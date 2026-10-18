@@ -315,8 +315,9 @@ function activate(loc, { traversal = false } = {}) {
       // fallback must not turn the remembered lens into Both.
       const groups = featureState('groups');
       const singleLens = groups?.focus?.value === 'processes' || groups?.focus?.value === 'agents';
+      // Back from an open run onto bare Groups (Both) must close the run.
       if (loc.subtab || loc.selection || groups?.subview?.value === 'routes'
-        || (traversal && singleLens && groupsProcessesFocusAvailable())) {
+        || (traversal && (singleLens || groups?.focusedRun?.value) && groupsProcessesFocusAvailable())) {
         requestGroupsLocation(
           loc.subtab === 'routes' && !groupsRouteMapAvailable() ? { tab: 'groups' } : loc,
         );
