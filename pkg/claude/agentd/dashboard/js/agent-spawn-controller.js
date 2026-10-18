@@ -62,7 +62,10 @@ export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, 
   }
   // The grant's pinned profile is the peer's default for this requester: it
   // outranks the group's default profile, as on the peer.
-  return requireController().open({ groupName, remote, role, fastMode, profileName: remote.options?.defaults?.profile || profileName || '' });
+  // A chosen profile is the operator's pick (the dialog applies it as one, so
+  // the request names it); a pin leaves nothing to choose.
+  const pin = remote.options?.defaults?.profile || '';
+  return requireController().open({ groupName, remote, role, fastMode, profileName: pin, chosenProfile: pin ? '' : profileName });
 }
 
 export function refreshAgentSpawnSandboxPolicy() {

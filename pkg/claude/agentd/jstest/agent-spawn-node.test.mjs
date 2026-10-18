@@ -117,10 +117,10 @@ test('a spawn on an unrestricted peer or on this node opens the local dialog the
   const restricted = { peer_view: { level: 'restricted' } };
   await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted, profileName: 'heavy', role: 'reviewer',
     prepare: async () => ({ options: { defaults: {} } }) });
-  assert.deepEqual([opened.at(-1).profileName, opened.pop().role], ['heavy', 'reviewer'], 'a restricted peer\'s request keeps them too');
+  assert.deepEqual([opened.at(-1).chosenProfile, opened.pop().role], ['heavy', 'reviewer'], 'a restricted peer\'s request keeps them too, the profile as a pick');
   await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted, profileName: 'heavy',
     prepare: async () => ({ options: { defaults: { profile: 'pinned' } } }) });
-  assert.equal(opened.pop().profileName, 'pinned', 'the grant\'s pinned profile still outranks, as on the peer');
+  assert.deepEqual([opened.at(-1).profileName, opened.pop().chosenProfile], ['pinned', ''], 'the grant\'s pinned profile still outranks, as on the peer');
 });
 
 test("a node's spawn attachments go to it through this node, in chunks past the peer view's request limit", async (t) => {

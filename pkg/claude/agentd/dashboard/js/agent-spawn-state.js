@@ -39,6 +39,9 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
         groupName: String(options?.groupName || ''),
         defaultGroup: String(options?.defaultGroup || ''),
         profileName: String(options?.profileName || ''),
+        // A remote spawn's profile chosen by its opener (palette, dock):
+        // applied as the operator's pick once the peer's profiles load.
+        chosenProfile: String(options?.chosenProfile || ''),
         fastMode: options?.fastMode === true,
         role: String(options?.role || ''),
         // A queued spawn reopened for edit (or launch, with autoSpawn): its id,
