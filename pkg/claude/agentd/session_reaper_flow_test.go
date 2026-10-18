@@ -44,6 +44,29 @@ func TestSessionReaper_MarksDeadSessionExited(t *testing.T) {
 		"reaper must persist status=exited for the dead session")
 }
 
+// Scenario: exited rows are retained forever. Once their tmux session is
+// gone, later sweeps must not fork a pane probe per historical row.
+func TestSessionReaper_GoneExitedRowsCostNoPerRowTmuxProbe(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "reap-gone-1111-2222-3333-44444444444"
+	f.HaveConvWithTitle(conv, "gone-worker")
+	f.HaveAliveSession(conv, "spwn-gone", "tmux-gone", f.TestCwd("gone"))
+	f.MarkOffline("tmux-gone")
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick())
+	require.Equal(t, "exited", statusOf(t, "spwn-gone"))
+
+	displays := f.World.Tmux.CommandCount("display-message")
+	hasSessions := f.World.Tmux.CommandCount("has-session")
+	assert.Equal(t, 0, reaper.Tick())
+	assert.Equal(t, displays, f.World.Tmux.CommandCount("display-message"),
+		"a gone exited row is not inspected for a retained pane")
+	assert.Equal(t, hasSessions, f.World.Tmux.CommandCount("has-session"),
+		"a gone exited row is not probed for Codex profile cleanup")
+}
+
 func TestSessionReaper_BackgroundActivityGatesStableIdleNotification(t *testing.T) {
 	f := newFlow(t)
 

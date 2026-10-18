@@ -398,6 +398,12 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		return 0
 	}
 	reapOrphanedOpenCodeRuntimes(states)
+	// One tmux listing for the whole sweep. Exited rows are retained across
+	// relaunches, so probing each one's pane individually would cost a tmux
+	// fork per historical launch on every tick. Unlike the liveness caches, this
+	// listing keeps sessions whose pane is retained-dead; a session missing from
+	// it has no pane left to inspect. On a listing error, probe each row.
+	tmuxSessions, tmuxErr := liveTmuxSessionsWithTimeout()
 	// Which CONVERSATIONS still have a launch, computed once for the whole tick.
 	//
 	// Session rows are per-launch and exited ones are retained, but a Copilot API
@@ -432,6 +438,9 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			// removing the retained pane, preserving evidence for bounded retries
 			// if persistence is temporarily unavailable.
 			if st.TmuxSession == "" {
+				continue
+			}
+			if _, ok := tmuxSessions[st.TmuxSession]; tmuxErr == nil && !ok {
 				continue
 			}
 			evidence, inspectErr := session.InspectDeadTmuxSessionPane(st.TmuxSession)
