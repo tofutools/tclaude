@@ -14,7 +14,7 @@ import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } fr
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
 import {
-  ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantSelectors, peerAction, refusedActsRule, usableActSelectors,
+  ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
 import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
@@ -409,7 +409,8 @@ export function MergedGroups({
         if (req) { setPeerReq({ ...req, node: name || instance.slice(0, 13), nodeId: instance }); return; }
       }
       if (instance && instance !== state.view.value.fleet?.self?.id) {
-        toast(`${name || 'This node'} does not share this action with you`, true);
+        const missing = grantMissing(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
+        toast(`${name || 'This node'} does not share this action with you${needsSuffix(missing)}`, true);
       } else {
         const where = name ? `${name}'s own dashboard (click @${name})` : "the node's own dashboard";
         toast(`Act on this node's groups from ${where}`, true);

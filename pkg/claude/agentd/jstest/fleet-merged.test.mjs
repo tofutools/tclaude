@@ -145,7 +145,7 @@ test('a peer row runs what the peer grants through its own handlers or peer rout
   const local = inGroup('inst_self', 'desk', '<span data-act="dot-toggle" data-online="0" data-agent="agt_me1">○</span>');
   const localSpawn = inGroup('inst_self', 'desk', '<button data-act="spawn-agent" data-group="ops@desk">+</button>');
   assert.equal(harness.fireEvent(running, 'click').defaultPrevented, true);
-  assert.match(toasts.at(-1), /forge does not share this action with you/);
+  assert.match(toasts.at(-1), /forge does not share this action with you \(needs groups\.members\.stop\)/);
   assert.equal(harness.fireEvent(local, 'click').defaultPrevented, false);
   assert.equal(harness.fireEvent(localSpawn, 'click').defaultPrevented, false);
   assert.equal(doc.querySelector('#peer-action-modal'), null);

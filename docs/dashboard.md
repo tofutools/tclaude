@@ -951,7 +951,11 @@ profile pickers the peer's `node.spawn.read` (docs/federation.md, "Changing a
 peer's groups").
 
 Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
-They stay in place so the layout does not jump; hover or click one to see why.
+They stay in place so the layout does not jump; hover or click one to see why,
+including the grant the peer would have to give you (or "unrestricted trust"
+for what no grant opens). The Groups tab shows every group the peer shares
+anything in: a roster, presence or mail grant alone shows its members, and
+`agents.status.read` adds their activity, model, task and context.
 The peer-view pill names both directions of trust and lists what is hidden
 from you, with the grant each needs. Usage
 and costs say when they are not shared.

@@ -15,7 +15,7 @@ import { fleetState } from './fleet-state.js';
 import { HelpDisclosure } from './help-field.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { nodeSnapshot } from './node-api.js';
-import { groupFieldHeld } from './peer-view-limits.js';
+import { groupFieldHeld, groupFieldMissing, needsSuffix } from './peer-view-limits.js';
 import {
   AgentExportDialog, PresetCloneDialog, SandboxImplDialog, TerminalDirectoryDialog, TerminalChooserDialog,
 } from './small-dialog-components.js';
@@ -548,7 +548,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
   const peerView = snap?.peer_view || null;
   const here = !node && !peerView;
   const can = (act) => groupFieldHeld(act, descriptor.group, peerView);
-  const off = (act) => (can(act) ? {} : { disabled: true, title: 'This node does not share this setting with you' });
+  const off = (act) => (can(act) ? {} : { disabled: true, title: `This node does not share this setting with you${needsSuffix(groupFieldMissing(act, descriptor.group, peerView))}` });
   const withCurrent = (names, current) => (current && !names.includes(current) ? [current, ...names] : names);
   const profileNames = withCurrent((snap?.profiles || []).map((profile) => profile.name), group?.default_profile || '');
   const sandboxNames = withCurrent((snap?.sandbox_profiles || []).map((profile) => (typeof profile === 'string' ? profile : profile.name)), group?.sandbox_profile || '');
