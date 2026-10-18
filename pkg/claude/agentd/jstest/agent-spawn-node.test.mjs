@@ -30,10 +30,13 @@ test("a node's spawn actions send every request to that node and keep this machi
     if (String(url).endsWith('/spawn-profile-default')) return respond({ name: 'fast' });
     return respond({ agent_id: 'agt_new1', conv_id: 'c1' });
   };
-  const local = createAgentSpawnActions({ fetchImpl, notify: (m) => notes.push(m), openNodeTerminal: async (o) => { terminals.push(o); } });
-  assert.equal(local.canSaveProfile, true);
+  const editors = [];
+  const local = createAgentSpawnActions({ fetchImpl, notify: (m) => notes.push(m), openNodeTerminal: async (o) => { terminals.push(o); }, openProfileEditor: (seed, options) => editors.push([seed, options]) });
   const actions = local.forNode({ node: NODE, nodeId: NODE, name: 'forge' });
-  assert.equal(actions.canSaveProfile, false, "the profile editor saves to the page's node");
+  const nodes = [{ id: NODE, name: 'forge', operatorOnly: false }, { id: '', name: 'this node', operatorOnly: false }];
+  const onSaved = () => {};
+  actions.openProfileEditor({ name: 'seed' }, onSaved, nodes);
+  assert.deepEqual(editors, [[{ name: 'seed' }, { editExisting: false, onSaved, nodes }]], 'the profile editor offers where to save');
   assert.deepEqual((await actions.loadProfiles()).map((p) => p.name), ['fast']);
   assert.equal(actions.dashboardDefaultProfile(), 'fast', "the node's global default profile pre-fills");
   assert.match((await actions.pickDirectory({})).error, /forge's folders/);
@@ -80,10 +83,10 @@ test("the spawn dialog on another node is the local dialog over that node's snap
   assert.deepEqual([...q('#agent-spawn-group').querySelectorAll('option')].map((o) => o.value).filter(Boolean), ['build'], "the node's groups, not this node's");
   assert.ok(q('.saved-prompt-chip-manage'), 'Manage… saved prompts is there, as locally');
   assert.ok([...q('.saved-prompt-chip-add').querySelectorAll('option')].some((o) => o.value === 'house-rules'), "the node's prompt library");
-  for (const id of ['agent-spawn-cwd-browse', 'agent-spawn-wt-repo-browse', 'agent-spawn-save-profile']) {
+  for (const id of ['agent-spawn-cwd-browse', 'agent-spawn-wt-repo-browse']) {
     assert.equal(q(`#${id}`).disabled, true, `${id} stays with this machine`);
   }
-  for (const id of ['agent-spawn-cwd', 'agent-spawn-harness', 'agent-spawn-queue', 'agent-spawn-attach-btn', 'agent-spawn-focus']) {
+  for (const id of ['agent-spawn-save-profile', 'agent-spawn-cwd', 'agent-spawn-harness', 'agent-spawn-queue', 'agent-spawn-attach-btn', 'agent-spawn-focus']) {
     assert.equal(q(`#${id}`).disabled, false, `${id} works as locally`);
   }
   assert.ok(urls.length > 0 && urls.every((u) => u.startsWith(`/api/peer/${NODE}/`)), `every request reaches forge: ${urls.join(', ')}`);
@@ -121,4 +124,23 @@ test("a node's spawn attachments go to it through this node, in chunks past the 
   const paths = await actions.uploadAttachments([{ file: new Blob(['png']), name: 'a.png' }]);
   assert.deepEqual(paths, ['/tmp/x/a.png'], "the node's own staged paths, for its spawn");
   assert.deepEqual(calls, [[`/api/peer-upload/${NODE}?path=${encodeURIComponent('/api/spawn-attachments')}`, 'POST']]);
+});
+
+test('Save as profile offers the nodes this operator may create profiles on', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ profileSaveNodes }, nodeApi] = await Promise.all([
+    harness.importDashboardModule('js/profile-save-nodes.js'),
+    harness.importDashboardModule('js/node-api.js'),
+  ]);
+  nodeApi.setSelfNode('inst_desk0001');
+  const views = {
+    inst_full0001: { level: 'unrestricted' },
+    inst_slug0001: { level: 'restricted', included: ['spawn.profiles.create'], omitted: [] },
+    inst_none0001: { level: 'restricted', included: [], omitted: [{ feature: 'spawn.profiles.create', requires: 'node.spawn.profiles.create' }] },
+  };
+  t.after(nodeApi.setNodeSnapshotSource((node) => (views[node] ? { peer_view: views[node] } : null)));
+  const here = { id: '', name: 'this node', operatorOnly: false };
+  assert.deepEqual(profileSaveNodes('inst_full0001', 'full'), [{ id: 'inst_full0001', name: 'full', operatorOnly: false }, here], 'unrestricted trust saves as its own operator');
+  assert.deepEqual(profileSaveNodes('inst_slug0001', 'slug'), [{ id: 'inst_slug0001', name: 'slug', operatorOnly: true }, here], 'the grant saves operator-only');
+  assert.deepEqual(profileSaveNodes('inst_none0001', 'none'), [here], 'without either only this node is offered');
 });

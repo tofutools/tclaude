@@ -92,7 +92,7 @@ var fedInstancePeerSlugs = map[string]bool{
 	"config.offer": true, PermApprovalsAnswer: true, PermNodeRead: true, PermNodeHarnessesRead: true,
 	PermNodeUpdate: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
 	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
-	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeGroupsCreate: true,
+	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeSpawnProfilesCreate: true, PermNodeGroupsCreate: true,
 }
 
 func fedInstancePeerSlug(slug string) bool { return fedInstancePeerSlugs[slug] }

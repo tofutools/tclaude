@@ -1346,6 +1346,11 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
   const [environmentHelpOpen, setEnvironmentHelpOpen] = useState('');
   const [inspectedRole, setInspectedRole] = useState('');
   const dirty = dirtyDraft(draft, baseline); const local = !!options.local;
+  // options.nodes (profile-save-nodes.js): the nodes a profile from another
+  // node's spawn dialog may be saved on, the spawn's node first.
+  const saveNodes = local ? [] : options.nodes || [];
+  const [saveOn, setSaveOn] = useState(() => saveNodes[0]?.id || '');
+  const saveNode = saveNodes.find((node) => node.id === saveOn) || null;
   const hEntry = harnessByName(catalog, draft.harness);
   const submit = async () => {
     state.error.value = '';
@@ -1361,7 +1366,8 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
       );
       if (hint?.warn) { state.error.value = hint.text; return; }
     }
-    await actions.saveProfile({ draft, original: options.editExisting === false ? null : seed, options, payload: profilePayload(draft, seed, catalog, { local }) });
+    const saveOptions = saveNode ? { ...options, node: saveNode.id, nodeName: saveNode.name } : options;
+    await actions.saveProfile({ draft, original: options.editExisting === false ? null : seed, options: saveOptions, payload: profilePayload(draft, seed, catalog, { local }) });
   };
   const saving = state.busy.value === 'profile-save';
   const selectedRoles = (draft.role_refs || []).map((name) => roles.find((role) => role.name === name) || { name, missing: true });
@@ -1378,6 +1384,7 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
     (role.permissions || []).length ? `Grants: ${role.permissions.map((grant) => roleGrantSlug(grant)).join(', ')}` : 'Grants: none']
     .filter(Boolean).join('\n\n');
   return html`<${Overlay} id="profile-editor-modal" labelledby="profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${saving ? null : submit} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="profile-editor-title">${local ? wizWord('Custom launch — this agent only', 'Bespoke summons — this familiar only') : options.cloneSourceName ? wizWord(`Clone profile: ${options.cloneSourceName}`, `Mirror pattern: ${options.cloneSourceName}`) : seed && options.editExisting !== false ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`) : wizWord('New spawn profile', 'New familiar pattern')}</h3>
+    ${saveNodes.length > 0 && html`<${Row} label="Save on" title="A profile lives on one node; spawns on that node can use it."><div class="cron-create-target"><select id="profile-editor-save-on" value=${saveOn} onChange=${(event) => setSaveOn(event.currentTarget.value)}>${saveNodes.map((node) => html`<option key=${node.id} value=${node.id}>${node.name}</option>`)}</select>${saveNode?.operatorOnly && html`<div class="spawn-field-hint" id="profile-editor-save-on-hint">${saveNode.name} saves it as operator-only. Only ${saveNode.name}'s operator can change that.</div>`}</div></${Row}>`}
     <${Row} label="Name" hidden=${local}><input id="profile-editor-name" value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="profile name — kebab-or-snake-case label" autofocus autocomplete="off" spellcheck="false" /></${Row}>
     <${Row} label="Aliases" hidden=${local} title="Alternate handles for this same profile. Separate multiple aliases with commas."><input id="profile-editor-aliases" value=${draft.aliases_text} onInput=${(event) => change(setDraft, 'aliases_text', event.currentTarget.value)} placeholder="e.g. codex-reviewer, cold-reviewer" autocomplete="off" spellcheck="false" /></${Row}>
     <${Row} label="Disabled" hidden=${local} title="Keep this profile visible and editable, but block every spawn that would use it."><input id="profile-editor-disabled" type="checkbox" checked=${draft.disabled} onChange=${(event) => change(setDraft, 'disabled', event.currentTarget.checked)} /></${Row}>

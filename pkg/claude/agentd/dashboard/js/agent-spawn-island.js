@@ -3,6 +3,8 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { LockReason } from './lock-reason.js';
+import { isPageNode } from './node-api.js';
+import { profileSaveNodes } from './profile-save-nodes.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -262,6 +264,11 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   const actions = useMemo(() => (remote ? createRemoteSpawnActions(localActions, remote, { notify })
     : target ? localActions.forNode(target) : localActions), [remote, target, localActions]);
   const away = !!target;
+  // "Save as profile…" saves on the spawn's node or the page's, where this
+  // operator may create profiles; the profile editor offers the choice.
+  const spawnNode = remote ? remote.nodeId || '' : target && !isPageNode(target.node) ? target.node : '';
+  const saveNodes = useMemo(() => (spawnNode ? profileSaveNodes(spawnNode, remote ? remote.node : target?.name) : null), [spawnNode, remote, target]);
+  const canSaveProfile = !saveNodes || saveNodes.length > 0;
   const awayHint = away ? `${target.name || 'That node'}'s folders are browsed from its own dashboard; type the path` : '';
   // Disable what the remote request cannot carry, for as long as the dialog
   // lives (see watchRemoteSpawnLocks): fail-closed for controls added later too.
@@ -914,13 +921,16 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   };
   const saveProfile = () => {
     const generation = current.generation;
-    actions.openProfileEditor(spawnProfileSeed(draft, context), (name) => {
+    actions.openProfileEditor(spawnProfileSeed(draft, context), (name, node = '') => {
+      // Only a profile on the node this dialog lists profiles from is
+      // picked; a remote request's catalog is the peer's, read at open.
+      if (remote || node !== spawnNode) return;
       actions.loadProfiles(true).then((nextProfiles) => {
         if (!state.isCurrent(generation)) return;
         setProfiles(nextProfiles);
         setDraft((before) => ({ ...before, profile: name }));
       }).catch(() => {});
-    });
+    }, saveNodes);
   };
 
   const submit = async () => {
@@ -1213,10 +1223,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         <button id="agent-spawn-clear" type="button" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
           onClick=${() => changeProfile('')}>Clear</button>
-        <button id="agent-spawn-save-profile" type="button" disabled=${busy || !actions.canSaveProfile}
-          aria-disabled=${actions.canSaveProfile ? undefined : 'true'}
-          title=${actions.canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it (the directory and worktree aren't stored)" : undefined}
-          onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as pattern…" /></button><${LockReason} id="agent-spawn-save-profile-lock" align="end" why=${actions.canSaveProfile ? '' : `Can't save a profile from here: profiles are stored on ${target?.name || 'that node'}. Open ${target?.name || 'that node'}'s own dashboard to save one.`}/>
+        <button id="agent-spawn-save-profile" type="button" disabled=${busy || !canSaveProfile}
+          aria-disabled=${canSaveProfile ? undefined : 'true'} data-remote-spawn-free=${canSaveProfile ? '' : undefined}
+          title=${canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it and pick the node it's saved on (the directory and worktree aren't stored)" : undefined}
+          onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as pattern…" /></button><${LockReason} id="agent-spawn-save-profile-lock" align="end" why=${canSaveProfile ? '' : `You can't save profiles on ${remote?.node || target?.name || 'that node'} or here: that needs unrestricted trust or the node.spawn.profiles.create grant.`}/>
       </div></div>
     </label>
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>

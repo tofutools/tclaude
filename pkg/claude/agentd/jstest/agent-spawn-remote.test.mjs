@@ -132,7 +132,7 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
     .filter((el) => !el.disabled && !el.classList.contains('spawn-field-help-trigger') && !el.closest('.help-disclosure'))
     .map((el) => el.id || el.outerHTML.slice(0, 120)).sort();
   assert.deepEqual(live, ['agent-spawn-cancel', 'agent-spawn-effort', 'agent-spawn-init-msg', 'agent-spawn-model', 'agent-spawn-model-codex',
-    'agent-spawn-model-custom', 'agent-spawn-name', 'agent-spawn-role', 'agent-spawn-source-local', 'agent-spawn-source-target', 'agent-spawn-submit'], 'fail-closed: everything else is disabled');
+    'agent-spawn-model-custom', 'agent-spawn-name', 'agent-spawn-role', 'agent-spawn-save-profile', 'agent-spawn-source-local', 'agent-spawn-source-target', 'agent-spawn-submit'], 'fail-closed: everything else is disabled (Save as profile saves on this node)');
 
   const name = q('#agent-spawn-name'); setValue(name, 'parser'); await harness.act(() => harness.fireEvent(name, 'input'));
   const brief = q('#agent-spawn-init-msg'); setValue(brief, 'port the parser'); await harness.act(() => harness.fireEvent(brief, 'input'));

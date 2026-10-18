@@ -265,6 +265,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
 | `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model, the harness and sandbox implementation catalogs; group templates, in full (a template snapshotted from a group carries that group's context and briefs, even one the peer cannot see); the fused Groups view's right panel lists them; shares profile environment values and paths (unscoped only; see "The remote spawn dialog") |
 | `node.spawn.defaults.manage` | set or clear the global default spawn profile and global sandbox profile from the peer page's Groups toolbar, choosing among existing profiles (`node.spawn.read` lists them; unscoped only) |
+| `node.spawn.profiles.create` | save a new spawn profile here from the peer's spawn dialog (**Save as profile…** → **Save on**); a restricted peer's profile is saved operator-only, so it opens nothing its spawn grants keep closed until this node's operator lifts that; editing and deleting profiles take unrestricted trust (unscoped only) |
 | `node.groups.create` | create plain groups from the peer page's **+ new group**: name, parent (a visible group), description, context, attachment, member cap; launch settings, templates and clones take unrestricted trust (unscoped only; see "Managing a peer's node") |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
 | `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
@@ -809,14 +810,19 @@ Groups toolbar's 🧠 global default spawn profile, 🛡 global sandbox profile 
 handlers when it shares them, and stay greyed with the reason otherwise.
 
 - `node.spawn.defaults.manage` sets or clears both global defaults, choosing
-  among the peer's existing profiles; the pickers also need `node.spawn.read`
-  to list them, and stay greyed without it. Creating a profile stays on its own node. With either
-  grant the peer's snapshot carries the two current defaults.
+  among the peer's existing profiles (an operator-only one takes unrestricted
+  trust); the pickers also need `node.spawn.read`
+  to list them, and stay greyed without it. With either grant the peer's
+  snapshot carries the two current defaults.
+- `node.spawn.profiles.create` saves a new spawn profile from the peer's spawn
+  dialog (**Save as profile…**, choosing the node under **Save on**). A
+  restricted peer's profile is saved operator-only; editing and deleting
+  profiles stay with unrestricted trust.
 - `node.groups.create` creates a plain group. A restricted peer sets only its
   name, a parent it can see, description, context, attachment and member cap;
   a directory, environment, profile or repository clone is refused. It sees
   the new group only through an unscoped grant.
-- Unrestricted trust holds both, and also creates groups from a template
+- Unrestricted trust holds all three, and also creates groups from a template
   (whose team spawns here) or as a clone of a group.
 
 #### The remote spawn dialog

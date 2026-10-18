@@ -3,7 +3,7 @@ import { sandboxPredictionWarnings, sandboxProfileForWire } from './sandbox-prof
 import { SANDBOX_PROFILE_NONE, WT_NEW } from './agent-spawn-model.js';
 import { revealGroupPath, setFusedSectionOpen } from './groups-fused-sections.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
-import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot, nodeUpload } from './node-api.js';
+import { announceNodeChanged, nodeFetch, nodeSnapshot, nodeUpload } from './node-api.js';
 
 const EFFORT_KEY = 'tclaude.dash.spawn.modelEffort';
 const AUTOFOCUS_KEY = 'tclaude.dash.spawn.autofocus';
@@ -72,15 +72,14 @@ export function createAgentSpawnActions(dependencies = {}) {
   uploadImpl = (path, init) => nodeUpload('', path, init, { fetchImpl }),
   } = dependencies;
   return Object.freeze({
-    canSaveProfile: true,
     // forNode is the same dialog's actions aimed at another node's group
     // (target: {node, nodeId, name}, agent-spawn-state.js): every request
     // goes through nodeFetch(node) to that node's own routes — its profiles,
     // libraries, worktrees, queue and spawn — as its own dashboard would send
     // them. What works on the browser's own machine stays with it: the
-    // directory picker, and the profile editor off the node's own page. The new
-    // agent's terminal opens in the browser terminal, not as a window on the
-    // node's desktop.
+    // directory picker. The new agent's terminal opens in the browser
+    // terminal, not as a window on the node's desktop. The profile editor
+    // saves where its "Save on" says.
     forNode(target) {
       return createNodeSpawnActions(dependencies, target);
     },
@@ -374,8 +373,10 @@ export function createAgentSpawnActions(dependencies = {}) {
       return pickDirectory(options);
     },
 
-    openProfileEditor(seed, onSaved) {
-      return openProfileEditor(seed, { editExisting: false, onSaved });
+    // nodes (profile-save-nodes.js) is the editor's "Save on" choice, for a
+    // spawn on another node; without it the profile saves on the page's.
+    openProfileEditor(seed, onSaved, nodes = null) {
+      return openProfileEditor(seed, { editExisting: false, onSaved, ...(nodes ? { nodes } : {}) });
     },
 
     openPermissions(options) {
@@ -470,15 +471,11 @@ function createNodeSpawnActions(dependencies, { node = '', nodeId = '', name = '
     },
     getDashboardDefaultProfile: () => fallbackProfile,
     pickDirectory: async () => ({ error: `Browse ${where}'s folders from its own dashboard, or type the path` }),
-    // The profile editor saves to the page's node: right on that node's own
-    // page, not from another node's (its button shows locked).
-    ...(isPageNode(node) ? {} : { openProfileEditor: () => {} }),
     refresh: () => { announceNodeChanged(node); refresh(); },
     getSnapshot: () => nodeSnapshot(node) || getSnapshot(),
   });
   return Object.freeze({
     ...base,
-    canSaveProfile: isPageNode(node),
     async spawn(request) {
       // The node would open the new agent's window on its own desktop.
       const { auto_focus: _focus, auto_focus_web: _web, ...body } = request.body || {};
