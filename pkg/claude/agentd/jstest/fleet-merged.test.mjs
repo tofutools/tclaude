@@ -202,7 +202,7 @@ test('fused Groups shows each node\'s triggers in its own groups, read from node
   assert.deepEqual(names('ops@desk'), ['desk-global'], 'this node\'s global rule, not forge\'s group rule of the same name');
   assert.deepEqual(names('ops@forge'), ['forge-ops'], 'forge\'s rule on its own ops');
   assert.deepEqual(names('qa@lab'), [], 'a restricted peer\'s triggers are not read');
-  assert.deepEqual([...new Set(asked)].sort(), ['forge', 'self'], 'lab is never asked');
+  assert.deepEqual(asked.sort(), ['forge', 'self'], 'each node is read once; lab is never asked');
   await mounted.unmount(); state.dispose();
 });
 
