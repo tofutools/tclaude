@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -485,7 +486,23 @@ func servePeerMessage(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 		Body    string `json:"body"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, operatorMessageMaxBody+4096)
-	decoder := json.NewDecoder(r.Body)
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, 400, "invalid_arg", "expected to, subject and nonempty body within message limits")
+		return
+	}
+	// An announcement to every live agent (the palette's Announce) has no
+	// peer grant: only an unrestricted peer sends it, as this node's operator
+	// does. Every other message stays a remote operator's, under its grant.
+	var announce struct {
+		AllLive bool `json:"all_live"`
+	}
+	if json.Unmarshal(raw, &announce) == nil && announce.AllLive && db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		servePeerAsLocal(w, r, v, peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true})
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&in); err != nil || strings.TrimSpace(in.Body) == "" || len(in.Body) > operatorMessageMaxBody || len([]rune(in.Subject)) > operatorMessageMaxSubject {
 		writeError(w, 400, "invalid_arg", "expected to, subject and nonempty body within message limits")

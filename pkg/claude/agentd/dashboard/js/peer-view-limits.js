@@ -460,7 +460,9 @@ export function peerViewSubtabUsable(tab, subtab, { remote = globalThis.__tclaud
 // limitPeerViewCommands disables the command palette's node-changing commands
 // on a peer view. Under unrestricted trust every command runs on the peer as
 // on its own dashboard, except the ones that act on this machine's own
-// windows, terminals or files (peerView 'own'). Otherwise only view commands,
+// windows, terminals or files (peerView 'own'). Commands only unrestricted
+// trust reaches (peerView 'operator', what: the reason's subject) are off
+// on any other peer. Otherwise only view commands,
 // tabs the peer offers, messaging and spawning when it shares them, and an
 // agent's lifecycle its grants cover (grant: the act, as its row's control)
 // stay runnable.
@@ -487,6 +489,7 @@ export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeR
     else if (cmd.peerView === 'view') state = 'shared';
     else if (cmd.peerView === 'tab') { state = tabState(cmd.tab, pv); what = tabLabel(cmd.tab); needs = tabNeeds(cmd.tab, pv); }
     else if (cmd.peerView === 'messaging') { state = featureState('messaging', pv); what = 'messaging'; needs = featureNeeds('messaging', pv); }
+    else if (cmd.peerView === 'operator') { state = 'omitted'; what = cmd.what || what; needs = 'unrestricted trust'; }
     if (state === 'shared') return cmd;
     return { ...cmd, enabled: false, disabledReason: limitHint(state, what, name, [needs]) };
   });
