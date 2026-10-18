@@ -3634,6 +3634,14 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-node-item:hover:not(:disabled), .usage-node-item.on { background: #1f6feb22; }
 .usage-node-item.locked { opacity: .55; cursor: not-allowed; }
 .usage-node-peak { margin-left: auto; color: #8b949e; }
+.fused-usage { margin: 0 0 14px; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #161b22; }
+.fused-usage-table { border-collapse: collapse; font-size: 12.5px; min-width: 460px; }
+.fused-usage-table th, .fused-usage-table td { padding: 3px 12px 3px 0; text-align: left; border-bottom: 1px solid #21262d; }
+.fused-usage-table .n { text-align: right; font-variant-numeric: tabular-nums; }
+.fused-usage-table .muted { color: #8b949e; }
+.fused-usage-table tr .usage-node-dot { display: inline-block; }
+.fused-usage-table tfoot th { border-bottom: 0; }
+.fused-usage-note { margin: 6px 0 0; font-size: 11.5px; color: #8b949e; }
 #usage .uw { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 /* An unavailable Codex window still occupies its fixed-width slot so the
    following window stays aligned with the Claude row, but contributes no

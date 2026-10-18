@@ -119,3 +119,76 @@ export function UsageNodePill({ nodes, selected, onSelect, peakOf, onOpen }) {
     </span>` : null}
   </span>`;
 }
+
+// usePeerUsages reads every listed peer's usage (its peer snapshot) while
+// active, refreshed each PEER_USAGE_POLL_MS. It returns id -> entry, as
+// peerUsageState reads it.
+export function usePeerUsages({ ids, active, fetchImpl = (...a) => globalThis.fetch(...a), timers = globalThis, now = () => Date.now() }) {
+  const [entries, setEntries] = useState({});
+  const key = ids.join(',');
+  useEffect(() => {
+    if (!active || !ids.length) return undefined;
+    let live = true;
+    const load = async (id) => {
+      let entry;
+      try {
+        const response = await fetchImpl(`/api/peer/${encodeURIComponent(id)}/snapshot`);
+        if (!response.ok) entry = { failure: `HTTP ${response.status}`, at: now() };
+        else {
+          const body = await response.json();
+          entry = { usage: body?.usage || null, peerView: body?.peer_view || null, at: now() };
+        }
+      } catch (_) {
+        entry = { failure: 'network', at: now() };
+      }
+      if (live) setEntries((current) => ({ ...current, [id]: entry }));
+    };
+    const all = () => { for (const id of ids) void load(id); };
+    all();
+    const timer = timers.setInterval(all, PEER_USAGE_POLL_MS);
+    return () => { live = false; timers.clearInterval(timer); };
+  }, [key, active]);
+  return entries;
+}
+
+// fusedUsageRows is the fused Usage summary: a row per node (this node
+// first) with its cost today and month to date and its peak quota, plus the
+// cost total over the nodes that share it. Quota is per node only: quota
+// percentages do not add up across machines.
+export function fusedUsageRows(nodes, selfUsage, entries) {
+  const rows = nodes.map((node) => {
+    const st = node.local ? { usage: selfUsage } : peerUsageState(node, entries[node.id]);
+    if (st.why) return { node, why: st.why, pending: !!st.pending };
+    const usage = st.usage || {};
+    return { node, today: Number(usage.today_cost_usd || 0), mtd: Number(usage.total_cost_usd || 0), peak: usagePeak(usage) };
+  });
+  const shared = rows.filter((r) => !r.why);
+  return {
+    rows,
+    total: { today: shared.reduce((s, r) => s + r.today, 0), mtd: shared.reduce((s, r) => s + r.mtd, 0), nodes: shared.length },
+  };
+}
+
+// FusedUsageSummary tops the Usage tab in a fused view: each ticked node's
+// spend and peak quota, and the spend total. The views below stay this
+// node's.
+export function FusedUsageSummary({ nodes, selfUsage, entries, fmt }) {
+  const { rows, total } = fusedUsageRows(nodes, selfUsage, entries);
+  const label = (n) => `${n.local ? '⌂ ' : ''}${n.name}`;
+  return html`<section class="fused-usage" aria-label="Usage on the fused nodes">
+    <table class="fused-usage-table">
+      <thead><tr><th>Node</th><th class="n">Today</th><th class="n">Month to date</th><th class="n">Peak quota</th></tr></thead>
+      <tbody>
+        ${rows.map((r) => html`<tr key=${r.node.id} style=${`--nc:${r.node.color}`}>
+          <td><span class="usage-node-dot" aria-hidden="true"></span> ${label(r.node)}</td>
+          ${r.why
+            ? html`<td class="n muted" colspan="3">${r.pending ? 'loading…' : html`not shared <${LockReason} why=${r.why} align="end" />`}</td>`
+            : html`<td class="n">${fmt(r.today)}</td><td class="n">${fmt(r.mtd)}</td><td class="n">${r.peak == null ? '—' : `${r.peak}%`}</td>`}
+        </tr>`)}
+      </tbody>
+      <tfoot><tr><th>Total (${total.nodes} ${total.nodes === 1 ? 'node' : 'nodes'})</th><th class="n">${fmt(total.today)}</th><th class="n">${fmt(total.mtd)}</th>
+        <th class="n muted" title="Quota percentages do not add up across machines">per node</th></tr></tfoot>
+    </table>
+    <p class="fused-usage-note">The views below show this node, ⌂ ${nodes.find((n) => n.local)?.name || ''}. Switch the header's quota bars to another node from their node pill.</p>
+  </section>`;
+}
