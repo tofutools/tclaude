@@ -150,6 +150,51 @@ func TestBranchLinksForPartsKeepsAPRTheWorkspaceHasNotSeenYet(t *testing.T) {
 	assert.Equal(t, prURL, links.BranchPRURL)
 }
 
+// TestBranchLinksForPartsSurfacesAStatuslinePRThatMissesBothSlots — the slot
+// overrides need an exact cwd + branch match, so an agent whose Claude Code cwd
+// is a subdirectory of its worktree (or whose launch-dir branch moved on) used
+// to lose the PR its own statusline was showing. It now rides along with the
+// presented PRs, deduped against an explicit presentation of the same PR.
+func TestBranchLinksForPartsSurfacesAStatuslinePRThatMissesBothSlots(t *testing.T) {
+	now := time.Now()
+	const prURL = "https://github.com/o/r/pull/7"
+	loc := agentLocationView{
+		CurrentDir: "/repo", StartupDir: "/repo",
+		Branch: "feature", StartupBranch: "main",
+	}
+	ws := db.AgentWorkspace{
+		ConvID: "conv", Cwd: "/repo/pkg/sub", Branch: "feature",
+		RepoURL: "https://github.com/o/r", DefaultBranch: "main",
+		PRNumber: 7, PRURL: prURL, PRState: "open", UpdatedAt: now,
+	}
+	noPR := func(string, string) (string, int, string, string, time.Time) {
+		return "https://github.com/o/r/tree/feature", 0, "", "", now
+	}
+
+	links := branchLinksForParts("conv", loc, ws, noPR).withPresentedPRs(nil)
+	assert.Empty(t, links.BranchPRURL, "the cwd mismatch still keeps the slot override off")
+	require.Len(t, links.PresentedPRs, 1, "the statusline PR is surfaced anyway")
+	assert.Equal(t, prURL, links.PresentedPRs[0].URL)
+	assert.Equal(t, 7, links.PresentedPRs[0].Number)
+	assert.Equal(t, "open", links.PresentedPRs[0].State)
+
+	presented := []presentedPRView{{URL: prURL + "/files", Summary: "mine"}}
+	links = branchLinksForParts("conv", loc, ws, noPR).withPresentedPRs(presented)
+	require.Len(t, links.PresentedPRs, 1, "an explicit presentation of the same PR is not duplicated")
+	assert.Equal(t, "mine", links.PresentedPRs[0].Summary)
+
+	other := []presentedPRView{{URL: "https://github.com/o/r/pull/8"}}
+	links = branchLinksForParts("conv", loc, ws, noPR).withPresentedPRs(other)
+	require.Len(t, links.PresentedPRs, 2)
+	assert.Len(t, other, 1, "the caller's presented slice is not mutated")
+
+	// Once the slot names the PR, it is not repeated as an extra badge.
+	ws.Cwd = "/repo"
+	links = branchLinksForParts("conv", loc, ws, noPR).withPresentedPRs(nil)
+	assert.Equal(t, prURL, links.BranchPRURL)
+	assert.Empty(t, links.PresentedPRs)
+}
+
 // resolverReturning installs a git-info resolver fake that reports a
 // fixed PR for any branch, and returns a restore closure.
 func resolverReturning(prNumber int, prURL, prState string) func() {

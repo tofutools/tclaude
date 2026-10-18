@@ -77,6 +77,10 @@ type repoLinksView struct {
 	StartupReviews   *prReviewSummary `json:"startup_reviews,omitempty"`
 	branchPRUpdated  time.Time
 	startupPRUpdated time.Time
+	// statuslinePR is the statusbar's live PR (agent_workspace) when it could
+	// not be placed in the branch or startup slot; withPresentedPRs surfaces it
+	// alongside the presented PRs so it is never silently dropped.
+	statuslinePR presentedPRView
 }
 
 // repoBranchInfo is the cached git/gh resolution for one
@@ -196,6 +200,25 @@ func branchLinksForParts(convID string, loc agentLocationView, ws db.AgentWorksp
 		v.StartupPRNumber, v.StartupPRURL, v.StartupPRState, v.startupPRUpdated = reconcilePRSlot(
 			v.StartupPRNumber, v.StartupPRURL, v.StartupPRState, v.startupPRUpdated, ws)
 	}
+	// The slot overrides above need an exact cwd + branch match, which misses
+	// an agent whose Claude Code cwd sits in a subdirectory or another
+	// worktree, or whose launch-dir branch moved on since startup. The PR the
+	// statusline shows is still this agent's, so keep it rather than drop it.
+	if ws.PRURL != "" && !samePRURL(ws.PRURL, v.BranchPRURL) && !samePRURL(ws.PRURL, v.StartupPRURL) {
+		v.statuslinePR = presentedPRView{
+			URL:       ws.PRURL,
+			Number:    ws.PRNumber,
+			Summary:   "Pull request shown in the agent's statusline",
+			State:     ws.PRState,
+			updatedAt: ws.UpdatedAt,
+		}
+		if v.statuslinePR.Number == 0 {
+			v.statuslinePR.Number = deriveGitHubPRNumber(ws.PRURL)
+		}
+		if !ws.UpdatedAt.IsZero() {
+			v.statuslinePR.UpdatedAt = ws.UpdatedAt.Format("2006-01-02T15:04:05Z07:00")
+		}
+	}
 	return v
 }
 
@@ -244,7 +267,13 @@ func reconcilePRSlot(number int, url, state string, updated time.Time, ws db.Age
 // deliberately independent: whichever source most recently checked a PR owns
 // its displayed open/merged/closed state, even when the frontend later hides a
 // duplicate presented badge.
+//
+// A statusline PR that missed both slots is appended unless a presented row
+// already names it; a fresh slice keeps the caller's prs untouched.
 func (v repoLinksView) withPresentedPRs(prs []presentedPRView) repoLinksView {
+	if v.statuslinePR.URL != "" && !containsPRURL(prs, v.statuslinePR.URL) {
+		prs = append(append(make([]presentedPRView, 0, len(prs)+1), prs...), v.statuslinePR)
+	}
 	v.PresentedPRs = prs
 	for _, pr := range prs {
 		if samePRURL(pr.URL, v.BranchPRURL) {
@@ -257,6 +286,15 @@ func (v repoLinksView) withPresentedPRs(prs []presentedPRView) repoLinksView {
 		}
 	}
 	return v
+}
+
+func containsPRURL(prs []presentedPRView, rawURL string) bool {
+	for _, pr := range prs {
+		if samePRURL(pr.URL, rawURL) {
+			return true
+		}
+	}
+	return false
 }
 
 type prStateObservation struct {
@@ -284,6 +322,7 @@ func (idx prStateIndex) add(rawURL, state string, updatedAt time.Time) {
 func (idx prStateIndex) addRepoLinks(v repoLinksView) {
 	idx.add(v.BranchPRURL, v.BranchPRState, v.branchPRUpdated)
 	idx.add(v.StartupPRURL, v.StartupPRState, v.startupPRUpdated)
+	idx.add(v.statuslinePR.URL, v.statuslinePR.State, v.statuslinePR.updatedAt)
 }
 
 // withFreshestPRStates gives every badge for the same PR the same state,

@@ -3157,10 +3157,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	rc := newSnapshotRowCache(convIDs, sharedStatus, func(phases []perfPhase) {
 		span.addChildren("preload", phases...)
 	})
-	branchPRCacheURLs = make([]string, 0, len(convIDs)*2)
+	branchPRCacheURLs = make([]string, 0, len(convIDs)*3)
 	for _, convID := range convIDs {
 		links := rc.viewFor(convID).Links
-		branchPRCacheURLs = append(branchPRCacheURLs, links.BranchPRURL, links.StartupPRURL)
+		// The statusline PR rides along so its badge gets the same cached
+		// checks, reviews, title and background refresh as a slot PR.
+		branchPRCacheURLs = append(branchPRCacheURLs, links.BranchPRURL, links.StartupPRURL, links.statuslinePR.URL)
 	}
 	visibleAgentIDs := make([]string, 0, len(rc.agents))
 	visibleAgentSet := make(map[string]struct{}, len(rc.agents))
