@@ -254,31 +254,26 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return exec.Command(falseBin)
 	case len(args) >= 1 && args[0] == "list-sessions":
 		// The bounded production snapshot uses Command + Output rather than
-		// the unbounded ListSessions interface. Echo the same live names so
-		// flow tests exercise the real timeout/parse path.
+		// the unbounded ListSessions interface. Like real tmux, this lists every
+		// session, including one whose pane is retained-dead (#{pane_dead}
+		// renders 1), so flow tests exercise the real timeout/parse path.
 		t.mu.Lock()
 		names := make([]string, 0, len(t.sessions))
-		for name := range t.sessions {
-			names = append(names, name)
+		for name, s := range t.sessions {
+			if t.sessionPaneAlive(s) || s.remainOnExit {
+				names = append(names, name)
+			}
 		}
 		t.mu.Unlock()
-		alive := names[:0]
-		for _, name := range names {
-			if t.IsAlive(name) {
-				alive = append(alive, name)
-			}
-		}
 		// Render -F formats so callers asking for more than the name (the
 		// background-terminal listing reads #{session_attached}) parse real
-		// fields. Plain #{session_name} renders exactly as before.
+		// fields.
 		if len(args) >= 3 && args[1] == "-F" {
-			lines := make([]string, 0, len(alive))
-			for _, name := range alive {
-				lines = append(lines, t.renderSessionFormat(args[2], name))
+			for i, name := range names {
+				names[i] = t.renderSessionFormat(args[2], name)
 			}
-			alive = lines
 		}
-		return exec.Command(echoBin, strings.Join(alive, "\n"))
+		return exec.Command(echoBin, strings.Join(names, "\n"))
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
 		if strings.HasPrefix(args[2], "=%") {
 			return exec.Command(falseBin)
@@ -948,6 +943,10 @@ func (t *TmuxSim) renderSessionFormat(format, name string) string {
 	if s := t.sessions[name]; s != nil {
 		cwd = s.cwd
 	}
+	paneDead := "0"
+	if !t.sessionPaneAlive(t.sessions[name]) {
+		paneDead = "1"
+	}
 	t.mu.Unlock()
 	return strings.NewReplacer(
 		"#{session_name}", name,
@@ -955,7 +954,7 @@ func (t *TmuxSim) renderSessionFormat(format, name string) string {
 		"#{pane_current_path}", cwd,
 		"#{session_activity}", "0",
 		"#{session_created}", "0",
-		"#{pane_dead}", "0",
+		"#{pane_dead}", paneDead,
 	).Replace(format)
 }
 

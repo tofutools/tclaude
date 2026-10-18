@@ -142,14 +142,20 @@ func cleanupRetiredCodexNativeProfiles(convID string) {
 }
 
 func cleanupRetiredCodexNativeProfilesUnderLaunchLock(convID string) {
-	if codexNativeConvOnline(convID) {
-		return
-	}
+	// The DB gates run before the tmux liveness probe: the reaper calls this for
+	// every retained exited row on every tick, and nearly all of them have no
+	// retired owner with profiles left, so they return here without a tmux fork.
 	actor, err := db.GetAgentByConv(convID)
 	if err != nil || actor == nil || actor.Active() || db.AgentAway(actor.AgentID) {
 		return
 	}
 	generations, err := db.ListCodexNativePermissionProfileGenerationsForAgent(actor.AgentID)
+	if err == nil && len(generations) == 0 {
+		return
+	}
+	if codexNativeConvOnline(convID) {
+		return
+	}
 	if err == nil {
 		err = session.CleanupCodexNativePermissionProfiles(generations)
 	}
