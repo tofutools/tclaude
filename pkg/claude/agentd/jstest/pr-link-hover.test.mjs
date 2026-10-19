@@ -59,6 +59,9 @@ test('hovering the PR link opens a details card', async (t) => {
     await harness.act(async () => {});
     let panel = mounted.container.querySelector('.prd-panel');
     assert.ok(panel, 'hover opens the card at once');
+    assert.equal(panel.querySelector('.prd-repo').textContent.trim(), 'tofutools/tclaude',
+      'the repo shows before any fetch');
+    assert.equal(panel.querySelector('.prd-repo a').getAttribute('href'), 'https://github.com/tofutools/tclaude');
     assert.match(panel.querySelector('.prd-title').textContent, /Dock: remember collapsed sections\s+#3090/,
       'the snapshot title shows before any fetch');
     assert.equal(panel.querySelector('.prd-state').textContent, 'Draft');
@@ -85,6 +88,7 @@ test('hovering the PR link opens a details card', async (t) => {
     assert.equal(panel.querySelectorAll('.prd-bar i.a').length, 4);
     assert.equal(panel.querySelectorAll('.prd-bar i.d').length, 1);
     assert.equal(panel.querySelector('.prd-excerpt').textContent, 'The dock forgot collapsed sections.');
+    assert.equal(panel.querySelector('.prd-repo').textContent.trim(), 'tofutools/tclaude');
     const links = [...panel.querySelectorAll('.ci-panel-note a')].map((a) => a.getAttribute('href'));
     assert.deepEqual(links, [PR, `${PR}/files`]);
 
@@ -101,10 +105,12 @@ test('hovering the PR link opens a details card', async (t) => {
 
 test('only GitHub pull requests get a card; other forges keep the plain link', async (t) => {
   const harness = await createPreactHarness(t);
-  const { PRLinkHover, githubPRBase } = await harness.importDashboardModule('js/pr-link-hover.js');
+  const { PRLinkHover, githubPRBase, githubPRRepo } = await harness.importDashboardModule('js/pr-link-hover.js');
   assert.equal(githubPRBase(`${PR}/files?w=1#diff`), PR);
   assert.equal(githubPRBase('https://gitlab.com/a/b/-/merge_requests/3'), '');
   assert.equal(githubPRBase('javascript:alert(1)'), '');
+  assert.equal(githubPRRepo(`${PR}/files`), 'tofutools/tclaude');
+  assert.equal(githubPRRepo('https://gitlab.com/a/b/-/merge_requests/3'), '');
 
   const other = 'https://gitlab.com/a/b/-/merge_requests/3';
   const mounted = await harness.mount(harness.html`

@@ -1362,6 +1362,12 @@ body.slop .ci-panel::-webkit-scrollbar-thumb:hover { background: #d8b95e; }
    diffstat and the opening of its description. Shares the CI panel's
    placement and theming; only the card's own rows are styled here. */
 .prd-hover .pr-link { display: inline-block; }
+.prd-repo {
+  margin-bottom: 2px; color: #8b949e; font-family: ui-monospace, monospace; font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+.prd-repo a { color: inherit; text-decoration: none; }
+.prd-repo a:hover { text-decoration: underline; }
 .prd-title { color: #f0f6fc; font-size: 13px; font-weight: 600; line-height: 1.3; }
 .prd-title a {
   color: inherit; text-decoration: none; overflow-wrap: anywhere;
@@ -1404,6 +1410,7 @@ body.slop .ci-panel::-webkit-scrollbar-thumb:hover { background: #d8b95e; }
 @keyframes prd-loading-in { from { visibility: hidden; } to { visibility: visible; } }
 body.wizard .prd-title { color: #f3e6c0; }
 body.wizard .prd-num,
+body.wizard .prd-repo,
 body.wizard .prd-meta,
 body.wizard .prd-branches,
 body.wizard .prd-counts { color: #9a86c4; }
@@ -1411,6 +1418,7 @@ body.wizard .prd-excerpt { color: #e7d9f5; }
 body.wizard .prd-bar i { background: #3a2a63; }
 body.slop .prd-title { color: #fff4bd; }
 body.slop .prd-num,
+body.slop .prd-repo,
 body.slop .prd-meta,
 body.slop .prd-branches,
 body.slop .prd-counts { color: #d8b95e; }
