@@ -293,7 +293,9 @@ func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
 	return presentedPRInfo{Title: truncateAuthoredPRTitle(pr.Title), Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, false)}, true
 }
 
-func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) {
+// It returns the state the cache holds afterwards: the newest observation,
+// which need not be info's.
+func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) string {
 	// The per-PR resolver and daemon-wide merged search write this cache
 	// concurrently. Serialize their read/choose/write sequence so a slower
 	// open result cannot overwrite the durable merged tombstone.
@@ -327,12 +329,13 @@ func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Tim
 	}
 	data, err := json.Marshal(info)
 	if err != nil {
-		return
+		return info.State
 	}
 	if err := db.SaveGitCache(key, data, now); err != nil {
 		slog.Warn("presented-pr: failed to cache PR refresh",
 			"error", err, "url", rawURL, "module", "agentd")
 	}
+	return info.State
 }
 
 // cachedPresentedPRStates loads the durable per-PR observations for the URLs

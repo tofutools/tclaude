@@ -288,6 +288,7 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 	if _, busy := prDetailsInflight.LoadOrStore(key, struct{}{}); busy {
 		return true
 	}
+	requestedAt := time.Now()
 	goBackground(func() {
 		defer prDetailsInflight.Delete(key)
 		raw, ok := prDetailsFetcher(rawURL)
@@ -302,7 +303,7 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 		prDetailsFailedAt.Delete(key)
 		details.FetchedAt = time.Now()
 		savePRDetails(rawURL, details)
-		sharePRDetailsObservation(rawURL, details)
+		sharePRDetailsObservation(rawURL, details, requestedAt)
 	})
 	return true
 }
@@ -310,20 +311,21 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 // sharePRDetailsObservation feeds a hover read's state and title into the
 // same per-PR observation cache and agent_prs rows the background pollers
 // write, so the Groups badges catch up with what the card just showed instead
-// of waiting for the next poll. savePresentedPRCache and UpdateAgentPRState
-// keep their usual race guards (merged never regresses).
-func sharePRDetailsObservation(rawURL string, details prDetails) {
+// of waiting for the next poll. The observation is stamped with the request's
+// start rather than its finish, so a slow read cannot outrank a poll that saw
+// GitHub after it started; the rows get whichever state the cache then holds.
+func sharePRDetailsObservation(rawURL string, details prDetails, observedAt time.Time) {
 	if details.State == "" {
 		return
 	}
-	savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{
+	state := savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{
 		Title:     truncateAuthoredPRTitle(details.Title),
 		Number:    deriveGitHubPRNumber(rawURL),
 		URL:       strings.TrimSpace(rawURL),
 		State:     details.State,
-		FetchedAt: details.FetchedAt,
-	}, details.FetchedAt)
-	applyObservedStatesToPresentedPRs(map[string]string{prStateKey(rawURL): details.State}, "pr-details")
+		FetchedAt: observedAt,
+	}, observedAt)
+	applyObservedStatesToPresentedPRs(map[string]string{prStateKey(rawURL): state}, "pr-details")
 }
 
 // prDetailsResponse is the hover card's wire shape. Refreshing marks a `gh`
