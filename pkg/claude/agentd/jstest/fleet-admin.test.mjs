@@ -250,6 +250,10 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       openai: { enabled: false, models: [] },
     } }; },
     setModelSwitch: async (o) => { log.push(['modelSwitch', o]); return o; },
+    modelGateway: async (name) => { log.push(['modelGateway', name]); return { name, url: 'https://api.anthropic.com', header: 'x-api-key', credential: 'managed', policy: { enabled: true, models: ['claude-sonnet-5-5'], daily_requests: 500, daily_tokens: 2000000, peer_daily_requests: 100, peer_daily_tokens: 500000, session_daily_requests: 50, session_daily_tokens: 100000, max_input_tokens: 100000, max_output_tokens: 8000, max_concurrent: 4, requests_per_minute: 30, max_request_bytes: 1048576, blocked_peers: ['inst_lab'] } }; },
+    saveModelGateway: async (name, body) => { log.push(['saveGateway', name, body]); return body; },
+    removeModelGateway: async (name) => { log.push(['removeGateway', name]); return { removed: true }; },
+    testModelGateway: async (body) => { log.push(['testGateway', body]); return { ok: true, status: 200, message: 'The key works: the provider lists 2 models.', models: ['claude-haiku-5-5', 'claude-sonnet-5-5'] }; },
     modelLeases: async () => [
       { id: 'lease_aaaaaaaaaaaa1', peer: 'inst_forge', proxy: 'claude', kind: 'requester_paid', worker: 'agt_w1', revoked: false, idle_seconds: 7200, touched_at: '2026-10-10T09:00:00Z' },
       { id: 'lease_bbbbbbbbbbbb2', peer: 'inst_forge', proxy: 'claude', worker: 'agt_w0', revoked: true, touched_at: '2026-10-09T09:00:00Z' },
@@ -1470,6 +1474,53 @@ test('model gateways: switches confirm what they revoke, leases revoke, and usag
   assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeLease'), ['revokeLease', 'lease_aaaaaaaaaaaa1']);
   const usage = [...s.mounted.container.querySelectorAll('#fleet-model-usage tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => c.textContent.trim()).join('|'));
   assert.deepEqual(usage, ['claude|forge|claude-sonnet-5-5|3 (1 in progress) (1 failed)|109.5k|1.3k · 200|$0.00 (3 unpriced)']);
+});
+
+test('model gateways: add one with a pasted key, test it, edit keeping the stored key, and remove it', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Model gateways/.test(b.textContent)));
+  const q = (x) => s.harness.document.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  await s.click(s.q('#fleet-models-add'));
+  assert.equal(q('#fleet-mg-url').value, 'https://api.anthropic.com', 'the Anthropic preset fills the URL');
+  assert.equal(q('#fleet-mg-header'), null, 'a preset hides the header fields');
+  await s.click(q('#fleet-mg-save'));
+  assert.match(q('#fleet-model-gateway [role=alert]').textContent, /name is 1-64/);
+  await type('#fleet-mg-name', 'anthropic');
+  await s.click(q('#fleet-mg-save'));
+  assert.match(q('#fleet-model-gateway [role=alert]').textContent, /Paste the provider API key/);
+  await type('#fleet-mg-key', '  sk-ant-test  ');
+  await s.click(q('#fleet-mg-test'));
+  assert.equal(s.log.findLast((l) => l[0] === 'testGateway')[1].key, 'sk-ant-test');
+  assert.match(q('#fleet-mg-test-result').textContent, /lists 2 models/);
+  await s.click(q('#fleet-mg-offered [data-model="claude-haiku-5-5"]'));
+  assert.equal(q('#fleet-mg-models').value, 'claude-*, claude-haiku-5-5');
+  await s.click(q('#fleet-mg-save'));
+  assert.match(s.confirms.at(-1).body, /trusts unrestricted, and peers granted models\.proxy for anthropic.*claude-\*, claude-haiku-5-5, up to 250,000,000 tokens.*never shown again/);
+  const [, name, body] = s.log.findLast((l) => l[0] === 'saveGateway');
+  assert.equal(name, 'anthropic');
+  assert.deepEqual(body, { name: 'anthropic', url: 'https://api.anthropic.com', header: 'x-api-key', header_prefix: '', key: 'sk-ant-test', create: true, policy: { dialect: 'anthropic', enabled: true, models: ['claude-*', 'claude-haiku-5-5'], daily_requests: 5000, daily_tokens: 250e6, peer_daily_requests: 2500, peer_daily_tokens: 125e6, session_daily_requests: 1000, session_daily_tokens: 50e6, max_input_tokens: 200000, max_output_tokens: 64000, max_concurrent: 4, requests_per_minute: 60 } });
+  assert.equal(q('#fleet-model-gateway'), null, 'saving closes the dialog');
+
+  await s.click(s.q('[data-gateway="claude"] [data-fa="edit-gateway"]'));
+  assert.equal(q('#fleet-mg-name').disabled, true);
+  assert.match(q('#fleet-model-gateway').textContent, /A key is stored for this gateway/);
+  await type('[data-limit="max_concurrent"]', '0');
+  await s.click(q('#fleet-mg-save'));
+  assert.match(q('#fleet-model-gateway [role=alert]').textContent, /requests at once to a whole number above 0/);
+  await type('[data-limit="max_concurrent"]', '6');
+  await s.click(q('#fleet-mg-save'));
+  const edited = s.log.findLast((l) => l[0] === 'saveGateway')[2];
+  assert.equal(edited.key, undefined, 'a blank key keeps the stored one');
+  assert.equal(edited.create, undefined);
+  assert.equal(edited.policy.max_concurrent, 6);
+  assert.equal(edited.policy.max_request_bytes, 1048576, 'fields the dialog does not edit round-trip');
+  assert.equal(edited.policy.blocked_peers, undefined, 'blocks are not sent from a form');
+
+  await s.click(s.q('[data-gateway="claude"] [data-fa="remove-gateway"]'));
+  assert.match(s.confirms.at(-1).body, /leases are revoked.*key pasted here is deleted/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'removeGateway'), ['removeGateway', 'claude']);
 });
 
 test('a pending key transition is information only, with no recovery command', async (t) => {

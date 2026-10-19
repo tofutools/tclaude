@@ -20695,6 +20695,16 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-jb-row .fa-jb-nodes { margin: 0; }
 #fleet-job-logs pre { max-height: 50vh; overflow: auto; }
 #fleet-run-job .modal-buttons button, #fleet-repo .modal-buttons button { flex: none; white-space: nowrap; }
+#fleet-model-gateway { max-width: 760px; }
+#fleet-model-gateway .modal-buttons button { flex: none; white-space: nowrap; }
+#fleet-model-gateway .fa-jb-row input[type="radio"], #fleet-model-gateway .fa-jb-row input[type="checkbox"] { width: auto; margin-right: 4px; }
+#fleet-model-gateway .fa-jb-row label + label { margin-left: 14px; }
+#fleet-model-gateway .fa-jb-row input#fleet-mg-key, #fleet-model-gateway .fa-jb-row input#fleet-mg-keyfile { margin-top: 4px; }
+.fa-mg-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px; }
+.fa-mg-limits label { display: flex; align-items: center; gap: 6px; }
+#fleet-model-gateway .fa-mg-limits input { width: 9em; flex: none; }
+#fleet-mg-offered .fa-chip { cursor: pointer; background: none; color: inherit; margin: 2px 0; }
+#fleet-mg-offered .fa-chip.on { border-color: #3fb950; color: #3fb950; }
 #fleet-key-transition > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
 #fleet-key-transition .fa-table th { text-align: left; white-space: nowrap; padding-right: 12px; vertical-align: top; }
 .fa-kt-cmd { margin: 6px 0; }

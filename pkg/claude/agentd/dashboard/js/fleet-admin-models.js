@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { GatewayDialog } from './fleet-admin-model-gateway.js';
 
 const html = htm.bind(h);
 
@@ -66,8 +67,8 @@ export function usageRows(rows) {
 // ModelsPage administers this node's model gateways: peers with a
 // models.proxy grant send model requests through them, charged against the
 // gateway's limits (models.proxy, or models.proxy.leased for requester-paid
-// workers). Every switch here only narrows or restores access; the
-// gateway itself (provider, credentials, limits) is configured in config.
+// workers). The switches only narrow or restore access; Add / Edit set up a
+// gateway itself (provider, key, models, limits).
 export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) {
   const [control, setControl] = useState(null);
   const [leases, setLeases] = useState(null);
@@ -76,6 +77,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
   const [error, setError] = useState('');
   const [tick, setTick] = useState(0);
   const [blocking, setBlocking] = useState({});
+  const [dialog, setDialog] = useState(null);
   const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
   const reload = () => setTick((n) => n + 1);
 
@@ -140,6 +142,15 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
     action: () => actions.revokeModelLease(l.id),
   });
 
+  const edit = (name) => actions.modelGateway(name).then((setup) => setDialog({ setup }))
+    .catch((e) => toast(`Could not load ${name}: ${errText(e)}`, true));
+  const remove = (name) => flip({
+    title: `Remove gateway ${name}?`,
+    body: `${name} stops serving peers at once, its active leases are revoked, and its settings are deleted. A key pasted here is deleted from this node; a key file you named is left alone. Peer grants scoped to ${name} stay but match nothing.`,
+    okLabel: 'Remove', busyLabel: 'Removing…', done: `${name} removed`,
+    action: () => actions.removeModelGateway(name),
+  });
+
   const gws = control?.gateways ? Object.entries(control.gateways).sort(([a], [b]) => a.localeCompare(b)) : [];
   const peers = view.trusted || [];
   const leaseList = Array.isArray(leases) ? [...leases].sort((a, b) => Number(a.revoked) - Number(b.revoked) || String(b.touched_at).localeCompare(String(a.touched_at))) : [];
@@ -151,9 +162,10 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
       <span class="fa-k">Model gateways</span>
       <span class=${control.disabled ? 'fa-warn' : 'muted'}>${control.disabled ? 'all off: no peer model requests are served' : `on (${gws.filter(([, p]) => p.enabled).length} of ${gws.length} enabled)`}</span>
       <button id="fleet-models-master-toggle" type="button" class=${control.disabled ? '' : 'fa-danger'} onClick=${master}>${control.disabled ? 'Turn on…' : 'Turn off all…'}</button>
+      <button id="fleet-models-add" type="button" onClick=${() => setDialog({ setup: null })}>Add gateway…</button>
       <button type="button" class="fa-link" onClick=${reload}>refresh</button>
     </div>
-    ${gws.length === 0 ? html`<div class="empty">No model gateways are configured. A gateway is an HTTP proxy with a model policy in config.</div>` : html`
+    ${gws.length === 0 ? html`<div class="empty">No model gateways yet. Add one to let workers on your other nodes use this node's provider API key.</div>` : html`
     <table class="fa-table" id="fleet-model-gateways">
       <thead><tr><th>Gateway</th><th>State</th><th>Models</th><th>Daily: all · per peer · per session</th><th>Per request</th><th>Blocked peers</th><th></th></tr></thead>
       <tbody>${gws.map(([name, p]) => html`<tr key=${name} data-gateway=${name}>
@@ -168,7 +180,9 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
             ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
           </select>
           ${blocking[name] && html`<button type="button" class="fa-danger" data-fa="block" onClick=${() => { const b = blocking[name]; setBlocking({ ...blocking, [name]: '' }); block(name, b); }}>Block…</button>`}`}</td>
-        <td class="fa-acts"><button type="button" class=${p.enabled ? 'fa-danger' : ''} data-fa="gateway" onClick=${() => gateway(name, p)}>${p.enabled ? 'Disable…' : 'Enable…'}</button></td>
+        <td class="fa-acts"><button type="button" data-fa="edit-gateway" onClick=${() => edit(name)}>Edit…</button>
+          <button type="button" class=${p.enabled ? 'fa-danger' : ''} data-fa="gateway" onClick=${() => gateway(name, p)}>${p.enabled ? 'Disable…' : 'Enable…'}</button>
+          <button type="button" class="fa-danger" data-fa="remove-gateway" onClick=${() => remove(name)}>Remove…</button></td>
       </tr>`)}</tbody>
     </table>`}`}
     <h4 class="fa-h">Leases <span class="muted">— requester-paid workers using a gateway</span></h4>
@@ -195,6 +209,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
         <td data-cost=${u.microUSD}>${usdText(u.microUSD)}${u.unpriced ? html` <span class="muted" title="No price is known for this model; add one under model_policy.prices">(${u.unpriced} unpriced)</span>` : ''}</td>
       </tr>`)}</tbody>
     </table>`}
+    ${dialog && html`<${GatewayDialog} setup=${dialog.setup} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${(msg) => { setDialog(null); toast(msg, false); reload(); }} />`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation models status|usage --day …|leases [--revoke ID]|disable|enable [--name GW] [--peer PEER]</code>. Grant peers access with <code>models.proxy</code> (or <code>models.proxy.leased</code>) on Peer grants. In-progress requests count their reservation until they finish. Cost is the provider's reported usage at the model's API price; a request the provider refused costs nothing.</div>
   </div>`;
 }

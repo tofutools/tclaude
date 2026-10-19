@@ -2266,6 +2266,19 @@ gateways}` without provider URLs, headers or credentials; writes accept
 `{name?, peer?, disabled}`. Lease and usage reads return arrays. These dashboard
 routes require the local operator cookie and are refused through peer views.
 
+Fleet admin → Model gateways can also set a gateway up without editing config:
+**Add gateway…** picks a provider preset (Anthropic API, OpenAI API, or a custom
+Anthropic- or OpenAI-compatible endpoint), takes the provider API key, the model
+allowlist and the limits (Light, Standard or Heavy presets, or custom numbers),
+and **Test the key** lists the provider's models without spending tokens. A pasted
+key is written to a 0600 file under `~/.tclaude/data/model-gateways/` and
+referenced by `header_value_file`; no dashboard read returns it, and removing the
+gateway deletes it. A key file you name yourself is referenced as is and left in
+place. **Edit…** keeps the stored key unless you give a new one; **Remove…** revokes
+the gateway's leases and deletes its entry. The routes behind these are GET, PUT and
+DELETE `/api/federation/models/gateways/{name}` and POST
+`/api/federation/models/gateway-test`.
+
 
 A trusted machine can provide a named gateway to Claude Code or Codex workers
 on another machine. Claude Code uses Anthropic Messages; Codex uses OpenAI Responses. The provider key stays on the gateway machine;
