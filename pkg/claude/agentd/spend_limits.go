@@ -58,7 +58,7 @@ func pollSpendLimits(cfg *config.Config) {
 	if cfg == nil || cfg.Cost == nil || (cfg.Cost.DailyLimitUSD <= 0 && cfg.Cost.MonthlyLimitUSD <= 0) {
 		return
 	}
-	rows, err := db.AllCostDailyRows()
+	rows, _, _, err := countedCostDailyRows()
 	if err != nil {
 		slog.Warn("read spend limit ledger", "error", err)
 		return

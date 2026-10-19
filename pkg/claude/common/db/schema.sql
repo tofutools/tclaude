@@ -1937,3 +1937,8 @@ CREATE TABLE conv_cost_inheritance (
 		conv_id         TEXT PRIMARY KEY,
 		inherited_until INTEGER NOT NULL
 	);
+
+CREATE TABLE cost_ignored_convs (
+		conv_id    TEXT PRIMARY KEY,
+		ignored_at INTEGER NOT NULL
+	);

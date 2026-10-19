@@ -98,6 +98,7 @@ var peerViewLocalRoutes = []string{
 	"/api/conversations",
 	"/api/cost-factor",
 	"/api/costs",
+	"/api/costs/ignore",
 	"/api/cron",
 	"/api/cron/",
 	"/api/export-jobs/",

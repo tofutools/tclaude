@@ -11,6 +11,7 @@ import {
 } from './costs-model.js';
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 import { fromPath } from './nav-history-core.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -330,7 +331,52 @@ function SortHeader({ state, current }) {
       aria-sort=${active ? (current.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
       title=${`Sort by ${column.label}`} onClick=${(event) => activate(event, column.sort)}
       onKeyDown=${(event) => activate(event, column.sort)}>${column.label}${active ? (current.sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
-  })}</tr></thead>`;
+  })}<th class="cost-ignore-col" aria-label="Ignore"></th></tr></thead>`;
+}
+
+// useCostIgnore runs the Ignore / Restore requests: one at a time per
+// conversation (its buttons disable while pending), with a toast either way.
+function useCostIgnore(actions) {
+  const [pending, setPending] = useState(() => new Set());
+  const run = async (convID, title, ignored) => {
+    if (!convID || pending.has(convID) || !actions?.setIgnored) return;
+    setPending((current) => new Set(current).add(convID));
+    const result = await actions.setIgnored(convID, ignored);
+    setPending((current) => { const next = new Set(current); next.delete(convID); return next; });
+    const name = title || convID;
+    if (!result?.ok) {
+      shellToast(`${ignored ? 'Ignore' : 'Restore'} failed for ${name}: ${result?.error || 'unknown error'}`, true);
+      return;
+    }
+    shellToast(ignored
+      ? `Ignored ${name} in cost totals — restore it from the Ignored list below the table`
+      : `Restored ${name} to cost totals`);
+  };
+  return { pending, run };
+}
+
+// IgnoredCosts lists the conversations excluded from every cost total, each
+// with the spend restoring it would add to this span, and a Restore button.
+function IgnoredCosts({ current, ignore }) {
+  const ignored = current.payload?.ignored || [];
+  if (!ignored.length) return null;
+  const excluded = ignored.reduce((sum, row) => sum + (Number(row.cost_usd) || 0), 0);
+  return html`<details class="cost-ignored" id="costs-ignored">
+    <summary><strong>Ignored</strong><span>${ignored.length} agent${ignored.length === 1 ? '' : 's'} · ${fmtUSD(excluded)} excluded from this span's totals</span></summary>
+    <p class="muted">Ignored agents' spend is left out of every cost total — this view, the header and Overview figures, spend alerts and <code>tclaude costs</code>. Their recorded history is kept, so Restore brings it back exactly.</p>
+    <table><tbody>
+      ${ignored.map((row) => html`<tr key=${row.conv_id} data-key=${`cost-ignored-${row.conv_id}`}>
+        <td title=${row.title || '(unknown)'}><span class="rowname">${row.title || '(unknown)'}</span> <span class="id" title=${idTooltip(row.agent_id, row.conv_id)}>${shortAgentId(row.agent_id, row.conv_id)}</span></td>
+        <td><span class="cost-amt" title="Spend in this span that restoring would add back">${fmtUSD(row.cost_usd)}</span></td>
+        <td><span class="muted">${harnessLabel(row.harness)}</span></td>
+        <td><span class="muted">${costModelLabel(row)}</span></td>
+        <td><button class="tool cost-restore" data-act="cost-restore" disabled=${ignore.pending.has(row.conv_id)}
+          title="Count this agent's spend in cost totals again"
+          aria-label=${`Restore ${row.title || row.conv_id} to cost totals`}
+          onClick=${() => ignore.run(row.conv_id, row.title, false)}>Restore</button></td>
+      </tr>`)}
+    </tbody></table>
+  </details>`;
 }
 
 // Send the reader to the tab's WHAT-IF banner, for a click on a row's WHAT-IF
@@ -438,7 +484,7 @@ function ModelRollup({ current }) {
   </div>`;
 }
 
-function CostsTable({ state, current }) {
+function CostsTable({ state, current, ignore }) {
   const [hovered, setHovered] = useState(null);
   const inputRef = useRef(null);
   const agents = current.payload?.agents || [];
@@ -507,12 +553,17 @@ function CostsTable({ state, current }) {
               <td><span class="muted">${harnessLabel(agent.harness)}</span></td>
               <td><span class="muted">${costModelLabel(agent)}</span></td>
               <td><span class="muted">${fmtLastActivity(agent)}</span></td>
+              <td class="cost-ignore-cell">${agent.conv_id && html`<button class="cost-ignore" data-act="cost-ignore"
+                disabled=${ignore.pending.has(agent.conv_id)}
+                title="Ignore this agent's spend (all its days) in every cost total — e.g. spend counted twice. Restore it from the Ignored list."
+                aria-label=${`Ignore ${agent.title || agent.conv_id} in cost totals`}
+                onClick=${() => ignore.run(agent.conv_id, agent.title, true)}>⊘</button>`}</td>
             </tr>`;
           })}
           <tr class="cost-total-row"><td><span class="muted">${current.filtered ? 'matched' : 'total'} (${current.shownConversations} agent${current.shownConversations === 1 ? '' : 's'})</span></td>
             <td><span class="cost-amt">${current.tableWhatIfTotal > 0
               ? `${fmtUSD(current.tableTotal)} (${fmtUSD(current.tableTotal - current.tableWhatIfTotal)} real + ≈${fmtUSD(current.tableWhatIfTotal)} WHAT-IF)`
-              : fmtUSD(current.tableTotal)}</span></td><td></td><td></td><td></td></tr>
+              : fmtUSD(current.tableTotal)}</span></td><td></td><td></td><td></td><td></td></tr>
         </tbody></table>`}
     </div>
   </${Fragment}>`;
@@ -520,6 +571,7 @@ function CostsTable({ state, current }) {
 
 export function CostsApp({ state, actions }) {
   const current = state.view.value;
+  const ignore = useCostIgnore(actions);
   useEffect(() => {
     if (!current.snapshotLoaded) return;
     document.body.classList.toggle('hide-costs', !current.visible);
@@ -551,7 +603,8 @@ export function CostsApp({ state, actions }) {
         ? `stacked by ${[current.stackByProvider && 'provider', current.stackByModel && 'model'].filter(Boolean).join(' + ')}`
         : 'total'}</span></div>
       <${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} />
-      <${CostsTable} state=${state} current=${current} />
+      <${CostsTable} state=${state} current=${current} ignore=${ignore} />
+      <${IgnoredCosts} current=${current} ignore=${ignore} />
     </${Fragment}>`}
   </div>`;
 }
