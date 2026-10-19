@@ -2425,6 +2425,55 @@ your fleet. A gateway does not turn a Claude subscription into API credentials
 or change the provider's account and service terms; cross-organization or
 cross-location sharing needs the gateway operator's separate authorization.
 
+### Usage sharing: a dollar cap on a peer's gateway grant
+
+A `models.proxy` grant can carry a dollar cap. The peer's agents use this
+node's gateway, on this node's provider account, until they have spent that
+much. Their model calls are the only thing shared; they keep running on
+their own node, in their own environment.
+
+```bash
+tclaude federation grant alice models.proxy --scope http_proxy=team-key --max-usd 20 --for 7d
+tclaude federation grants alice   # … [max $20.00] [expires …]
+```
+
+The gateway prices each request from the usage the provider reports, at the
+model's standard API rate (global routing, no batch or fast-mode surcharge),
+so the cap works the same for every harness. Built-in rates cover the Claude
+and OpenAI API models tclaude knows. `model_policy.prices` adds or overrides
+rates in USD per million tokens, by model ID or trailing-`*` prefix:
+
+```json
+"prices": {"my-local-*": {"input": 1, "output": 4, "cache_read": 0.1}}
+```
+
+- **What counts:** every request the peer makes through the gateway since
+  the grant was created. Raising the cap with a new `grant` keeps what was
+  spent; revoking and granting again starts over. An unscoped `models.proxy`
+  grant caps the peer's spend through every gateway together. A peer holding
+  both a gateway's capped grant and a capped unscoped one is held to both.
+- **When it stops:** a request starts only while the peer's spend, including
+  requests still in flight, is below the cap. The requests in flight when it
+  is reached can overrun it by their own cost. After that, requests get 429
+  `usage share used up`.
+- **What a request costs:**
+  - Free: a request the provider never received, one it refused with an
+    error status, and token counting.
+  - A finished response: its reported usage.
+  - A response that broke off: the input it reported plus every output token
+    it was allowed.
+  - A request sent with no answer (a timeout, a dropped connection): its worst
+    case, since the provider may have run it to the end.
+- **Unpriced models:** with a cap set, a model without a known price is
+  refused, since its spend could not be counted.
+- **Where it is recorded:** this node's database records the charge for each
+  request. **Fleet → Model gateways → Usage** and
+  `tclaude federation models usage` show it per gateway, peer and model.
+
+Use an API key for a shared gateway, not a consumer subscription's login:
+letting other people use a Claude Pro/Max or ChatGPT subscription is likely
+against the provider's terms.
+
 ### Requester-paid workers
 
 A requesting machine can pay for its remote Claude Code worker through its own

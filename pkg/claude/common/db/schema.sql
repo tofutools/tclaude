@@ -1726,9 +1726,11 @@ CREATE TABLE model_proxy_requests (
  cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
  status INTEGER NOT NULL DEFAULT 0, complete INTEGER NOT NULL DEFAULT 0,
  request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0,
- started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL DEFAULT 0) STRICT;
+ started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL DEFAULT 0, charged_micro_usd INTEGER NOT NULL DEFAULT 0, priced INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE INDEX model_proxy_daily ON model_proxy_requests(day,proxy,peer,session);
+
+CREATE INDEX model_proxy_share ON model_proxy_requests(peer,proxy,started_at);
 
 CREATE TABLE federation_teleport_leases (
  direction TEXT NOT NULL, peer TEXT NOT NULL, offer TEXT NOT NULL,

@@ -474,6 +474,7 @@ type peerGrant struct {
 		Harness         string   `json:"harness,omitempty"`
 		Model           string   `json:"model,omitempty"`
 		MaxLive         int      `json:"max_live,omitempty"`
+		MaxUSD          float64  `json:"max_usd,omitempty"`
 	} `json:"spawn_policy,omitempty"`
 }
 type grantParams struct {
@@ -489,6 +490,7 @@ type grantParams struct {
 	Harness         string   `long:"harness" optional:"true" help:"Receiver worker harness"`
 	Model           string   `long:"model" optional:"true" help:"Receiver worker model"`
 	MaxLive         int      `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
+	MaxUSD          float64  `long:"max-usd" optional:"true" help:"models.proxy only: cap the peer's spend through the gateway at this many US dollars over the grant's life (usage sharing)"`
 	For             string   `long:"for" optional:"true" help:"Grant for this long, e.g. 8h, 7d or 2w (at most a year); omitted grants permanently"`
 	Until           string   `long:"until" optional:"true" help:"Grant until this time (RFC 3339 or YYYY-MM-DD, local midnight)"`
 }
@@ -505,6 +507,7 @@ func grantCmd() *cobra.Command {
 		grant.SpawnPolicy.MaxLive = p.MaxLive
 		grant.SpawnPolicy.JobApproval = p.JobApproval
 		grant.SpawnPolicy.RequesterPays = p.RequesterPays
+		grant.SpawnPolicy.MaxUSD = p.MaxUSD
 		expires, err := parseGrantExpiry(p.For, p.Until, time.Now())
 		if err != nil {
 			os.Exit(fail(os.Stderr, err))
@@ -658,6 +661,9 @@ func grantsCmd() *cobra.Command {
 			}
 			if g.PoolName != "" && g.Peer != "group:"+g.PoolName {
 				fmt.Printf(" [inherited from group:%s]", g.PoolName)
+			}
+			if g.SpawnPolicy.MaxUSD > 0 {
+				fmt.Printf(" [max $%.2f]", g.SpawnPolicy.MaxUSD)
 			}
 			if g.ExpiresAt != nil {
 				fmt.Printf(" [expires %s]", g.ExpiresAt.Local().Format("2006-01-02 15:04 MST"))

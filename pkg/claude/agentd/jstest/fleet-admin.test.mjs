@@ -1469,7 +1469,7 @@ test('model gateways: switches confirm what they revoke, leases revoke, and usag
   assert.match(s.confirms.at(-1).body, /forge worker agt_w1 using this lease loses model access through claude/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeLease'), ['revokeLease', 'lease_aaaaaaaaaaaa1']);
   const usage = [...s.mounted.container.querySelectorAll('#fleet-model-usage tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => c.textContent.trim()).join('|'));
-  assert.deepEqual(usage, ['claude|forge|claude-sonnet-5-5|3 (1 in progress) (1 failed)|109.5k|1.3k · 200']);
+  assert.deepEqual(usage, ['claude|forge|claude-sonnet-5-5|3 (1 in progress) (1 failed)|109.5k|1.3k · 200|$0.00 (3 unpriced)']);
 });
 
 test('a pending key transition is information only, with no recovery command', async (t) => {

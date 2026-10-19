@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -159,4 +160,49 @@ func TestModelOpenAIUsageRequiresValidTerminalCounts(t *testing.T) {
 			require.True(t, o.invalid, "duplicate terminal accounting must not settle")
 		}
 	}
+}
+
+func TestModelPricingCosts(t *testing.T) {
+	claude, ok := lookupModelPricing(&config.ModelProxyPolicy{}, "claude-sonnet-5-5")
+	require.True(t, ok)
+	// $2 in, $10 out, $0.10 read, $2.50 5m write, $4 1h write per MTok.
+	u := db.ModelProxyUsage{InputTokens: 1000, OutputTokens: 1000, CacheReadTokens: 10000, CacheWriteTokens: 3000, CacheWrite1hTokens: 1000}
+	require.EqualValues(t, 2000+10000+1000+5000+4000, claude.costMicroUSD(u))
+	require.EqualValues(t, 100*4+10*10, claude.worstCaseMicroUSD(100, 10), "the dearest input rate bounds every prompt token")
+
+	haiku, ok := lookupModelPricing(nil, "claude-haiku-5-5")
+	require.True(t, ok)
+	require.EqualValues(t, 1000*0.10, haiku.costMicroUSD(db.ModelProxyUsage{InputTokens: 1000}))
+	require.EqualValues(t, 50000*0.50+60000*0.05, haiku.costMicroUSD(db.ModelProxyUsage{InputTokens: 50000, CacheReadTokens: 60000}), "over 100k prompt tokens prices the whole request at the long tier")
+
+	gpt, ok := lookupModelPricing(&config.ModelProxyPolicy{Dialect: "openai"}, "gpt-6-sol")
+	require.True(t, ok)
+	require.EqualValues(t, 1000*2+1000*0.2+100*10, gpt.costMicroUSD(db.ModelProxyUsage{InputTokens: 1000, CacheReadTokens: 1000, OutputTokens: 100}))
+
+	_, ok = lookupModelPricing(&config.ModelProxyPolicy{Dialect: "openai"}, "claude-sonnet-5-5")
+	require.False(t, ok, "an OpenAI gateway does not borrow Claude prices")
+	own, ok := lookupModelPricing(&config.ModelProxyPolicy{Prices: map[string]config.ModelProxyPrice{"local-*": {Input: 1, Output: 2}, "local-big": {Input: 3, Output: 4}}}, "local-big")
+	require.True(t, ok)
+	require.Equal(t, 3.0, own.short.input, "an exact price beats a pattern")
+	own, ok = lookupModelPricing(&config.ModelProxyPolicy{Prices: map[string]config.ModelProxyPrice{"local-*": {Input: 1, Output: 2}}}, "local-small")
+	require.True(t, ok)
+	require.Equal(t, 1.0, own.short.cacheRead, "an unset cache rate falls back to input")
+	require.Equal(t, "$1.31", formatUSD(1_300_001))
+}
+
+func TestModelUsageParseIgnoresNonCountFields(t *testing.T) {
+	u := db.ModelProxyUsage{}
+	o := modelUsageObserver{usage: &u}
+	o.parse([]byte(`{"input_tokens":5,"cache_creation_input_tokens":7,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":4},"service_tier":"standard","server_tool_use":{"web_search_requests":0},"output_tokens":2}`))
+	require.True(t, o.sawInput && o.sawOutput)
+	require.EqualValues(t, 5, u.InputTokens)
+	require.EqualValues(t, 7, u.CacheWriteTokens)
+	require.EqualValues(t, 4, u.CacheWrite1hTokens)
+
+	v := db.ModelProxyUsage{}
+	o = modelUsageObserver{usage: &v, openai: true}
+	o.parse([]byte(`{"input_tokens":100,"input_tokens_details":{"cached_tokens":80},"output_tokens":9,"output_tokens_details":{"reasoning_tokens":4}}`))
+	require.EqualValues(t, 20, v.InputTokens, "OpenAI cached input is split out of input_tokens")
+	require.EqualValues(t, 80, v.CacheReadTokens)
+	require.EqualValues(t, 9, v.OutputTokens)
 }

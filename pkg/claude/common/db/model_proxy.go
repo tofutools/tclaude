@@ -76,7 +76,23 @@ func RevokeModelProxyLaunch(session, generation string) error {
 	return err
 }
 
-type ModelProxyBudget struct{ Requests, Tokens, PeerRequests, PeerTokens, SessionRequests, SessionTokens int64 }
+type ModelProxyBudget struct {
+	Requests, Tokens, PeerRequests, PeerTokens, SessionRequests, SessionTokens int64
+	// Shares are the usage-sharing dollar caps on the peer's grants that
+	// cover this gateway (none: uncapped); every one must have room.
+	Shares []ModelProxyShareCap
+}
+
+// ModelProxyShareCap bounds what one peer spends through a gateway since its
+// grant began: a request starts only while the peer's settled spend plus its
+// requests in flight is below the cap, so concurrent requests can overrun it
+// by at most their own cost.
+type ModelProxyShareCap struct {
+	MicroUSD int64
+	Since    time.Time
+	// AllProxies counts spend through every gateway (an unscoped grant).
+	AllProxies bool
+}
 type ModelProxyUsage struct {
 	ID               string `json:"id"`
 	Day              string `json:"day"`
@@ -94,6 +110,13 @@ type ModelProxyUsage struct {
 	RequestBytes     int64  `json:"request_bytes"`
 	ResponseBytes    int64  `json:"response_bytes"`
 	DurationMS       int64  `json:"duration_ms"`
+	// ChargedMicroUSD is the dollar charge in micro-USD: the reserved worst
+	// case until the request settles. Priced says the model had a price.
+	ChargedMicroUSD int64 `json:"charged_micro_usd"`
+	Priced          bool  `json:"priced"`
+	// CacheWrite1hTokens is the part of CacheWriteTokens written to the
+	// one-hour cache, which costs more; it is only used for pricing.
+	CacheWrite1hTokens int64 `json:"-"`
 }
 
 // ReserveModelProxyRequest serializes all three daily scopes in one SQLite
@@ -107,18 +130,28 @@ func ReserveModelProxyRequest(u ModelProxyUsage, b ModelProxyBudget) error {
 	if err != nil {
 		return err
 	}
-	result, err := d.Exec(`INSERT INTO model_proxy_requests(id,day,proxy,peer,session,model,charged_tokens,request_bytes,started_at)
- SELECT ?,?,?,?,?,?,?,?,? WHERE
+	shareWhere, shareArgs := "", []any{}
+	for _, share := range b.Shares {
+		if share.Since.IsZero() {
+			share.Since = time.Unix(0, 0)
+		}
+		shareWhere += "\n (SELECT COALESCE(SUM(charged_micro_usd),0) FROM model_proxy_requests WHERE peer=? AND (?=1 OR proxy=?) AND started_at>=?) < ? AND"
+		shareArgs = append(shareArgs, u.Peer, share.AllProxies, u.Proxy, dbTimeBoundary(share.Since), share.MicroUSD)
+	}
+	args := []any{u.ID, u.Day, u.Proxy, u.Peer, u.Session, u.Model, u.ChargedTokens, u.RequestBytes, dbTime(time.Now()), u.ChargedMicroUSD, u.Priced}
+	args = append(args, shareArgs...)
+	result, err := d.Exec(`INSERT INTO model_proxy_requests(id,day,proxy,peer,session,model,charged_tokens,request_bytes,started_at,charged_micro_usd,priced)
+ SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE`+shareWhere+`
  (SELECT COUNT(*) FROM model_proxy_requests WHERE day=? AND proxy=?) < ? AND
  (SELECT COALESCE(SUM(charged_tokens),0) FROM model_proxy_requests WHERE day=? AND proxy=?) <= ? AND
  (SELECT COUNT(*) FROM model_proxy_requests WHERE day=? AND proxy=? AND peer=?) < ? AND
  (SELECT COALESCE(SUM(charged_tokens),0) FROM model_proxy_requests WHERE day=? AND proxy=? AND peer=?) <= ? AND
  (SELECT COUNT(*) FROM model_proxy_requests WHERE day=? AND proxy=? AND peer=? AND session=?) < ? AND
  (SELECT COALESCE(SUM(charged_tokens),0) FROM model_proxy_requests WHERE day=? AND proxy=? AND peer=? AND session=?) <= ?`,
-		u.ID, u.Day, u.Proxy, u.Peer, u.Session, u.Model, u.ChargedTokens, u.RequestBytes, dbTime(time.Now()),
-		u.Day, u.Proxy, b.Requests, u.Day, u.Proxy, b.Tokens-u.ChargedTokens,
-		u.Day, u.Proxy, u.Peer, b.PeerRequests, u.Day, u.Proxy, u.Peer, b.PeerTokens-u.ChargedTokens,
-		u.Day, u.Proxy, u.Peer, u.Session, b.SessionRequests, u.Day, u.Proxy, u.Peer, u.Session, b.SessionTokens-u.ChargedTokens)
+		append(args,
+			u.Day, u.Proxy, b.Requests, u.Day, u.Proxy, b.Tokens-u.ChargedTokens,
+			u.Day, u.Proxy, u.Peer, b.PeerRequests, u.Day, u.Proxy, u.Peer, b.PeerTokens-u.ChargedTokens,
+			u.Day, u.Proxy, u.Peer, u.Session, b.SessionRequests, u.Day, u.Proxy, u.Peer, u.Session, b.SessionTokens-u.ChargedTokens)...)
 	if err != nil {
 		return err
 	}
@@ -139,9 +172,12 @@ func FinishModelProxyRequest(u ModelProxyUsage) error {
 	actual := u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
 	// A successful terminal usage replaces the reservation once. Incomplete
 	// requests keep their charge; usage metadata can still aid the operator.
+	// The dollar charge is the caller's settlement: the gateway knows when
+	// the provider never billed a request, which tokens cannot tell.
 	_, err = d.Exec(`UPDATE model_proxy_requests SET charged_tokens=CASE WHEN ? THEN ? ELSE MAX(charged_tokens,?) END,
+ charged_micro_usd=?,
  input_tokens=?,output_tokens=?,cache_read_tokens=?,cache_write_tokens=?,status=?,complete=?,response_bytes=?,duration_ms=?
- WHERE id=? AND complete=0`, u.Complete, actual, actual, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.Status, u.Complete, u.ResponseBytes, u.DurationMS, u.ID)
+ WHERE id=? AND complete=0`, u.Complete, actual, actual, u.ChargedMicroUSD, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.Status, u.Complete, u.ResponseBytes, u.DurationMS, u.ID)
 	return err
 }
 func ListModelProxyUsage(day string) ([]ModelProxyUsage, error) {
@@ -149,7 +185,7 @@ func ListModelProxyUsage(day string) ([]ModelProxyUsage, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,day,proxy,peer,session,model,charged_tokens,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,status,complete,request_bytes,response_bytes,duration_ms FROM model_proxy_requests WHERE day=? ORDER BY started_at,id LIMIT 10000`, day)
+	rows, err := d.Query(`SELECT id,day,proxy,peer,session,model,charged_tokens,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,status,complete,request_bytes,response_bytes,duration_ms,charged_micro_usd,priced FROM model_proxy_requests WHERE day=? ORDER BY started_at,id LIMIT 10000`, day)
 	if err != nil {
 		return nil, err
 	}
@@ -157,13 +193,29 @@ func ListModelProxyUsage(day string) ([]ModelProxyUsage, error) {
 	out := []ModelProxyUsage{}
 	for rows.Next() {
 		var u ModelProxyUsage
-		err = rows.Scan(&u.ID, &u.Day, &u.Proxy, &u.Peer, &u.Session, &u.Model, &u.ChargedTokens, &u.InputTokens, &u.OutputTokens, &u.CacheReadTokens, &u.CacheWriteTokens, &u.Status, &u.Complete, &u.RequestBytes, &u.ResponseBytes, &u.DurationMS)
+		err = rows.Scan(&u.ID, &u.Day, &u.Proxy, &u.Peer, &u.Session, &u.Model, &u.ChargedTokens, &u.InputTokens, &u.OutputTokens, &u.CacheReadTokens, &u.CacheWriteTokens, &u.Status, &u.Complete, &u.RequestBytes, &u.ResponseBytes, &u.DurationMS, &u.ChargedMicroUSD, &u.Priced)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// ModelProxyShareSpent is a peer's dollar charge (micro-USD, in-flight
+// reservations included) through one gateway, or every gateway when proxy is
+// empty, since a share began.
+func ModelProxyShareSpent(peer, proxy string, since time.Time) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	if since.IsZero() {
+		since = time.Unix(0, 0)
+	}
+	var spent int64
+	err = d.QueryRow(`SELECT COALESCE(SUM(charged_micro_usd),0) FROM model_proxy_requests WHERE peer=? AND (?='' OR proxy=?) AND started_at>=?`, peer, proxy, proxy, dbTimeBoundary(since)).Scan(&spent)
+	return spent, err
 }
 
 func SetModelProxyLaunchLease(session, generation, lease string) error {

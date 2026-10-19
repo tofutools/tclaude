@@ -255,6 +255,9 @@ type fedPeerGrantReq struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+// maxShareUSD bounds a models.proxy grant's dollar cap.
+const maxShareUSD = 1_000_000
+
 // maxPeerGrantLifetime bounds a timed grant; longer is a permanent grant.
 const maxPeerGrantLifetime = 366 * 24 * time.Hour
 
@@ -498,8 +501,13 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "invalid_arg", "job_approval must be auto or manual and requires jobs.run")
 			return
 		}
+		if in.SpawnPolicy.MaxUSD != 0 && (in.Slug != PermModelsProxy || !(in.SpawnPolicy.MaxUSD > 0 && in.SpawnPolicy.MaxUSD <= maxShareUSD)) {
+			writeError(w, 400, "invalid_arg", fmt.Sprintf("max_usd requires models.proxy and must be above 0 and at most %d", maxShareUSD))
+			return
+		}
 		launchSettings := in.SpawnPolicy
 		launchSettings.PermissionSlugs = nil
+		launchSettings.MaxUSD = 0
 		if in.Slug == PermGroupsMembersSpawn || in.Slug == PermJobsRun {
 			if in.SpawnPolicy.MaxLive == 0 {
 				in.SpawnPolicy.MaxLive = 2
