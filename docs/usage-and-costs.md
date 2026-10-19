@@ -109,9 +109,11 @@ sharing, or a requester-paid worker) is ignored on its own, with the reason
 paid for it and counts it, so it cannot be restored. The gateway's node shows
 that spend in its Costs view under **Served to peers**: what its gateways paid
 for each peer in the span, priced by the gateway from the provider's token
-counts. That spend is kept apart from the node's own agents' totals. A
-session that was launched through a peer's gateway once stays billed to it
-for all of its conversations.
+counts. A request still running, or one the provider never answered, counts
+its worst case. That spend is kept apart from the node's own agents' totals.
+The mark is per conversation: a conversation that ever ran through a peer's
+gateway stays billed to it, including when it is resumed in a session on
+your own account.
 
 Cost data covers recorded tclaude sessions, not the provider's entire invoice.
 Model attribution follows the dashboard's Costs view: each conversation/day slice uses the

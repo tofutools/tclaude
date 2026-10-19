@@ -59,7 +59,9 @@ const CostIgnoreBilledTo = "billed_to:"
 // conversation with recorded spend from a session launched through a peer's
 // model gateway (usage sharing, requester-paid workers). Their history stays
 // recorded; the totals leave it out. An operator's own Ignore of such a
-// conversation gains the reason.
+// conversation gains the reason. The mark is per conversation: one resumed
+// in another session keeps it either way. Spend recorded before a session
+// knows its conversation has no conversation to mark and stays counted.
 func MarkCostConvsBilledElsewhere() error {
 	d, err := Open()
 	if err != nil {

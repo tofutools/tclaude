@@ -364,7 +364,7 @@ function ServedCosts({ current }) {
   const unpriced = served.reduce((n, row) => n + (row.unpriced || 0), 0);
   return html`<details class="cost-ignored cost-served" id="costs-served" open>
     <summary><strong>Served to peers</strong><span>${fmtUSD(current.payload.served_total_usd || 0)} through your model gateways in this span</span></summary>
-    <p class="muted">Peers' agents billed these model calls to your gateways (usage sharing). The gateway prices them from the token counts the provider reports${unpriced ? `; ${unpriced} request${unpriced === 1 ? '' : 's'} had no price` : ''}. They are not in your agents' totals above.</p>
+    <p class="muted">Peers' agents billed these model calls to your gateways (usage sharing). The gateway charges each one from the token counts the provider reports; one still running, or never answered, counts its worst case${unpriced ? `. ${unpriced} request${unpriced === 1 ? '' : 's'} had no price and count${unpriced === 1 ? 's' : ''} nothing here` : ''}. They are not in your agents' totals above.</p>
     <table><tbody>
       ${served.map((row) => html`<tr key=${`${row.peer}/${row.gateway}`} data-key=${`cost-served-${row.peer}-${row.gateway}`}>
         <td><span class="rowname">${row.peer_name || row.peer}</span> <span class="muted">· ${row.gateway}</span></td>

@@ -417,7 +417,7 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 		CostKind: costKind(realTotal, whatIfTotal),
 		Days:     []costDayPoint{}, Agents: []costAgentRow{},
 		Ignored: ignoredCostRows(ignoredConvs, ignoredDeltas, models, fromKey, toKey)}
-	if err := billIgnoredRows(out.Ignored); err != nil {
+	if out.Ignored, err = billIgnoredRows(out.Ignored); err != nil {
 		return costsResponse{}, err
 	}
 	if err := addServedCosts(&out, from, to); err != nil {
@@ -518,24 +518,38 @@ func ignoredCostRows(ignored map[string]time.Time, deltas []costDelta, models ma
 	return out
 }
 
-// billIgnoredRows names where a billed-to conversation's spend went.
-func billIgnoredRows(rows []costIgnoredRow) error {
+// billIgnoredRows names where a billed-to conversation's spend went, and
+// leaves out billed-to conversations with no spend in the span: they pile up
+// on their own and cannot be restored, so only the span's matter.
+func billIgnoredRows(rows []costIgnoredRow) ([]costIgnoredRow, error) {
 	reasons, err := db.CostIgnoredReasons()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for i := range rows {
-		ref, ok := strings.CutPrefix(reasons[rows[i].ConvID], db.CostIgnoreBilledTo)
-		if !ok {
-			continue
-		}
-		rows[i].BilledTo = ref
-		gateway, peer, _ := strings.Cut(ref, "@")
-		if p, err := db.GetFederationPeer(peer); err == nil && p != nil {
-			rows[i].BilledToName = gateway + "@" + peerDisplay(p)
+	if len(reasons) == 0 {
+		return rows, nil
+	}
+	names := map[string]string{}
+	if peers, err := db.ListFederationPeers(); err == nil {
+		for i := range peers {
+			names[peers[i].InstanceID] = peerDisplay(&peers[i])
 		}
 	}
-	return nil
+	out := rows[:0]
+	for _, row := range rows {
+		ref, ok := strings.CutPrefix(reasons[row.ConvID], db.CostIgnoreBilledTo)
+		if ok {
+			if row.CostUSD == 0 {
+				continue
+			}
+			row.BilledTo = ref
+			if gateway, peer, _ := strings.Cut(ref, "@"); names[peer] != "" {
+				row.BilledToName = gateway + "@" + names[peer]
+			}
+		}
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 // addServedCosts adds what this node's gateways paid for peers in the span
