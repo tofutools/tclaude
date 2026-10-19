@@ -64,45 +64,37 @@ func fedPeerModelAllows(peer, name string) bool {
 	return false
 }
 
-// modelShareGrant is the peer's models.proxy grant for a gateway that
-// carries a usage-sharing dollar cap, preferring one scoped to that gateway
-// over an unscoped one. It applies to an unrestricted peer too: a capped
-// share is a limit its grantor chose.
-func modelShareGrant(peer, name string) *db.FederationPeerGrant {
+// modelShareGrants are the peer's models.proxy grants covering gateway name
+// that carry a usage-sharing dollar cap: one scoped to that gateway and one
+// unscoped (all gateways), each a limit of its own. They apply to an
+// unrestricted peer too: a capped share is a limit its grantor chose.
+func modelShareGrants(peer, name string) []db.FederationPeerGrant {
 	grants, err := db.ListEffectiveFederationPeerGrants(peer)
 	if err != nil {
 		return nil
 	}
-	var best *db.FederationPeerGrant
-	for i := range grants {
-		g := &grants[i]
-		if g.Slug != PermModelsProxy || g.SpawnPolicy.MaxUSD <= 0 || (g.Scope != "" && g.Scope != "http_proxy="+name) {
-			continue
-		}
-		if best == nil || g.Scope != "" {
-			best = g
+	var out []db.FederationPeerGrant
+	for _, g := range grants {
+		if g.Slug == PermModelsProxy && g.SpawnPolicy.MaxUSD > 0 && (g.Scope == "" || g.Scope == "http_proxy="+name) {
+			out = append(out, g)
 		}
 	}
-	return best
+	return out
 }
 
-// modelShareCap is the dollar cap a peer's requests through gateway name
-// count against (zero: none).
-func modelShareCap(peer, name string) db.ModelProxyShareCap {
-	g := modelShareGrant(peer, name)
-	if g == nil {
-		return db.ModelProxyShareCap{}
-	}
+// shareCap is a capped grant as a reservation limit.
+func shareCap(g db.FederationPeerGrant) db.ModelProxyShareCap {
 	return db.ModelProxyShareCap{MicroUSD: int64(math.Round(g.SpawnPolicy.MaxUSD * 1e6)), Since: g.CreatedAt, AllProxies: g.Scope == ""}
 }
 
-// modelShareProxy is the gateway a capped share's spend is summed over: name
-// for a gateway-scoped grant, "" (every gateway) for an unscoped one.
-func modelShareProxy(peer, name string) string {
-	if g := modelShareGrant(peer, name); g != nil && g.Scope == "" {
-		return ""
+// modelShareCaps are the dollar caps a peer's requests through gateway name
+// count against (none: uncapped).
+func modelShareCaps(peer, name string) []db.ModelProxyShareCap {
+	var out []db.ModelProxyShareCap
+	for _, g := range modelShareGrants(peer, name) {
+		out = append(out, shareCap(g))
 	}
-	return name
+	return out
 }
 
 // formatUSD renders micro-USD as dollars and cents, rounding up.

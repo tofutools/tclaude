@@ -24,6 +24,10 @@ type AnthropicModelPricing struct {
 	LongAbove int64
 }
 
+// Sonnet 4 and 4.5 charge long-context rates for prompts over 200k tokens
+// (the 1M context window); Claude 4.6 and later price the whole window at
+// standard rates.
+//
 // anthropicModelPrices are the Claude API's standard (global routing, not
 // fast mode, not batch) rates from
 // https://platform.claude.com/docs/en/about-claude/pricing, keyed by model
@@ -45,8 +49,8 @@ var anthropicModelPrices = map[string]AnthropicModelPricing{
 	"claude-sonnet-5-5": {Short: AnthropicModelPrice{2, 2.50, 4, 0.10, 10}},
 	"claude-sonnet-5":   {Short: AnthropicModelPrice{2, 2.50, 4, 0.20, 10}},
 	"claude-sonnet-4-6": {Short: AnthropicModelPrice{3, 3.75, 6, 0.30, 15}},
-	"claude-sonnet-4-5": {Short: AnthropicModelPrice{3, 3.75, 6, 0.30, 15}},
-	"claude-sonnet-4":   {Short: AnthropicModelPrice{3, 3.75, 6, 0.30, 15}},
+	"claude-sonnet-4-5": {Short: AnthropicModelPrice{3, 3.75, 6, 0.30, 15}, Long: &AnthropicModelPrice{6, 7.50, 12, 0.60, 22.50}, LongAbove: 200000},
+	"claude-sonnet-4":   {Short: AnthropicModelPrice{3, 3.75, 6, 0.30, 15}, Long: &AnthropicModelPrice{6, 7.50, 12, 0.60, 22.50}, LongAbove: 200000},
 	"claude-haiku-5-5": {
 		Short:     AnthropicModelPrice{0.10, 0.125, 0.20, 0.01, 0.50},
 		Long:      &AnthropicModelPrice{0.50, 0.625, 1, 0.05, 2.50},
