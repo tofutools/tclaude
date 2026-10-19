@@ -21,6 +21,7 @@ import { RunPage } from './fleet-admin-run.js';
 import { viewersFocus, viewersOpened } from './remote-viewers.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
 import { ModelsPage } from './fleet-admin-models.js';
+import { SharingPage } from './fleet-admin-sharing.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
 import { FLEET_PAGE_EVENT } from './fleet-move-drop.js';
 import { fleetAdminLocation, fleetAdminPage, fleetGrantTarget, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
@@ -52,6 +53,7 @@ export const SUB_PAGES = Object.freeze([
   { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
   { id: 'models', label: 'Model gateways' },
+  { id: 'sharing', label: 'Usage sharing' },
   { id: 'profiles', label: 'Profiles & pools' },
   { id: 'offers', label: 'Offers' },
   { id: 'jobs', label: 'Jobs & repos' },
@@ -505,6 +507,8 @@ export function FleetAdmin({
       ? html`<${JobsPage} view=${view} pools=${(pools || []).map((p) => p.name)} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} active=${active} />`
       : sub.id === 'models'
       ? html`<${ModelsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
+      : sub.id === 'sharing'
+      ? html`<${SharingPage} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'boards'
       ? html`<${BoardsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} updates=${boardUpdates} loadUpdates=${loadBoardUpdates} />`
       : sub.id === 'hub'

@@ -80,7 +80,7 @@ export const KNOWN_SUBTABS = {
     'assistants', 'daemon', 'logs', 'experimental', 'advanced',
   ]),
   'fleet-admin': new Set([
-    'setup', 'peers', 'harnesses', 'run', 'spawns', 'invites', 'grants', 'models',
+    'setup', 'peers', 'harnesses', 'run', 'spawns', 'invites', 'grants', 'models', 'sharing',
     'profiles', 'offers', 'jobs', 'moves', 'boards', 'audit', 'hub',
   ]),
 };

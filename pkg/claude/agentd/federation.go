@@ -355,11 +355,12 @@ func startFederationWith(fc *config.FederationConfig) error {
 	rt.ctx, rt.cancel = ctx, cancel
 	withdrawStaleFederationMirrors()
 	scheduleGrantExpiryBroadcast()
-	rt.wg.Add(4)
+	rt.wg.Add(5)
 	go func() { defer rt.wg.Done(); cl.Run(ctx) }()
 	go func() { defer rt.wg.Done(); rt.inboundLoop(ctx) }()
 	go func() { defer rt.wg.Done(); rt.outboxLoop(ctx) }()
 	go func() { defer rt.wg.Done(); rt.nodeLoop(ctx) }()
+	go func() { defer rt.wg.Done(); rt.runShareAlerts(ctx) }()
 	startFleetMetadata(ctx, &rt.wg)
 
 	fedMu.Lock()

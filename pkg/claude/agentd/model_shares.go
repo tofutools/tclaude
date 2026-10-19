@@ -34,6 +34,9 @@ type modelShare struct {
 	Unrestricted bool `json:"unrestricted,omitempty"`
 	// UsedUp says a cap is spent: the gateway refuses every request.
 	UsedUp bool `json:"used_up,omitempty"`
+	// Scope is the shown grant's scope (http_proxy=<gateway>, or "" for
+	// every gateway), which the panel's extend, raise and revoke act on.
+	Scope string `json:"scope,omitempty"`
 }
 
 // modelSharesFor lists the gateways peer may use on this node now. A
@@ -96,7 +99,7 @@ func modelSharesFor(cfg *config.Config, peer *db.FederationPeer) []modelShare {
 		}
 		s.Unrestricted = unrestricted
 		if grant != nil {
-			s.MaxUSD, s.Since = grant.SpawnPolicy.MaxUSD, grant.CreatedAt
+			s.MaxUSD, s.Since, s.Scope = grant.SpawnPolicy.MaxUSD, grant.CreatedAt, grant.Scope
 		}
 		s.UsedUp = left <= 0
 		// Access lasts as long as its longest-lived source: unrestricted
@@ -162,14 +165,21 @@ func handleModelSharesReceived(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt := currentFederation()
-	out := []modelShare{}
-	errs := map[string]string{}
 	if rt == nil {
-		writeJSON(w, 200, map[string]any{"shares": out, "errors": errs, "offline": true})
+		writeJSON(w, 200, map[string]any{"shares": []modelShare{}, "errors": map[string]string{}, "offline": true})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), modelSharesReceivedWait)
 	defer cancel()
+	out, errs := receivedModelShares(ctx, rt, peers)
+	writeJSON(w, 200, map[string]any{"shares": out, "errors": errs})
+}
+
+// receivedModelShares asks each peer what it shares with this node; errs
+// names the peers that could not answer.
+func receivedModelShares(ctx context.Context, rt *fedRuntime, peers []db.FederationPeer) ([]modelShare, map[string]string) {
+	out := []modelShare{}
+	errs := map[string]string{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for i := range peers {
@@ -213,7 +223,7 @@ func handleModelSharesReceived(w http.ResponseWriter, r *http.Request) {
 		}
 		return out[i].Gateway < out[j].Gateway
 	})
-	writeJSON(w, 200, map[string]any{"shares": out, "errors": errs})
+	return out, errs
 }
 
 // validReceivedShare checks what a peer says it shares before it reaches the
@@ -222,6 +232,9 @@ func handleModelSharesReceived(w http.ResponseWriter, r *http.Request) {
 func validReceivedShare(s *modelShare) bool {
 	if !validModelProxyName(s.Gateway) || (s.Dialect != "anthropic" && s.Dialect != "openai") || !(s.MaxUSD >= 0) || !(s.SpentUSD >= 0) {
 		return false
+	}
+	if gw, ok := strings.CutPrefix(s.Scope, "http_proxy="); s.Scope != "" && (!ok || !validModelProxyName(gw)) {
+		s.Scope = ""
 	}
 	models := s.Models[:0]
 	for _, m := range s.Models {

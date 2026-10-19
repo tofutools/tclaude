@@ -218,6 +218,18 @@ func ModelProxyShareSpent(peer, proxy string, since time.Time) (int64, error) {
 	return spent, err
 }
 
+// LiveModelProxyLaunches reports whether a live session here is bound to a
+// peer's model gateway.
+func LiveModelProxyLaunches() (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var live bool
+	err = d.QueryRow(`SELECT EXISTS (SELECT 1 FROM model_proxy_launches l JOIN sessions s ON s.id=l.session AND s.exit_callback_generation=l.generation WHERE l.revoked=0 AND s.status<>'exited')`).Scan(&live)
+	return live, err
+}
+
 // ModelProxyServedRow is what this node's gateways spent on one peer's
 // requests through one gateway: the cost the gateway's credentials paid for
 // that peer (usage sharing, requester-paid workers).

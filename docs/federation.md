@@ -2498,6 +2498,22 @@ when a capped share on every gateway would still bind the chosen gateway
 lift a share's cap. Requests time out after five minutes, like every
 operator access request.
 
+**The Usage sharing panel.** Fleet → **Usage sharing** lists both
+directions. **Shared with you** shows each peer's gateway that your agents may
+bill, with a bar of what is spent against the cap and when it ends, and **Ask
+for more…**, which sends that peer a usage request. **You share** shows what
+your gateways serve each peer, with **+7 days…** for a timed share, **Raise…**
+to add dollars to a cap (the share keeps counting from its start), and
+**Revoke…**.
+
+**Alerts.** The daemon checks shares every two minutes and notifies the
+operator when a share reaches 80% and 100% of its cap, and when it ends. The
+node that gives a share is notified about what it gives. The node that
+receives one is notified about what it receives, while one of its agents is
+bound to a peer's gateway. A share revoked by its own grantor does not alert
+that grantor. A daemon restart picks up where each share stands without
+alerting again.
+
 Use an API key for a shared gateway, not a consumer subscription's login:
 letting other people use a Claude Pro/Max or ChatGPT subscription is likely
 against the provider's terms.

@@ -21602,3 +21602,10 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
 /* Fused Automations (fused-jobs.js): a peer's rows under its node pill. */
 .fused-jobs-head td { padding-top: 12px; border-bottom: 1px solid #30363d; }
 .fused-jobs-node tr:not(.fused-jobs-head) td:first-child { box-shadow: inset 3px 0 0 var(--nc); }
+
+/* Fleet → Usage sharing: a share's spend against its cap. */
+.fa-share-bar { height: 5px; margin-top: 3px; border-radius: 3px; background: #30363d; overflow: hidden; max-width: 160px; }
+.fa-share-bar > i { display: block; height: 100%; background: #3fb950; }
+.fa-warn .fa-share-bar > i { background: #d29922; }
+.fa-danger .fa-share-bar > i { background: #f85149; }
+.fa-share-add { width: 5em; }
