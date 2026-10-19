@@ -78,4 +78,31 @@ func TestCodexHistoryImportHonoursExplicitStateRoot(t *testing.T) {
 	assert.Len(t, matches, 1, "rollout lands under the explicit root")
 	_, err = os.Stat(filepath.Join(home, "daemon-codex", "sessions"))
 	assert.True(t, os.IsNotExist(err), "nothing lands under the daemon's own CODEX_HOME")
+	until, err := db.ConvCostInheritedUntil(id)
+	require.NoError(t, err)
+	assert.False(t, until.IsZero(), "the copied token usage is marked as the source's spend")
+	cleanup()
+	until, err = db.ConvCostInheritedUntil(id)
+	require.NoError(t, err)
+	assert.True(t, until.IsZero(), "a rolled-back import leaves no boundary behind")
+}
+
+// Claude Code restores a transcript's cost-state on resume. Re-keyed onto the
+// copy it would put the source's spend on the copy's meter, so the import
+// drops it; the rest of the transcript is untouched.
+func TestClaudeHistoryImportDropsCostState(t *testing.T) {
+	h, _ := Get(DefaultName)
+	native := h.History.(jsonlHistory)
+	turn := `{"sessionId":"` + historySource + `","cwd":"/original","type":"user","message":{"content":"mentions cost-state in prose"}}`
+	costState := `{"type":"cost-state","sessionId":"` + historySource + `","totalCostUSD":12.5}`
+	raw := turn + "\n" + costState + "\n" + turn + "\n"
+	require.NoError(t, native.Validate([]byte(raw), historySource))
+	got, err := native.rewriteHistory([]byte(raw), historySource, historyTarget, "/receiving")
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	require.Len(t, lines, 2)
+	for _, line := range lines {
+		assert.Contains(t, line, "mentions cost-state in prose")
+		assert.NotContains(t, line, "totalCostUSD")
+	}
 }

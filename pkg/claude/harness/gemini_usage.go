@@ -226,7 +226,9 @@ func (g geminiUsageFold) clone() geminiUsageFold {
 	}
 }
 
-func (g *geminiUsageFold) usage() GeminiUsage {
+// usage projects the fold. Calls at or before inheritedUntil are left out of
+// the cost (see geminiCostHistory) but still describe the context.
+func (g *geminiUsageFold) usage(inheritedUntil time.Time) GeminiUsage {
 	var usage GeminiUsage
 	for _, record := range g.records {
 		if record.tokens == nil {
@@ -242,7 +244,7 @@ func (g *geminiUsageFold) usage() GeminiUsage {
 	if usage.Calls > 0 {
 		usage.ContextWindow = GeminiContextWindow(usage.Model)
 	}
-	usage.CostUSD, _ = geminiCostHistory(g.billed, time.Now())
+	usage.CostUSD, _ = geminiCostHistory(g.billed, time.Now(), inheritedUntil)
 	return usage
 }
 
@@ -271,7 +273,16 @@ type GeminiUsageFollower struct {
 	fold geminiUsageFold
 	// legacyInfo is the stat of the legacy `.json` file last folded.
 	legacyInfo os.FileInfo
+	// inheritedUntil is the conversation's inherited-history boundary; see
+	// SetCostInheritedUntil.
+	inheritedUntil time.Time
 }
+
+// SetCostInheritedUntil supplies the conversation's inherited-history boundary
+// (db.ConvCostInheritedUntil): calls recorded at or before it were copied in
+// from another conversation, so the cost leaves them out. Pricing is computed
+// from the fold on every read, so no re-fold is needed.
+func (f *GeminiUsageFollower) SetCostInheritedUntil(until time.Time) { f.inheritedUntil = until }
 
 // Path is the file the follower last read, "" before the first read.
 func (f *GeminiUsageFollower) Path() string { return f.path }
@@ -293,7 +304,7 @@ func (f *GeminiUsageFollower) Read(path string) (usage GeminiUsage, found bool, 
 		return GeminiUsage{}, false, err
 	}
 	f.path, f.fold = path, update.State
-	return f.fold.usage(), true, nil
+	return f.fold.usage(f.inheritedUntil), true, nil
 }
 
 func (f *GeminiUsageFollower) ensureStream() *filefollow.Follower[geminiUsageFold] {
@@ -350,7 +361,7 @@ func (f *GeminiUsageFollower) readLegacy(path string) (GeminiUsage, bool, error)
 	}
 	if f.path == path && f.legacyInfo != nil && os.SameFile(f.legacyInfo, info) &&
 		info.Size() == f.legacyInfo.Size() && info.ModTime().Equal(f.legacyInfo.ModTime()) {
-		return f.fold.usage(), true, nil
+		return f.fold.usage(f.inheritedUntil), true, nil
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, geminiLegacyFileLimit))
 	if err != nil {
@@ -363,13 +374,13 @@ func (f *GeminiUsageFollower) readLegacy(path string) (GeminiUsage, bool, error)
 		f.stream.Reset()
 	}
 	f.path, f.fold, f.legacyInfo = path, fold, info
-	return f.fold.usage(), true, nil
+	return f.fold.usage(f.inheritedUntil), true, nil
 }
 
 // CostHistory is the WHAT-IF cost as cumulative per-day rows, as of the last
 // Read. now places calls that carry no timestamp.
 func (f *GeminiUsageFollower) CostHistory(now time.Time) []GeminiCostDay {
-	_, history := geminiCostHistory(f.fold.billed, now)
+	_, history := geminiCostHistory(f.fold.billed, now, f.inheritedUntil)
 	return history
 }
 

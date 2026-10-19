@@ -58,9 +58,15 @@ func TestGeminiHistoryPreservesNativeCheckpointAndRewind(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	until, err := db.ConvCostInheritedUntil(id)
+	require.NoError(t, err)
+	require.False(t, until.IsZero(), "the copied calls are marked as the source's spend")
 	cleanup()
 	_, err = os.Stat(path)
 	require.True(t, os.IsNotExist(err))
+	until, err = db.ConvCostInheritedUntil(id)
+	require.NoError(t, err)
+	require.True(t, until.IsZero())
 }
 func TestGeminiHistoryLegacyFieldOrder(t *testing.T) {
 	raw := `{"messages":[{"id":"u1","type":"user","content":"original"}],"sessionId":"` + historySource + `","projectHash":"old","kind":"main","summary":"keep summary"}`

@@ -2,6 +2,7 @@
 package convops
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -992,14 +993,52 @@ func RemoveSessionByID(index *SessionsIndex, sessionID string) bool {
 	return false
 }
 
-// CopyConversationFile copies a conversation file and updates sessionId references
+// CopyConversationFile copies a conversation file and updates sessionId references.
+// The source's cost-state records are dropped (see IsClaudeCostStateRecord).
 func CopyConversationFile(src, dst, oldID, newID string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	content := strings.ReplaceAll(string(data), oldID, newID)
+	content := strings.ReplaceAll(string(StripClaudeCostState(data)), oldID, newID)
 	return os.WriteFile(dst, []byte(content), 0600)
+}
+
+// IsClaudeCostStateRecord reports whether one transcript line is a Claude Code
+// "cost-state" record: the session's running cost totals, which Claude Code
+// restores on --resume for the record's sessionId. A copy re-keys every
+// record to the copy's id, so a kept cost-state would make the copy resume
+// with the source's spend already on its meter, and tclaude would record that
+// spend a second time under the copy's conversation. Dropping it starts the
+// copy at zero, the same as a fresh session.
+func IsClaudeCostStateRecord(line []byte) bool {
+	if !bytes.Contains(line, []byte(`"cost-state"`)) {
+		return false
+	}
+	var record struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(line, &record) == nil && record.Type == "cost-state"
+}
+
+// StripClaudeCostState returns data without its cost-state lines.
+func StripClaudeCostState(data []byte) []byte {
+	if !bytes.Contains(data, []byte(`"cost-state"`)) {
+		return data
+	}
+	out := make([]byte, 0, len(data))
+	for rest := data; len(rest) > 0; {
+		line := rest
+		if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+			line, rest = rest[:i+1], rest[i+1:]
+		} else {
+			rest = nil
+		}
+		if !IsClaudeCostStateRecord(bytes.TrimSpace(line)) {
+			out = append(out, line...)
+		}
+	}
+	return out
 }
 
 // CopyDir recursively copies a directory

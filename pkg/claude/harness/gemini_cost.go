@@ -110,8 +110,10 @@ const geminiCostDayFormat = "2006-01-02"
 // geminiCostHistory prices calls in record order and returns the conversation
 // total plus one cumulative row per local day that had a priced call. A call
 // without a timestamp is attributed to the latest timestamp seen before it, or
-// to now when none was. Unpriced calls add nothing.
-func geminiCostHistory(calls []geminiBilledCall, now time.Time) (float64, []GeminiCostDay) {
+// to now when none was. Unpriced calls add nothing, and neither do calls at or
+// before inheritedUntil (when set): those were copied in from another
+// conversation and are its spend (see MarkConvCostInherited).
+func geminiCostHistory(calls []geminiBilledCall, now, inheritedUntil time.Time) (float64, []GeminiCostDay) {
 	var (
 		total   float64
 		history []GeminiCostDay
@@ -126,6 +128,9 @@ func geminiCostHistory(calls []geminiBilledCall, now time.Time) (float64, []Gemi
 			at = now
 		}
 		last = at
+		if !inheritedUntil.IsZero() && !at.After(inheritedUntil) {
+			continue
+		}
 		usd, ok := geminiCallCostUSD(call.model, call.tokens)
 		if !ok || usd <= 0 {
 			continue

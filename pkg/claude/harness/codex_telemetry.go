@@ -226,7 +226,7 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 
 func codexRuntimeTelemetryStateFromRollout(rolloutPath, ownerID string) (codexRuntimeScanState, error) {
 	return codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
-		rolloutPath, ownerID, false, false, time.Time{},
+		rolloutPath, ownerID, false, false, time.Time{}, time.Time{},
 	)
 }
 
@@ -234,6 +234,7 @@ func codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
 	rolloutPath, ownerID string,
 	fastMode, hasFastMode bool,
 	observedAt time.Time,
+	inheritedUntil time.Time,
 ) (codexRuntimeScanState, error) {
 	rc, err := openCodexRollout(rolloutPath)
 	if err != nil {
@@ -248,6 +249,7 @@ func codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
 	state.costFastBaseline = fastMode
 	state.hasCostFastBaseline = hasFastMode
 	state.costFastBaselineAt = observedAt
+	state.costInheritedUntil = inheritedUntil
 	if _, _, err := scanCompleteCodexLines(rc, rolloutPath, &state, false); err != nil {
 		return codexRuntimeScanState{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
@@ -270,6 +272,13 @@ type codexRuntimeScanState struct {
 	hasCostFastBaseline  bool
 	costFastBaselineAt   time.Time
 	costFastBaselineUsed bool
+	// costInheritedUntil is the conversation's inherited-history boundary
+	// (db.ConvCostInheritedUntil): token usage observed at or before it was
+	// copied in from another conversation and is that conversation's spend.
+	// costInheritedUSD is costUSD as of the last such record; the reported
+	// cost and its daily history are net of it.
+	costInheritedUntil   time.Time
+	costInheritedUSD     float64
 	usage                *CodexUsage
 	costUSD              float64
 	costPriced           bool
@@ -313,6 +322,8 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		hasCostFastBaseline:  s.hasCostFastBaseline,
 		costFastBaselineAt:   s.costFastBaselineAt,
 		costFastBaselineUsed: s.costFastBaselineUsed,
+		costInheritedUntil:   s.costInheritedUntil,
+		costInheritedUSD:     s.costInheritedUSD,
 		usage:                s.usage,
 		costUSD:              s.costUSD,
 		costPriced:           s.costPriced,
@@ -440,6 +451,11 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 		switch ev.Kind {
 		case "started":
+			if s.inheritedRecord(env.Timestamp) {
+				// A child spawned by the conversation this history was
+				// copied from: its spend is that conversation's.
+				return true
+			}
 			// Collaboration activity is bidirectional: child rollouts also
 			// reference their parent when results/messages cross the boundary.
 			// Only started is an authoritative parent -> newly-spawned-child
@@ -489,6 +505,12 @@ func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observe
 	} else {
 		s.costUSD += cost
 	}
+	if s.inheritedRecord(observed) {
+		// Keep the running total (a legacy cumulative event after the
+		// boundary still includes this spend) but report none of it.
+		s.costInheritedUSD = s.costUSD
+		return
+	}
 	s.costPriced = true
 	s.costModel = s.model
 	s.costObserved = observed
@@ -498,13 +520,29 @@ func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observe
 	}
 	daily := CodexTokenCostDailySnapshot{
 		Day:     observedAt.In(time.Local).Format("2006-01-02"),
-		CostUSD: s.costUSD, Observed: observedAt, Model: s.model,
+		CostUSD: s.ownCostUSD(), Observed: observedAt, Model: s.model,
 	}
 	if len(s.costHistory) > 0 && s.costHistory[len(s.costHistory)-1].Day == daily.Day {
 		s.costHistory[len(s.costHistory)-1] = daily
 	} else {
 		s.costHistory = append(s.costHistory, daily)
 	}
+}
+
+// inheritedRecord reports whether a record observed at the given rollout
+// timestamp belongs to history copied from another conversation. A record
+// whose time cannot be parsed is counted as the conversation's own.
+func (s *codexRuntimeScanState) inheritedRecord(observed string) bool {
+	if s.costInheritedUntil.IsZero() {
+		return false
+	}
+	at := parseCodexEventTime(observed)
+	return !at.IsZero() && !at.After(s.costInheritedUntil)
+}
+
+// ownCostUSD is the running cost net of the inherited history's share.
+func (s *codexRuntimeScanState) ownCostUSD() float64 {
+	return max(s.costUSD-s.costInheritedUSD, 0)
 }
 
 func (s *codexRuntimeScanState) applyCostFastModeBaseline(observed string) {
@@ -608,7 +646,7 @@ func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
 	}
 	if s.costPriced {
 		result.Cost = CodexTokenCost{
-			CostUSD: s.costUSD, Model: s.costModel, Observed: parseCodexEventTime(s.costObserved),
+			CostUSD: s.ownCostUSD(), Model: s.costModel, Observed: parseCodexEventTime(s.costObserved),
 		}
 		result.HasCost = true
 	}

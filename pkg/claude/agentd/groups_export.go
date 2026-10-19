@@ -941,7 +941,10 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		if harnessLanded[c.ConvID] {
 			continue
 		}
-		content := transformConvJSONL(c.Content, exp.SourceHome, targetHome,
+		// The member's cost-state is its source's spend: kept, Claude Code
+		// would resume the landed conversation with it on its meter and this
+		// node would record that spend again.
+		content := transformConvJSONL(convops.StripClaudeCostState(c.Content), exp.SourceHome, targetHome,
 			c.SourceCwd, targetCwd, convRemap)
 		if newTitle, remapped := retitled[finalID]; remapped {
 			content = appendCustomTitleTurn(content, finalID, newTitle)

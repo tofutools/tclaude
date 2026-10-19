@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -76,6 +77,8 @@ func TestOpenCodeHistoryCLI(t *testing.T) {
 func TestOpenCodeHistoryTransferNativeProjection(t *testing.T) {
 	home := testutil.CanonicalTempDir(t)
 	t.Setenv("HOME", home)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	t.Setenv("TCLAUDE_OPENCODE_HISTORY_HELPER", "1")
 	bin := filepath.Join(home, "bin")
 	require.NoError(t, os.Mkdir(bin, 0700))
@@ -86,7 +89,7 @@ func TestOpenCodeHistoryTransferNativeProjection(t *testing.T) {
 	root := filepath.Join(home, "native-fixture")
 	require.NoError(t, os.Mkdir(root, 0700))
 	const source = "ses_source"
-	raw := []byte(`{"info":{"id":"ses_source","directory":"/source","permission":[{"action":"allow"}],"share":{"url":"old"}},"messages":[{"info":{"id":"msg_user","sessionID":"ses_source","role":"user"},"parts":[{"id":"prt_user","sessionID":"ses_source","messageID":"msg_user","type":"text","text":"keep /source and ses_source literally"}]},{"info":{"id":"msg_assistant","sessionID":"ses_source","parentID":"msg_user","path":{"cwd":"/source","root":"/source"},"role":"assistant"},"parts":[{"id":"prt_assistant","sessionID":"ses_source","messageID":"msg_assistant","type":"text","text":"remote result"}]}]}`)
+	raw := []byte(`{"info":{"id":"ses_source","directory":"/source","permission":[{"action":"allow"}],"share":{"url":"old"},"cost":1.25,"tokens":{"input":10,"output":5}},"messages":[{"info":{"id":"msg_user","sessionID":"ses_source","role":"user"},"parts":[{"id":"prt_user","sessionID":"ses_source","messageID":"msg_user","type":"text","text":"keep /source and ses_source literally"}]},{"info":{"id":"msg_assistant","sessionID":"ses_source","parentID":"msg_user","path":{"cwd":"/source","root":"/source"},"role":"assistant","cost":1.25},"parts":[{"id":"prt_assistant","sessionID":"ses_source","messageID":"msg_assistant","type":"text","text":"remote result"}]}]}`)
 	require.NoError(t, os.WriteFile(filepath.Join(root, source+".json"), raw, 0600))
 	h := openCodeHistory{}
 	bounded := h.WithLimits(2<<30, 64).(openCodeHistory)
@@ -115,6 +118,14 @@ func TestOpenCodeHistoryTransferNativeProjection(t *testing.T) {
 	require.Equal(t, cwd, rawString(data.Info, "directory"))
 	require.Nil(t, data.Info["permission"])
 	require.Nil(t, data.Info["share"])
+	// The session's running totals would start the copy's native cost at the
+	// source's spend; the message keeps its own figure, marked as inherited.
+	require.Nil(t, data.Info["cost"])
+	require.Nil(t, data.Info["tokens"])
+	require.JSONEq(t, "1.25", string(data.Messages[1].Info["cost"]))
+	until, err := db.ConvCostInheritedUntil(id)
+	require.NoError(t, err)
+	require.False(t, until.IsZero())
 	require.Equal(t, rawString(data.Messages[0].Info, "id"), rawString(data.Messages[1].Info, "parentID"))
 	require.NotEqual(t, "msg_user", rawString(data.Messages[0].Info, "id"))
 	require.NotEqual(t, "prt_user", rawString(data.Messages[0].Parts[0], "id"))

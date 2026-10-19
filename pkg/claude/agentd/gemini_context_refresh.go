@@ -34,6 +34,9 @@ type geminiContextRefreshState struct {
 	refreshing  bool
 
 	follower harness.GeminiUsageFollower
+	// inheritanceResolved records that the follower was given the
+	// conversation's inherited-history boundary (db.ConvCostInheritedUntil).
+	inheritanceResolved bool
 
 	// persisted is the projection last written. It advances only on a
 	// successful write, so a failed one is retried on the next refresh.
@@ -89,6 +92,18 @@ func refreshGeminiContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 			return
 		}
 		path = located
+	}
+	if !state.inheritanceResolved {
+		// A clone or imported history: its copied calls are the source
+		// conversation's spend. Written before the conversation first runs.
+		until, err := db.ConvCostInheritedUntil(sess.ConvID)
+		if err != nil {
+			slog.Warn("gemini-usage: cannot resolve the inherited-history boundary",
+				"session_id", sess.ID, "conv_id", sess.ConvID, "error", err, "module", "agentd")
+			return
+		}
+		state.follower.SetCostInheritedUntil(until)
+		state.inheritanceResolved = true
 	}
 	usage, found, err := state.follower.Read(path)
 	if err != nil {

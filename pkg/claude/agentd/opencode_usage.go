@@ -452,6 +452,9 @@ var openCodeVirtualCostState struct {
 	// retiredNativeCost compacts deleted descendants into one cumulative
 	// scalar. Backfill reconstructs it from the persisted session total.
 	retiredNativeCost map[string]float64
+	// inheritedUntil caches each root session's inherited-history boundary
+	// (db.ConvCostInheritedUntil); see openCodeInheritedUntil.
+	inheritedUntil map[string]time.Time
 }
 
 type openCodePendingRemoval struct {
@@ -480,7 +483,41 @@ func clearOpenCodeVirtualCostState(sessionID string) {
 	delete(openCodeVirtualCostState.trackedSessions, sessionID)
 	delete(openCodeVirtualCostState.nativeCosts, sessionID)
 	delete(openCodeVirtualCostState.retiredNativeCost, sessionID)
+	delete(openCodeVirtualCostState.inheritedUntil, sessionID)
 	openCodeVirtualCostState.Unlock()
+}
+
+// openCodeInheritedUntil returns the root conversation's inherited-history
+// boundary: messages created at or before it were imported from another
+// conversation (a clone or a bundle import) and their cost is that
+// conversation's spend. The boundary is written before the conversation first
+// runs, so it is read once per runtime.
+func openCodeInheritedUntil(runtime db.OpenCodeRuntime) (time.Time, error) {
+	openCodeVirtualCostState.Lock()
+	until, cached := openCodeVirtualCostState.inheritedUntil[runtime.SessionID]
+	openCodeVirtualCostState.Unlock()
+	if cached {
+		return until, nil
+	}
+	until, err := db.ConvCostInheritedUntil(runtime.ConvID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.inheritedUntil == nil {
+		openCodeVirtualCostState.inheritedUntil = map[string]time.Time{}
+	}
+	openCodeVirtualCostState.inheritedUntil[runtime.SessionID] = until
+	openCodeVirtualCostState.Unlock()
+	return until, nil
+}
+
+// openCodeMessageInherited reports whether a root-session message predates the
+// inherited-history boundary. Child sessions are never imported, and a
+// message without a creation time is counted as the conversation's own.
+func openCodeMessageInherited(runtime db.OpenCodeRuntime, usage openCodeContextUsage, until time.Time) bool {
+	return !until.IsZero() && usage.SessionID == runtime.ConvID &&
+		!usage.CreatedAt.IsZero() && !usage.CreatedAt.After(until)
 }
 
 func clearOpenCodeConversationStepState(convID string) {
@@ -933,11 +970,22 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
+	inheritedUntil, err := openCodeInheritedUntil(runtime)
+	if err != nil {
+		// Without the boundary an imported history would be counted as this
+		// conversation's spend, and real cost never decreases once written.
+		slog.Warn("OpenCode inherited-history boundary could not be read",
+			"session", runtime.SessionID, "error", err, "module", "agentd")
+		return
+	}
 	openCodeVirtualCostState.Lock()
 	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	states := make([]openCodeMessageCostUsage, 0, len(usages))
 	realCost := 0.0
 	for _, state := range usages {
+		if openCodeMessageInherited(runtime, state.message, inheritedUntil) {
+			continue
+		}
 		realCost += openCodeMessageUsageRealCost(state)
 		states = append(states, state)
 	}
@@ -1411,6 +1459,12 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			"session", runtime.SessionID, "module", "agentd")
 		return false
 	}
+	inheritedUntil, err := openCodeInheritedUntil(runtime)
+	if err != nil {
+		slog.Debug("OpenCode inherited-history boundary could not be loaded",
+			"session", runtime.SessionID, "error", err, "module", "agentd")
+		return false
+	}
 	removedPricingSteps, err := db.OpenCodePricingStepsRemoved(runtime.ConvID, time.Now())
 	if err != nil {
 		// Missing durable removal state is not safe to interpret as "no
@@ -1510,19 +1564,26 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			}
 			openCodeVirtualCostState.Unlock()
 		}
-		messageRealCost := openCodeMessageUsageRealCost(costUsage)
-		realCost += messageRealCost
-		if messageRealCost > 0 {
-			historyCosts[m.Info.SessionID] += messageRealCost
+		// An imported message still describes the context, but its cost is
+		// the spend of the conversation it was copied from.
+		inherited := openCodeMessageInherited(runtime, usage, inheritedUntil)
+		if !inherited {
+			messageRealCost := openCodeMessageUsageRealCost(costUsage)
+			realCost += messageRealCost
+			if messageRealCost > 0 {
+				historyCosts[m.Info.SessionID] += messageRealCost
+			}
 		}
 		effectiveUsage := aggregateOpenCodeMessageCostUsage(costUsage)
 		if effectiveUsage.total() <= 0 {
-			if costUsage.hadSteps {
+			if costUsage.hadSteps && !inherited {
 				costUsages = append(costUsages, costUsage)
 			}
 			continue
 		}
-		costUsages = append(costUsages, costUsage)
+		if !inherited {
+			costUsages = append(costUsages, costUsage)
+		}
 		if m.Info.SessionID == runtime.ConvID && (!haveAny || m.Info.Time.Created >= latestAt) {
 			// Context occupancy is the latest model call, represented by the
 			// top-level token block. Only fall back to aggregated parts when

@@ -187,6 +187,14 @@ func (j jsonlHistory) rewriteHistoryReader(reader io.Reader, sourceID, newID, cw
 					set(obj, "sessionId", newID)
 				}
 			}
+			var kind string
+			_ = json.Unmarshal(obj["type"], &kind)
+			if newID != "" && kind == "cost-state" {
+				// The source's running cost totals: re-keyed, Claude Code
+				// would resume the copy with them on its meter. See
+				// convops.IsClaudeCostStateRecord.
+				continue
+			}
 			if newID != "" {
 				if _, ok := obj["cwd"]; ok {
 					set(obj, "cwd", cwd)
@@ -251,7 +259,12 @@ func (j jsonlHistory) ImportReader(reader io.Reader, sourceID, cwd string) (stri
 	if err != nil {
 		return "", nil, err
 	}
-	cleanup := func() { _ = os.Remove(path); _ = db.DeleteConvIndex(id); _ = db.DeleteConvBranchHistory(id) }
+	cleanup := func() {
+		_ = os.Remove(path)
+		_ = db.DeleteConvIndex(id)
+		_ = db.DeleteConvBranchHistory(id)
+		_ = db.DeleteConvCostInheritance(id)
+	}
 	writeErr := j.rewriteHistoryReader(reader, sourceID, id, cwd, file)
 	closeErr := file.Close()
 	if writeErr != nil {
@@ -279,6 +292,14 @@ func (j jsonlHistory) ImportReader(reader io.Reader, sourceID, cwd string) (stri
 			return "", nil, err
 		}
 		if err := db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: filepath.Dir(path), FullPath: path, FileMtime: info.ModTime(), FileSize: info.Size(), ProjectPath: cwd, Harness: j.harness, Created: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+	}
+	if j.harness == CodexName {
+		// The copied token_count events carry the source's spend. Claude Code
+		// needs no boundary: its meter is the cost-state record dropped above.
+		if err := MarkConvCostInherited(id); err != nil {
 			cleanup()
 			return "", nil, err
 		}

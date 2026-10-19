@@ -1546,3 +1546,63 @@ func TestOpenCodeHaiku55CatalogPricing(t *testing.T) {
 		})
 	}
 }
+
+// An imported (cloned) session keeps its source's messages with their recorded
+// cost and tokens. Those are the source's spend: only messages created after
+// the inherited-history boundary count, while the context still reads the
+// conversation's latest call.
+func TestBackfillOpenCodeCostExcludesInheritedHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		inheritedCost string
+		ownCost       string
+		wantReal      float64
+		wantWhatIf    bool
+	}{
+		{name: "real", inheritedCost: "0.5", ownCost: "0.3", wantReal: 0.3},
+		{name: "what-if", inheritedCost: "0", ownCost: "0", wantWhatIf: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			resetOpenCodeLimitCacheForTest()
+			resetOpenCodeVirtualCostStateForTest()
+			t.Cleanup(resetOpenCodeLimitCacheForTest)
+			t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+			const sessionID, convID = "oc-inherited", "ses_inherited"
+			seedOpenCodeUsageSession(t, sessionID, convID)
+			require.NoError(t, db.SetConvCostInheritedUntil(convID, time.UnixMilli(150)))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/config/providers":
+					_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+						`"cost":{"input":1,"output":2},"limit":{"context":200000}}}}]}`))
+				case "/session/" + convID + "/message":
+					_, _ = w.Write([]byte(`[` +
+						`{"info":{"id":"msg-copied","sessionID":"` + convID + `","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
+						`"time":{"created":100},"cost":` + tc.inheritedCost + `,"tokens":{"input":5000,"output":500}}},` +
+						`{"info":{"id":"msg-own","sessionID":"` + convID + `","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
+						`"time":{"created":200},"cost":` + tc.ownCost + `,"tokens":{"input":1000,"output":100}}}` +
+						`]`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			backfillOpenCodeContextUsage(context.Background(), db.OpenCodeRuntime{
+				SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+				Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+			})
+			snap, err := db.GetContextSnapshot(sessionID)
+			require.NoError(t, err)
+			assert.InDelta(t, tc.wantReal, snap.CostUSD, 1e-12, "only the clone's own real spend")
+			if tc.wantWhatIf {
+				// 1000 input + 100 output tokens at $1/$2 per million.
+				assert.InDelta(t, (1000*1+100*2)/1e6, snap.VirtualCostUSD, 1e-12,
+					"only the clone's own tokens are priced")
+			}
+			assert.Equal(t, int64(1000), snap.TokensInput, "context reads the latest call")
+		})
+	}
+}
