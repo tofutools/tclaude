@@ -75,4 +75,12 @@ func TestPeerAccessUsageRequest(t *testing.T) {
 	require.Equal(t, 200, decide(more.ID, map[string]any{}))
 	fedEventually(t, "share raised", func() bool { g := share(); return g != nil && g.SpawnPolicy.MaxUSD == 15 })
 	require.Equal(t, g.CreatedAt.Unix(), share().CreatedAt.Unix(), "the share keeps counting from its start")
+
+	// A cap is never laid over access that has none.
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: bob, Slug: agentd.PermModelsProxy, Scope: ""}))
+	code, wide := ask(map[string]any{"permission": agentd.PermModelsProxy, "max_usd": 5})
+	require.Equal(t, 202, code)
+	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/access-requests/"+wide.ID+"/decision", map[string]any{"decision": "approve", "http_proxy": "", "max_usd": 5})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "with no cap")
 }

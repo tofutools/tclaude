@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,9 +29,8 @@ type FederationPeerAccessRequest struct {
 	GrantProxy  string  `json:"grant_http_proxy,omitempty"`
 	MaxUSD      float64 `json:"max_usd,omitempty"`
 	GrantMaxUSD float64 `json:"grant_max_usd,omitempty"`
-	// CapUSD is the grant's resulting cap, set by the caller just before
-	// approval: an amount added to an already capped share counts on top of
-	// what the share has spent. Not stored.
+	// CapUSD is the share's resulting cap after approval (an amount added
+	// to a live capped share counts on top of its cap). Not stored.
 	CapUSD float64 `json:"-"`
 }
 
@@ -151,14 +151,16 @@ func ApproveFederationPeerAccessRequest(r *FederationPeerAccessRequest, meaningf
 	if r.GrantGroupID != 0 {
 		scope = FederationGroupScope(r.GrantGroupID)
 	}
-	usage := r.Slug == usageRequestSlug
-	if usage && r.GrantProxy != "" {
-		scope = "http_proxy=" + r.GrantProxy
-	}
 	var wanted *time.Time
 	if r.GrantTTLSeconds > 0 {
 		at := time.Now().Add(time.Duration(r.GrantTTLSeconds) * time.Second)
 		wanted = &at
+	}
+	if r.Slug == usageRequestSlug {
+		if err = approveUsageGrant(tx, r, wanted); err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
 	}
 	covered := level == FederationTrustUnrestricted
 	var policy FederationSpawnPolicy
@@ -178,21 +180,10 @@ func ApproveFederationPeerAccessRequest(r *FederationPeerAccessRequest, meaningf
 			policy = g.SpawnPolicy
 			bestRank = rank
 		}
-		// A capped share never covers a usage request: the approval adds
-		// dollars to it.
-		if usage && g.SpawnPolicy.MaxUSD > 0 {
-			continue
-		}
 		if g.ExpiresAt == nil || wanted != nil && !g.ExpiresAt.Before(*wanted) {
 			covered = true
 			r.ExpiresAt = g.ExpiresAt
 		}
-	}
-	// A usage approval sets the share's cap, unless the share is already
-	// uncapped: approval never narrows what the peer has.
-	setPolicy := usage && (bestRank < 0 || policy.MaxUSD > 0)
-	if setPolicy {
-		policy.MaxUSD = r.CapUSD
 	}
 	if !covered {
 		raw, e := json.Marshal(policy)
@@ -203,24 +194,14 @@ func ApproveFederationPeerAccessRequest(r *FederationPeerAccessRequest, meaningf
 		if wanted != nil {
 			expires = dbTime(*wanted)
 		}
-		upsert := `INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at,expires_at) VALUES(?,?,?,?,?,?)
- ON CONFLICT(peer,slug,scope) DO UPDATE SET expires_at=CASE WHEN federation_peer_grants.expires_at IS NULL OR excluded.expires_at IS NULL THEN NULL ELSE MAX(federation_peer_grants.expires_at,excluded.expires_at) END`
-		if setPolicy {
-			// An expired share starts over: its old spend no longer counts.
-			upsert += `,spawn_policy=excluded.spawn_policy,created_at=CASE WHEN federation_peer_grants.expires_at IS NOT NULL AND federation_peer_grants.expires_at<=excluded.created_at THEN excluded.created_at ELSE federation_peer_grants.created_at END`
-		}
-		_, err = tx.Exec(upsert, r.Peer, r.Slug, scope, string(raw), dbTime(time.Now()), expires)
+		_, err = tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at,expires_at) VALUES(?,?,?,?,?,?)
+ ON CONFLICT(peer,slug,scope) DO UPDATE SET expires_at=CASE WHEN federation_peer_grants.expires_at IS NULL OR excluded.expires_at IS NULL THEN NULL ELSE MAX(federation_peer_grants.expires_at,excluded.expires_at) END`, r.Peer, r.Slug, scope, string(raw), dbTime(time.Now()), expires)
 		if err != nil {
 			return false, err
 		}
 		r.ExpiresAt = wanted
 	}
-	var expires any
-	if r.ExpiresAt != nil {
-		expires = dbTime(*r.ExpiresAt)
-	}
-	_, err = tx.Exec(`UPDATE federation_peer_access_requests SET grant_group_id=?,grant_ttl_seconds=?,expires_at=?,grant_http_proxy=?,grant_max_usd=? WHERE id=? AND peer=?`, r.GrantGroupID, r.GrantTTLSeconds, expires, r.GrantProxy, r.GrantMaxUSD, r.ID, r.Peer)
-	if err != nil {
+	if err = recordPeerAccessGrant(tx, r); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -232,3 +213,88 @@ func ApproveFederationPeerAccessRequest(r *FederationPeerAccessRequest, meaningf
 // usageRequestSlug is agentd's models.proxy: a request for it is a usage
 // request, which carries a gateway and a dollar amount.
 const usageRequestSlug = "models.proxy"
+
+// maxUsageCapUSD bounds a share's cap however often amounts are added (as
+// agentd's maxShareUSD).
+const maxUsageCapUSD = 1_000_000
+
+// recordPeerAccessGrant stores what an approval granted on its request row.
+func recordPeerAccessGrant(tx *sql.Tx, r *FederationPeerAccessRequest) error {
+	var expires any
+	if r.ExpiresAt != nil {
+		expires = dbTime(*r.ExpiresAt)
+	}
+	_, err := tx.Exec(`UPDATE federation_peer_access_requests SET grant_group_id=?,grant_ttl_seconds=?,expires_at=?,grant_http_proxy=?,grant_max_usd=? WHERE id=? AND peer=?`, r.GrantGroupID, r.GrantTTLSeconds, expires, r.GrantProxy, r.GrantMaxUSD, r.ID, r.Peer)
+	return err
+}
+
+// approveUsageGrant writes an approved usage request's models.proxy grant,
+// reading the peer's direct grant for the same gateway in the same
+// transaction:
+//   - none, or expired: a fresh share, the amount as its cap, starting now
+//     (old spend no longer counts);
+//   - live and capped: the amount added to its cap ("$5 more"), keeping its
+//     start, lasting at least as long as approved;
+//   - live and uncapped: an uncapped approval extends it; a capped one is
+//     refused (agentd says so before deciding), since a cap would narrow it.
+//
+// Unrestricted trust never covers a usage request: a share's cap applies to
+// an unrestricted peer too.
+func approveUsageGrant(tx *sql.Tx, r *FederationPeerAccessRequest, wanted *time.Time) error {
+	scope := ""
+	if r.GrantProxy != "" {
+		scope = "http_proxy=" + r.GrantProxy
+	}
+	now := time.Now()
+	var raw string
+	var created, expiresAt dbTimestamp
+	err := tx.QueryRow(`SELECT spawn_policy,created_at,expires_at FROM federation_peer_grants WHERE peer=? AND slug=? AND scope=?`, r.Peer, r.Slug, scope).Scan(&raw, &created, &expiresAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	var policy FederationSpawnPolicy
+	exists := err == nil
+	if exists {
+		if err = json.Unmarshal([]byte(raw), &policy); err != nil {
+			return err
+		}
+	}
+	live := exists && (expiresAt.Time().IsZero() || expiresAt.Time().After(now))
+	start := now
+	expires := wanted
+	if live {
+		if policy.MaxUSD == 0 && r.GrantMaxUSD > 0 {
+			return ErrUsageNarrows
+		}
+		start = created.Time()
+		if expiresAt.Time().IsZero() || wanted == nil {
+			expires = nil
+		} else if at := expiresAt.Time(); at.After(*wanted) {
+			expires = &at
+		}
+		if policy.MaxUSD > 0 && r.GrantMaxUSD > 0 {
+			policy.MaxUSD = math.Min(maxUsageCapUSD, policy.MaxUSD+r.GrantMaxUSD)
+		} else {
+			policy.MaxUSD = r.GrantMaxUSD
+		}
+	} else {
+		policy.MaxUSD = r.GrantMaxUSD
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return err
+	}
+	var expiresArg any
+	if expires != nil {
+		expiresArg = dbTime(*expires)
+	}
+	if _, err = tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at,expires_at) VALUES(?,?,?,?,?,?)
+ ON CONFLICT(peer,slug,scope) DO UPDATE SET spawn_policy=excluded.spawn_policy,created_at=excluded.created_at,expires_at=excluded.expires_at`, r.Peer, r.Slug, scope, string(encoded), dbTime(start), expiresArg); err != nil {
+		return err
+	}
+	r.ExpiresAt, r.CapUSD = expires, policy.MaxUSD
+	return recordPeerAccessGrant(tx, r)
+}
+
+// ErrUsageNarrows refuses a capped usage approval over an uncapped share.
+var ErrUsageNarrows = errors.New("the peer already shares usage on this gateway with no cap")

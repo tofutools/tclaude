@@ -2491,9 +2491,12 @@ asked for), and may lower the amount or shorten the time, never raise them:
 Approval writes a `models.proxy` grant scoped to that gateway with the amount
 as its cap. Asking again for a gateway that already has a live capped share
 adds the amount to its cap. The share keeps counting from its start, so
-"$5 more" means $5 more than is left. An expired share starts over. An
-uncapped share stays uncapped. Requests time out after five minutes, like
-every operator access request.
+"$5 more" means $5 more than is left. An expired share starts over. A
+capped approval is refused when it would limit access that has no cap, or
+when a capped share on every gateway would still bind the chosen gateway
+(approve for any gateway to add to that share). Unrestricted trust does not
+lift a share's cap. Requests time out after five minutes, like every
+operator access request.
 
 Use an API key for a shared gateway, not a consumer subscription's login:
 letting other people use a Claude Pro/Max or ChatGPT subscription is likely

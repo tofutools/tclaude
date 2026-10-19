@@ -270,9 +270,6 @@ func applyPeerAccessOutcome(req *approvalRequest, outcome approvalOutcome) bool 
 		scope = "http_proxy=" + pa.GrantProxy
 	}
 	if outcome.approved() {
-		if pa.Slug == PermModelsProxy {
-			pa.CapUSD = usageShareCapUSD(pa)
-		}
 		meaningful, groupSlugs := peerAccessCatalog()
 		approved, _ = db.ApproveFederationPeerAccessRequest(&pa, meaningful, groupSlugs)
 	}
