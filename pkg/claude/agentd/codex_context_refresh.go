@@ -500,19 +500,22 @@ func refreshCodexContextSnapshotOnReadBatched(
 		// conversation's spend. The boundary is written before the
 		// conversation first runs, so one read per generation suffices.
 		inheritedUntil, inheritedErr := db.ConvCostInheritedUntil(sess.ConvID)
-		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
-		switch {
-		case inheritedErr != nil:
-			// Leave the generation unresolved so the next refresh retries.
+		if inheritedErr != nil {
+			// Scanning without the boundary would price the copied history
+			// as this conversation's spend; serve the cached projection and
+			// retry on the next refresh.
 			slog.Warn("codex-cost: failed to resolve the inherited-history boundary",
 				"session_id", sess.ID, "conv_id", sess.ConvID, "error", inheritedErr, "module", "agentd")
-		case profileErr != nil:
+			return codexContextRefreshResultFromCache(sess, cached)
+		}
+		costInheritedUntil = inheritedUntil
+		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
+		if profileErr != nil {
 			slog.Warn("codex-cost: failed to resolve launch Fast-mode baseline",
 				"session_id", sess.ID, "conv_id", sess.ConvID, "error", profileErr, "module", "agentd")
-		default:
+		} else {
 			costBaselineConvID = sess.ConvID
 			costBaselineCreatedAt = sess.CreatedAt
-			costInheritedUntil = inheritedUntil
 			hasCostFastBaseline = profile != nil &&
 				(profile.FastModeAtLaunch != nil || profile.FastMode != nil)
 			if profile != nil && profile.FastModeAtLaunch != nil {
