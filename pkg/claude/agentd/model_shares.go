@@ -3,10 +3,12 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,8 +30,10 @@ type modelShare struct {
 	SpentUSD  float64    `json:"spent_usd"`
 	Since     time.Time  `json:"since,omitzero"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	// Unrestricted marks access through unrestricted trust, not a grant.
+	// Unrestricted marks access through unrestricted trust.
 	Unrestricted bool `json:"unrestricted,omitempty"`
+	// UsedUp says a cap is spent: the gateway refuses every request.
+	UsedUp bool `json:"used_up,omitempty"`
 }
 
 // modelSharesFor lists the gateways peer may use on this node now. A
@@ -90,10 +94,27 @@ func modelSharesFor(cfg *config.Config, peer *db.FederationPeer) []modelShare {
 				s.SpentUSD = float64(spent) / 1e6
 			}
 		}
-		if grant == nil {
-			s.Unrestricted = unrestricted
-		} else {
-			s.MaxUSD, s.Since, s.ExpiresAt = grant.SpawnPolicy.MaxUSD, grant.CreatedAt, grant.ExpiresAt
+		s.Unrestricted = unrestricted
+		if grant != nil {
+			s.MaxUSD, s.Since = grant.SpawnPolicy.MaxUSD, grant.CreatedAt
+		}
+		s.UsedUp = left <= 0
+		// Access lasts as long as its longest-lived source: unrestricted
+		// trust or a permanent grant never ends.
+		if !unrestricted {
+			for i := range grants {
+				g := &grants[i]
+				if g.Slug != PermModelsProxy || (g.Scope != "" && g.Scope != "http_proxy="+name) {
+					continue
+				}
+				if g.ExpiresAt == nil {
+					s.ExpiresAt = nil
+					break
+				}
+				if s.ExpiresAt == nil || g.ExpiresAt.After(*s.ExpiresAt) {
+					s.ExpiresAt = g.ExpiresAt
+				}
+			}
 		}
 		out = append(out, s)
 	}
@@ -166,10 +187,19 @@ func handleModelSharesReceived(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				Shares []modelShare `json:"shares"`
 			}
+			// A peer too old to know the route refuses it like any unknown
+			// path; that is "shares nothing", anything else is an error.
+			if reply.Status == http.StatusForbidden || reply.Status == http.StatusNotFound {
+				return
+			}
 			if reply.Status != 200 || json.Unmarshal(reply.Body, &body) != nil {
+				errs[peer.InstanceID] = fmt.Sprintf("unexpected answer (HTTP %d)", reply.Status)
 				return
 			}
 			for _, s := range body.Shares {
+				if !validReceivedShare(&s) {
+					continue
+				}
 				// The answer names this node; restate it as the gateway's node.
 				s.Peer, s.PeerName = peer.InstanceID, peerDisplay(peer)
 				out = append(out, s)
@@ -184,4 +214,33 @@ func handleModelSharesReceived(w http.ResponseWriter, r *http.Request) {
 		return out[i].Gateway < out[j].Gateway
 	})
 	writeJSON(w, 200, map[string]any{"shares": out, "errors": errs})
+}
+
+// validReceivedShare checks what a peer says it shares before it reaches the
+// dashboard or a terminal: names in their own charsets, a known dialect.
+// A model entry outside the model-ID charset is dropped.
+func validReceivedShare(s *modelShare) bool {
+	if !validModelProxyName(s.Gateway) || (s.Dialect != "anthropic" && s.Dialect != "openai") || !(s.MaxUSD >= 0) || !(s.SpentUSD >= 0) {
+		return false
+	}
+	models := s.Models[:0]
+	for _, m := range s.Models {
+		if validShareModelID(m) {
+			models = append(models, m)
+		}
+	}
+	s.Models = models
+	return true
+}
+
+func validShareModelID(m string) bool {
+	if m == "" || len(m) > 128 {
+		return false
+	}
+	for _, r := range m {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-:/@[]*", r)) {
+			return false
+		}
+	}
+	return true
 }

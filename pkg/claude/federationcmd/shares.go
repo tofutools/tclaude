@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -24,6 +25,7 @@ type modelShare struct {
 	SpentUSD     float64    `json:"spent_usd"`
 	ExpiresAt    *time.Time `json:"expires_at"`
 	Unrestricted bool       `json:"unrestricted"`
+	UsedUp       bool       `json:"used_up"`
 }
 
 type sharesParams struct {
@@ -74,10 +76,13 @@ func runShares(p *sharesParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(tw, "%s\tGATEWAY\tDIALECT\tSPENT\tCAP\tENDS\tMODELS\tUSE WITH\n", who)
 		for _, s := range resp.Shares {
 			capText, ends := "none", "never"
-			if s.Unrestricted {
-				capText = "none (unrestricted)"
-			} else if s.MaxUSD > 0 {
+			if s.MaxUSD > 0 {
 				capText = fmt.Sprintf("$%.2f", s.MaxUSD)
+				if s.UsedUp {
+					capText += " (used up)"
+				}
+			} else if s.Unrestricted {
+				capText = "none (unrestricted)"
 			}
 			if s.ExpiresAt != nil {
 				ends = s.ExpiresAt.Local().Format("2006-01-02 15:04")
@@ -90,8 +95,13 @@ func runShares(p *sharesParams, stdout, stderr io.Writer) int {
 		}
 		_ = tw.Flush()
 	}
-	for peer, reason := range resp.Errors {
-		fmt.Fprintf(stderr, "could not ask %s: %s\n", peer, reason)
+	peers := make([]string, 0, len(resp.Errors))
+	for peer := range resp.Errors {
+		peers = append(peers, peer)
+	}
+	sort.Strings(peers)
+	for _, peer := range peers {
+		fmt.Fprintf(stderr, "could not ask %s: %s\n", peer, resp.Errors[peer])
 	}
 	return 0
 }
