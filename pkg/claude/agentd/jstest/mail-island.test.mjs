@@ -308,6 +308,37 @@ test('a peer operator\'s access request decides with a TTL and an optional narro
   await mounted.unmount();
 });
 
+test('a peer\'s usage request picks the gateway and may only lower the amount', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = { id: 'par-u', origin_peer: 'inst_desk1', conv_title: 'operator@inst_desk1', caller_state: 'operator', title_status: 'available',
+    perm: 'models.proxy', grant_ttl_seconds: 7 * 86400, max_usd: 20, usage_gateways: ['openai-key', 'team-key'], body: 'budget ran out', body_label: 'Reason',
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-12T00:05:00Z', auto_grantable: false, scope_display: 'up to $20.00 on any gateway' };
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'par-u', messages: [] });
+  const controller = controllerFor(state);
+  const decided = [];
+  controller.decideAccess = (...a) => decided.push(a);
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const root = mounted.container;
+  assert.match(root.textContent, /Approving lets operator@inst_desk1's agents bill their model calls to you, up to \$20\.00 through openai-key, for 7 days/);
+  const gw = root.querySelector('select.access-usage-gateway');
+  assert.deepEqual([...gw.querySelectorAll('option')].map((o) => o.value), ['openai-key', 'team-key', '']);
+  for (const o of gw.querySelectorAll('option')) { if (o.value === 'team-key') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await harness.act(() => harness.fireEvent(gw, 'change'));
+  const amount = root.querySelector('.access-usage-amount');
+  amount.value = '30';
+  await harness.act(() => harness.fireEvent(amount, 'input'));
+  assert.match(root.textContent, /At most \$20\.00 was asked for/);
+  assert.equal(root.querySelector('.access-btn.approve').hasAttribute('disabled'), true);
+  amount.value = '10';
+  await harness.act(() => harness.fireEvent(amount, 'input'));
+  await harness.act(() => root.querySelector('.access-btn.approve').click());
+  assert.deepEqual(decided, [['par-u', 'approve', { grant_ttl_seconds: 7 * 86400, http_proxy: 'team-key', max_usd: 10 }]]);
+  await mounted.unmount();
+});
+
 test('a cross-node link request names the exact edge and decides approve, approve_future or deny', async (t) => {
   const harness = await createPreactHarness(t);
   const { MailApp } = await harness.importDashboardModule('js/mail-island.js');

@@ -8,8 +8,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/common"
 	"io"
+	"math"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -22,6 +24,8 @@ type accessParams struct {
 	Reason     string `long:"reason" optional:"true" help:"Explain the access request to the receiving operator"`
 	TTL        string `long:"ttl" optional:"true" help:"Grant lifetime, e.g. 1h or 0 for permanent; default 1h on requests"`
 	Seconds    int    `long:"seconds" optional:"true" help:"Extend the decision deadline by 1-300 seconds"`
+	HTTPProxy  string `long:"http-proxy" optional:"true" help:"models.proxy usage requests: the model gateway asked for (default any) or granted"`
+	MaxUSD     string `long:"max-usd" optional:"true" help:"models.proxy usage requests: the US dollar amount asked for or granted (approval may only lower it)"`
 }
 
 func accessCmd() *cobra.Command {
@@ -40,6 +44,14 @@ func runAccess(p *accessParams, stdout, stderr io.Writer) int {
 		seconds := int(d / time.Second)
 		ttl = &seconds
 	}
+	var maxUSD *float64
+	if p.MaxUSD != "" {
+		v, err := strconv.ParseFloat(p.MaxUSD, 64)
+		if err != nil || v < 0 || math.IsInf(v, 0) || math.IsNaN(v) {
+			return fail(stderr, fmt.Errorf("--max-usd must be a nonnegative dollar amount"))
+		}
+		maxUSD = &v
+	}
 	switch p.Action {
 	case "request":
 		if p.Node == "" || p.Permission == "" || p.GroupID < 0 {
@@ -50,6 +62,12 @@ func runAccess(p *accessParams, stdout, stderr io.Writer) int {
 		in := map[string]any{"permission": p.Permission, "group_id": p.GroupID, "reason": p.Reason}
 		if ttl != nil {
 			in["grant_ttl_seconds"] = *ttl
+		}
+		if p.HTTPProxy != "" {
+			in["http_proxy"] = p.HTTPProxy
+		}
+		if maxUSD != nil {
+			in["max_usd"] = *maxUSD
 		}
 		body = in
 	case "status":
@@ -76,6 +94,12 @@ func runAccess(p *accessParams, stdout, stderr io.Writer) int {
 		}
 		if p.Seconds != 0 {
 			in["secs"] = p.Seconds
+		}
+		if p.HTTPProxy != "" {
+			in["http_proxy"] = p.HTTPProxy
+		}
+		if maxUSD != nil {
+			in["max_usd"] = *maxUSD
 		}
 		body = in
 	default:

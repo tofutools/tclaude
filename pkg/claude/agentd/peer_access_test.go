@@ -11,14 +11,14 @@ func TestPeerAccessDecisionCannotBeReplacedAfterConsumption(t *testing.T) {
 	req := &approvalRequest{peerAccess: &db.FederationPeerAccessRequest{Slug: PermNodeUpdate, GrantTTLSeconds: 7200}, decision: make(chan approvalOutcome, 1)}
 	ttl := 3600
 	first := httptest.NewRecorder()
-	servePeerAccessDecision(first, req, "approve", &ttl, nil)
+	servePeerAccessDecision(first, req, "approve", &ttl, nil, nil, nil)
 	require.Equal(t, 200, first.Code)
 	// The waiter has consumed the first channel value, but has not yet read the
 	// grant fields. A competing POST must still be refused at this boundary.
 	require.Equal(t, outcomeApprove, <-req.decision)
 	forever := 0
 	second := httptest.NewRecorder()
-	servePeerAccessDecision(second, req, "approve", &forever, nil)
+	servePeerAccessDecision(second, req, "approve", &forever, nil, nil, nil)
 	require.Equal(t, 409, second.Code)
 	require.Equal(t, 3600, req.peerAccess.GrantTTLSeconds)
 }
@@ -38,7 +38,7 @@ func TestPeerAccessDecisionCannotExtendRequestedLifetime(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := &approvalRequest{peerAccess: &db.FederationPeerAccessRequest{Slug: PermNodeUpdate, GrantTTLSeconds: tc.requested}, decision: make(chan approvalOutcome, 1)}
 			rec := httptest.NewRecorder()
-			servePeerAccessDecision(rec, req, "approve", &tc.approved, nil)
+			servePeerAccessDecision(rec, req, "approve", &tc.approved, nil, nil, nil)
 			require.Equal(t, tc.status, rec.Code, rec.Body.String())
 			if tc.status != 200 {
 				require.Empty(t, req.decision)

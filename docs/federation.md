@@ -2479,6 +2479,22 @@ answers with an empty list. A gateway the peer is blocked on, or that is
 switched off, is not listed. The dashboard reads the same lists from
 `/api/federation/models/shares` and `…/shares/received`.
 
+**Asking for usage.** An operator access request (see "Operator access
+requests") for `models.proxy` asks a peer to share usage:
+`tclaude federation access request --node forge --permission models.proxy
+--max-usd 20 --ttl 168h --reason '…'`, optionally with `--http-proxy NAME` for
+one gateway. In the dashboard, open the peer's view and use **ask for usage…**
+in its peer-view pill. The peer's operator sees the amount, the time and the
+reason under Messages → Access requests. They pick the gateway (unless one was
+asked for), and may lower the amount or shorten the time, never raise them:
+`tclaude federation access approve --id ID --http-proxy team-key --max-usd 10`.
+Approval writes a `models.proxy` grant scoped to that gateway with the amount
+as its cap. Asking again for a gateway that already has a live capped share
+adds the amount to its cap. The share keeps counting from its start, so
+"$5 more" means $5 more than is left. An expired share starts over. An
+uncapped share stays uncapped. Requests time out after five minutes, like
+every operator access request.
+
 Use an API key for a shared gateway, not a consumer subscription's login:
 letting other people use a Claude Pro/Max or ChatGPT subscription is likely
 against the provider's terms.

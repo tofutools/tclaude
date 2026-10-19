@@ -2,7 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { NodeUpdateDialog } from './node-update.js';
-import { RequestAccessDialog } from './peer-access.js';
+import { RequestAccessDialog, USAGE_PERM } from './peer-access.js';
 import { PeerActionHost } from './peer-action.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LOCAL_COLOR, STATUS_POLL_MS, cardView, fmtAge, hubOffReason, linkView, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './fleet-model.js';
@@ -1060,6 +1060,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
       ${pv && pv.included.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Shared</span> ${pv.included.join(', ')}</div>`}
       ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Hidden from you</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${requestable(o) ? html` <button type="button" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…</button>` : ''}`)}</div>`}
       ${!pv && html`<div class="rnp-row muted">What the peer shares shows once it answers.</div>`}
+      <div class="rnp-row"><span class="rnp-k">Usage</span> <button type="button" class="rnp-ask" id="rnp-ask-usage" title=${`Ask ${name}'s operator to pay for your agents' model calls through its model gateway`} onClick=${() => { setAsking(USAGE_PERM); setOpen(false); }}>ask for usage…</button></div>
       <div class="rnp-foot"><button type="button" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}</button></div>
     </div>`}
     ${asking && html`<${RequestAccessDialog} node=${name} perm=${asking} groups=${(snapshot.value?.groups || []).filter((g) => g?.id && g.name)} onClose=${() => setAsking('')} />`}

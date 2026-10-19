@@ -30,7 +30,7 @@ import { proposalTurn } from './proposals-model.js';
 function openPeerMail(detail) {
   document.dispatchEvent(new CustomEvent(PEER_MAIL_EVENT, { detail }));
 }
-import { TTL_CHOICES, ttlText } from './peer-access.js';
+import { TTL_CHOICES, USAGE_PERM, parseUSD, ttlText } from './peer-access.js';
 import { LockReason, trustLock } from './lock-reason.js';
 import { slugInfo } from './fleet-admin-model.js';
 import { RemoteInboxSection } from './remote-inbox.js';
@@ -428,6 +428,7 @@ function AccessReader({ request, controller }) {
     </div></div>
     <div class="mail-reader-actions access-reader-actions">
       ${handled ? html`<${Fragment}><span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>${request.decided_at && html`<span class="access-decided-at">${relTime(request.decided_at)}</span>`}</${Fragment}>`
+        : request.origin_peer && request.perm === USAGE_PERM ? html`<${UsageAccessDecision} key=${request.id} request=${request} controller=${controller} />`
         : request.origin_peer ? html`<${PeerAccessDecision} request=${request} controller=${controller} />`
                 : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
           <span class="grow"></span><button class="access-btn extend" title="Push the auto-decline back 5 minutes"
@@ -483,6 +484,36 @@ function PeerAccessDecision({ request, controller, loadLinks = defaultLinks }) {
     <button class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
     <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
     <button class="access-btn approve" onClick=${approve}>Approve</button></${Fragment}>`;
+}
+
+// UsageAccessDecision decides a peer's usage request: billing its agents'
+// model calls to one of this node's model gateways. The approver picks the
+// gateway (unless one was asked for) and may lower the amount or shorten the
+// time, never raise them.
+function UsageAccessDecision({ request, controller }) {
+  const gateways = request.usage_gateways || [];
+  const [ttl, setTtl] = useState(String(request.grant_ttl_seconds ?? 3600));
+  const [gateway, setGateway] = useState(request.http_proxy || gateways[0] || '');
+  const [amount, setAmount] = useState(request.max_usd > 0 ? String(request.max_usd) : '');
+  const asked = Number(request.grant_ttl_seconds ?? 3600);
+  const ttlChoices = [...TTL_CHOICES.filter((c) => asked === 0 || (c.s !== 0 && c.s <= asked)),
+    ...(TTL_CHOICES.some((c) => c.s === asked) ? [] : [{ s: asked, label: ttlText(asked) }])].sort((a, b) => (a.s || Infinity) - (b.s || Infinity));
+  const usd = parseUSD(amount);
+  const tooMuch = usd !== null && request.max_usd > 0 && (usd === 0 || usd > request.max_usd);
+  const peer = request.conv_title || request.origin_peer;
+  const approve = () => controller.decideAccess(request.id, 'approve', { grant_ttl_seconds: Number(ttl), http_proxy: gateway, max_usd: usd || 0 });
+  const what = `${usd > 0 ? `up to $${usd.toFixed(2)}` : 'with no cap'} through ${gateway || 'any of your model gateways'}`;
+  return html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
+    <span class="access-peer-consequence">Approving lets ${peer}'s agents bill their model calls to you, ${what}, ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${gateways.length === 0 ? html` <b class="fa-danger">This node has no enabled model gateway.</b>` : ''}${tooMuch ? html` <b class="fa-danger">At most $${Number(request.max_usd).toFixed(2)} was asked for.</b>` : ''}</span>
+    <span class="grow"></span>
+    ${request.http_proxy ? html`<span class="access-usage-gateway mono">${request.http_proxy}</span>` : html`<select class="access-usage-gateway" title="The model gateway it bills to" value=${gateway} onChange=${(e) => setGateway(e.currentTarget.value)}>
+      ${gateways.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<option value="">any gateway</option></select>`}
+    <input class="access-usage-amount" title="Dollars it may spend (blank: no cap)" inputmode="decimal" placeholder="no cap" size="7" value=${amount} onInput=${(e) => setAmount(e.currentTarget.value)} />
+    <select class="access-peer-ttl" title="How long the share lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
+      ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}</select>
+    <button class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
+    <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
+    <button class="access-btn approve" disabled=${usd === null || tooMuch || gateways.length === 0} onClick=${approve}>Share</button></${Fragment}>`;
 }
 
 async function defaultLinks() {

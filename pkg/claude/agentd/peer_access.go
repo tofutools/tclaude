@@ -99,10 +99,12 @@ func servePeerAccessRequest(w http.ResponseWriter, r *http.Request, v *peerView,
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	var in struct {
-		Permission      string `json:"permission"`
-		GroupID         int64  `json:"group_id"`
-		Reason          string `json:"reason"`
-		GrantTTLSeconds *int   `json:"grant_ttl_seconds"`
+		Permission      string  `json:"permission"`
+		GroupID         int64   `json:"group_id"`
+		Reason          string  `json:"reason"`
+		GrantTTLSeconds *int    `json:"grant_ttl_seconds"`
+		HTTPProxy       string  `json:"http_proxy"`
+		MaxUSD          float64 `json:"max_usd"`
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -114,9 +116,17 @@ func servePeerAccessRequest(w http.ResponseWriter, r *http.Request, v *peerView,
 		writeError(w, 400, "invalid_arg", "one JSON body required")
 		return
 	}
+	// models.proxy is no peer-view route but a usage request: a gateway
+	// (or any) and an amount.
+	usage := in.Permission == PermModelsProxy
 	groupPermission, ok := requestablePeerPermission(in.Permission)
+	ok = ok || usage
 	if !ok || len(in.Reason) > 4096 || in.GroupID < 0 || !groupPermission && in.GroupID != 0 {
 		writeError(w, 400, "invalid_arg", "permission or scope is not requestable")
+		return
+	}
+	if !usage && (in.HTTPProxy != "" || in.MaxUSD != 0) || in.HTTPProxy != "" && !validModelProxyName(in.HTTPProxy) || !validUsageUSD(in.MaxUSD) {
+		writeError(w, 400, "invalid_arg", "a gateway and an amount (0 to 1000000 dollars) go only with models.proxy")
 		return
 	}
 	// Restricted callers can request a grant only in a group already visible to
@@ -138,8 +148,13 @@ func servePeerAccessRequest(w http.ResponseWriter, r *http.Request, v *peerView,
 		writeError(w, 400, "invalid_arg", "grant TTL must be 0 (permanent) through 30 days")
 		return
 	}
-	pa := &db.FederationPeerAccessRequest{ID: newApprovalID(), Peer: peer, Slug: in.Permission, GroupID: in.GroupID, GrantGroupID: in.GroupID, GrantTTLSeconds: ttl, Status: db.AccessRequestStatusPending}
-	req := &approvalRequest{id: pa.ID, peerAccess: pa, perm: in.Permission, convTitle: "operator@" + peer, method: http.MethodPost, path: "/api/peer-access-requests", bodyPreview: in.Reason, bodyLabel: "Reason", targetGroup: groupName, scopeDisplay: fmt.Sprintf("group_id=%d", in.GroupID), createdAt: time.Now(), timeout: 300 * time.Second, decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1), delegated: make(chan fedAwayDecision, 1)}
+	pa := &db.FederationPeerAccessRequest{ID: newApprovalID(), Peer: peer, Slug: in.Permission, GroupID: in.GroupID, GrantGroupID: in.GroupID, GrantTTLSeconds: ttl, Status: db.AccessRequestStatusPending,
+		Proxy: in.HTTPProxy, GrantProxy: in.HTTPProxy, MaxUSD: in.MaxUSD, GrantMaxUSD: in.MaxUSD}
+	scopeDisplay := fmt.Sprintf("group_id=%d", in.GroupID)
+	if usage {
+		scopeDisplay = usageAmountText(in.MaxUSD, in.HTTPProxy)
+	}
+	req := &approvalRequest{id: pa.ID, peerAccess: pa, perm: in.Permission, convTitle: "operator@" + peer, method: http.MethodPost, path: "/api/peer-access-requests", bodyPreview: in.Reason, bodyLabel: "Reason", targetGroup: groupName, scopeDisplay: scopeDisplay, createdAt: time.Now(), timeout: 300 * time.Second, decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1), delegated: make(chan fedAwayDecision, 1)}
 	approvals.mu.Lock()
 	pending := 0
 	for _, other := range approvals.pending {
@@ -170,7 +185,7 @@ func servePeerAccessRequest(w http.ResponseWriter, r *http.Request, v *peerView,
 	go waitHumanApproval(req, popupBaseURL)
 	writeJSON(w, 202, ack)
 }
-func servePeerAccessDecision(w http.ResponseWriter, req *approvalRequest, decision string, ttl *int, groupID *int64) {
+func servePeerAccessDecision(w http.ResponseWriter, req *approvalRequest, decision string, ttl *int, groupID *int64, proxy *string, maxUSD *float64) {
 	if decision != "approve" && decision != "deny" {
 		writeError(w, 400, "invalid_arg", "peer decisions are approve, deny, or extend")
 		return
@@ -208,6 +223,15 @@ func servePeerAccessDecision(w http.ResponseWriter, req *approvalRequest, decisi
 		writeError(w, 400, "invalid_arg", "approval cannot widen requested scope or TTL bounds")
 		return
 	}
+	if pa.Slug == PermModelsProxy {
+		if err := decideUsage(&pa, proxy, maxUSD); err != nil {
+			writeError(w, 400, "invalid_arg", err.Error())
+			return
+		}
+	} else if proxy != nil || maxUSD != nil {
+		writeError(w, 400, "invalid_arg", "a gateway and an amount go only with models.proxy")
+		return
+	}
 	if pa.GrantGroupID != 0 {
 		g, err := db.GetAgentGroupByID(pa.GrantGroupID)
 		if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(pa.Peer, g.ID) {
@@ -225,6 +249,8 @@ func servePeerAccessDecision(w http.ResponseWriter, req *approvalRequest, decisi
 		req.peerAccess.GrantGroupID = pa.GrantGroupID
 		req.peerAccess.GrantTTLSeconds = pa.GrantTTLSeconds
 		req.peerAccess.ExpiresAt = pa.ExpiresAt
+		req.peerAccess.GrantProxy = pa.GrantProxy
+		req.peerAccess.GrantMaxUSD = pa.GrantMaxUSD
 	default:
 		writeError(w, 409, "already_decided", "decision already queued")
 		return
@@ -240,7 +266,13 @@ func applyPeerAccessOutcome(req *approvalRequest, outcome approvalOutcome) bool 
 	if pa.GrantGroupID != 0 {
 		scope = db.FederationGroupScope(pa.GrantGroupID)
 	}
+	if pa.Slug == PermModelsProxy && pa.GrantProxy != "" {
+		scope = "http_proxy=" + pa.GrantProxy
+	}
 	if outcome.approved() {
+		if pa.Slug == PermModelsProxy {
+			pa.CapUSD = usageShareCapUSD(pa)
+		}
 		meaningful, groupSlugs := peerAccessCatalog()
 		approved, _ = db.ApproveFederationPeerAccessRequest(&pa, meaningful, groupSlugs)
 	}
