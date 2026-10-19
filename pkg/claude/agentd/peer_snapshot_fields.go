@@ -28,7 +28,7 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 		"identity": "AgentID ConvID Title",
 		"roster":   "Role",
 		"presence": "Online FederationPresence",
-		"status":   "State taskRefView",
+		"status":   "State taskRefView ClaudeSubscription",
 		"settings": "Descr tagsView Notify NotifyEffective",
 		"denied":   "CreatedAt agentLocationView repoLinksView Waking RouteHealth Owner",
 	}),

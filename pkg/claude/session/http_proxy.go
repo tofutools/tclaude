@@ -317,10 +317,10 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			return 0, e
 		}
 		if e = validateModelProxySettings(cwd, os.Environ()); e != nil {
-			return 0, fmt.Errorf("Claude subscription launch refused: %w", e)
+			return 0, fmt.Errorf("launch on a Claude subscription refused: %w", e)
 		}
 		if subscriptionToken, e = fetchClaudeSubscriptionToken(client, sessionID); e != nil {
-			return 0, fmt.Errorf("Claude subscription token unavailable; launch refused so this node's own login is not used: %w", e)
+			return 0, fmt.Errorf("the Claude subscription token is unavailable; launch refused so this node's own login is not used: %w", e)
 		}
 	}
 	environ := []string{}
