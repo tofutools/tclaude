@@ -21,6 +21,10 @@ var grantExpiry struct {
 // grantExpirySlack lets the expiry pass before the catalog is rebuilt.
 const grantExpirySlack = time.Second
 
+// grantExpiryRecheck bounds one wait: a timer's monotonic clock stops while
+// the host sleeps, so a long wait would wake late after a suspend.
+const grantExpiryRecheck = 5 * time.Minute
+
 // scheduleGrantExpiryBroadcast arms the timer for the soonest grant expiry,
 // replacing an earlier one. Call it whenever grants change.
 func scheduleGrantExpiryBroadcast() {
@@ -31,9 +35,6 @@ func scheduleGrantExpiryBroadcast() {
 	}
 	grantExpiry.mu.Lock()
 	defer grantExpiry.mu.Unlock()
-	if next.Equal(grantExpiry.at) && grantExpiry.timer != nil {
-		return
-	}
 	if grantExpiry.timer != nil {
 		grantExpiry.timer.Stop()
 		grantExpiry.timer = nil
@@ -42,11 +43,22 @@ func scheduleGrantExpiryBroadcast() {
 	if next.IsZero() {
 		return
 	}
-	grantExpiry.timer = time.AfterFunc(time.Until(next)+grantExpirySlack, func() {
+	wait := min(time.Until(next)+grantExpirySlack, grantExpiryRecheck)
+	var t *time.Timer
+	t = time.AfterFunc(wait, func() {
 		grantExpiry.mu.Lock()
-		grantExpiry.timer, grantExpiry.at = nil, time.Time{}
+		// A reschedule that raced this firing owns the state now.
+		if grantExpiry.timer != t {
+			grantExpiry.mu.Unlock()
+			return
+		}
+		due := !time.Now().Before(grantExpiry.at)
+		grantExpiry.timer = nil
 		grantExpiry.mu.Unlock()
-		broadcastFederationCatalogs()
+		if due {
+			broadcastFederationCatalogs()
+		}
 		scheduleGrantExpiryBroadcast()
 	})
+	grantExpiry.timer = t
 }

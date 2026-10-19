@@ -356,6 +356,13 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	// Away cover answers are bound to the away epoch, which rotates only on
+	// a grant or revoke; a grant that lapsed and came back would revive old
+	// answer tickets. Away mode has its own end instead.
+	if in.Slug == PermApprovalsAnswer && (in.ExpiresAt != nil || r.Method == http.MethodPatch) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "approvals.answer cannot be time-limited; away mode ends cover")
+		return
+	}
 	if poolID != "" && (in.ExpiresAt != nil || r.Method == http.MethodPatch) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "node-group grants cannot expire; grant the peer directly for a time limit")
 		return

@@ -258,7 +258,7 @@ func ApplyFederationProposal(id, peer string, revision int, decision, state stri
 			continue
 		}
 		if change.FutureLinks {
-			_, err = tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at) VALUES(?,'groups.link.accept',?,'{}',?) ON CONFLICT(peer,slug,scope) DO NOTHING`, peer, FederationGroupScope(change.GroupID), dbTime(time.Now()))
+			_, err = tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at) VALUES(?,'groups.link.accept',?,'{}',?) ON CONFLICT(peer,slug,scope) DO UPDATE SET expires_at=NULL`, peer, FederationGroupScope(change.GroupID), dbTime(time.Now()))
 			if err != nil {
 				return false, err
 			}
@@ -269,7 +269,7 @@ func ApplyFederationProposal(id, peer string, revision int, decision, state stri
 				policy = `{"include_members":true}`
 			}
 			_, err = tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at) VALUES(?,'groups.visibility.read',?,?,?)
- ON CONFLICT(peer,slug,scope) DO UPDATE SET spawn_policy=CASE WHEN json_extract(federation_peer_grants.spawn_policy,'$.include_members')=1 THEN federation_peer_grants.spawn_policy ELSE excluded.spawn_policy END`, peer, FederationGroupScope(change.GroupID), policy, dbTime(time.Now()))
+ ON CONFLICT(peer,slug,scope) DO UPDATE SET spawn_policy=CASE WHEN json_extract(federation_peer_grants.spawn_policy,'$.include_members')=1 THEN federation_peer_grants.spawn_policy ELSE excluded.spawn_policy END,expires_at=NULL`, peer, FederationGroupScope(change.GroupID), policy, dbTime(time.Now()))
 			if err != nil {
 				return false, err
 			}
