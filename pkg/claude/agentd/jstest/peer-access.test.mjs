@@ -28,7 +28,7 @@ test('the request dialog sends permission, group, TTL and reason and follows the
   await harness.act(() => harness.fireEvent(reason, 'input'));
   await harness.act(() => q('#peer-access-submit').click());
   await harness.act(() => new Promise((r) => setTimeout(r, 25)));
-  assert.deepEqual(calls[0], ['request', { permission: 'groups.members.clone', groupID: 0, reason: 'clone for triage', ttl: 86400 }]);
+  assert.deepEqual(calls[0], ['request', { permission: 'groups.members.clone', groupID: 0, reason: 'clone for triage', ttl: 86400, proxy: '', maxUSD: 0 }]);
   assert.match(q('#peer-access-status').textContent, /par-9: pending/);
   const tick = timers.queue.find((x) => x.ms === 3000);
   assert.ok(tick);
@@ -55,6 +55,42 @@ test('a peer that shares nothing yet explains the 403; the client sends the rout
   await harness.act(() => new Promise((r) => setTimeout(r, 25)));
   assert.match(doc.querySelector('[role=alert]').textContent, /forge only takes requests from peers it already shares something with/);
   await mounted.unmount();
+});
+
+test('a usage request asks for an amount, optionally a gateway, and names what was shared', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-access.js');
+  assert.equal(mod.parseUSD(''), 0);
+  assert.equal(mod.parseUSD('$12.5'), 12.5);
+  assert.equal(mod.parseUSD('-1'), null);
+  assert.equal(mod.parseUSD('lots'), null);
+  const calls = []; const timers = fakeTimers();
+  const actions = {
+    request: async (o) => { calls.push(o); return { id: 'par-u', status: 'pending' }; },
+    status: async (id) => ({ id, status: 'approved', grant_ttl_seconds: 86400, grant_max_usd: 10, grant_http_proxy: 'team-key' }),
+  };
+  const mounted = await harness.mount(harness.html`<${mod.RequestAccessDialog} node="forge" perm="models.proxy" onClose=${() => {}} actions=${actions} timers=${timers} />`);
+  const doc = harness.document; const q = (s) => doc.querySelector(s);
+  assert.match(q('#peer-access-title').textContent, /Ask forge for usage/);
+  assert.equal(q('#peer-access-group'), null);
+  const amount = q('#peer-access-amount');
+  amount.value = 'x';
+  await harness.act(() => harness.fireEvent(amount, 'input'));
+  assert.equal(q('#peer-access-submit').hasAttribute('disabled'), true);
+  amount.value = '15';
+  await harness.act(() => harness.fireEvent(amount, 'input'));
+  await harness.act(() => q('#peer-access-submit').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.deepEqual(calls[0], { permission: 'models.proxy', groupID: 0, reason: '', ttl: 7 * 86400, proxy: '', maxUSD: 15 });
+  const tick = timers.queue.find((x) => x.ms === 3000);
+  await harness.act(() => { timers.queue.splice(timers.queue.indexOf(tick), 1); tick.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.match(q('#peer-access-status').textContent, /forge shares \$10\.00 on team-key for 1 day/);
+  await mounted.unmount();
+  const sent = [];
+  const a = mod.createPeerAccessActions({ fetchImpl: async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, json: async () => ({}) }; } });
+  await a.request({ permission: 'models.proxy', ttl: 3600, proxy: 'team-key', maxUSD: 5 });
+  assert.deepEqual(sent[0], { permission: 'models.proxy', grant_ttl_seconds: 3600, http_proxy: 'team-key', max_usd: 5 });
 });
 
 test('Escape cancels the request dialog', async (t) => {

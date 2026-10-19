@@ -1762,7 +1762,7 @@ CREATE TABLE federation_identity_rotations (
 
 CREATE TABLE federation_peer_access_requests (
  id TEXT PRIMARY KEY, peer TEXT NOT NULL, slug TEXT NOT NULL, group_id INTEGER NOT NULL,
- grant_group_id INTEGER NOT NULL, grant_ttl_seconds INTEGER NOT NULL, expires_at INTEGER) STRICT;
+ grant_group_id INTEGER NOT NULL, grant_ttl_seconds INTEGER NOT NULL, expires_at INTEGER, http_proxy TEXT NOT NULL DEFAULT '', grant_http_proxy TEXT NOT NULL DEFAULT '', max_usd REAL NOT NULL DEFAULT 0, grant_max_usd REAL NOT NULL DEFAULT 0) STRICT;
 
 CREATE TABLE agent_federation_presence (
  agent_id TEXT PRIMARY KEY, home_instance TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('here','away','reserved','terminal')),

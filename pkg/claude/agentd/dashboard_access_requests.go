@@ -55,11 +55,19 @@ type dashboardAccessRequest struct {
 	GroupID         int64          `json:"group_id,omitempty"`
 	GrantTTLSeconds *int           `json:"grant_ttl_seconds,omitempty"`
 	GrantExpiresAt  *time.Time     `json:"grant_expires_at,omitempty"`
-	ID              string         `json:"id"`
-	Perm            string         `json:"perm"`
-	ConvID          string         `json:"conv_id,omitempty"`
-	ConvTitle       string         `json:"conv_title,omitempty"`
-	AgentID         string         `json:"agent_id,omitempty"`
+	// A usage request (models.proxy): the gateway asked for ("" any) and
+	// the amount (0 no cap), then what was granted; Gateways are this node's
+	// enabled gateways, the approver's choices.
+	UsageProxy      string   `json:"http_proxy,omitempty"`
+	UsageMaxUSD     float64  `json:"max_usd,omitempty"`
+	UsageGrantProxy string   `json:"grant_http_proxy,omitempty"`
+	UsageGrantUSD   float64  `json:"grant_max_usd,omitempty"`
+	UsageGateways   []string `json:"usage_gateways,omitempty"`
+	ID              string   `json:"id"`
+	Perm            string   `json:"perm"`
+	ConvID          string   `json:"conv_id,omitempty"`
+	ConvTitle       string   `json:"conv_title,omitempty"`
+	AgentID         string   `json:"agent_id,omitempty"`
 	// CurrentConvID / caller and title states are display metadata refreshed
 	// from AgentID on every snapshot. ConvID above remains the immutable
 	// request-generation correlation key.
@@ -199,6 +207,11 @@ func enrichPeerAccess(out *dashboardAccessRequest, p db.FederationPeerAccessRequ
 	ttl := p.GrantTTLSeconds
 	out.GrantTTLSeconds = &ttl
 	out.GrantExpiresAt = p.ExpiresAt
+	if p.Slug == PermModelsProxy {
+		out.UsageProxy, out.UsageMaxUSD = p.Proxy, p.MaxUSD
+		out.UsageGrantProxy, out.UsageGrantUSD = p.GrantProxy, p.GrantMaxUSD
+		out.UsageGateways = usageGateways()
+	}
 }
 
 func dbAccessRequestToDashboard(ar *db.AccessRequest) dashboardAccessRequest {
@@ -327,6 +340,9 @@ func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 		Secs            int    `json:"secs"`
 		GrantTTLSeconds *int   `json:"grant_ttl_seconds"`
 		GroupID         *int64 `json:"group_id"`
+		// A usage request's approval: the gateway and amount granted.
+		HTTPProxy *string  `json:"http_proxy"`
+		MaxUSD    *float64 `json:"max_usd"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
@@ -343,7 +359,7 @@ func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 
 	decision := strings.ToLower(strings.TrimSpace(body.Decision))
 	if req.peerAccess != nil && decision != "extend" {
-		servePeerAccessDecision(w, req, decision, body.GrantTTLSeconds, body.GroupID)
+		servePeerAccessDecision(w, req, decision, body.GrantTTLSeconds, body.GroupID, body.HTTPProxy, body.MaxUSD)
 		return
 	}
 	switch decision {
