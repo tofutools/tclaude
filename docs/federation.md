@@ -304,7 +304,9 @@ ends, so the peer's view drops it without waiting for another change.
 **Add grants** dialog has a **For** choice, and the grant list shows how long
 each timed grant has left; updating a timed grant there keeps its limit unless
 a new one is picked. Node-pool grants cannot be timed yet; grant the peer
-directly. An approved operator access request is a timed grant too (see
+directly. `approvals.answer` cannot be timed either; away mode ends the cover.
+Applying a node profile or accepting a peer's proposal makes the grants it
+writes permanent. An approved operator access request is a timed grant too (see
 "Operator access requests").
 
 ### Changing a peer's groups

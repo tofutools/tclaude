@@ -395,6 +395,7 @@ func TestFederation_TimedPeerGrant(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": time.Now().Add(-time.Minute)}), "an expiry in the past")
 	require.Equal(t, http.StatusBadRequest, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": time.Now().Add(400 * 24 * time.Hour)}), "an expiry beyond a year")
 	require.Equal(t, http.StatusNotFound, post(http.MethodPatch, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": time.Now().Add(time.Hour)}), "extending a grant that does not exist")
+	require.Equal(t, http.StatusBadRequest, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermApprovalsAnswer, "expires_at": time.Now().Add(time.Hour)}), "away cover is not time-limited")
 
 	soon := time.Now().Add(1500 * time.Millisecond)
 	require.Equal(t, http.StatusOK, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": soon}))

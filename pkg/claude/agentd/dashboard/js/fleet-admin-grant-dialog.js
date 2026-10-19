@@ -65,7 +65,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
   const fields = LAUNCH_FIELDS.filter((f) => policySlugs.some((s) => !f.slugs || f.slugs.includes(s)));
   const gw = gateway.trim();
   const gwBad = gatewayKinds && gw && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(gw);
-  const plan = target && rows ? planGrants({ target: target.id, slugs: picked, groups: chosen, allGroups, gateway: gw, maxLive, launch, rows, lifetime }) : { grants: [], missing: [] };
+  const plan = target && rows ? planGrants({ target: target.id, slugs: picked, groups: chosen, allGroups, gateway: gw, maxLive, launch, rows, lifetime: target.pool ? '' : lifetime }) : { grants: [], missing: [] };
   const todo = plan.grants.filter((g) => !g.skip);
   const canGrant = !!target && !!rows && todo.length > 0 && !plan.missing.length && !gwBad && !busy;
 
