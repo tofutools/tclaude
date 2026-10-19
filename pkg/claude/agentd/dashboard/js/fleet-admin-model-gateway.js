@@ -77,6 +77,7 @@ export function gatewayBody(form, { create = false } = {}) {
   const stored = form.credential !== 'none' && !create;
   if (form.keyMode === 'paste' && !form.key.trim() && !stored) return { error: 'Paste the provider API key.' };
   if (form.keyMode === 'file' && !/^(\/|~\/)/.test(form.keyFile.trim()) && !stored) return { error: 'Give the absolute path of the file that holds the key.' };
+  if (form.keyMode === 'paste' && form.key.trim().startsWith('sk-ant-oat')) return { error: 'This is a Claude subscription token (from claude setup-token). A gateway needs a provider API key from the Anthropic Console; subscription tokens cannot be served through one.' };
   const models = splitModels(form.models);
   if (!models.length) return { error: 'Allow at least one model (an exact ID or a prefix ending in *).' };
   for (const [f, what] of LIMIT_FIELDS) {

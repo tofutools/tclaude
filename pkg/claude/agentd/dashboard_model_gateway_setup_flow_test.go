@@ -68,6 +68,11 @@ func TestDashboardModelGatewaySetupEndToEnd(t *testing.T) {
 	require.Contains(t, got["message"], "refused the key (HTTP 401)")
 
 	call("PUT", "gateways/model", setup(map[string]any{"create": true}), 400)
+	// A subscription token is explained, not sent to the provider for a bare 401.
+	got = call("POST", "gateway-test", setup(map[string]any{"key": "sk-ant-oat01-example"}), 200)
+	require.Equal(t, false, got["ok"])
+	require.Contains(t, got["message"], "Claude subscription token")
+	call("PUT", "gateways/model", setup(map[string]any{"create": true, "key": "sk-ant-oat01-example"}), 400)
 	got = call("PUT", "gateways/model", setup(map[string]any{"create": true, "key": " sk-pasted-1 "}), 200)
 	require.Equal(t, "managed", got["credential"])
 	call("PUT", "gateways/model", setup(map[string]any{"create": true, "key": "sk-pasted-1"}), 400)
