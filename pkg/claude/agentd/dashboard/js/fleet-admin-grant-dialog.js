@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { GRANT_CATEGORIES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, extraPolicy, grantConsequence, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
+import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
 
@@ -40,6 +40,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
   const [maxLive, setMaxLive] = useState(2);
   const [launch, setLaunch] = useState({});
   const [showLaunch, setShowLaunch] = useState(false);
+  const [lifetime, setLifetime] = useState('');
   const [busy, setBusy] = useState(false);
   const target = targets.find((t) => t.id === to) || null;
 
@@ -64,7 +65,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
   const fields = LAUNCH_FIELDS.filter((f) => policySlugs.some((s) => !f.slugs || f.slugs.includes(s)));
   const gw = gateway.trim();
   const gwBad = gatewayKinds && gw && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(gw);
-  const plan = target && rows ? planGrants({ target: target.id, slugs: picked, groups: chosen, allGroups, gateway: gw, maxLive, launch, rows }) : { grants: [], missing: [] };
+  const plan = target && rows ? planGrants({ target: target.id, slugs: picked, groups: chosen, allGroups, gateway: gw, maxLive, launch, rows, lifetime: target.pool ? '' : lifetime }) : { grants: [], missing: [] };
   const todo = plan.grants.filter((g) => !g.skip);
   const canGrant = !!target && !!rows && todo.length > 0 && !plan.missing.length && !gwBad && !busy;
 
@@ -76,9 +77,10 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
     const n = todo.length;
     const notes = todo.map((g) => {
       const c = grantConsequence({ target: target.label, slug: g.slug, group: g.group, maxLive: g.body.spawn_policy?.max_live, gateway: g.gateway, policy: g.body.spawn_policy });
-      const kept = g.existing ? extraPolicy(g.existing.policy).filter((k) => !(k in g.body.spawn_policy) || g.existing.policy[k] === g.body.spawn_policy[k]) : [];
-      const replaces = g.existing ? ` This updates the existing grant (cap ${g.existing.maxLive || 2} → ${g.body.spawn_policy.max_live})${kept.length ? `; its other launch settings (${kept.join(', ')}) are kept` : ''}.` : '';
-      return `${c}${replaces}`;
+      const kept = g.existing && g.body.spawn_policy ? extraPolicy(g.existing.policy).filter((k) => !(k in g.body.spawn_policy) || g.existing.policy[k] === g.body.spawn_policy[k]) : [];
+      const replaces = !g.existing ? '' : g.body.spawn_policy ? ` This updates the existing grant (cap ${g.existing.maxLive || 2} → ${g.body.spawn_policy.max_live})${kept.length ? `; its other launch settings (${kept.join(', ')}) are kept` : ''}.` : ' This changes when the existing grant ends.';
+      const until = g.body.expires_at ? ` It ends ${new Date(g.body.expires_at).toLocaleString()}.` : '';
+      return `${c}${replaces}${until}`;
     });
     const sensitive = todo.some((g) => slugInfo(g.slug).sensitive);
     const warnings = [...new Set(todo.map((g) => slugInfo(g.slug).warning).filter(Boolean))];
@@ -93,7 +95,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
         const warned = [];
         for (const [i, g] of todo.entries()) {
           try {
-            const res = await actions.grant(g.body);
+            const res = g.extend ? await actions.extend({ ...g.body, scope: g.scope }) : await actions.grant(g.body);
             warned.push(...(res?.warnings || []));
           } catch (e) {
             for (const w of warned) toast(w, true);
@@ -165,10 +167,13 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
           ${policySlugs.includes('jobs.run') && html`<label><span class="fa-k">job approval</span><select data-launch="job_approval" value=${launch.job_approval ?? ''} onChange=${(e) => setLaunch({ ...launch, job_approval: e.currentTarget.value })}>
             <option value="">auto (default)</option><option value="manual">manual: each job waits for you</option></select></label>`}
         </div>`}
+        ${!target?.pool && html`<label class="fa-gd-row"><span class="fa-k">For</span><select id="fleet-grant-lifetime" value=${lifetime} onChange=${(e) => setLifetime(e.currentTarget.value)}>
+          ${GRANT_LIFETIMES.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}</select></label>`}
+        ${!target?.pool && !lifetime && rows?.some((r) => !r.pool && r.expiresAt && picked.includes(r.slug)) && html`<div class="muted fa-gd-note">A timed grant you update keeps its time limit.</div>`}
         <div class="fa-gd-plan" id="fleet-grant-plan">
           ${rowsError ? html`<span class="fa-danger" role="alert">Could not read ${target?.label}'s grants: ${rowsError}</span>` : !picked.length ? html`<span class="muted">Tick permissions on the left.</span>` : !target ? html`<span class="muted">Pick who gets them.</span>` : !rows ? html`<span class="muted">Loading ${target.label}'s grants…</span>` : html`
             <b>${todo.length ? `${target.label} gets ${todo.length} grant${todo.length === 1 ? '' : 's'}:` : 'Nothing new to grant.'}</b>
-            <ul>${plan.grants.map((g) => html`<li key=${g.key} data-plan=${g.key} class=${g.skip ? 'muted' : ''}><code class=${slugInfo(g.slug).sensitive ? 'fa-sensitive' : ''}>${g.slug}</code> ${where(g)}${g.body.spawn_policy ? ` (cap ${g.body.spawn_policy.max_live})` : ''}${g.skip ? ' — already granted' : g.existing ? ' — updates the existing grant' : ''}</li>`)}</ul>
+            <ul>${plan.grants.map((g) => html`<li key=${g.key} data-plan=${g.key} class=${g.skip ? 'muted' : ''}><code class=${slugInfo(g.slug).sensitive ? 'fa-sensitive' : ''}>${g.slug}</code> ${where(g)}${g.body.spawn_policy ? ` (cap ${g.body.spawn_policy.max_live})` : ''}${g.body.expires_at ? html` <span class="muted">${grantExpiryText(g.body.expires_at)}</span>` : ''}${g.skip ? ' — already granted' : g.existing ? ' — updates the existing grant' : ''}</li>`)}</ul>
             ${plan.missing.length > 0 && html`<div class="fa-warn">Pick a group for ${plan.missing.join(', ')}.</div>`}`}
         </div>
         <div class="modal-buttons"><span class="spacer"></span>
@@ -177,6 +182,6 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
         </div>
       </div>
     </div>
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation grant PEER SLUG [--scope …] [--max-live N] [--profile …] [--harness …] [--model …] [--cwd …] [--allow-profile …] [--requester-pays …] [--job-approval …]</code></div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation grant PEER SLUG [--scope …] [--max-live N] [--profile …] [--harness …] [--model …] [--cwd …] [--allow-profile …] [--requester-pays …] [--job-approval …] [--for 7d]</code> · <code>tclaude federation extend PEER SLUG --for 7d</code></div>
   </${Overlay}>`;
 }

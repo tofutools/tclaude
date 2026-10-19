@@ -373,3 +373,56 @@ func TestFederation_AbandonedAttemptCannotResolveReplacement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{newID}, workers)
 }
+
+// A timed peer grant works until it ends, then the peer's catalog drops it
+// without any other grant change; extend changes only the expiry.
+func TestFederation_TimedPeerGrant(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("one")
+	f.HaveGroup("two")
+	latest := func() proto.CatalogPayload {
+		cats := p.envelopes(proto.KindCatalog)
+		require.NotEmpty(t, cats)
+		var cat proto.CatalogPayload
+		require.NoError(t, cats[len(cats)-1].DecodePayload(&cat))
+		return cat
+	}
+	post := func(method string, body map[string]any) int {
+		rec := fedHuman(t, f, method, "/v1/federation/grants", body)
+		return rec.Code
+	}
+	require.Equal(t, http.StatusBadRequest, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": time.Now().Add(-time.Minute)}), "an expiry in the past")
+	require.Equal(t, http.StatusBadRequest, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": time.Now().Add(400 * 24 * time.Hour)}), "an expiry beyond a year")
+	require.Equal(t, http.StatusNotFound, post(http.MethodPatch, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": time.Now().Add(time.Hour)}), "extending a grant that does not exist")
+	require.Equal(t, http.StatusBadRequest, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermApprovalsAnswer, "expires_at": time.Now().Add(time.Hour)}), "away cover is not time-limited")
+
+	soon := time.Now().Add(1500 * time.Millisecond)
+	require.Equal(t, http.StatusOK, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": soon}))
+	later := time.Now().Add(time.Hour)
+	require.Equal(t, http.StatusOK, post(http.MethodPost, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=two", "expires_at": later}))
+	fedEventually(t, "both timed groups shared", func() bool { return len(latest().Groups) == 2 })
+	grants, err := db.ListFederationPeerGrants(p.id.ID())
+	require.NoError(t, err)
+	require.Len(t, grants, 2)
+	for _, g := range grants {
+		require.NotNil(t, g.ExpiresAt, g.Scope)
+	}
+	fedEventually(t, "the expired grant leaves the catalog on its own", func() bool { cat := latest(); return len(cat.Groups) == 1 && cat.Groups[0].Name == "two" })
+
+	// Renewing the expired grant and making the other permanent keep their scope.
+	require.Equal(t, http.StatusOK, post(http.MethodPatch, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=one", "expires_at": later}))
+	require.Equal(t, http.StatusOK, post(http.MethodPatch, map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=two", "expires_at": nil}))
+	fedEventually(t, "the renewed grant is shared again", func() bool { return len(latest().Groups) == 2 })
+	grants, err = db.ListFederationPeerGrants(p.id.ID())
+	require.NoError(t, err)
+	require.Len(t, grants, 2)
+	byScope := map[string]*time.Time{}
+	for _, g := range grants {
+		byScope[g.Scope] = g.ExpiresAt
+	}
+	g1, _ := db.GetAgentGroupByName("one")
+	g2, _ := db.GetAgentGroupByName("two")
+	require.NotNil(t, byScope[db.FederationGroupScope(g1.ID)])
+	require.Nil(t, byScope[db.FederationGroupScope(g2.ID)])
+}

@@ -354,6 +354,7 @@ func startFederationWith(fc *config.FederationConfig) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.ctx, rt.cancel = ctx, cancel
 	withdrawStaleFederationMirrors()
+	scheduleGrantExpiryBroadcast()
 	rt.wg.Add(4)
 	go func() { defer rt.wg.Done(); cl.Run(ctx) }()
 	go func() { defer rt.wg.Done(); rt.inboundLoop(ctx) }()

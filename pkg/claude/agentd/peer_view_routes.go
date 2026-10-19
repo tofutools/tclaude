@@ -182,6 +182,7 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/grants",
 	"POST /api/federation/grants",
 	"DELETE /api/federation/grants",
+	"PATCH /api/federation/grants",
 	"GET /api/federation/profiles",
 	"POST /api/federation/profiles",
 	"GET /api/federation/profiles/{name}",

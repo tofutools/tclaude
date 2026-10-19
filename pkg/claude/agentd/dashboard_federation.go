@@ -121,6 +121,7 @@ func registerDashboardFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/federation/grants", dashboardFederationRoute(handleFederationPeerGrants))
 	mux.HandleFunc("POST /api/federation/grants", dashboardFederationRoute(handleFederationPeerGrants))
 	mux.HandleFunc("DELETE /api/federation/grants", dashboardFederationRoute(handleFederationPeerGrants))
+	mux.HandleFunc("PATCH /api/federation/grants", dashboardFederationRoute(handleFederationPeerGrants))
 	mux.HandleFunc("GET /api/federation/profiles", dashboardFederationRoute(handleFederationNodeProfiles))
 	mux.HandleFunc("POST /api/federation/profiles", dashboardFederationRoute(handleFederationNodeProfiles))
 	mux.HandleFunc("GET /api/federation/profiles/{name}", dashboardFederationRoute(handleFederationNodeProfiles))

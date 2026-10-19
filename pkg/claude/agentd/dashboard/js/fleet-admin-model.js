@@ -222,7 +222,29 @@ export function grantVisibleSettings(slug) {
 // permission and scope is skipped, except a spawn/job grant, which is
 // updated: the daemon replaces it wholesale, so its other launch settings
 // are carried over and only the ones typed here change.
-export function planGrants({ target, slugs, groups = [], allGroups = false, gateway = '', maxLive = 2, launch = {}, rows = [] }) {
+// GRANT_LIFETIMES are the grant dialog's time limits in seconds ('' = none).
+export const GRANT_LIFETIMES = Object.freeze([
+  { value: '', label: 'no time limit' },
+  { value: '3600', label: '1 hour' },
+  { value: '28800', label: '8 hours' },
+  { value: '86400', label: '1 day' },
+  { value: '604800', label: '7 days' },
+  { value: '2592000', label: '30 days' },
+]);
+
+// grantExpiryText says when a timed grant ends ('' for a permanent one).
+export function grantExpiryText(iso, now = Date.now()) {
+  const at = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(at)) return '';
+  const left = Math.max(0, at - now) / 60000;
+  if (left < 60) return `expires in ${Math.max(1, Math.round(left))} min`;
+  if (left < 48 * 60) return `expires in ${Math.round(left / 60)} h`;
+  return `expires in ${Math.round(left / 1440)} d`;
+}
+
+// planGrants plans one POST per slug and scope. lifetime (seconds) times every
+// planned grant; without it, an existing grant keeps its expiry.
+export function planGrants({ target, slugs, groups = [], allGroups = false, gateway = '', maxLive = 2, launch = {}, rows = [], lifetime = 0, now = Date.now() }) {
   const out = []; const missing = [];
   for (const slug of slugs) {
     const info = slugInfo(slug);
@@ -249,7 +271,13 @@ export function planGrants({ target, slugs, groups = [], allGroups = false, gate
         body.spawn_policy = { ...(existing?.policy || {}), ...set, max_live: Math.max(1, Number(maxLive) || 2) };
         for (const k of Object.keys(body.spawn_policy)) { const v = body.spawn_policy[k]; if (v === '' || (Array.isArray(v) && !v.length)) delete body.spawn_policy[k]; }
       }
-      out.push({ key: `${slug}|${scope}`, slug, scope, group, gateway: gw, body, existing, skip: !!existing && !info.policy });
+      const seconds = Number(lifetime) || 0;
+      if (seconds > 0) body.expires_at = new Date(now + seconds * 1000).toISOString();
+      else if (existing?.expiresAt) body.expires_at = existing.expiresAt;
+      // A timed update of a grant without launch settings changes only its
+      // expiry (PATCH), so nothing else the grant holds is rewritten.
+      const extend = !!existing && !info.policy && seconds > 0;
+      out.push({ key: `${slug}|${scope}`, slug, scope: existing && extend ? existing.scope : scope, group, gateway: gw, body, existing, extend, skip: !!existing && !info.policy && !extend });
     }
   }
   return { grants: out, missing };
@@ -286,6 +314,7 @@ export function grantRows(grants, { ownPool = '', groups = null } = {}) {
       revocable: !deletedGroup || stableIDs,
       maxLive: g.spawn_policy?.max_live || 0,
       policy: g.spawn_policy || {},
+      expiresAt: g.expires_at || '',
     };
   });
   return rows.sort((a, b) => (a.pool ? 1 : 0) - (b.pool ? 1 : 0) || a.slug.localeCompare(b.slug) || a.group.localeCompare(b.group));

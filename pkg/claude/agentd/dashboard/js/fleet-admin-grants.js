@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { extraPolicy, grantRows } from './fleet-admin-model.js';
+import { extraPolicy, grantExpiryText, grantRows } from './fleet-admin-model.js';
 import { AddGrantDialog } from './fleet-admin-grant-dialog.js';
 import { ALL_TARGETS } from './fleet-admin-page.js';
 
@@ -43,7 +43,7 @@ function matches(t, r, q) {
 // grantCells renders one grant row's permission, where, allows and action
 // cells.
 function grantCells(r, onRevoke) {
-  return html`<td><code class=${r.sensitive ? 'fa-sensitive' : ''}>${r.slug}</code>${r.maxLive ? html` <span class="muted">cap ${r.maxLive}</span>` : ''}${extraPolicy(r.policy).length ? html` <span class="muted" title=${extraPolicy(r.policy).map((k) => `${k}: ${JSON.stringify(r.policy[k])}`).join('\n')}>+ settings</span>` : ''}</td>
+  return html`<td><code class=${r.sensitive ? 'fa-sensitive' : ''}>${r.slug}</code>${r.maxLive ? html` <span class="muted">cap ${r.maxLive}</span>` : ''}${extraPolicy(r.policy).length ? html` <span class="muted" title=${extraPolicy(r.policy).map((k) => `${k}: ${JSON.stringify(r.policy[k])}`).join('\n')}>+ settings</span>` : ''}${r.expiresAt ? html` <span class="muted fa-expiry" data-expires=${r.expiresAt} title=${`Until ${new Date(r.expiresAt).toLocaleString()}`}>${grantExpiryText(r.expiresAt)}</span>` : ''}</td>
     <td>${where(r)}</td>
     <td class="muted">${r.what}</td>
     <td class="fa-acts">${r.pool
