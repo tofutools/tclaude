@@ -278,12 +278,19 @@ func applyAuthoredStatesToPresentedPRs(view dashboardAuthoredOpenPRs) {
 			observed[prStateKey(pr.URL)] = strings.ToLower(strings.TrimSpace(pr.State))
 		}
 	}
+	applyObservedStatesToPresentedPRs(observed, "open-prs")
+}
+
+// applyObservedStatesToPresentedPRs writes GitHub state observations, keyed
+// by prStateKey, onto every visible agent_prs row for the same PR. source
+// prefixes the log lines.
+func applyObservedStatesToPresentedPRs(observed map[string]string, source string) {
 	if len(observed) == 0 {
 		return
 	}
 	all, err := listVisiblePresentedPRs()
 	if err != nil {
-		slog.Warn("open-prs: failed to reconcile presented PR rows", "error", err, "module", "agentd")
+		slog.Warn(source+": failed to reconcile presented PR rows", "error", err, "module", "agentd")
 		return
 	}
 	for _, rows := range all {
@@ -293,7 +300,7 @@ func applyAuthoredStatesToPresentedPRs(view dashboardAuthoredOpenPRs) {
 				continue
 			}
 			if _, err := db.UpdateAgentPRState(row.AgentID, row.PRURL, state); err != nil {
-				slog.Warn("open-prs: failed to apply state to presented PR",
+				slog.Warn(source+": failed to apply state to presented PR",
 					"error", err, "agent_id", row.AgentID, "url", row.PRURL,
 					"state", state, "module", "agentd")
 			}

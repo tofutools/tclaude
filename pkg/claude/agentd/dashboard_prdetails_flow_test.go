@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -178,4 +179,91 @@ func TestDashboardPRDetails_BranchLookupTitleReachesSnapshot(t *testing.T) {
 	warm := findAgent(snap.Agents, conv)
 	require.NotNil(t, warm)
 	assert.Equal(t, "Add the PR title to links", warm.BranchPRTitle)
+}
+
+// Scenario: the dashboard still shows an agent's branch PR as open, but the
+// operator hovers it after it merged. The hover's gh read must move the
+// Groups badge too, not only the card.
+func TestDashboardPRDetails_HoverStateReachesBranchBadge(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	const (
+		conv   = "prhovers-0000-0000-0000-000000000001"
+		branch = "feature-pr-hover"
+		prURL  = "https://github.com/acme/app/pull/92"
+	)
+	t.Cleanup(agentd.SetGitInfoResolverForTest(
+		func(_, b string) (string, string, int, string, string, bool) {
+			if b != branch {
+				return "", "", 0, "", "", false
+			}
+			return "https://github.com/acme/app", "main", 92, prURL, "open", true
+		}))
+	t.Cleanup(agentd.SetBranchPRTitleForTest(func(string) string { return "Old title" }))
+	t.Cleanup(agentd.SetPRDetailsFetcherForTest(func(string) (string, bool) {
+		return `{"title":"Hover title","state":"MERGED","isDraft":false}`, true
+	}))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSessionOnBranch(conv, "spwn-prhover", "tmux-prhover", f.TestCwd("wt/hover"), branch)
+	f.HaveMember("squad", conv)
+	require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
+	savePresentedPRPolicy(t, "github.com/acme")
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	_ = fetchDashSnapshot(t, mux)
+	agentd.WaitForBackgroundForTest()
+	member := findDashMember(fetchDashSnapshot(t, mux), "squad", conv)
+	require.NotNil(t, member)
+	require.Equal(t, "open", member.BranchPRState)
+
+	_ = fetchPRDetails(t, mux, prURL)
+	agentd.WaitForBackgroundForTest()
+
+	member = findDashMember(fetchDashSnapshot(t, mux), "squad", conv)
+	require.NotNil(t, member)
+	assert.Equal(t, "merged", member.BranchPRState, "the hover read updates the badge")
+	assert.Equal(t, "Hover title", member.BranchPRTitle)
+}
+
+// Scenario: an agent presented a PR that has since been closed. Hovering it
+// updates the presented badge and the durable agent_prs row the lifecycle
+// (expiry, triggers) runs on.
+func TestDashboardPRDetails_HoverStateReachesPresentedPR(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetPresentedPRInfoResolverForTest(
+		func(rawURL string) (int, string, string, bool) { return 125, rawURL, "open", true }))
+	t.Cleanup(agentd.SetPRDetailsFetcherForTest(func(string) (string, bool) {
+		return `{"title":"Abandoned idea","state":"CLOSED","isDraft":false}`, true
+	}))
+	const (
+		worker = "prhp-aaaa-bbbb-cccc-dddd"
+		prURL  = "https://github.com/tofutools/tclaude/pull/125"
+	)
+	f.HaveGroup("alpha")
+	f.HaveConvWithTitle(worker, "worker")
+	repo := presentedPRTestRepo(t, f, "prhp", "git@github.com:tofutools/tclaude.git", "github.com/tofutools")
+	f.HaveAliveSession(worker, "lbl-prhp", "tmux-prhp", repo)
+	f.HaveMember("alpha", worker)
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": prURL, "state": "open"}), worker))
+	require.Equalf(t, http.StatusOK, rec.Code, "present: body=%s", rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	_ = fetchPRDetails(t, mux, prURL)
+	agentd.WaitForBackgroundForTest()
+
+	m := findDashMember(fetchDashSnapshot(t, mux), "alpha", worker)
+	require.NotNil(t, m)
+	require.Len(t, m.PresentedPRs, 1)
+	assert.Equal(t, "closed", m.PresentedPRs[0].State)
+	agentID, err := db.AgentIDForConv(worker)
+	require.NoError(t, err)
+	row, err := db.GetAgentPR(agentID, prURL)
+	require.NoError(t, err)
+	assert.Equal(t, "closed", row.State)
 }

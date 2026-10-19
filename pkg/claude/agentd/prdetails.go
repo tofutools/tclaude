@@ -25,6 +25,10 @@ import (
 // a much longer TTL: a title or diffstat moves on a push, not every few
 // seconds, and the card is read rather than watched.
 //
+// A successful read also shares its state and title with the Groups badges
+// (see sharePRDetailsObservation): the card is often the freshest GitHub read
+// the daemon has for that PR.
+//
 // The description is reduced to a plain-text excerpt here rather than in the
 // browser, so the cache and the wire carry a few hundred characters instead
 // of a PR body that can run to tens of kilobytes.
@@ -284,6 +288,7 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 	if _, busy := prDetailsInflight.LoadOrStore(key, struct{}{}); busy {
 		return true
 	}
+	requestedAt := time.Now()
 	goBackground(func() {
 		defer prDetailsInflight.Delete(key)
 		raw, ok := prDetailsFetcher(rawURL)
@@ -298,8 +303,29 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 		prDetailsFailedAt.Delete(key)
 		details.FetchedAt = time.Now()
 		savePRDetails(rawURL, details)
+		sharePRDetailsObservation(rawURL, details, requestedAt)
 	})
 	return true
+}
+
+// sharePRDetailsObservation feeds a hover read's state and title into the
+// same per-PR observation cache and agent_prs rows the background pollers
+// write, so the Groups badges catch up with what the card just showed instead
+// of waiting for the next poll. The observation is stamped with the request's
+// start rather than its finish, so a slow read cannot outrank a poll that saw
+// GitHub after it started; the rows get whichever state the cache then holds.
+func sharePRDetailsObservation(rawURL string, details prDetails, observedAt time.Time) {
+	if details.State == "" {
+		return
+	}
+	state := savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{
+		Title:     truncateAuthoredPRTitle(details.Title),
+		Number:    deriveGitHubPRNumber(rawURL),
+		URL:       strings.TrimSpace(rawURL),
+		State:     details.State,
+		FetchedAt: observedAt,
+	}, observedAt)
+	applyObservedStatesToPresentedPRs(map[string]string{prStateKey(rawURL): state}, "pr-details")
 }
 
 // prDetailsResponse is the hover card's wire shape. Refreshing marks a `gh`
