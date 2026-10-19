@@ -92,6 +92,12 @@ spend to a monetary budget. `what_if_enabled` follows the operator's
 `cost.show_on_subscription` setting. WHAT-IF values are omitted from spend
 when disabled. Dashboard display multipliers never change these raw amounts.
 
+A conversation created from copied history (a clone, a cross-node teleport or
+move, a bundle or `.paf` import) records only its own spend; the copied
+history's spend stays with its source. Claude Code transcripts drop their
+restored cost meter when copied, and Codex, Gemini and OpenCode cost readers
+skip usage recorded before the copy landed.
+
 Cost data covers recorded tclaude sessions, not the provider's entire invoice.
 Model attribution follows the dashboard's Costs view: each conversation/day slice uses the
 last observed model. `generated_at` is the response time, not proof that all

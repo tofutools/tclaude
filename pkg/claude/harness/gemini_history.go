@@ -316,6 +316,7 @@ func (h geminiHistory) ImportReader(r io.Reader, source, cwd string) (string, fu
 		}
 		_ = db.DeleteConvIndex(id)
 		_ = db.DeleteConvBranchHistory(id)
+		_ = db.DeleteConvCostInheritance(id)
 	}
 	fail := func(e error) (string, func(), error) { cleanup(); return "", nil, e }
 	for _, root := range roots {
@@ -392,6 +393,11 @@ func (h geminiHistory) ImportReader(r io.Reader, source, cwd string) (string, fu
 		return fail(err)
 	}
 	if err = db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: filepath.Dir(filepath.Dir(paths[0])), FullPath: paths[0], ProjectPath: cwd, Harness: GeminiName, FileSize: info.Size(), FileMtime: info.ModTime()}); err != nil {
+		return fail(err)
+	}
+	// The copied messages keep their recorded tokens, which the cost reader
+	// prices; they are the source's spend.
+	if err = MarkConvCostInherited(id); err != nil {
 		return fail(err)
 	}
 	return id, cleanup, nil

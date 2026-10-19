@@ -643,6 +643,15 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 		newConv = forkedID
 		codexThreadForked = true
+		// Current Codex forks by reference (forked_from_id), so the new
+		// rollout holds no inherited usage. Older releases copied the
+		// parent's records into it at fork time; the boundary keeps those
+		// from being priced again under the clone. The fork already exists
+		// and cannot be retried safely, so a failure here only warns.
+		if err := harness.MarkConvCostInherited(newConv); err != nil {
+			slog.Warn("clone: recording the forked thread's inherited-cost boundary failed",
+				"conv", newConv, "error", err)
+		}
 	}
 
 	if noCopyConv {

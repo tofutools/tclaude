@@ -44,7 +44,7 @@ func TestGeminiCostHistoryIsCumulativePerLocalDay(t *testing.T) {
 		call(day1.Add(time.Hour), "gemini-unknown"),
 		call(time.Time{}, "gemini-2.5-flash"), // no timestamp: the previous call's day
 		call(day2, "gemini-2.5-pro"),
-	}, day2.Add(time.Hour))
+	}, day2.Add(time.Hour), time.Time{})
 	assert.InDelta(t, 0.30+0.30+2.50, total, 1e-9, "1M tokens of prompt is 2.5 Pro's long tier")
 	require.Len(t, history, 2)
 	assert.Equal(t, day1.Format("2006-01-02"), history[0].Day)
@@ -99,4 +99,44 @@ func TestGeminiUsageFollowerCostSurvivesAFileRewrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, usage.Calls)
 	assert.InDelta(t, 0.60, usage.CostUSD, 1e-9, "a rewrite never lowers the cost of calls already made")
+}
+
+// A cloned session file keeps its source's calls with their tokens. Calls at
+// or before the inherited-history boundary are the source's spend; an
+// untimestamped call shares the previous call's side of it.
+func TestGeminiCostHistoryExcludesInheritedCalls(t *testing.T) {
+	day1 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.Local)
+	day2 := day1.Add(24 * time.Hour)
+	call := func(at time.Time) geminiBilledCall {
+		return geminiBilledCall{model: "gemini-2.5-flash", tokens: geminiTokens{Input: 1_000_000}, timestamp: at}
+	}
+	total, history := geminiCostHistory([]geminiBilledCall{
+		call(day1),
+		call(time.Time{}), // inherited with the call before it
+		call(day2),
+		call(time.Time{}),
+	}, day2.Add(time.Hour), day1.Add(time.Hour))
+	assert.InDelta(t, 0.60, total, 1e-9, "only the two calls after the boundary")
+	require.Len(t, history, 1, "the source's day gets no row")
+	assert.Equal(t, day2.Format("2006-01-02"), history[0].Day)
+	assert.InDelta(t, 0.60, history[0].CostUSD, 1e-9)
+}
+
+func TestGeminiUsageFollowerExcludesInheritedCalls(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(GeminiHomeEnvVar, home)
+	path := writeGeminiUsageFixture(t, home, geminiUsageTestConv,
+		`{"id":"g1","type":"gemini","content":"a","model":"gemini-2.5-flash","timestamp":"2026-10-02T08:01:00Z","tokens":{"input":1000000,"output":0}}`,
+		`{"id":"g2","type":"gemini","content":"b","model":"gemini-2.5-flash","timestamp":"2026-10-02T09:01:00Z","tokens":{"input":1000000,"output":0}}`,
+	)
+	var follower GeminiUsageFollower
+	follower.SetCostInheritedUntil(time.Date(2026, 10, 2, 8, 30, 0, 0, time.UTC))
+	usage, found, err := follower.Read(path)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, 2, usage.Calls, "the inherited call still describes the context")
+	assert.InDelta(t, 0.30, usage.CostUSD, 1e-9, "only the call after the boundary is priced")
+	history := follower.CostHistory(time.Now())
+	require.Len(t, history, 1)
+	assert.InDelta(t, 0.30, history[0].CostUSD, 1e-9)
 }

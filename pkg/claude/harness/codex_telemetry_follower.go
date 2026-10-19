@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	codexTelemetryCheckpointVersion  = 8
+	codexTelemetryCheckpointVersion  = 9
 	codexTelemetryAnchorBytes        = 64
 	maxCodexTelemetryCheckpointBytes = 1 << 20
 )
@@ -44,6 +44,7 @@ type CodexTelemetryFollower struct {
 	costFastBaseline             bool
 	hasCostFastBaseline          bool
 	costFastBaselineAt           time.Time
+	costInheritedUntil           time.Time
 }
 
 func (f *CodexTelemetryFollower) ensureStream() *filefollow.Follower[codexRuntimeScanState] {
@@ -59,6 +60,7 @@ func (f *CodexTelemetryFollower) ensureStream() *filefollow.Follower[codexRuntim
 				state.costFastBaseline = f.costFastBaseline
 				state.hasCostFastBaseline = f.hasCostFastBaseline
 				state.costFastBaselineAt = f.costFastBaselineAt
+				state.costInheritedUntil = f.costInheritedUntil
 				return state
 			},
 			CloneState: func(state codexRuntimeScanState) codexRuntimeScanState { return state.clone() },
@@ -102,6 +104,8 @@ type codexTelemetryCheckpoint struct {
 	HasCostFastBaseline  bool                          `json:"has_cost_fast_baseline,omitempty"`
 	CostFastBaselineAt   time.Time                     `json:"cost_fast_baseline_at,omitempty"`
 	CostFastBaselineUsed bool                          `json:"cost_fast_baseline_used,omitempty"`
+	CostInheritedUntil   time.Time                     `json:"cost_inherited_until,omitzero"`
+	CostInheritedUSD     float64                       `json:"cost_inherited_usd,omitempty"`
 	Usage                *CodexUsage                   `json:"usage,omitempty"`
 	CostUSD              float64                       `json:"cost_usd,omitempty"`
 	CostPriced           bool                          `json:"cost_priced,omitempty"`
@@ -155,6 +159,8 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	state.hasCostFastBaseline = cp.HasCostFastBaseline
 	state.costFastBaselineAt = cp.CostFastBaselineAt
 	state.costFastBaselineUsed = cp.CostFastBaselineUsed
+	state.costInheritedUntil = cp.CostInheritedUntil
+	state.costInheritedUSD = cp.CostInheritedUSD
 	state.usage = cp.Usage
 	state.costUSD = cp.CostUSD
 	state.costPriced = cp.CostPriced
@@ -193,6 +199,7 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	f.costFastBaseline = cp.CostFastBaseline
 	f.hasCostFastBaseline = cp.HasCostFastBaseline
 	f.costFastBaselineAt = cp.CostFastBaselineAt
+	f.costInheritedUntil = cp.CostInheritedUntil
 	f.children = make(map[string]*CodexTelemetryFollower, len(cp.Children))
 	for id, childData := range cp.Children {
 		child := &CodexTelemetryFollower{preserveMissing: true}
@@ -246,6 +253,8 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		HasCostFastBaseline:  f.state.hasCostFastBaseline,
 		CostFastBaselineAt:   f.state.costFastBaselineAt,
 		CostFastBaselineUsed: f.state.costFastBaselineUsed,
+		CostInheritedUntil:   f.state.costInheritedUntil,
+		CostInheritedUSD:     f.state.costInheritedUSD,
 		Usage:                f.state.usage,
 		CostUSD:              f.state.costUSD,
 		CostPriced:           f.state.costPriced,
@@ -300,6 +309,21 @@ func (f *CodexTelemetryFollower) SetCostFastModeBaseline(fast bool, observedAt t
 	f.costFastBaseline = fast
 	f.hasCostFastBaseline = true
 	f.costFastBaselineAt = observedAt
+	f.clearCursor()
+}
+
+// SetCostInheritedUntil supplies the conversation's inherited-history boundary
+// (db.ConvCostInheritedUntil). Token usage the rollout records at or before it
+// was copied in from another conversation and is excluded from the cost, as
+// are sub-agents that conversation spawned. The zero time means the whole
+// rollout is the conversation's own.
+func (f *CodexTelemetryFollower) SetCostInheritedUntil(until time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.costInheritedUntil.Equal(until) {
+		return
+	}
+	f.costInheritedUntil = until
 	f.clearCursor()
 }
 
@@ -358,6 +382,7 @@ func (f *CodexTelemetryFollower) runtimeTelemetry(
 		state, err := codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
 			path, ownerID,
 			f.costFastBaseline, f.hasCostFastBaseline, f.costFastBaselineAt,
+			f.costInheritedUntil,
 		)
 		if err != nil {
 			return CodexRuntimeSnapshot{}, err
@@ -408,6 +433,7 @@ func (f *CodexTelemetryFollower) aggregateChildrenLocked(
 		if f.hasCostFastBaseline {
 			child.SetCostFastModeBaseline(f.costFastBaseline, f.costFastBaselineAt)
 		}
+		child.SetCostInheritedUntil(f.costInheritedUntil)
 		snap, err := child.runtimeTelemetry(home, id, ancestors)
 		if err != nil {
 			return CodexRuntimeSnapshot{}, fmt.Errorf("follow Codex child %s: %w", id, err)

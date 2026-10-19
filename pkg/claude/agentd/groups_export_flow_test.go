@@ -548,7 +548,9 @@ func TestGroupImport_CrossHomePathRewrite(t *testing.T) {
 
 	jsonl := `{"type":"user","sessionId":"` + convID + `","cwd":"` + srcCwd +
 		`","message":{"role":"user","content":"touched ` + srcCwd +
-		`/main.go and ` + srcHome + `/.config/tclaude/x"}}` + "\n"
+		`/main.go and ` + srcHome + `/.config/tclaude/x"}}` + "\n" +
+		// The source's restored cost meter: its spend stays on its own books.
+		`{"type":"cost-state","sessionId":"` + convID + `","totalCostUSD":7.5}` + "\n"
 
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
@@ -581,6 +583,7 @@ func TestGroupImport_CrossHomePathRewrite(t *testing.T) {
 	assert.NotContains(t, got, srcCwd, "no trace of the source cwd")
 	assert.Contains(t, got, res.TargetDir+"/main.go", "source cwd rewritten to the import target")
 	assert.Contains(t, got, home+"/.config/tclaude/x", "source home rewritten to the local home")
+	assert.NotContains(t, got, "totalCostUSD", "the source's cost meter is not imported")
 }
 
 func TestGroupImport_MissingConversationLateFileCollisionRollsBack(t *testing.T) {

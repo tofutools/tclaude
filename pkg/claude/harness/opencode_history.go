@@ -331,6 +331,13 @@ func rewriteOpenCodeHistory(r io.Reader, source, newID, cwd string, out io.Write
 				delete(info, "revert")
 				delete(info, "projectID")
 				delete(info, "path")
+				// The session's running cost and token totals: imported, they
+				// would start the copy's native session cost at the source's
+				// spend, which tclaude would record again under the copy. The
+				// messages keep their own figures; the copy's cost reader
+				// skips those as inherited (MarkConvCostInherited).
+				delete(info, "cost")
+				delete(info, "tokens")
 			}
 			raw, err := json.Marshal(info)
 			if err != nil {
@@ -436,6 +443,7 @@ func (h openCodeHistory) ImportReader(r io.Reader, source, cwd string) (string, 
 		_ = h.command(cwd, io.Discard, "session", "delete", id)
 		_ = db.DeleteConvIndex(id)
 		_ = db.DeleteConvBranchHistory(id)
+		_ = db.DeleteConvCostInheritance(id)
 	}
 	if err = h.command(cwd, io.Discard, "import", file.Name()); err != nil {
 		cleanup()
@@ -455,6 +463,12 @@ func (h openCodeHistory) ImportReader(r io.Reader, source, cwd string) (string, 
 	for _, session := range sessions {
 		if session.ID == id {
 			if err = db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: cwd, ProjectPath: cwd, Harness: OpenCodeName, Created: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+				cleanup()
+				return "", nil, err
+			}
+			// The imported messages keep their recorded cost and tokens; they
+			// are the source's spend.
+			if err = MarkConvCostInherited(id); err != nil {
 				cleanup()
 				return "", nil, err
 			}

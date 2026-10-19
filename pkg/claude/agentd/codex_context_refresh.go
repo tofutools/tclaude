@@ -70,6 +70,7 @@ type codexReadThroughSnapshot struct {
 	costBaselineCreatedAt time.Time
 	costFastModeBaseline  bool
 	hasCostFastBaseline   bool
+	costInheritedUntil    time.Time
 	persistedConvID       string
 	persistedCreatedAt    time.Time
 	persistedContext      harness.ContextTelemetry
@@ -493,7 +494,21 @@ func refreshCodexContextSnapshotOnReadBatched(
 	costBaselineCreatedAt := cached.costBaselineCreatedAt
 	costFastModeBaseline := cached.costFastModeBaseline
 	hasCostFastBaseline := cached.hasCostFastBaseline
+	costInheritedUntil := cached.costInheritedUntil
 	if costBaselineConvID != sess.ConvID || !costBaselineCreatedAt.Equal(sess.CreatedAt) {
+		// A clone or imported history: the copied token usage is the source
+		// conversation's spend. The boundary is written before the
+		// conversation first runs, so one read per generation suffices.
+		inheritedUntil, inheritedErr := db.ConvCostInheritedUntil(sess.ConvID)
+		if inheritedErr != nil {
+			// Scanning without the boundary would price the copied history
+			// as this conversation's spend; serve the cached projection and
+			// retry on the next refresh.
+			slog.Warn("codex-cost: failed to resolve the inherited-history boundary",
+				"session_id", sess.ID, "conv_id", sess.ConvID, "error", inheritedErr, "module", "agentd")
+			return codexContextRefreshResultFromCache(sess, cached)
+		}
+		costInheritedUntil = inheritedUntil
 		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
 		if profileErr != nil {
 			slog.Warn("codex-cost: failed to resolve launch Fast-mode baseline",
@@ -515,6 +530,7 @@ func refreshCodexContextSnapshotOnReadBatched(
 	if hasCostFastBaseline {
 		cached.follower.SetCostFastModeBaseline(costFastModeBaseline, sess.CreatedAt)
 	}
+	cached.follower.SetCostInheritedUntil(costInheritedUntil)
 	rolloutStarted := time.Now()
 	snap, err := cached.follower.RuntimeTelemetry(home, sess.ConvID)
 	timing.rolloutRead = time.Since(rolloutStarted)
@@ -803,6 +819,7 @@ func refreshCodexContextSnapshotOnReadBatched(
 		costBaselineCreatedAt,
 		costFastModeBaseline,
 		hasCostFastBaseline,
+		costInheritedUntil,
 		contextPersistenceDeferred,
 		cachePersistedConvID,
 		cachePersistedCreatedAt,
@@ -1028,6 +1045,7 @@ func cacheCodexRuntimeRefresh(
 	costBaselineCreatedAt time.Time,
 	costFastModeBaseline bool,
 	hasCostFastBaseline bool,
+	costInheritedUntil time.Time,
 	keepRefreshing bool,
 	persistedConvID string,
 	persistedCreatedAt time.Time,
@@ -1063,6 +1081,7 @@ func cacheCodexRuntimeRefresh(
 	prev.costBaselineCreatedAt = costBaselineCreatedAt
 	prev.costFastModeBaseline = costFastModeBaseline
 	prev.hasCostFastBaseline = hasCostFastBaseline
+	prev.costInheritedUntil = costInheritedUntil
 	prev.persistedConvID = persistedConvID
 	prev.persistedCreatedAt = persistedCreatedAt
 	prev.persistedContext = persistedContext

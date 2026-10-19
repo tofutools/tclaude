@@ -858,3 +858,25 @@ func TestRefreshConvIndexEntry_GenuineWorkLeavesSessionWorking(t *testing.T) {
 	assert.Equal(t, "working", got.Status, "a genuinely-working session must NOT be flipped to idle")
 	assert.Equal(t, "PreToolUse", got.StatusDetail, "status_detail untouched")
 }
+
+// A copied transcript must not carry its source's cost-state: Claude Code
+// would resume the copy with the source's spend on its meter, and tclaude
+// would record that spend again under the copy.
+func TestCopyConversationFile_DropsCostState(t *testing.T) {
+	const oldID, newID = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	dir := t.TempDir()
+	src := filepath.Join(dir, oldID+".jsonl")
+	dst := filepath.Join(dir, newID+".jsonl")
+	turn := `{"type":"user","sessionId":"` + oldID + `","message":{"content":"the cost-state type stays in prose"}}`
+	require.NoError(t, os.WriteFile(src, []byte(turn+"\n"+
+		`{"type":"cost-state","sessionId":"`+oldID+`","totalCostUSD":12.5}`+"\n"+
+		turn+"\n"+
+		`{"type":"cost-state","sessionId":"`+oldID+`","totalCostUSD":13}`), 0o600))
+
+	require.NoError(t, CopyConversationFile(src, dst, oldID, newID))
+
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	want := strings.ReplaceAll(turn, oldID, newID)
+	assert.Equal(t, want+"\n"+want+"\n", string(got))
+}

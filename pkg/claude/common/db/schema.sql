@@ -1932,3 +1932,8 @@ CREATE TABLE queued_spawns (
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 ) STRICT;
+
+CREATE TABLE conv_cost_inheritance (
+		conv_id         TEXT PRIMARY KEY,
+		inherited_until INTEGER NOT NULL
+	);
