@@ -78,8 +78,9 @@ func RevokeModelProxyLaunch(session, generation string) error {
 
 type ModelProxyBudget struct {
 	Requests, Tokens, PeerRequests, PeerTokens, SessionRequests, SessionTokens int64
-	// Share is a usage-sharing dollar cap on the peer's grant (zero: none).
-	Share ModelProxyShareCap
+	// Shares are the usage-sharing dollar caps on the peer's grants that
+	// cover this gateway (none: uncapped); every one must have room.
+	Shares []ModelProxyShareCap
 }
 
 // ModelProxyShareCap bounds what one peer spends through a gateway since its
@@ -129,24 +130,28 @@ func ReserveModelProxyRequest(u ModelProxyUsage, b ModelProxyBudget) error {
 	if err != nil {
 		return err
 	}
-	share := b.Share
-	if share.Since.IsZero() {
-		share.Since = time.Unix(0, 0)
+	shareWhere, shareArgs := "", []any{}
+	for _, share := range b.Shares {
+		if share.Since.IsZero() {
+			share.Since = time.Unix(0, 0)
+		}
+		shareWhere += "\n (SELECT COALESCE(SUM(charged_micro_usd),0) FROM model_proxy_requests WHERE peer=? AND (?=1 OR proxy=?) AND started_at>=?) < ? AND"
+		shareArgs = append(shareArgs, u.Peer, share.AllProxies, u.Proxy, dbTimeBoundary(share.Since), share.MicroUSD)
 	}
+	args := []any{u.ID, u.Day, u.Proxy, u.Peer, u.Session, u.Model, u.ChargedTokens, u.RequestBytes, dbTime(time.Now()), u.ChargedMicroUSD, u.Priced}
+	args = append(args, shareArgs...)
 	result, err := d.Exec(`INSERT INTO model_proxy_requests(id,day,proxy,peer,session,model,charged_tokens,request_bytes,started_at,charged_micro_usd,priced)
- SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE
- (?=0 OR (SELECT COALESCE(SUM(charged_micro_usd),0) FROM model_proxy_requests WHERE peer=? AND (?=1 OR proxy=?) AND started_at>=?) < ?) AND
+ SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE`+shareWhere+`
  (SELECT COUNT(*) FROM model_proxy_requests WHERE day=? AND proxy=?) < ? AND
  (SELECT COALESCE(SUM(charged_tokens),0) FROM model_proxy_requests WHERE day=? AND proxy=?) <= ? AND
  (SELECT COUNT(*) FROM model_proxy_requests WHERE day=? AND proxy=? AND peer=?) < ? AND
  (SELECT COALESCE(SUM(charged_tokens),0) FROM model_proxy_requests WHERE day=? AND proxy=? AND peer=?) <= ? AND
  (SELECT COUNT(*) FROM model_proxy_requests WHERE day=? AND proxy=? AND peer=? AND session=?) < ? AND
  (SELECT COALESCE(SUM(charged_tokens),0) FROM model_proxy_requests WHERE day=? AND proxy=? AND peer=? AND session=?) <= ?`,
-		u.ID, u.Day, u.Proxy, u.Peer, u.Session, u.Model, u.ChargedTokens, u.RequestBytes, dbTime(time.Now()), u.ChargedMicroUSD, u.Priced,
-		share.MicroUSD, u.Peer, share.AllProxies, u.Proxy, dbTimeBoundary(share.Since), share.MicroUSD,
-		u.Day, u.Proxy, b.Requests, u.Day, u.Proxy, b.Tokens-u.ChargedTokens,
-		u.Day, u.Proxy, u.Peer, b.PeerRequests, u.Day, u.Proxy, u.Peer, b.PeerTokens-u.ChargedTokens,
-		u.Day, u.Proxy, u.Peer, u.Session, b.SessionRequests, u.Day, u.Proxy, u.Peer, u.Session, b.SessionTokens-u.ChargedTokens)
+		append(args,
+			u.Day, u.Proxy, b.Requests, u.Day, u.Proxy, b.Tokens-u.ChargedTokens,
+			u.Day, u.Proxy, u.Peer, b.PeerRequests, u.Day, u.Proxy, u.Peer, b.PeerTokens-u.ChargedTokens,
+			u.Day, u.Proxy, u.Peer, u.Session, b.SessionRequests, u.Day, u.Proxy, u.Peer, u.Session, b.SessionTokens-u.ChargedTokens)...)
 	if err != nil {
 		return err
 	}

@@ -285,10 +285,14 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	budget := db.ModelProxyBudget{Requests: p.DailyRequests, Tokens: p.DailyTokens, PeerRequests: p.PeerDailyRequests, PeerTokens: p.PeerDailyTokens, SessionRequests: p.SessionDailyRequests, SessionTokens: p.SessionDailyTokens}
 	leased := len(opening) > 0 && opening[0].Lease != ""
 	if !leased {
-		budget.Share = modelShareCap(peer, name)
+		budget.Shares = modelShareCaps(peer, name)
 	}
 	pricing, priced := lookupModelPricing(p, data.Model)
-	if budget.Share.MicroUSD > 0 && !priced {
+	// Token counting is free at the provider, so it is never priced.
+	if counting {
+		priced = false
+	}
+	if len(budget.Shares) > 0 && !priced && !counting {
 		modelError(w, 403, fmt.Sprintf("this usage share is capped in dollars, and the gateway has no price for %s; its operator can add one under model_policy.prices", data.Model))
 		return
 	}
@@ -297,9 +301,13 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 		u.ChargedMicroUSD = pricing.worstCaseMicroUSD(p.MaxInputTokens, data.MaxTokens)
 	}
 	if err = db.ReserveModelProxyRequest(u, budget); err != nil {
-		if budget.Share.MicroUSD > 0 {
-			if spent, e := db.ModelProxyShareSpent(peer, modelShareProxy(peer, name), budget.Share.Since); e == nil && spent >= budget.Share.MicroUSD {
-				modelError(w, 429, fmt.Sprintf("usage share used up: %s of %s spent through this gateway", formatUSD(spent), formatUSD(budget.Share.MicroUSD)))
+		for _, share := range budget.Shares {
+			proxy := name
+			if share.AllProxies {
+				proxy = ""
+			}
+			if spent, e := db.ModelProxyShareSpent(peer, proxy, share.Since); e == nil && spent >= share.MicroUSD {
+				modelError(w, 429, fmt.Sprintf("usage share used up: %s of %s spent", formatUSD(spent), formatUSD(share.MicroUSD)))
 				return
 			}
 		}
@@ -307,10 +315,12 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 		return
 	}
 	started := time.Now()
-	// The provider bills nothing for a request it refused or never got. A
+	// The provider bills nothing for a request it never got or refused with
+	// an error status. One sent without an answer (timeout, dropped
+	// connection) may have run to completion, so it keeps the worst case. A
 	// response that broke off is charged what it reported plus every output
 	// token it was allowed, since the rest of its usage never arrived.
-	providerAccepted := false
+	sent, refused, providerAccepted := false, false, false
 	var observer *modelUsageObserver
 	defer func() {
 		u.ChargedTokens = max(u.ChargedTokens, u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens)
@@ -318,8 +328,9 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 		case !u.Priced:
 		case u.Complete:
 			u.ChargedMicroUSD = pricing.costMicroUSD(u)
-		case !providerAccepted:
+		case !sent || refused:
 			u.ChargedMicroUSD = 0
+		case !providerAccepted:
 		case observer != nil && observer.sawInput:
 			partial := u
 			partial.OutputTokens = max(u.OutputTokens, data.MaxTokens)
@@ -403,6 +414,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 			return
 		}
 	}
+	sent = true
 	resp, err := client.Do(req)
 	if err != nil {
 		u.Status = 502
@@ -414,6 +426,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	// Preserve the provider signals Claude uses for retry and compaction, while
 	// discarding unrecognized fields and credential reflections.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		refused = true
 		writeModelProviderError(w, resp, credential)
 		return
 	}

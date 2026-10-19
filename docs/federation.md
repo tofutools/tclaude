@@ -2450,15 +2450,20 @@ rates in USD per million tokens, by model ID or trailing-`*` prefix:
 - **What counts:** every request the peer makes through the gateway since
   the grant was created. Raising the cap with a new `grant` keeps what was
   spent; revoking and granting again starts over. An unscoped `models.proxy`
-  grant caps the peer's spend through every gateway together.
+  grant caps the peer's spend through every gateway together. A peer holding
+  both a gateway's capped grant and a capped unscoped one is held to both.
 - **When it stops:** a request starts only while the peer's spend, including
   requests still in flight, is below the cap. The requests in flight when it
   is reached can overrun it by their own cost. After that, requests get 429
   `usage share used up`.
-- **What a request costs:** a request the provider refused or never received
-  costs nothing. A response that broke off is charged the input it reported
-  plus every output token it was allowed. A finished response is charged its
-  reported usage.
+- **What a request costs:**
+  - Free: a request the provider never received, one it refused with an
+    error status, and token counting.
+  - A finished response: its reported usage.
+  - A response that broke off: the input it reported plus every output token
+    it was allowed.
+  - A request sent with no answer (a timeout, a dropped connection): its worst
+    case, since the provider may have run it to the end.
 - **Unpriced models:** with a cap set, a model without a known price is
   refused, since its spend could not be counted.
 - **Where it is recorded:** this node's database records the charge for each
