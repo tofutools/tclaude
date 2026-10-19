@@ -1449,6 +1449,9 @@ type dashboardHarness struct {
 	CodexNativeRegistryReady  bool   `json:"codex_native_registry_ready"`
 	CodexNativeRegistryReason string `json:"codex_native_registry_reason,omitempty"`
 	CanFastMode               bool   `json:"can_fast_mode"`
+	// ModelProxyDialect is the gateway wire dialect (anthropic, openai)
+	// the harness can be routed through; empty when it cannot use one.
+	ModelProxyDialect string `json:"model_proxy_dialect,omitempty"`
 	// CanTclaudeLayer reports whether the tclaude-layer sandbox
 	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
@@ -1538,6 +1541,9 @@ func buildHarnessCatalog() []dashboardHarness {
 				strings.TrimSpace(h.TclaudeLayerMode) != "",
 			CanStacked:                 h.SupportsNestedSandbox(),
 			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
+		}
+		if h.SupportsModelProxy() {
+			dh.ModelProxyDialect = h.ModelProxyDialect()
 		}
 		if h.Name == harness.OpenCodeName {
 			dh.ProfileRecommendedApproval = harness.OpenCodeApprovalAllowTools

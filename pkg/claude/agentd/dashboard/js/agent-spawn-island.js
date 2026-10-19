@@ -23,6 +23,7 @@ import {
   clearSpawnProfileFields,
   createSpawnDraft,
   deriveSpawnNameFromMessage,
+  findSpawnHarness,
   findSpawnProfile,
   formatAttachmentSize,
   groupDefaultProfileName,
@@ -69,6 +70,7 @@ import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } fr
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import { isWizardActive } from './slop.js';
+import { shareHint, shareKey, shareOptions } from './usage-share-model.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, SANDBOX_PROFILE_COMPOSITION,
   resolvedDefaultOption, harnessBuiltinModeOptionLabel,
@@ -437,6 +439,27 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     }
     attachmentsRef.current = [];
   }, []);
+
+  // Usage sharing: model gateways peers let this node's agents bill their
+  // model calls to. Only a spawn on this node can use one (the new agent's
+  // gateway bridge runs here), and the row shows only once a peer shares.
+  const [usageShares, setUsageShares] = useState([]);
+  useEffect(() => {
+    if (remote || target || !actions.loadUsageShares) return undefined;
+    let off = false;
+    actions.loadUsageShares().then((shares) => {
+      if (off) return;
+      setUsageShares(shares);
+      // A draft (a queued one too) keeps a copy of its share; judge it by
+      // what the peer says now, and drop it once the peer stopped sharing.
+      setDraft((before) => {
+        if (!before.usageFrom) return before;
+        const fresh = shares.find((s) => shareKey(s) === before.usageFrom) || null;
+        return { ...before, usageFrom: fresh ? before.usageFrom : '', usageShare: fresh };
+      });
+    }).catch(() => {});
+    return () => { off = true; };
+  }, [remote, target, actions]);
 
   useEffect(() => {
     const request = ++profileRequest.current;
@@ -1153,6 +1176,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   }, [worktrees.phase, policyReady]);
 
   const selectedModel = modelSelectValue(draft, context);
+  const usageChoices = shareOptions(usageShares, findSpawnHarness(context.harnesses, draft.harness), draft.model, Date.now(), draft.permissionOverrides);
+  const usageChoice = usageChoices.find((o) => o.value === draft.usageFrom) || null;
   const sandboxHelp = harnessBuiltinModeHelpForImplementation(
     view.sandbox.help[draft.sandbox],
     draft.sandboxImpl
@@ -1460,6 +1485,23 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         }}
         placeholder="model id or alias" autocomplete="off" spellcheck="false" />
     </label>
+    ${usageChoices.length > 0 && html`<div class="cron-create-row" id="agent-spawn-usage-row"
+      title="Whose provider account pays for this agent's model calls. A peer's share routes them through that peer's model gateway; the agent still runs here.">
+      <label class="cron-create-label" for="agent-spawn-usage">Usage from</label>
+      <div class="cron-create-target">
+        <select id="agent-spawn-usage" value=${usageChoice && !usageChoice.reason ? draft.usageFrom : ''} disabled=${busy}
+          onChange=${(event) => {
+            const value = event.currentTarget.value;
+            const pick = usageChoices.find((o) => o.value === value);
+            setDraft((before) => ({ ...before, usageFrom: pick ? value : '', usageShare: pick ? pick.share : null, usageOwn: !pick }));
+          }}>
+          <option value="">⌂ Your own account</option>
+          ${usageChoices.map((o) => html`<option key=${o.value} value=${o.value} disabled=${!!o.reason}>${o.label} — ${o.reason || o.detail}</option>`)}
+        </select>
+        ${usageChoice && !usageChoice.reason && html`<div class="spawn-field-hint info" id="agent-spawn-usage-hint">${shareHint(usageChoice.share)}</div>`}
+        ${usageChoice?.reason && html`<div class="spawn-field-hint warn" id="agent-spawn-usage-hint">${usageChoice.label} cannot pay for this spawn: ${usageChoice.reason}. It will use your own account.</div>`}
+      </div>
+    </div>`}
     <div class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
       title=${SANDBOX_IMPL_TITLE}>
       <label class="cron-create-label" for="agent-spawn-sandbox-impl">Sandbox</label>

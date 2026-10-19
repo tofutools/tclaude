@@ -54,6 +54,7 @@ export function createAgentSpawnActions(dependencies = {}) {
   prefs,
   loadProfiles,
   loadSandboxProfiles,
+  loadUsageShares = null,
   getDashboardDefaultProfile = () => '',
   pickDirectory,
   openProfileEditor,
@@ -116,6 +117,14 @@ export function createAgentSpawnActions(dependencies = {}) {
 
     async loadProfiles(force = false) {
       return loadProfiles(force);
+    },
+
+    // loadUsageShares lists the peers' model gateways this node may bill
+    // to (model_shares.go handleModelSharesReceived).
+    async loadUsageShares() {
+      if (loadUsageShares) return loadUsageShares();
+      const value = await jsonRequest(fetchImpl, '/api/federation/models/shares/received');
+      return Array.isArray(value?.shares) ? value.shares : [];
     },
 
     async loadWorktrees(repo) {
@@ -474,6 +483,8 @@ function createNodeSpawnActions(dependencies, { node = '', nodeId = '', name = '
       return Array.isArray(value) ? value : [];
     },
     getDashboardDefaultProfile: () => fallbackProfile,
+    // Shares are this node's: an agent spawned on another node bills there.
+    loadUsageShares: async () => [],
     pickDirectory: async () => ({ error: `Browse ${where}'s folders from its own dashboard, or type the path` }),
     refresh: () => { announceNodeChanged(node); refresh(); },
     getSnapshot: () => nodeSnapshot(node) || getSnapshot(),

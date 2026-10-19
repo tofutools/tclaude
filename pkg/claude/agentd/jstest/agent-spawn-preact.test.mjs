@@ -2037,3 +2037,75 @@ test('▶ on a queued spawn launches once its loads settle', async (t) => {
   assert.deepEqual(log.filter(([kind]) => kind === 'delete'), [['delete', 9]]);
   mounted.cleanup();
 });
+
+test('Preact agent-spawn bills a spawn to a peer\'s usage share only for a harness that can use it', async (t) => {
+  const claude = harnesses.find((h) => h.name === 'claude');
+  claude.model_proxy_dialect = 'anthropic';
+  t.after(() => { delete claude.model_proxy_dialect; });
+  const bodies = [];
+  const mounted = await mountSpawn(t, {
+    loadUsageShares: async () => [
+      { peer: 'inst_forge', peer_name: 'forge', gateway: 'team-key', dialect: 'anthropic', models: ['claude-sonnet-5*'], max_usd: 20, spent_usd: 5 },
+      { peer: 'inst_lab', peer_name: 'lab', gateway: 'openai-key', dialect: 'openai', models: [] },
+    ],
+    spawn: async (request) => { bodies.push(request.body); return { conv_id: 'abcdef1234' }; },
+  });
+  const { harness, host, state } = mounted;
+  state.open({ groupName: 'alpha' });
+  await flush(harness);
+  await settleWorktrees(harness);
+  const select = host.querySelector('#agent-spawn-usage');
+  assert.ok(select, 'the row shows once a peer shares');
+  const options = [...select.querySelectorAll('option')];
+  assert.deepEqual(options.map((o) => o.value), ['', 'team-key@inst_forge', 'openai-key@inst_lab']);
+  assert.match(options[1].textContent, /forge · team-key — \$15\.00 of \$20\.00 left/);
+  assert.equal(options[2].hasAttribute('disabled'), true, 'an OpenAI share cannot pay for Claude Code');
+  setValue(select, 'team-key@inst_forge');
+  await harness.act(() => harness.fireEvent(select, 'change'));
+  assert.match(host.querySelector('#agent-spawn-usage-hint').textContent, /forge pays for this agent's model calls through team-key/);
+  const name = host.querySelector('#agent-spawn-name');
+  setValue(name, 'worker');
+  await harness.act(() => harness.fireEvent(name, 'input'));
+  host.querySelector('#agent-spawn-submit').click();
+  await flush(harness);
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0].model_proxy, 'team-key@inst_forge');
+  assert.deepEqual(bodies[0].permission_overrides['models.proxy'], { effect: 'grant', scope: { peer: ['inst_forge'], http_proxy: ['team-key'] } });
+  mounted.cleanup();
+});
+
+test('agent-spawn model never sends a share the dialog shows as unusable', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { buildSpawnRequest, createSpawnDraft } = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses: harnesses.map((h) => (h.name === 'claude' ? { ...h, model_proxy_dialect: 'anthropic' } : h)), userDefaultModel: '' };
+  const share = { peer: 'inst_forge', gateway: 'team-key', dialect: 'anthropic', models: ['claude-sonnet-5*'], max_usd: 20, spent_usd: 5 };
+  const draft = { ...createSpawnDraft({ ...context, groupName: 'alpha' }), name: 'worker', harness: 'claude', usageFrom: 'team-key@inst_forge', usageShare: share };
+  const send = (d) => buildSpawnRequest(d, context, { path: '', branch: '' }).body;
+  assert.equal(send({ ...draft, model: 'claude-sonnet-5-5' }).model_proxy, 'team-key@inst_forge');
+  assert.equal(send({ ...draft, model: 'claude-haiku-5-5' }).model_proxy, undefined, 'a model outside the allowlist');
+  assert.equal(send({ ...draft, usageShare: { ...share, spent_usd: 20 } }).model_proxy, undefined, 'used up');
+  assert.equal(send({ ...draft, permissionOverrides: { 'models.proxy': { effect: 'deny' } } }).permission_overrides['models.proxy'].effect, 'deny', 'a deny stands');
+  assert.equal(send({ ...draft, usageFrom: '', usageShare: null, usageOwn: true }).model_proxy, 'off', 'your own account turns a profile route off');
+  assert.equal(send({ ...draft, usageFrom: '', usageShare: null }).model_proxy, undefined);
+});
+
+test('Preact agent-spawn without shares shows no usage row and sends no gateway', async (t) => {
+  const bodies = [];
+  const mounted = await mountSpawn(t, {
+    loadUsageShares: async () => [],
+    spawn: async (request) => { bodies.push(request.body); return { conv_id: 'abcdef1234' }; },
+  });
+  const { harness, host, state } = mounted;
+  state.open({ groupName: 'alpha' });
+  await flush(harness);
+  await settleWorktrees(harness);
+  assert.equal(host.querySelector('#agent-spawn-usage-row'), null);
+  const name = host.querySelector('#agent-spawn-name');
+  setValue(name, 'worker');
+  await harness.act(() => harness.fireEvent(name, 'input'));
+  host.querySelector('#agent-spawn-submit').click();
+  await flush(harness);
+  assert.equal(bodies[0].model_proxy, undefined);
+  assert.equal(bodies[0].permission_overrides?.['models.proxy'], undefined);
+  mounted.cleanup();
+});
