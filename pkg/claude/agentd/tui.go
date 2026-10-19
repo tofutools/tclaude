@@ -3754,7 +3754,6 @@ func (m tuiModel) helpBodyLines() []string {
 		b.WriteString("               form left it, tab still moves to the next field.\n")
 	}
 	b.WriteString("    ←/→        Change the group, spawn profile, worktree or harness\n")
-	b.WriteString("               Type Model/Effort overrides; blank keeps profile/harness defaults.\n")
 	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
 	b.WriteString("               group's and the global default profile in force.\n")
 	b.WriteString("               Directory starts on the group's own default directory\n")
@@ -3768,6 +3767,8 @@ func (m tuiModel) helpBodyLines() []string {
 	b.WriteString("               consoles only — the worktree is created on the daemon's\n")
 	b.WriteString("               host, and a failed spawn leaves it for you to keep or\n")
 	b.WriteString("               remove.\n")
+	b.WriteString("    Model/     Type launch overrides; leave blank to use the profile\n")
+	b.WriteString("    Effort     chain or harness default.\n")
 	if m.capabilities.attachAgent {
 		b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
 		b.WriteString("               the same move enter makes on its row. Operator\n")
