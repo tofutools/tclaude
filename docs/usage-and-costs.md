@@ -103,6 +103,16 @@ out of every summary and breakdown here, as they are from the dashboard
 totals and spend-limit alerts. Restore them from the Costs view's **Ignored**
 list.
 
+An agent whose model calls went through a peer's model gateway (usage
+sharing, or a requester-paid worker) is ignored on its own, with the reason
+"billed to <gateway>@<peer>". Its spend stays recorded here, but the peer
+paid for it and counts it, so it cannot be restored. The gateway's node shows
+that spend in its Costs view under **Served to peers**: what its gateways paid
+for each peer in the span, priced by the gateway from the provider's token
+counts. That spend is kept apart from the node's own agents' totals. A
+session that was launched through a peer's gateway once stays billed to it
+for all of its conversations.
+
 Cost data covers recorded tclaude sessions, not the provider's entire invoice.
 Model attribution follows the dashboard's Costs view: each conversation/day slice uses the
 last observed model. `generated_at` is the response time, not proof that all

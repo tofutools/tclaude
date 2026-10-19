@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -89,6 +90,11 @@ func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
 // conversations come back separately so the Costs view can list them for
 // restoring. A row with no conversation id cannot be ignored and always counts.
 func countedCostDailyRows() (counted, ignored []db.CostDailyRow, ignoredConvs map[string]time.Time, err error) {
+	// A conversation billed to a peer's gateway is that peer's spend; it is
+	// marked ignored (with the reference) before the totals read.
+	if err := db.MarkCostConvsBilledElsewhere(); err != nil {
+		return nil, nil, nil, err
+	}
 	rows, err := db.AllCostDailyRows()
 	if err != nil {
 		return nil, nil, nil, err
@@ -224,12 +230,18 @@ type costsResponse struct {
 	// Ignored lists every conversation the operator excluded from the
 	// totals, with the spend it would have added to this span. Nothing in
 	// Days, Agents or the totals includes it.
-	Ignored            []costIgnoredRow `json:"ignored"`
-	TotalUSD           float64          `json:"total_usd"`
-	RealTotalUSD       float64          `json:"real_total_usd,omitempty"`
-	WhatIfTotalUSD     float64          `json:"what_if_total_usd,omitempty"`
-	VirtualCostCredits float64          `json:"virtual_cost_credits,omitempty"`
-	CostKind           string           `json:"cost_kind,omitempty"`
+	Ignored []costIgnoredRow `json:"ignored"`
+	// Served is what this node's model gateways paid for peers' agents
+	// in the span (usage sharing): real spend on this node's credentials,
+	// kept apart from its own agents' totals, which the borrowing peer
+	// leaves out of its own (billed-to rows in its Ignored list).
+	Served             []costServedRow `json:"served,omitempty"`
+	ServedTotalUSD     float64         `json:"served_total_usd,omitempty"`
+	TotalUSD           float64         `json:"total_usd"`
+	RealTotalUSD       float64         `json:"real_total_usd,omitempty"`
+	WhatIfTotalUSD     float64         `json:"what_if_total_usd,omitempty"`
+	VirtualCostCredits float64         `json:"virtual_cost_credits,omitempty"`
+	CostKind           string          `json:"cost_kind,omitempty"`
 }
 
 // costIgnoredRow is one ignored conversation in the Costs view's Ignored
@@ -243,6 +255,21 @@ type costIgnoredRow struct {
 	Harness   string  `json:"harness"`
 	Model     string  `json:"model"`
 	IgnoredAt string  `json:"ignored_at"`
+	// BilledTo is the peer gateway reference (<gateway>@<peer>) a
+	// conversation's model calls went through: that peer counts its spend,
+	// and it cannot be restored here. BilledToName names the peer.
+	BilledTo     string `json:"billed_to,omitempty"`
+	BilledToName string `json:"billed_to_name,omitempty"`
+}
+
+// costServedRow is one peer's spend through one of this node's gateways.
+type costServedRow struct {
+	Peer     string  `json:"peer"`
+	PeerName string  `json:"peer_name,omitempty"`
+	Gateway  string  `json:"gateway"`
+	CostUSD  float64 `json:"cost_usd"`
+	Requests int     `json:"requests"`
+	Unpriced int     `json:"unpriced,omitempty"`
 }
 
 // maxCostSpanDays caps the requested span. The daily table is small,
@@ -390,6 +417,12 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 		CostKind: costKind(realTotal, whatIfTotal),
 		Days:     []costDayPoint{}, Agents: []costAgentRow{},
 		Ignored: ignoredCostRows(ignoredConvs, ignoredDeltas, models, fromKey, toKey)}
+	if err := billIgnoredRows(out.Ignored); err != nil {
+		return costsResponse{}, err
+	}
+	if err := addServedCosts(&out, from, to); err != nil {
+		return costsResponse{}, err
+	}
 	for day := from; ; day = day.AddDate(0, 0, 1) {
 		key := day.Format(costDayKey)
 		if key > toKey {
@@ -483,6 +516,46 @@ func ignoredCostRows(ignored map[string]time.Time, deltas []costDelta, models ma
 		return out[i].ConvID < out[j].ConvID
 	})
 	return out
+}
+
+// billIgnoredRows names where a billed-to conversation's spend went.
+func billIgnoredRows(rows []costIgnoredRow) error {
+	reasons, err := db.CostIgnoredReasons()
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		ref, ok := strings.CutPrefix(reasons[rows[i].ConvID], db.CostIgnoreBilledTo)
+		if !ok {
+			continue
+		}
+		rows[i].BilledTo = ref
+		gateway, peer, _ := strings.Cut(ref, "@")
+		if p, err := db.GetFederationPeer(peer); err == nil && p != nil {
+			rows[i].BilledToName = gateway + "@" + peerDisplay(p)
+		}
+	}
+	return nil
+}
+
+// addServedCosts adds what this node's gateways paid for peers in the span
+// [from, to] (whole local days).
+func addServedCosts(out *costsResponse, from, to time.Time) error {
+	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.Local)
+	end := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, 1)
+	served, err := db.ModelProxyServed(start, end)
+	if err != nil {
+		return err
+	}
+	for _, r := range served {
+		row := costServedRow{Peer: r.Peer, Gateway: r.Proxy, CostUSD: float64(r.MicroUSD) / 1e6, Requests: r.Requests, Unpriced: r.Unpriced}
+		if p, err := db.GetFederationPeer(r.Peer); err == nil && p != nil {
+			row.PeerName = peerDisplay(p)
+		}
+		out.Served = append(out.Served, row)
+		out.ServedTotalUSD += row.CostUSD
+	}
+	return nil
 }
 
 // scaleCostDeltas changes only the display copy, never the raw baseline walk.
@@ -645,6 +718,17 @@ func handleDashboardCostsIgnore(w http.ResponseWriter, r *http.Request) {
 	if body.ConvID == "" || len(body.ConvID) > maxCostIgnoreConvIDBytes {
 		http.Error(w, "conv_id is required", http.StatusBadRequest)
 		return
+	}
+	if !*body.Ignored {
+		reasons, err := db.CostIgnoredReasons()
+		if err != nil {
+			http.Error(w, "read cost ignores: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if ref, ok := strings.CutPrefix(reasons[body.ConvID], db.CostIgnoreBilledTo); ok {
+			http.Error(w, "this conversation's model calls were billed to "+ref+"; that peer counts its cost", http.StatusConflict)
+			return
+		}
 	}
 	if err := db.SetCostConvIgnored(body.ConvID, *body.Ignored); err != nil {
 		http.Error(w, "set cost ignore: "+err.Error(), http.StatusInternalServerError)

@@ -489,3 +489,30 @@ test('Costs rows ignore a whole agent and the Ignored list restores it', async (
   assert.match(shellState.toast.value.message, /Restore failed for Alpha: boom/);
   assert.equal(shellState.toast.value.error, true);
 });
+
+test('Costs lists what peers were served and names where a billed-to agent\'s cost went', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createCostsState }, { CostsApp }] = await Promise.all([
+    harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
+  ]);
+  const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false });
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot, activeTab: harness.signals.signal('usage'), prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  state.initialize();
+  const next = payload();
+  next.ignored = [{ conv_id: 'conv-s', title: 'Borrower', cost_usd: 4, harness: 'claude', ignored_at: '2026-07-10T12:00:00Z', billed_to: 'team-key@inst_forge', billed_to_name: 'team-key@forge' }];
+  next.served = [{ peer: 'inst_desk', peer_name: 'desk', gateway: 'team-key', cost_usd: 1.75, requests: 2, unpriced: 1 }];
+  next.served_total_usd = 1.75;
+  state.beginRequest(1);
+  state.commitRequest(1, next);
+  const actions = { load: async () => {}, loadFactor: async () => {}, saveFactor: async () => {}, setIgnored: async () => ({ ok: true }) };
+  const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
+  const served = mounted.container.querySelector('#costs-served');
+  assert.ok(served);
+  assert.match(served.querySelector('summary').textContent, /Served to peers.*\$1\.75/);
+  assert.match(served.textContent, /1 request had no price/);
+  assert.match(served.querySelector('tr[data-key="cost-served-inst_desk-team-key"]').textContent, /desk · team-key.*\$1\.75.*2 requests/);
+  const ignored = mounted.container.querySelector('tr[data-key="cost-ignored-conv-s"]');
+  assert.match(ignored.textContent, /billed to team-key@forge/);
+  assert.equal(ignored.querySelector('.cost-restore'), null, 'a billed-to agent cannot be restored');
+  await mounted.unmount();
+});

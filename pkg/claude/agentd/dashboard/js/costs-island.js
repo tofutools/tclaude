@@ -355,6 +355,26 @@ function useCostIgnore(actions) {
   return { pending, run };
 }
 
+// ServedCosts lists what this node's model gateways paid for peers' agents
+// in the span (usage sharing). It is real spend on this node's credentials,
+// kept apart from its own agents' totals.
+function ServedCosts({ current }) {
+  const served = current.payload?.served || [];
+  if (!served.length) return null;
+  const unpriced = served.reduce((n, row) => n + (row.unpriced || 0), 0);
+  return html`<details class="cost-ignored cost-served" id="costs-served" open>
+    <summary><strong>Served to peers</strong><span>${fmtUSD(current.payload.served_total_usd || 0)} through your model gateways in this span</span></summary>
+    <p class="muted">Peers' agents billed these model calls to your gateways (usage sharing). The gateway prices them from the token counts the provider reports${unpriced ? `; ${unpriced} request${unpriced === 1 ? '' : 's'} had no price` : ''}. They are not in your agents' totals above.</p>
+    <table><tbody>
+      ${served.map((row) => html`<tr key=${`${row.peer}/${row.gateway}`} data-key=${`cost-served-${row.peer}-${row.gateway}`}>
+        <td><span class="rowname">${row.peer_name || row.peer}</span> <span class="muted">· ${row.gateway}</span></td>
+        <td><span class="cost-amt">${fmtUSD(row.cost_usd)}</span></td>
+        <td><span class="muted">${row.requests} request${row.requests === 1 ? '' : 's'}</span></td>
+      </tr>`)}
+    </tbody></table>
+  </details>`;
+}
+
 // IgnoredCosts lists the conversations excluded from every cost total, each
 // with the spend restoring it would add to this span, and a Restore button.
 function IgnoredCosts({ current, ignore }) {
@@ -363,17 +383,18 @@ function IgnoredCosts({ current, ignore }) {
   const excluded = ignored.reduce((sum, row) => sum + (Number(row.cost_usd) || 0), 0);
   return html`<details class="cost-ignored" id="costs-ignored">
     <summary><strong>Ignored</strong><span>${ignored.length} agent${ignored.length === 1 ? '' : 's'} · ${fmtUSD(excluded)} excluded from this span's totals</span></summary>
-    <p class="muted">Ignored agents' spend is left out of every cost total — this view, the header and Overview figures, spend alerts and <code>tclaude costs</code>. Their recorded history is kept, so Restore brings it back exactly.</p>
+    <p class="muted">Ignored agents' spend is left out of every cost total — this view, the header and Overview figures, spend alerts and <code>tclaude costs</code>. Their recorded history is kept, so Restore brings it back exactly. An agent billed to a peer's model gateway is ignored on its own: that peer pays, and counts it.</p>
     <table><tbody>
       ${ignored.map((row) => html`<tr key=${row.conv_id} data-key=${`cost-ignored-${row.conv_id}`}>
         <td title=${row.title || '(unknown)'}><span class="rowname">${row.title || '(unknown)'}</span> <span class="id" title=${idTooltip(row.agent_id, row.conv_id)}>${shortAgentId(row.agent_id, row.conv_id)}</span></td>
         <td><span class="cost-amt" title="Spend in this span that restoring would add back">${fmtUSD(row.cost_usd)}</span></td>
         <td><span class="muted">${harnessLabel(row.harness)}</span></td>
         <td><span class="muted">${costModelLabel(row)}</span></td>
-        <td><button class="tool cost-restore" data-act="cost-restore" disabled=${ignore.pending.has(row.conv_id)}
+        <td>${row.billed_to ? html`<span class="muted cost-billed-to" title="Its model calls went through this peer's model gateway; that peer pays for them and counts the cost">billed to ${row.billed_to_name || row.billed_to}</span>`
+          : html`<button class="tool cost-restore" data-act="cost-restore" disabled=${ignore.pending.has(row.conv_id)}
           title="Count this agent's spend in cost totals again"
           aria-label=${`Restore ${row.title || row.conv_id} to cost totals`}
-          onClick=${() => ignore.run(row.conv_id, row.title, false)}>Restore</button></td>
+          onClick=${() => ignore.run(row.conv_id, row.title, false)}>Restore</button>`}</td>
       </tr>`)}
     </tbody></table>
   </details>`;
@@ -604,6 +625,7 @@ export function CostsApp({ state, actions }) {
         : 'total'}</span></div>
       <${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} />
       <${CostsTable} state=${state} current=${current} ignore=${ignore} />
+      <${ServedCosts} current=${current} />
       <${IgnoredCosts} current=${current} ignore=${ignore} />
     </${Fragment}>`}
   </div>`;

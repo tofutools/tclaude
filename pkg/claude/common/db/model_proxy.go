@@ -218,6 +218,40 @@ func ModelProxyShareSpent(peer, proxy string, since time.Time) (int64, error) {
 	return spent, err
 }
 
+// ModelProxyServedRow is what this node's gateways spent on one peer's
+// requests through one gateway: the cost the gateway's credentials paid for
+// that peer (usage sharing, requester-paid workers).
+type ModelProxyServedRow struct {
+	Peer     string
+	Proxy    string
+	MicroUSD int64
+	Requests int
+	Unpriced int
+}
+
+// ModelProxyServed totals the peer requests started in [from, to).
+func ModelProxyServed(from, to time.Time) ([]ModelProxyServedRow, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT peer,proxy,COALESCE(SUM(charged_micro_usd),0),COUNT(*),COALESCE(SUM(CASE WHEN priced=0 THEN 1 ELSE 0 END),0)
+ FROM model_proxy_requests WHERE peer<>'' AND started_at>=? AND started_at<? GROUP BY peer,proxy ORDER BY peer,proxy`, dbTimeBoundary(from), dbTimeBoundary(to))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ModelProxyServedRow
+	for rows.Next() {
+		var r ModelProxyServedRow
+		if err := rows.Scan(&r.Peer, &r.Proxy, &r.MicroUSD, &r.Requests, &r.Unpriced); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func SetModelProxyLaunchLease(session, generation, lease string) error {
 	d, err := Open()
 	if err != nil {
