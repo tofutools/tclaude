@@ -25,6 +25,10 @@ import (
 // a much longer TTL: a title or diffstat moves on a push, not every few
 // seconds, and the card is read rather than watched.
 //
+// A successful read also shares its state and title with the Groups badges
+// (see sharePRDetailsObservation): the card is often the freshest GitHub read
+// the daemon has for that PR.
+//
 // The description is reduced to a plain-text excerpt here rather than in the
 // browser, so the cache and the wire carry a few hundred characters instead
 // of a PR body that can run to tens of kilobytes.
@@ -298,8 +302,28 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 		prDetailsFailedAt.Delete(key)
 		details.FetchedAt = time.Now()
 		savePRDetails(rawURL, details)
+		sharePRDetailsObservation(rawURL, details)
 	})
 	return true
+}
+
+// sharePRDetailsObservation feeds a hover read's state and title into the
+// same per-PR observation cache and agent_prs rows the background pollers
+// write, so the Groups badges catch up with what the card just showed instead
+// of waiting for the next poll. savePresentedPRCache and UpdateAgentPRState
+// keep their usual race guards (merged never regresses).
+func sharePRDetailsObservation(rawURL string, details prDetails) {
+	if details.State == "" {
+		return
+	}
+	savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{
+		Title:     truncateAuthoredPRTitle(details.Title),
+		Number:    deriveGitHubPRNumber(rawURL),
+		URL:       strings.TrimSpace(rawURL),
+		State:     details.State,
+		FetchedAt: details.FetchedAt,
+	}, details.FetchedAt)
+	applyObservedStatesToPresentedPRs(map[string]string{prStateKey(rawURL): details.State}, "pr-details")
 }
 
 // prDetailsResponse is the hover card's wire shape. Refreshing marks a `gh`
