@@ -118,6 +118,8 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/models/leases",
 	"POST /api/federation/models/leases",
 	"GET /api/federation/models/usage",
+	"GET /api/federation/models/shares",
+	"GET /api/federation/models/shares/received",
 	"GET /api/federation/spawn-requests",
 	"POST /api/federation/spawn-requests",
 	"POST /api/federation/spawn-requests/{id}/approve",

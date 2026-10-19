@@ -1512,6 +1512,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/models/leases", handleModelProxyLeases)
 	mux.HandleFunc("POST /v1/models/leases", handleModelProxyLeases)
 	mux.HandleFunc("GET /v1/models/usage", handleModelProxyUsage)
+	mux.HandleFunc("GET /v1/models/shares", handleModelSharesGiven)
+	mux.HandleFunc("GET /v1/models/shares/received", handleModelSharesReceived)
 	mux.HandleFunc("GET /v1/models/control", handleModelProxyControl)
 	mux.HandleFunc("POST /v1/models/control", handleModelProxyControl)
 	mux.HandleFunc("POST /v1/linear/whoami", handleLinearProxyWhoami)

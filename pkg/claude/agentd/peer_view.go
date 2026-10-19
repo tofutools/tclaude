@@ -180,6 +180,9 @@ func peerViewRules() map[string]peerViewRule {
 	rules["POST /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, write: servePeerNodeUpdate}
 	rules["GET /api/harnesses/availability"] = peerViewRule{feature: "node.harnesses", requires: PermNodeHarnessesRead, serve: servePeerHarnessAvailability}
 	rules["GET /api/node-summary"] = peerViewRule{feature: "node.summary", publicRead: true, summary: true, serve: servePeerSummary}
+	// Usage sharing: any trusted peer may ask which gateways it may use here;
+	// the answer covers only its own grants (an empty list without any).
+	rules["GET /api/model-shares"] = peerViewRule{feature: "models.shares", publicRead: true, serve: servePeerModelShares}
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	// The Usage tab's Quota view reads the node's own subscription quota

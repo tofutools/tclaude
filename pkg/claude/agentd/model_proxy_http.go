@@ -302,11 +302,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	}
 	if err = db.ReserveModelProxyRequest(u, budget); err != nil {
 		for _, share := range budget.Shares {
-			proxy := name
-			if share.AllProxies {
-				proxy = ""
-			}
-			if spent, e := db.ModelProxyShareSpent(peer, proxy, share.Since); e == nil && spent >= share.MicroUSD {
+			if spent, e := db.ModelProxyShareSpent(peer, shareProxy(share, name), share.Since); e == nil && spent >= share.MicroUSD {
 				modelError(w, 429, fmt.Sprintf("usage share used up: %s of %s spent", formatUSD(spent), formatUSD(share.MicroUSD)))
 				return
 			}
