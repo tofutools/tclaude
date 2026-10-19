@@ -38,8 +38,10 @@ export function modelAllowed(share, model) {
 }
 
 // shareOptions turns the received shares into the dialog's choices for a
-// harness and model, each with why it cannot be used, if it cannot.
-export function shareOptions(shares, harness, model, now = Date.now()) {
+// harness and model, each with why it cannot be used, if it cannot. A
+// models.proxy deny in the spawn's own permissions rules every share out.
+export function shareOptions(shares, harness, model, now = Date.now(), overrides = {}) {
+  const denied = overrides?.['models.proxy']?.effect === 'deny';
   const dialect = harness?.model_proxy_dialect || '';
   return (Array.isArray(shares) ? shares : []).map((share) => {
     const left = shareLeftUSD(share);
@@ -50,6 +52,7 @@ export function shareOptions(shares, harness, model, now = Date.now()) {
     else if (share.expires_at && Date.parse(share.expires_at) <= now) reason = 'ended';
     else if (left !== null && left <= 0) reason = `used up (${dollars(share.spent_usd || 0)} of ${dollars(share.max_usd)})`;
     else if (!modelAllowed(share, model)) reason = `not for ${model}`;
+    else if (denied) reason = 'this spawn\'s permissions deny models.proxy';
     const detail = [left === null ? 'no cap' : `${dollars(left)} of ${dollars(share.max_usd)} left`, ends && `ends in ${ends}`].filter(Boolean).join(' · ');
     return {
       value: shareKey(share),

@@ -2074,6 +2074,21 @@ test('Preact agent-spawn bills a spawn to a peer\'s usage share only for a harne
   mounted.cleanup();
 });
 
+test('agent-spawn model never sends a share the dialog shows as unusable', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { buildSpawnRequest, createSpawnDraft } = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses: harnesses.map((h) => (h.name === 'claude' ? { ...h, model_proxy_dialect: 'anthropic' } : h)), userDefaultModel: '' };
+  const share = { peer: 'inst_forge', gateway: 'team-key', dialect: 'anthropic', models: ['claude-sonnet-5*'], max_usd: 20, spent_usd: 5 };
+  const draft = { ...createSpawnDraft({ ...context, groupName: 'alpha' }), name: 'worker', harness: 'claude', usageFrom: 'team-key@inst_forge', usageShare: share };
+  const send = (d) => buildSpawnRequest(d, context, { path: '', branch: '' }).body;
+  assert.equal(send({ ...draft, model: 'claude-sonnet-5-5' }).model_proxy, 'team-key@inst_forge');
+  assert.equal(send({ ...draft, model: 'claude-haiku-5-5' }).model_proxy, undefined, 'a model outside the allowlist');
+  assert.equal(send({ ...draft, usageShare: { ...share, spent_usd: 20 } }).model_proxy, undefined, 'used up');
+  assert.equal(send({ ...draft, permissionOverrides: { 'models.proxy': { effect: 'deny' } } }).permission_overrides['models.proxy'].effect, 'deny', 'a deny stands');
+  assert.equal(send({ ...draft, usageFrom: '', usageShare: null, usageOwn: true }).model_proxy, 'off', 'your own account turns a profile route off');
+  assert.equal(send({ ...draft, usageFrom: '', usageShare: null }).model_proxy, undefined);
+});
+
 test('Preact agent-spawn without shares shows no usage row and sends no gateway', async (t) => {
   const bodies = [];
   const mounted = await mountSpawn(t, {

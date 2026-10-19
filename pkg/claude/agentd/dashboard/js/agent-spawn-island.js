@@ -70,7 +70,7 @@ import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } fr
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import { isWizardActive } from './slop.js';
-import { shareHint, shareOptions } from './usage-share-model.js';
+import { shareHint, shareKey, shareOptions } from './usage-share-model.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, SANDBOX_PROFILE_COMPOSITION,
   resolvedDefaultOption, harnessBuiltinModeOptionLabel,
@@ -447,7 +447,17 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   useEffect(() => {
     if (remote || target || !actions.loadUsageShares) return undefined;
     let off = false;
-    actions.loadUsageShares().then((shares) => { if (!off) setUsageShares(shares); }).catch(() => {});
+    actions.loadUsageShares().then((shares) => {
+      if (off) return;
+      setUsageShares(shares);
+      // A draft (a queued one too) keeps a copy of its share; judge it by
+      // what the peer says now, and drop it once the peer stopped sharing.
+      setDraft((before) => {
+        if (!before.usageFrom) return before;
+        const fresh = shares.find((s) => shareKey(s) === before.usageFrom) || null;
+        return { ...before, usageFrom: fresh ? before.usageFrom : '', usageShare: fresh };
+      });
+    }).catch(() => {});
     return () => { off = true; };
   }, [remote, target, actions]);
 
@@ -1166,7 +1176,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   }, [worktrees.phase, policyReady]);
 
   const selectedModel = modelSelectValue(draft, context);
-  const usageChoices = shareOptions(usageShares, findSpawnHarness(context.harnesses, draft.harness), draft.model);
+  const usageChoices = shareOptions(usageShares, findSpawnHarness(context.harnesses, draft.harness), draft.model, Date.now(), draft.permissionOverrides);
   const usageChoice = usageChoices.find((o) => o.value === draft.usageFrom) || null;
   const sandboxHelp = harnessBuiltinModeHelpForImplementation(
     view.sandbox.help[draft.sandbox],
@@ -1483,7 +1493,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           onChange=${(event) => {
             const value = event.currentTarget.value;
             const pick = usageChoices.find((o) => o.value === value);
-            setDraft((before) => ({ ...before, usageFrom: pick ? value : '', usageShare: pick ? pick.share : null }));
+            setDraft((before) => ({ ...before, usageFrom: pick ? value : '', usageShare: pick ? pick.share : null, usageOwn: !pick }));
           }}>
           <option value="">⌂ Your own account</option>
           ${usageChoices.map((o) => html`<option key=${o.value} value=${o.value} disabled=${!!o.reason}>${o.label} — ${o.reason || o.detail}</option>`)}

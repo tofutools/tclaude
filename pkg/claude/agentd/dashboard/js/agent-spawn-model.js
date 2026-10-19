@@ -1,6 +1,6 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
-import { shareSpawnFields } from './usage-share-model.js';
+import { shareOptions, shareSpawnFields } from './usage-share-model.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
@@ -1236,7 +1236,7 @@ const DIRTY_FIELDS = [
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
   'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
-  'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext',
+  'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext', 'usageFrom', 'usageOwn',
 ];
 
 export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {
@@ -1288,12 +1288,6 @@ export function prepareSpawnDraft(
     name = confirmedDerivedName;
   }
   return syncSpawnWorktree({ ...draft, name }, pickerUsable);
-}
-
-// spawnHarnessDialect is the model gateway dialect the draft's harness takes
-// ('' when it cannot use a gateway).
-function spawnHarnessDialect(draft, context) {
-  return findSpawnHarness(context.harnesses, draft.harness)?.model_proxy_dialect || '';
 }
 
 export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = []) {
@@ -1380,8 +1374,15 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   body.permission_overrides = { ...(draft.permissionOverrides || {}) };
   // A spawn billed to a peer's usage share routes its model calls through
   // that peer's gateway and carries its own scoped models.proxy grant.
-  if (draft.usageShare && draft.usageFrom && spawnHarnessDialect(draft, context) === draft.usageShare.dialect) {
-    Object.assign(body, shareSpawnFields(draft.usageShare, body.permission_overrides));
+  // The choice is re-judged here, so one the dialog shows as unusable (the
+  // model or harness changed, the share ended) is never sent. Picking your
+  // own account explicitly also turns off a profile's gateway route.
+  const harness = findSpawnHarness(context.harnesses, draft.harness);
+  if (draft.usageShare && draft.usageFrom) {
+    const [choice] = shareOptions([draft.usageShare], harness, draft.model, Date.now(), draft.permissionOverrides);
+    if (!choice.reason) Object.assign(body, shareSpawnFields(draft.usageShare, body.permission_overrides));
+  } else if (draft.usageOwn && harness?.model_proxy_dialect) {
+    body.model_proxy = 'off';
   }
   // Sent whenever the harness can take it, INCLUDING as an empty object: the
   // form is the authoritative statement of what this agent loads, so an operator
