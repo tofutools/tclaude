@@ -575,6 +575,8 @@ const (
 	tuiFieldWorktree
 	tuiFieldWorktreeBranch
 	tuiFieldHarness
+	tuiFieldModel
+	tuiFieldEffort
 	tuiFieldBrief
 	tuiSpawnFieldCount
 )
@@ -760,6 +762,8 @@ type tuiSpawnForm struct {
 	dir    textinput.Model
 	branch textinput.Model
 	brief  textinput.Model
+	model  textinput.Model
+	effort textinput.Model
 	// branchSynced is the worktree branch's "still following the name" state:
 	// while it holds, every keystroke in Name is copied into the branch field,
 	// so the common case (one agent, its own worktree, named after it) needs
@@ -1322,6 +1326,8 @@ func (m tuiModel) openSpawnForm() tuiModel {
 		dir:           newTUITextInput("  Directory: "),
 		branch:        newTUITextInput("  Branch:    "),
 		brief:         newTUITextInput("  Brief:     "),
+		model:         newTUITextInput("  Model:     "),
+		effort:        newTUITextInput("  Effort:    "),
 		// The branch follows the name until the operator says otherwise, so
 		// picking "create new worktree" on a named agent needs nothing else
 		// typed. Nothing is created until they pick it: the form opens on
@@ -1533,6 +1539,8 @@ func (m tuiModel) focusSpawnField(field int) tuiModel {
 	m.form.dir.Blur()
 	m.form.branch.Blur()
 	m.form.brief.Blur()
+	m.form.model.Blur()
+	m.form.effort.Blur()
 	switch field {
 	case tuiFieldName:
 		m.form.name.Focus()
@@ -1540,6 +1548,10 @@ func (m tuiModel) focusSpawnField(field int) tuiModel {
 		m.form.dir.Focus()
 	case tuiFieldWorktreeBranch:
 		m.form.branch.Focus()
+	case tuiFieldModel:
+		m.form.model.Focus()
+	case tuiFieldEffort:
+		m.form.effort.Focus()
 	case tuiFieldBrief:
 		m.form.brief.Focus()
 	}
@@ -1673,6 +1685,10 @@ func (m tuiModel) updateFocusedInput(msg tea.Msg) (tuiModel, tea.Cmd) {
 		if m.form.branch.Value() != before {
 			m.form.branchSynced = false
 		}
+	case tuiFieldModel:
+		m.form.model, cmd = m.form.model.Update(msg)
+	case tuiFieldEffort:
+		m.form.effort, cmd = m.form.effort.Update(msg)
 	case tuiFieldBrief:
 		m.form.brief, cmd = m.form.brief.Update(msg)
 	}
@@ -1703,6 +1719,8 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 		Cwd:            strings.TrimSpace(m.form.dir.Value()),
 		Profile:        m.selectedProfile(),
 		Harness:        m.selectedHarness(),
+		Model:          strings.TrimSpace(m.form.model.Value()),
+		Effort:         strings.TrimSpace(m.form.effort.Value()),
 		InitialMessage: strings.TrimSpace(m.form.brief.Value()),
 	}
 	// The name is STATED, not merely set: this form has a box for it and fills
@@ -3418,6 +3436,8 @@ func (m tuiModel) renderSpawnForm() string {
 		tuiHint(harnessChoice == tuiHarnessDefault,
 			"  (the profile chain decides — "+harness.DefaultName+" if nothing pins one)"),
 		m.form.field == tuiFieldHarness))
+	b.WriteString(m.form.model.View() + tuiHint(m.form.model.Value() == "", "  (blank = profile or harness default)") + "\n")
+	b.WriteString(m.form.effort.View() + tuiHint(m.form.effort.Value() == "", "  (blank = profile or harness default)") + "\n")
 	b.WriteString(m.form.brief.View() + m.briefHint())
 	b.WriteString("\n")
 
@@ -3747,6 +3767,8 @@ func (m tuiModel) helpBodyLines() []string {
 	b.WriteString("               consoles only — the worktree is created on the daemon's\n")
 	b.WriteString("               host, and a failed spawn leaves it for you to keep or\n")
 	b.WriteString("               remove.\n")
+	b.WriteString("    Model/     Type launch overrides; leave blank to use the profile\n")
+	b.WriteString("    Effort     chain or harness default.\n")
 	if m.capabilities.attachAgent {
 		b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
 		b.WriteString("               the same move enter makes on its row. Operator\n")

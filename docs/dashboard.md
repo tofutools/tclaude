@@ -1674,6 +1674,11 @@ only); `delete` steps live → offline → retired with confirmation; `f` filter
 to active; `?` help; `q` quits — and an in-process `q` **shuts down the
 daemon**, while standalone just exits.
 
+The spawn form includes Model and Effort text fields for explicit launch
+overrides (for example, `sonnet` and `high` for Claude). Leave either blank
+to use the profile chain or harness default. Values are validated against the
+resolved harness, so select a harness or profile matching the model you enter.
+
 The spawn and shell forms' text fields take your terminal's paste — a
 bracketed paste (`ctrl+shift+v`, `cmd+v`, or tmux's `prefix ]`, which sends
 one by default), folded onto the single line each field is. `ctrl+v` is
