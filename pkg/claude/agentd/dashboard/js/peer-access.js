@@ -42,7 +42,9 @@ function errText(error) { return error?.message || String(error); }
 // createPeerAccessActions sends the requester side. On a peer view
 // remote-node.js forwards /api/* to /api/peer/{id}/*, so these reach the
 // peer's /api/peer-access-requests routes.
-export function createPeerAccessActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
+// base is the API root: '/api' on a peer view, or /api/peer/{id} from this
+// node's own dashboard (the local peer proxy).
+export function createPeerAccessActions({ fetchImpl = (...a) => globalThis.fetch(...a), base = '/api' } = {}) {
   async function call(method, url, body) {
     const init = { method, credentials: 'same-origin', headers: {} };
     if (body !== undefined) {
@@ -56,11 +58,11 @@ export function createPeerAccessActions({ fetchImpl = (...a) => globalThis.fetch
     return data;
   }
   return Object.freeze({
-    request: ({ permission, groupID = 0, reason = '', ttl = 3600, proxy = '', maxUSD = 0 }) => call('POST', '/api/peer-access-requests', {
+    request: ({ permission, groupID = 0, reason = '', ttl = 3600, proxy = '', maxUSD = 0 }) => call('POST', `${base}/peer-access-requests`, {
       permission, ...(groupID ? { group_id: groupID } : {}), ...(reason ? { reason } : {}), grant_ttl_seconds: ttl,
       ...(proxy ? { http_proxy: proxy } : {}), ...(maxUSD > 0 ? { max_usd: maxUSD } : {}),
     }),
-    status: (id) => call('GET', `/api/peer-access-requests/${encodeURIComponent(id)}`),
+    status: (id) => call('GET', `${base}/peer-access-requests/${encodeURIComponent(id)}`),
   });
 }
 
@@ -92,14 +94,14 @@ const ACTIVE = new Set(['pending']);
 // operator lacks on that node. The peer's operator decides (only them, never
 // an away cover); on approval the grant applies and the feature appears on
 // the next refresh.
-export function RequestAccessDialog({ node, perm, groups = [], onClose, actions = defaultActions(), timers = globalThis }) {
+export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onClose, actions = defaultActions(), timers = globalThis }) {
   const usage = perm === USAGE_PERM;
   const scope = usage ? 'node' : requestScope(perm);
   const [groupID, setGroupID] = useState(scope === 'scoped' && groups[0] ? String(groups[0].id) : '');
   const [reason, setReason] = useState('');
   const [ttl, setTtl] = useState(usage ? String(7 * 86400) : '3600');
   const [amount, setAmount] = useState(usage ? '20' : '');
-  const [proxy, setProxy] = useState('');
+  const [proxy, setProxy] = useState(gateway);
   const maxUSD = usage ? parseUSD(amount) : 0;
   const [misses, setMisses] = useState(0);
   const [busy, setBusy] = useState(false);

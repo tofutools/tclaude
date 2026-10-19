@@ -219,6 +219,9 @@ const settingRows = (v) => {
     models: () => call('GET', 'models/control'),
     setModelSwitch: ({ name = '', peer = '', disabled }) => call('POST', 'models/control', { ...(name ? { name } : {}), ...(peer ? { peer } : {}), disabled }),
     modelLeases: async () => (await call('GET', 'models/leases')) || [],
+    // Usage sharing: what this node shares, and what peers share with it.
+    modelSharesGiven: () => call('GET', 'models/shares'),
+    modelSharesReceived: () => call('GET', 'models/shares/received'),
     revokeModelLease: (id) => call('POST', 'models/leases', { id }),
     modelUsage: async (day = '') => (await call('GET', `models/usage${day ? `?day=${encodeURIComponent(day)}` : ''}`)) || [],
     // Spawn requests: incoming ones peers sent to this node's groups (all
