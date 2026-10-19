@@ -731,6 +731,44 @@ test('fused Groups lists each node\'s virtual groups; a peer\'s paged lists come
   await mounted.unmount(); fleet.dispose();
 });
 
+test('on a ?node= page, that node\'s own virtual lists page with the page\'s snapshot', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island, groupsStateMod] = await Promise.all([
+    harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'),
+    harness.importDashboardModule('js/groups-state.js'),
+  ]);
+  const values = new Map();
+  const prefs = { getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, String(v)), removeItem: (k) => values.delete(k) };
+  const groups = groupsStateMod.createGroupsState({ prefs, resetOffsets: () => {}, reorder: (g) => g,
+    columns: { list: () => [], hidden: () => false, setHidden: () => {}, deviationCount: () => 0 } });
+  groups.initialize();
+  groups.setVisible('retired', true);
+  // The page reads forge (?node=inst_forge): its snapshot is the page's, and
+  // carries the first window of forge's 120 retired agents.
+  groups.publish({ groups: [group('build')], agents: [], ungrouped: [],
+    retired: [{ conv_id: 'cf0', title: 'forge-veteran' }], paging: { retired: { offset: 0, limit: 50, total: 120, total_unfiltered: 120 } } });
+  const fleet = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  fleet.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  const fetched = [];
+  const fetchImpl = async (url) => {
+    fetched.push(url);
+    return { ok: true, status: 200, json: async () => ({ groups: [group('ops')], agents: [], ungrouped: [] }) };
+  };
+  const timers = fakeTimers();
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${fleet} host=${host} snapshot=${groups.snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="inst_forge" groups=${groups} />`, host);
+  for (const first of timers.queue.splice(0)) await harness.act(async () => { await first.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  const retiredForge = mounted.container.querySelector('details[data-group-key="inst_forge/ retired-virtual"]');
+  assert.ok(retiredForge, "forge's Retired is listed");
+  assert.match(retiredForge.querySelector('.list-pager-count').textContent, /1–50 of 120/, "forge's list keeps its pager");
+  // Its pager is the page's own (list-paging.js through the snapshot tick),
+  // not a peer list's, so it names no node.
+  assert.equal(retiredForge.querySelector('button[data-pager="next"]').dataset.node, undefined);
+  assert.equal(fetched.some((u) => u.startsWith('/api/peer/inst_forge/retired')), false, "forge's list is not read again as a peer's");
+  await mounted.unmount(); fleet.dispose();
+});
+
 test('a peer agent\'s unread notification raises its ! here and opens the reader on its node', async (t) => {
   const harness = await createPreactHarness(t);
   const [stateMod, island, attention] = await Promise.all([

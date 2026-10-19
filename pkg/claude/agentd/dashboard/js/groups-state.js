@@ -143,7 +143,8 @@ const VIRTUAL_KINDS = [
 
 // nodeVirtualGroup names one node's virtual group in the fused view, as its
 // real groups are (group@node); its rows name their node, so their controls
-// reach it. The home node's lists page through list-paging.js; a peer's
+// reach it. The page's node's lists (this node's, or the ?node= peer's) come
+// with the page's snapshot and page through list-paging.js; another peer's
 // page when its lists came through usePeerLists (their paging names the
 // node), and otherwise show their first page.
 function nodeVirtualGroup(group, node) {
@@ -153,7 +154,7 @@ function nodeVirtualGroup(group, node) {
     key: `${node.id}/${group.key}`,
     fleet_node: node,
     members: (group.members || []).map((m) => ({ ...m, fleet_node: node })),
-    ...(node.home || group.paging?.node === node.id ? {} : { paging: null }),
+    ...(node.page || group.paging?.node === node.id ? {} : { paging: null }),
   };
 }
 

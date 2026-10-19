@@ -443,7 +443,7 @@ export function MergedGroups({
 
   const t = now();
   const nodes = ticked.map((node) => ({
-    node: node.id === home ? { ...node, home: true } : node,
+    node: { ...node, ...(node.id === home ? { home: true } : {}), ...(node.id === pageNode ? { page: true } : {}) },
     entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
   }));
   const merged = current.fused && fleet ? mergeSnapshots(nodes, t, snapshot.value, notifications) : null;
