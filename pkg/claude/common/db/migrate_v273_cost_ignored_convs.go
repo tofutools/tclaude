@@ -19,7 +19,7 @@ func migrateV272toV273(d *sql.DB) error {
 	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS cost_ignored_convs (
 		conv_id    TEXT PRIMARY KEY,
 		ignored_at INTEGER NOT NULL
-	)`); err != nil {
+	) STRICT`); err != nil {
 		return fmt.Errorf("migrate v272→v273 (cost ignored convs): %w", err)
 	}
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 273`); err != nil {

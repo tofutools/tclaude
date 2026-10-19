@@ -555,7 +555,7 @@ function CostsTable({ state, current, ignore }) {
               <td><span class="muted">${fmtLastActivity(agent)}</span></td>
               <td class="cost-ignore-cell">${agent.conv_id && html`<button class="cost-ignore" data-act="cost-ignore"
                 disabled=${ignore.pending.has(agent.conv_id)}
-                title="Ignore this agent's spend (all its days) in every cost total — e.g. spend counted twice. Restore it from the Ignored list."
+                title="Ignore this conversation's spend (all its days) in every cost total — e.g. spend counted twice. Earlier conversations of the same agent (after /clear or a resume) are separate rows. Restore it from the Ignored list."
                 aria-label=${`Ignore ${agent.title || agent.conv_id} in cost totals`}
                 onClick=${() => ignore.run(agent.conv_id, agent.title, true)}>⊘</button>`}</td>
             </tr>`;

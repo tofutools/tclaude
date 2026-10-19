@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"cmp"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -388,7 +389,7 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 		RealTotalUSD: realTotal, WhatIfTotalUSD: whatIfTotal, VirtualCostCredits: virtualCreditsTotal,
 		CostKind: costKind(realTotal, whatIfTotal),
 		Days:     []costDayPoint{}, Agents: []costAgentRow{},
-		Ignored: ignoredCostRows(ignoredConvs, ignoredDeltas, fromKey, toKey)}
+		Ignored: ignoredCostRows(ignoredConvs, ignoredDeltas, models, fromKey, toKey)}
 	for day := from; ; day = day.AddDate(0, 0, 1) {
 		key := day.Format(costDayKey)
 		if key > toKey {
@@ -430,7 +431,7 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 // the spend its deltas would add to [fromKey, toKey] (zero when it spent
 // nothing there, so it stays restorable from any span). Most recently ignored
 // first.
-func ignoredCostRows(ignored map[string]time.Time, deltas []costDelta, fromKey, toKey string) []costIgnoredRow {
+func ignoredCostRows(ignored map[string]time.Time, deltas []costDelta, models map[string]string, fromKey, toKey string) []costIgnoredRow {
 	type agg struct {
 		real, whatif   float64
 		model, harness string
@@ -443,11 +444,12 @@ func ignoredCostRows(ignored map[string]time.Time, deltas []costDelta, fromKey, 
 			a = &agg{}
 			byConv[d.convID] = a
 		}
-		// Model and harness name the conversation even outside the span.
+		// Model and harness name the conversation even outside the span,
+		// with the Costs table's live-session fallback for pre-v71 history.
 		if db.CompareCostInstants(d.updatedAtNS, a.latestNS) >= 0 {
 			a.latestNS = d.updatedAtNS
-			if d.model != "" {
-				a.model = d.model
+			if m := cmp.Or(d.model, models[d.sessionID]); m != "" {
+				a.model = m
 			}
 			if d.harness != "" {
 				a.harness = d.harness
