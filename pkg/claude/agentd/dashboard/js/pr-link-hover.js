@@ -7,7 +7,7 @@ import { relativeAge } from './pr-review-model.js';
 const html = htm.bind(h);
 
 // The PR link itself (#1234 in the Groups tab's Branch column), plus a hover
-// card answering "what is this PR": title, state, author, branches, diffstat
+// card answering "what is this PR": repo, title, state, author, branches, diffstat
 // and the opening of its description. The CI pill and the review pill that
 // follow the link keep their own panels; this one shares their placement,
 // hover-root and bridge mechanics and their .ci-panel styling.
@@ -89,9 +89,17 @@ function usePRDetails(url, active) {
 // githubPRBase returns the canonical https://github.com/<owner>/<repo>/pull/<n>
 // for a GitHub PR URL (dropping any /files tab, query or fragment), or ''.
 export function githubPRBase(url) {
-  const match = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)(?:[/?#]|$)/i.exec(String(url || '').trim());
+  const match = GITHUB_PR_URL.exec(String(url || '').trim());
   return match ? `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}` : '';
 }
+
+// githubPRRepo returns the "<owner>/<repo>" a GitHub PR URL belongs to, or ''.
+export function githubPRRepo(url) {
+  const match = GITHUB_PR_URL.exec(String(url || '').trim());
+  return match ? `${match[1]}/${match[2]}` : '';
+}
+
+const GITHUB_PR_URL = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)(?:[/?#]|$)/i;
 
 const STATE_LABELS = { open: 'Open', draft: 'Draft', merged: 'Merged', closed: 'Closed' };
 
@@ -157,9 +165,15 @@ function PRDetailsPanel({ prURL, prNumber, title, prState, state, panelID, headi
       (placement.placement === 'above' ? 'transform:translateY(-100%)' : '')
     : 'visibility:hidden';
   const updated = details ? relativeAge(details.fetched_at, now) : '';
+  const repo = githubPRRepo(prURL);
   return html`
     <div ref=${panelRef} class="ci-panel prd-panel" style=${style}
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
+      ${repo ? html`
+        <div class="prd-repo">
+          <a href=${`https://github.com/${repo}`} target="_blank" rel="noopener noreferrer">${repo}</a>
+        </div>
+      ` : null}
       <div class="prd-title" id=${headingID}>
         <a href=${prURL} target="_blank" rel="noopener noreferrer">
           ${shownTitle || (prNumber ? `Pull request #${prNumber}` : 'Pull request')}
