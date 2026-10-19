@@ -87,6 +87,15 @@ func shareCap(g db.FederationPeerGrant) db.ModelProxyShareCap {
 	return db.ModelProxyShareCap{MicroUSD: int64(math.Round(g.SpawnPolicy.MaxUSD * 1e6)), Since: g.CreatedAt, AllProxies: g.Scope == ""}
 }
 
+// shareProxy is the gateway a cap's spend is summed over: every gateway
+// ("") for an unscoped grant's cap.
+func shareProxy(c db.ModelProxyShareCap, name string) string {
+	if c.AllProxies {
+		return ""
+	}
+	return name
+}
+
 // modelShareCaps are the dollar caps a peer's requests through gateway name
 // count against (none: uncapped).
 func modelShareCaps(peer, name string) []db.ModelProxyShareCap {

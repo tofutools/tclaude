@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"slices"
 	"sort"
@@ -57,27 +58,42 @@ func modelSharesFor(cfg *config.Config, peer *db.FederationPeer) []modelShare {
 		if s.Dialect == "" {
 			s.Dialect = "anthropic"
 		}
+		// The grant shown is the tightest capped one (least left), else the
+		// one most specific to this gateway.
 		var grant *db.FederationPeerGrant
-		for i := range grants {
-			g := &grants[i]
-			if g.Slug == PermModelsProxy && (g.Scope == "" || g.Scope == "http_proxy="+name) && (grant == nil || g.Scope != "") {
-				grant = g
+		left := int64(math.MaxInt64)
+		for _, g := range modelShareGrants(peer.InstanceID, name) {
+			c := shareCap(g)
+			spent, err := db.ModelProxyShareSpent(peer.InstanceID, shareProxy(c, name), c.Since)
+			if err == nil && c.MicroUSD-spent < left {
+				left = c.MicroUSD - spent
+				grant = &g
+				s.SpentUSD = float64(spent) / 1e6
 			}
 		}
-		if capped := modelShareGrant(peer.InstanceID, name); capped != nil {
-			grant = capped
+		if grant == nil {
+			for i := range grants {
+				g := &grants[i]
+				if g.Slug == PermModelsProxy && (g.Scope == "" || g.Scope == "http_proxy="+name) && (grant == nil || g.Scope != "") {
+					grant = g
+				}
+			}
+			since := time.Time{}
+			if grant != nil {
+				since = grant.CreatedAt
+			}
+			proxy := name
+			if grant != nil && grant.Scope == "" {
+				proxy = ""
+			}
+			if spent, err := db.ModelProxyShareSpent(peer.InstanceID, proxy, since); err == nil {
+				s.SpentUSD = float64(spent) / 1e6
+			}
 		}
 		if grant == nil {
 			s.Unrestricted = unrestricted
 		} else {
 			s.MaxUSD, s.Since, s.ExpiresAt = grant.SpawnPolicy.MaxUSD, grant.CreatedAt, grant.ExpiresAt
-		}
-		proxy := name
-		if grant != nil && grant.Scope == "" {
-			proxy = ""
-		}
-		if spent, err := db.ModelProxyShareSpent(peer.InstanceID, proxy, s.Since); err == nil {
-			s.SpentUSD = float64(spent) / 1e6
 		}
 		out = append(out, s)
 	}

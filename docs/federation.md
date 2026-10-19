@@ -2470,6 +2470,15 @@ rates in USD per million tokens, by model ID or trailing-`*` prefix:
   request. **Fleet → Model gateways → Usage** and
   `tclaude federation models usage` show it per gateway, peer and model.
 
+**Seeing what is shared.** `tclaude federation shares` asks every trusted
+peer which of its gateways this node may use, and lists for each one the
+models, the cap, what has been spent so far, when it ends, and the
+`--model-proxy` reference to spawn with. `--given` lists what this node shares
+with its peers. A peer answers only about its own grants; one sharing nothing
+answers with an empty list. A gateway the peer is blocked on, or that is
+switched off, is not listed. The dashboard reads the same lists from
+`/api/federation/models/shares` and `…/shares/received`.
+
 Use an API key for a shared gateway, not a consumer subscription's login:
 letting other people use a Claude Pro/Max or ChatGPT subscription is likely
 against the provider's terms.
