@@ -816,6 +816,15 @@ top-bar totals. Recorded costs and native credits remain unchanged. The same
 settings are available under Config → Usage, costs & rate limits. On subscription accounts the
 Costs view appears only when enabled in Config.
 
+To leave an agent out of the books — for example spend that was counted twice
+before clones and imports stopped copying their source's cost — click the dim
+⊘ at the end of its row. That ignores the whole conversation (all of its days)
+in every cost total: this view, the header and Overview figures, spend alerts
+and `tclaude costs`. Ignored agents are listed in the collapsible **Ignored**
+section under the table, with the spend restoring them would add back to the
+current span; **Restore** counts them again. The recorded cost history is
+never modified. Restricted peer views show these buttons greyed out.
+
 ## Activity
 
 Three subtabs, each with its own address: **Audit** (`/activity/audit`, the

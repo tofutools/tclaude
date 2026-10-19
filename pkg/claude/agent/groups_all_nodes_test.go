@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -20,9 +21,13 @@ func TestGroupsLsAllNodesMergesPeersAndReportsUnreachable(t *testing.T) {
 	allNodesReaders.local = func(out any) error {
 		return json.Unmarshal([]byte(`[{"name":"ops","members":3,"online":2}]`), out)
 	}
+	// Peers are read concurrently, so the record of reads needs a lock.
+	var readMu sync.Mutex
 	read := []string{}
 	allNodesReaders.peerView = func(node, endpoint string, out any) error {
+		readMu.Lock()
 		read = append(read, node+"/"+endpoint)
+		readMu.Unlock()
 		if node == "inst_lab" {
 			return errors.New("peer is unreachable")
 		}

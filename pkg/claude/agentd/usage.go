@@ -188,7 +188,7 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 	var costHistoryAvailable bool
 	var spendLimits []dashboardSpendLimit
 	timed("cost_history", func() {
-		rows, err := db.AllCostDailyRows()
+		rows, _, _, err := countedCostDailyRows()
 		costErr = err
 		costHistoryAvailable = err == nil
 		now := time.Now()

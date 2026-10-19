@@ -112,5 +112,23 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
     return operation;
   }
 
-  return Object.freeze({ load, loadFactor, saveFactor, resetFactors });
+  // setIgnored excludes a conversation's spend from every cost total, or
+  // restores it, then reloads the view so totals and lists move together.
+  // Resolves to { ok, error } so the caller can report a failure.
+  async function setIgnored(convID, ignored) {
+    try {
+      const response = await fetchImpl('/api/costs/ignore', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conv_id: convID, ignored: Boolean(ignored) }),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
+    }
+    await load();
+    return { ok: true, error: '' };
+  }
+
+  return Object.freeze({ load, loadFactor, saveFactor, resetFactors, setIgnored });
 }

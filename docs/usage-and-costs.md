@@ -98,6 +98,11 @@ history's spend stays with its source. Claude Code transcripts drop their
 restored cost meter when copied, and Codex, Gemini and OpenCode cost readers
 skip usage recorded before the copy landed.
 
+Agents ignored from the dashboard's Costs view (the ⊘ row button) are left
+out of every summary and breakdown here, as they are from the dashboard
+totals and spend-limit alerts. Restore them from the Costs view's **Ignored**
+list.
+
 Cost data covers recorded tclaude sessions, not the provider's entire invoice.
 Model attribution follows the dashboard's Costs view: each conversation/day slice uses the
 last observed model. `generated_at` is the response time, not proof that all

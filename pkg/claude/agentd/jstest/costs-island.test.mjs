@@ -444,3 +444,48 @@ test('Multiplier popover edits harnesses with reset buttons before aligned input
   assert.equal(menu.querySelector('#costs-factor-codex').value, '');
   await mounted.unmount();
 });
+
+test('Costs rows ignore a whole agent and the Ignored list restores it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createCostsState }, { CostsApp }, { shellState }] = await Promise.all([
+    harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
+    harness.importDashboardModule('js/shell-state.js'),
+  ]);
+  const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false });
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot, activeTab: harness.signals.signal('usage'), prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1, payload());
+  const calls = [];
+  let result = { ok: true, error: '' };
+  const actions = {
+    load: async () => {}, loadFactor: async () => {}, saveFactor: async () => {},
+    setIgnored: async (conv, ignored) => { calls.push([conv, ignored]); return result; },
+  };
+  const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
+  assertAbsent(mounted.container.querySelector('#costs-ignored'), 'no Ignored section while nothing is ignored');
+
+  const ignoreAlpha = getByRole(mounted.container, 'button', { name: 'Ignore Alpha in cost totals' });
+  assert.equal(ignoreAlpha.dataset.act, 'cost-ignore', 'peer-view gating keys off data-act');
+  await harness.act(async () => { harness.fireEvent(ignoreAlpha, 'click'); await new Promise((done) => setTimeout(done, 0)); });
+  assert.deepEqual(calls, [['conv-a', true]]);
+  assert.match(shellState.toast.value.message, /Ignored Alpha/);
+
+  // The reloaded payload moves Alpha from the rows into the Ignored list.
+  const next = payload();
+  next.agents = next.agents.filter((row) => row.conv_id !== 'conv-a');
+  next.ignored = [{ agent_id: 'agt_alpha', conv_id: 'conv-a', title: 'Alpha', cost_usd: 3, harness: 'claude', model: 'opus', ignored_at: '2026-07-10T12:00:00Z' }];
+  await harness.act(() => { state.beginRequest(2); state.commitRequest(2, next); });
+  const section = mounted.container.querySelector('#costs-ignored');
+  assert.ok(section, 'ignored agents are listed');
+  assert.match(section.querySelector('summary').textContent, /1 agent · \$3\.00 excluded/);
+  assert.ok(section.querySelector('tr[data-key="cost-ignored-conv-a"]'));
+
+  result = { ok: false, error: 'boom' };
+  const restore = getByRole(section, 'button', { name: 'Restore Alpha to cost totals' });
+  assert.equal(restore.dataset.act, 'cost-restore');
+  await harness.act(async () => { harness.fireEvent(restore, 'click'); await new Promise((done) => setTimeout(done, 0)); });
+  assert.deepEqual(calls.at(-1), ['conv-a', false]);
+  assert.match(shellState.toast.value.message, /Restore failed for Alpha: boom/);
+  assert.equal(shellState.toast.value.error, true);
+});

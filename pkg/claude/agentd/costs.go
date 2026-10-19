@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"cmp"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -79,6 +81,34 @@ func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
 		out = append(out, costDelta{day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD, updatedAtNS: d.UpdatedAtNS, model: d.Model, harness: d.Harness, kind: kind})
 	}
 	return out
+}
+
+// countedCostDailyRows loads the cost history every total counts: all of
+// session_cost_daily except the conversations the operator ignored (the
+// Costs view's per-row Ignore, db.SetCostConvIgnored). The ignored rows and
+// conversations come back separately so the Costs view can list them for
+// restoring. A row with no conversation id cannot be ignored and always counts.
+func countedCostDailyRows() (counted, ignored []db.CostDailyRow, ignoredConvs map[string]time.Time, err error) {
+	rows, err := db.AllCostDailyRows()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	ignoredConvs, err = db.CostIgnoredConvs()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(ignoredConvs) == 0 {
+		return rows, nil, ignoredConvs, nil
+	}
+	counted = make([]db.CostDailyRow, 0, len(rows))
+	for _, row := range rows {
+		if _, skip := ignoredConvs[row.ConvID]; skip && row.ConvID != "" {
+			ignored = append(ignored, row)
+			continue
+		}
+		counted = append(counted, row)
+	}
+	return counted, ignored, ignoredConvs, nil
 }
 
 // displayedCostDeltasFromRows is the single source of cost slices for every
@@ -186,16 +216,33 @@ type costAgentRow struct {
 // just this span); the Costs tab's month projection uses it to decide
 // where the per-weekday average starts (see firstCostDay).
 type costsResponse struct {
-	From               string         `json:"from"`
-	To                 string         `json:"to"`
-	FirstDay           string         `json:"first_day,omitempty"`
-	Days               []costDayPoint `json:"days"`
-	Agents             []costAgentRow `json:"agents"`
-	TotalUSD           float64        `json:"total_usd"`
-	RealTotalUSD       float64        `json:"real_total_usd,omitempty"`
-	WhatIfTotalUSD     float64        `json:"what_if_total_usd,omitempty"`
-	VirtualCostCredits float64        `json:"virtual_cost_credits,omitempty"`
-	CostKind           string         `json:"cost_kind,omitempty"`
+	From     string         `json:"from"`
+	To       string         `json:"to"`
+	FirstDay string         `json:"first_day,omitempty"`
+	Days     []costDayPoint `json:"days"`
+	Agents   []costAgentRow `json:"agents"`
+	// Ignored lists every conversation the operator excluded from the
+	// totals, with the spend it would have added to this span. Nothing in
+	// Days, Agents or the totals includes it.
+	Ignored            []costIgnoredRow `json:"ignored"`
+	TotalUSD           float64          `json:"total_usd"`
+	RealTotalUSD       float64          `json:"real_total_usd,omitempty"`
+	WhatIfTotalUSD     float64          `json:"what_if_total_usd,omitempty"`
+	VirtualCostCredits float64          `json:"virtual_cost_credits,omitempty"`
+	CostKind           string           `json:"cost_kind,omitempty"`
+}
+
+// costIgnoredRow is one ignored conversation in the Costs view's Ignored
+// list: what restoring it would add back to the requested span.
+type costIgnoredRow struct {
+	AgentID   string  `json:"agent_id,omitempty"`
+	ConvID    string  `json:"conv_id"`
+	Title     string  `json:"title"`
+	CostUSD   float64 `json:"cost_usd"`
+	CostKind  string  `json:"cost_kind"`
+	Harness   string  `json:"harness"`
+	Model     string  `json:"model"`
+	IgnoredAt string  `json:"ignored_at"`
 }
 
 // maxCostSpanDays caps the requested span. The daily table is small,
@@ -221,11 +268,12 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 	fromKey := from.Format(costDayKey)
 	toKey := to.Format(costDayKey)
 
-	rows, err := db.AllCostDailyRows()
+	rows, ignoredRows, ignoredConvs, err := countedCostDailyRows()
 	if err != nil {
 		return costsResponse{}, err
 	}
 	deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
+	ignoredDeltas := displayedCostDeltasFromRows(ignoredRows, includeWhatIf)
 	models, err := db.SessionModels()
 	if err != nil {
 		return costsResponse{}, err
@@ -236,6 +284,7 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 	}
 
 	scaleCostDeltas(deltas, cfg, harnesses)
+	scaleCostDeltas(ignoredDeltas, cfg, harnesses)
 
 	type kindTotals struct{ real, whatif, credits float64 }
 	byDay := map[string]kindTotals{}
@@ -339,7 +388,8 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 	out := costsResponse{From: fromKey, To: toKey, FirstDay: firstCostDay(deltas), TotalUSD: total,
 		RealTotalUSD: realTotal, WhatIfTotalUSD: whatIfTotal, VirtualCostCredits: virtualCreditsTotal,
 		CostKind: costKind(realTotal, whatIfTotal),
-		Days:     []costDayPoint{}, Agents: []costAgentRow{}}
+		Days:     []costDayPoint{}, Agents: []costAgentRow{},
+		Ignored: ignoredCostRows(ignoredConvs, ignoredDeltas, models, fromKey, toKey)}
 	for day := from; ; day = day.AddDate(0, 0, 1) {
 		key := day.Format(costDayKey)
 		if key > toKey {
@@ -375,6 +425,64 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 	}
 	sortCostAgentRows(out.Agents)
 	return out, nil
+}
+
+// ignoredCostRows builds the Ignored list: every ignored conversation, with
+// the spend its deltas would add to [fromKey, toKey] (zero when it spent
+// nothing there, so it stays restorable from any span). Most recently ignored
+// first.
+func ignoredCostRows(ignored map[string]time.Time, deltas []costDelta, models map[string]string, fromKey, toKey string) []costIgnoredRow {
+	type agg struct {
+		real, whatif   float64
+		model, harness string
+		latestNS       int64
+	}
+	byConv := map[string]*agg{}
+	for _, d := range deltas {
+		a := byConv[d.convID]
+		if a == nil {
+			a = &agg{}
+			byConv[d.convID] = a
+		}
+		// Model and harness name the conversation even outside the span,
+		// with the Costs table's live-session fallback for pre-v71 history.
+		if db.CompareCostInstants(d.updatedAtNS, a.latestNS) >= 0 {
+			a.latestNS = d.updatedAtNS
+			if m := cmp.Or(d.model, models[d.sessionID]); m != "" {
+				a.model = m
+			}
+			if d.harness != "" {
+				a.harness = d.harness
+			}
+		}
+		if d.day < fromKey || d.day > toKey {
+			continue
+		}
+		if d.kind == "what_if" {
+			a.whatif += d.usd
+		} else {
+			a.real += d.usd
+		}
+	}
+	out := make([]costIgnoredRow, 0, len(ignored))
+	for convID, at := range ignored {
+		a := byConv[convID]
+		if a == nil {
+			a = &agg{}
+		}
+		out = append(out, costIgnoredRow{
+			AgentID: peerAgentID(convID), ConvID: convID, Title: agent.CachedTitle(convID),
+			CostUSD: a.real + a.whatif, CostKind: costKind(a.real, a.whatif),
+			Harness: a.harness, Model: a.model, IgnoredAt: at.Format(time.RFC3339Nano),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IgnoredAt != out[j].IgnoredAt {
+			return ignored[out[i].ConvID].After(ignored[out[j].ConvID])
+		}
+		return out[i].ConvID < out[j].ConvID
+	})
+	return out
 }
 
 // scaleCostDeltas changes only the display copy, never the raw baseline walk.
@@ -499,4 +607,48 @@ func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// costsIgnoreBody is the POST /api/costs/ignore request.
+type costsIgnoreBody struct {
+	ConvID  string `json:"conv_id"`
+	Ignored *bool  `json:"ignored"`
+}
+
+// maxCostIgnoreConvIDBytes bounds the conversation id a client may name.
+const maxCostIgnoreConvIDBytes = 256
+
+// handleDashboardCostsIgnore serves POST /api/costs/ignore — the Costs view's
+// per-row Ignore and its Ignored list's Restore. An ignored conversation's
+// spend leaves every total (the Costs view, the header and Overview figures,
+// spend alerts, `tclaude costs`) while its recorded history stays intact.
+func handleDashboardCostsIgnore(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var body costsIgnoreBody
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		http.Error(w, "bad ignore body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Ignored == nil {
+		http.Error(w, "ignored is required", http.StatusBadRequest)
+		return
+	}
+	if body.ConvID == "" || len(body.ConvID) > maxCostIgnoreConvIDBytes {
+		http.Error(w, "conv_id is required", http.StatusBadRequest)
+		return
+	}
+	if err := db.SetCostConvIgnored(body.ConvID, *body.Ignored); err != nil {
+		http.Error(w, "set cost ignore: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conv_id": body.ConvID, "ignored": *body.Ignored})
 }

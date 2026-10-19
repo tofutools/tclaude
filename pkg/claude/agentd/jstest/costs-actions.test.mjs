@@ -150,3 +150,33 @@ test('A successful harness save cannot hide another harness failure', async (t) 
   assert.equal(reloads, before + 1, 'successful independent save refreshes even when the later save fails');
   assert.match(state.factor.value.status, /codex: Codex failed/);
 });
+
+test('Cost ignore posts the conversation and reloads, reporting failures', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createCostsState }, { createCostsActions }] = await Promise.all([
+    harness.importDashboardModule('js/costs-state.js'),
+    harness.importDashboardModule('js/costs-actions.js'),
+  ]);
+  const state = createCostsState({
+    snapshot: harness.signals.signal({ cost_tab_visible: true }), activeTab: harness.signals.signal('costs'), prefs: storage,
+  });
+  const posts = [];
+  let loads = 0;
+  let fail = false;
+  const actions = createCostsActions({ state, fetchImpl: async (path, options = {}) => {
+    if (path === '/api/costs/ignore') {
+      posts.push({ method: options.method, body: JSON.parse(options.body) });
+      return fail ? response('nope', false, 400) : response({ ok: true });
+    }
+    loads += 1;
+    return response({ from: 'a', to: 'a', days: [], agents: [], total_usd: 0 });
+  } });
+  assert.deepEqual(await actions.setIgnored('conv-a', true), { ok: true, error: '' });
+  assert.deepEqual(posts, [{ method: 'POST', body: { conv_id: 'conv-a', ignored: true } }]);
+  assert.equal(loads, 1, 'a successful ignore reloads the totals');
+  fail = true;
+  const failed = await actions.setIgnored('conv-a', false);
+  assert.equal(failed.ok, false);
+  assert.match(failed.error, /nope/);
+  assert.equal(loads, 1, 'a failed request does not reload');
+});

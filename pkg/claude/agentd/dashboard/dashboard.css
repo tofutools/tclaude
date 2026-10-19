@@ -4313,6 +4313,26 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 #costs-table th.cost-sort { cursor: pointer; user-select: none; white-space: nowrap; }
 #costs-table th.cost-sort:hover { color: #58a6ff; }
 #costs-table th.cost-sort.active { color: #58a6ff; }
+/* Per-row Ignore: a dim ⊘ at the row's end that comes forward on hover or
+   focus, so it is findable without competing with the amounts. Ignoring is
+   reversible from the Ignored list below the table. */
+#costs-table .cost-ignore {
+  background: none; border: 0; padding: 0 2px; cursor: pointer;
+  color: #6e7681; font-size: 13px; line-height: 1; opacity: 0.35;
+}
+#costs-table tr:hover .cost-ignore, #costs-table .cost-ignore:focus-visible { opacity: 1; }
+#costs-table .cost-ignore:hover { color: #f85149; }
+#costs-table .cost-ignore:disabled { cursor: progress; opacity: 0.35; }
+/* The Ignored list: conversations left out of every cost total, collapsed
+   by default under the table, each with a Restore button. */
+.cost-ignored { margin: 12px 0 0; border: 1px solid #30363d; border-radius: 5px; padding: 6px 9px; }
+.cost-ignored > summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.cost-ignored > summary span { color: #8b949e; }
+.cost-ignored p { margin: 6px 0; font-size: 12px; }
+.cost-ignored table { width: 100%; border-collapse: collapse; }
+.cost-ignored td { padding: 3px 6px; white-space: nowrap; width: 1%; }
+.cost-ignored td:first-child { width: auto; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cost-ignored .rowname { color: #8b949e; text-decoration: line-through; }
 .empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
 .row-actions {
   display: inline-flex; gap: 4px; opacity: 0.4; position: relative;
@@ -17470,6 +17490,7 @@ body.wizard #costs-table tr.cost-chain-hl td { background: rgba(122, 93, 176, 0.
 body.wizard #costs-table .cost-total-row td { border-top-color: #4a3a6b; }
 body.wizard #costs-table th.cost-sort:hover,
 body.wizard #costs-table th.cost-sort.active { color: #d9b45a; }
+body.wizard .cost-ignored { border-color: #4a3a6b; }
 
 /* ─── Per-model spend strip: a treasury split between the summoned ─────
    Same treatment as the table below it — gold amounts, violet chrome — so
