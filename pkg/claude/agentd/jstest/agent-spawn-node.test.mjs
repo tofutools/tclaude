@@ -62,6 +62,7 @@ test("the spawn dialog on another node is the local dialog over that node's snap
     if (String(url).includes('/saved-prompts')) return respond([{ name: 'house-rules', body: 'Follow the house rules.' }]);
     if (String(url).includes('/spawn-profiles') || String(url).includes('/sandbox-profiles')) return respond([]);
     if (String(url).includes('/worktrees')) return respond({ is_repo: false, worktrees: [], branches: [] });
+    if (String(url) === '/api/federation/claude-subscription') return respond({ set: true });
     return respond({});
   };
   const prevFetch = harness.window.fetch;
@@ -89,7 +90,16 @@ test("the spawn dialog on another node is the local dialog over that node's snap
   for (const id of ['agent-spawn-save-profile', 'agent-spawn-cwd', 'agent-spawn-harness', 'agent-spawn-queue', 'agent-spawn-attach-btn', 'agent-spawn-focus']) {
     assert.equal(q(`#${id}`).disabled, false, `${id} works as locally`);
   }
-  assert.ok(urls.length > 0 && urls.every((u) => u.startsWith(`/api/peer/${NODE}/`)), `every request reaches forge: ${urls.join(', ')}`);
+  // The Claude login row offers this operator's own subscription, asked of
+  // this node: the token is this node's, never forge's.
+  const login = q('#agent-spawn-claude-login');
+  assert.ok(login, 'a spawn elsewhere offers your own Claude subscription');
+  assert.match(login.textContent, /forge's own login.*Your Claude subscription/s);
+  Object.defineProperty(login, 'value', { configurable: true, writable: true, value: 'mine' });
+  await harness.act(() => harness.fireEvent(login, 'change'));
+  assert.match(q('#agent-spawn-claude-login-hint').textContent, /forge holds the token in memory only/);
+  const elsewhere = urls.filter((u) => u !== '/api/federation/claude-subscription');
+  assert.ok(elsewhere.length > 0 && elsewhere.every((u) => u.startsWith(`/api/peer/${NODE}/`)), `every other request reaches forge: ${urls.join(', ')}`);
   await mounted.unmount();
 });
 

@@ -54,9 +54,9 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   fleetState.fleet.value = fleet;
   const now = new Date().toISOString();
   const members = [
-    { conv_id: 'c1', agent_id: 'agt_1', title: 'builder-2', online: true, state: { status: 'idle' } },
+    { conv_id: 'c1', agent_id: 'agt_1', title: 'builder-2', online: true, state: { status: 'idle' }, claude_subscription: { peer: 'inst_a', held: false } },
     { conv_id: 'c2', agent_id: 'agt_b1d3', title: 'builder-1', online: false, state: {}, federation_presence: { state: 'away', home_instance: 'inst_a', current_instance: 'inst_forge', hop_count: 2 } },
-    { conv_id: 'c3', agent_id: 'agt_3', title: 'returned', online: true, state: { status: 'idle' }, federation_presence: { state: 'here', home_instance: 'inst_a', current_instance: 'inst_a', predecessor_instance: 'inst_forge', hop_count: 1, arrived_at: now } },
+    { conv_id: 'c3', agent_id: 'agt_3', title: 'returned', online: true, state: { status: 'idle' }, federation_presence: { state: 'here', home_instance: 'inst_a', current_instance: 'inst_a', predecessor_instance: 'inst_forge', hop_count: 1, arrived_at: now }, claude_subscription: { peer: 'inst_forge', label: 'forge', held: true } },
   ];
   const group = { name: 'builders', members, online: 2 };
 
@@ -80,6 +80,12 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   assert.equal(placeholder.querySelector('.row-actions'), null, 'no menu or terminal on a placeholder');
   assert.equal(host.querySelector('.presence-badge[data-presence="back"]').textContent, '⌂ back home · from forge · 1 hop');
   assert.ok(host.querySelector('tr.presence-row-back'));
+  // An agent on a peer operator's own Claude subscription says whose, and
+  // warns once the token is gone and it can no longer be restarted.
+  assert.equal(host.querySelector('[data-subscription="held"]').textContent, "◆ forge's subscription");
+  const lost = host.querySelector('[data-subscription="lost"]');
+  assert.equal(lost.textContent, '◆ your subscription (token gone)');
+  assert.match(lost.getAttribute('title'), /no longer holds the token.*Spawn a new agent/);
   const modes = [...host.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode);
   assert.deepEqual(modes, ['move', 'teleport', 'clone', 'morph'], 'recall home shows only on a visiting agent');
   const recall = [...host.querySelectorAll('tr.away-placeholder [data-act="send-elsewhere"]')].map((b) => b.dataset.mode);

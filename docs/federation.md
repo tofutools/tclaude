@@ -2280,6 +2280,42 @@ the gateway's leases and deletes its entry. The routes behind these are GET, PUT
 DELETE `/api/federation/models/gateways/{name}` and POST
 `/api/federation/models/gateway-test`.
 
+### Running as yourself on another node (Claude subscription)
+
+A gateway relays model requests and needs a provider API key. To run Claude
+Code on another node on **your own** Claude subscription instead (for example
+a helper on a family member's machine), store a long-lived token once:
+run `claude setup-token` where you are logged in, then paste it under Fleet
+admin → Model gateways → **My Claude subscription**. It is written to a 0600
+file under `~/.tclaude/data/` and never shown again; **Forget…** deletes it.
+The token lasts about a year; revoke it at claude.ai (Settings → Claude Code).
+
+When you spawn on another node (an unrestricted peer, or a restricted one under
+a spawn grant), the spawn dialog's **Claude login** row offers **Your Claude
+subscription**. This node's peer proxy then adds the token to that spawn's
+encrypted request, and only for this node's own operator. The receiving node:
+
+- keeps the token in daemon memory only, keyed by the agent. A durable marker
+  records only whose subscription the agent runs on;
+- hands it to the agent's pane wrapper once per launch. The wrapper passes it
+  to Claude Code through an inherited pipe
+  (`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`), never through the environment,
+  argv or disk, and strips competing auth variables;
+- requires Claude Code 2.1.303 or newer, and refuses another harness, a model
+  gateway, and `apiKeyHelper` or `env` settings for that agent;
+- refuses to relaunch the agent once it no longer holds the token (after its
+  tclaude restarts, or when the agent retires), rather than falling back to its
+  own login.
+
+The member row shows a **◆ \<name\>'s subscription** badge. When the token is
+gone, the badge says so; spawn a new agent to continue. Clones, moves,
+teleports and manual `conv resume` on the receiving node do not carry the
+subscription: a moved agent runs on its destination's own login. A receiver
+whose requester-pays policy is `required` accepts a subscription spawn without
+a gateway lease, since the requester pays through their own subscription. The routes
+are GET, PUT and DELETE `/api/federation/claude-subscription`, and these routes
+are never served to peers.
+
 
 A trusted machine can provide a named gateway to Claude Code or Codex workers
 on another machine. Claude Code uses Anthropic Messages; Codex uses OpenAI Responses. The provider key stays on the gateway machine;

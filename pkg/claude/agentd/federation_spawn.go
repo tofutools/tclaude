@@ -610,7 +610,17 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		return
 	}
 	modelProxy := ""
-	if req.Credentials != "" {
+	var subscription claudeSubscriptionHandoff
+	if req.Credentials == claudeSubscriptionMode {
+		// Held in memory since the request arrived; a restart in between, or
+		// a request that waited past its window, loses it.
+		var ok bool
+		if subscription, ok = takeRequestClaudeSubscription(req.ID); !ok || subscription.peer != peer.InstanceID {
+			release()
+			fail(409, "claude_subscription", "this node no longer holds the requester's Claude subscription token (it is kept in memory only); ask "+peerDisplay(peer)+" to send the spawn again")
+			return
+		}
+	} else if req.Credentials != "" {
 		var err error
 		modelProxy, err = teleportModelReference(req.Credentials, "")
 		if err != nil {
@@ -646,6 +656,9 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		return
 	}
 	inner := r.Clone(context.WithValue(r.Context(), reservedAgentIDContextKey{}, reservedID))
+	if subscription.token != "" {
+		inner = inner.WithContext(withClaudeSubscription(inner.Context(), subscription))
+	}
 	if fedSpawnLaunchSandboxed(req.Overrides.Launch) {
 		// The unenforced-sandbox and omitted-profiles settings passed the
 		// .permissions grant check above (or the operator is approving them).
@@ -723,6 +736,8 @@ func handleFederationSpawnRequestDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "decided", "request was decided concurrently")
 		return
 	}
+	// A denied request never launches: forget its Claude subscription token now.
+	takeRequestClaudeSubscription(req.ID)
 	_ = queueSpawnResult(req, peer, proto.SpawnResultPayload{Status: proto.SpawnDenied, Reason: reason})
 	setAuditTargetLabel(r, fmt.Sprintf("#%d", req.ID))
 	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID, "status": db.FedSpawnDenied})

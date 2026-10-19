@@ -127,6 +127,13 @@ export function createAgentSpawnActions(dependencies = {}) {
       return Array.isArray(value?.shares) ? value.shares : [];
     },
 
+    // loadClaudeSubscription says whether this node's operator stored their
+    // own Claude subscription token (claude_subscription_origin.go); the
+    // token itself never comes back.
+    async loadClaudeSubscription() {
+      return jsonRequest(fetchImpl, '/api/federation/claude-subscription');
+    },
+
     async loadWorktrees(repo) {
       const value = String(repo || '').trim();
       if (!value) {

@@ -5023,6 +5023,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	p := spawnParams{
 		Arrival:                    arrivalFromRequest(r),
 		AgentID:                    reservedAgentIDFromContext(r.Context()),
+		ClaudeSubscription:         claudeSubscriptionForSpawn(r.Context()),
 		EffectiveSandbox:           &effectiveSandbox,
 		Name:                       body.Name,
 		Role:                       body.Role,
@@ -5164,6 +5165,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"group_default":  groupProfile,
 		"global_default": globalProfile,
 	}))
+	if p.ClaudeSubscription.token != "" {
+		if body.NonInteractive || (p.Harness != "" && p.Harness != harness.DefaultName) {
+			writeError(w, 400, "claude_subscription", "a peer's Claude subscription runs an ordinary Claude Code worker only")
+			return
+		}
+		if p.ModelProxy != "" && p.ModelProxy != "off" {
+			writeError(w, 400, "claude_subscription", "a worker on a peer's Claude subscription cannot also use a model gateway")
+			return
+		}
+		p.ModelProxy = ""
+	}
 	if body.NonInteractive {
 		managed, managedErr := managedinstructions.Resolve([]*db.AgentGroup{g})
 		if managedErr != nil {
@@ -5373,6 +5385,9 @@ type spawnParams struct {
 	// if those are unset too, the flag is omitted entirely.
 	Model      string
 	ModelProxy string
+	// ClaudeSubscription is a peer operator's own Claude subscription token
+	// for this worker, held in memory only (claude_subscription.go).
+	ClaudeSubscription claudeSubscriptionHandoff
 	// Harness is the resolved harness name to launch ("" or "claude" =
 	// Claude Code, the default; "codex" = Codex CLI). It forwards to
 	// `tclaude session new --harness <h>` and is validated at the spawn
@@ -7662,6 +7677,19 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return launchFailed(bundleLaunchPreparationFailed(spawnArgs, err))
 		}
 	}
+	if p.ClaudeSubscription.token != "" {
+		agentID := p.AgentID
+		if agentID == "" && preConvID != "" {
+			agentID, _ = db.AgentIDForConv(preConvID)
+		}
+		if agentID == "" {
+			return launchFailed(errors.New("could not resolve the agent identity that holds the Claude subscription token"))
+		}
+		if err := holdClaudeSubscription(agentID, p.ClaudeSubscription); err != nil {
+			return launchFailed(err)
+		}
+		spawnArgs.ClaudeSubscriptionAgentID = agentID
+	}
 	if err := launch(spawnArgs); err != nil {
 		return launchFailed(err)
 	}
@@ -9676,6 +9704,9 @@ func bundleLaunchPreparationFailed(args clcommon.SpawnArgs, launchErr error) err
 // setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
 // for the per-field semantics.
 func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
+	if err := applyClaudeSubscription(&args); err != nil {
+		return err
+	}
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
 		return bundleLaunchPreparationFailed(args, err)
 	}
@@ -9735,6 +9766,9 @@ func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunch
 	// A COPY clone has resume-shaped argv but names a newly forked conversation;
 	// only an ordinary durable resume may bind a known thread without waiting
 	// for a TUI hook that Codex does not emit on every resume.
+	if err := applyClaudeSubscription(&args); err != nil {
+		return err
+	}
 	args.CodexAppServerExistingThread = kind == copilotAPILaunchResume
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
 		return bundleLaunchPreparationFailed(args, err)
@@ -9772,6 +9806,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	}
 	if a.ModelProxy != "" {
 		args = append(args, "--model-proxy", a.ModelProxy)
+	}
+	if a.ClaudeSubscription {
+		args = append(args, "--claude-subscription")
 	}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
@@ -10028,6 +10065,9 @@ func appendRemoteControlFlag(args []string, remoteControl bool) []string {
 // can be unit-tested without forking a subprocess.
 func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-r", a.ConvID, "-d", "--global"}
+	if a.ClaudeSubscription {
+		args = append(args, "--claude-subscription")
+	}
 	if a.ManagedInstructionsRoot != "" {
 		args = append(args, "--managed-instructions-root", a.ManagedInstructionsRoot)
 	}

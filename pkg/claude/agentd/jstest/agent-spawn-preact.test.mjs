@@ -346,6 +346,13 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     cwd: '/mono', worktree_path: '/tmp/wt', worktree_branch: 'worker',
   });
 
+  const onSub = { ...draft, claudeSubscription: true };
+  assert.equal(model.buildSpawnRequest(onSub, context, null).body.claude_subscription, undefined, 'a spawn on this node runs on its own login');
+  const subBody = model.buildSpawnRequest(onSub, { ...context, remoteSpawn: true }, null).body;
+  assert.equal(subBody.claude_subscription, true);
+  assert.equal('model_proxy' in subBody, false, 'never mixed with a gateway route');
+  assert.equal(model.buildSpawnRequest({ ...onSub, harness: 'codex' }, { ...context, remoteSpawn: true }, null).body.claude_subscription, undefined, 'Claude Code only');
+
   const webRequest = model.buildSpawnRequest(
     draft, { ...context, defaultTerminal: 'web' }, { path: '', branch: '' },
   );

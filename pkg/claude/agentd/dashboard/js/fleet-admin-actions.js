@@ -229,6 +229,12 @@ const settingRows = (v) => {
     saveModelGateway: (name, body) => call('PUT', `models/gateways/${encodeURIComponent(name)}`, body),
     removeModelGateway: (name) => call('DELETE', `models/gateways/${encodeURIComponent(name)}`),
     testModelGateway: (body) => call('POST', 'models/gateway-test', body),
+    // This operator's own Claude subscription token for running agents on
+    // other nodes as themselves: whether it is set (never the token itself),
+    // store or replace it (write-only), and forget it.
+    claudeSubscription: () => call('GET', 'claude-subscription'),
+    setClaudeSubscription: (token) => call('PUT', 'claude-subscription', { token }),
+    forgetClaudeSubscription: () => call('DELETE', 'claude-subscription'),
     modelUsage: async (day = '') => (await call('GET', `models/usage${day ? `?day=${encodeURIComponent(day)}` : ''}`)) || [],
     // Spawn requests: incoming ones peers sent to this node's groups (all
     // states, newest first), and asking a peer for a worker.

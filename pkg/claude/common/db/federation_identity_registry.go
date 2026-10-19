@@ -44,6 +44,8 @@ var FederationIdentityColumns = []IdentityColumn{
 	{"federation_teleport_leases", "peer", IdentityRebind},
 	{"model_proxy_leases", "peer", IdentityClose},
 	{"model_proxy_worker_leases", "gateway", IdentityClose},
+	// A rotated operator keeps running the agents on their subscription.
+	{"agent_claude_subscriptions", "peer", IdentityRebind},
 	{"federation_identity_rotations", "old_instance", IdentityHistorical},
 	{"federation_identity_rotations", "new_instance", IdentityHistorical},
 	// Continuations pin the original host identities and proof-map keys. They

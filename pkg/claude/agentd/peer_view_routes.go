@@ -354,6 +354,10 @@ var peerViewLocalRoutes = []string{
 // notifications, which has none, is reached as local above). Every federation
 // administration route is also kept here (peerViewOwnNodeRoute).
 var peerViewOwnNodeRoutes = []string{
+	// The operator's own Claude subscription token never serves a peer.
+	"GET /api/federation/claude-subscription",
+	"PUT /api/federation/claude-subscription",
+	"DELETE /api/federation/claude-subscription",
 	"/api/terminal-file",
 	"POST /api/federation/terminal-attachments",
 	"/api/terminal-attachments",

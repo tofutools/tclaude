@@ -82,7 +82,7 @@ func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffse
 
 func httpProxyExecCmd() *cobra.Command {
 	var sessionID, command, modelProxy, modelHarness, modelProfile string
-	var runtime bool
+	var runtime, claudeSubscription bool
 	var commandFD int
 	var markerOffsets []int
 	cmd := &cobra.Command{Use: "http-proxy-exec", Hidden: true, Args: cobra.NoArgs,
@@ -96,7 +96,7 @@ func httpProxyExecCmd() *cobra.Command {
 				}
 				command = strings.TrimSuffix(string(data), "\n")
 			}
-			code, err := runHTTPProxyExecWithOptions(sessionID, command, runtime, markerOffsets, modelProxy, modelHarness, modelProfile)
+			code, err := runHTTPProxyExecWithOptions(sessionID, command, runtime, markerOffsets, claudeSubscription, modelProxy, modelHarness, modelProfile)
 			if err != nil {
 				return err
 			}
@@ -109,6 +109,7 @@ func httpProxyExecCmd() *cobra.Command {
 	cmd.Flags().IntVar(&commandFD, "command-fd", -1, "private workload descriptor")
 	cmd.Flags().IntSliceVar(&markerOffsets, "codex-env-marker-offset", nil, "position of the compile-time Codex environment marker")
 	cmd.Flags().BoolVar(&runtime, "runtime", false, "managed server process boundary")
+	cmd.Flags().BoolVar(&claudeSubscription, "claude-subscription", false, "hand the agent's Claude subscription token to Claude Code through a pipe")
 	cmd.Flags().StringVar(&modelProfile, "model-proxy-profile", "", "Codex launch permission profile")
 	cmd.Flags().StringVar(&modelHarness, "model-proxy-harness", "claude", "model gateway harness")
 	cmd.Flags().StringVar(&modelProxy, "model-proxy", "", "named model gateway reference")
@@ -234,10 +235,10 @@ func newHTTPProxyBridge(client *http.Client, sessionID string, names []string, a
 
 func runHTTPProxyExec(sessionID, command string, runtimeMode ...bool) (int, error) {
 	runtime := len(runtimeMode) > 0 && runtimeMode[0]
-	return runHTTPProxyExecWithOptions(sessionID, command, runtime, nil)
+	return runHTTPProxyExecWithOptions(sessionID, command, runtime, nil, false)
 }
 
-func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, markerOffsets []int, modelRefs ...string) (int, error) {
+func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, markerOffsets []int, claudeSubscription bool, modelRefs ...string) (int, error) {
 	client := newHTTPProxyDaemonClient()
 	if runtime {
 		client.Transport = &httpProxyRuntimeTransport{inner: client.Transport, sessionID: sessionID}
@@ -306,10 +307,26 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			ordinary.ServeHTTP(w, r)
 		})
 	}
+	var subscriptionToken []byte
+	if claudeSubscription {
+		if modelRef != "" {
+			return 0, errors.New("a Claude subscription launch cannot also use a model gateway")
+		}
+		cwd, e := os.Getwd()
+		if e != nil {
+			return 0, e
+		}
+		if e = validateModelProxySettings(cwd, os.Environ()); e != nil {
+			return 0, fmt.Errorf("launch on a Claude subscription refused: %w", e)
+		}
+		if subscriptionToken, e = fetchClaudeSubscriptionToken(client, sessionID); e != nil {
+			return 0, fmt.Errorf("the Claude subscription token is unavailable; launch refused so this node's own login is not used: %w", e)
+		}
+	}
 	environ := []string{}
 	for _, pair := range os.Environ() {
 		name, value, _ := strings.Cut(pair, "=")
-		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (modelBridge == nil || !modelProxyCompetingEnvironmentForHarness(name, modelHarness)) {
+		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (modelBridge == nil || !modelProxyCompetingEnvironmentForHarness(name, modelHarness)) && (!claudeSubscription || !claudeSubscriptionCompetingEnvironment(name)) {
 			environ = append(environ, pair)
 		}
 	}
@@ -382,6 +399,16 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 		command = command[:offset] + args + command[offset+markerLength:]
 	}
 	child := exec.Command(clcommon.BootstrapShellPath(), "-c", command)
+	if subscriptionToken != nil {
+		read, err := claudeSubscriptionPipe(subscriptionToken)
+		if err != nil {
+			return 0, err
+		}
+		defer read.Close()
+		// ExtraFiles[0] is the child's fd 3; only its number is in the env.
+		child.ExtraFiles = []*os.File{read}
+		environ = append(environ, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=3")
+	}
 	child.Env = environ
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// Keep the terminal's foreground process group: the workload must retain
@@ -498,11 +525,18 @@ func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.Sp
 	}
 	filteredEnvironment := map[string]string{}
 	for name, value := range spec.ShellEnvironment {
-		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (spec.ModelProxy == "" || !modelProxyCompetingEnvironmentForHarness(name, h.Name)) {
+		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (spec.ModelProxy == "" || !modelProxyCompetingEnvironmentForHarness(name, h.Name)) && (!spec.ClaudeSubscription || !claudeSubscriptionCompetingEnvironment(name)) {
 			filteredEnvironment[name] = value
 		}
 	}
 	spec.ShellEnvironment = filteredEnvironment
+	if spec.ClaudeSubscription && spec.ModelProxy == "" && h.Name == harness.DefaultName {
+		// Always wrapped: the wrapper fetches the token and hands it over.
+		prefix := spec.EnvExports + spec.PreLaunchScript
+		spec.EnvExports, spec.PreLaunchScript = "", ""
+		command := renderHTTPProxyCommand(sessionID, h.Spawn.BuildCommand(spec), false, nil, cliPath...)
+		return prefix + strings.Replace(command, " session http-proxy-exec", " session http-proxy-exec --claude-subscription", 1)
+	}
 	if spec.ModelProxy != "" {
 		prefix := spec.EnvExports + spec.PreLaunchScript
 		spec.EnvExports, spec.PreLaunchScript = "", ""

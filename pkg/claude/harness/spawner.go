@@ -9,6 +9,9 @@ package harness
 type SpawnSpec struct {
 	// ModelProxy is a non-secret named gateway reference; only the launch bridge consumes it.
 	ModelProxy string
+	// ClaudeSubscription runs Claude Code on a peer operator's subscription
+	// token, handed over by the launch wrapper through a pipe.
+	ClaudeSubscription bool
 	// ExecutablePath pins the exact harness executable selected and verified by
 	// a capability boundary. Empty uses the adapter's ordinary PATH lookup.
 	// Codex strict-Home launches set this to the binary whose split-policy

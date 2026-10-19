@@ -1861,6 +1861,10 @@ type dashboardMember struct {
 	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title"`
+	// ClaudeSubscription names the peer operator whose own Claude
+	// subscription this agent runs on (claude_subscription.go); nil when it
+	// runs on this node's login.
+	ClaudeSubscription *memberClaudeSubscription `json:"claude_subscription,omitempty"`
 	// CreatedAt is the earliest known existence timestamp: actor birth
 	// (agents.created_at) or, for a late-enrolled legacy actor, the older
 	// conv_index.Created — see snapshotRowCache.createdFor. Emitted as UTC
@@ -3545,6 +3549,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		memberSet := map[string]bool{}
 		memberMark := gt.begin()
+		subscriptions := snapshotClaudeSubscriptions()
 		for _, m := range members {
 			memberSet[m.ConvID] = true
 			b := rc.viewFor(m.ConvID)
@@ -3564,6 +3569,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			dg.Members = append(dg.Members, dashboardMember{
 				FederationPresence: presence,
+				ClaudeSubscription: subscriptions.forAgent(b.AgentID),
 				AgentID:            b.AgentID,
 				ConvID:             m.ConvID,
 				Title:              b.Title,

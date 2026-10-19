@@ -1236,7 +1236,7 @@ const DIRTY_FIELDS = [
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
   'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
-  'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext', 'usageFrom', 'usageOwn',
+  'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext', 'usageFrom', 'usageOwn', 'claudeSubscription',
 ];
 
 export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {
@@ -1383,6 +1383,13 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     if (!choice.reason) Object.assign(body, shareSpawnFields(draft.usageShare, body.permission_overrides));
   } else if (draft.usageOwn && harness?.model_proxy_dialect) {
     body.model_proxy = 'off';
+  }
+  // Runs Claude Code on another node as yourself: the dashboard sends only
+  // the choice, and this node's peer proxy puts the stored token into the
+  // encrypted request. It replaces any gateway route, never mixes with one.
+  if (draft.claudeSubscription && context.remoteSpawn && (draft.harness || 'claude') === 'claude') {
+    for (const key of ['model_proxy', 'model_proxy_grant', 'model_proxy_share']) delete body[key];
+    body.claude_subscription = true;
   }
   // Sent whenever the harness can take it, INCLUDING as an empty object: the
   // form is the authoritative statement of what this agent loads, so an operator

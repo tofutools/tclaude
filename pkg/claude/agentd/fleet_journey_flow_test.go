@@ -383,9 +383,21 @@ func TestFleetJourney(t *testing.T) {
 	journeyAwait(t, "bob reachable after teleport", func() bool {
 		return alice.status(t, "POST", remote+"/agents/"+secretID+"/stop", map[string]any{"group": "receiver"}) != http.StatusBadGateway
 	})
+	// The link can still churn after one good answer, so each check retries
+	// a transient 502 (peer briefly unreachable) and asserts the first real answer.
 	for _, action := range []string{"stop", "retire", "clone", "teleport"} {
-		alice.call(t, "POST", remote+"/agents/"+secretID+"/"+action, map[string]any{"group": "receiver"}, 404)
-		alice.call(t, "POST", remote+"/agents/"+ids["boundary"]+"/"+action, map[string]any{"group": "receiver"}, 403)
+		for _, want := range []struct {
+			id     string
+			status int
+		}{{secretID, http.StatusNotFound}, {ids["boundary"], http.StatusForbidden}} {
+			path := remote + "/agents/" + want.id + "/" + action
+			got := 0
+			journeyAwait(t, fmt.Sprintf("POST %s answers %d", path, want.status), func() bool {
+				got = alice.status(t, "POST", path, map[string]any{"group": "receiver"})
+				return got != http.StatusBadGateway
+			})
+			require.Equal(t, want.status, got, path)
+		}
 	}
 
 	// Merged views use local plus peer snapshots. Links and grant rows are

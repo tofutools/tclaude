@@ -69,7 +69,9 @@ func checkRequesterPays(peer string, group int64, mode, lease string, teleport b
 	if err != nil {
 		return err
 	}
-	if policy == "required" && lease == "" {
+	// A worker on the requester's own Claude subscription is paid by the
+	// requester without a gateway lease.
+	if policy == "required" && lease == "" && mode != claudeSubscriptionMode {
 		return errors.New("receiver requires requester-pays; use --credentials proxy:<name>@self with a requester gateway")
 	}
 	if policy == "off" && lease != "" {
