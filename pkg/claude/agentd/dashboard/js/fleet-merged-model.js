@@ -55,7 +55,8 @@ export function uniqueNodeNames(nodes) {
 // from every node. Group names (and parent references) carry @node so names
 // never collide across nodes; each group also carries fleet_node for the
 // renderer's node colour and stale treatment, and home for the node whose
-// groups this page acts on directly (the Groups actions). The page's own snapshot (base,
+// groups this page acts on directly (the Groups actions), and page for the node
+// this page reads (its snapshot's lists page with it). The page's own snapshot (base,
 // else this node's) provides the presentation settings (theme, attachments
 // mode, …).
 //
@@ -84,7 +85,7 @@ export function mergeSnapshots(input, now = Date.now(), base = null, notificatio
     const st = nodeState(node, entry, now);
     status.push({ node, ...st, failure: entry?.failure || null });
     if (!snap) continue;
-    const fleetNode = { id: node.id, name: node.name, color: node.color, local: !!node.local, home: !!node.home, stale: st.stale, label: st.label };
+    const fleetNode = { id: node.id, name: node.name, color: node.color, local: !!node.local, home: !!node.home, page: !!node.page, stale: st.stale, label: st.label };
     // A node's virtual groups (Ungrouped, Retired, …): the page's own, and a
     // peer's that trusts this node unrestricted (a restricted snapshot keeps
     // them). A peer's paged lists join later (fleet-merged-island.js).
