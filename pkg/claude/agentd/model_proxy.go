@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -61,6 +63,54 @@ func fedPeerModelAllows(peer, name string) bool {
 	}
 	return false
 }
+
+// modelShareGrant is the peer's models.proxy grant for a gateway that
+// carries a usage-sharing dollar cap, preferring one scoped to that gateway
+// over an unscoped one. It applies to an unrestricted peer too: a capped
+// share is a limit its grantor chose.
+func modelShareGrant(peer, name string) *db.FederationPeerGrant {
+	grants, err := db.ListEffectiveFederationPeerGrants(peer)
+	if err != nil {
+		return nil
+	}
+	var best *db.FederationPeerGrant
+	for i := range grants {
+		g := &grants[i]
+		if g.Slug != PermModelsProxy || g.SpawnPolicy.MaxUSD <= 0 || (g.Scope != "" && g.Scope != "http_proxy="+name) {
+			continue
+		}
+		if best == nil || g.Scope != "" {
+			best = g
+		}
+	}
+	return best
+}
+
+// modelShareCap is the dollar cap a peer's requests through gateway name
+// count against (zero: none).
+func modelShareCap(peer, name string) db.ModelProxyShareCap {
+	g := modelShareGrant(peer, name)
+	if g == nil {
+		return db.ModelProxyShareCap{}
+	}
+	return db.ModelProxyShareCap{MicroUSD: int64(math.Round(g.SpawnPolicy.MaxUSD * 1e6)), Since: g.CreatedAt, AllProxies: g.Scope == ""}
+}
+
+// modelShareProxy is the gateway a capped share's spend is summed over: name
+// for a gateway-scoped grant, "" (every gateway) for an unscoped one.
+func modelShareProxy(peer, name string) string {
+	if g := modelShareGrant(peer, name); g != nil && g.Scope == "" {
+		return ""
+	}
+	return name
+}
+
+// formatUSD renders micro-USD as dollars and cents, rounding up.
+func formatUSD(micro int64) string {
+	cents := (micro + 9999) / 10000
+	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
+}
+
 func modelProxyPolicy(name string) (config.HTTPProxyConfig, error) {
 	cfg, err := config.Load()
 	if err != nil || cfg.Agent == nil || cfg.Agent.ModelProxyDisabled {

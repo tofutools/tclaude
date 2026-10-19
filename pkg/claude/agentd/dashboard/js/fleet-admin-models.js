@@ -37,18 +37,25 @@ export function gatewayGaps(p) {
   return gaps;
 }
 
+// usdText shows micro-USD as dollars, rounding up to the cent.
+export function usdText(micro) {
+  const cents = Math.ceil((Number(micro) || 0) / 10000);
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
 // usageRows sums the day's request rows per gateway × peer × model.
 export function usageRows(rows) {
   const by = new Map();
   for (const r of rows || []) {
     const k = `${r.proxy}\u0000${r.peer}\u0000${r.model}`;
-    const a = by.get(k) || { proxy: r.proxy, peer: r.peer, model: r.model, requests: 0, failed: 0, running: 0, charged: 0, input: 0, output: 0 };
+    const a = by.get(k) || { proxy: r.proxy, peer: r.peer, model: r.model, requests: 0, failed: 0, running: 0, charged: 0, input: 0, output: 0, microUSD: 0, unpriced: 0 };
     a.requests += 1;
     // A row is written when a request is reserved (status 0, incomplete, the
     // reservation charged) and settled when it ends.
     if (!r.status && !r.complete) a.running += 1;
     else if (r.status >= 400 || !r.complete) a.failed += 1;
     a.charged += r.charged_tokens || 0;
+    if (r.priced) a.microUSD += r.charged_micro_usd || 0; else a.unpriced += 1;
     a.input += r.input_tokens || 0;
     a.output += r.output_tokens || 0;
     by.set(k, a);
@@ -180,13 +187,14 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
     <h4 class="fa-h">Usage <input type="date" id="fleet-model-day" value=${day} max=${utcToday(now)} onChange=${(e) => e.currentTarget.value && setDay(e.currentTarget.value)} /> <span class="muted">UTC day</span></h4>
     ${usage?.error ? html`<div class="fa-danger">${usage.error}</div>` : !usage ? html`<div class="empty">Loading…</div>` : used.length === 0 ? html`<div class="empty">No model requests on ${day}.</div>` : html`
     <table class="fa-table" id="fleet-model-usage">
-      <thead><tr><th>Gateway</th><th>Peer</th><th>Model</th><th>Requests</th><th>Charged tokens</th><th>In · out</th></tr></thead>
+      <thead><tr><th>Gateway</th><th>Peer</th><th>Model</th><th>Requests</th><th>Charged tokens</th><th>In · out</th><th>Cost</th></tr></thead>
       <tbody>${used.map((u) => html`<tr key=${`${u.proxy}/${u.peer}/${u.model}`}>
         <td><code>${u.proxy}</code></td><td>${label(u.peer)}</td><td>${u.model || '—'}</td>
         <td>${u.requests}${u.running ? html` <span class="muted">(${u.running} in progress)</span>` : ''}${u.failed ? html` <span class="fa-danger">(${u.failed} failed)</span>` : ''}</td>
         <td>${num(u.charged)}</td><td class="muted">${num(u.input)} · ${num(u.output)}</td>
+        <td data-cost=${u.microUSD}>${usdText(u.microUSD)}${u.unpriced ? html` <span class="muted" title="No price is known for this model; add one under model_policy.prices">(${u.unpriced} unpriced)</span>` : ''}</td>
       </tr>`)}</tbody>
     </table>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation models status|usage --day …|leases [--revoke ID]|disable|enable [--name GW] [--peer PEER]</code>. Grant peers access with <code>models.proxy</code> (or <code>models.proxy.leased</code>) on Peer grants. In-progress requests count their reservation until they finish.</div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation models status|usage --day …|leases [--revoke ID]|disable|enable [--name GW] [--peer PEER]</code>. Grant peers access with <code>models.proxy</code> (or <code>models.proxy.leased</code>) on Peer grants. In-progress requests count their reservation until they finish. Cost is the provider's reported usage at the model's API price; a request the provider refused costs nothing.</div>
   </div>`;
 }

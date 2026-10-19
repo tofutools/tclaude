@@ -283,16 +283,55 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	}
 	u := db.ModelProxyUsage{ID: id, Day: time.Now().UTC().Format("2006-01-02"), Proxy: name, Peer: peer, Session: session, Model: data.Model, ChargedTokens: p.MaxInputTokens + data.MaxTokens, RequestBytes: int64(len(body))}
 	budget := db.ModelProxyBudget{Requests: p.DailyRequests, Tokens: p.DailyTokens, PeerRequests: p.PeerDailyRequests, PeerTokens: p.PeerDailyTokens, SessionRequests: p.SessionDailyRequests, SessionTokens: p.SessionDailyTokens}
+	leased := len(opening) > 0 && opening[0].Lease != ""
+	if !leased {
+		budget.Share = modelShareCap(peer, name)
+	}
+	pricing, priced := lookupModelPricing(p, data.Model)
+	if budget.Share.MicroUSD > 0 && !priced {
+		modelError(w, 403, fmt.Sprintf("this usage share is capped in dollars, and the gateway has no price for %s; its operator can add one under model_policy.prices", data.Model))
+		return
+	}
+	if priced {
+		u.Priced = true
+		u.ChargedMicroUSD = pricing.worstCaseMicroUSD(p.MaxInputTokens, data.MaxTokens)
+	}
 	if err = db.ReserveModelProxyRequest(u, budget); err != nil {
-		modelError(w, 429, "model gateway daily request or token budget exhausted; incomplete requests remain charged until the next UTC day")
+		if budget.Share.MicroUSD > 0 {
+			if spent, e := db.ModelProxyShareSpent(peer, modelShareProxy(peer, name), budget.Share.Since); e == nil && spent >= budget.Share.MicroUSD {
+				modelError(w, 429, fmt.Sprintf("usage share used up: %s of %s spent through this gateway", formatUSD(spent), formatUSD(budget.Share.MicroUSD)))
+				return
+			}
+		}
+		modelError(w, 429, "model gateway daily request or token budget exhausted, or this usage share has requests in flight that would reach its dollar cap; incomplete requests remain charged until the next UTC day")
 		return
 	}
 	started := time.Now()
+	// The provider bills nothing for a request it refused or never got. A
+	// response that broke off is charged what it reported plus every output
+	// token it was allowed, since the rest of its usage never arrived.
+	providerAccepted := false
+	var observer *modelUsageObserver
 	defer func() {
 		u.ChargedTokens = max(u.ChargedTokens, u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens)
+		switch {
+		case !u.Priced:
+		case u.Complete:
+			u.ChargedMicroUSD = pricing.costMicroUSD(u)
+		case !providerAccepted:
+			u.ChargedMicroUSD = 0
+		case observer != nil && observer.sawInput:
+			partial := u
+			partial.OutputTokens = max(u.OutputTokens, data.MaxTokens)
+			u.ChargedMicroUSD = pricing.costMicroUSD(partial)
+		}
 		u.DurationMS = time.Since(started).Milliseconds()
 		_ = db.FinishModelProxyRequest(u)
-		recordFederationAudit("models.proxy.request", peer, "", name, fmt.Sprintf("request=%s session=%s model=%s status=%d complete=%t charged_tokens=%d", id, session, data.Model, u.Status, u.Complete, u.ChargedTokens), u.Status)
+		cost := ""
+		if u.Priced {
+			cost = " charged_usd=" + formatUSD(u.ChargedMicroUSD)
+		}
+		recordFederationAudit("models.proxy.request", peer, "", name, fmt.Sprintf("request=%s session=%s model=%s status=%d complete=%t charged_tokens=%d%s", id, session, data.Model, u.Status, u.Complete, u.ChargedTokens, cost), u.Status)
 	}()
 	credential, err := httpProxyCredential(instance)
 	if err != nil {
@@ -378,6 +417,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 		writeModelProviderError(w, resp, credential)
 		return
 	}
+	providerAccepted = true
 	copyModelResponseHeaders(w.Header(), resp.Header)
 	if data.Stream {
 		if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
@@ -385,9 +425,9 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 			modelError(w, 502, "model gateway provider did not return an event stream")
 			return
 		}
-		observer := modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential, openai: openai}
+		observer = &modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential, openai: openai}
 		w.WriteHeader(resp.StatusCode)
-		err = relayModelEvents(w, resp.Body, responseCap, eventCap, &observer)
+		err = relayModelEvents(w, resp.Body, responseCap, eventCap, observer)
 		if err != nil {
 			u.Status = 502
 			if openai {
@@ -412,7 +452,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 			Object      string          `json:"object"`
 			Status      string          `json:"status"`
 		}
-		observer := modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential, openai: openai}
+		observer = &modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential, openai: openai}
 		if json.Unmarshal(result, &resultData) == nil {
 			if counting && resultData.InputTokens != nil {
 				observer.apply(map[string]*int64{"input_tokens": resultData.InputTokens})
@@ -464,20 +504,46 @@ func (o *modelUsageObserver) apply(values map[string]*int64) {
 		}
 	}
 }
+
+// parse reads a usage object. Providers mix counts with other fields
+// (service_tier, the cache_creation breakdown, server_tool_use), so only
+// the counts are decoded; one unexpected field must not drop the usage.
 func (o *modelUsageObserver) parse(data json.RawMessage) {
-	var values map[string]*int64
 	if o.openai {
 		var v struct {
-			Input  *int64 `json:"input_tokens"`
-			Output *int64 `json:"output_tokens"`
+			Input   *int64 `json:"input_tokens"`
+			Output  *int64 `json:"output_tokens"`
+			Details struct {
+				Cached *int64 `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
 		}
 		if json.Unmarshal(data, &v) == nil {
-			o.apply(map[string]*int64{"input_tokens": v.Input, "output_tokens": v.Output})
+			// OpenAI counts cached input inside input_tokens; split it out so
+			// it is priced at the cached rate. The token total is unchanged.
+			var cached *int64
+			if v.Input != nil && v.Details.Cached != nil && *v.Details.Cached >= 0 && *v.Details.Cached <= *v.Input {
+				uncached := *v.Input - *v.Details.Cached
+				v.Input, cached = &uncached, v.Details.Cached
+			}
+			o.apply(map[string]*int64{"input_tokens": v.Input, "output_tokens": v.Output, "cache_read_input_tokens": cached})
 		}
 		return
 	}
-	if json.Unmarshal(data, &values) == nil {
-		o.apply(values)
+	var v struct {
+		Input      *int64 `json:"input_tokens"`
+		Output     *int64 `json:"output_tokens"`
+		CacheRead  *int64 `json:"cache_read_input_tokens"`
+		CacheWrite *int64 `json:"cache_creation_input_tokens"`
+		Creation   *struct {
+			OneHour *int64 `json:"ephemeral_1h_input_tokens"`
+		} `json:"cache_creation"`
+	}
+	if json.Unmarshal(data, &v) != nil {
+		return
+	}
+	o.apply(map[string]*int64{"input_tokens": v.Input, "output_tokens": v.Output, "cache_read_input_tokens": v.CacheRead, "cache_creation_input_tokens": v.CacheWrite})
+	if v.Creation != nil && v.Creation.OneHour != nil && *v.Creation.OneHour >= 0 {
+		o.usage.CacheWrite1hTokens = *v.Creation.OneHour
 	}
 }
 func (o *modelUsageObserver) event(raw []byte) {

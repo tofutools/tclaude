@@ -30,6 +30,9 @@ type FederationSpawnPolicy struct {
 	Harness                string   `json:"harness,omitempty"`
 	Model                  string   `json:"model,omitempty"`
 	MaxLive                int      `json:"max_live,omitempty"`
+	// MaxUSD caps a models.proxy grant's spend in US dollars over the
+	// grant's life (usage sharing); zero is no dollar cap.
+	MaxUSD float64 `json:"max_usd,omitempty"`
 }
 
 // Equal includes selectable profiles in inherited-policy conflict checks.
@@ -37,7 +40,7 @@ func (p FederationSpawnPolicy) Equal(other FederationSpawnPolicy) bool {
 	return p.IncludeMembers == other.IncludeMembers && slices.Equal(p.PermissionSlugs, other.PermissionSlugs) && slices.Equal(p.AllowedProfiles, other.AllowedProfiles) &&
 		p.RequesterPays == other.RequesterPays && p.JobApproval == other.JobApproval &&
 		p.Profile == other.Profile && p.Cwd == other.Cwd && p.Harness == other.Harness &&
-		p.Model == other.Model && p.MaxLive == other.MaxLive
+		p.Model == other.Model && p.MaxLive == other.MaxLive && p.MaxUSD == other.MaxUSD
 }
 
 // UnmarshalJSON also reads the replaced allowed_overrides list.

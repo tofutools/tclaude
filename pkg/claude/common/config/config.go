@@ -4387,6 +4387,21 @@ type ModelProxyPolicy struct {
 	MaxResponseBytes   int64 `json:"max_response_bytes,omitempty"`
 	MaxEventBytes      int   `json:"max_event_bytes,omitempty"`
 	MaxDurationSeconds int   `json:"max_duration_seconds,omitempty"`
+	// Prices adds or overrides the gateway's model prices (USD per million
+	// tokens), keyed by model ID or a trailing-* prefix. Usage sharing
+	// prices requests with them; built-in Claude and OpenAI API rates apply
+	// otherwise.
+	Prices map[string]ModelProxyPrice `json:"prices,omitempty"`
+}
+
+// ModelProxyPrice is one model's rates in USD per million tokens. A zero
+// cache rate falls back to the input rate.
+type ModelProxyPrice struct {
+	Input        float64 `json:"input"`
+	Output       float64 `json:"output"`
+	CacheRead    float64 `json:"cache_read,omitempty"`
+	CacheWrite   float64 `json:"cache_write,omitempty"`
+	CacheWrite1h float64 `json:"cache_write_1h,omitempty"`
 }
 
 // TeleportBackupConfig deliberately prefers remote availability during an
