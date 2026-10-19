@@ -107,20 +107,20 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
   const [form, setForm] = useState(() => gatewayDraft(setup));
   const [error, setError] = useState('');
   const [test, setTest] = useState(null);
-  const set = (k) => (e) => setForm({ ...form, [k]: e.currentTarget.type === 'checkbox' ? e.currentTarget.checked : e.currentTarget.value });
+  const set = (k) => (e) => { const el = e.currentTarget; const v = el.type === 'checkbox' ? el.checked : el.value; setForm((f) => ({ ...f, [k]: v })); };
   const setProvider = (e) => {
     const provider = e.currentTarget.value;
     const p = PROVIDERS[provider];
     setTest(null);
-    setForm(p.url ? { ...form, provider, dialect: p.dialect, url: p.url, header: p.header, prefix: p.prefix, models: create || !form.models ? p.models.join(', ') : form.models } : { ...form, provider });
+    setForm((f) => (p.url ? { ...f, provider, dialect: p.dialect, url: p.url, header: p.header, prefix: p.prefix, models: create || !f.models ? p.models.join(', ') : f.models } : { ...f, provider }));
   };
   const setPreset = (e) => {
     const preset = e.currentTarget.value;
-    setForm({ ...form, preset, limits: preset === 'custom' ? form.limits : Object.fromEntries(LIMIT_FIELDS.map(([f]) => [f, LIMIT_PRESETS[preset][f]])) });
+    setForm((x) => ({ ...x, preset, limits: preset === 'custom' ? x.limits : Object.fromEntries(LIMIT_FIELDS.map(([f]) => [f, LIMIT_PRESETS[preset][f]])) }));
   };
-  const setLimit = (f) => (e) => setForm({ ...form, preset: 'custom', limits: { ...form.limits, [f]: e.currentTarget.value === '' ? '' : Number(e.currentTarget.value) } });
+  const setLimit = (f) => (e) => { const v = e.currentTarget.value; setForm((x) => ({ ...x, preset: 'custom', limits: { ...x.limits, [f]: v === '' ? '' : Number(v) } })); };
   const allowed = splitModels(form.models);
-  const toggleModel = (id) => setForm({ ...form, models: (allowed.includes(id) ? allowed.filter((m) => m !== id) : [...allowed, id]).join(', ') });
+  const toggleModel = (id) => setForm((f) => { const now = splitModels(f.models); return { ...f, models: (now.includes(id) ? now.filter((m) => m !== id) : [...now, id]).join(', ') }; });
 
   const runTest = () => {
     const { body, error: e } = gatewayBody({ ...form, models: form.models || 'x', limits: Object.fromEntries(LIMIT_FIELDS.map(([f]) => [f, 1])) }, { create });
@@ -161,8 +161,8 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
     ${custom && html`<label class="fa-jb-row"><span class="fa-k">header</span><input id="fleet-mg-header" value=${form.header} placeholder="x-api-key or Authorization" autocomplete="off" spellcheck="false" onInput=${set('header')} /></label>
     <label class="fa-jb-row"><span class="fa-k">prefix</span><input id="fleet-mg-prefix" value=${form.prefix} placeholder='before the key, e.g. "Bearer "' autocomplete="off" spellcheck="false" onInput=${set('prefix')} /></label>`}
     <div class="fa-jb-row"><span class="fa-k">API key</span><div>
-      <label><input type="radio" name="fleet-mg-keymode" checked=${form.keyMode === 'paste'} onChange=${() => setForm({ ...form, keyMode: 'paste' })} /> paste</label>
-      <label><input type="radio" name="fleet-mg-keymode" data-mode="file" checked=${form.keyMode === 'file'} onChange=${() => setForm({ ...form, keyMode: 'file' })} /> read from a file</label>
+      <label class="fa-mg-keymode"><input type="radio" name="fleet-mg-keymode" checked=${form.keyMode === 'paste'} onChange=${() => setForm((f) => ({ ...f, keyMode: 'paste' }))} /> paste</label>
+      <label class="fa-mg-keymode"><input type="radio" name="fleet-mg-keymode" data-mode="file" checked=${form.keyMode === 'file'} onChange=${() => setForm((f) => ({ ...f, keyMode: 'file' }))} /> read from a file</label>
       ${form.keyMode === 'paste'
         ? html`<input id="fleet-mg-key" type="password" value=${form.key} placeholder=${form.credential === 'none' ? 'provider API key' : 'stored; leave blank to keep'} autocomplete="new-password" spellcheck="false" onInput=${set('key')} />`
         : html`<input id="fleet-mg-keyfile" value=${form.keyFile} placeholder="/abs/path or ~/path of a file holding only the key" autocomplete="off" spellcheck="false" onInput=${set('keyFile')} />`}
@@ -182,7 +182,7 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
       <option value="custom">Custom</option>
     </select></label>
     <div class="fa-jb-row"><span></span><div class="fa-mg-limits">
-      ${LIMIT_FIELDS.map(([f, what]) => html`<label key=${f}><input type="number" min="1" step="1" data-limit=${f} value=${form.limits[f]} onInput=${setLimit(f)} /> <span class="muted">${what}</span></label>`)}
+      ${LIMIT_FIELDS.map(([f, what]) => html`<label key=${f}><span class="muted">${what}</span><input type="number" min="1" step="1" data-limit=${f} value=${form.limits[f]} onInput=${setLimit(f)} /></label>`)}
     </div></div>
     <div class="fa-jb-row"><span></span><div class="muted">Tokens include cache reads: a busy Claude Code session can use tens of millions a day. Requests over a limit are refused, never billed.</div></div>
     <label class="fa-jb-row"><span class="fa-k">on</span><span><input id="fleet-mg-enabled" type="checkbox" checked=${form.enabled} onChange=${set('enabled')} /> serve peers now</span></label>

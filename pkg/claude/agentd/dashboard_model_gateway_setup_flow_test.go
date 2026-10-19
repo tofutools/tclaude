@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // A gateway set up from the dashboard serves a peer end to end: the pasted key
@@ -105,9 +106,42 @@ func TestDashboardModelGatewaySetupEndToEnd(t *testing.T) {
 	require.Equal(t, 200, status, result)
 
 	call("PUT", "gateways/model", setup(map[string]any{"policy": map[string]any{"enabled": true, "models": []string{}}}), 400)
-	require.Equal(t, true, call("DELETE", "gateways/model", nil, 200)["removed"])
+	// A key file inside the data dir (pasted keys, daemon secrets) is refused.
+	call("PUT", "gateways/model", setup(map[string]any{"key_file": second}), 400)
+	call("PUT", "gateways/model", setup(map[string]any{"key_file": filepath.Join(config.DataDir(), "operator_token")}), 400)
+	// Moving to an operator key file deletes the no longer referenced pasted key.
+	own := filepath.Join(testutil.CanonicalTempDir(t), "provider-key")
+	require.NoError(t, os.WriteFile(own, []byte("sk-pasted-2\n"), 0o600))
+	require.Equal(t, "file", call("PUT", "gateways/model", setup(map[string]any{"key_file": own}), 200)["credential"])
 	_, err = os.Stat(second)
-	require.True(t, os.IsNotExist(err), "removing the gateway deletes its pasted key")
+	require.True(t, os.IsNotExist(err), "the replaced pasted key is deleted")
+	status, result = fedModelCall(t, fh, `{"model":"test-model","max_tokens":5,"messages":[{"role":"user","content":"hello"}]}`)
+	require.Equal(t, 200, status, result)
+	require.Equal(t, true, call("DELETE", "gateways/model", nil, 200)["removed"])
+	_, err = os.Stat(own)
+	require.NoError(t, err, "removing the gateway leaves an operator key file alone")
 	require.Empty(t, call("GET", "control", nil, 200)["gateways"])
 	call("GET", "gateways/model", nil, 404)
+}
+
+// An inline "Bearer …" credential reports its scheme, so a key pasted to
+// replace it keeps the scheme; the secret itself never leaves config.
+func TestDashboardModelGatewayInlineBearerPrefix(t *testing.T) {
+	newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	_, err := config.Update(func(cfg *config.Config, err error) error {
+		if cfg.Agent == nil {
+			cfg.Agent = &config.AgentConfig{}
+		}
+		cfg.Agent.HTTPProxies = map[string]config.HTTPProxyConfig{"oa": {URL: "https://api.openai.com", Header: "Authorization", HeaderValue: "Bearer sk-inline-secret", ModelPolicy: &config.ModelProxyPolicy{Dialect: "openai"}}}
+		return err
+	})
+	require.NoError(t, err)
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), testharness.JSONRequest(t, "GET", "/api/federation/models/gateways/oa", nil))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "sk-inline-secret")
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, "inline", got["credential"])
+	require.Equal(t, "Bearer ", got["header_prefix"])
 }

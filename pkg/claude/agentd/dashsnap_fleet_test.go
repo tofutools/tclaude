@@ -202,6 +202,7 @@ const fleetFederationStubJS = `(function(){
       { id: 'mlease_7q2kx9d4hpa1', peer: 'inst_hn3cxq7a', proxy: 'claude', kind: 'requester_paid', worker: 'agt_r8k2m4c1x9', revoked: false, idle_seconds: 28800, touched_at: '2026-10-10T09:31:00Z' },
       { id: 'mlease_3mz81cqv0e8c', peer: 'inst_hn3cxq7a', proxy: 'claude', kind: 'requester_paid', worker: 'agt_p2w7d0j5n3', revoked: true, idle_seconds: 28800, touched_at: '2026-10-09T17:02:00Z' }
     ]);
+    if (path === '/api/federation/models/gateway-test') return json({ ok: true, status: 200, message: 'The key works: the provider lists 4 models.', models: ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] });
     if (path === '/api/federation/models/usage') return json([
       { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 812000, input_tokens: 690000, output_tokens: 122000, status: 200, complete: true },
       { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 410000, input_tokens: 380000, output_tokens: 30000, status: 200, complete: true },
@@ -1197,6 +1198,31 @@ func fleetStates() []dashsnap.State {
   for (var j = 0; j < 30 && !document.querySelector('#fleet-model-usage'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-model-gateways tbody tr').length !== 2) throw new Error('fleet: gateways missing');
   if (document.querySelectorAll('#fleet-model-leases [data-fa="revoke-lease"]').length !== 1) throw new Error('fleet: revoked lease should not be revocable');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "fleet-model-gateway-add",
+			Title:   "Add a model gateway",
+			Caption: "Fleet → Model gateways → Add gateway…: the Anthropic preset fills the URL and key header; the key is pasted once (stored 0600 on this node, never shown again); Test the key lists the provider's models without spending tokens, and each chip toggles it in the allowlist; limits come from a preset or custom numbers.",
+			InitJS:  fleetFederationStubJS,
+			Height:  1100,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return /Model gateways/.test(b.textContent); }).click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-models-add'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-models-add').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-mg-key'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  var set = function(sel, v){ var el = document.querySelector(sel); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+  set('#fleet-mg-name', 'anthropic');
+  set('#fleet-mg-key', 'sk-ant-example');
+  await new Promise(function(r){ setTimeout(r, 50); });
+  document.querySelector('#fleet-mg-test').click();
+  for (var m = 0; m < 30 && !document.querySelector('#fleet-mg-offered'); m++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-mg-offered [data-model="claude-sonnet-5-5"]')) throw new Error('fleet: offered models missing');
+  document.querySelector('#fleet-mg-offered [data-model="claude-sonnet-5-5"]').click();
 })();`,
 			SettleMS: 400,
 		},

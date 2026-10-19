@@ -47,6 +47,25 @@ func modelGatewayManagedKey(path string) bool {
 	return path != "" && filepath.Dir(path) == modelGatewayKeyDir()
 }
 
+func modelGatewayKeyFileInDataDir(path string) bool {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return true
+		}
+		path = filepath.Join(home, path[2:])
+	}
+	data := filepath.Clean(config.DataDir())
+	if resolved, err := filepath.EvalSymlinks(data); err == nil {
+		data = resolved
+	}
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return path == data || strings.HasPrefix(path, data+string(filepath.Separator))
+}
+
 func modelGatewayCredentialSource(instance config.HTTPProxyConfig) string {
 	switch {
 	case modelGatewayManagedKey(instance.HeaderValueFile):
@@ -67,6 +86,10 @@ func modelGatewayView(name string, instance config.HTTPProxyConfig) modelGateway
 		if out.Credential == "file" {
 			out.KeyFile = instance.HeaderValueFile
 		}
+	} else if strings.HasPrefix(instance.HeaderValue, "Bearer ") {
+		// An inline secret's scheme is not secret; a key pasted to replace
+		// it keeps the same scheme.
+		out.HeaderPrefix = "Bearer "
 	}
 	if instance.ModelPolicy != nil {
 		out.Policy = *instance.ModelPolicy
@@ -110,6 +133,11 @@ func (in modelGatewaySetup) credentialFields(stored *config.HTTPProxyConfig, key
 	case in.KeyFile != "":
 		if !filepath.IsAbs(in.KeyFile) && !strings.HasPrefix(in.KeyFile, "~/") {
 			return "", "", errors.New("the key file must be an absolute path or start with ~/")
+		}
+		if modelGatewayKeyFileInDataDir(in.KeyFile) {
+			// Pasted keys and daemon secrets live there; deleting a gateway
+			// removes its pasted key, so sharing one would break another.
+			return "", "", errors.New("the key file cannot be inside tclaude's data directory; paste the key instead")
 		}
 		if _, err := httpProxyCredential(config.HTTPProxyConfig{HeaderValue: in.HeaderPrefix, HeaderValueFile: in.KeyFile}); err != nil {
 			return "", "", fmt.Errorf("the key file is unreadable, empty or invalid")
@@ -197,6 +225,16 @@ func handleModelGatewayPut(w http.ResponseWriter, r *http.Request) {
 		modelError(w, 400, err.Error())
 		return
 	}
+	// Turning a gateway off revokes its leases first and fails closed, like
+	// the switch: a lease must never outlive an off it was told about.
+	if cfg, err := config.Load(); err == nil && cfg.Agent != nil && !in.Policy.Enabled {
+		if stored, ok := cfg.Agent.HTTPProxies[name]; ok && stored.ModelPolicy != nil && stored.ModelPolicy.Enabled && !in.Create {
+			if err := db.RevokeModelProxyLeaseSelection(name, ""); err != nil {
+				modelError(w, 503, "model gateway lease revocation unavailable")
+				return
+			}
+		}
+	}
 	newKey := ""
 	if in.Key != "" {
 		// Check the key before it reaches disk.
@@ -211,7 +249,7 @@ func handleModelGatewayPut(w http.ResponseWriter, r *http.Request) {
 		}
 		newKey = path
 	}
-	oldFile, wasEnabled := "", false
+	oldFile, savedFile, wasEnabled := "", "", false
 	_, err := config.Update(func(cfg *config.Config, loadErr error) error {
 		if loadErr != nil {
 			return loadErr
@@ -243,7 +281,7 @@ func handleModelGatewayPut(w http.ResponseWriter, r *http.Request) {
 			// Blocks change through the switch; never from a stale form.
 			policy.BlockedPeers = stored.ModelPolicy.BlockedPeers
 		}
-		oldFile = stored.HeaderValueFile
+		oldFile, savedFile = stored.HeaderValueFile, file
 		stored.URL, stored.Header, stored.HeaderValue, stored.HeaderValueFile = in.URL, in.Header, value, file
 		stored.ModelPolicy = &policy
 		cfg.Agent.HTTPProxies[name] = stored
@@ -256,7 +294,7 @@ func handleModelGatewayPut(w http.ResponseWriter, r *http.Request) {
 		modelError(w, 400, err.Error())
 		return
 	}
-	if newKey != "" && oldFile != newKey && modelGatewayManagedKey(oldFile) {
+	if oldFile != savedFile && modelGatewayManagedKey(oldFile) {
 		_ = os.Remove(oldFile)
 	}
 	if wasEnabled && !in.Policy.Enabled {
