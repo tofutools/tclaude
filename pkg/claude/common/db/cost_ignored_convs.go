@@ -49,3 +49,57 @@ func CostIgnoredConvs() (map[string]time.Time, error) {
 	}
 	return out, rows.Err()
 }
+
+// CostIgnoreBilledTo prefixes the reason of a conversation whose model calls
+// went through a peer's model gateway: the rest is the gateway reference
+// (<gateway>@<peer instance>). That peer's cost totals carry the spend.
+const CostIgnoreBilledTo = "billed_to:"
+
+// MarkCostConvsBilledElsewhere ignores, with a billed-to reason, every
+// conversation with recorded spend from a session launched through a peer's
+// model gateway (usage sharing, requester-paid workers). Their history stays
+// recorded; the totals leave it out. An operator's own Ignore of such a
+// conversation gains the reason. The mark is per conversation: one resumed
+// in another session keeps it either way. Spend recorded before a session
+// knows its conversation has no conversation to mark and stays counted.
+func MarkCostConvsBilledElsewhere() error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	// The totals read this often: write only when a conversation is new.
+	const unmarked = `FROM session_cost_daily c JOIN model_proxy_launches l ON l.session = c.session_id
+		WHERE c.conv_id <> '' AND NOT EXISTS (SELECT 1 FROM cost_ignored_convs i WHERE i.conv_id = c.conv_id AND i.reason <> '')`
+	var pending bool
+	if err := d.QueryRow(`SELECT EXISTS (SELECT 1 ` + unmarked + `)`).Scan(&pending); err != nil || !pending {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO cost_ignored_convs (conv_id, ignored_at, reason)
+		SELECT c.conv_id, ?, ? || MIN(l.reference) `+unmarked+` GROUP BY c.conv_id
+		ON CONFLICT(conv_id) DO UPDATE SET reason = excluded.reason WHERE cost_ignored_convs.reason = ''`,
+		dbTime(time.Now()), CostIgnoreBilledTo)
+	return err
+}
+
+// CostIgnoredReasons returns each ignored conversation's reason ("" for the
+// operator's own Ignore).
+func CostIgnoredReasons() (map[string]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT conv_id, reason FROM cost_ignored_convs WHERE reason <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var convID, reason string
+		if err := rows.Scan(&convID, &reason); err != nil {
+			return nil, err
+		}
+		out[convID] = reason
+	}
+	return out, rows.Err()
+}

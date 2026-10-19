@@ -300,6 +300,11 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 		u.Priced = true
 		u.ChargedMicroUSD = pricing.worstCaseMicroUSD(p.MaxInputTokens, data.MaxTokens)
 	}
+	// A counting request's price is known: nothing. Recorded as priced, so
+	// it never reads as a request the gateway could not price.
+	if counting {
+		u.Priced = true
+	}
 	if err = db.ReserveModelProxyRequest(u, budget); err != nil {
 		for _, share := range budget.Shares {
 			if spent, e := db.ModelProxyShareSpent(peer, shareProxy(share, name), share.Since); e == nil && spent >= share.MicroUSD {
@@ -322,6 +327,8 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 		u.ChargedTokens = max(u.ChargedTokens, u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens)
 		switch {
 		case !u.Priced:
+		case counting:
+			u.ChargedMicroUSD = 0
 		case u.Complete:
 			u.ChargedMicroUSD = pricing.costMicroUSD(u)
 		case !sent || refused:
