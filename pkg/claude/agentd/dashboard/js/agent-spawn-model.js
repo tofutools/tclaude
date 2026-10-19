@@ -1,5 +1,6 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
+import { shareSpawnFields } from './usage-share-model.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
@@ -1289,6 +1290,12 @@ export function prepareSpawnDraft(
   return syncSpawnWorktree({ ...draft, name }, pickerUsable);
 }
 
+// spawnHarnessDialect is the model gateway dialect the draft's harness takes
+// ('' when it cannot use a gateway).
+function spawnHarnessDialect(draft, context) {
+  return findSpawnHarness(context.harnesses, draft.harness)?.model_proxy_dialect || '';
+}
+
 export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = []) {
   const view = spawnCapabilityView(draft, context);
   const body = {
@@ -1371,6 +1378,11 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   // what this dialog shows is what the spawn gets.
   body.is_owner = !!draft.owner;
   body.permission_overrides = { ...(draft.permissionOverrides || {}) };
+  // A spawn billed to a peer's usage share routes its model calls through
+  // that peer's gateway and carries its own scoped models.proxy grant.
+  if (draft.usageShare && draft.usageFrom && spawnHarnessDialect(draft, context) === draft.usageShare.dialect) {
+    Object.assign(body, shareSpawnFields(draft.usageShare, body.permission_overrides));
+  }
   // Sent whenever the harness can take it, INCLUDING as an empty object: the
   // form is the authoritative statement of what this agent loads, so an operator
   // who cleared a profile's trims must not silently get them back from the

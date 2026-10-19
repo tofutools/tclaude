@@ -240,7 +240,8 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   }
   // The gateway is currently configured through profile JSON. Preserve it
   // through ordinary dashboard edits; a harness switch clears incompatible routes.
-  if (draft.model_proxy && (norm(draft.harness) === 'claude' || draft.model_proxy === 'off')) {
+  const proxyCapable = norm(draft.harness) === 'claude' || !!h?.model_proxy_dialect;
+  if (draft.model_proxy && (proxyCapable || draft.model_proxy === 'off')) {
     body.model_proxy = draft.model_proxy;
   }
   if (local) {
