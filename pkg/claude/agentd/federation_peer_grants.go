@@ -2,11 +2,13 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -248,6 +250,26 @@ type fedPeerGrantReq struct {
 	Slug        string                   `json:"slug"`
 	Scope       string                   `json:"scope,omitempty"`
 	SpawnPolicy db.FederationSpawnPolicy `json:"spawn_policy,omitempty"`
+	// ExpiresAt ends the grant (nil: never). A POST without it grants
+	// permanently; PATCH changes only the expiry.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// maxPeerGrantLifetime bounds a timed grant; longer is a permanent grant.
+const maxPeerGrantLifetime = 366 * 24 * time.Hour
+
+// validGrantExpiry checks a requested grant expiry: in the future, within a year.
+func validGrantExpiry(at *time.Time) error {
+	if at == nil {
+		return nil
+	}
+	if !at.After(time.Now()) {
+		return errors.New("expires_at must be in the future")
+	}
+	if time.Until(*at) > maxPeerGrantLifetime {
+		return errors.New("expires_at must be within a year; omit it for a permanent grant")
+	}
+	return nil
 }
 
 // Display group names while storing stable group ids so renames cannot retarget
@@ -293,8 +315,8 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "manage federation peer grants") {
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodPost && r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST or DELETE")
+	if r.Method != http.MethodGet && r.Method != http.MethodPost && r.Method != http.MethodDelete && r.Method != http.MethodPatch {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, PATCH or DELETE")
 		return
 	}
 	var in fedPeerGrantReq
@@ -328,6 +350,14 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeFedErr(w, err)
+		return
+	}
+	if err := validGrantExpiry(in.ExpiresAt); err != nil && r.Method != http.MethodGet && r.Method != http.MethodDelete {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if poolID != "" && (in.ExpiresAt != nil || r.Method == http.MethodPatch) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "node-group grants cannot expire; grant the peer directly for a time limit")
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -398,10 +428,20 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		scope = db.FederationGroupScope(gid)
 	}
 	warnings := []string{}
-	if scope == "" && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
+	if r.Method == http.MethodPost && scope == "" && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
 		warnings = append(warnings, "WARNING: unscoped peer grant covers every active group, including future groups")
 	}
-	if r.Method == http.MethodDelete {
+	if r.Method == http.MethodPatch {
+		ok, err := db.SetFederationPeerGrantExpiry(p.InstanceID, in.Slug, scope, in.ExpiresAt)
+		if err != nil {
+			writeFedErr(w, err)
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusNotFound, "not_found", "no such peer grant")
+			return
+		}
+	} else if r.Method == http.MethodDelete {
 		if in.Slug == PermApprovalsAnswer && poolID == "" {
 			finish := lockAwayAuthorityMutation(p.InstanceID)
 			defer finish()
@@ -467,7 +507,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		if in.Slug == PermMessageAttachments && !fedGrantMailCoversScope(p.InstanceID, poolID, gid) {
 			warnings = append(warnings, "attachments require message.direct on the same group")
 		}
-		grant := db.FederationPeerGrant{Peer: p.InstanceID, Slug: in.Slug, Scope: scope, SpawnPolicy: in.SpawnPolicy}
+		grant := db.FederationPeerGrant{Peer: p.InstanceID, Slug: in.Slug, Scope: scope, SpawnPolicy: in.SpawnPolicy, ExpiresAt: in.ExpiresAt}
 		if poolID != "" {
 			err = db.UpsertFederationNodeGroupGrant(poolID, grant)
 		} else {
@@ -478,8 +518,13 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	setAuditTargetLabel(r, fmt.Sprintf("%s %s %s", p.InstanceID, in.Slug, scope))
+	label := fmt.Sprintf("%s %s %s", p.InstanceID, in.Slug, scope)
+	if in.ExpiresAt != nil {
+		label += " until " + in.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	setAuditTargetLabel(r, label)
 	broadcastFederationCatalogs()
+	scheduleGrantExpiryBroadcast()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warnings": warnings})
 }
 

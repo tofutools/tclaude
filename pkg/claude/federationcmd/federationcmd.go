@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -57,7 +58,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			proposalsCmd(), boardsCmd(), hubCmd(), accessCmd(), actionCmd(), linksCmd(), statusCmd(), nodeRunCmd(), nodeScriptSettingsCmd(), identityCmd(), connectCmd(), joinCmd(), disconnectCmd(), auditCmd(),
 			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
-			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), peerViewCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), fileCmd(), humanInboxCmd(), attachCmd(), viewersCmd(), kickCmd(),
+			grantCmd(), extendCmd(), revokeCmd(), grantsCmd(), remoteCmd(), peerViewCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), fileCmd(), humanInboxCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
 			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(), moveAgentCmd(), movesCmd(), teleportControlCmd(),
 		},
@@ -455,13 +456,14 @@ func untrustCmd() *cobra.Command {
 
 // --- peer grants ---
 type peerGrant struct {
-	PoolID       string `json:"pool_id,omitempty"`
-	PoolName     string `json:"pool_name,omitempty"`
-	Peer         string `json:"peer"`
-	Slug         string `json:"slug"`
-	Scope        string `json:"scope"`
-	GroupName    string `json:"group_name,omitempty"`
-	GroupDeleted bool   `json:"group_deleted,omitempty"`
+	PoolID       string     `json:"pool_id,omitempty"`
+	PoolName     string     `json:"pool_name,omitempty"`
+	Peer         string     `json:"peer"`
+	Slug         string     `json:"slug"`
+	Scope        string     `json:"scope"`
+	GroupName    string     `json:"group_name,omitempty"`
+	GroupDeleted bool       `json:"group_deleted,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
 	SpawnPolicy  struct {
 		PermissionSlugs []string `json:"permission_slugs,omitempty"`
 		AllowedProfiles []string `json:"allowed_profiles,omitempty"`
@@ -487,6 +489,8 @@ type grantParams struct {
 	Harness         string   `long:"harness" optional:"true" help:"Receiver worker harness"`
 	Model           string   `long:"model" optional:"true" help:"Receiver worker model"`
 	MaxLive         int      `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
+	For             string   `long:"for" optional:"true" help:"Grant for this long, e.g. 8h, 7d or 2w (at most a year); omitted grants permanently"`
+	Until           string   `long:"until" optional:"true" help:"Grant until this time (RFC 3339 or YYYY-MM-DD, local midnight)"`
 }
 
 func grantCmd() *cobra.Command {
@@ -501,6 +505,11 @@ func grantCmd() *cobra.Command {
 		grant.SpawnPolicy.MaxLive = p.MaxLive
 		grant.SpawnPolicy.JobApproval = p.JobApproval
 		grant.SpawnPolicy.RequesterPays = p.RequesterPays
+		expires, err := parseGrantExpiry(p.For, p.Until, time.Now())
+		if err != nil {
+			os.Exit(fail(os.Stderr, err))
+		}
+		grant.ExpiresAt = expires
 		var resp struct {
 			Warnings []string `json:"warnings"`
 		}
@@ -510,8 +519,100 @@ func grantCmd() *cobra.Command {
 		for _, warning := range resp.Warnings {
 			fmt.Fprintln(os.Stderr, warning)
 		}
-		fmt.Printf("granted %s to %s (%s)\n", p.Slug, p.Peer, p.Scope)
+		fmt.Printf("granted %s to %s (%s)%s\n", p.Slug, p.Peer, p.Scope, expiryText(expires))
 	}}.ToCobra()
+}
+
+type extendParams struct {
+	Peer  string `pos:"true" help:"Trusted peer label or instance id"`
+	Slug  string `pos:"true" help:"Granted permission slug"`
+	Scope string `long:"scope" optional:"true" help:"The grant's scope, as the grants listing shows it"`
+	For   string `long:"for" optional:"true" help:"New lifetime from now, e.g. 8h, 7d or 2w"`
+	Until string `long:"until" optional:"true" help:"New end time (RFC 3339 or YYYY-MM-DD, local midnight)"`
+	Never bool   `long:"never" optional:"true" help:"Make the grant permanent"`
+}
+
+func extendCmd() *cobra.Command {
+	return boa.CmdT[extendParams]{Use: "extend", Short: "Change when a peer grant expires, keeping its settings (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *extendParams, _ *cobra.Command, _ []string) {
+		os.Exit(runExtend(p, os.Stdout, os.Stderr))
+	}}.ToCobra()
+}
+
+func runExtend(p *extendParams, stdout, stderr io.Writer) int {
+	if p.Never == (p.For != "" || p.Until != "") {
+		return fail(stderr, fmt.Errorf("pass one of --for, --until or --never"))
+	}
+	expires, err := parseGrantExpiry(p.For, p.Until, time.Now())
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
+		return rc
+	}
+	body := map[string]any{"peer": p.Peer, "slug": p.Slug, "scope": p.Scope, "expires_at": expires}
+	if err := agent.DaemonRequest(http.MethodPatch, "/v1/federation/grants", body, nil, agent.DaemonOpts{}); err != nil {
+		return fail(stderr, err)
+	}
+	if expires == nil {
+		fmt.Fprintf(stdout, "%s for %s no longer expires\n", p.Slug, p.Peer)
+	} else {
+		fmt.Fprintf(stdout, "%s for %s%s\n", p.Slug, p.Peer, expiryText(expires))
+	}
+	return 0
+}
+
+// parseGrantExpiry turns --for or --until into a grant expiry; neither is a
+// permanent grant (nil).
+func parseGrantExpiry(forText, until string, now time.Time) (*time.Time, error) {
+	if forText != "" && until != "" {
+		return nil, fmt.Errorf("pass --for or --until, not both")
+	}
+	if forText != "" {
+		d, err := parseGrantDuration(forText)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("--for must be a positive duration such as 8h, 7d or 2w")
+		}
+		at := now.Add(d).Truncate(time.Second)
+		return &at, nil
+	}
+	if until != "" {
+		at, err := time.Parse(time.RFC3339, until)
+		if err != nil {
+			at, err = time.ParseInLocation("2006-01-02", until, time.Local)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("--until must be RFC 3339 (2026-10-24T18:00:00+02:00) or a date (2026-10-24)")
+		}
+		if !at.After(now) {
+			return nil, fmt.Errorf("--until must be in the future")
+		}
+		return &at, nil
+	}
+	return nil, nil
+}
+
+// parseGrantDuration is time.ParseDuration plus <n>d and <n>w.
+func parseGrantDuration(s string) (time.Duration, error) {
+	if n := len(s); n > 1 && (s[n-1] == 'd' || s[n-1] == 'w') {
+		v, err := strconv.Atoi(s[:n-1])
+		if err != nil || v < 0 {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+		unit := 24 * time.Hour
+		if s[n-1] == 'w' {
+			unit *= 7
+		}
+		return time.Duration(v) * unit, nil
+	}
+	return time.ParseDuration(s)
+}
+
+// expiryText is " until <local time>" for a timed grant, "" for a permanent one.
+func expiryText(at *time.Time) string {
+	if at == nil {
+		return ""
+	}
+	return " until " + at.Local().Format("2006-01-02 15:04 MST")
 }
 
 type revokeParams struct {
@@ -557,6 +658,9 @@ func grantsCmd() *cobra.Command {
 			}
 			if g.PoolName != "" && g.Peer != "group:"+g.PoolName {
 				fmt.Printf(" [inherited from group:%s]", g.PoolName)
+			}
+			if g.ExpiresAt != nil {
+				fmt.Printf(" [expires %s]", g.ExpiresAt.Local().Format("2006-01-02 15:04 MST"))
 			}
 			if g.Slug == "groups.members.spawn" {
 				policy, _ := json.Marshal(g.SpawnPolicy)

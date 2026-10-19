@@ -135,6 +135,7 @@ const settingRows = (v) => {
     grants: async (target) => (await call('GET', `grants?peer=${encodeURIComponent(target)}`))?.grants || [],
     grant: (body) => call('POST', 'grants', body),
     revoke: ({ peer, slug, scope }) => call('DELETE', 'grants', { peer, slug, scope }),
+    extend: ({ peer, slug, scope, expires_at: expiresAt }) => call('PATCH', 'grants', { peer, slug, scope, expires_at: expiresAt || null }),
     profiles: () => call('GET', 'profiles'),
     tokens: async () => (await call('GET', 'enroll-tokens'))?.tokens || [],
     // The bearer is in this response only; callers show it once and drop it.

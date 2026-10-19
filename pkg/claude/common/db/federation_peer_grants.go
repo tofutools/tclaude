@@ -117,6 +117,40 @@ func UpsertFederationPeerGrant(g FederationPeerGrant) error {
 	return err
 }
 
+// SetFederationPeerGrantExpiry changes only a grant's expiry (nil: never).
+// It finds an already expired grant too, so an expired grant can be renewed
+// without restating its policy.
+func SetFederationPeerGrantExpiry(peer, slug, scope string, at *time.Time) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var expires any
+	if at != nil {
+		expires = dbTime(*at)
+	}
+	res, err := d.Exec(`UPDATE federation_peer_grants SET expires_at=? WHERE peer=? AND slug=? AND scope=?`, expires, peer, slug, scope)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// NextFederationPeerGrantExpiry is the soonest future grant expiry, or the
+// zero time when no grant expires.
+func NextFederationPeerGrantExpiry() (time.Time, error) {
+	d, err := Open()
+	if err != nil {
+		return time.Time{}, err
+	}
+	var at dbTimestamp
+	if err := d.QueryRow(`SELECT MIN(expires_at) FROM federation_peer_grants WHERE expires_at>?`, dbTime(time.Now())).Scan(&at); err != nil {
+		return time.Time{}, err
+	}
+	return at.Time(), nil
+}
+
 func DeleteFederationPeerGrant(peer, slug, scope string) (bool, error) {
 	d, err := Open()
 	if err != nil {

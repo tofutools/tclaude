@@ -251,6 +251,9 @@ func applyPeerAccessOutcome(req *approvalRequest, outcome approvalOutcome) bool 
 	req.mu.Unlock()
 	if !approved {
 		_ = db.UpsertFederationPeerAccessRequest(pa)
+	} else {
+		broadcastFederationCatalogs()
+		scheduleGrantExpiryBroadcast()
 	}
 	verb := "federation.access.deny"
 	status := 403

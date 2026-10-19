@@ -283,6 +283,30 @@ identity through renames; deleting the group does not authorize a replacement.
 Omitting `--scope` grants authority on **every active group, including future
 groups**; the CLI warns explicitly. There is no grant to all peers at once.
 
+### Time-limited grants
+
+A peer grant can end on its own. `--for` takes a duration (`90m`, `8h`, `7d`,
+`2w`); `--until` takes an RFC 3339 time or a date (local midnight). The
+limit is at most a year; without either flag the grant is permanent.
+
+```bash
+tclaude federation grant bob message.direct --scope group=builders --for 7d
+tclaude federation extend bob message.direct --scope group=builders --for 30d
+tclaude federation extend bob message.direct --scope group=builders --never
+```
+
+`extend` changes only when the grant ends and keeps its launch settings; it
+also renews a grant that has already expired. Re-running `grant` replaces the
+grant, so without `--for` or `--until` the replacement is permanent. Every
+check reads the expiry, so an expired grant stops working on time. This node also re-sends its catalog when a grant
+ends, so the peer's view drops it without waiting for another change.
+`federation grants` shows each timed grant's end. In the dashboard, the
+**Add grants** dialog has a **For** choice, and the grant list shows how long
+each timed grant has left; updating a timed grant there keeps its limit unless
+a new one is picked. Node-pool grants cannot be timed yet; grant the peer
+directly. An approved operator access request is a timed grant too (see
+"Operator access requests").
+
 ### Changing a peer's groups
 
 A peer's operator changes a visible group from the peer's dashboard (its
