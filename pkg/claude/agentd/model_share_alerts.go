@@ -46,8 +46,17 @@ func shareLevel(s modelShare) int {
 	return 0
 }
 
+// shareAlertKey follows one peer's access to one gateway, whichever grant
+// is the binding one at the moment.
 func shareAlertKey(side string, s modelShare) string {
-	return side + "|" + s.Peer + "|" + s.Gateway + "|" + s.Scope + "|" + s.Since.UTC().Format(time.RFC3339Nano)
+	return side + "|" + s.Peer + "|" + s.Gateway
+}
+
+// sameShare reports whether two sightings show the same grant; a different
+// one (re-granted, or another cap became the binding one) restarts its
+// level without alerting.
+func sameShare(a, b modelShare) bool {
+	return a.Scope == b.Scope && a.Since.Equal(b.Since)
 }
 
 // observe compares one side's shares now with what it saw last, and returns
@@ -69,7 +78,7 @@ func (st *shareAlerts) observe(side string, shares []modelShare, answered map[st
 		level := shareLevel(s)
 		last, known := st.seen[key]
 		st.seen[key] = shareAlertSeen{share: s, level: level}
-		if known && level > last.level {
+		if known && sameShare(last.share, s) && level > last.level {
 			out = append(out, shareLevelAlert(side, s, level))
 		}
 	}
@@ -87,7 +96,24 @@ func (st *shareAlerts) observe(side string, shares []modelShare, answered map[st
 			out = append(out, shareEndedAlert(side, s))
 		}
 	}
-	return out
+	// A cap on every gateway shows once per gateway: alert about it once.
+	seen := map[shareAlert]bool{}
+	unique := out[:0]
+	for _, a := range out {
+		if !seen[a] {
+			seen[a] = true
+			unique = append(unique, a)
+		}
+	}
+	return unique
+}
+
+// shareWhere names what a share covers: its gateway, or every gateway.
+func shareWhere(s modelShare) string {
+	if s.Scope == "" && !s.Since.IsZero() {
+		return "every gateway"
+	}
+	return "gateway " + s.Gateway
 }
 
 func shareWho(s modelShare) string {
@@ -102,18 +128,18 @@ func shareLevelAlert(side string, s modelShare, level int) shareAlert {
 	who := shareWho(s)
 	if side == "given" {
 		if level >= 100 {
-			return shareAlert{fmt.Sprintf("Usage share used up: %s on %s", who, s.Gateway),
-				fmt.Sprintf("%s has spent %s you share on gateway %s. The gateway refuses its model calls until you raise the cap (Fleet → Usage sharing).", who, spent, s.Gateway)}
+			return shareAlert{fmt.Sprintf("Usage share used up: %s on %s", who, shareWhere(s)),
+				fmt.Sprintf("%s has spent %s you share on %s. Its model calls are refused until you raise the cap (Fleet → Usage sharing).", who, spent, shareWhere(s))}
 		}
-		return shareAlert{fmt.Sprintf("Usage share at 80%%: %s on %s", who, s.Gateway),
-			fmt.Sprintf("%s has spent %s you share on gateway %s.", who, spent, s.Gateway)}
+		return shareAlert{fmt.Sprintf("Usage share at 80%%: %s on %s", who, shareWhere(s)),
+			fmt.Sprintf("%s has spent %s you share on %s.", who, spent, shareWhere(s))}
 	}
 	if level >= 100 {
 		return shareAlert{fmt.Sprintf("%s's usage share is used up", who),
-			fmt.Sprintf("Your agents have spent %s that %s shares on %s; their model calls through it are refused. Ask %s for more (Fleet → Usage sharing) or spawn on your own account.", spent, who, s.Gateway, who)}
+			fmt.Sprintf("Your agents have spent %s that %s shares on %s; their model calls through it are refused. Ask %s for more (Fleet → Usage sharing) or spawn on your own account.", spent, who, shareWhere(s), who)}
 	}
 	return shareAlert{fmt.Sprintf("%s's usage share is 80%% used", who),
-		fmt.Sprintf("Your agents have spent %s that %s shares on %s.", spent, who, s.Gateway)}
+		fmt.Sprintf("Your agents have spent %s that %s shares on %s.", spent, who, shareWhere(s))}
 }
 
 func shareEndedAlert(side string, s modelShare) shareAlert {
@@ -123,11 +149,11 @@ func shareEndedAlert(side string, s modelShare) shareAlert {
 		spent = fmt.Sprintf("$%.2f of $%.2f spent", s.SpentUSD, s.MaxUSD)
 	}
 	if side == "given" {
-		return shareAlert{fmt.Sprintf("Usage share ended: %s on %s", who, s.Gateway),
-			fmt.Sprintf("Your usage share with %s on gateway %s has ended (%s).", who, s.Gateway, spent)}
+		return shareAlert{fmt.Sprintf("Usage share ended: %s on %s", who, shareWhere(s)),
+			fmt.Sprintf("Your usage share with %s on %s has ended (%s).", who, shareWhere(s), spent)}
 	}
 	return shareAlert{fmt.Sprintf("%s's usage share ended", who),
-		fmt.Sprintf("%s no longer shares %s with this node (%s). Agents billed to it lose model access; ask %s again or spawn on your own account.", who, s.Gateway, spent, who)}
+		fmt.Sprintf("%s no longer shares %s with this node (%s). Agents billed to it lose model access; ask %s again or spawn on your own account.", who, shareWhere(s), spent, who)}
 }
 
 var usageShareAlerts shareAlerts

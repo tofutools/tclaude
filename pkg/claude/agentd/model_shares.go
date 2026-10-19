@@ -37,6 +37,11 @@ type modelShare struct {
 	// Scope is the shown grant's scope (http_proxy=<gateway>, or "" for
 	// every gateway), which the panel's extend, raise and revoke act on.
 	Scope string `json:"scope,omitempty"`
+	// GrantExpiresAt is the shown grant's own end (ExpiresAt is access's,
+	// across every grant); Pool names a node group the grant comes from,
+	// which is administered as that group's grant, not the peer's.
+	GrantExpiresAt *time.Time `json:"grant_expires_at,omitempty"`
+	Pool           string     `json:"pool,omitempty"`
 }
 
 // modelSharesFor lists the gateways peer may use on this node now. A
@@ -100,6 +105,7 @@ func modelSharesFor(cfg *config.Config, peer *db.FederationPeer) []modelShare {
 		s.Unrestricted = unrestricted
 		if grant != nil {
 			s.MaxUSD, s.Since, s.Scope = grant.SpawnPolicy.MaxUSD, grant.CreatedAt, grant.Scope
+			s.GrantExpiresAt, s.Pool = grant.ExpiresAt, grant.PoolName
 		}
 		s.UsedUp = left <= 0
 		// Access lasts as long as its longest-lived source: unrestricted

@@ -34,10 +34,10 @@ export function endsText(share, now) {
   return `ends in ${Math.max(1, Math.round((at - now) / 3600000))} h`;
 }
 
-// extendedExpiry is a timed share's end pushed back by days, counted from
+// extendedExpiry is the shown grant's end pushed back by days, counted from
 // now when it already passed.
 export function extendedExpiry(share, now, days = 7) {
-  const at = Date.parse(share?.expires_at || '');
+  const at = Date.parse(share?.grant_expires_at || '');
   return new Date(Math.max(Number.isFinite(at) ? at : now, now) + days * DAY_MS).toISOString();
 }
 
@@ -76,7 +76,7 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
   const where = (s) => (s.scope ? `gateway ${s.gateway}` : 'every gateway');
   const extend = (s) => act({
     title: `Extend ${s.peer_name || s.peer}'s usage share by 7 days?`,
-    body: `It keeps its cap and what it has spent, and ends ${new Date(extendedExpiry(s, now)).toLocaleString()}.`,
+    body: `This grant keeps its cap and what it has spent, and ends ${new Date(extendedExpiry(s, now)).toLocaleString()}.`,
     okLabel: 'Extend', busyLabel: 'Saving…', done: 'Usage share extended',
     action: () => actions.extend({ ...grantOf(s), expires_at: extendedExpiry(s, now) }),
   });
@@ -88,8 +88,11 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
       title: `Raise ${s.peer_name || s.peer}'s cap to ${dollars(cap)}?`,
       body: `${s.peer_name || s.peer} may then spend ${dollars(cap - (s.spent_usd || 0))} more through ${where(s)}, paid with this node's credentials.`,
       okLabel: 'Raise', busyLabel: 'Saving…', done: `Cap raised to ${dollars(cap)}`,
-      action: () => actions.grant({ ...grantOf(s), spawn_policy: { max_usd: cap }, ...(s.expires_at ? { expires_at: s.expires_at } : {}) }),
-    }).then(() => setRaise({ ...raise, [s.peer + s.gateway]: '' }));
+      action: async () => {
+        await actions.grant({ ...grantOf(s), spawn_policy: { max_usd: cap }, ...(s.grant_expires_at ? { expires_at: s.grant_expires_at } : {}) });
+        setRaise((r) => ({ ...r, [s.peer + s.gateway]: '' }));
+      },
+    });
   };
   const revoke = (s) => act({
     title: `Stop sharing usage with ${s.peer_name || s.peer}?`,
@@ -116,13 +119,14 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
     <table class="fa-table" id="fleet-shares-given">
       <thead><tr><th>Peer</th><th>Gateway</th><th>Spent</th><th>Ends</th><th></th></tr></thead>
       <tbody>${givenRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
-        ${s.since && html`${s.expires_at && html`<button type="button" data-fa="extend-share" onClick=${() => extend(s)}>+7 days…</button>`}
+        ${s.since && s.pool && html`<span class="muted" title="Change it on Peer grants, as that node group's grant">from node group ${s.pool}</span>`}
+        ${s.since && !s.pool && html`${s.grant_expires_at && html`<button type="button" data-fa="extend-share" onClick=${() => extend(s)}>+7 days…</button>`}
         ${s.max_usd > 0 && html`<input class="fa-share-add" aria-label=${`Dollars to add for ${s.peer_name || s.peer}`} placeholder="+$" size="5" inputmode="decimal"
           value=${raise[s.peer + s.gateway] || ''} onInput=${(e) => setRaise({ ...raise, [s.peer + s.gateway]: e.currentTarget.value })} />
           <button type="button" data-fa="raise-share" onClick=${() => raiseBy(s)}>Raise…</button>`}
         <button type="button" class="fa-danger" data-fa="revoke-share" onClick=${() => revoke(s)}>Revoke…</button>`}</${ShareRow}>`)}</tbody>
     </table>`}
     <div class="muted fa-cli-note">You are notified when a share reaches 80% and 100% of its cap and when it ends, on both sides. Dollars are what the gateway charges from the provider's token counts; use an API key for a shared gateway, not a subscription login. CLI: <code>tclaude federation shares [--given]</code>.</div>
-    ${asking && html`<${RequestAccessDialog} node=${asking.peer_name || asking.peer} perm=${USAGE_PERM} gateway=${asking.gateway} onClose=${() => setAsking(null)} actions=${peerAccess(asking.peer)} />`}
+    ${asking && html`<${RequestAccessDialog} node=${asking.peer_name || asking.peer} perm=${USAGE_PERM} gateway=${String(asking.scope || '').startsWith('http_proxy=') ? asking.gateway : ''} onClose=${() => setAsking(null)} actions=${peerAccess(asking.peer)} />`}
   </div>`;
 }
