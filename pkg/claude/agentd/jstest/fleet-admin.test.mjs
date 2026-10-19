@@ -71,6 +71,8 @@ let s_output = [];
 let s_viewers = [];
 // s_landing, when set, answers an agent import with the landing it resolves.
 let s_landing = null;
+let s_subscription = { set: false };
+
 async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP_NEW, level: 'restricted', profile: null, plan: null }, statusFn = status } = {}) {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-admin-island.js')]);
@@ -253,6 +255,9 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     modelGateway: async (name) => { log.push(['modelGateway', name]); return { name, url: 'https://api.anthropic.com', header: 'x-api-key', credential: 'managed', policy: { enabled: true, models: ['claude-sonnet-5-5'], daily_requests: 500, daily_tokens: 2000000, peer_daily_requests: 100, peer_daily_tokens: 500000, session_daily_requests: 50, session_daily_tokens: 100000, max_input_tokens: 100000, max_output_tokens: 8000, max_concurrent: 4, requests_per_minute: 30, max_request_bytes: 1048576, blocked_peers: ['inst_lab'] } }; },
     saveModelGateway: async (name, body) => { log.push(['saveGateway', name, body]); return body; },
     removeModelGateway: async (name) => { log.push(['removeGateway', name]); return { removed: true }; },
+    claudeSubscription: async () => { log.push(['claudeSubscription']); return s_subscription; },
+    setClaudeSubscription: async (token) => { log.push(['setSubscription', token]); if (!token.startsWith('sk-ant-oat')) throw new Error('paste the token that claude setup-token printed'); s_subscription = { set: true, set_at: '2026-10-19T09:00:00Z' }; return s_subscription; },
+    forgetClaudeSubscription: async () => { log.push(['forgetSubscription']); s_subscription = { set: false }; return s_subscription; },
     testModelGateway: async (body) => { log.push(['testGateway', body]); return { ok: true, status: 200, message: 'The key works: the provider lists 2 models.', models: ['claude-haiku-5-5', 'claude-sonnet-5-5'] }; },
     modelLeases: async () => [
       { id: 'lease_aaaaaaaaaaaa1', peer: 'inst_forge', proxy: 'claude', kind: 'requester_paid', worker: 'agt_w1', revoked: false, idle_seconds: 7200, touched_at: '2026-10-10T09:00:00Z' },
@@ -1524,6 +1529,33 @@ test('model gateways: add one with a pasted key, test it, edit keeping the store
   await s.click(s.q('[data-gateway="claude"] [data-fa="remove-gateway"]'));
   assert.match(s.confirms.at(-1).body, /leases are revoked.*key pasted here is deleted/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'removeGateway'), ['removeGateway', 'claude']);
+});
+
+test('my Claude subscription: set up a pasted token write-only, replace it, and forget it with a confirm', async (t) => {
+  s_subscription = { set: false };
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Model gateways/.test(b.textContent)));
+  const q = (x) => s.harness.document.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  assert.match(q('#fleet-claude-subscription-state').textContent, /not set up/);
+  assert.equal(q('#fleet-claude-subscription-forget'), null);
+  await s.click(q('#fleet-claude-subscription-edit'));
+  assert.equal(q('#fleet-claude-subscription-token').type, 'password');
+  assert.match(q('#fleet-claude-subscription').textContent, /claude setup-token.*revoke it at claude\.ai/s);
+  await type('#fleet-claude-subscription-token', 'sk-ant-api03-key');
+  await s.click(q('#fleet-claude-subscription-save'));
+  assert.match(q('#fleet-claude-subscription [role=alert]').textContent, /setup-token/);
+  await type('#fleet-claude-subscription-token', '  sk-ant-oat01-example ');
+  await s.click(q('#fleet-claude-subscription-save'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'setSubscription'), ['setSubscription', 'sk-ant-oat01-example']);
+  assert.equal(q('#fleet-claude-subscription-token'), null, 'saving closes the form; the token is never shown again');
+  assert.match(q('#fleet-claude-subscription-state').textContent, /stored/);
+  assert.match(q('#fleet-claude-subscription-edit').textContent, /Replace/);
+  await s.click(q('#fleet-claude-subscription-forget'));
+  assert.match(s.confirms.at(-1).body, /Agents already running on it keep running.*revoke the token at claude\.ai/);
+  assert.ok(s.log.some((l) => l[0] === 'forgetSubscription'));
+  assert.match(q('#fleet-claude-subscription-state').textContent, /not set up/);
 });
 
 test('a pending key transition is information only, with no recovery command', async (t) => {

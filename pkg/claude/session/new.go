@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 	"log/slog"
 	"net/url"
 	"os"
@@ -91,7 +92,10 @@ type NewParams struct {
 	// blank the harness receives no override. A non-empty value is normalized
 	// and validated by the harness catalog in runNew.
 	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>"`
-	Model      string `long:"model" optional:"true" help:"Harness model or alias. Unset = global profile, then the harness default"`
+	// ClaudeSubscription is set by agentd for an agent that runs on a peer
+	// operator's own Claude subscription; the token never passes through here.
+	ClaudeSubscription bool   `long:"claude-subscription" optional:"true" hidden:"true" help:"Run Claude Code on the agent's peer-provided subscription token"`
+	Model              string `long:"model" optional:"true" help:"Harness model or alias. Unset = global profile, then the harness default"`
 
 	// Harness selects the coding tool this session runs. A fresh human launch
 	// fills an omitted value from the global default spawn profile, or chooses an
@@ -587,6 +591,9 @@ func runNew(params *NewParams) error {
 	params.Model = model
 	if params.ModelProxy == "off" {
 		params.ModelProxy = ""
+	}
+	if params.ClaudeSubscription && (h.Name != harness.DefaultName || params.ModelProxy != "") {
+		return errors.New("a Claude subscription launch runs Claude Code without a model gateway")
 	}
 	if params.ModelProxy != "" {
 		if !h.SupportsModelProxy() {
@@ -1129,6 +1136,11 @@ func runNew(params *NewParams) error {
 		}
 		if err := validateModelProxyExtraArgs(extraArgs); err != nil {
 			return err
+		}
+	}
+	if params.ClaudeSubscription {
+		if err := validateModelProxyExtraArgs(extraArgs); err != nil {
+			return errors.New("a Claude subscription launch cannot combine with pass-through --settings")
 		}
 	}
 	if err := harness.ValidateLaunchExtraArgs(h, extraArgs); err != nil {
@@ -2182,6 +2194,15 @@ func runNew(params *NewParams) error {
 			return err
 		}
 	}
+	if params.ClaudeSubscription {
+		binary := executablePath
+		if binary == "" {
+			binary = harnesspath.ManagedExecutable(h.Spawn.Binary())
+		}
+		if err = validateClaudeSubscriptionVersion(binary); err != nil {
+			return err
+		}
+	}
 	if h.CheckVersion != nil {
 		binary := executablePath
 		if binary == "" {
@@ -2286,6 +2307,7 @@ func runNew(params *NewParams) error {
 	}
 	spawnSpec := harness.SpawnSpec{
 		ModelProxy:                     params.ModelProxy,
+		ClaudeSubscription:             params.ClaudeSubscription,
 		ExecutablePath:                 executablePath,
 		ExecutableInterpreter:          executableInterpreter,
 		CodexAppServerSocket:           params.CodexAppServerSocket,

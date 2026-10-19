@@ -1944,3 +1944,9 @@ CREATE TABLE cost_ignored_convs (
 		conv_id    TEXT PRIMARY KEY,
 		ignored_at INTEGER NOT NULL
 	, reason TEXT NOT NULL DEFAULT '') STRICT;
+
+CREATE TABLE agent_claude_subscriptions (
+			agent_id   TEXT PRIMARY KEY,
+			peer       TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		) STRICT;

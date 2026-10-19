@@ -123,6 +123,13 @@ type SpawnArgs struct {
 	// default. Resume surfaces pass the predecessor's inherited model for the
 	// same reason as Effort.
 	ModelProxy string
+	// ClaudeSubscription launches Claude Code on a peer operator's own
+	// subscription: the pane wrapper fetches the token from agentd and hands
+	// it over through an inherited pipe. Set by agentd at launch, from the
+	// agent's marker; ClaudeSubscriptionAgentID names the agent for a fresh
+	// spawn, whose conversation is not enrolled yet.
+	ClaudeSubscription        bool
+	ClaudeSubscriptionAgentID string
 	Model      string
 
 	// Harness is the harness name to launch ("claude", "codex"); "" or "claude"

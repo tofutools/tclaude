@@ -286,6 +286,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     userDefaultModel: current.userDefaultModel,
     defaultTerminal: current.defaultTerminal,
     normalizeNames: current.normalizeNames,
+    remoteSpawn: !!(current.remote || current.target),
   }), [current]);
   const rememberedEffort = (model) => actions.rememberedEffort(model);
   // A reopened queued spawn restores its stored draft over a fresh one, so a
@@ -444,6 +445,19 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // model calls to. Only a spawn on this node can use one (the new agent's
   // gateway bridge runs here), and the row shows only once a peer shares.
   const [usageShares, setUsageShares] = useState([]);
+  // Running as yourself elsewhere: an agent spawned on another node may run
+  // Claude Code on this operator's own subscription token, stored on this
+  // node and sent in the encrypted spawn request only. Asked of this node
+  // (localActions), whichever node the dialog spawns on.
+  const [subscription, setSubscription] = useState(null);
+  useEffect(() => {
+    if (!(remote || target) || !localActions.loadClaudeSubscription) return undefined;
+    let off = false;
+    localActions.loadClaudeSubscription().then((value) => { if (!off) setSubscription(value || { set: false }); })
+      .catch(() => { if (!off) setSubscription(null); });
+    return () => { off = true; };
+  }, [remote, target, localActions]);
+
   useEffect(() => {
     if (remote || target || !actions.loadUsageShares) return undefined;
     let off = false;
@@ -1178,6 +1192,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   const selectedModel = modelSelectValue(draft, context);
   const usageChoices = shareOptions(usageShares, findSpawnHarness(context.harnesses, draft.harness), draft.model, Date.now(), draft.permissionOverrides);
   const usageChoice = usageChoices.find((o) => o.value === draft.usageFrom) || null;
+  const subscriptionRow = !!subscription && (remote || target) && (draft.harness || 'claude') === 'claude';
+  const spawnNodeName = remote ? remote.node || 'the peer' : target?.name || 'that node';
   const sandboxHelp = harnessBuiltinModeHelpForImplementation(
     view.sandbox.help[draft.sandbox],
     draft.sandboxImpl
@@ -1500,6 +1516,23 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         </select>
         ${usageChoice && !usageChoice.reason && html`<div class="spawn-field-hint info" id="agent-spawn-usage-hint">${shareHint(usageChoice.share)}</div>`}
         ${usageChoice?.reason && html`<div class="spawn-field-hint warn" id="agent-spawn-usage-hint">${usageChoice.label} cannot pay for this spawn: ${usageChoice.reason}. It will use your own account.</div>`}
+      </div>
+    </div>`}
+    ${subscriptionRow && html`<div class="cron-create-row" id="agent-spawn-claude-login-row" data-remote-spawn-free=""
+      title="Which Claude login the agent runs on. Your subscription: the token you stored on this node travels in the encrypted spawn request, stays in memory on the node running the agent, and reaches Claude Code through a pipe — never its disk or environment.">
+      <label class="cron-create-label" for="agent-spawn-claude-login">Claude login</label>
+      <div class="cron-create-target">
+        <select id="agent-spawn-claude-login" value=${draft.claudeSubscription && subscription?.set ? 'mine' : ''} disabled=${busy}
+          onChange=${(event) => {
+            const mine = event.currentTarget.value === 'mine';
+            setDraft((before) => ({ ...before, claudeSubscription: mine }));
+          }}>
+          <option value="">${spawnNodeName}'s own login</option>
+          <option value="mine" disabled=${!subscription?.set}>Your Claude subscription${subscription?.set ? '' : ' (not set up)'}</option>
+        </select>
+        ${draft.claudeSubscription && subscription?.set
+          ? html`<div class="spawn-field-hint info" id="agent-spawn-claude-login-hint">Runs on your subscription and is billed to it. ${spawnNodeName} holds the token in memory only: if its tclaude restarts, the agent cannot be restarted, and you spawn a new one.</div>`
+          : !subscription?.set && html`<div class="spawn-field-hint" id="agent-spawn-claude-login-hint">To run it on your own subscription, store a token from <code>claude setup-token</code> under Fleet config → Model gateways → My Claude subscription.</div>`}
       </div>
     </div>`}
     <div class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}

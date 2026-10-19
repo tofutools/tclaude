@@ -243,8 +243,11 @@ type CatalogPayload struct {
 	PeerProposals     bool `json:"peer_proposals,omitempty"`
 	AgentBundleChunks bool `json:"agent_bundle_chunks,omitempty"`
 	RequesterPays     int  `json:"requester_pays,omitempty"`
-	TeleportBackups   bool `json:"teleport_backups,omitempty"`
-	AgentTeleports    int  `json:"agent_teleports,omitempty"`
+	// ClaudeSubscription 1: the node runs a peer operator's spawn on that
+	// operator's own Claude subscription token, held in memory only.
+	ClaudeSubscription int  `json:"claude_subscription,omitempty"`
+	TeleportBackups    bool `json:"teleport_backups,omitempty"`
+	AgentTeleports     int  `json:"agent_teleports,omitempty"`
 	// ResilienceSnapshots is the resilience snapshot custody version this
 	// node accepts (bundle type "snapshot"); 0 means none, 2 adds
 	// returning held snapshots on a resilience_recall.

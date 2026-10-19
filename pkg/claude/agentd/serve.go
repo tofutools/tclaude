@@ -1507,6 +1507,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/http/proxy/{name}/{path...}", handleHTTPProxyGateway)
 	mux.HandleFunc("GET /v1/http/environment", handleHTTPProxyEnvironment)
 	mux.HandleFunc("POST /v1/models/bind", handleModelProxyBind)
+	mux.HandleFunc("POST /v1/models/claude-subscription", handleClaudeSubscriptionToken)
 	mux.HandleFunc("DELETE /v1/models/bind", handleModelProxyRevoke)
 	mux.HandleFunc("/v1/models/request/{path...}", handleModelProxyRequest)
 	mux.HandleFunc("GET /v1/models/leases", handleModelProxyLeases)

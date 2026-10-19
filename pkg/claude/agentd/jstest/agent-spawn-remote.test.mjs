@@ -57,6 +57,7 @@ test('remote spawn allowances, lock reasons and request mapping', async (t) => {
   assert.deepEqual(mod.remoteSpawnBody(request, [], granted), { brief: 'fix it', name: 'w', role: 'r' }, 'an untouched prefill (even its profile) leaves the peer in charge');
   assert.deepEqual(mod.remoteSpawnBody({ body: { ...request.body, profile: 'local:mine' } }, ['profile'], granted), { brief: 'fix it', name: 'w', role: 'r' }, 'a local profile is never named to the peer');
   assert.deepEqual(mod.remoteSpawnBody({ body: { ...request.body, profile: 'other' } }, ['profile'], granted), { brief: 'fix it', name: 'w', role: 'r' }, 'nor a peer profile the grant does not list');
+  assert.deepEqual(mod.remoteSpawnBody({ body: { ...request.body, claude_subscription: true } }, [], granted), { brief: 'fix it', name: 'w', role: 'r', claude_subscription: true }, 'the subscription choice rides along; the token is added by this node\'s peer proxy');
   assert.deepEqual(mod.remoteSpawnBody(request, [], granted, ['first', 'second']), { brief: 'first\n\nsecond\n\nfix it', name: 'w', role: 'r' }, 'prompt bodies open the brief');
   assert.throws(() => mod.remoteSpawnBody({ body: { initial_message: '  ' } }, [], granted), /write a brief/);
 

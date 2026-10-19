@@ -474,6 +474,8 @@ export function remoteSpawnBody(request, explicit, options, prompts = [], { prom
       launch.worktree_branch = text(body.worktree_branch);
     }
   }
+  // The choice only: this node's peer proxy adds the token itself.
+  if (body.claude_subscription === true) out.claude_subscription = true;
   if (Object.keys(launch).length) out.launch = launch;
   return out;
 }

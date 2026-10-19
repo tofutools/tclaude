@@ -95,6 +95,11 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		writeError(w, 400, "invalid_arg", err.Error())
 		return
 	}
+	body, err = prepareClaudeSubscriptionPush(r, body, peer)
+	if err != nil {
+		writeError(w, 409, "claude_subscription", err.Error())
+		return
+	}
 	auditNodeRunProxyRequest(r, peer.InstanceID, body)
 	auditPeerAccessProxy(r, peer.InstanceID, "requested", 202, nil)
 	auditPeerActionProxy(r, peer.InstanceID, "requested", 202)

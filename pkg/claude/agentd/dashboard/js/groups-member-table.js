@@ -25,7 +25,7 @@ import { PRReviewBadge } from './pr-review-badge.js';
 import { PRLinkHover } from './pr-link-hover.js';
 import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 import { fleetState } from './fleet-state.js';
-import { presenceView } from './agent-presence.js';
+import { nodeRef, presenceView } from './agent-presence.js';
 import { hubOffReason } from './fleet-model.js';
 import { TELEPORT_ROUTES } from './launch-target-dialog.js';
 import { unrestrictedOn } from './node-trust.js';
@@ -1057,7 +1057,21 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
       ...memberAttrs(member), 'data-current': member.title || '', 'data-editor-key': editorKey,
       title: `${idPrefix}Click to rename this agent — Enter saves, Esc cancels`,
     }}
-  >${member.title || '(unnamed)'}<//><${PresenceBadge} member=${member} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+  >${member.title || '(unnamed)'}<//><${PresenceBadge} member=${member} /><${SubscriptionBadge} member=${member} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+}
+
+// SubscriptionBadge marks an agent that runs Claude Code on a peer operator's
+// own Claude subscription, handed over in memory only: once the node no
+// longer holds the token (its tclaude restarted), a relaunch refuses.
+function SubscriptionBadge({ member }) {
+  const sub = member.claude_subscription;
+  if (!sub?.peer) return null;
+  const who = nodeRef(sub.peer, fleetState.fleet.value);
+  const owner = who.local ? 'your' : `${who.name || sub.label || 'a peer'}'s`;
+  const title = sub.held
+    ? `Runs on ${owner} own Claude subscription. The token is held in memory on the node running it, never on its disk or in the agent's environment; it ends with the agent.`
+    : `Runs on ${owner} own Claude subscription, but the node running it no longer holds the token (its tclaude restarted), so it cannot be restarted or resumed. Spawn a new agent to continue.`;
+  return html`<span class=${`presence-badge subscription-badge${sub.held ? '' : ' lost'}`} style=${who.color ? `--nc:${who.color}` : undefined} title=${title} data-subscription=${sub.held ? 'held' : 'lost'}>◆ ${owner} subscription${sub.held ? '' : ' (token gone)'}</span>`;
 }
 
 // PresenceBadge marks a visiting agent with its home, and a returned one with

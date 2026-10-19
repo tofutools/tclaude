@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"io"
 	"net/http"
@@ -344,6 +345,16 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 	// regular spawn route and body. Without the mark the route keeps the
 	// remote spawn request, which the CLI and request mode send.
 	if r.URL.Query().Get("as") == "local" && db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		// The operator's own Claude subscription token rides in the encrypted
+		// request; lift it out before the body reaches the spawn route, its
+		// audit or an ask-human preview.
+		raw, ok := liftClaudeSubscriptionToken(w, r)
+		if !ok {
+			return
+		}
+		if raw != "" {
+			r = r.WithContext(withClaudeSubscription(r.Context(), claudeSubscriptionHandoff{peer: v.peer.InstanceID, token: raw}))
+		}
 		servePeerAsLocal(w, r, v, peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true})
 		return
 	}
@@ -367,8 +378,15 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		// Launch carries further spawn request settings by wire key
 		// (fedSpawnLaunchKeys), each under its groups.members.spawn.* grant.
 		Launch map[string]json.RawMessage `json:"launch,omitempty"`
+		// ClaudeSubscriptionToken is the requesting operator's own Claude
+		// subscription token for the worker; never stored.
+		ClaudeSubscriptionToken string `json:"claude_subscription_token,omitempty"`
 	}
 	if !decodePeerActionLimit(w, r, &body, 64<<10) {
+		return
+	}
+	if body.ClaudeSubscriptionToken != "" && !validClaudeSubscriptionToken(body.ClaudeSubscriptionToken) {
+		writeError(w, 400, "invalid_arg", "the Claude subscription token is not a claude setup-token")
 		return
 	}
 	if strings.TrimSpace(body.Brief) == "" || len(body.Brief) > proto.MaxSpawnBrief || len(body.Name) > 128 || len(body.Role) > 128 || len(body.Profile) > 128 {
@@ -397,6 +415,18 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		return
 	}
 	req := &db.FederationSpawnRequest{FromInstance: v.peer.InstanceID, FromName: "operator", EnvelopeID: proto.NewEnvelopeID(), GroupID: g.ID, GroupName: g.Name, Name: proto.SafeName(body.Name, false), Role: proto.SafeName(body.Role, false), Brief: body.Brief, Profile: body.Profile, Overrides: overrides, ExpiresAt: time.Now().Add(fedSpawnTTL)}
+	if body.ClaudeSubscriptionToken != "" {
+		if overrides.Harness != "" && overrides.Harness != harness.DefaultName {
+			writeError(w, 400, "claude_subscription", "a Claude subscription runs a Claude Code worker only")
+			return
+		}
+		if err := checkRequesterPays(v.peer.InstanceID, g.ID, claudeSubscriptionMode, "", false); err != nil {
+			writeError(w, 409, "requester_pays", err.Error())
+			return
+		}
+		// Only the mode is stored; the token waits in memory for the launch.
+		req.Credentials = claudeSubscriptionMode
+	}
 	id, err := insertFederationSpawnWithCapacity(req)
 	if err != nil {
 		writeError(w, 409, "spawn_capacity", "remote spawn request capacity unavailable")
@@ -405,6 +435,9 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 	req.ID = id
 	req.Status = db.FedSpawnPending
 	req.CreatedAt = time.Now().UTC()
+	if body.ClaudeSubscriptionToken != "" {
+		holdRequestClaudeSubscription(id, claudeSubscriptionHandoff{peer: v.peer.InstanceID, token: body.ClaudeSubscriptionToken})
+	}
 	v.groupName = g.Name
 	if fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsMembersSpawn) {
 		goBackground(func() { autoApproveFederationSpawnWithPeerAction(req, v.peer, true) })

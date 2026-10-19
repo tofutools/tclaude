@@ -107,6 +107,7 @@ func (v *peerView) gatheredStatusSnapshot() *statusSnapshot {
 }
 
 func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
+	subscriptions := snapshotClaudeSubscriptions()
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil, nil, err
@@ -160,6 +161,10 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 					continue
 				}
 				ar := dashboardMember{AgentID: aid, ConvID: m.ConvID, Title: agent.TitleFor(m.ConvID)}
+				// A viewer learns only of agents running on its own subscription.
+				if sub := subscriptions.forAgent(aid); sub != nil && v != nil && sub.Peer == v.peer.InstanceID {
+					ar.ClaudeSubscription = sub
+				}
 				descrs[aid] = m.Descr
 				fp, err := db.ProjectedAgentFederationPresence(aid)
 				if err != nil {

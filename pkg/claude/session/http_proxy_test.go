@@ -118,7 +118,7 @@ func TestHTTPProxyBootstrapInjectsWorkingURLs(t *testing.T) {
 	offsets, err := cmd.Flags().GetIntSlice("codex-env-marker-offset")
 	require.NoError(t, err)
 	require.Len(t, offsets, 1)
-	code, err = runHTTPProxyExecWithOptions("launch-row", workload, false, offsets)
+	code, err = runHTTPProxyExecWithOptions("launch-row", workload, false, offsets, false)
 	require.NoError(t, err)
 	assert.Zero(t, code)
 	assert.Equal(t, 2, calls)

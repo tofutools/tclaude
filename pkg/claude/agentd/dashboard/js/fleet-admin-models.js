@@ -69,6 +69,68 @@ export function usageRows(rows) {
 // gateway's limits (models.proxy, or models.proxy.leased for requester-paid
 // workers). The switches only narrow or restore access; Add / Edit set up a
 // gateway itself (provider, key, models, limits).
+// SubscriptionCard keeps this operator's own Claude subscription token (from
+// claude setup-token) for running agents on other nodes as themselves. It is
+// stored on this node only, never shown again, and chosen per spawn in the
+// spawn dialog's Claude login row; a model gateway cannot use it.
+export function SubscriptionCard({ actions, confirm, toast }) {
+  const [state, setState] = useState(null);
+  const [token, setToken] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let off = false;
+    if (!actions.claudeSubscription) return undefined;
+    actions.claudeSubscription().then((s) => { if (!off) setState(s || { set: false }); })
+      .catch((e) => { if (!off) setState({ set: false, error: errText(e) }); });
+    return () => { off = true; };
+  }, [actions]);
+  if (!actions.claudeSubscription) return null;
+  const save = async () => {
+    const value = token.trim();
+    if (!value) return;
+    setBusy(true); setError('');
+    try {
+      setState(await actions.setClaudeSubscription(value));
+      setToken(''); setEditing(false);
+      toast('Your Claude subscription token is stored', false);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const forget = () => confirm({
+    title: 'Forget your Claude subscription token?',
+    body: 'New spawns on other nodes can no longer run on your subscription. Agents already running on it keep running until they stop. To cut them off as well, revoke the token at claude.ai (Settings → Claude Code).',
+    okLabel: 'Forget', busyLabel: 'Forgetting…',
+    action: () => actions.forgetClaudeSubscription(),
+  }).then((r) => { if (r) { setState({ set: false }); toast('Your Claude subscription token is forgotten', false); } })
+    .catch((e) => toast(`Forget failed: ${errText(e)}`, true));
+  const set = !!state?.set;
+  return html`<div class="fa-subscription" id="fleet-claude-subscription">
+    <h4 class="fa-h">My Claude subscription <span class="muted">— run agents on your other nodes as yourself</span></h4>
+    <p class="muted">Agents you spawn on another node can run Claude Code on your own subscription instead of that node's login: pick <b>Your Claude subscription</b> under Claude login in the spawn dialog. The token travels in the encrypted spawn request, stays in memory on that node, and reaches Claude Code through a pipe, never its disk or environment. Only you can use it, and only Claude Code; a model gateway cannot.</p>
+    ${!state ? html`<div class="empty">Loading…</div>` : html`<div class="fa-run-settings">
+      <span class="fa-k">Token</span>
+      <span class=${set ? '' : 'muted'} id="fleet-claude-subscription-state">${set ? `stored${state.set_at ? ` ${new Date(state.set_at).toLocaleDateString()}` : ''}` : 'not set up'}</span>
+      ${!editing && html`<button type="button" id="fleet-claude-subscription-edit" onClick=${() => { setEditing(true); setError(''); }}>${set ? 'Replace…' : 'Set up…'}</button>`}
+      ${set && !editing && html`<button type="button" class="fa-danger" id="fleet-claude-subscription-forget" onClick=${forget}>Forget…</button>`}
+    </div>`}
+    ${state?.error && html`<div class="fa-warn">${state.error}</div>`}
+    ${editing && html`<div class="fa-subscription-form">
+      <div class="muted">On a machine where you are logged in to Claude Code, run <code>claude setup-token</code> and paste the token it prints (it starts with <code>sk-ant-oat</code>). It lasts about a year; revoke it at claude.ai (Settings → Claude Code).</div>
+      <input id="fleet-claude-subscription-token" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-oat…" aria-label="Claude subscription token"
+        value=${token} disabled=${busy} onInput=${(e) => setToken(e.currentTarget.value)}
+        onKeyDown=${(e) => { if (e.key === 'Enter') save(); }} />
+      <button type="button" id="fleet-claude-subscription-save" onClick=${save} disabled=${busy || !token.trim()}>${busy ? 'Saving…' : 'Save'}</button>
+      <button type="button" class="fa-link" disabled=${busy} onClick=${() => { setEditing(false); setToken(''); setError(''); }}>cancel</button>
+      ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    </div>`}
+  </div>`;
+}
+
 export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) {
   const [control, setControl] = useState(null);
   const [leases, setLeases] = useState(null);
@@ -185,6 +247,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
           <button type="button" class="fa-danger" data-fa="remove-gateway" onClick=${() => remove(name)}>Remove…</button></td>
       </tr>`)}</tbody>
     </table>`}`}
+    <${SubscriptionCard} actions=${actions} confirm=${confirm} toast=${toast} />
     <h4 class="fa-h">Leases <span class="muted">— requester-paid workers using a gateway</span></h4>
     ${leases?.error ? html`<div class="fa-danger">${leases.error}</div>` : !leases ? html`<div class="empty">Loading…</div>` : leaseList.length === 0 ? html`<div class="empty">No leases.</div>` : html`
     <table class="fa-table" id="fleet-model-leases">
