@@ -453,8 +453,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   useEffect(() => {
     if (!(remote || target) || !localActions.loadClaudeSubscription) return undefined;
     let off = false;
-    localActions.loadClaudeSubscription().then((value) => { if (!off) setSubscription(value || { set: false }); })
-      .catch(() => { if (!off) setSubscription(null); });
+    // A reopened draft keeps its choice only while a token is stored, so a
+    // hidden or disabled row never sends it.
+    const settle = (value) => {
+      if (off) return;
+      setSubscription(value);
+      if (!value?.set) setDraft((before) => (before.claudeSubscription ? { ...before, claudeSubscription: false } : before));
+    };
+    localActions.loadClaudeSubscription().then((value) => settle(value || { set: false })).catch(() => settle(null));
     return () => { off = true; };
   }, [remote, target, localActions]);
 

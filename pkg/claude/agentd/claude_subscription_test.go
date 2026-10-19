@@ -22,7 +22,7 @@ func clearClaudeSubscriptions() {
 	claudeSubscriptions.Lock()
 	claudeSubscriptions.agents = map[string]claudeSubscriptionHandoff{}
 	claudeSubscriptions.requests = map[int64]claudeSubscriptionPending{}
-	claudeSubscriptions.fetched = map[string]bool{}
+	claudeSubscriptions.armed = map[string]bool{}
 	claudeSubscriptions.Unlock()
 }
 
@@ -50,19 +50,23 @@ func TestClaudeSubscriptionTokenIsHandedToItsLaunchOnce(t *testing.T) {
 		return w
 	}
 	require.Equal(t, 403, fetch(nil).Code, "only a verified live launch pane")
-	got := fetch(row)
-	require.Equal(t, 200, got.Code, got.Body.String())
-	require.Contains(t, got.Body.String(), testSubscriptionToken)
-	require.Equal(t, 409, fetch(row).Code, "a tool in the pane cannot take it again")
+	require.Equal(t, 409, fetch(row).Code, "a launch tclaude did not start gets no token")
+	// Every launch agentd starts (a resume reuses the same row ID) takes it once.
+	for range 2 {
+		args := clcommon.SpawnArgs{ConvID: convID}
+		require.NoError(t, applyClaudeSubscription(&args))
+		require.True(t, args.ClaudeSubscription)
+		got := fetch(row)
+		require.Equal(t, 200, got.Code, got.Body.String())
+		require.Contains(t, got.Body.String(), testSubscriptionToken)
+		require.Equal(t, 409, fetch(row).Code, "a tool in the pane cannot take it again")
+	}
 	other := &db.SessionRow{ID: "launch-other", ConvID: "conv-none", Status: "idle"}
 	require.Equal(t, 404, fetch(other).Code)
 
-	// A relaunch is marked while the token is held, and refuses once it is not.
-	args := clcommon.SpawnArgs{ConvID: convID}
-	require.NoError(t, applyClaudeSubscription(&args))
-	require.True(t, args.ClaudeSubscription)
+	// A relaunch refuses once the token is no longer held.
 	dropClaudeSubscription(agentID)
-	args = clcommon.SpawnArgs{ConvID: convID}
+	args := clcommon.SpawnArgs{ConvID: convID}
 	err = applyClaudeSubscription(&args)
 	require.ErrorContains(t, err, "no longer holds the token")
 	require.False(t, args.ClaudeSubscription)

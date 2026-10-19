@@ -65,10 +65,12 @@ var claudeSubscriptions = struct {
 	agents map[string]claudeSubscriptionHandoff
 	// requests holds a remote spawn request's token until it launches.
 	requests map[int64]claudeSubscriptionPending
-	// fetched records launch rows that already took their token: the wrapper
-	// takes it before starting Claude Code, so no tool in the pane can again.
-	fetched map[string]bool
-}{agents: map[string]claudeSubscriptionHandoff{}, requests: map[int64]claudeSubscriptionPending{}, fetched: map[string]bool{}}
+	// armed records agents with a launch this daemon started that has not
+	// taken its token yet. The pane wrapper takes it before starting Claude
+	// Code, so neither a tool in the pane nor a launch agentd did not start
+	// can take it; each relaunch arms it again.
+	armed map[string]bool
+}{agents: map[string]claudeSubscriptionHandoff{}, requests: map[int64]claudeSubscriptionPending{}, armed: map[string]bool{}}
 
 type claudeSubscriptionPending struct {
 	claudeSubscriptionHandoff
@@ -90,6 +92,7 @@ func holdClaudeSubscription(agentID string, h claudeSubscriptionHandoff) error {
 func dropClaudeSubscription(agentID string) {
 	claudeSubscriptions.Lock()
 	delete(claudeSubscriptions.agents, agentID)
+	delete(claudeSubscriptions.armed, agentID)
 	claudeSubscriptions.Unlock()
 }
 
@@ -172,12 +175,15 @@ func applyClaudeSubscription(a *clcommon.SpawnArgs) error {
 	if _, ok := heldClaudeSubscription(agentID); !ok {
 		return errClaudeSubscriptionLost(marker.Peer)
 	}
+	claudeSubscriptions.Lock()
+	claudeSubscriptions.armed[agentID] = true
+	claudeSubscriptions.Unlock()
 	a.ClaudeSubscription = true
 	return nil
 }
 
 // handleClaudeSubscriptionToken gives the pane wrapper of a verified live
-// launch its agent's token, once per launch.
+// launch its agent's token, once per launch agentd armed.
 func handleClaudeSubscriptionToken(w http.ResponseWriter, r *http.Request) {
 	row, _ := r.Context().Value(httpProxyLaunchRowKey{}).(*db.SessionRow)
 	if row == nil {
@@ -191,11 +197,11 @@ func handleClaudeSubscriptionToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claudeSubscriptions.Lock()
-	taken := claudeSubscriptions.fetched[row.ID]
-	claudeSubscriptions.fetched[row.ID] = true
+	armed := claudeSubscriptions.armed[agentID]
+	delete(claudeSubscriptions.armed, agentID)
 	claudeSubscriptions.Unlock()
-	if taken {
-		writeError(w, 409, "conflict", "this launch already took its Claude subscription token")
+	if !armed {
+		writeError(w, 409, "conflict", "no launch of this agent started by tclaude is waiting for its Claude subscription token")
 		return
 	}
 	recordFederationAudit("federation.claude_subscription.use", h.peer, row.ConvID, "", "agent="+agentID+" session="+row.ID, 200)

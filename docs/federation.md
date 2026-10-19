@@ -2308,8 +2308,11 @@ encrypted request, and only for this node's own operator. The receiving node:
   own login.
 
 The member row shows a **◆ \<name\>'s subscription** badge. When the token is
-gone, the badge says so; spawn a new agent to continue. Clones and manual
-`conv resume` on the receiving node do not carry the subscription. The routes
+gone, the badge says so; spawn a new agent to continue. Clones, moves,
+teleports and manual `conv resume` on the receiving node do not carry the
+subscription: a moved agent runs on its destination's own login. A receiver
+whose requester-pays policy is `required` accepts a subscription spawn without
+a gateway lease, since the requester pays through their own subscription. The routes
 are GET, PUT and DELETE `/api/federation/claude-subscription`, and these routes
 are never served to peers.
 

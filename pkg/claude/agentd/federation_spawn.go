@@ -736,6 +736,8 @@ func handleFederationSpawnRequestDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "decided", "request was decided concurrently")
 		return
 	}
+	// A denied request never launches: forget its Claude subscription token now.
+	takeRequestClaudeSubscription(req.ID)
 	_ = queueSpawnResult(req, peer, proto.SpawnResultPayload{Status: proto.SpawnDenied, Reason: reason})
 	setAuditTargetLabel(r, fmt.Sprintf("#%d", req.ID))
 	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID, "status": db.FedSpawnDenied})
