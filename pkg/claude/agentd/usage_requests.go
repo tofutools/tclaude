@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -61,35 +62,59 @@ func decideUsage(pa *db.FederationPeerAccessRequest, proxy *string, maxUSD *floa
 	if pa.Proxy != "" && pa.GrantProxy != pa.Proxy {
 		return fmt.Errorf("approval cannot change the requested gateway")
 	}
-	if pa.GrantProxy != "" && !slices.Contains(usageGateways(), pa.GrantProxy) {
+	gateways := usageGateways()
+	if len(gateways) == 0 {
+		return fmt.Errorf("this node has no enabled model gateway to share")
+	}
+	if pa.GrantProxy != "" && !slices.Contains(gateways, pa.GrantProxy) {
 		return fmt.Errorf("no such enabled model gateway")
 	}
 	if !validUsageUSD(pa.GrantMaxUSD) || pa.MaxUSD > 0 && (pa.GrantMaxUSD == 0 || pa.GrantMaxUSD > pa.MaxUSD) {
 		return fmt.Errorf("approval cannot raise the requested amount")
 	}
-	return nil
+	return usageConflict(pa)
 }
 
-// usageShareCapUSD is the cap an approved usage request writes: the amount,
-// added to a live capped share for the same gateway ("$5 more"), whose spend
-// keeps counting from its start. An expired share starts over
-// (ApproveFederationPeerAccessRequest), so the amount is the whole cap.
-func usageShareCapUSD(pa db.FederationPeerAccessRequest) float64 {
+// usageConflict refuses an approval that would narrow the peer's access, or
+// whose share another cap would keep from being used. Caps are each a limit
+// of their own (modelShareGrants), so:
+//   - a cap on a share that is uncapped would narrow it;
+//   - a cap on every gateway would also limit a gateway the peer may use
+//     with no cap;
+//   - a share on one gateway does not lift a capped share on every gateway,
+//     which still binds; adding to that one is what helps.
+func usageConflict(pa *db.FederationPeerAccessRequest) error {
 	if pa.GrantMaxUSD <= 0 {
-		return 0
+		return nil
+	}
+	grants, err := db.ListFederationPeerGrants(pa.Peer)
+	if err != nil {
+		return fmt.Errorf("could not read the peer's grants")
 	}
 	scope := ""
 	if pa.GrantProxy != "" {
 		scope = "http_proxy=" + pa.GrantProxy
 	}
-	grants, err := db.ListFederationPeerGrants(pa.Peer)
-	if err != nil {
-		return pa.GrantMaxUSD
-	}
 	for _, g := range grants {
-		if g.Slug == PermModelsProxy && g.Scope == scope && g.SpawnPolicy.MaxUSD > 0 {
-			return math.Min(maxShareUSD, g.SpawnPolicy.MaxUSD+pa.GrantMaxUSD)
+		if g.Slug != PermModelsProxy {
+			continue
+		}
+		capped := g.SpawnPolicy.MaxUSD > 0
+		switch {
+		case g.Scope == scope && !capped:
+			return fmt.Errorf("the peer already uses %s with no cap; extend or revoke that grant instead", gatewayText(pa.GrantProxy))
+		case scope == "" && !capped:
+			return fmt.Errorf("the peer uses gateway %s with no cap, and a cap on every gateway would limit it; approve for one gateway", strings.TrimPrefix(g.Scope, "http_proxy="))
+		case scope != "" && g.Scope == "" && capped:
+			return fmt.Errorf("the peer's share on every gateway (max $%.2f) also limits %s; approve for any gateway to add to it", g.SpawnPolicy.MaxUSD, pa.GrantProxy)
 		}
 	}
-	return pa.GrantMaxUSD
+	return nil
+}
+
+func gatewayText(proxy string) string {
+	if proxy == "" {
+		return "every gateway"
+	}
+	return "gateway " + proxy
 }
