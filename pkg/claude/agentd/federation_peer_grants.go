@@ -438,7 +438,8 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && scope == "" && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
 		warnings = append(warnings, "WARNING: unscoped peer grant covers every active group, including future groups")
 	}
-	if r.Method == http.MethodPatch {
+	switch r.Method {
+	case http.MethodPatch:
 		ok, err := db.SetFederationPeerGrantExpiry(p.InstanceID, in.Slug, scope, in.ExpiresAt)
 		if err != nil {
 			writeFedErr(w, err)
@@ -448,7 +449,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "no such peer grant")
 			return
 		}
-	} else if r.Method == http.MethodDelete {
+	case http.MethodDelete:
 		if in.Slug == PermApprovalsAnswer && poolID == "" {
 			finish := lockAwayAuthorityMutation(p.InstanceID)
 			defer finish()
@@ -467,7 +468,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "no such peer grant")
 			return
 		}
-	} else {
+	default:
 		if in.Slug == PermAgentsReceivePermissions {
 			slices.Sort(in.SpawnPolicy.PermissionSlugs)
 			in.SpawnPolicy.PermissionSlugs = slices.Compact(in.SpawnPolicy.PermissionSlugs)
