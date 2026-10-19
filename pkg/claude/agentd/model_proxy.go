@@ -122,16 +122,25 @@ func modelProxyPolicy(name string) (config.HTTPProxyConfig, error) {
 	if !ok || p == nil || !p.Enabled {
 		return instance, errors.New("named model gateway is disabled or absent")
 	}
-	if (p.Dialect != "" && p.Dialect != "anthropic" && p.Dialect != "openai") || (p.Dialect == "openai" && p.PrecountInput) {
-		return instance, errors.New("model gateway dialect must be anthropic or openai; OpenAI token precounting is not supported")
-	}
-	if len(p.Models) == 0 || p.DailyRequests <= 0 || p.DailyTokens <= 0 || p.PeerDailyRequests <= 0 || p.PeerDailyTokens <= 0 || p.SessionDailyRequests <= 0 || p.SessionDailyTokens <= 0 || p.MaxInputTokens <= 0 || p.MaxInputTokens > 100000000 || p.MaxOutputTokens <= 0 || p.MaxOutputTokens > 10000000 || p.MaxConcurrent < 1 || p.MaxConcurrent > 128 || p.RequestsPerMinute < 1 || p.MaxRequestBytes < 0 || p.MaxRequestBytes > 16<<20 || p.MaxResponseBytes < 0 || p.MaxResponseBytes > 256<<20 || p.MaxEventBytes < 0 || p.MaxEventBytes > 4<<20 || p.MaxDurationSeconds < 0 || p.MaxDurationSeconds > 3600 {
-		return instance, errors.New("operator must configure model allowlist, positive daily budgets, token bounds and concurrency/rate limits")
+	if err := modelPolicyProblem(p); err != nil {
+		return instance, err
 	}
 	if _, err = httpProxyURL(instance.URL, ""); err != nil || !httpProxyHeaderAllowed(instance.Header) {
 		return instance, errors.New("operator must fix the named model gateway URL or credential header")
 	}
 	return instance, nil
+}
+
+// modelPolicyProblem reports why a policy cannot serve requests, whether it
+// was hand-written in config or saved through the dashboard's gateway setup.
+func modelPolicyProblem(p *config.ModelProxyPolicy) error {
+	if (p.Dialect != "" && p.Dialect != "anthropic" && p.Dialect != "openai") || (p.Dialect == "openai" && p.PrecountInput) {
+		return errors.New("model gateway dialect must be anthropic or openai; OpenAI token precounting is not supported")
+	}
+	if len(p.Models) == 0 || p.DailyRequests <= 0 || p.DailyTokens <= 0 || p.PeerDailyRequests <= 0 || p.PeerDailyTokens <= 0 || p.SessionDailyRequests <= 0 || p.SessionDailyTokens <= 0 || p.MaxInputTokens <= 0 || p.MaxInputTokens > 100000000 || p.MaxOutputTokens <= 0 || p.MaxOutputTokens > 10000000 || p.MaxConcurrent < 1 || p.MaxConcurrent > 128 || p.RequestsPerMinute < 1 || p.MaxRequestBytes < 0 || p.MaxRequestBytes > 16<<20 || p.MaxResponseBytes < 0 || p.MaxResponseBytes > 256<<20 || p.MaxEventBytes < 0 || p.MaxEventBytes > 4<<20 || p.MaxDurationSeconds < 0 || p.MaxDurationSeconds > 3600 {
+		return errors.New("operator must configure model allowlist, positive daily budgets, token bounds and concurrency/rate limits")
+	}
+	return nil
 }
 
 type modelDialectWriter struct {

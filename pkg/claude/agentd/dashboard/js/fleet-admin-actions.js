@@ -223,6 +223,12 @@ const settingRows = (v) => {
     modelSharesGiven: () => call('GET', 'models/shares'),
     modelSharesReceived: () => call('GET', 'models/shares/received'),
     revokeModelLease: (id) => call('POST', 'models/leases', { id }),
+    // Gateway setup: the editable view (never the key), save (key is
+    // write-only), remove, and a no-token connection test of a draft.
+    modelGateway: (name) => call('GET', `models/gateways/${encodeURIComponent(name)}`),
+    saveModelGateway: (name, body) => call('PUT', `models/gateways/${encodeURIComponent(name)}`, body),
+    removeModelGateway: (name) => call('DELETE', `models/gateways/${encodeURIComponent(name)}`),
+    testModelGateway: (body) => call('POST', 'models/gateway-test', body),
     modelUsage: async (day = '') => (await call('GET', `models/usage${day ? `?day=${encodeURIComponent(day)}` : ''}`)) || [],
     // Spawn requests: incoming ones peers sent to this node's groups (all
     // states, newest first), and asking a peer for a worker.
