@@ -2274,7 +2274,8 @@ and **Test the key** lists the provider's models without spending tokens. A past
 key is written to a 0600 file under `~/.tclaude/data/model-gateways/` and
 referenced by `header_value_file`; no dashboard read returns it, and removing the
 gateway deletes it. A key file you name yourself is referenced as is and left in
-place. **Edit…** keeps the stored key unless you give a new one; **Remove…** revokes
+place. A Claude subscription token (from `claude setup-token`) is refused with an
+explanation: a gateway needs a provider API key. **Edit…** keeps the stored key unless you give a new one; **Remove…** revokes
 the gateway's leases and deletes its entry. The routes behind these are GET, PUT and
 DELETE `/api/federation/models/gateways/{name}` and POST
 `/api/federation/models/gateway-test`.

@@ -1490,6 +1490,9 @@ test('model gateways: add one with a pasted key, test it, edit keeping the store
   await type('#fleet-mg-name', 'anthropic');
   await s.click(q('#fleet-mg-save'));
   assert.match(q('#fleet-model-gateway [role=alert]').textContent, /Paste the provider API key/);
+  await type('#fleet-mg-key', 'sk-ant-oat01-example');
+  await s.click(q('#fleet-mg-save'));
+  assert.match(q('#fleet-model-gateway [role=alert]').textContent, /Claude subscription token.*needs a provider API key/);
   await type('#fleet-mg-key', '  sk-ant-test  ');
   await s.click(q('#fleet-mg-test'));
   assert.equal(s.log.findLast((l) => l[0] === 'testGateway')[1].key, 'sk-ant-test');

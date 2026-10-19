@@ -43,6 +43,13 @@ type modelGatewaySetup struct {
 
 func modelGatewayKeyDir() string { return filepath.Join(config.DataDir(), "model-gateways") }
 
+// A Claude subscription token (claude setup-token) authenticates Claude Code
+// itself; a gateway relaying it would let any client spend the subscription.
+// The provider would refuse it with a bare 401, so say why up front.
+const claudeSubscriptionTokenPrefix = "sk-ant-oat"
+
+var errClaudeSubscriptionToken = errors.New("this is a Claude subscription token (from claude setup-token); a gateway needs a provider API key from the Anthropic Console, and subscription tokens cannot be served through one")
+
 func modelGatewayManagedKey(path string) bool {
 	return path != "" && filepath.Dir(path) == modelGatewayKeyDir()
 }
@@ -123,6 +130,9 @@ func (in modelGatewaySetup) credentialFields(stored *config.HTTPProxyConfig, key
 	}
 	switch {
 	case in.Key != "":
+		if strings.HasPrefix(in.Key, claudeSubscriptionTokenPrefix) {
+			return "", "", errClaudeSubscriptionToken
+		}
 		if len(in.Key) > 16384 || !httpguts.ValidHeaderFieldValue(in.HeaderPrefix+in.Key) {
 			return "", "", errors.New("the API key is too long or contains characters a header cannot carry")
 		}
