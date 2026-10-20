@@ -130,6 +130,30 @@ test('the merged view polls peers only while shown, renders group@node, and guar
   await mounted.unmount(); state.dispose();
 });
 
+test('a peer poll sends the static_version it holds and keeps the registries an unchanged reply leaves out', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island, nodeApi] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'), harness.importDashboardModule('js/node-api.js')]);
+  const activeTab = harness.signals.signal('groups');
+  const state = stateMod.createFleetState({ activeTab, search: '' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
+  const timers = fakeTimers(); const calls = [];
+  const replies = [
+    { groups: [group('build')], agents: [], static_version: 'v1', roles: [{ name: 'reviewer' }] },
+    { groups: [group('build')], agents: [], static_version: 'v1', static_unchanged: true, roles: null },
+  ];
+  const fetchImpl = async (url) => { calls.push(url); const body = replies.shift(); return { ok: true, status: 200, json: async () => body }; };
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${() => {}} switchNode=${() => {}} />`);
+  await harness.act(() => { state.setFused('all'); });
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  assert.deepEqual(calls, ['/api/peer/inst_forge/snapshot', '/api/peer/inst_forge/snapshot?static_version=v1']);
+  assert.deepEqual(nodeApi.nodeSnapshot('inst_forge')?.roles, [{ name: 'reviewer' }], 'the unchanged reply keeps the roles already read');
+  await harness.act(() => { activeTab.value = 'usage'; });
+  await mounted.unmount(); state.dispose();
+});
+
 test('a peer row runs what the peer grants through its own handlers or peer routes; this node\'s rows act directly; unshared controls are stopped', async (t) => {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);

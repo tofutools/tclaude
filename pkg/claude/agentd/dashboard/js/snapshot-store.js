@@ -176,6 +176,18 @@ export function createDashboardState({ now = () => Date.now() } = {}) {
 
 export const dashboardState = createDashboardState();
 
+// SNAPSHOT_STATIC_KEYS are the registries a snapshot leaves out when the
+// request's static_version still matches (dashboard.go snapshotStaticVersion).
+const SNAPSHOT_STATIC_KEYS = ['slugs', 'templates', 'profiles', 'roles', 'saved_prompts', 'plugins_catalog'];
+
+// restoreUnchangedStatics fills next's omitted registries from prev, the
+// snapshot whose static_version the request sent. It changes next in place.
+export function restoreUnchangedStatics(next, prev) {
+  if (!next?.static_unchanged || !prev || prev.static_version !== next.static_version) return next;
+  for (const key of SNAPSHOT_STATIC_KEYS) next[key] = prev[key];
+  return next;
+}
+
 // The Fleet map renders from its own per-node summary polls, not this node's
 // snapshot, so the snapshot poll slows while it is shown. (Groups · all nodes
 // renders this node's groups from the snapshot, so it keeps the full cadence.)
