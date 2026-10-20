@@ -274,7 +274,9 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
           if (tapped) close(); else setTapped(true);
         }}
         onKeyDown=${(event) => {
-          if (event.key !== 'Escape') return;
+          // A closed card leaves Escape to whatever surrounds the link, e.g.
+          // the footer PR popover closing itself.
+          if (event.key !== 'Escape' || !open) return;
           event.preventDefault();
           event.stopPropagation();
           close();

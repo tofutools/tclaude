@@ -557,5 +557,11 @@ test('ignored PRs leave every open list and count until they expire or come back
     'the stored set drops an expired entry on read');
   assert.equal(serializeIgnoredPRs(unignorePR(unignorePR(unignorePR(roundTrip, pr(2).url), pr(9).url), pr(77).url)), '');
   assert.deepEqual(Object.keys(parseIgnoredPRs('not json')), []);
+  let many = {};
+  for (let n = 1; n <= 200; n++) many = ignorePR(many, pr(n, { title: 'é'.repeat(300), repository: 'r'.repeat(300) }), 0, now + n);
+  const bounded = serializeIgnoredPRs(many, now);
+  assert.ok(new TextEncoder().encode(bounded).length <= 48 * 1024, 'the stored value stays under the prefs cap');
+  const kept = parseIgnoredPRs(bounded, now);
+  assert.ok(kept['acme/app#200'] && !kept['acme/app#1'], 'the oldest ignores are evicted first');
   assert.deepEqual(Object.keys(parseIgnoredPRs(JSON.stringify({ x: { url: 'javascript:alert(1)', until: 0, at: 1 } }))), []);
 });

@@ -257,9 +257,12 @@ export const OPEN_PR_IGNORE_DURATIONS = Object.freeze([
   { id: '30d', label: '30 days', ms: 30 * 24 * 3600e3 },
   { id: 'forever', label: 'Permanently', ms: 0 },
 ]);
-// Bounds keep the pref well under the daemon's value cap whatever is stored.
+// Bounds on the stored set. The byte budget is what keeps the pref under the
+// daemon's 64 KiB value cap (and the browser's keepalive body quota): past
+// it, the oldest ignores are evicted on save.
 const IGNORED_PRS_MAX = 200;
 const IGNORED_PR_TEXT_MAX = 200;
+const IGNORED_PRS_MAX_BYTES = 48 * 1024;
 
 const ignoredText = (value) => String(value || '').slice(0, IGNORED_PR_TEXT_MAX);
 
@@ -317,10 +320,18 @@ export function unignorePR(ignored, url) {
 }
 
 // serializeIgnoredPRs is the pref value for a set, or '' when it is empty
-// (the caller removes the pref then).
+// (the caller removes the pref then). Expired entries are dropped, and the
+// oldest ignores go first if the value would outgrow its byte budget.
 export function serializeIgnoredPRs(ignored, now = Date.now()) {
-  const live = Object.fromEntries(Object.entries(ignored || {}).filter(([, e]) => ignoredEntryActive(e, now)));
-  return Object.keys(live).length ? JSON.stringify(live) : '';
+  const entries = Object.entries(ignored || {}).filter(([, e]) => ignoredEntryActive(e, now))
+    .sort(([, a], [, b]) => a.at - b.at);
+  const encoder = new TextEncoder();
+  while (entries.length) {
+    const value = JSON.stringify(Object.fromEntries(entries));
+    if (encoder.encode(value).length <= IGNORED_PRS_MAX_BYTES) return value;
+    entries.shift();
+  }
+  return '';
 }
 
 export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAttention = false, peers = [], ignored = null, now = Date.now()) {

@@ -554,13 +554,17 @@ test('footer open PRs ignores a PR after confirming, and brings it back', async 
   await harness.act(() => trigger.click());
   const titles = () => [...c.querySelectorAll('.open-pr-title')].map((node) => node.textContent);
 
-  await harness.act(() => getByRole(c, 'button', { name: /Ignore pull request #2/ }).click());
+  const ignoreButton = getByRole(c, 'button', { name: /Ignore pull request #2/ });
+  ignoreButton.focus();
+  await harness.act(() => ignoreButton.click());
   const dialog = c.querySelector('[role="alertdialog"]');
   assert.ok(dialog, 'ignoring asks first');
   assert.match(dialog.textContent, /Stale idea/);
   await harness.act(() => harness.fireEvent(dialog, 'keydown', { key: 'Escape' }));
   assertAbsent(c.querySelector('[role="alertdialog"]'));
   assert.ok(c.querySelector('#open-prs-popover'), 'Escape cancels the dialog, not the popover');
+  assert.equal(harness.document.activeElement?.getAttribute('aria-label'), 'Ignore pull request #2…',
+    'focus returns to the button that opened the dialog');
   assert.deepEqual(titles(), ['Keep', 'Stale idea']);
 
   await harness.act(() => getByRole(c, 'button', { name: /Ignore pull request #2/ }).click());
@@ -610,6 +614,10 @@ test('footer open PR titles open the PR details card unless turned off', async (
   assert.match(card.querySelector('.prd-title').textContent, /Hover me\s+#4/);
   assert.equal(card.querySelector('.prd-repo').textContent.trim(), 'acme/app');
   await harness.act(() => harness.fireEvent(hoverRoot(), 'mouseleave'));
+  const title = c.querySelector('a.open-pr-title');
+  await harness.act(() => harness.fireEvent(title, 'keydown', { key: 'Escape' }));
+  assertAbsent(c.querySelector('#open-prs-popover'), 'Escape on a title with no card open closes the popover');
+  await harness.act(() => getByRole(c, 'button', { name: /Open PRs/ }).click());
 
   const toggle = getByLabelText(c, 'Hover details');
   toggle.checked = false;

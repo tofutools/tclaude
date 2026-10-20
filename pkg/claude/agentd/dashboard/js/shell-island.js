@@ -247,6 +247,17 @@ function IgnorePRDialog({ pr, onCancel, onConfirm }) {
       <div class="open-prs-confirm" role="alertdialog" aria-modal="true"
         aria-labelledby="open-prs-confirm-title" aria-describedby="open-prs-confirm-body"
         onKeyDown=${(event) => {
+          if (event.key === 'Tab') {
+            // aria-modal: keep Tab inside the dialog.
+            const focusable = [...event.currentTarget.querySelectorAll('input:checked, button')];
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey ? document.activeElement === first : document.activeElement === last) {
+              event.preventDefault();
+              (event.shiftKey ? last : first)?.focus();
+            }
+            return;
+          }
           if (event.key !== 'Escape') return;
           event.preventDefault();
           event.stopPropagation();
@@ -288,6 +299,11 @@ function OpenPRs({ state }) {
   const [showFinalCI, setShowFinalCI] = useState(false);
   const [ignored, setIgnored] = useState(() => parseIgnoredPRs(dashPrefs.getItem(OPEN_PRS_IGNORED_PREF)));
   const [confirmIgnore, setConfirmIgnore] = useState(null);
+  // Where focus goes back to once the ignore dialog closes or a Restore
+  // removes its own row: the ⊘ button that opened the dialog while it is
+  // still mounted, the popover trigger otherwise.
+  const returnFocus = useRef(null);
+  const [focusBack, setFocusBack] = useState(0);
   const [titleDetails, setTitleDetails] = useState(
     () => dashPrefs.getItem(OPEN_PRS_TITLE_DETAILS_PREF) !== '0',
   );
@@ -302,10 +318,19 @@ function OpenPRs({ state }) {
     .map((n) => ({ name: n.name, snapshot: dock.snapshots?.[n.id] })) : [];
   const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers, ignored);
   const saveIgnored = (next) => {
-    setIgnored(next);
     const value = serializeIgnoredPRs(next);
+    // Re-read what was stored: serialization may have evicted old entries.
+    setIgnored(parseIgnoredPRs(value));
     if (value) dashPrefs.setItem(OPEN_PRS_IGNORED_PREF, value);
     else dashPrefs.removeItem(OPEN_PRS_IGNORED_PREF);
+  };
+  const askIgnore = (pr) => {
+    returnFocus.current = document.activeElement;
+    setConfirmIgnore(pr);
+  };
+  const closeIgnoreDialog = () => {
+    setConfirmIgnore(null);
+    setFocusBack((n) => n + 1);
   };
   // The indicator is permanent by default (dashboard.always_show_open_prs), so
   // the popover must open at zero open PRs too — that is where the recently
@@ -336,6 +361,13 @@ function OpenPRs({ state }) {
   };
 
   useEffect(() => () => cancelHoverClose(), []);
+  useEffect(() => {
+    if (!focusBack) return;
+    const target = returnFocus.current;
+    returnFocus.current = null;
+    if (target?.isConnected && rootRef.current?.contains(target)) target.focus();
+    else rootRef.current?.querySelector('.open-prs-trigger')?.focus();
+  }, [focusBack]);
 
   useEffect(() => {
     if (!pinned && !confirmIgnore) return undefined;
@@ -355,7 +387,7 @@ function OpenPRs({ state }) {
       if (event.key !== 'Escape') return;
       event.preventDefault();
       if (confirmIgnore) {
-        setConfirmIgnore(null);
+        closeIgnoreDialog();
         return;
       }
       setPinned(false);
@@ -390,7 +422,10 @@ function OpenPRs({ state }) {
           ${view.items.length
             ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr}
                 showFinalCI=${view.showingRecent && showFinalCI} titleDetails=${titleDetails}
-                onIgnore=${setConfirmIgnore} onRestore=${(target) => saveIgnored(unignorePR(ignored, target.url))} />`)}</ul>`
+                onIgnore=${askIgnore} onRestore=${(target) => {
+                  saveIgnored(unignorePR(ignored, target.url));
+                  setFocusBack((n) => n + 1);
+                }} />`)}</ul>`
             : html`<p class="open-prs-empty">${view.showingIgnored
               ? 'No ignored pull requests.'
               : view.showingRecent
@@ -440,10 +475,10 @@ function OpenPRs({ state }) {
             </label>
           </div>
           ${confirmIgnore ? html`<${IgnorePRDialog} pr=${confirmIgnore}
-            onCancel=${() => setConfirmIgnore(null)}
+            onCancel=${closeIgnoreDialog}
             onConfirm=${(ms) => {
               saveIgnored(ignorePR(ignored, confirmIgnore, ms));
-              setConfirmIgnore(null);
+              closeIgnoreDialog();
             }} />` : null}
         </div>
       ` : null}
