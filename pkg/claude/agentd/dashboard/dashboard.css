@@ -175,6 +175,9 @@ footer {
   display: flex; flex-direction: column; overflow: hidden; border: 1px solid #3a4654;
   border-radius: 9px; background: #161b22; box-shadow: 0 14px 45px rgba(0,0,0,.55);
   color: #c9d1d9; text-align: left;
+  /* Native controls (the footer's checkboxes, the ignore dialog's radios)
+     otherwise render light: accent-color only tints their checked state. */
+  color-scheme: dark;
 }
 /* Keep the footer disclosure hovered while the pointer crosses the visual gap
    to its popover. The bridge matches the popover's fixed positioning so it
@@ -283,6 +286,56 @@ body.dock-open .open-prs.is-open::before {
 .open-pr-ignore:hover, .open-pr-restore:hover { color: #c9d1d9; border-color: #385b81; background: #172a40; }
 .open-pr-ignore:focus-visible, .open-pr-restore:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-pr-row.is-ignored .open-pr-title { color: #8b949e; }
+/* Whose pull requests: the operator's own tab plus one per tracked colleague,
+   and the inline form that adds one. */
+.open-prs-people {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 6px;
+  padding: 8px 12px 0; border-bottom: 1px solid #2a3340;
+}
+.open-prs-people-tabs { display: flex; flex-wrap: wrap; gap: 2px; min-width: 0; }
+.open-prs-person {
+  display: inline-flex; align-items: center; margin-bottom: -1px;
+  border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0;
+}
+.open-prs-person.active { border-color: #2a3340; background: #161b22; box-shadow: 0 1px 0 #161b22; }
+.open-prs-person > button[role="tab"] {
+  display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px 6px;
+  border: 0; background: transparent; color: #8b949e; cursor: pointer; font-size: 11px;
+}
+.open-prs-person > button[role="tab"]:hover { color: #c9d1d9; }
+.open-prs-person.active > button[role="tab"] { color: #e6edf3; }
+.open-prs-person > button[role="tab"]:focus-visible,
+.open-prs-person-x:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; border-radius: 4px; }
+.open-prs-person-n {
+  min-width: 14px; padding: 0 5px; border-radius: 8px; background: #21262d;
+  color: #8b949e; font-size: 9.5px; font-weight: 700; text-align: center;
+}
+.open-prs-person.active .open-prs-person-n { background: #1f6feb; color: #fff; }
+.open-prs-person-x {
+  margin: 0 6px 0 -4px; padding: 1px 3px; border: 0; background: transparent;
+  color: #6e7681; cursor: pointer; font-size: 9px; line-height: 1;
+}
+.open-prs-person-x:hover { color: #f85149; }
+.open-prs-add-person {
+  margin: 0 0 5px auto; padding: 3px 8px; border: 1px dashed #303946; border-radius: 10px;
+  background: transparent; color: #7d8590; cursor: pointer; font-size: 10px;
+}
+.open-prs-add-person:hover { color: #c9d1d9; border-color: #385b81; }
+.open-prs-add-person:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.open-prs-add-form { display: flex; gap: 4px; margin: 0 0 5px auto; }
+.open-prs-add-form input {
+  width: 130px; padding: 2px 7px; border: 1px solid #385b81; border-radius: 6px;
+  background: #0d1117; color: #c9d1d9; font: inherit; font-size: 11px;
+}
+.open-prs-add-form input:focus-visible { outline: 2px solid #58a6ff; outline-offset: 0; }
+.open-prs-add-form button {
+  padding: 2px 8px; border: 1px solid #303946; border-radius: 6px; background: transparent;
+  color: #8b949e; cursor: pointer; font-size: 10.5px;
+}
+.open-prs-add-form .open-prs-add-ok { border-color: #385b81; background: #172a40; color: #c9d1d9; }
+.open-prs-add-form button:disabled { opacity: 0.5; cursor: default; }
+.open-prs-add-form button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.open-prs-people-error { flex-basis: 100%; margin: 0 0 6px; color: #f85149; font-size: 10.5px; text-align: right; }
 /* The ignore confirmation covers the popover (its positioned ancestor). */
 .open-prs-confirm-backdrop {
   position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center;
@@ -11682,6 +11735,13 @@ body.wizard .open-pr-ignore:hover,
 body.wizard .open-pr-restore:hover { border-color: #d9b45a; background: #3a2a63; color: #f3e6c0; }
 body.wizard .open-pr-row.is-ignored .open-pr-title { color: #9a86c4; }
 body.wizard .open-prs-confirm { border-color: #7a5db0; background: #241b3d; }
+body.wizard .open-prs-people { border-color: #33284d; }
+body.wizard .open-prs-person.active { border-color: #33284d; background: #241b3d; box-shadow: 0 1px 0 #241b3d; }
+body.wizard .open-prs-person > button[role="tab"] { color: #b39ddb; }
+body.wizard .open-prs-person.active > button[role="tab"] { color: #f3e6c0; }
+body.wizard .open-prs-person.active .open-prs-person-n { background: #7a5db0; }
+body.wizard .open-prs-add-person { border-color: #4a3d6b; color: #b39ddb; }
+body.wizard .open-prs-add-form input { border-color: #7a5db0; background: #140f28; color: #e7d9f5; }
 body.wizard .open-prs-confirm h4 { color: #f3e6c0; }
 body.wizard .open-prs-confirm p,
 body.wizard .open-prs-confirm-durations legend { color: #9a86c4; }

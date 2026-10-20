@@ -74,8 +74,12 @@ func withAuthoredOpenPRReviews(query string) string {
 // something already merged or abandoned is noise, and the rollup is the
 // expensive half of the response.
 const authoredRecentPRGraphQLQuery = "query($q:String!,$first:Int!,$qr:String!,$rfirst:Int!){\n" +
-	authoredOpenPRSearchFragment + `
-  recent: search(query:$qr,type:ISSUE,first:$rfirst){
+	authoredOpenPRSearchFragment + "\n" + authoredRecentPRSearchFragment + "\n}"
+
+// authoredRecentPRSearchFragment is the recently closed search, shared with
+// the tracked-authors query (trackedprs.go) for the same reason as the open
+// fragment.
+const authoredRecentPRSearchFragment = `  recent: search(query:$qr,type:ISSUE,first:$rfirst){
     issueCount
     nodes{
       ... on PullRequest{
@@ -83,8 +87,7 @@ const authoredRecentPRGraphQLQuery = "query($q:String!,$first:Int!,$qr:String!,$
         repository{nameWithOwner}
       }
     }
-  }
-}`
+  }`
 
 type dashboardAuthoredOpenPR struct {
 	Number     int              `json:"number"`
@@ -147,6 +150,9 @@ type dashboardAuthoredOpenPRs struct {
 	// ordered by last update, so a truncated page is not even "the N most
 	// recently closed".
 	RecentTruncated bool `json:"recent_truncated,omitempty"`
+	// Error is set only on a tracked author's list (trackedprs.go) whose
+	// last search GitHub refused, e.g. a login that does not exist.
+	Error string `json:"error,omitempty"`
 }
 
 var authoredOpenPRResolver = liveAuthoredOpenPRResolver
@@ -213,6 +219,25 @@ func pollAuthoredOpenPRs() error {
 	if view.Items == nil {
 		view.Items = []dashboardAuthoredOpenPR{}
 	}
+	shareAuthoredPRView(view, now)
+	if !isGitHubOwnerSlug(view.Login) {
+		return fmt.Errorf("resolver returned invalid GitHub login")
+	}
+	data, err := json.Marshal(view)
+	if err != nil {
+		return fmt.Errorf("encode authored open PR cache: %w", err)
+	}
+	if err := db.SaveGitCache(authoredOpenPRCacheKey(view.Login), data, now); err != nil {
+		return fmt.Errorf("save authored open PR cache: %w", err)
+	}
+	setAuthoredOpenPRActiveLogin(view.Login)
+	return nil
+}
+
+// shareAuthoredPRView writes one search result into the shared per-PR state,
+// check and review caches every other PR surface reads, and reconciles
+// presented PR rows with it.
+func shareAuthoredPRView(view dashboardAuthoredOpenPRs, now time.Time) {
 	for i := range view.Items {
 		state := "open"
 		if view.Items[i].Draft {
@@ -245,18 +270,6 @@ func pollAuthoredOpenPRs() error {
 		}, now)
 	}
 	applyAuthoredStatesToPresentedPRs(view)
-	if !isGitHubOwnerSlug(view.Login) {
-		return fmt.Errorf("resolver returned invalid GitHub login")
-	}
-	data, err := json.Marshal(view)
-	if err != nil {
-		return fmt.Errorf("encode authored open PR cache: %w", err)
-	}
-	if err := db.SaveGitCache(authoredOpenPRCacheKey(view.Login), data, now); err != nil {
-		return fmt.Errorf("save authored open PR cache: %w", err)
-	}
-	setAuthoredOpenPRActiveLogin(view.Login)
-	return nil
 }
 
 // applyAuthoredStatesToPresentedPRs keeps the durable presented-PR lifecycle
@@ -613,9 +626,14 @@ func loadAuthoredOpenPRsSnapshot(cfg *config.Config) dashboardAuthoredOpenPRs {
 	// the next GitHub search. Narrowing the window therefore takes effect
 	// immediately; widening it still needs a poll to fetch the older PRs.
 	view.AlwaysShow = cfg.AlwaysShowOpenPRs()
-	// A widened window cannot be honoured from a cache fetched under the old
-	// one, so the snapshot advertises the narrower of the two until the poller
-	// catches up — better than promising 14 days and listing 3.
+	return applyRecentPRWindow(view, cfg, login)
+}
+
+// applyRecentPRWindow trims a cached list's recently closed PRs to the
+// configured window. A widened window cannot be honoured from a cache fetched
+// under the old one, so the snapshot advertises the narrower of the two until
+// the poller catches up — better than promising 14 days and listing 3.
+func applyRecentPRWindow(view dashboardAuthoredOpenPRs, cfg *config.Config, login string) dashboardAuthoredOpenPRs {
 	windowDays := min(cfg.RecentPRWindowDays(), view.RecentWindowDays)
 	view.RecentWindowDays = windowDays
 	view.Recent = filterRecentAuthoredPRs(view.Recent, windowDays, time.Now())

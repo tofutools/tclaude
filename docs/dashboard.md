@@ -393,6 +393,15 @@ list and count and waits under the **Ignored** filter, where **Restore** brings
 it back; a timed ignore also runs out by itself. Ignores and the Hover details
 choice are stored with the other dashboard preferences.
 
+**＋ Add person** in the popover tracks another GitHub user's pull requests in a
+tab of their own, next to **You**, up to eight people. A colleague's tab has
+the same filters except Unattached, the same CI and review badges, hover
+details and ignore button; their PRs never count toward the footer indicator.
+One GitHub GraphQL request a minute covers every tracked person (an open and a
+recently closed search each), and GitHub only returns pull requests your `gh`
+login can see. The list lives in the daemon's database, not `config.json`;
+✕ on a tab stops tracking that person.
+
 A review pill follows the CI pill on open, non-draft PRs: a person icon
 coloured by state, so it never reads as a second CI ✓. Green with a count means
 approved (`👤2`), red with a count means changes requested, amber means branch

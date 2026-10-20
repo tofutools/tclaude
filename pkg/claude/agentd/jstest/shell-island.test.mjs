@@ -628,3 +628,77 @@ test('footer open PR titles open the PR details card unless turned off', async (
   dashPrefs.removeItem('tclaude.dash.open-prs.title-details');
   await mounted.unmount();
 });
+
+test('footer open PRs tracks colleagues in their own tabs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { dashPrefs }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  dashPrefs.removeItem('tclaude.dash.open-prs.ignored');
+  const saved = globalThis.fetch;
+  const posts = [];
+  let authors = ['alice', 'bob'];
+  globalThis.fetch = async (url, init) => {
+    if (String(url) !== '/api/open-prs/tracked-authors') return { ok: true, json: async () => ({}) };
+    const body = JSON.parse(init.body);
+    posts.push([String(url), body]);
+    authors = body.action === 'add' ? [...authors, body.login] : authors.filter((a) => a !== body.login);
+    return { ok: true, json: async () => ({ authors }) };
+  };
+  t.after(() => { globalThis.fetch = saved; });
+  const pr = (n, repo, extra = {}) => ({ number: n, url: `https://github.com/${repo}/pull/${n}`, title: `PR ${n}`, repository: repo, ...extra });
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, {
+    authored_open_prs: { available: true, total: 1, items: [pr(1, 'me/app')] },
+    tracked_pr_authors: [
+      { login: 'alice', available: true, total: 2, items: [pr(7, 'acme/infra', { agent_id: '' }), pr(8, 'acme/api')],
+        recent_window_days: 3, recent: [pr(5, 'acme/api', { state: 'merged', closed_at: new Date().toISOString() })] },
+      { login: 'bob', available: false, items: [], recent: [] },
+    ],
+  }));
+  const c = mounted.container;
+  const trigger = getByRole(c, 'button', { name: /Open PRs/ });
+  assert.match(trigger.textContent, /Open PRs\s*1/, 'the trigger counts your PRs only');
+  await harness.act(() => trigger.click());
+  const titles = () => [...c.querySelectorAll('.open-pr-title')].map((node) => node.textContent);
+  const tabs = () => [...c.querySelectorAll('[role="tab"]')].map((node) => node.textContent.replace(/\s+/g, ' ').trim());
+  assert.deepEqual(tabs(), ['You 1', 'alice 2', 'bob …']);
+
+  await harness.act(() => getByRole(c, 'tab', { name: /alice/ }).click());
+  assert.match(c.querySelector('.open-prs-head strong').textContent, /alice’s pull requests/);
+  assert.deepEqual(titles(), ['PR 7', 'PR 8']);
+  assertAbsent([...c.querySelectorAll('.open-prs-filters button')].find((b) => /Unattached/.test(b.textContent)) || null,
+    'a colleague tab has no Unattached filter');
+  assert.ok([...c.querySelectorAll('.open-prs-filters button')].some((b) => /Closed 3d 1/.test(b.textContent)));
+
+  await harness.act(() => getByRole(c, 'button', { name: /Ignore pull request #8/ }).click());
+  await harness.act(() => getByRole(c, 'button', { name: /^Ignore$/ }).click());
+  assert.deepEqual(titles(), ['PR 7']);
+  assert.deepEqual(tabs(), ['You 1', 'alice 1', 'bob …'], 'ignoring works in a colleague tab and its count follows');
+  await harness.act(() => getByRole(c, 'tab', { name: /You/ }).click());
+  assertAbsent([...c.querySelectorAll('.open-prs-filters button')].find((b) => /Ignored/.test(b.textContent)) || null,
+    "a colleague's ignore stays out of your Ignored list");
+
+  await harness.act(() => getByRole(c, 'tab', { name: /bob/ }).click());
+  assert.match(c.querySelector('.open-prs-empty').textContent, /Searching GitHub for bob’s pull requests/);
+
+  await harness.act(() => getByRole(c, 'button', { name: /Add person/ }).click());
+  const field = c.querySelector('input[aria-label="GitHub username"]');
+  await harness.input(field, '@carol');
+  await harness.act(async () => { harness.fireEvent(c.querySelector('.open-prs-add-form'), 'submit'); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(posts.at(-1), ['/api/open-prs/tracked-authors', { action: 'add', login: 'carol' }]);
+  assert.deepEqual(tabs(), ['You 1', 'alice 1', 'bob …', 'carol …'], 'the new tab shows before the snapshot has it');
+  assert.equal(c.querySelector('[role="tab"][aria-selected="true"]').textContent.trim().startsWith('carol'), true);
+
+  await harness.act(async () => { getByRole(c, 'button', { name: 'Stop tracking alice' }).click(); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(posts.at(-1)[1], { action: 'remove', login: 'alice' });
+  assert.deepEqual(tabs(), ['You 1', 'bob …', 'carol …']);
+  dashPrefs.removeItem('tclaude.dash.open-prs.ignored');
+  await mounted.unmount();
+});

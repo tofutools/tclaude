@@ -372,6 +372,8 @@ var peerViewOwnNodeRoutes = []string{
 	"/api/browser-notifications",
 	"/api/config",
 	"/api/dashboard/prefs",
+	// The tracked-author list spends this node's GitHub quota.
+	"/api/open-prs/tracked-authors",
 	"GET /api/node/run/settings",
 	"PUT /api/node/run/settings",
 	"GET /api/peer/{node}/{tail...}",
