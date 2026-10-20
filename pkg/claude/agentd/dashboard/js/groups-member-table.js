@@ -907,6 +907,7 @@ function SendElsewhereItems({ member, group, snapshot }) {
   const attrs = (mode) => ({
     'data-mode': mode, 'data-presence': kind, 'data-home-node': view?.home?.id || '', 'data-home-name': view?.home?.name || '',
     'data-cwd': member.state?.cwd || member.cwd || '',
+    'data-harness': member.state?.harness || '',
     ...(peerRow ? { 'data-node': rowNode.id, 'data-node-name': rowNode.name || '' } : {}),
   });
   const item = (mode, regular, wizard, title, disabled = false) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} disabled=${disabled} />`;

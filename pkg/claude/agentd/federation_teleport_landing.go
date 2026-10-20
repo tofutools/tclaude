@@ -121,13 +121,7 @@ func resolveTeleportLanding(peer string, group int64, credentials string) (*db.F
 	if mode == "" {
 		mode = "local"
 	}
-	allowed := false
-	for _, value := range landing.CredentialsAllowed {
-		if sameTeleportCredentialMode(value, mode) {
-			allowed = true
-		}
-	}
-	if !allowed {
+	if !teleportCredentialAllowed(peer, landing.CredentialsAllowed, mode) {
 		return nil, nil, nil, "", errors.New("credential mode is not allowed by the receiver landing policy")
 	}
 	profile, err := db.GetSpawnProfileByID(landing.SpawnProfileID)
@@ -502,6 +496,22 @@ func teleportImportBundle(r *http.Request, b *agentbundle.Bundle) error {
 
 func sameTeleportIntent(a, b *bundletransfer.TeleportIntent) bool { return reflect.DeepEqual(a, b) }
 
+// teleportCredentialAllowed reports whether a sender may land an agent here
+// on mode. An unrestricted peer acts as this node's operator does, so any
+// mode this node can resolve is allowed; any other peer is held to the
+// landing policy's list.
+func teleportCredentialAllowed(peer string, allowed []string, mode string) bool {
+	if db.FederationPeerUnrestricted(peer) {
+		return true
+	}
+	for _, candidate := range allowed {
+		if sameTeleportCredentialMode(candidate, mode) {
+			return true
+		}
+	}
+	return false
+}
+
 func pendingTeleportCredentials(peer, requested string) (string, error) {
 	mode := requested
 	assignment, err := db.GetFederationNodeProfileAssignment(peer)
@@ -520,12 +530,9 @@ func pendingTeleportCredentials(peer, requested string) (string, error) {
 	}
 	allowed := mode == "local"
 	if landing != nil && len(landing.CredentialsAllowed) > 0 {
-		allowed = false
-		for _, candidate := range landing.CredentialsAllowed {
-			if sameTeleportCredentialMode(candidate, mode) {
-				allowed = true
-			}
-		}
+		allowed = teleportCredentialAllowed(peer, landing.CredentialsAllowed, mode)
+	} else if db.FederationPeerUnrestricted(peer) {
+		allowed = true
 	}
 	if !allowed {
 		return "", errors.New("credential mode is not allowed by the receiver landing policy")

@@ -15,6 +15,7 @@ import { missingPullGrants, needsSuffix } from './peer-view-limits.js';
 import { nodeFetch } from './node-api.js';
 import { unrestrictedOn } from './node-trust.js';
 import { markInTransit } from './drop-landing.js';
+import { modelAccessOptions, ownGateways } from './teleport-model-access.js';
 
 const html = htm.bind(h);
 
@@ -186,6 +187,11 @@ export function createLaunchTargetApi({ fetchImpl = (...a) => globalThis.fetch(.
     morph: (id, body) => call('POST', agent(id, 'morph'), body),
     morphStatus: (id) => call('GET', agent(id, 'morph')),
     teleport: (id, body) => call('POST', agent(id, 'teleport'), body),
+    // Model access for a teleport: what the receiving node accepts from this
+    // node, this node's own gateways, and the gateways peers share with it.
+    teleportCredentials: (node, group) => call('GET', `/api/peer/${encodeURIComponent(node)}/teleport-credentials?group=${encodeURIComponent(group)}`),
+    models: () => call('GET', '/api/federation/models/control'),
+    sharesReceived: () => call('GET', '/api/federation/models/shares/received'),
     // recall asks where an away agent runs to send it straight home; the
     // home group defaults to its first group here.
     recall: (id) => call('POST', `/api/federation/agents/${encodeURIComponent(id)}/recall`, {}),
@@ -349,11 +355,43 @@ export function followMove({ id, actions, timers = globalThis, now = () => Date.
   timers.setTimeout(tick, MOVE_POLL_MS);
 }
 
+// useModelAccess loads the Model access choices for a teleport or clone:
+// for an agent sent from here, what the receiving node accepts and this
+// node's own gateways; for one pulled here from a node that trusts this one
+// unrestricted, the gateways peers share with this node. null hides the row
+// (a recall, a pull this node may not choose for, or nothing to load).
+function useModelAccess({ mode, agent, target, api, pull, acting }) {
+  const [options, setOptions] = useState(null);
+  useEffect(() => {
+    if (mode === 'home' || !target?.node || !target?.group || (pull && !acting)) return undefined;
+    let live = true;
+    const dest = pull ? 'this node' : target.name;
+    const settle = (p) => p.then((v) => v, () => null);
+    const loads = pull
+      ? [Promise.resolve(null), Promise.resolve(null), settle(api.sharesReceived?.() || Promise.reject())]
+      : [settle(api.teleportCredentials?.(target.node, target.group) || Promise.reject()), settle(api.models?.() || Promise.reject()), Promise.resolve(null)];
+    Promise.all(loads).then(([creds, control, received]) => {
+      if (!live) return;
+      setOptions(modelAccessOptions({
+        dest, harness: agent.harness || '', creds, pull,
+        own: pull ? [] : ownGateways(control),
+        shares: pull ? (received?.shares || []) : (creds?.shares || []),
+      }));
+    });
+    return () => { live = false; };
+  }, [mode, target?.node, target?.group, pull, acting]);
+  return options;
+}
+
 // TeleportPanel sends it (Teleport, Clone to a peer, Recall home), then closes;
 // followMove reports how the move ends.
 // pullActions, set for a peer's agent, asks that peer to send it here.
-function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, onClose, openPage, okRef, viaPeer, pullActions = null, onPhase, toast = shellToast }) {
+function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, onClose, openPage, okRef, viaPeer, pullActions = null, acting = false, onPhase, toast = shellToast }) {
   const [note, setNote] = useState('');
+  const [access, setAccess] = useState('');
+  const accessOptions = useModelAccess({ mode, agent, target, api, pull: !!pullActions, acting });
+  const accessPick = accessOptions?.find((o) => o.value === access && !o.reason) ? access : '';
+  const credentials = accessPick ? { credentials: accessPick } : {};
   const [phase, setPhase] = useState('confirm');
   useEffect(() => { onPhase?.(phase); }, [phase]);
   const [error, setError] = useState('');
@@ -365,10 +403,10 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
     try {
       let res;
       if (mode === 'home' && viaPeer) res = await api.recall(agent.id);
-      else if (pullActions) res = await pullActions.teleport(agent.id, { group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}) });
+      else if (pullActions) res = await pullActions.teleport(agent.id, { group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}), ...credentials });
       else res = await api.teleport(agent.conv || agent.id, mode === 'home'
         ? { home: true, ...(note ? { note } : {}) }
-        : { peer: target.node, group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}) });
+        : { peer: target.node, group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}), ...credentials });
       // Close once it is sent; the outcome arrives as toasts, even when the
       // dialog was cancelled while sending. A pulled move's record lives on
       // the peer, so there is none here to follow. A return to a
@@ -414,6 +452,10 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
       : mode === 'clone'
         ? `Sends a copy of ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${dest}. The original keeps running ${from}.`
         : `Sends ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${dest}. It leaves at once: it keeps running ${from} until its copy runs ${pullActions ? 'here' : 'there'}, then stops ${pullActions ? 'there' : 'here'}; its groups keep a placeholder row.`}</p>
+      ${accessOptions && html`<label class="lt-row" title="Whose provider account the agent's model calls use where it lands: that node's own login, or a model gateway. Your own gateway is paid by you through a lease."><span class="lt-k">Model access</span>
+        <select id="lt-model-access" value=${accessPick} disabled=${phase !== 'confirm'} onChange=${(e) => setAccess(e.currentTarget.value)}>
+          ${accessOptions.map((o) => html`<option key=${o.value} value=${o.value} disabled=${!!o.reason} title=${o.reason}>${o.label}${o.reason ? ` — ${o.reason}` : ''}</option>`)}
+        </select></label>`}
       ${viaPeer ? '' : html`<label class="lt-row"><span class="lt-k">Note</span><textarea id="lt-note" rows="2" placeholder="Optional: told to the agent on arrival" value=${note} onInput=${(e) => setNote(e.currentTarget.value)}></textarea></label>`}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
@@ -481,7 +523,7 @@ export function LaunchTargetDialog({
       <button type="button" ref=${okRef} class="primary" id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</button></div>`;
   else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull' || (plan.kind === 'third' && relay))) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase}
-    pullActions=${local ? null : peerActions(source.node)} />`;
+    pullActions=${local ? null : peerActions(source.node)} acting=${acting} />`;
   else body = html`<div class="muted lt-hint">${picked ? 'Pick the receiving group there.' : 'Pick the node to send it to.'}</div>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" ref=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</button></div>`;
 
@@ -523,5 +565,6 @@ export function launchAgent(data, node) {
     id: data.agent || data.conv || '', conv: data.conv || '', name: data.label || data.agent || '',
     node: node.id || '', nodeName: node.name || '', group: data.ownGroup || data.group || '',
     presence: data.presence || '', homeNode: data.homeNode || '', homeName: data.homeName || '', cwd: data.cwd || '',
+    harness: data.harness || '',
   };
 }

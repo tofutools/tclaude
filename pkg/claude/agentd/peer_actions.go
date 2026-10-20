@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +13,9 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 type peerActionKey struct{}
@@ -260,9 +261,19 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			// peer: only an unrestricted peer, which acts here as this
 			// node's operator does, and only to a node this one trusts.
 			To string `json:"to,omitempty"`
+			// Credentials picks the model access the pulled agent lands on
+			// (local or proxy:<gateway>@<node>); only an unrestricted peer,
+			// acting here as this node's operator, may choose it.
+			Credentials string `json:"credentials,omitempty"`
 		}
 		if !decodePeerAction(w, r, &body) {
 			return
+		}
+		if body.Credentials != "" {
+			if !strings.HasSuffix(r.URL.Path, "/teleport") || !db.FederationPeerUnrestricted(a.peer) || !bundletransfer.ValidCredentials(body.Credentials) {
+				writeError(w, 400, "invalid_arg", "credentials are only valid for an unrestricted peer's teleport: local or proxy:<name>@<node>")
+				return
+			}
 		}
 		if body.To != "" {
 			if strings.HasSuffix(r.URL.Path, "/teleport") {
@@ -305,7 +316,7 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 				}
 				destination = "" // Home is resolved by the shared teleport path.
 			}
-			raw, _ := json.Marshal(teleportRequest{Peer: destination, Home: body.Home, Group: body.Group, Note: body.Note, Clone: body.Clone, CarryPermissions: body.CarryPermissions})
+			raw, _ := json.Marshal(teleportRequest{Peer: destination, Home: body.Home, Group: body.Group, Note: body.Note, Clone: body.Clone, CarryPermissions: body.CarryPermissions, Credentials: body.Credentials})
 			r.Body = io.NopCloser(bytes.NewReader(raw))
 			handleFederationTeleport(w, r)
 		} else {
