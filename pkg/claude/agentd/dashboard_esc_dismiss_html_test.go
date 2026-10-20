@@ -53,7 +53,7 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must(`id="role-editor-modal"`, "the role editor uses the shared Preact dismissal boundary")
 	must(`id="profile-editor-modal"`, "the profile editor uses the shared Preact dismissal boundary")
 	must(`id="agent-spawn-modal"`, "the Preact spawn dialog retains its scoped overlay id")
-	must("spawnDraftIsDirty(draft, baseline, attachments.length)", "the spawn dialog derives dirty state from its controlled draft")
+	must("spawnDraftIsDirty(draft, baseline, attachmentsChanged ? 1 : 0)", "the spawn dialog derives dirty state from its controlled draft")
 	must(`id="cron-create-modal"`, "the cron editor uses the shared Preact overlay")
 	must("overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''}",
 		"component mode controls only the overlay presentation class")
