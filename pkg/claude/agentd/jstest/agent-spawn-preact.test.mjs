@@ -2045,6 +2045,59 @@ test('▶ on a queued spawn launches once its loads settle', async (t) => {
   mounted.cleanup();
 });
 
+test('queueing keeps attachments: new files are staged, stored ones are re-staged at launch', async (t) => {
+  const originalCreate = URL.createObjectURL;
+  URL.createObjectURL = () => 'blob:queued-preview';
+  t.after(() => { URL.createObjectURL = originalCreate; });
+  const log = [];
+  const mounted = await mountSpawn(t, {
+    ...queueActions(log),
+    uploadAttachments: async (attachments) => {
+      log.push(['upload', attachments.map((attachment) => attachment.name)]);
+      return attachments.map((attachment) => `/staging/b/${attachment.name}`);
+    },
+    stageQueuedAttachments: async (id, names) => {
+      log.push(['stage', id, names]);
+      return names.map((name) => `/staging/q/${name}`);
+    },
+    spawn: async (request) => { log.push(['spawn', request.body.attachments]); return { conv_id: 'abcdef1234' }; },
+  });
+  const { harness, host, state } = mounted;
+  const entry = {
+    id: 5, created_at: new Date().toISOString(),
+    draft: { group: 'alpha', name: 'later', attachments: [{ name: 'spec.md', size: 12 }] },
+  };
+  state.open({ queued: entry });
+  await flush(harness);
+  await settleWorktrees(harness);
+  assert.deepEqual([...host.querySelectorAll('#agent-spawn-attachments-list .att-name')].map((el) => el.textContent), ['spec.md']);
+  const shot = new Blob(['png'], { type: 'image/png' });
+  Object.defineProperty(shot, 'name', { value: 'shot.png' });
+  const input = host.querySelector('#agent-spawn-attach-input');
+  Object.defineProperty(input, 'files', { configurable: true, value: [shot] });
+  await harness.act(() => harness.fireEvent(input, 'change'));
+  await harness.act(() => hotkey(harness, host));
+  await flush(harness);
+  const save = log.find(([kind]) => kind === 'save');
+  assert.ok(save, JSON.stringify(log));
+  assert.equal(save[1], 5);
+  assert.deepEqual(save[2].attachments, [
+    { name: 'spec.md', size: 12 },
+    { name: 'shot.png', size: 3, staged: '/staging/b/shot.png' },
+  ]);
+  assert.equal(log.filter(([kind]) => kind === 'spawn').length, 0, 'saving never spawns');
+
+  log.length = 0;
+  state.open({ queued: entry });
+  await flush(harness);
+  await settleWorktrees(harness);
+  host.querySelector('#agent-spawn-submit').click();
+  await flush(harness);
+  assert.deepEqual(log.find(([kind]) => kind === 'stage'), ['stage', 5, ['spec.md']]);
+  assert.deepEqual(log.find(([kind]) => kind === 'spawn'), ['spawn', ['/staging/q/spec.md']]);
+  mounted.cleanup();
+});
+
 test('Preact agent-spawn bills a spawn to a peer\'s usage share only for a harness that can use it', async (t) => {
   const claude = harnesses.find((h) => h.name === 'claude');
   claude.model_proxy_dialect = 'anthropic';

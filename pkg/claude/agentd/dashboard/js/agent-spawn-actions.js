@@ -335,8 +335,20 @@ export function createAgentSpawnActions(dependencies = {}) {
       } catch (_) {}
     },
 
-    // Queued spawns store the dialog draft only. Nothing a launch does —
-    // worktree creation, base-branch fetch, attachment upload, the spawn
+    // stageQueuedAttachments copies a queued spawn's stored attachments into
+    // a fresh staging batch for its launch and returns their paths, as
+    // uploadAttachments does for picked files.
+    async stageQueuedAttachments(id, names) {
+      const payload = await jsonRequest(fetchImpl, `/api/queued-spawns/${encodeURIComponent(id)}/stage-attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names }),
+      });
+      return (payload?.files || []).map((file) => file.path);
+    },
+
+    // Queued spawns store the dialog draft and its attachments only. Nothing
+    // else a launch does — worktree creation, base-branch fetch, the spawn
     // itself — runs until the queued draft is launched through submit.
     async saveQueued(id, draft) {
       const response = await fetchImpl(id ? `/api/queued-spawns/${encodeURIComponent(id)}` : '/api/queued-spawns', {

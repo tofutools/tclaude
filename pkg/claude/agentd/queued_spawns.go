@@ -16,7 +16,8 @@ import (
 // opaquely and reads only the target group. Launching one reopens the dialog
 // from the draft and submits it through the ordinary spawn path, so a queued
 // spawn is validated (permissions, sandbox, worktree) when it launches, not
-// when it is queued.
+// when it is queued. The one field the daemon does read is `attachments`:
+// their files are kept with the queued spawn (queued_spawn_attachments.go).
 
 // queuedSpawnMaxBytes caps one stored draft. The initial message alone may be
 // 16 KiB; the rest of the form is small.
@@ -51,6 +52,7 @@ func collectQueuedSpawnsSnapshot() []queuedSpawnJSON {
 func registerDashboardQueuedSpawnRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/queued-spawns", dashboardRolesRoute(handleQueuedSpawns))
 	mux.HandleFunc("/api/queued-spawns/{id}", dashboardRolesRoute(handleQueuedSpawnByID))
+	mux.HandleFunc("/api/queued-spawns/{id}/stage-attachments", dashboardRolesRoute(handleQueuedSpawnStageAttachments))
 }
 
 func handleQueuedSpawns(w http.ResponseWriter, r *http.Request) {
@@ -62,9 +64,24 @@ func handleQueuedSpawns(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		queuedSpawnAttachmentsMu.Lock()
+		defer queuedSpawnAttachmentsMu.Unlock()
+		sweepOrphanQueuedSpawnAttachments()
 		id, err := db.CreateQueuedSpawn(group, draft, time.Now())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		// The row id names the attachment dir, so the draft's attachments are
+		// stored after the insert and the row rewritten with their stored names.
+		stored, _, err := storeQueuedSpawnAttachments(id, draft)
+		if err == nil && stored != draft {
+			err = db.UpdateQueuedSpawn(id, group, stored, time.Now())
+		}
+		if err != nil {
+			_ = db.DeleteQueuedSpawn(id)
+			removeQueuedSpawnAttachments(id)
+			writeError(w, http.StatusBadRequest, "invalid_attachments", err.Error())
 			return
 		}
 		writeQueuedSpawn(w, http.StatusCreated, id)
@@ -87,16 +104,31 @@ func handleQueuedSpawnByID(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if err := db.UpdateQueuedSpawn(id, group, draft, time.Now()); err != nil {
+		queuedSpawnAttachmentsMu.Lock()
+		defer queuedSpawnAttachmentsMu.Unlock()
+		if q, err := db.GetQueuedSpawn(id); err != nil || q == nil {
+			writeQueuedSpawnError(w, firstNonNil(err, db.ErrQueuedSpawnNotFound))
+			return
+		}
+		stored, prune, err := storeQueuedSpawnAttachments(id, draft)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_attachments", err.Error())
+			return
+		}
+		if err := db.UpdateQueuedSpawn(id, group, stored, time.Now()); err != nil {
 			writeQueuedSpawnError(w, err)
 			return
 		}
+		prune()
 		writeQueuedSpawn(w, http.StatusOK, id)
 	case http.MethodDelete:
+		queuedSpawnAttachmentsMu.Lock()
+		defer queuedSpawnAttachmentsMu.Unlock()
 		if err := db.DeleteQueuedSpawn(id); err != nil {
 			writeQueuedSpawnError(w, err)
 			return
 		}
+		removeQueuedSpawnAttachments(id)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET, PUT or DELETE")

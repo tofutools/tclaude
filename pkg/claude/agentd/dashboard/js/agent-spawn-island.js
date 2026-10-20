@@ -187,6 +187,15 @@ function SettingOptions({ setting, optionLabel = null }) {
   }));
 }
 
+// storedQueuedAttachments lists a reopened queued spawn's stored attachments
+// as dialog attachment entries (no File: they stay on the daemon).
+function storedQueuedAttachments(queued) {
+  const stored = Array.isArray(queued?.draft?.attachments) ? queued.draft.attachments : [];
+  return stored.filter((entry) => entry?.name).map((entry, index) => ({
+    id: -(index + 1), name: String(entry.name), size: Number(entry.size) || 0, url: '',
+  }));
+}
+
 function AttachmentList({ attachments, remove, busy }) {
   return html`<ul class="spawn-attachments-list" id="agent-spawn-attachments-list">
     ${attachments.map((attachment) => html`<li key=${attachment.id}>
@@ -290,10 +299,12 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   }), [current]);
   const rememberedEffort = (model) => actions.rememberedEffort(model);
   // A reopened queued spawn restores its stored draft over a fresh one, so a
-  // field added to the form since it was queued still gets its default.
+  // field added to the form since it was queued still gets its default. Its
+  // attachments live in the attachment list, not the draft.
   const queued = current.options.queued;
   const initial = useMemo(() => {
     if (queued) {
+      const { attachments: _stored, ...queuedDraft } = queued.draft;
       return {
         ...createSpawnDraft({
           groups: context.groups,
@@ -302,7 +313,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           autoFocus: actions.autoFocusDefault(),
           rememberedEffort,
         }),
-        ...queued.draft,
+        ...queuedDraft,
       };
     }
     const value = createSpawnDraft({
@@ -340,7 +351,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // them on the spawn response regardless.
   const [autonomyWarnings, setAutonomyWarnings] = useState([]);
   const [sandboxInfo, setSandboxInfo] = useState([]);
-  const [attachments, setAttachments] = useState([]);
+  // A local attachment carries the picked File; a queued spawn's stored one
+  // only its name and size, and is re-staged from the queue at launch.
+  const [attachments, setAttachments] = useState(() => storedQueuedAttachments(queued));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   // Busy with a queue save rather than a launch: the Spawn button must not
@@ -421,7 +434,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
 		add(draft.environment, 'this spawn');
 		return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
 	}, [draft.group, draft.profile, draft.environment, context.groups, profiles]);
-  const dirty = spawnDraftIsDirty(draft, baseline, attachments.length);
+  const attachmentsChanged = attachments.some((attachment) => attachment.file)
+    || attachments.length !== storedQueuedAttachments(queued).length;
+  const dirty = spawnDraftIsDirty(draft, baseline, attachmentsChanged ? 1 : 0);
   const nameHint = spawnNameHint(draft.name, context.normalizeNames);
   const permissionsLabel = spawnPermissionIndicator(draft.permissionOverrides);
   const selectedRoles = (draft.roleRefs || []).map((name) =>
@@ -1068,10 +1083,17 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       markTiming('worktree_ready_ms');
       if (!state.isCurrent(current.generation)) return;
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
-      const uploadKey = attachments.map((attachment) => `${attachment.id}:${attachKey(attachment.file)}`).join('|');
+      const uploadKey = attachments.map((attachment) => (attachment.file
+        ? `${attachment.id}:${attachKey(attachment.file)}` : `queued:${attachment.name}`)).join('|');
       let attachmentPaths = uploaded.current.key === uploadKey ? uploaded.current.paths : null;
       if (!attachmentPaths) {
-        attachmentPaths = await actions.uploadAttachments(attachments);
+        const stored = attachments.filter((attachment) => !attachment.file);
+        const stagedPaths = stored.length
+          ? await actions.stageQueuedAttachments(queued.id, stored.map((attachment) => attachment.name))
+          : [];
+        if (!state.isCurrent(current.generation)) return;
+        const uploadedPaths = await actions.uploadAttachments(attachments.filter((attachment) => attachment.file));
+        attachmentPaths = [...stagedPaths, ...uploadedPaths];
         uploaded.current = { key: uploadKey, paths: attachmentPaths };
       }
       if (!state.isCurrent(current.generation)) return;
@@ -1129,11 +1151,6 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       release();
       return;
     }
-    if (attachments.length) {
-      setError('attachments cannot be queued yet — remove them, or spawn now');
-      release();
-      return;
-    }
     const derived = !next.name.trim() && !next.descr.trim()
       ? deriveSpawnNameFromMessage(next.initialMessage) : '';
     if (derived) {
@@ -1152,7 +1169,16 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     setBusy(true);
     setQueueing(true);
     try {
-      await actions.saveQueued(queued?.id || 0, next);
+      // New files go up to the ordinary staging endpoint first; the queue
+      // keeps its own copy of each, and the stored ones by name.
+      const local = attachments.filter((attachment) => attachment.file);
+      const stagedPaths = local.length ? await actions.uploadAttachments(local) : [];
+      if (!state.isCurrent(current.generation)) return;
+      let stagedIndex = 0;
+      const queuedAttachments = attachments.map((attachment) => (attachment.file
+        ? { name: attachment.name, size: attachment.size, staged: stagedPaths[stagedIndex++] }
+        : { name: attachment.name, size: attachment.size }));
+      await actions.saveQueued(queued?.id || 0, queuedAttachments.length ? { ...next, attachments: queuedAttachments } : next);
       if (!state.isCurrent(current.generation)) return;
       state.close();
       actions.queued(next, !!queued);

@@ -55,7 +55,7 @@ func TestDashboardAgentSpawnPreactOwnership(t *testing.T) {
 	present("export function AgentSpawnApp(", "Preact owns the rendered dialog")
 	present("if (submitLock.current) return;", "duplicate submit is claimed synchronously")
 	present("!state.isCurrent(current.generation)", "async returns are generation guarded")
-	present("spawnDraftIsDirty(draft, baseline, attachments.length)", "dismissal reads controlled state")
+	present("spawnDraftIsDirty(draft, baseline, attachmentsChanged ? 1 : 0)", "dismissal reads controlled state")
 	present("onPaste=${paste}", "component owns attachment paste")
 	present("onDrop=${drop}", "component owns attachment drop")
 	present("URL.revokeObjectURL(attachment.url)", "component disposes previews")

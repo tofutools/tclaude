@@ -4,9 +4,10 @@
 // head of each target group's member table (groups-member-table.js's
 // QueuedMemberRow). Both call the launch / edit / discard actions below.
 //
-// A queued spawn is only a stored draft. Launching reopens the spawn dialog
-// from it and submits through the ordinary path, so worktree creation, base
-// fetch, attachment upload and every spawn-time check happen at launch.
+// A queued spawn is a stored draft plus the files attached to it, which the
+// daemon keeps with the queue entry. Launching reopens the spawn dialog from it
+// and submits through the ordinary path, so worktree creation, base fetch and
+// every spawn-time check happen at launch.
 import { h } from 'preact';
 import htm from 'htm';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
@@ -48,6 +49,8 @@ export function queuedSpawnDetail(entry, { group = true } = {}) {
   else if (draft.role) parts.push(String(draft.role));
   if (draft.profile) parts.push(String(draft.profile));
   else if (draft.harness) parts.push([draft.harness, draft.model].filter(Boolean).join(' '));
+  const files = Array.isArray(draft.attachments) ? draft.attachments.length : 0;
+  if (files) parts.push(`📎 ${files}`);
   const brief = String(draft.initialMessage || '').trim().replace(/\s+/g, ' ');
   if (brief) parts.push(`“${brief.length > 60 ? `${brief.slice(0, 59)}…` : brief}”`);
   return parts.join(' · ');
