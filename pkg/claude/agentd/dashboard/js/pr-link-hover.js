@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { safeCheckURL, touchOnly, usePanelPlacement } from './pr-checks-hover.js';
+import { safeCheckURL, useHoverPopover, usePanelPlacement } from './pr-checks-hover.js';
 import { relativeAge } from './pr-review-model.js';
 
 const html = htm.bind(h);
@@ -218,15 +218,11 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const [tapped, setTapped] = useState(false);
+  const { open, hovered, focused, tapped, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
   const [dwelled, setDwelled] = useState(false);
-  const open = hovered || focused || tapped;
   const prURL = githubPRBase(url);
   const state = usePRDetails(prURL, dwelled || focused || tapped);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
-  const close = () => { setHovered(false); setFocused(false); setTapped(false); };
 
   // Hover intent: the full fetch waits until the pointer has rested a moment.
   useEffect(() => {
@@ -238,15 +234,6 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
     return () => globalThis.clearTimeout(timer);
   }, [hovered]);
 
-  useEffect(() => {
-    if (!tapped) return undefined;
-    const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [tapped]);
-
   const panelID = `prd-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
 
@@ -254,10 +241,7 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
     <span
       ref=${rootRef}
       class=${`ci-hover prd-hover${open ? ' is-open' : ''}`}
-      onMouseEnter=${() => setHovered(true)}
-      onMouseLeave=${() => setHovered(false)}
-      onFocusIn=${() => setFocused(true)}
-      onFocusOut=${(event) => { if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false); }}
+      ...${rootProps}
     >
       <a
         class=${`${linkClass} ${className}`.trim()}
@@ -268,11 +252,7 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
         aria-label=${`${describe || 'Pull request'} — opens it on GitHub.`}
-        onClick=${(event) => {
-          if (!touchOnly()) return;
-          event.preventDefault();
-          if (tapped) close(); else setTapped(true);
-        }}
+        onClick=${onTriggerClick}
         onKeyDown=${(event) => {
           // A closed card leaves Escape to whatever surrounds the link, e.g.
           // the footer PR popover closing itself.

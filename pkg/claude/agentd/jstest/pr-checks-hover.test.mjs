@@ -25,6 +25,14 @@ function stubFetch(t, respond) {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+
+// leave moves the pointer off a PR popover and waits out its close grace.
+async function leave(harness, root) {
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, HOVER_CLOSE_MS + 20)));
+}
+
 test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/pr-checks-hover.js');
@@ -350,7 +358,7 @@ test('the panel fetches only while it is open', async (t) => {
 
     // Leaving closes the panel and, with it, the poll — the cost of this
     // surface is bounded by "a human is looking at exactly one PR".
-    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    await leave(harness, root);
     assert.equal(mounted.container.querySelector('.ci-panel'), null);
     const settled = calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -416,7 +424,7 @@ test('a running check ticks locally between polls', async (t) => {
     await harness.act(() => { [...intervals.values()][0](); });
     assert.equal(time(), '3m 31s', 'the display advances without waiting for another fetch');
 
-    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    await leave(harness, root);
     assert.equal(intervals.size, 0, 'closing the popover stops its local clock');
   } finally {
     await mounted.unmount();
@@ -486,7 +494,7 @@ test('the measured panel is positioned and follows the viewport', async (t) => {
     assert.ok(listeners.includes('scroll'), 'scroll is watched while open');
     assert.ok(listeners.includes('resize'), 'resize is watched while open');
 
-    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    await leave(harness, root);
     assert.equal(mounted.container.querySelector('.ci-panel'), null);
     assert.ok(!listeners.includes('scroll'), 'and both are dropped on close');
     assert.ok(!listeners.includes('resize'));

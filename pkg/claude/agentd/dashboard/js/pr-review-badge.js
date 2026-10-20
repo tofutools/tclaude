@@ -1,7 +1,7 @@
 import { h } from 'preact';
-import { useEffect, useId, useRef, useState } from 'preact/hooks';
+import { useId, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { safeCheckURL, touchOnly, usePanelPlacement } from './pr-checks-hover.js';
+import { safeCheckURL, useHoverPopover, usePanelPlacement } from './pr-checks-hover.js';
 import {
   prReviewDecisionText, prReviewLabel, prReviewState, prReviewStateText,
   prReviewSummaryLine, relativeAge,
@@ -104,21 +104,8 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const [tapped, setTapped] = useState(false);
-  const open = hovered || focused || tapped;
+  const { open, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
-  const close = () => { setHovered(false); setFocused(false); setTapped(false); };
-
-  useEffect(() => {
-    if (!tapped) return undefined;
-    const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [tapped]);
 
   const prURL = safeCheckURL(url).replace(/\/+$/, '');
   const state = prReviewState(reviews);
@@ -132,10 +119,7 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
     <span
       ref=${rootRef}
       class=${`ci-hover rv-hover${open ? ' is-open' : ''}`}
-      onMouseEnter=${() => setHovered(true)}
-      onMouseLeave=${() => setHovered(false)}
-      onFocusIn=${() => setFocused(true)}
-      onFocusOut=${(event) => { if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false); }}
+      ...${rootProps}
     >
       <a
         class=${`ci-badge rv-badge rv-${state}`}
@@ -146,11 +130,7 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
         aria-label=${`Reviews for ${who} — ${prReviewSummaryLine(reviews)}, ${prReviewDecisionText(reviews.decision)}. Opens the pull request on GitHub.`}
-        onClick=${(event) => {
-          if (!touchOnly()) return;
-          event.preventDefault();
-          if (tapped) close(); else setTapped(true);
-        }}
+        onClick=${onTriggerClick}
         onKeyDown=${(event) => {
           if (event.key !== 'Escape') return;
           event.preventDefault();
