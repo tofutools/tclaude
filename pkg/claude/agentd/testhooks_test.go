@@ -2167,6 +2167,32 @@ func SeedAuthoredOpenPRsForTest(login, repoURL string, prs []AuthoredOpenPRForTe
 	return func() { setAuthoredOpenPRActiveLogin("") }, pollAuthoredOpenPRs()
 }
 
+// SetTrackedPRSourcesForTest swaps every GitHub seam behind the footer's
+// colleague tabs: the active gh identity, the add-time user lookup, and the
+// aliased GraphQL search, which receives the real argv and returns a canned
+// response for the production decoder.
+func SetTrackedPRSourcesForTest(self string, exists func(login string) bool, search func(args []string) ([]byte, error)) func() {
+	prevConfigured, prevEnv := githubConfiguredLoginResolver, githubEnvironmentTokenPresent
+	prevLookup, prevSearch := trackedPRUserLookup, trackedPRGraphQL
+	githubConfiguredLoginResolver = func() (string, bool) { return self, true }
+	githubEnvironmentTokenPresent = func() bool { return false }
+	trackedPRUserLookup = func(login string) (bool, bool) { return exists(login), true }
+	trackedPRGraphQL = search
+	setAuthoredOpenPRActiveLogin(self)
+	trackedPRReviewsFetchedAt.Store(0)
+	return func() {
+		githubConfiguredLoginResolver, githubEnvironmentTokenPresent = prevConfigured, prevEnv
+		trackedPRUserLookup, trackedPRGraphQL = prevLookup, prevSearch
+		setAuthoredOpenPRActiveLogin("")
+		githubLoginCache.Lock()
+		githubLoginCache.login = ""
+		githubLoginCache.Unlock()
+	}
+}
+
+// PollTrackedPRAuthorsForTest runs one colleague-tabs poll synchronously.
+func PollTrackedPRAuthorsForTest() error { return pollTrackedPRAuthors() }
+
 // RecheckFederationRouteAuthorityForTest runs the periodic watcher's authority
 // check immediately, so revocation flows need not race its five-second ticker.
 // Teardown still runs asynchronously through the production broker read loop.

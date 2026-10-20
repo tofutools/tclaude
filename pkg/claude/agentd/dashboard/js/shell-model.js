@@ -250,7 +250,8 @@ export function peerPRAgents(peers) {
 // Ignored filter until it is brought back or its time runs out. The set is
 // one DB-backed dashboard pref holding a JSON object keyed by prKey; each
 // entry keeps enough of the PR (title, repository, number) to stay listable
-// after it drops out of the authored search, e.g. once it merges.
+// after it drops out of the authored search, e.g. once it merges, and whose
+// tab it was ignored from ('' for the operator's own; a colleague's login).
 export const OPEN_PR_IGNORE_DURATIONS = Object.freeze([
   { id: '1d', label: '1 day', ms: 24 * 3600e3 },
   { id: '7d', label: '1 week', ms: 7 * 24 * 3600e3 },
@@ -286,6 +287,7 @@ export function parseIgnoredPRs(raw, now = Date.now()) {
     const clean = {
       url: entry.url, title: ignoredText(entry.title), repository: ignoredText(entry.repository),
       number: Math.max(0, Math.trunc(Number(entry.number) || 0)), until, at,
+      author: ignoredText(entry.author).slice(0, 39),
     };
     if (ignoredEntryActive(clean, now)) out[key] = clean;
   }
@@ -294,7 +296,7 @@ export function parseIgnoredPRs(raw, now = Date.now()) {
 
 // ignorePR returns a new set with pr ignored for durationMs (0 = for good).
 // Past the cap, the oldest ignores make room.
-export function ignorePR(ignored, pr, durationMs, now = Date.now()) {
+export function ignorePR(ignored, pr, durationMs, now = Date.now(), author = '') {
   const key = prKey(pr?.url);
   if (!key || !PR_URL_RE.test(pr.url)) return ignored;
   const next = { ...ignored };
@@ -302,6 +304,7 @@ export function ignorePR(ignored, pr, durationMs, now = Date.now()) {
     url: pr.url, title: ignoredText(pr.title), repository: ignoredText(pr.repository),
     number: Math.max(0, Math.trunc(Number(pr.number) || 0)),
     until: durationMs > 0 ? now + durationMs : 0, at: now,
+    author: ignoredText(author).slice(0, 39),
   };
   const keys = Object.keys(next);
   if (keys.length > IGNORED_PRS_MAX) {
@@ -334,7 +337,9 @@ export function serializeIgnoredPRs(ignored, now = Date.now()) {
   return '';
 }
 
-export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAttention = false, peers = [], ignored = null, now = Date.now()) {
+// owner names whose list this is — '' for the operator's own, else a tracked
+// colleague's login — so the Ignored filter lists only that tab's ignores.
+export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAttention = false, peers = [], ignored = null, now = Date.now(), owner = '') {
   const source = snapshot?.authored_open_prs;
   if (!source?.available) return { available: false, items: [], total: 0, recentCount: 0, recentWindowDays: 0, ignoredCount: 0 };
   const peerAgents = peerPRAgents(peers);
@@ -359,7 +364,9 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
   // that has dropped out (merged long ago, beyond a truncated page) renders
   // from what was stored when it was ignored.
   const liveByKey = new Map([...recentWithIgnored, ...allWithIgnored].map((pr) => [prKey(pr.url), pr]));
+  const ownerKey = String(owner || '').toLowerCase();
   const ignoredItems = activeIgnores
+    .filter(([key, entry]) => liveByKey.has(key) || String(entry.author || '').toLowerCase() === ownerKey)
     .sort(([, a], [, b]) => b.at - a.at)
     .map(([key, entry]) => ({ ...(liveByKey.get(key) || entry), ignored: { until: entry.until, at: entry.at } }));
   // A clean run that is still in flight needs time, not operator attention.

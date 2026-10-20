@@ -1008,6 +1008,9 @@ type snapshotPayload struct {
 	// snapshot only performs one bounded cache read and associates matching
 	// agent PR URLs in memory.
 	AuthoredOpenPRs dashboardAuthoredOpenPRs `json:"authored_open_prs"`
+	// TrackedPRAuthors are the colleague tabs of the same popover: one list
+	// per tracked GitHub user, in the order they were added (trackedprs.go).
+	TrackedPRAuthors []dashboardAuthoredOpenPRs `json:"tracked_pr_authors,omitempty"`
 	// Templates are the group-template blueprints rendered in the
 	// Templates tab. Empty slice (not nil) so JS .map() is safe.
 	Templates []templateJSON `json:"templates"`
@@ -3176,6 +3179,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		cachedPRTitles    map[string]string
 		allTags           map[string][]string
 		authoredOpenPRs   dashboardAuthoredOpenPRs
+		trackedPRAuthors  []dashboardAuthoredOpenPRs
 		branchPRCacheURLs []string
 	)
 	rc := newSnapshotRowCache(convIDs, sharedStatus, func(phases []perfPhase) {
@@ -3207,6 +3211,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"presented_prs", func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) }},
 		snapshotNamedLoad{"tags", func() { allTags, _ = db.ListAllAgentTags() }},
 		snapshotNamedLoad{"authored_open_prs", func() { authoredOpenPRs = loadAuthoredOpenPRsSnapshot(cfg) }},
+		snapshotNamedLoad{"tracked_pr_authors", func() { trackedPRAuthors = loadTrackedPRAuthorsSnapshot(cfg) }},
 	)...)
 	// Every PR visualization draws state and checks from these two canonical
 	// identity-keyed caches. Build the union first so branch/startup,
@@ -3229,6 +3234,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	for _, list := range [][]dashboardAuthoredOpenPR{authoredOpenPRs.Items, authoredOpenPRs.Recent} {
 		for _, pr := range list {
 			allPRCacheURLs = append(allPRCacheURLs, pr.URL)
+		}
+	}
+	for _, view := range trackedPRAuthors {
+		for _, list := range [][]dashboardAuthoredOpenPR{view.Items, view.Recent} {
+			for _, pr := range list {
+				allPRCacheURLs = append(allPRCacheURLs, pr.URL)
+			}
 		}
 	}
 	span.addChildren("preload", runSnapshotNamedLoads(
@@ -3909,6 +3921,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		), prReviews),
 		out.Agents,
 	)
+	for _, view := range trackedPRAuthors {
+		out.TrackedPRAuthors = append(out.TrackedPRAuthors, associateAuthoredOpenPRs(
+			withAuthoredPRReviews(reconcileAuthoredOpenPRs(view, freshPRStates, prChecks, time.Now()), prReviews),
+			out.Agents,
+		))
+	}
 	// Costs-tab visibility: show when there is real pay-per-token spend to
 	// display, OR a subscription account has opted into the WHAT-IF view
 	// (cost.show_on_subscription). A subscription-only account with the opt-in
