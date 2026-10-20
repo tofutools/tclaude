@@ -1770,7 +1770,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label">New branch</span>
       <input id="agent-spawn-wt-branch" type="text" value=${draft.worktreeBranch} disabled=${busy}
         onInput=${(event) => {
-          touched.current.add('worktreeBranch'); touched.current.add('syncWorktree');
+          // Editing the branch also claims the new-worktree selection it belongs
+          // to, which name sync may have made, so a profile change keeps both.
+          touched.current.add('worktree'); touched.current.add('worktreeBranch'); touched.current.add('syncWorktree');
           profileOverrides.current.add('syncWorktree');
           setDraft((before) => ({ ...before, worktreeBranch: event.currentTarget.value, syncWorktree: false }));
         }}

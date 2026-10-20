@@ -1189,12 +1189,17 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
 });
 
 test('Preact agent-spawn profile clear keeps user text and the operator\'s worktree choice', async (t) => {
-  const mounted = await mountSpawn(t);
+  const mounted = await mountSpawn(t, {
+    loadWorktrees: async () => ({
+      repo: '/repo', isRepo: true, empty: false, hasCommits: true, repoRoot: '/repo',
+      worktrees: [], branches: ['main'], defaultBranch: 'main', subRepos: [],
+    }),
+  });
   const { harness, host, state } = mounted;
   try {
     state.open({ groupName: 'alpha' });
     await flush(harness);
-    await flush(harness);
+    await settleWorktrees(harness);
     assert.equal(selectedValue(host.querySelector('#agent-spawn-load-profile')), 'group-default');
 
     const name = host.querySelector('#agent-spawn-name');
@@ -1203,9 +1208,8 @@ test('Preact agent-spawn profile clear keeps user text and the operator\'s workt
     const message = host.querySelector('#agent-spawn-init-msg');
     setValue(message, 'my brief');
     await harness.act(() => harness.fireEvent(message, 'input'));
-    const worktree = host.querySelector('#agent-spawn-worktree');
-    setValue(worktree, '__new__');
-    await harness.act(() => harness.fireEvent(worktree, 'change'));
+    // The new worktree comes from name sync, not an explicit pick.
+    assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
     const branch = host.querySelector('#agent-spawn-wt-branch');
     setValue(branch, 'manual-branch');
     await harness.act(() => harness.fireEvent(branch, 'input'));
