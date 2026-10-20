@@ -862,7 +862,12 @@ path), and saving a profile from the fused view. Auto focus opens the new
 agent in the browser terminal instead of a window on the peer's desktop.
 
 Otherwise spawning into a peer's group sends a spawn request: it opens the
-regular spawn dialog with every control in place. Controls the
+regular spawn dialog with every control in place. Where the peer has not
+granted you `groups.members.spawn` on the group, its spawn button is outlined
+and labelled "request", and clicking it first asks whether to request an agent
+from the peer's operator; the dialog then reads "Request an agent" and sends
+with **Send request**. The peer's operator reviews it on their Spawn requests
+page (below), and the answer arrives in your Messages. Controls the
 request cannot carry are disabled, and hovering one says why; the spawn still
 works, the peer applying its own value there.
 

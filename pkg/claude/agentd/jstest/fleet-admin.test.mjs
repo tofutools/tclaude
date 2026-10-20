@@ -319,7 +319,7 @@ test('the admin view reads status only while shown and lists trusted and waiting
   const s = await setup(t);
   assert.equal(s.log.length, 0, 'hidden view reads nothing');
   await s.show();
-  assert.deepEqual(s.log, [['status']]);
+  assert.deepEqual(s.log, [['status'], ['spawnRequests']], 'the status poll also counts pending spawn requests');
   assert.match(s.mounted.container.textContent, /self-fp-0000/, 'this node\'s fingerprint is shown whole');
   const self = s.q('#fleet-self tbody tr');
   assert.equal(self.dataset.self, 'inst_self');
@@ -2730,4 +2730,14 @@ test('picking whose grants Peer grants shows is a history entry; Back restores i
   })));
   assert.equal(page.fleetGrantTarget.value, 'inst_forge');
   assert.equal(navigated.length, count, 'a restore is not a navigation');
+});
+
+test('the Spawn requests sub-tab counts the requests waiting for a decision', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  const tab = [...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Spawn requests/.test(b.textContent));
+  assert.equal(tab.querySelector('#fleet-spawns-pending-count').textContent, '1', 'pending only: not launching, decided or expired');
+  const { pendingSpawnCount } = await s.harness.importDashboardModule('js/fleet-admin-island.js');
+  assert.equal(pendingSpawnCount([{ status: 'pending', expires_at: '2000-01-01T00:00:00Z' }]), 0, 'an expired request no longer waits');
+  assert.equal(pendingSpawnCount(null), 0);
 });

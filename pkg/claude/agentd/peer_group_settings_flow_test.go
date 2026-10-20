@@ -258,6 +258,14 @@ func TestPeerGroupPowerUnderLifecycleGrants(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
 	require.Equal(t, []string{agentd.PermGroupsMembersStop, agentd.PermGroupsMembersResume}, out.PeerView.Groups["crew"])
+
+	// The spawn grant is named too: the peer's spawn button launches there
+	// instead of sending a request its operator decides.
+	grant(agentd.PermGroupsMembersSpawn, "crew")
+	snap = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
+	require.Contains(t, out.PeerView.Groups["crew"], agentd.PermGroupsMembersSpawn)
+	require.NotContains(t, out.PeerView.Groups["secret"], agentd.PermGroupsMembersSpawn)
 }
 
 // A group's ⚙ cleanup, its delete and the delete's retiring of members first

@@ -650,6 +650,38 @@ const PEER_ACTS = Object.freeze({
   'spawn-agent': { action: 'spawn', feature: 'spawn.request', legacy: 'spawn' },
   'message-new': { action: 'message', feature: 'messaging' },
 });
+// SPAWN_GRANT launches a peer's spawn request without its operator; the peer
+// names it per group in peer_view.groups.
+const SPAWN_GRANT = 'groups.members.spawn';
+
+// spawnRequestOnly reports whether a spawn into group (the peer's own name)
+// is a request the peer's operator decides: the peer takes requests there
+// but has not granted this node spawn in it.
+export function spawnRequestOnly(group, peerView) {
+  if (!peerView || unrestricted(peerView) || featureState('spawn.request', peerView) !== 'shared') return false;
+  const held = peerView?.groups?.[group];
+  return !(Array.isArray(held) && held.includes(SPAWN_GRANT));
+}
+
+// spawnRequestRule marks the spawn buttons under scope that send a request
+// (spawnRequestOnly): outlined and labelled "request", so they do not read
+// as a spawn. groupName maps the peer's group name to the one its controls
+// carry (the fused view's group@node); exclude is a :not() selector list the
+// buttons must not match.
+export function spawnRequestRule(scope, peerView, groupName = (g) => g, exclude = '') {
+  if (!peerView || unrestricted(peerView) || featureState('spawn.request', peerView) !== 'shared') return '';
+  const granted = Object.entries(peerView?.groups || {}).filter(([, held]) => Array.isArray(held) && held.includes(SPAWN_GRANT))
+    .map(([g]) => `[data-group=${cssString(groupName(g))}]`);
+  const not = [...granted, ...(exclude ? [exclude] : [])];
+  const sel = `${scope} .spawn-btn[data-act="spawn-agent"]${not.length ? `:not(${not.join(', ')})` : ''}`;
+  return `${sel} { background: transparent; color: #58a6ff; border: 1px dashed #388bfd; }\n${sel}::after { content: 'request'; }`;
+}
+
+// spawnRequestHint is the hover text on such a button.
+export function spawnRequestHint(node, group) {
+  return `Request an agent — you have no spawn permission in ${group} on ${node}, so its operator approves or denies the request`;
+}
+
 // PEER_ACTION_EVENT carries such a click to peer-action.js.
 export const PEER_ACTION_EVENT = 'tclaude:peer-action';
 const SAFE_GROUP = /^[A-Za-z0-9._@:-]{1,128}$/;
@@ -796,6 +828,7 @@ export function reasonTitles() {
 // no-op unless this page is a peer view.
 const PEER_VIEW_STYLE_ID = 'peer-view-limits-style';
 const PEER_VIEW_MANAGED_STYLE_ID = 'peer-view-managed-style';
+const PEER_VIEW_SPAWN_STYLE_ID = 'peer-view-spawn-request-style';
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 const openRemoteShell = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteShell(opts));
 
@@ -809,11 +842,16 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // A control's reason, as hover and focus give it ([reason, disabled]).
   const reasonOf = (el) => {
     const blocked = blockedControl(el, peerView);
+    if (blocked?.state === 'peer-action' && blocked.el === el) return requestReason(blocked);
     if (!blocked || blocked.state === 'peer-action' || blocked.el !== el) return null;
     // Tabs keep their title only: the palette still lists them, and says why
     // on use.
     return [limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), !OPENS_HERE.has(blocked.state) && !el.matches(TAB_CONTROLS)];
   };
+
+  // A spawn button that sends a request says so on hover (not disabled).
+  const requestReason = (blocked) => (blocked.request?.action === 'spawn' && spawnRequestOnly(blocked.request.group, peerView)
+    ? [spawnRequestHint(nodeName(), blocked.request.group), false] : null);
 
   // Tabs carry their state as a class so CSS greys them, with the reason as
   // their title; recomputed whenever a snapshot changes what the peer shares
@@ -823,6 +861,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     root.classList.toggle('pv-unrestricted', unrestricted(peerView));
     setLimitStyle(doc, PEER_VIEW_STYLE_ID, refusedActsRule('html.remote-node', usableActSelectors(peerView), `[data-act]:not(${FUSED_ROOT} [data-act])`));
     setLimitStyle(doc, PEER_VIEW_MANAGED_STYLE_ID, managedControlsRule(peerView));
+    setLimitStyle(doc, PEER_VIEW_SPAWN_STYLE_ID, spawnRequestRule('html.remote-node', peerView, undefined, `${FUSED_ROOT} [data-act]`));
     for (const tab of doc.querySelectorAll('nav [data-tab]')) {
       const state = tabState(tab.dataset.tab, peerView);
       tab.classList.toggle('pv-off', state !== 'shared');
@@ -869,7 +908,9 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // effect).
   const onOver = (event) => {
     const blocked = blockedControl(event.target, peerView, event);
-    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), !OPENS_HERE.has(blocked.state));
+    const request = blocked?.state === 'peer-action' ? requestReason(blocked) : null;
+    if (request) setReason(blocked.el, request[0], request[1]);
+    else if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), !OPENS_HERE.has(blocked.state));
     // One the peer now shares drops a reason it showed before.
     else if (!blocked) { const el = event.target?.closest?.(REASON_CONTROLS); if (el) clearReason(el); }
   };
@@ -892,6 +933,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     root.classList.remove('pv-unrestricted');
     setLimitStyle(doc, PEER_VIEW_STYLE_ID, '');
     setLimitStyle(doc, PEER_VIEW_MANAGED_STYLE_ID, '');
+    setLimitStyle(doc, PEER_VIEW_SPAWN_STYLE_ID, '');
     doc.removeEventListener('click', refuse, true);
     doc.removeEventListener('keydown', onKey, true);
     doc.removeEventListener('pointerover', onOver, true);

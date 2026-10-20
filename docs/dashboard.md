@@ -1462,6 +1462,8 @@ first and says what will happen. Most pages name their CLI.
   page — that switch is full remote code execution as the tclaude user, and the
   limits beside it cap each script's memory, cpu and processes.
 - **Spawn requests** — workers peers asked this node to start in its groups.
+  Its sub-tab counts the requests waiting for a decision, and a request's
+  notification in Messages has a **review request…** button that opens it.
   **Approve…** starts the worker in that group as you (optionally overriding
   name, profile, cwd, harness or model); **Deny…** declines with an optional
   reason. A launch that never confirmed can be abandoned back to pending, but

@@ -63,6 +63,11 @@ export const SUB_PAGES = Object.freeze([
   { id: 'hub', label: 'Hub' },
 ]);
 
+// pendingSpawnCount counts the spawn requests still open for a decision.
+export function pendingSpawnCount(rows, now = Date.now()) {
+  return Array.isArray(rows) ? rows.filter((r) => r?.status === 'pending' && !(Date.parse(r.expires_at) < now)).length : 0;
+}
+
 function defaultSwitchHome() {
   globalThis.location.assign(nodeHref('', { pathname: toPath(fleetAdminLocation()), search: globalThis.location.search }));
 }
@@ -387,6 +392,8 @@ export function FleetAdmin({
   const [runPreselect, setRunPreselect] = useState('');
   const [tick, setTick] = useState(0);
   const reload = () => setTick((n) => n + 1);
+  // Peers' spawn requests waiting for this operator: the Spawn requests badge.
+  const [pendingSpawns, setPendingSpawns] = useState(0);
   // Board items this node keeps that have a newer version: the Boards badge.
   const [boardUpdates, setBoardUpdates] = useState(null);
   const loadBoardUpdates = (refresh = false) => (actions.boardUpdates ? actions.boardUpdates(refresh) : Promise.resolve(null))
@@ -411,8 +418,9 @@ export function FleetAdmin({
       if (disposed) return;
       if (!globalThis.document?.hidden) {
         try {
-          const [st, pl] = await Promise.all([actions.status(), actions.pools().catch(() => [])]);
-          if (!disposed) { setStatus(st); setPools(pl); setFailure(''); }
+          const [st, pl, sr] = await Promise.all([actions.status(), actions.pools().catch(() => []),
+            actions.spawnRequests ? actions.spawnRequests().catch(() => null) : null]);
+          if (!disposed) { setStatus(st); setPools(pl); setPendingSpawns(pendingSpawnCount(sr)); setFailure(''); }
         } catch (error) {
           if (!disposed) setFailure(error?.status === 404 || error?.status === 403 ? 'unavailable' : errText(error));
         }
@@ -478,7 +486,8 @@ export function FleetAdmin({
     <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
       class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}${p.id === 'setup' && !progress.complete
-        ? html` <span class="fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
+        ? html` <span class="fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'spawns' && pendingSpawns > 0
+        ? html` <span class="fa-badge" id="fleet-spawns-pending-count" title="Spawn requests from peers waiting for your decision">${pendingSpawns}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
         ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}</button>`)}</div>
     ${sub.id === 'setup'
       ? html`<${SetupGuide} onSeen=${state.markSetupSeen} onHub=${() => setPage('hub')} view=${view} groups=${localGroups(snapshot.value)} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}

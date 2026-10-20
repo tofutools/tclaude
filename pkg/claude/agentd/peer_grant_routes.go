@@ -203,9 +203,9 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 var peerGroupControlGrants = []string{PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersManage, PermGroupsMembersClone, PermSessionsShell}
 
 // peerGroupGrants names, per group, the peer grants of
-// peerGroupControlGrants (and the spawn directory, prompts and sandbox
-// grants a group's default directory, saved prompts and sandbox assignment
-// also need) that peer holds there, so its dashboard enables exactly the
+// peerGroupControlGrants (and the spawn grant, plus the spawn directory,
+// prompts and sandbox grants a group's default directory, saved prompts and
+// sandbox assignment also need) that peer holds there, so its dashboard enables exactly the
 // controls a click would be allowed to run. It rides on every peer-view read,
 // so it lists the peer's grants once. Unrestricted trust holds them all on every visible
 // group, which the metadata's level already says: nothing is listed.
@@ -226,6 +226,7 @@ func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 		return false
 	}
 	out := map[string][]string{}
+	resolver := newFedGrantResolver().seedGroups(groups)
 	for _, g := range groups {
 		// A settings grant is a known peer slug, so holding one makes the
 		// group visible to the peer as well.
@@ -237,6 +238,11 @@ func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 			if holds(g.ID, slug) {
 				held = append(held, slug)
 			}
+		}
+		// The spawn grant decides whether the group's spawn button launches
+		// an agent or sends a request this node's operator decides.
+		if resolver.allows(peer, g.ID, PermGroupsMembersSpawn) {
+			held = append(held, PermGroupsMembersSpawn)
 		}
 		if len(held) == 0 {
 			continue

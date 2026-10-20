@@ -271,6 +271,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // A spawn into a peer's group (agent-spawn-remote.js) keeps this dialog
   // but sends a remote spawn request and never touches this node's state.
   const remote = current.remote || null;
+  // Without a spawn grant the peer's operator decides it: a request.
+  const requestOnly = remote?.options?.approval === 'operator';
   // A spawn on another node under unrestricted trust (current.target) runs
   // as that node's own dialog would, through its routes (actions.forNode).
   const target = current.target || null;
@@ -1318,7 +1320,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   >
     <h3 id="agent-spawn-title">${queued
       ? html`<${Words} prefix="spawn-title" plain="Queued agent" wizard="Dormant summoning" />`
-      : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new familiar" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}</h3>
+      : requestOnly
+        ? html`<${Words} prefix="spawn-title" plain="Request an agent" wizard="Petition for a familiar" />`
+        : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new familiar" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}</h3>
     ${queued && html`<div class="agent-spawn-queued-banner" id="agent-spawn-queued-banner">
       ⏸ ${wizard ? 'Prepared' : 'Queued'}${queued.createdAt ? ` ${relTime(queued.createdAt)}` : ''} · not running yet
     </div>`}
@@ -1907,9 +1911,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       </button>
       <button id="agent-spawn-submit" class=${`${queued ? 'agent-spawn-launch-btn' : 'primary'}${busy ? ' slop-pull-active' : ''}`} type="button"
         disabled=${busy} aria-busy=${busy ? 'true' : undefined}
-        title=${queued ? 'Launch it now and remove it from the queue' : 'Spawn the agent now (Ctrl/⌘+Enter)'}
+        title=${queued ? 'Launch it now and remove it from the queue' : requestOnly ? `Send the request to ${remote.node}'s operator (Ctrl/⌘+Enter)` : 'Spawn the agent now (Ctrl/⌘+Enter)'}
         onClick=${() => { void submit(); }}>
-        ${busy && !queueing ? 'Spawning…' : (queued ? '▶ Spawn now' : 'Spawn')}
+        ${busy && !queueing ? (requestOnly ? 'Sending…' : 'Spawning…') : (queued ? '▶ Spawn now' : requestOnly ? 'Send request' : 'Spawn')}
       </button>
     </div>
   </${Overlay}>`;

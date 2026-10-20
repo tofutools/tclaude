@@ -701,3 +701,25 @@ test('on a peer\'s page under unrestricted trust, Messages deletes, wipes and fo
   assert.equal(del.disabled, false);
   await mounted.unmount();
 });
+
+test('a peer\'s spawn request notification opens Spawn requests to review it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const { fleetAdminPage } = await harness.importDashboardModule('js/fleet-admin-page.js');
+  const clicked = [];
+  const nav = harness.document.createElement('nav');
+  nav.innerHTML = '<button data-tab="fleet-admin"></button>';
+  nav.firstChild.addEventListener('click', () => clicked.push('fleet-admin'));
+  harness.document.body.appendChild(nav);
+  t.after(() => nav.remove());
+  const request = { id: 1, from_conv: '', from_agent: '', from_title: 'operator@forge (remote)', group: 'federation:inst_forge7', subject: 'remote spawn request #12' };
+  const state = harness.signals.signal({ ...populated(), messages: [message(1, request)] });
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controllerFor(state)} />`);
+  const review = mounted.container.querySelector('[data-act="review-spawn-request"]');
+  assert.ok(review, 'a waiting request offers its review');
+  await harness.act(() => review.click());
+  assert.equal(fleetAdminPage.value, 'spawns');
+  assert.deepEqual(clicked, ['fleet-admin']);
+  await harness.act(() => { state.value = { ...state.value, messages: [message(1, { ...request, subject: 'remote spawn request #12 auto-approved' })] }; });
+  assertAbsent(mounted.container.querySelector('[data-act="review-spawn-request"]'), 'a decided request has nothing to review');
+});

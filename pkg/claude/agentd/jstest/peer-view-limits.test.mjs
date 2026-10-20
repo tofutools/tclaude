@@ -382,3 +382,19 @@ test('palette commands only unrestricted trust reaches are off on a restricted p
   const full = mod.limitPeerViewCommands(cmds, { peer_view: { level: 'unrestricted' } }, remote);
   assert.notEqual(full[0].enabled, false, 'unrestricted trust runs it on the peer');
 });
+
+test('a spawn without the peer\'s spawn grant is marked as a request, group by group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const view = { ...pv, included: [...pv.included, 'spawn.request', 'spawn'], groups: { build: ['groups.members.spawn'], ops: ['groups.settings'] } };
+  assert.equal(mod.spawnRequestOnly('build', view), false, 'the spawn grant launches it');
+  assert.equal(mod.spawnRequestOnly('ops', view), true, 'another grant is no spawn grant');
+  assert.equal(mod.spawnRequestOnly('docs', view), true, 'a group without grants takes a request');
+  assert.equal(mod.spawnRequestOnly('docs', { ...view, level: 'unrestricted' }), false);
+  assert.equal(mod.spawnRequestOnly('docs', pv), false, 'a peer taking no requests has nothing to mark');
+  const rule = mod.spawnRequestRule('html.remote-node', view);
+  assert.match(rule, /^html\.remote-node \.spawn-btn\[data-act="spawn-agent"\]:not\(\[data-group="build"\]\) \{/);
+  assert.match(rule, /::after \{ content: 'request'; \}/);
+  assert.equal(mod.spawnRequestRule('x', { ...view, level: 'unrestricted' }), '');
+  assert.match(mod.spawnRequestRule('S', view, (g) => `${g}@forge`, '#root [data-act]'), /:not\(\[data-group="build@forge"\], #root \[data-act\]\)/);
+});
