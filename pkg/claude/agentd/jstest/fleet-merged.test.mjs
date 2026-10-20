@@ -684,6 +684,15 @@ test("the Groups toolbar follows the node of the fused group last clicked, and r
   const node = toolbar.toolbarNode.value;
   assert.deepEqual([node.id, node.profile, node.sandbox], ['inst_forge', 'forge-prof', 'forge-box']);
   assert.equal(toolbar.toolbarTarget(), 'inst_forge');
+  // dashboard.fused_toolbar_fixed_node: only the chip moves it.
+  toolbar.setToolbarFixedNode(true);
+  t.after(() => toolbar.setToolbarFixedNode(false));
+  await harness.act(() => toolbar.pickToolbarNode('inst_self'));
+  await harness.act(() => harness.fireEvent(d.querySelector('.x'), 'click'));
+  await harness.act(() => harness.fireEvent(d.querySelector('details'), 'contextmenu'));
+  assert.equal(toolbar.toolbarNode.value.id, 'inst_self', 'a fixed toolbar stays on the chip\'s pick');
+  await harness.act(() => toolbar.pickToolbarNode('inst_forge'));
+  assert.equal(toolbar.toolbarNode.value.id, 'inst_forge', 'the chip still moves it');
   await harness.act(() => { activeTab.value = 'usage'; });
   assert.equal(toolbar.toolbarNode.value, null, 'leaving the fused Groups view gives the toolbar back to the page');
   await mounted.unmount(); state.dispose();

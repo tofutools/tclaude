@@ -5,9 +5,10 @@
 // One node's page: that node, and nothing here is set. The fused Groups view
 // lists several nodes' groups on one page, so it publishes those nodes
 // (setToolbarNodes) and the toolbar follows the node of the group last
-// interacted with there (pickToolbarNode), or the one picked in the toolbar's
-// node chip. Every node's own setup cannot fit the toolbar; the chip says
-// whose it shows.
+// interacted with there (followToolbarNode), or the one picked in the
+// toolbar's node chip (pickToolbarNode). Config
+// dashboard.fused_toolbar_fixed_node turns the following off. Every node's
+// own setup cannot fit the toolbar; the chip says whose it shows.
 import { computed, signal } from '@preact/signals';
 import { managedHint } from './peer-view-limits.js';
 
@@ -40,6 +41,17 @@ export function setToolbarNodes(list = []) {
 // pickToolbarNode makes a listed node the toolbar's.
 export function pickToolbarNode(id) {
   if (id && toolbarNodes.value.some((n) => n.id === id)) picked.value = id;
+}
+
+// followToolbarNode moves the toolbar to the node of a group acted on in the
+// fused view, unless config dashboard.fused_toolbar_fixed_node keeps it on
+// the chip's pick.
+let fixedNode = false;
+export function setToolbarFixedNode(value) {
+  fixedNode = !!value;
+}
+export function followToolbarNode(id) {
+  if (!fixedNode) pickToolbarNode(id);
 }
 
 // toolbarTarget is the node a toolbar control's requests go to: blank for the

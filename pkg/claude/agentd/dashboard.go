@@ -1199,6 +1199,11 @@ type snapshotPayload struct {
 	// them to Groups (false, the default). refresh.js hands it to
 	// terminal-close-nav.js each poll. See Config.StayOnTerminalsAfterLastClose.
 	StayOnTerminalsAfterLastClose bool `json:"stay_on_terminals_after_last_close"`
+	// FusedToolbarFixedNode mirrors config dashboard.fused_toolbar_fixed_node
+	// — whether the fused Groups toolbar stays on the node picked in its chip
+	// (true) or follows the group last acted on (false, the default).
+	// refresh.js hands it to toolbar-node.js each poll.
+	FusedToolbarFixedNode bool `json:"fused_toolbar_fixed_node"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -3444,6 +3449,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowGroupDescription:          cfg.ShowGroupDescription(),
 		ShowFinalPRChecks:             cfg.ShowFinalPRChecks(),
 		StayOnTerminalsAfterLastClose: cfg.StayOnTerminalsAfterLastClose(),
+		FusedToolbarFixedNode:         cfg.FusedToolbarFixedNode(),
 		ProcessesEnabled:              cfg.ProcessesEnabled(),
 		TriggersEnabled:               triggersEnabled,
 		GroupsRouteMapEnabled:         groupsRouteMapEnabled,

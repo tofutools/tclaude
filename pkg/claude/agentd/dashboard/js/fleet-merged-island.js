@@ -32,7 +32,7 @@ import { featureState } from './feature-state-registry.js';
 import { peerSharesNotifications, usePeerNotifications } from './peer-notifications.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { publishFusedDock } from './dock-nodes.js';
-import { pickToolbarNode, setToolbarNodes } from './toolbar-node.js';
+import { followToolbarNode, setToolbarNodes } from './toolbar-node.js';
 
 const html = htm.bind(h);
 
@@ -537,6 +537,7 @@ export function MergedGroups({
   // right-clicked or dropped onto. Hover, focus and polls do not move it, nor
   // does a click on a group's plain text or empty space: that is often just
   // the click away from the toolbar's own node chip, which it would undo.
+  // Config dashboard.fused_toolbar_fixed_node turns the following off.
   const toolbarList = active && merged ? merged.fleet_nodes.map(({ node }) => {
     const snap = snapOf(node.id);
     return {
@@ -550,7 +551,7 @@ export function MergedGroups({
     if (!host) return undefined;
     const follow = (event) => {
       if (event.type === 'click' && !event.target?.closest?.(FOLLOW_CLICK_TARGETS)) return;
-      pickToolbarNode(event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode || '');
+      followToolbarNode(event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode || '');
     };
     const kinds = ['click', 'contextmenu', 'drop'];
     for (const kind of kinds) host.addEventListener(kind, follow, true);

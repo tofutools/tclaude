@@ -1135,6 +1135,16 @@ func TestStayOnTerminalsAfterLastClose(t *testing.T) {
 	assert.True(t, loaded.StayOnTerminalsAfterLastClose(), "true survives round-trip")
 }
 
+func TestFusedToolbarFixedNode(t *testing.T) {
+	assert.False(t, (*Config)(nil).FusedToolbarFixedNode(), "nil → follows")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{}}).FusedToolbarFixedNode(), "absent key → follows")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{FusedToolbarFixedNode: true}}).FusedToolbarFixedNode(), "explicit true → fixed")
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "fused_toolbar_fixed_node")
+}
+
 func TestShowGroupDescription(t *testing.T) {
 	// Default is false (chip hidden) for every "unset" shape.
 	assert.False(t, (*Config)(nil).ShowGroupDescription(), "nil → hidden")
