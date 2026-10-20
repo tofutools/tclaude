@@ -30,18 +30,16 @@ type teleportCredentials struct {
 // servePeerTeleportCredentials answers GET /api/teleport-credentials?group=G.
 func servePeerTeleportCredentials(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
 	out := teleportCredentials{Allowed: []string{"local"}, Default: "local", Shares: []modelShare{}}
-	var groupID int64
-	if name := r.URL.Query().Get("group"); name != "" {
-		g, err := db.GetAgentGroupByName(name)
-		// Only a group the peer may send agents to is answered for.
-		if err != nil || g == nil || !fedPeerAllows(v.peer.InstanceID, g.ID, PermAgentsTeleportReceive) && !fedPeerAllows(v.peer.InstanceID, g.ID, PermAgentsReceive) {
-			writeError(w, 404, "not_found", "no such group")
-			return
-		}
-		groupID = g.ID
+	// Only a group the peer may send agents to is answered for, so a peer
+	// without a receive grant learns nothing (nor fans out to other peers).
+	g, err := db.GetAgentGroupByName(r.URL.Query().Get("group"))
+	if err != nil || g == nil || !fedPeerAllows(v.peer.InstanceID, g.ID, PermAgentsTeleportReceive) && !fedPeerAllows(v.peer.InstanceID, g.ID, PermAgentsReceive) {
+		writeError(w, 404, "not_found", "no such group")
+		return
 	}
+	groupID := g.ID
 	if a, err := db.GetFederationNodeProfileAssignment(v.peer.InstanceID); err == nil && a != nil {
-		if l := a.Profile.Definition.TeleportLanding; l != nil && (groupID == 0 || l.GroupID == groupID) {
+		if l := a.Profile.Definition.TeleportLanding; l != nil && l.GroupID == groupID {
 			landing := *l
 			if normalizeTeleportLanding(&landing) == nil {
 				out.Allowed, out.Default = slices.Clone(landing.CredentialsAllowed), landing.CredentialsDefault

@@ -370,12 +370,19 @@ function useModelAccess({ mode, agent, target, api, pull, acting }) {
     const loads = pull
       ? [Promise.resolve(null), Promise.resolve(null), settle(api.sharesReceived?.() || Promise.reject())]
       : [settle(api.teleportCredentials?.(target.node, target.group) || Promise.reject()), settle(api.models?.() || Promise.reject()), Promise.resolve(null)];
-    Promise.all(loads).then(([creds, control, received]) => {
+    // This node's trust of the other node: a pull's source is held to this
+    // node's landing policy, and a lease to a push's receiver needs a grant.
+    const other = pull ? agent.node : target.node;
+    loads.push(settle(api.status?.() || Promise.reject()));
+    Promise.all(loads).then(([creds, control, received, status]) => {
       if (!live) return;
       setOptions(modelAccessOptions({
         dest, harness: agent.harness || '', creds, pull,
         own: pull ? [] : ownGateways(control),
         shares: pull ? (received?.shares || []) : (creds?.shares || []),
+        trust: (status?.peers || []).find((p) => p.instance_id === other)?.level || '',
+        source: agent.node, sourceName: agent.nodeName,
+        selfIds: [status?.instance_id, status?.name],
       }));
     });
     return () => { live = false; };

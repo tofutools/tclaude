@@ -16,19 +16,29 @@ export function harnessDialect(harness) {
 // node; creds is its /api/teleport-credentials answer (null for a pull
 // here, where this node decides); own are this node's gateways (push only,
 // paid through a lease); shares are gateways the receiving node can use.
-// Each option is {value, label, reason}; a reason disables it.
-export function modelAccessOptions({ dest, harness = '', creds = null, own = [], shares = [], pull = false }) {
+// trust is the level this node gives the other node (the receiver of a push,
+// the source of a pull), source names a pull's source node, and selfIds are
+// the names a landing policy may use for this node. Each option is
+// {value, label, reason}; a reason disables it.
+export function modelAccessOptions({ dest, harness = '', creds = null, own = [], shares = [], pull = false, trust = '', source = '', sourceName = '', selfIds = [] }) {
   const dialect = harnessDialect(harness);
   const gatewayWhy = dialect === null ? `${harness} cannot use a model gateway` : '';
   const fits = (d) => !dialect || (d || 'anthropic') === dialect;
   // A landing policy names this node's own gateway by whatever alias its
-  // operator used for this node, so one of ours matches by gateway name.
-  const accepts = (mode) => pull || !creds || creds.any || (creds.allowed || []).includes(mode)
-    || (mode.endsWith('@self') && (creds.allowed || []).some((m) => m.startsWith(mode.slice(0, -'self'.length))));
+  // operator used for this node.
+  const ours = new Set(['self', ...selfIds.filter(Boolean)]);
+  const accepts = (mode) => !creds || creds.any || (creds.allowed || []).includes(mode)
+    || (mode.endsWith('@self') && (creds.allowed || []).some((m) => {
+      const at = m.lastIndexOf('@');
+      return m.slice(0, at) === mode.slice(0, -'@self'.length) && ours.has(m.slice(at + 1));
+    }));
+  // A pull lands here: this node holds the source to its landing policy
+  // unless it trusts the source unrestricted.
+  const pullWhy = pull && trust !== 'unrestricted' ? `this node holds ${sourceName || 'that node'} to its landing policy; trust it unrestricted to choose here` : '';
   const out = [];
   const def = creds?.default && creds.default !== 'local' ? ` (${creds.default.replace(/^proxy:/, 'gateway ')})` : '';
   out.push({ value: '', label: `${dest}'s default${def}`, reason: '' });
-  out.push({ value: 'local', label: `${dest}'s own login`, reason: accepts('local') ? '' : `${dest} does not accept that from this node` });
+  out.push({ value: 'local', label: `${dest}'s own login`, reason: pull || accepts('local') ? '' : `${dest} does not accept that from this node` });
   if (!pull) {
     for (const g of own) {
       if (!fits(g.dialect)) continue;
@@ -36,13 +46,18 @@ export function modelAccessOptions({ dest, harness = '', creds = null, own = [],
       const reason = gatewayWhy || (!g.enabled ? 'this gateway is disabled'
         : creds?.requester_pays === 'off' ? `${dest} does not take workers you pay for`
           : !accepts(value) ? `${dest}'s landing policy does not list it` : '');
-      out.push({ value, label: `Your gateway ${g.name} (you pay)`, reason });
+      // The lease needs a models.proxy.leased grant for the receiver, which
+      // unrestricted trust implies; an explicit grant is not visible here.
+      const grant = trust === 'unrestricted' ? '' : ` (needs a models.proxy.leased grant for ${dest})`;
+      out.push({ value, label: `Your gateway ${g.name} (you pay)${grant}`, reason });
     }
   }
   for (const s of shares) {
-    if (!fits(s.dialect)) continue;
+    // The source's own gateway would become a lease the source pays for, not
+    // the share this node holds.
+    if (!fits(s.dialect) || (pull && s.peer === source)) continue;
     const value = `proxy:${s.gateway}@${s.peer}`;
-    const reason = gatewayWhy || (s.used_up ? 'its cap is spent' : !accepts(value) ? `${dest}'s landing policy does not list it` : '');
+    const reason = gatewayWhy || pullWhy || (s.used_up ? 'its cap is spent' : !pull && !accepts(value) ? `${dest}'s landing policy does not list it` : '');
     out.push({ value, label: `${s.peer_name || s.peer}'s gateway ${s.gateway}`, reason });
   }
   return out;
