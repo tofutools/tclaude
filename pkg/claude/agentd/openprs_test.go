@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"net/url"
 	"testing"
 	"time"
 
@@ -393,4 +394,30 @@ func TestAssociateAuthoredOpenPRsWithStatuslineOnlyPR(t *testing.T) {
 	}, []dashboardAgent{{AgentID: "agt_1", ConvID: "conv", Title: "builder", repoLinksView: links.withPresentedPRs(nil)}})
 	assert.Equal(t, "agt_1", view.Items[0].AgentID)
 	assert.Equal(t, "builder", view.Items[0].AgentTitle)
+}
+
+// Archived-repository PRs stay in the decoded search (shared caches and the
+// Groups badges keep seeing them) and leave only the footer lists, including
+// through the local union of agent branch links.
+func TestFooterPRListsDropArchivedRepositories(t *testing.T) {
+	data := []byte(`{"data":{
+		"search":{"issueCount":2,"nodes":[
+			{"number":1,"title":"live","url":"https://github.com/acme/app/pull/1","repository":{"nameWithOwner":"acme/app"},"commits":{"nodes":[]}},
+			{"number":2,"title":"frozen","url":"https://github.com/acme/old/pull/2","repository":{"nameWithOwner":"acme/old","isArchived":true},"commits":{"nodes":[]}}]},
+		"recent":{"issueCount":1,"nodes":[
+			{"number":3,"title":"frozen too","url":"https://github.com/acme/old/pull/3","state":"MERGED","mergedAt":"2026-08-13T09:00:00Z","repository":{"nameWithOwner":"acme/old","isArchived":true}}]}}}`)
+	view, _, err := decodeAuthoredOpenPRGraphQL(data, "octocat")
+	require.NoError(t, err)
+	require.Len(t, view.Items, 2, "the decoded search keeps archived PRs for the shared caches")
+	assert.True(t, view.Items[1].Archived)
+
+	states := make(prStateIndex)
+	states.add("https://github.com/acme/old/pull/2", "open", time.Now())
+	view = unionLocallyKnownOpenPRs(view, []locallyKnownPR{{URL: "https://github.com/acme/old/pull/2/files"}}, states, nil)
+	got := withoutArchivedPRs(view)
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, 1, got.Items[0].Number)
+	assert.Equal(t, 1, got.Total, "an archived PR leaves the count too")
+	assert.Empty(t, got.Recent)
+	assert.Contains(t, got.SearchURL, url.QueryEscape("archived:false"))
 }

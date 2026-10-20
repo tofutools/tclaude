@@ -58,8 +58,8 @@ var (
 	trackedPRGraphQL = liveTrackedPRGraphQL
 	// trackedPRKick wakes the poller when an author is added, so the new tab
 	// fills within a second instead of up to a minute later.
-	trackedPRKick                = make(chan struct{}, 1)
-	trackedPRReviewsFetchedAt    atomic.Int64
+	trackedPRKick             = make(chan struct{}, 1)
+	trackedPRReviewsFetchedAt atomic.Int64
 	// trackedPRAuthorsEditMu serializes the endpoint's load-modify-save, so
 	// two quick adds cannot drop one another.
 	trackedPRAuthorsEditMu       sync.Mutex

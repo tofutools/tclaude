@@ -43,7 +43,7 @@ const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first)
     nodes{
       ... on PullRequest{
         number title url isDraft updatedAt reviewDecision
-        repository{nameWithOwner}
+        repository{nameWithOwner isArchived}
         commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
           __typename
           ... on CheckRun{name status conclusion detailsUrl startedAt completedAt}
@@ -84,7 +84,7 @@ const authoredRecentPRSearchFragment = `  recent: search(query:$qr,type:ISSUE,fi
     nodes{
       ... on PullRequest{
         number title url isDraft updatedAt state mergedAt closedAt
-        repository{nameWithOwner}
+        repository{nameWithOwner isArchived}
       }
     }
   }`
@@ -105,6 +105,11 @@ type dashboardAuthoredOpenPR struct {
 	// Items in the open list leave both empty.
 	State    string `json:"state,omitempty"`
 	ClosedAt string `json:"closed_at,omitempty"`
+	// Archived marks a PR whose repository is archived. The searches keep
+	// returning such PRs, so every shared cache (and with it the Groups
+	// badges) sees them as before; only the footer popover's lists drop them,
+	// at snapshot time (withoutArchivedPRs).
+	Archived bool `json:"archived,omitempty"`
 	// Reviews is stamped from the per-PR review cache at snapshot time, open
 	// items only (prreviews.go).
 	Reviews *prReviewSummary `json:"reviews,omitempty"`
@@ -420,6 +425,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 					} `json:"latestOpinionatedReviews"`
 					Repository struct {
 						NameWithOwner string `json:"nameWithOwner"`
+						IsArchived    bool   `json:"isArchived"`
 					} `json:"repository"`
 					Commits struct {
 						Nodes []struct {
@@ -449,6 +455,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 					ClosedAt   string `json:"closedAt"`
 					Repository struct {
 						NameWithOwner string `json:"nameWithOwner"`
+						IsArchived    bool   `json:"isArchived"`
 					} `json:"repository"`
 				} `json:"nodes"`
 			} `json:"recent"`
@@ -467,7 +474,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 	view := dashboardAuthoredOpenPRs{
 		Available: true,
 		Login:     login,
-		SearchURL: "https://github.com/pulls?q=" + url.QueryEscape("is:open is:pr author:"+login),
+		SearchURL: "https://github.com/pulls?q=" + url.QueryEscape("is:open is:pr archived:false author:"+login),
 		Total:     payload.Data.Search.IssueCount,
 		Truncated: payload.Data.Search.IssueCount > authoredOpenPRLimit,
 		Items:     []dashboardAuthoredOpenPR{},
@@ -482,6 +489,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 		item := dashboardAuthoredOpenPR{
 			Number: node.Number, URL: strings.TrimSpace(node.URL), Title: truncateAuthoredPRTitle(node.Title),
 			Repository: ref.repo, Draft: node.IsDraft, UpdatedAt: node.UpdatedAt,
+			Archived: node.Repository.IsArchived,
 		}
 		if len(node.Commits.Nodes) > 0 && node.Commits.Nodes[0].Commit.StatusCheckRollup != nil {
 			raw, _ := json.Marshal(node.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes)
@@ -529,7 +537,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 			Number: node.Number, URL: strings.TrimSpace(node.URL),
 			Title: truncateAuthoredPRTitle(node.Title), Repository: ref.repo,
 			Draft: node.IsDraft, UpdatedAt: node.UpdatedAt,
-			State: state, ClosedAt: closedAt,
+			State: state, ClosedAt: closedAt, Archived: node.Repository.IsArchived,
 		})
 	}
 	view.RecentTruncated = payload.Data.Recent.IssueCount > authoredRecentPRLimit
@@ -640,7 +648,7 @@ func applyRecentPRWindow(view dashboardAuthoredOpenPRs, cfg *config.Config, logi
 	view.RecentSearchURL = ""
 	if windowDays > 0 {
 		view.RecentSearchURL = "https://github.com/pulls?q=" + url.QueryEscape(
-			"is:closed is:pr author:"+login+" closed:>="+
+			"is:closed is:pr archived:false author:"+login+" closed:>="+
 				time.Now().UTC().AddDate(0, 0, -windowDays).Format("2006-01-02"))
 	}
 	return view
@@ -755,6 +763,27 @@ func reconcileAuthoredOpenPRs(
 	sort.SliceStable(view.Recent, func(i, j int) bool {
 		return view.Recent[i].ClosedAt > view.Recent[j].ClosedAt
 	})
+	return view
+}
+
+// withoutArchivedPRs drops pull requests in archived repositories from a
+// footer list — the operator never wants to see them there. It runs after
+// unionLocallyKnownOpenPRs, which counts an archived PR the search returned as
+// already known, so an agent's branch link cannot bring it back either.
+func withoutArchivedPRs(view dashboardAuthoredOpenPRs) dashboardAuthoredOpenPRs {
+	keep := func(list []dashboardAuthoredOpenPR) ([]dashboardAuthoredOpenPR, int) {
+		out := make([]dashboardAuthoredOpenPR, 0, len(list))
+		for _, pr := range list {
+			if !pr.Archived {
+				out = append(out, pr)
+			}
+		}
+		return out, len(list) - len(out)
+	}
+	var dropped int
+	view.Items, dropped = keep(view.Items)
+	view.Total = max(0, view.Total-dropped)
+	view.Recent, _ = keep(view.Recent)
 	return view
 }
 
