@@ -169,13 +169,16 @@ func pollTrackedPRAuthors() error {
 	}
 	cfg, _ := config.Load()
 	now := time.Now()
+	reviewsMark := trackedPRReviewsFetchedAt.Load()
 	withReviews := trackedPRReviewsDue(now)
 	views, err := trackedPRResolver(authors, cfg.RecentPRWindowDays(), now, withReviews)
 	if err != nil {
 		return err
 	}
 	if withReviews {
-		trackedPRReviewsFetchedAt.Store(now.UnixNano())
+		// An add during this search reset the mark to 0; keep that reset so
+		// the kicked poll fetches the new author's reviewers.
+		trackedPRReviewsFetchedAt.CompareAndSwap(reviewsMark, now.UnixNano())
 	}
 	for _, view := range views {
 		if view.Error != "" {
