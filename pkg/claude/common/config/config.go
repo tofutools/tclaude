@@ -616,6 +616,11 @@ type DashboardConfig struct {
 	// on. Flip this on to keep the old stay-put behavior. Default false. See
 	// (*Config).StayOnTerminalsAfterLastClose.
 	StayOnTerminalsAfterLastClose bool `json:"stay_on_terminals_after_last_close,omitempty"`
+	// FusedToolbarFixedNode keeps the fused Groups view's toolbar (global
+	// defaults, + new group) on the node picked in its node chip. By default
+	// it follows the node of the group last acted on there. Default false.
+	// See (*Config).FusedToolbarFixedNode.
+	FusedToolbarFixedNode bool `json:"fused_toolbar_fixed_node,omitempty"`
 }
 
 // Browser-terminal attach resize modes — config dashboard.terminal_attach.mode.
@@ -1725,6 +1730,14 @@ func (c *Config) ShowFinalPRChecks() bool {
 // moves to the Groups tab. Nil-safe on the receiver.
 func (c *Config) StayOnTerminalsAfterLastClose() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.StayOnTerminalsAfterLastClose
+}
+
+// FusedToolbarFixedNode reports whether the fused Groups view's toolbar stays
+// on the node picked in its node chip — config
+// dashboard.fused_toolbar_fixed_node. Default false: it follows the node of
+// the group last acted on. Nil-safe on the receiver.
+func (c *Config) FusedToolbarFixedNode() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.FusedToolbarFixedNode
 }
 
 // HScrollFollow reports whether the dashboard's full-bleed chrome bars

@@ -43,6 +43,7 @@ import { disclosurePreference } from './group-tree-activity.js';
 import { checkAssetsVersion } from './assets-version.js';
 import { setTerminalAttachConfig } from './terminal-attach-config.js';
 import { setStayOnTerminalsAfterLastClose } from './terminal-close-nav.js';
+import { setToolbarFixedNode } from './toolbar-node.js';
 import { peerViewTabUsable } from './peer-view-limits.js';
 import { automationsNavTarget, noteAutomationsSection } from './automations-nav.js';
 
@@ -272,6 +273,7 @@ export async function refresh(options) {
     setHScrollFollow(data.hscroll_follow !== false);
     setTerminalAttachConfig(data.terminal_attach);
     setStayOnTerminalsAfterLastClose(data.stay_on_terminals_after_last_close);
+    setToolbarFixedNode(data.fused_toolbar_fixed_node);
     // Group quick-options fold mode (config dashboard.group_quick_options,
     // default "hover"). body.group-quick-fold drives the CSS horizontal
     // accordion: the editable chips in each group <summary> collapse to
