@@ -74,7 +74,7 @@ func handleQueuedSpawns(w http.ResponseWriter, r *http.Request) {
 		}
 		// The row id names the attachment dir, so the draft's attachments are
 		// stored after the insert and the row rewritten with their stored names.
-		stored, err := storeQueuedSpawnAttachments(id, draft)
+		stored, _, err := storeQueuedSpawnAttachments(id, draft)
 		if err == nil && stored != draft {
 			err = db.UpdateQueuedSpawn(id, group, stored, time.Now())
 		}
@@ -110,7 +110,7 @@ func handleQueuedSpawnByID(w http.ResponseWriter, r *http.Request) {
 			writeQueuedSpawnError(w, firstNonNil(err, db.ErrQueuedSpawnNotFound))
 			return
 		}
-		stored, err := storeQueuedSpawnAttachments(id, draft)
+		stored, prune, err := storeQueuedSpawnAttachments(id, draft)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_attachments", err.Error())
 			return
@@ -119,6 +119,7 @@ func handleQueuedSpawnByID(w http.ResponseWriter, r *http.Request) {
 			writeQueuedSpawnError(w, err)
 			return
 		}
+		prune()
 		writeQueuedSpawn(w, http.StatusOK, id)
 	case http.MethodDelete:
 		queuedSpawnAttachmentsMu.Lock()

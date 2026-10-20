@@ -45,34 +45,36 @@ type queuedSpawnAttachment struct {
 
 // storeQueuedSpawnAttachments reconciles the queued spawn's dir with the
 // draft's attachments: staged uploads are copied in, stored files the draft no
-// longer lists are removed. It returns the draft with its attachments rewritten
-// to the stored names. On error the dir is left as it was.
-func storeQueuedSpawnAttachments(id int64, draft string) (string, error) {
+// longer lists are removed by the returned prune, which the caller runs once
+// the row naming the new list is written. It returns the draft with its
+// attachments rewritten to the stored names. On error the dir is left as it was.
+func storeQueuedSpawnAttachments(id int64, draft string) (string, func(), error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(draft), &fields); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	dir := queuedSpawnAttachmentsDir(id)
 	raw, listed := fields["attachments"]
 	var entries []queuedSpawnAttachment
 	if listed && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &entries); err != nil {
-			return "", fmt.Errorf("draft.attachments: %w", err)
+			return "", nil, fmt.Errorf("draft.attachments: %w", err)
 		}
 	}
 	if len(entries) > maxSpawnAttachments {
-		return "", fmt.Errorf("too many attachments: %d (max %d)", len(entries), maxSpawnAttachments)
+		return "", nil, fmt.Errorf("too many attachments: %d (max %d)", len(entries), maxSpawnAttachments)
 	}
 	if len(entries) == 0 {
-		if err := os.RemoveAll(dir); err != nil {
-			return "", err
-		}
+		prune := func() { _ = os.RemoveAll(dir) }
 		if !listed {
-			return draft, nil
+			return draft, prune, nil
 		}
 		delete(fields, "attachments")
 		out, err := json.Marshal(fields)
-		return string(out), err
+		if err != nil {
+			return "", nil, err
+		}
+		return string(out), prune, nil
 	}
 
 	existing := map[string]bool{}
@@ -94,7 +96,7 @@ func storeQueuedSpawnAttachments(id int64, draft string) (string, error) {
 		}
 		info, err := os.Lstat(filepath.Join(dir, entry.Name))
 		if entry.Name == "" || sanitizeAttachmentFilename(entry.Name) != entry.Name || err != nil || !info.Mode().IsRegular() {
-			return "", fmt.Errorf("attachment %d: %q is not stored with this queued spawn", i, entry.Name)
+			return "", nil, fmt.Errorf("attachment %d: %q is not stored with this queued spawn", i, entry.Name)
 		}
 		entries[i].Size = info.Size()
 		kept[entry.Name] = true
@@ -113,16 +115,16 @@ func storeQueuedSpawnAttachments(id int64, draft string) (string, error) {
 		}
 		if stagingErr != nil {
 			rollback()
-			return "", fmt.Errorf("resolve daemon attachment staging root: %w", stagingErr)
+			return "", nil, fmt.Errorf("resolve daemon attachment staging root: %w", stagingErr)
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			rollback()
-			return "", err
+			return "", nil, err
 		}
 		source, err := openDaemonStagedAttachment(stagingBase, entry.Staged)
 		if err != nil {
 			rollback()
-			return "", fmt.Errorf("attachment %d: %w", i, err)
+			return "", nil, fmt.Errorf("attachment %d: %w", i, err)
 		}
 		name := entry.Name
 		if name == "" {
@@ -134,7 +136,7 @@ func storeQueuedSpawnAttachments(id int64, draft string) (string, error) {
 		_ = source.Close()
 		if werr != nil {
 			rollback()
-			return "", fmt.Errorf("attachment %d: %s", i, werr.msg)
+			return "", nil, fmt.Errorf("attachment %d: %s", i, werr.msg)
 		}
 		created = append(created, dest)
 		used[name] = true
@@ -142,23 +144,25 @@ func storeQueuedSpawnAttachments(id int64, draft string) (string, error) {
 		entries[i] = queuedSpawnAttachment{Name: name, Size: size}
 	}
 
-	for name := range existing {
-		if !kept[name] {
-			_ = os.RemoveAll(filepath.Join(dir, name))
+	prune := func() {
+		for name := range existing {
+			if !kept[name] {
+				_ = os.RemoveAll(filepath.Join(dir, name))
+			}
 		}
 	}
 	encoded, err := json.Marshal(entries)
 	if err != nil {
 		rollback()
-		return "", err
+		return "", nil, err
 	}
 	fields["attachments"] = encoded
 	out, err := json.Marshal(fields)
 	if err != nil {
 		rollback()
-		return "", err
+		return "", nil, err
 	}
-	return string(out), nil
+	return string(out), prune, nil
 }
 
 // removeQueuedSpawnAttachments drops a deleted queued spawn's dir.
