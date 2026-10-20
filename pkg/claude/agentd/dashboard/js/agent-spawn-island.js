@@ -33,6 +33,7 @@ import {
   nativeCodexRegistryWarningFor,
   prepareSpawnDraft,
   replaceSpawnProfile,
+  spawnUserText,
   selectedDefaultProfile,
   selectSpawnGroup,
   selectSpawnHarness,
@@ -747,17 +748,19 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       operatorSet.current.clear();
       profileOverrides.current.clear();
       setPeerPrompts(basePeerPrompts.current);
-      setDraft((before) => ({ ...baseline, group: before.group, name: before.name || baseline.name, initialMessage: before.initialMessage || baseline.initialMessage }));
+      const previous = findSpawnProfile(profiles, draftRef.current.profile);
+      setDraft((before) => ({ ...baseline, group: before.group, ...spawnUserText(before, previous) }));
       return;
     }
     const profile = findSpawnProfile(profiles, handle);
     if (!profile) return;
+    const previous = findSpawnProfile(profiles, draftRef.current.profile);
     touched.current.add('profile');
     if (!isLocalRef(handle)) {
       operatorSet.current.add('profile');
       const next = replaceSpawnProfile(draftRef.current, profile, context, {
         autoFocus: actions.autoFocusDefault(), rememberedEffort, pickerUsable: false,
-        preservedFields: new Set(profileOverrides.current),
+        preservedFields: new Set(profileOverrides.current), previousProfile: previous,
       });
       setPeerPrompts([...(next.promptRefs || [])]);
       setDraft({ ...remoteSpawnPins(next, remote.options, operatorSet.current), profile: handle });
@@ -773,13 +776,15 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     setDraft((current) => {
       const before = {
         ...baseline, group: current.group,
-        ...Object.fromEntries(['name', 'descr', 'initialMessage', 'role', 'cwd'].map((key) => [key, current[key]])),
+        ...Object.fromEntries(['descr', 'role', 'cwd'].map((key) => [key, current[key]])),
+        ...spawnUserText(current, previous),
         promptRefs: [...new Set([...basePeerPrompts.current, ...(current.promptRefs || []).filter((ref) => isLocalRef(ref) || !peerPrompts.includes(ref))])],
       };
       const next = { ...before, profile: handle };
       for (const field of ['name', 'descr', 'initialMessage', 'role']) {
         if (String(filled[field] || '').trim() && !profileOverrides.current.has(field)) next[field] = filled[field];
       }
+      Object.assign(next, spawnUserText(current, previous));
       const overrides = { harness: ['harness'], model: ['model', 'customModel'], effort: ['effort'] };
       for (const [field, keys] of Object.entries(overrides)) {
         if (!remote.options.overrides[field] || !String(filled[field] || '').trim()) continue;
@@ -799,13 +804,17 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         operatorSet.current.delete(field);
       }
       profileOverrides.current.clear();
-      setDraft((before) => clearSpawnProfileFields(before, context, {
-        autoFocus: actions.autoFocusDefault(), rememberedEffort,
-      }));
+      const previous = findSpawnProfile(profiles, draftRef.current.profile);
+      // Clear resets with the picker treated as unusable, so a kept name must
+      // re-sync its new worktree against the real picker state.
+      setDraft((before) => syncSpawnWorktree(clearSpawnProfileFields(before, context, {
+        autoFocus: actions.autoFocusDefault(), rememberedEffort, previousProfile: previous,
+      }), worktrees.isRepo));
       return;
     }
     touched.current.add('profile');
     const profile = findSpawnProfile(profiles, handle);
+    const previous = findSpawnProfile(profiles, draftRef.current.profile);
     if (profile) {
       const preservedFields = new Set(profileOverrides.current);
       for (const field of WORKTREE_SELECTION_FIELDS) {
@@ -817,6 +826,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           rememberedEffort,
           pickerUsable: worktrees.isRepo,
           preservedFields,
+          previousProfile: previous,
         }),
         profile: handle,
       }));

@@ -306,18 +306,35 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.deepEqual(cleared.permissionOverrides, {});
   assert.equal(cleared.cwd, '/manual', 'Clear leaves location state alone');
 
-  const switched = model.replaceSpawnProfile(
-    { ...draft, name: 'worker', initialMessage: 'ship it', profile: 'a' },
-    { name: 'b', role: 'reviewer' }, context, { rememberedEffort: remembered },
+  const previousProfile = { name: 'a', agent_name: 'a-agent', initial_message: 'a brief' };
+  const prefilled = model.clearSpawnProfileFields({
+    ...draft, name: 'a-agent', initialMessage: 'a brief', profile: 'a',
+  }, context, { rememberedEffort: remembered, previousProfile });
+  assert.equal(prefilled.name, '', 'Clear drops the previous profile\'s pre-filled name');
+  assert.equal(prefilled.initialMessage, '', 'Clear drops the previous profile\'s pre-filled message');
+
+  const swapped = model.replaceSpawnProfile(
+    { ...draft, name: 'a-agent', initialMessage: 'a brief', profile: 'a' },
+    { name: 'c', agent_name: 'lead', initial_message: 'lead it' }, context,
+    { rememberedEffort: remembered, previousProfile },
   );
-  assert.equal(switched.name, 'worker', 'Switching to a nameless profile keeps the name');
-  assert.equal(switched.initialMessage, 'ship it', 'Switching to a briefless profile keeps the message');
-  const named = model.replaceSpawnProfile(
-    { ...draft, name: 'worker', initialMessage: 'ship it', profile: 'a' },
-    { name: 'c', agent_name: 'lead', initial_message: 'lead it' }, context, { rememberedEffort: remembered },
+  assert.equal(swapped.name, 'lead', 'A pre-fill is swapped for the new profile\'s');
+  assert.equal(swapped.initialMessage, 'lead it');
+
+  const edited = model.replaceSpawnProfile(
+    { ...draft, name: 'a-agent', initialMessage: 'a brief, then my notes', profile: 'a' },
+    { name: 'c', agent_name: 'lead', initial_message: 'lead it' }, context,
+    { rememberedEffort: remembered, previousProfile },
   );
-  assert.equal(named.name, 'lead', 'A profile that names its own agent still fills the name');
-  assert.equal(named.initialMessage, 'lead it');
+  assert.equal(edited.name, 'lead', 'An untouched pre-filled name follows the new profile');
+  assert.equal(edited.initialMessage, 'a brief, then my notes', 'Edited text outranks the new profile\'s pre-fill');
+
+  const dropped = model.replaceSpawnProfile(
+    { ...draft, name: 'a-agent', initialMessage: 'my own brief', profile: 'a' },
+    { name: 'b', role: 'reviewer' }, context, { rememberedEffort: remembered, previousProfile },
+  );
+  assert.equal(dropped.name, '', 'A pre-fill the new profile does not repeat is cleared');
+  assert.equal(dropped.initialMessage, 'my own brief', 'User text survives a profile without one');
 });
 
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {
