@@ -1743,6 +1743,19 @@ func SetOperatorMessageAttachmentBasesForTest(staging, durable string) func() {
 	}
 }
 
+// SetQueuedSpawnAttachmentBasesForTest isolates browser attachment staging
+// and the queued-spawn attachment store for flow tests.
+func SetQueuedSpawnAttachmentBasesForTest(staging, queued string) func() {
+	previousStaging := spawnAttachmentsBase
+	previousQueued := queuedSpawnAttachmentsBase
+	spawnAttachmentsBase = staging
+	queuedSpawnAttachmentsBase = queued
+	return func() {
+		spawnAttachmentsBase = previousStaging
+		queuedSpawnAttachmentsBase = previousQueued
+	}
+}
+
 type dashTestHandler struct{ inner http.Handler }
 
 func (h *dashTestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -549,6 +549,7 @@ export function createRemoteSpawnActions(base, remote, { notify = () => {}, time
     // from one, whatever path reaches these.
     saveQueued: notQueued,
     deleteQueued: notQueued,
+    stageQueuedAttachments: notQueued,
     autoFocusDefault: () => false,
     rememberedEffort: () => '',
     rememberLaunchPreferences() {},
