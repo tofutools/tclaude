@@ -516,3 +516,46 @@ test('Copilot what-if and API rows use the short provider name', async (t) => {
   assert.deepEqual(view.lines.map((line) => [line.label, !!line.whatIf]),
     [['Copilot:', true], ['Copilot API:', false]]);
 });
+
+test('ignored PRs leave every open list and count until they expire or come back', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenPRsView, ignorePR, unignorePR, parseIgnoredPRs, serializeIgnoredPRs } =
+    await harness.importDashboardModule('js/shell-model.js');
+  const now = Date.parse('2026-10-20T10:00:00Z');
+  const pr = (n, extra = {}) => ({ number: n, url: `https://github.com/acme/app/pull/${n}`, title: `PR ${n}`, repository: 'acme/app', ...extra });
+  const snapshot = { authored_open_prs: {
+    available: true, total: 5,
+    items: [pr(1, { checks: { total: 1, failed: 1, state: 'failing' } }), pr(2), pr(3, { agent_id: 'agt_3' })],
+    recent_window_days: 3, recent: [pr(9, { state: 'merged' })],
+  } };
+
+  let ignored = ignorePR({}, pr(1), 24 * 3600e3, now);
+  ignored = ignorePR(ignored, { ...pr(2), url: 'https://github.com/ACME/app/pull/2/files' }, 0, now + 1);
+  ignored = ignorePR(ignored, pr(9), 0, now + 2);
+  ignored = ignorePR(ignored, pr(77), 0, now + 3);
+  const view = authoredOpenPRsView(snapshot, 'all', false, [], ignored, now + 10);
+  assert.deepEqual(view.items.map((p) => p.number), [3], 'a differently spelled URL is the same PR');
+  assert.equal(view.total, 3, 'the daemon total loses the two ignored PRs on this page');
+  assert.equal(view.attention, 1, 'the ignored failing PR no longer needs attention');
+  assert.equal(view.recentCount, 0);
+  assert.equal(view.ignoredCount, 4);
+
+  const listed = authoredOpenPRsView(snapshot, 'ignored', false, [], ignored, now + 10);
+  assert.equal(listed.showingIgnored, true);
+  assert.deepEqual(listed.items.map((p) => p.number), [77, 9, 2, 1], 'newest ignore first');
+  assert.equal(listed.items[3].checks.state, 'failing', 'a still-listed PR renders from its live row');
+  assert.equal(listed.items[0].title, 'PR 77', 'one gone from the snapshot renders from what was stored');
+  assert.equal(listed.items[3].ignored.until, now + 24 * 3600e3);
+  assert.equal(listed.items[2].ignored.until, 0, 'permanent');
+
+  const later = now + 2 * 24 * 3600e3;
+  assert.deepEqual(authoredOpenPRsView(snapshot, 'all', false, [], ignored, later).items.map((p) => p.number), [1, 3],
+    'a timed ignore runs out by itself');
+
+  const roundTrip = parseIgnoredPRs(serializeIgnoredPRs(ignored, now), later);
+  assert.deepEqual(Object.keys(roundTrip).sort(), ['acme/app#2', 'acme/app#77', 'acme/app#9'],
+    'the stored set drops an expired entry on read');
+  assert.equal(serializeIgnoredPRs(unignorePR(unignorePR(unignorePR(roundTrip, pr(2).url), pr(9).url), pr(77).url)), '');
+  assert.deepEqual(Object.keys(parseIgnoredPRs('not json')), []);
+  assert.deepEqual(Object.keys(parseIgnoredPRs(JSON.stringify({ x: { url: 'javascript:alert(1)', until: 0, at: 1 } }))), []);
+});

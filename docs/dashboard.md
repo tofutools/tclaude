@@ -385,6 +385,14 @@ are ordered by repository name, then numeric PR number, so CI and activity
 updates do not move rows. Titles come from GitHub; newly discovered PRs show
 `repo#number` until their title is fetched. The Closed filter stays newest first.
 
+Hovering a title in the popover opens the same PR details card as the `#1234`
+links in the Groups tab; untick **Hover details** in the popover's footer if
+the card gets in the way. The ⊘ button on an open PR ignores it for a day, a
+week, 30 days or permanently, after a confirmation. An ignored PR leaves every
+list and count and waits under the **Ignored** filter, where **Restore** brings
+it back; a timed ignore also runs out by itself. Ignores and the Hover details
+choice are stored with the other dashboard preferences.
+
 A review pill follows the CI pill on open, non-draft PRs: a person icon
 coloured by state, so it never reads as a second CI ✓. Green with a count means
 approved (`👤2`), red with a count means changes requested, amber means branch

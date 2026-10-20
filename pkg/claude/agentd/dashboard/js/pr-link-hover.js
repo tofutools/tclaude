@@ -22,6 +22,10 @@ const html = htm.bind(h);
 //
 // Only GitHub pull request URLs get a card — that is all the endpoint can
 // describe. A presented PR on another forge keeps the plain link.
+//
+// The trigger is styled as the compact #1234 badge link (.pr-link) by
+// default; another surface, such as the footer PR list's titles, passes its
+// own linkClass and keeps its own look while sharing the card.
 
 // Re-poll cadence while the daemon reports a read in flight, and a cap so a
 // hung read cannot keep an open card polling forever.
@@ -204,13 +208,13 @@ export function PRLinkHover(props) {
   if (!githubPRBase(props.url)) {
     const href = safeCheckURL(props.url);
     if (!href) return null;
-    return html`<a class=${`pr-link ${props.className || ''}`.trim()} href=${href} target="_blank"
+    return html`<a class=${`${props.linkClass || 'pr-link'} ${props.className || ''}`.trim()} href=${href} target="_blank"
       rel="noopener noreferrer" draggable=${false} title=${props.describe || ''}>${props.label}</a>`;
   }
   return html`<${PRLinkCard} ...${props} />`;
 }
 
-function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', label, describe = '' }) {
+function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', linkClass = 'pr-link', label, describe = '' }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
@@ -256,7 +260,7 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
       onFocusOut=${(event) => { if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false); }}
     >
       <a
-        class=${`pr-link ${className}`.trim()}
+        class=${`${linkClass} ${className}`.trim()}
         href=${safeCheckURL(url) || prURL}
         target="_blank"
         rel="noopener noreferrer"
