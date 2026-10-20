@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,6 +43,9 @@ const (
 	trackedPROpenLimit      = 50
 	trackedPRRecentLimit    = 30
 	trackedPRCachePrefix    = "tracked_author_prs_v1_"
+	// trackedPRSearchTimeout bounds the one aliased request; eight authors
+	// with check rollups is a much larger query than a branch lookup.
+	trackedPRSearchTimeout = 30 * time.Second
 )
 
 var (
@@ -56,6 +60,9 @@ var (
 	// fills within a second instead of up to a minute later.
 	trackedPRKick                = make(chan struct{}, 1)
 	trackedPRReviewsFetchedAt    atomic.Int64
+	// trackedPRAuthorsEditMu serializes the endpoint's load-modify-save, so
+	// two quick adds cannot drop one another.
+	trackedPRAuthorsEditMu       sync.Mutex
 	errTrackedPRNoActiveIdentity = fmt.Errorf("resolve active GitHub login")
 )
 
@@ -172,16 +179,22 @@ func pollTrackedPRAuthors() error {
 	}
 	for _, view := range views {
 		if view.Error != "" {
-			// Keep an earlier good list; only a never-searched author shows
-			// the refusal.
+			// Keep an earlier good list, flagged with the refusal, rather
+			// than blanking the tab.
 			if row, err := db.LoadGitCache(trackedPRCacheKey(self, view.Login)); err == nil && row != nil {
-				continue
+				var cached dashboardAuthoredOpenPRs
+				if json.Unmarshal(row.Data, &cached) == nil && cached.Available {
+					cached.Error = view.Error
+					view = cached
+				}
 			}
 		} else {
 			view.Available = true
 			shareAuthoredPRView(view, now)
 		}
-		view.UpdatedAt = now.Format(time.RFC3339)
+		if view.Error == "" || !view.Available {
+			view.UpdatedAt = now.Format(time.RFC3339)
+		}
 		data, err := json.Marshal(view)
 		if err != nil {
 			continue
@@ -269,10 +282,24 @@ func decodeTrackedPRGraphQL(data []byte, authors []string, windowDays int) ([]da
 	refused := map[string]string{}
 	for _, e := range payload.Errors {
 		alias, _ := firstPathElement(e.Path)
-		if alias == "" {
+		switch {
+		case alias == "":
 			return nil, fmt.Errorf("tracked PR search: %s", e.Message)
+		case len(e.Path) == 1:
+			// The whole search was refused (e.g. a login that no longer
+			// exists). A deeper path is one PR's field — a repository behind
+			// SSO, say — and the rest of that author's list still decodes.
+			refused[strings.TrimLeft(alias, "ur")] = e.Message
 		}
-		refused[strings.TrimLeft(alias, "ur")] = e.Message
+	}
+	// No data at all is an HTTP-level failure (bad credentials, a 5xx body):
+	// fail the tick so every tab keeps its last good list.
+	if payload.Data == nil {
+		return nil, fmt.Errorf("tracked PR search returned no data")
+	}
+	present := func(key string) bool {
+		raw := bytes.TrimSpace(payload.Data[key])
+		return len(raw) > 0 && !bytes.Equal(raw, []byte("null"))
 	}
 	views := make([]dashboardAuthoredOpenPRs, 0, len(authors))
 	for i, author := range authors {
@@ -283,6 +310,9 @@ func decodeTrackedPRGraphQL(data []byte, authors []string, windowDays int) ([]da
 				Error: truncateAuthoredPRTitle(msg),
 			})
 			continue
+		}
+		if !present("u"+n) || (windowDays > 0 && !present("r"+n)) {
+			return nil, fmt.Errorf("tracked PR search returned no result for %s", author)
 		}
 		recent := payload.Data["r"+n]
 		if len(recent) == 0 {
@@ -314,7 +344,7 @@ func decodeTrackedPRGraphQL(data []byte, authors []string, windowDays int) ([]da
 }
 
 func liveTrackedPRGraphQL(args []string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), branchLinkCmdTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), trackedPRSearchTimeout)
 	defer cancel()
 	return exec.CommandContext(ctx, "gh", args...).Output()
 }
@@ -402,6 +432,8 @@ func handleDashboardTrackedPRAuthors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_login", "not a valid GitHub username")
 		return
 	}
+	trackedPRAuthorsEditMu.Lock()
+	defer trackedPRAuthorsEditMu.Unlock()
 	authors := loadTrackedPRAuthors()
 	switch body.Action {
 	case "add":
@@ -441,6 +473,8 @@ func handleDashboardTrackedPRAuthors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Action == "add" {
+		// The new author's first search brings its reviewer list too.
+		trackedPRReviewsFetchedAt.Store(0)
 		kickTrackedPRAuthorsPoller()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"authors": authors})

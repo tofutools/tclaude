@@ -25,3 +25,30 @@ func TestNormalizeTrackedPRAuthors(t *testing.T) {
 	got := normalizeTrackedPRAuthors([]string{"alice", "Alice", "bad login", "", "b", "c", "d", "e", "f", "g", "h", "i"})
 	assert.Equal(t, []string{"alice", "b", "c", "d", "e", "f", "g", "h"}, got)
 }
+
+func TestDecodeTrackedPRGraphQLFailureShapes(t *testing.T) {
+	authors := []string{"alice", "bob"}
+	// gh prints an HTTP error body to stdout: no data must fail the tick, not
+	// blank every tab.
+	_, err := decodeTrackedPRGraphQL([]byte(`{"message":"Bad credentials"}`), authors, 0)
+	assert.Error(t, err)
+	_, err = decodeTrackedPRGraphQL([]byte(`{"data":null,"errors":[{"path":["u0","nodes"],"message":"boom"}]}`), authors, 0)
+	assert.Error(t, err)
+	// A missing result for an author nobody refused is a failure too.
+	_, err = decodeTrackedPRGraphQL([]byte(`{"data":{"u0":{"issueCount":0,"nodes":[]}}}`), authors, 0)
+	assert.Error(t, err)
+
+	// An error deep inside one PR leaves the rest of that author's list.
+	views, err := decodeTrackedPRGraphQL([]byte(`{"data":{
+		"u0":{"issueCount":1,"nodes":[{"number":3,"title":"t","url":"https://github.com/a/b/pull/3","repository":{"nameWithOwner":"a/b"},"commits":{"nodes":[]}}]},
+		"u1":null},
+		"errors":[
+			{"path":["u0","nodes",0,"commits"],"message":"SAML enforcement"},
+			{"path":["u1"],"message":"cannot be searched"}]}`), authors, 0)
+	assert.NoError(t, err)
+	if assert.Len(t, views, 2) {
+		assert.Empty(t, views[0].Error)
+		assert.Len(t, views[0].Items, 1)
+		assert.Equal(t, "cannot be searched", views[1].Error)
+	}
+}

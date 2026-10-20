@@ -394,9 +394,10 @@ function OpenPRs({ state }) {
     () => dashPrefs.getItem(OPEN_PRS_TITLE_DETAILS_PREF) !== '0',
   );
   const [person, setPerson] = useState('');
-  // The tracked list as the daemon last answered an edit, until the snapshot
-  // catches up with it: a new tab shows at once, a removed one goes at once.
-  const [editedAuthors, setEditedAuthors] = useState(null);
+  // The tracked list as the daemon last answered an edit, held until the
+  // next snapshot (which the daemon builds from the saved list): a new tab
+  // shows at once, a removed one goes at once.
+  const [edited, setEdited] = useState(null);
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
@@ -409,14 +410,11 @@ function OpenPRs({ state }) {
   const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers, ignored);
   const snapshotAuthors = Array.isArray(state.snapshot.value?.tracked_pr_authors)
     ? state.snapshot.value.tracked_pr_authors.filter((entry) => GITHUB_LOGIN_RE.test(entry?.login || '')) : [];
-  const sameLogins = (a, b) => a.length === b.length && a.every((login, i) => login.toLowerCase() === b[i].toLowerCase());
-  const tracked = editedAuthors && !sameLogins(editedAuthors, snapshotAuthors.map((entry) => entry.login))
+  const editedAuthors = edited && edited.snapshot === state.snapshot.value ? edited.authors : null;
+  const tracked = editedAuthors
     ? editedAuthors.map((login) => snapshotAuthors.find((entry) => entry.login.toLowerCase() === login.toLowerCase())
       || { login, available: false, items: [], recent: [] })
     : snapshotAuthors;
-  useEffect(() => {
-    if (editedAuthors && sameLogins(editedAuthors, snapshotAuthors.map((entry) => entry.login))) setEditedAuthors(null);
-  });
   const personEntry = person ? tracked.find((entry) => entry.login.toLowerCase() === person.toLowerCase()) : null;
   // A colleague's PRs are not this node's agents' work, so their tab has no
   // Unattached filter; the operator's own view keeps driving the trigger.
@@ -426,10 +424,14 @@ function OpenPRs({ state }) {
     Date.now(), entry.login);
   const panel = personEntry ? colleagueView(personEntry, panelFilter) : view;
   const people = tracked.map((entry) => ({ login: entry.login, total: entry.available ? colleagueView(entry).total : null }));
-  const addPerson = async (login) => { setEditedAuthors(await postTrackedAuthor('add', login)); };
+  const addPerson = async (login) => {
+    const authors = await postTrackedAuthor('add', login);
+    setEdited({ authors, snapshot: state.snapshot.value });
+  };
   const removePerson = async (login) => {
     try {
-      setEditedAuthors(await postTrackedAuthor('remove', login));
+      const authors = await postTrackedAuthor('remove', login);
+      setEdited({ authors, snapshot: state.snapshot.value });
       if (person.toLowerCase() === login.toLowerCase()) setPerson('');
     } catch (_) {
       // The tab stays; the next snapshot shows the daemon's list either way.
@@ -530,6 +532,9 @@ function OpenPRs({ state }) {
     ? (personEntry.error ? `GitHub could not search ${personEntry.login}’s pull requests: ${personEntry.error}`
       : `Searching GitHub for ${personEntry.login}’s pull requests…`)
     : '';
+  // A refusal after an earlier good search keeps that list, marked stale.
+  const panelWarning = personEntry?.available && personEntry.error
+    ? `Last search failed (${personEntry.error}); showing the list from ${panelAge || 'earlier'}.` : '';
   return html`
     <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${leave}>
@@ -545,6 +550,7 @@ function OpenPRs({ state }) {
           <div class="open-prs-head"><strong>${heading}</strong><span class="open-prs-count">${panel.total}</span>${panelAge ? html`<span class="open-prs-age">updated ${panelAge}</span>` : null}</div>
           <${PeopleTabs} active=${personEntry ? personEntry.login : ''} mine=${view.total} people=${people}
             onSelect=${setPerson} onAdd=${addPerson} onRemove=${removePerson} />
+          ${panelWarning ? html`<p class="open-prs-stale" role="status">${panelWarning}</p>` : null}
           ${panelNotice ? html`<p class="open-prs-empty">${panelNotice}</p>` : panel.items.length
             ? html`<ul class="open-pr-list">${panel.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr}
                 showFinalCI=${panel.showingRecent && showFinalCI} titleDetails=${titleDetails}

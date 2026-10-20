@@ -335,6 +335,7 @@ body.dock-open .open-prs.is-open::before {
 .open-prs-add-form .open-prs-add-ok { border-color: #385b81; background: #172a40; color: #c9d1d9; }
 .open-prs-add-form button:disabled { opacity: 0.5; cursor: default; }
 .open-prs-add-form button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.open-prs-stale { margin: 0; padding: 6px 13px; border-bottom: 1px solid #222b35; color: #d29922; font-size: 10.5px; }
 .open-prs-people-error { flex-basis: 100%; margin: 0 0 6px; color: #f85149; font-size: 10.5px; text-align: right; }
 /* The ignore confirmation covers the popover (its positioned ancestor). */
 .open-prs-confirm-backdrop {
