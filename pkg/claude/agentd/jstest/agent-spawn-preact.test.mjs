@@ -342,6 +342,13 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
     { rememberedEffort: remembered, previousProfile: { name: 'local:l' }, prefill: { name: 'worker' } },
   );
   assert.equal(peerPrefilled.name, 'reviewer', 'A remote peer pre-fill is not user text');
+  const localToLocal = model.replaceSpawnProfile(
+    { ...draft, name: 'alpha', initialMessage: 'brief A', profile: 'local:l1' },
+    { name: 'l2' }, context,
+    { rememberedEffort: remembered, previousProfile: { name: 'local:l1', agent_name: 'alpha', initial_message: 'brief A' }, prefill: { name: 'peer-default' } },
+  );
+  assert.equal(localToLocal.name, '', 'The previous profile\'s pre-fill does not ride onto one without its own');
+  assert.equal(localToLocal.initialMessage, '');
 });
 
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {

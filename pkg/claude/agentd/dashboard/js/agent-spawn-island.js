@@ -772,6 +772,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     setPeerPrompts(basePeerPrompts.current);
     const filled = replaceSpawnProfile(draftRef.current, { ...profile, name: profile.localName }, context, {
       autoFocus: actions.autoFocusDefault(), rememberedEffort, pickerUsable: false,
+      previousProfile: previous, prefill: baseline,
     });
     setDraft((current) => {
       const before = {
