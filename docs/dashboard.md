@@ -1160,10 +1160,10 @@ chip in front of them names in the node's colour. It starts on the page's own
 node and follows the node of the group you last act on: a click on its header
 or one of its controls, a right-click, or a drop onto it (hovering, or a click
 on its plain text or empty space, does not move it). The chip flashes when it
-moves, and picking another node in it moves it by hand. Set
-`dashboard.fused_toolbar_fixed_node: true` (Config › Appearance › Header & rows › **Fused
-toolbar node**) to turn the following off: the toolbar then moves only when
-you pick a node in the chip. Another node's controls show and set that
+moves, and picking another node in it moves it by hand. Turn off Config ›
+Appearance › Header & rows › **Toolbar follows the clicked group**
+(`dashboard.fused_toolbar_fixed_node: true`) to stop the following: the
+toolbar then moves only when you pick a node in the chip. Another node's controls show and set that
 node's defaults and create the group there, as far as it shares them with you
 (the same grants as on its page); new profiles are made on their own node.
 
