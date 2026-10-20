@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/federation/stream"
 )
@@ -230,11 +229,6 @@ func (rt *fedRuntime) openPeerViewOnce(ctx context.Context, peer *db.FederationP
 		}
 		conn, err := rt.joinStream(ctx, peer.InstanceID, sid, kp, a.Key, true)
 		if err != nil {
-			// The hub's per-instance stream cap is busy too: retried.
-			var refused *client.RefusedError
-			if errors.As(err, &refused) && refused.Code == proto.CodeStreamLimit {
-				return nil, errPeerViewBusy
-			}
 			return nil, err
 		}
 		success = true

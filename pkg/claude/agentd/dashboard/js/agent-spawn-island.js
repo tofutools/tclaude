@@ -593,7 +593,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     // revision bump has re-rendered this component still stores the key the
     // submit gates will compare against.
     const policyKey = sandboxPolicyKey(draft.group, draft.sandboxProfile, state.dialog.value?.sandboxRevision);
-    setSandboxPolicy((value) => ({ ...value, key: '' }));
+    setSandboxPolicy((value) => ({ ...value, error: '', key: '' }));
     actions.loadSandboxPolicy(draft.group, draft.sandboxProfile).then((value) => {
       if (request !== sandboxRequest.current || !state.isCurrent(generation)) return;
       setSandboxPolicy({ ...value, error: '', key: policyKey });
