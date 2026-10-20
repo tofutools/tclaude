@@ -381,9 +381,13 @@ func TestFederation_TimedPeerGrant(t *testing.T) {
 	f, p := fh.f, fh.peer
 	f.HaveGroup("one")
 	f.HaveGroup("two")
+	// latest is polled from fedEventually, so a catalog that has not reached
+	// the peer yet must read as "not there yet", not fail the test outright.
 	latest := func() proto.CatalogPayload {
 		cats := p.envelopes(proto.KindCatalog)
-		require.NotEmpty(t, cats)
+		if len(cats) == 0 {
+			return proto.CatalogPayload{}
+		}
 		var cat proto.CatalogPayload
 		require.NoError(t, cats[len(cats)-1].DecodePayload(&cat))
 		return cat
