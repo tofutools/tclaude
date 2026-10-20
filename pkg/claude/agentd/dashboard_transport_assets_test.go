@@ -16,11 +16,23 @@ func TestDashboardSnapshotTransportWiring(t *testing.T) {
 		"fetchVisibleGroupListPages(",
 		"const staticVersion = lastSnapshot?.static_version || ''",
 		"{ credentials: 'same-origin', cache: 'no-store', signal: abort.signal }",
-		"data.static_unchanged && prevSnap.static_version === data.static_version",
-		"data[key] = prevSnap[key]",
+		"restoreUnchangedStatics(data, prevSnap)",
 	} {
 		if !strings.Contains(refresh, needle) {
 			t.Errorf("refresh.js missing transport optimization %q", needle)
+		}
+	}
+	storeBytes, err := fs.ReadFile(dashboardAssetsFS, "js/snapshot-store.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := string(storeBytes)
+	for _, needle := range []string{
+		"!next?.static_unchanged || !prev || prev.static_version !== next.static_version",
+		"next[key] = prev[key]",
+	} {
+		if !strings.Contains(store, needle) {
+			t.Errorf("snapshot-store.js missing transport optimization %q", needle)
 		}
 	}
 }
