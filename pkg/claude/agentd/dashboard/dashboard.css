@@ -1784,15 +1784,44 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   color: #58a6ff; font-size: 12px; text-decoration: none;
 }
 .human-notification-drawer-download:hover { background: rgba(31, 111, 235, .12); }
+/* Two rows in a 440px drawer: the sender actions (reply, terminal, Messages,
+   read state) on top, the message's own (download, delete) plus Close below.
+   The break element forces the second row; wrap stays on so a narrower drawer
+   flows instead of overflowing. Labels never wrap inside a button, so every
+   button keeps one height. */
 .human-notification-drawer-actions {
-  display: flex; align-items: center; gap: 7px; padding: 13px 16px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 7px; padding: 12px 16px;
   border-top: 1px solid #30363d; background: #161b22;
 }
+.human-notification-drawer-actions-break { flex-basis: 100%; height: 0; }
 .human-notification-drawer-actions button {
   padding: 7px 10px; border: 1px solid #30363d; border-radius: 5px;
   background: #21262d; color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
+  line-height: 16px; white-space: nowrap;
 }
-.human-notification-drawer-actions button:hover { border-color: #58a6ff; color: #f0f6fc; }
+.human-notification-drawer-actions button:disabled { opacity: .45; cursor: default; }
+.human-notification-drawer-actions .human-notification-drawer-delete { margin-left: auto; }
+/* The shared split button, joined and left-aligned on the second row. Its menu
+   opens UPWARD here: the bar sits at the drawer's bottom edge. */
+.human-notification-drawer-actions .mail-download { margin-left: 0; }
+.human-notification-drawer-actions .mail-download .mail-download-main[type] { border-radius: 5px 0 0 5px; }
+.human-notification-drawer-actions .mail-download .mail-download-caret[type] {
+  border-radius: 0 5px 5px 0; border-left: none; padding: 7px 7px;
+}
+.human-notification-drawer-actions .mail-download .mail-download-caret[type][aria-expanded="true"] {
+  border-color: #58a6ff; border-left: none; color: #f0f6fc;
+}
+.human-notification-drawer-actions .mail-download-menu { top: auto; bottom: calc(100% + 4px); left: 0; right: auto; }
+.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type] {
+  display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left;
+  background: transparent; border: none; border-radius: 4px; padding: 6px 8px;
+  color: #d4d4d4; font-size: 12px; white-space: normal;
+}
+.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:hover,
+.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:focus-visible {
+  background: #263445; color: #f0f6fc; outline: none;
+}
+.human-notification-drawer-actions button:hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
 .human-notification-drawer-actions button.primary {
   border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
 }
@@ -2585,7 +2614,7 @@ body.wizard .human-notification-drawer-download:hover { background: rgba(124, 92
 body.wizard .human-notification-drawer-actions button {
   background: #1d1730; border-color: #3a2f57; color: #d8cff0;
 }
-body.wizard .human-notification-drawer-actions button:hover { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .human-notification-drawer-actions button:hover:not(:disabled) { border-color: #7c5cc4; color: #e6dcff; }
 body.wizard .human-notification-drawer-actions button.primary {
   background: #3b2a63; border-color: #7c5cc4; color: #f0e9ff;
 }
@@ -2629,7 +2658,7 @@ body.slop .human-notification-drawer-download:hover { background: rgba(255, 215,
 body.slop .human-notification-drawer-actions button {
   background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
 }
-body.slop .human-notification-drawer-actions button:hover { border-color: #ffd700; color: #ffe88c; }
+body.slop .human-notification-drawer-actions button:hover:not(:disabled) { border-color: #ffd700; color: #ffe88c; }
 body.slop .human-notification-drawer-actions button.primary {
   background: #4a0a0a; border-color: #ffd700; color: #ffe88c;
 }
