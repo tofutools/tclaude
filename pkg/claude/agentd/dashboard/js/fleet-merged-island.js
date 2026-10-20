@@ -174,8 +174,8 @@ function defaultSwitchNode(id) {
   globalThis.location.assign(nodeHref(id, { pathname: '/groups', search: withFused(globalThis.location.search, null) }));
 }
 
-// MAX_IN_FLIGHT caps concurrent snapshot reads: the peer proxy allows 4
-// streams per peer and 16 overall, and a wide fused view must leave room for
+// MAX_IN_FLIGHT caps concurrent snapshot reads: the peer proxy allows 16
+// streams per peer and 64 overall, and a wide fused view must leave room for
 // everything else.
 export const MAX_IN_FLIGHT = 4;
 

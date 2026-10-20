@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/federation/stream"
 )
@@ -25,8 +26,19 @@ const (
 	fedPeerViewBodyLimit         = 32 << 10
 	fedPeerViewResponseLimit     = 12 << 20
 	fedPeerViewResponseBodyLimit = 8 << 20
-	fedPeerViewActiveLimit       = 16
-	fedPeerViewPerPeerLimit      = 4
+	// The active limits stay within the hub's default per-instance stream
+	// cap (tclaude-hub serve --max-streams).
+	fedPeerViewActiveLimit  = 64
+	fedPeerViewPerPeerLimit = 16
+	// fedPeerViewQueueWait bounds how long an outbound request waits for a
+	// stream slot, here or on the peer, before it fails busy. A dashboard
+	// dialog opens with a burst of reads larger than the per-peer limit; they
+	// queue instead of failing the ones that lose the race.
+	fedPeerViewQueueWait = 5 * time.Second
+	// fedPeerViewBusyBackoff is the first pause before asking a peer that
+	// answered busy again; it doubles up to fedPeerViewBusyBackoffMax.
+	fedPeerViewBusyBackoff    = 50 * time.Millisecond
+	fedPeerViewBusyBackoffMax = 800 * time.Millisecond
 )
 
 var (
@@ -55,11 +67,14 @@ type fedPeerViewWaiter struct {
 type fedPeerViewState struct {
 	active  map[string]string
 	waiters map[string]fedPeerViewWaiter
+	// freed is closed (and replaced) whenever a slot is released, waking
+	// outbound requests queued for one.
+	freed chan struct{}
 }
 
 func (rt *fedRuntime) peerViewsLocked() *fedPeerViewState {
 	if rt.peerViews == nil {
-		rt.peerViews = &fedPeerViewState{active: map[string]string{}, waiters: map[string]fedPeerViewWaiter{}}
+		rt.peerViews = &fedPeerViewState{active: map[string]string{}, waiters: map[string]fedPeerViewWaiter{}, freed: make(chan struct{})}
 	}
 	return rt.peerViews
 }
@@ -87,8 +102,37 @@ func (rt *fedRuntime) reservePeerView(key, peer string) bool {
 
 func (rt *fedRuntime) releasePeerView(key string) {
 	rt.peerViewsMu.Lock()
-	delete(rt.peerViewsLocked().active, key)
+	state := rt.peerViewsLocked()
+	delete(state.active, key)
+	close(state.freed)
+	state.freed = make(chan struct{})
 	rt.peerViewsMu.Unlock()
+}
+
+// reservePeerViewWait is reservePeerView that waits for a slot until ctx ends
+// or the deadline passes.
+func (rt *fedRuntime) reservePeerViewWait(ctx context.Context, key, peer string, deadline time.Time) bool {
+	for {
+		rt.peerViewsMu.Lock()
+		freed := rt.peerViewsLocked().freed
+		rt.peerViewsMu.Unlock()
+		if rt.reservePeerView(key, peer) {
+			return true
+		}
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			return false
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-freed:
+			timer.Stop()
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		}
+	}
 }
 
 func (rt *fedRuntime) handlePeerViewAnswer(peer *db.FederationPeer, env *proto.Envelope) {
@@ -115,9 +159,34 @@ type fedPeerViewConn struct {
 
 func (c *fedPeerViewConn) Close() error { c.release(); return c.Conn.Close() }
 
+// openPeerView opens a stream to peer. A request that finds no free slot,
+// here or on the peer, waits and retries for up to fedPeerViewQueueWait
+// before it fails busy.
 func (rt *fedRuntime) openPeerView(ctx context.Context, peer *db.FederationPeer) (*fedPeerViewConn, error) {
+	deadline := time.Now().Add(fedPeerViewQueueWait)
+	backoff := fedPeerViewBusyBackoff
+	for {
+		conn, err := rt.openPeerViewOnce(ctx, peer, deadline)
+		if !errors.Is(err, errPeerViewBusy) || !time.Now().Add(backoff).Before(deadline) {
+			return conn, err
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		}
+		backoff = min(backoff*2, fedPeerViewBusyBackoffMax)
+	}
+}
+
+func (rt *fedRuntime) openPeerViewOnce(ctx context.Context, peer *db.FederationPeer, deadline time.Time) (*fedPeerViewConn, error) {
 	sid := proto.NewEnvelopeID()
-	if !rt.reservePeerView("out:"+sid, peer.InstanceID) {
+	if !rt.reservePeerViewWait(ctx, "out:"+sid, peer.InstanceID, deadline) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, errPeerViewBusy
 	}
 	// The caller releases admission when the returned stream is closed.
@@ -161,6 +230,11 @@ func (rt *fedRuntime) openPeerView(ctx context.Context, peer *db.FederationPeer)
 		}
 		conn, err := rt.joinStream(ctx, peer.InstanceID, sid, kp, a.Key, true)
 		if err != nil {
+			// The hub's per-instance stream cap is busy too: retried.
+			var refused *client.RefusedError
+			if errors.As(err, &refused) && refused.Code == proto.CodeStreamLimit {
+				return nil, errPeerViewBusy
+			}
 			return nil, err
 		}
 		success = true

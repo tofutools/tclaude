@@ -89,7 +89,7 @@ func (c *Config) defaults() {
 		c.HelloTimeout = 10 * time.Second
 	}
 	if c.MaxStreams <= 0 {
-		c.MaxStreams = 16
+		c.MaxStreams = 128
 	}
 	if c.StreamBytesPerSecond <= 0 {
 		c.StreamBytesPerSecond = 10 << 20

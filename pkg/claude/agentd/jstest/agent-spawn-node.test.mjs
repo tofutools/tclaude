@@ -163,3 +163,54 @@ test('Save as profile offers the nodes this operator may create profiles on', as
   assert.deepEqual(profileSaveNodes('inst_slug0001', 'slug'), [{ id: 'inst_slug0001', name: 'slug', operatorOnly: true }, here], 'the grant saves operator-only');
   assert.deepEqual(profileSaveNodes('inst_none0001', 'none'), [here], 'without either only this node is offered');
 });
+
+test("a failed sandbox preview says why on submit and loads again", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ AgentSpawnApp }, { createAgentSpawnState }] = await Promise.all([
+    harness.importDashboardModule('js/agent-spawn-island.js'),
+    harness.importDashboardModule('js/agent-spawn-state.js'),
+  ]);
+  const P = `/api/peer/${NODE}/`;
+  let busy = 1;
+  const spawned = [];
+  const fetchImpl = async (url, init = {}) => {
+    const path = String(url).startsWith(P) ? String(url).slice(P.length).split('?')[0] : '';
+    if (path === 'sandbox-profile-default' && busy > 0) {
+      busy -= 1;
+      return respond({ code: 'peer_busy', error: 'peer view concurrency limit reached' }, 503);
+    }
+    if (path === 'groups/build/spawn') { spawned.push(path); return respond({ agent_id: 'agt_new1' }); }
+    if (['saved-prompts', 'roles', 'spawn-profiles', 'sandbox-profiles'].includes(path)) return respond([]);
+    if (path === 'worktrees') return respond({ is_repo: false, worktrees: [], branches: [] });
+    return respond({});
+  };
+  const prevFetch = harness.window.fetch;
+  harness.window.fetch = fetchImpl; globalThis.fetch = fetchImpl;
+  t.after(() => { harness.window.fetch = prevFetch; });
+  const { createAgentSpawnActions } = await harness.importDashboardModule('js/agent-spawn-actions.js');
+  const actions = createAgentSpawnActions({ fetchImpl, uploadTransport: fetchImpl });
+  const state = createAgentSpawnState({ getSnapshot: () => ({ groups: [], harnesses }) });
+  harness.window.HTMLElement.prototype.scrollIntoView = () => {};
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${AgentSpawnApp} state=${state} actions=${actions} confirmDiscard=${async () => true} notify=${() => {}} />`, host);
+  state.open({ groupName: 'build', target: { node: NODE, nodeId: NODE, name: 'forge', snapshot: { groups: [{ name: 'build' }], harnesses } } });
+  await flush(harness);
+  await harness.act(() => new Promise((r) => setTimeout(r, 600)));
+  await flush(harness);
+  const q = (sel) => host.querySelector(sel);
+  const name = q('#agent-spawn-name');
+  Object.defineProperty(name, 'value', { configurable: true, writable: true, value: 'w' });
+  await harness.act(() => harness.fireEvent(name, 'input'));
+  await flush(harness);
+  const submit = async () => {
+    await harness.act(() => q('#agent-spawn-submit').click());
+    await harness.act(() => new Promise((r) => setTimeout(r, 200)));
+    await flush(harness);
+  };
+  await submit();
+  assert.match(q('#agent-spawn-error')?.textContent || '', /could not load the sandbox policy preview \(.*concurrency limit.*\) — reloading it/);
+  assert.deepEqual(spawned, [], 'nothing spawns on a failed preview');
+  await submit();
+  assert.deepEqual(spawned, ['groups/build/spawn'], 'the reloaded preview lets the spawn through');
+  await mounted.unmount();
+});

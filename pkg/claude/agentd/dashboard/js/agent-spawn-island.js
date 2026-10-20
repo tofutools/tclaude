@@ -1075,6 +1075,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     // under an edited policy whose preview the operator never saw.
     const liveSelectionKey = () =>
       sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
+    // A failed preview never lands on its own: say why, and load it again.
+    if (!view.sandboxProfilesDisabled && sandboxPolicyRef.current.error) {
+      setError(`could not load the sandbox policy preview (${sandboxPolicyRef.current.error}) — reloading it; submit again in a moment`);
+      state.refreshSandboxPolicy();
+      submitLock.current = false;
+      return;
+    }
     if (!view.sandboxProfilesDisabled && sandboxPolicyRef.current.key !== liveSelectionKey()) {
       setError('wait for the sandbox policy preview to finish loading');
       submitLock.current = false;

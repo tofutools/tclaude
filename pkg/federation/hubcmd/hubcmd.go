@@ -118,7 +118,7 @@ type serveParams struct {
 	BytesPerMinute         int           `long:"bytes-per-minute" default:"104857600" help:"Per-instance send rate limit (bytes)"`
 	IdentityRotationWindow time.Duration `long:"identity-rotation-window" default:"10m" help:"Detection window before signed key succession is admitted"`
 	PolicyRefresh          time.Duration `long:"policy-refresh" default:"15s" help:"How often admin edits are re-read"`
-	MaxStreams             int           `long:"max-streams" default:"16" help:"Per-instance limit on concurrent relayed route streams"`
+	MaxStreams             int           `long:"max-streams" default:"128" help:"Per-instance limit on concurrent relayed route streams"`
 	StreamBytes            int           `long:"stream-bytes-per-second" default:"10485760" help:"Per-instance relayed stream bandwidth (bytes/second)"`
 	StreamIdle             time.Duration `long:"stream-idle" default:"90s" help:"How long a relayed route stream may sit idle, or blocked on a receiver that is not reading, before it is closed"`
 }
