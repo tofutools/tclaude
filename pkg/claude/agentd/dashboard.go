@@ -3913,19 +3913,18 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Links = links
 	out.Usage = usage
 	out.AuthoredOpenPRs = associateAuthoredOpenPRs(
-		withAuthoredPRReviews(unionLocallyKnownOpenPRs(
+		withAuthoredPRReviews(withoutArchivedPRs(unionLocallyKnownOpenPRs(
 			reconcileAuthoredOpenPRs(authoredOpenPRs, freshPRStates, prChecks, time.Now()),
 			localPRs,
 			freshPRStates,
 			prChecks,
-		), prReviews),
+		)), prReviews),
 		out.Agents,
 	)
-	// Internal to the cache: the union above was its only reader.
-	out.AuthoredOpenPRs.ArchivedPRs = nil
 	for _, view := range trackedPRAuthors {
 		out.TrackedPRAuthors = append(out.TrackedPRAuthors, associateAuthoredOpenPRs(
-			withAuthoredPRReviews(reconcileAuthoredOpenPRs(view, freshPRStates, prChecks, time.Now()), prReviews),
+			withAuthoredPRReviews(withoutArchivedPRs(
+				reconcileAuthoredOpenPRs(view, freshPRStates, prChecks, time.Now())), prReviews),
 			out.Agents,
 		))
 	}

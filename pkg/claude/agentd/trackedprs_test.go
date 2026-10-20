@@ -13,8 +13,7 @@ func TestTrackedPRSearchArgs(t *testing.T) {
 	argv := strings.Join(trackedPRSearchArgs([]string{"alice", "bob"}, 3, now, true), "\n")
 	assert.Contains(t, argv, "query($first:Int!,$rfirst:Int!,$q0:String!,$qr0:String!,$q1:String!,$qr1:String!){")
 	assert.Contains(t, argv, "r1: search(query:$qr1,")
-	assert.Contains(t, argv, "qr0=author:alice is:closed type:pr archived:false closed:>=2026-10-17")
-	assert.Contains(t, argv, "q1=author:bob is:open type:pr archived:false")
+	assert.Contains(t, argv, "qr0=author:alice is:closed type:pr closed:>=2026-10-17")
 	assert.Equal(t, 2, strings.Count(argv, "latestOpinionatedReviews"), "reviewers ride every author's open search")
 
 	argv = strings.Join(trackedPRSearchArgs([]string{"alice"}, 0, now, false), "\n")

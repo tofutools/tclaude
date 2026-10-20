@@ -232,13 +232,13 @@ func trackedPRSearchArgs(authors []string, windowDays int, now time.Time, withRe
 		body.WriteString(strings.Replace(authoredOpenPRSearchFragment,
 			"search(query:$q,", "u"+n+": search(query:$q"+n+",", 1))
 		body.WriteString("\n")
-		values = append(values, "-f", "q"+n+"=author:"+author+" is:open type:pr archived:false sort:updated-desc")
+		values = append(values, "-f", "q"+n+"=author:"+author+" is:open type:pr sort:updated-desc")
 		if windowDays > 0 {
 			vars = append(vars, "$qr"+n+":String!")
 			body.WriteString(strings.Replace(authoredRecentPRSearchFragment,
 				"recent: search(query:$qr,", "r"+n+": search(query:$qr"+n+",", 1))
 			body.WriteString("\n")
-			values = append(values, "-f", "qr"+n+"=author:"+author+" is:closed type:pr archived:false closed:>="+since+" sort:updated-desc")
+			values = append(values, "-f", "qr"+n+"=author:"+author+" is:closed type:pr closed:>="+since+" sort:updated-desc")
 		}
 	}
 	query := "query(" + strings.Join(vars, ",") + "){\n" + body.String() + "}"
