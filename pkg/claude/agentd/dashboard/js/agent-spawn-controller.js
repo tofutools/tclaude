@@ -76,7 +76,7 @@ export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, 
 export function spawnRequestConfirm(node, group) {
   return {
     title: `Request an agent on ${node}?`,
-    body: `You don't have spawn permission in ${group} on ${node}, so nothing launches right away. You can fill in a spawn request instead: ${node}'s operator reviews it on their Fleet admin → Spawns page, may change its settings, and approves or denies it. The answer arrives in your Messages tab.`,
+    body: `You don't have spawn permission in ${group} on ${node}, so nothing launches right away. You can fill in a spawn request instead: ${node}'s operator reviews it on their ⚙ Fleet config → Spawn requests page, may change its settings, and approves or denies it. The answer arrives in your Messages tab.`,
     okLabel: 'Write request…',
   };
 }

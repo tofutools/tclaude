@@ -139,7 +139,7 @@ test('a spawn on an unrestricted peer or on this node opens the local dialog the
     confirm: async (o) => { asked.push(o); return false; } }), null);
   assert.equal(opened.length, 0, 'a declined request opens no dialog');
   assert.match(asked[0].title, /Request an agent on forge/);
-  assert.match(asked[0].body, /spawn permission in build on forge.*Fleet admin → Spawns/s);
+  assert.match(asked[0].body, /spawn permission in build on forge.*Fleet config → Spawn requests/s);
   await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted, prepare: operator, confirm: async () => true });
   assert.equal(opened.pop().remote.options.approval, 'operator', 'an accepted request opens request mode');
   await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted,
