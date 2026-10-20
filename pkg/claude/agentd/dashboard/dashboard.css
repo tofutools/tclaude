@@ -1808,6 +1808,9 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .human-notification-drawer-actions .mail-download .mail-download-caret[type] {
   border-radius: 0 5px 5px 0; border-left: none; padding: 7px 7px;
 }
+.human-notification-drawer-actions .mail-download .mail-download-caret[type][aria-expanded="true"] {
+  border-color: #58a6ff; border-left: none; color: #f0f6fc;
+}
 .human-notification-drawer-actions .mail-download-menu { top: auto; bottom: calc(100% + 4px); left: 0; right: auto; }
 .human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type] {
   display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left;
@@ -1818,7 +1821,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:focus-visible {
   background: #263445; color: #f0f6fc; outline: none;
 }
-.human-notification-drawer-actions button:hover { border-color: #58a6ff; color: #f0f6fc; }
+.human-notification-drawer-actions button:hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
 .human-notification-drawer-actions button.primary {
   border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
 }
@@ -2611,7 +2614,7 @@ body.wizard .human-notification-drawer-download:hover { background: rgba(124, 92
 body.wizard .human-notification-drawer-actions button {
   background: #1d1730; border-color: #3a2f57; color: #d8cff0;
 }
-body.wizard .human-notification-drawer-actions button:hover { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .human-notification-drawer-actions button:hover:not(:disabled) { border-color: #7c5cc4; color: #e6dcff; }
 body.wizard .human-notification-drawer-actions button.primary {
   background: #3b2a63; border-color: #7c5cc4; color: #f0e9ff;
 }
@@ -2655,7 +2658,7 @@ body.slop .human-notification-drawer-download:hover { background: rgba(255, 215,
 body.slop .human-notification-drawer-actions button {
   background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
 }
-body.slop .human-notification-drawer-actions button:hover { border-color: #ffd700; color: #ffe88c; }
+body.slop .human-notification-drawer-actions button:hover:not(:disabled) { border-color: #ffd700; color: #ffe88c; }
 body.slop .human-notification-drawer-actions button.primary {
   background: #4a0a0a; border-color: #ffd700; color: #ffe88c;
 }

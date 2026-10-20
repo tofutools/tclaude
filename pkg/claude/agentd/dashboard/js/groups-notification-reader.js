@@ -439,7 +439,7 @@ export function GroupsNotificationReader({
       <span class="human-notification-drawer-actions-break" aria-hidden="true"></span>
       <${MessageDownloadMenu} message=${message} node=${peer} toast=${toast} />
       <button type="button" class="danger human-notification-drawer-delete" disabled=${!!deleteLock}
-        title=${deleteLock ? undefined : `Permanently delete this notification${peer ? ` on ${peerName}` : ''}`} onClick=${remove}>Delete</button><${LockReason} why=${deleteLock} />
+        title=${deleteLock ? undefined : `Permanently delete this notification${peer ? ` on ${peerName}` : ''}`} onClick=${remove}>Delete</button><${LockReason} why=${deleteLock} align="end" />
       <button type="button" onClick=${() => onClose(true)}>Close</button>
     </div>
   </aside>`;
