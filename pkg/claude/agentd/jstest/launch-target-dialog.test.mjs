@@ -201,13 +201,38 @@ test('teleport picks the model access it lands on: the target\'s login, a gatewa
   await s.settle();
   assert.deepEqual(asked, [['inst_forge', 'reviewers']], 'asks the target what it accepts from this node');
   const options = [...s.q('#lt-model-access').querySelectorAll('option')];
-  assert.deepEqual(options.map((o) => o.value), ['', 'local', 'proxy:mine@self', 'proxy:team@inst_lab'], 'an OpenAI gateway cannot serve Claude Code');
-  assert.match(options[2].textContent, /Your gateway mine \(you pay\).* — forge's landing policy does not list it/);
-  assert.equal(options[2].hasAttribute('disabled'), true);
-  assert.match(options[3].textContent, /lab's gateway team/);
+  assert.deepEqual(options.map((o) => o.value), ['', 'local', 'claude-subscription', 'proxy:mine@self', 'proxy:team@inst_lab'], 'an OpenAI gateway cannot serve Claude Code');
+  assert.match(options[2].textContent, /Your Claude subscription — not set up/);
+  assert.match(options[3].textContent, /Your gateway mine \(you pay\).* — forge's landing policy does not list it/);
+  assert.equal(options[3].hasAttribute('disabled'), true);
+  assert.match(options[4].textContent, /lab's gateway team/);
   await s.change(s.q('#lt-model-access'), 'proxy:team@inst_lab');
   await s.click(s.q('#lt-ok'));
   assert.deepEqual(sent, [['conv_b1', { peer: 'inst_forge', group: 'reviewers', credentials: 'proxy:team@inst_lab' }]]);
+});
+
+test('teleport on your own Claude subscription sends the token for the offer right after', async (t) => {
+  const sent = []; const pushed = [];
+  const s = await mountDialog(t, {
+    agent: { ...AGENT, harness: 'claude' },
+    initialMode: 'teleport', teleport: true,
+    api: {
+      status: async () => STATUS,
+      teleport: async (id, b) => { sent.push([id, b]); return { move_id: 'mv_9', teleport_state: 'awaiting_running_confirmation' }; },
+      teleportCredentials: async () => ({ any: true, default: 'local', requester_pays: 'allowed', shares: [], claude_subscription: true }),
+      models: async () => ({ gateways: {} }),
+      claudeSubscription: async () => ({ set: true }),
+      teleportSubscription: async (node, offer) => { pushed.push([node, offer]); return { held: 'offer' }; },
+    },
+    actions: { moveDetail: async () => ({ state: 'confirmed', disposition: 'landed', target_agent: 'agt_b1' }) },
+  });
+  await s.click(s.q('[data-lt-node="inst_forge"]'));
+  await s.change(s.q('#lt-group'), 'reviewers');
+  await s.settle();
+  await s.change(s.q('#lt-model-access'), 'claude-subscription');
+  await s.click(s.q('#lt-ok'));
+  assert.deepEqual(sent, [['conv_b1', { peer: 'inst_forge', group: 'reviewers', credentials: 'claude-subscription' }]], 'the offer names only the mode');
+  assert.deepEqual(pushed, [['inst_forge', 'mv_9']], 'the token follows for that offer, through this node');
 });
 
 test('model access options follow trust, requester-pays and the harness', async (t) => {
@@ -216,15 +241,18 @@ test('model access options follow trust, requester-pays and the harness', async 
   const own = m.ownGateways({ disabled: false, gateways: { mine: { enabled: true }, off: { enabled: false } } });
   const values = (opts) => opts.map((o) => [o.value, o.reason]);
   assert.deepEqual(values(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true, requester_pays: 'allowed', shares: [] }, own })),
-    [['', ''], ['local', ''], ['proxy:mine@self', ''], ['proxy:off@self', 'this gateway is disabled']], 'unrestricted trust accepts any mode');
-  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true, requester_pays: 'off' }, own })[2].reason, 'forge does not take workers you pay for');
-  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { allowed: ['proxy:mine@node-a'] }, own, selfIds: ['inst_a', 'node-a'] })[2].reason, '', 'a landing policy names this node by its alias');
-  assert.notEqual(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { allowed: ['proxy:mine@inst_lab'] }, own, selfIds: ['inst_a'] })[2].reason, '', "another node's gateway of the same name is not ours");
-  assert.match(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true }, own, trust: 'restricted' })[2].label, /needs a models\.proxy\.leased grant for forge/);
-  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'gemini', creds: { any: true }, own })[2].reason, 'gemini cannot use a model gateway');
+    [['', ''], ['local', ''], ['claude-subscription', 'not set up: store a token under Fleet config → Model gateways → My Claude subscription'], ['proxy:mine@self', ''], ['proxy:off@self', 'this gateway is disabled']], 'unrestricted trust accepts any mode');
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true, requester_pays: 'off' }, own })[3].reason, 'forge does not take workers you pay for');
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { allowed: ['proxy:mine@node-a'] }, own, selfIds: ['inst_a', 'node-a'] })[3].reason, '', 'a landing policy names this node by its alias');
+  assert.notEqual(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { allowed: ['proxy:mine@inst_lab'] }, own, selfIds: ['inst_a'] })[3].reason, '', "another node's gateway of the same name is not ours");
+  assert.match(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true }, own, trust: 'restricted' })[3].label, /needs a models\.proxy\.leased grant for forge/);
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'gemini', creds: { any: true }, own })[3].reason, 'gemini cannot use a model gateway');
   const pulled = [{ peer: 'inst_lab', gateway: 'oa', dialect: 'openai' }, { peer: 'inst_lab', gateway: 'an', dialect: 'anthropic' }, { peer: 'inst_forge', gateway: 'fo', dialect: 'openai' }];
   assert.deepEqual(values(m.modelAccessOptions({ dest: 'this node', harness: 'codex', pull: true, own, shares: pulled, trust: 'unrestricted', source: 'inst_forge' })),
     [['', ''], ['local', ''], ['proxy:oa@inst_lab', '']], "a pull offers the gateways shared with this node: not its own, nor the source's (that would be a lease)");
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'codex', creds: { any: true, claude_subscription: true }, subscription: { set: true } })[2].reason, 'it runs Claude Code only');
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { allowed: ['local'], claude_subscription: true }, subscription: { set: true } })[2].reason, "forge's landing policy does not list it");
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true, claude_subscription: true }, subscription: { set: true } })[2].reason, '');
   assert.match(m.modelAccessOptions({ dest: 'this node', harness: 'codex', pull: true, shares: pulled, trust: 'restricted', source: 'inst_forge', sourceName: 'forge' })[2].reason, /holds forge to its landing policy/);
 });
 

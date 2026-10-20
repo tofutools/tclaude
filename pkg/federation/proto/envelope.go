@@ -245,6 +245,7 @@ type CatalogPayload struct {
 	RequesterPays     int  `json:"requester_pays,omitempty"`
 	// ClaudeSubscription 1: the node runs a peer operator's spawn on that
 	// operator's own Claude subscription token, held in memory only.
+	// 2: it also lands that operator's teleports on it.
 	ClaudeSubscription int  `json:"claude_subscription,omitempty"`
 	TeleportBackups    bool `json:"teleport_backups,omitempty"`
 	AgentTeleports     int  `json:"agent_teleports,omitempty"`

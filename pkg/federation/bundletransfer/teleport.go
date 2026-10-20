@@ -39,7 +39,9 @@ type TeleportIntent struct {
 }
 
 func ValidCredentials(mode string) bool {
-	if mode == "" || mode == "local" {
+	// claude-subscription: the requesting operator's own Claude subscription,
+	// whose token travels separately and never in the offer.
+	if mode == "" || mode == "local" || mode == "claude-subscription" {
 		return true
 	}
 	ref, ok := strings.CutPrefix(mode, "proxy:")

@@ -121,7 +121,7 @@ func writeClaudeSubscriptionToken(token string) error {
 // token to a peer; a later resend to that peer requires one.
 const claudeSubscriptionSendVerb = "federation.claude_subscription.send"
 
-var claudeSubscriptionTail = regexp.MustCompile(`^(groups/[^/]+/spawn|agents/[^/]+/claude-subscription)$`)
+var claudeSubscriptionTail = regexp.MustCompile(`^(groups/[^/]+/spawn|agents/[^/]+/claude-subscription|teleport-subscription)$`)
 
 // prepareClaudeSubscriptionPush swaps a remote spawn's
 // "claude_subscription": true for this operator's token. It runs only for
@@ -147,13 +147,18 @@ func prepareClaudeSubscriptionPush(r *http.Request, body []byte, peer *db.Federa
 			return nil, errors.New("only this node's own operator can send their Claude subscription")
 		}
 		cat, _, err := fedCatalogFor(peer.InstanceID)
-		if err != nil || cat == nil || cat.ClaudeSubscription != 1 {
+		// 2 adds teleports onto the subscription (teleport-subscription).
+		need := 1
+		if r.PathValue("tail") == "teleport-subscription" {
+			need = 2
+		}
+		if err != nil || cat == nil || cat.ClaudeSubscription < need {
 			return nil, fmt.Errorf("%s cannot run an agent on your Claude subscription yet; update tclaude there", peerDisplay(peer))
 		}
 		// Sending it again only goes to a node this operator once spawned on
 		// their subscription: a peer's own claim that an agent runs on it
 		// cannot draw the token out of this node.
-		resend := !strings.HasPrefix(r.PathValue("tail"), "groups/")
+		resend := strings.HasPrefix(r.PathValue("tail"), "agents/")
 		if resend {
 			if sent, err := db.HasAuditLog(claudeSubscriptionSendVerb, "remote:"+peer.InstanceID); err != nil || !sent {
 				return nil, fmt.Errorf("you never spawned an agent on your Claude subscription on %s, so it is not sent there", peerDisplay(peer))

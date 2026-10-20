@@ -2184,6 +2184,23 @@ gateway that speaks the wrong protocol for the agent's harness is not offered.
 Pulling a peer's agent here offers the gateways shared with this node, and only
 when that peer trusts this node unrestricted.
 
+**Your Claude subscription** is offered too, for a Claude Code agent, once you
+stored a token (see "Running as yourself on another node" below) and the
+receiver runs a tclaude that lands such teleports. The flow:
+
+1. The offer carries only the mode `claude-subscription`.
+2. Your dashboard sends the token for that offer right after, through this
+   node's encrypted peer channel (`POST /api/teleport-subscription`). The
+   receiver holds it in memory only.
+3. An automatic landing waits up to two minutes for the token; an operator's
+   accept uses it when present.
+4. Without it, the agent lands offline, marked as running on your
+   subscription, and never starts on the receiver's own login. Send the token
+   from its ⚙ menu, or its badge, to start it.
+
+A restricted sender needs `claude-subscription` in the landing policy's
+`credentials_allowed`.
+
 Both sides durably charge attempts, including clones and failed launches. Under
 `federation.teleport.limits`, `per_hour`, `per_day`, `per_chain` and
 `revisit_minutes` default to 4, 12, 16 and 10. Landing policies can tighten these

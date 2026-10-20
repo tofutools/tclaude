@@ -192,6 +192,10 @@ export function createLaunchTargetApi({ fetchImpl = (...a) => globalThis.fetch(.
     teleportCredentials: (node, group) => call('GET', `/api/peer/${encodeURIComponent(node)}/teleport-credentials?group=${encodeURIComponent(group)}`),
     models: () => call('GET', '/api/federation/models/control'),
     sharesReceived: () => call('GET', '/api/federation/models/shares/received'),
+    // This operator's own Claude subscription: whether a token is stored, and
+    // sending it for a teleport offer (this node's peer proxy adds the token).
+    claudeSubscription: () => call('GET', '/api/federation/claude-subscription'),
+    teleportSubscription: (node, offer) => call('POST', `/api/peer/${encodeURIComponent(node)}/teleport-subscription`, { offer, claude_subscription: true }),
     // recall asks where an away agent runs to send it straight home; the
     // home group defaults to its first group here.
     recall: (id) => call('POST', `/api/federation/agents/${encodeURIComponent(id)}/recall`, {}),
@@ -370,11 +374,12 @@ function useModelAccess({ mode, agent, target, api, pull, acting }) {
     const loads = pull
       ? [Promise.resolve(null), Promise.resolve(null), settle(api.sharesReceived?.() || Promise.reject())]
       : [settle(api.teleportCredentials?.(target.node, target.group) || Promise.reject()), settle(api.models?.() || Promise.reject()), Promise.resolve(null)];
+    loads.push(pull ? Promise.resolve(null) : settle(api.claudeSubscription?.() || Promise.reject()));
     // This node's trust of the other node: a pull's source is held to this
     // node's landing policy, and a lease to a push's receiver needs a grant.
     const other = pull ? agent.node : target.node;
     loads.push(settle(api.status?.() || Promise.reject()));
-    Promise.all(loads).then(([creds, control, received, status]) => {
+    Promise.all(loads).then(([creds, control, received, subscription, status]) => {
       if (!live) return;
       setOptions(modelAccessOptions({
         dest, harness: agent.harness || '', creds, pull,
@@ -382,7 +387,7 @@ function useModelAccess({ mode, agent, target, api, pull, acting }) {
         shares: pull ? (received?.shares || []) : (creds?.shares || []),
         trust: (status?.peers || []).find((p) => p.instance_id === other)?.level || '',
         source: agent.node, sourceName: agent.nodeName,
-        selfIds: [status?.instance_id, status?.name],
+        selfIds: [status?.instance_id, status?.name], subscription,
       }));
     });
     return () => { live = false; };
@@ -414,6 +419,14 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
       else res = await api.teleport(agent.conv || agent.id, mode === 'home'
         ? { home: true, ...(note ? { note } : {}) }
         : { peer: target.node, group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}), ...credentials });
+      // On your own Claude subscription the offer names only the mode: send
+      // the token for it now. Without it the agent lands offline there, for
+      // you to send it from its ⚙ menu.
+      if (accessPick === 'claude-subscription' && res?.move_id && !pullActions) {
+        try { await api.teleportSubscription(target.node, res.move_id); } catch (e) {
+          toast(`${agent.name} goes on your Claude subscription, but sending it to ${target.name} failed: ${errText(e)}. It lands offline there; send it from its ⚙ menu.`, true);
+        }
+      }
       // Close once it is sent; the outcome arrives as toasts, even when the
       // dialog was cancelled while sending. A pulled move's record lives on
       // the peer, so there is none here to follow. A return to a

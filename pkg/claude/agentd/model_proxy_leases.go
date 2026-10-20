@@ -65,7 +65,9 @@ func modelLeaseWorker(row *db.SessionRow) string {
 // Creation spends the requester's gateway account and requires its ordinary
 // models.proxy authority for this receiving peer and named proxy.
 func prepareRequesterLease(r *http.Request, caller string, peer *db.FederationPeer, request, kind, mode string) (string, string, error) {
-	if mode == "" || mode == "local" {
+	// The sender's own Claude subscription is no gateway: its token follows
+	// the offer separately (claude_subscription_teleport.go).
+	if mode == "" || mode == "local" || mode == claudeSubscriptionMode {
 		return mode, "", nil
 	}
 	ref, ok := strings.CutPrefix(mode, "proxy:")

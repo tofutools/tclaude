@@ -186,6 +186,9 @@ func peerViewRules() map[string]peerViewRule {
 	// A teleport dialog asks which model access the receiving group accepts
 	// from the asking peer; groups it may not send agents to answer 404.
 	rules["GET /api/teleport-credentials"] = peerViewRule{feature: "agents.teleport.credentials", publicRead: true, serve: servePeerTeleportCredentials}
+	// The sender of a teleport onto its own Claude subscription sends the
+	// token for that offer; only the offer's own sender's token is held.
+	rules["POST /api/teleport-subscription"] = peerViewRule{feature: "agents.teleport.credentials", publicRead: true, write: servePeerTeleportSubscription}
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	// The Usage tab's Quota view reads the node's own subscription quota

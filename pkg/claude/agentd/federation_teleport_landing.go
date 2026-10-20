@@ -128,7 +128,11 @@ func resolveTeleportLanding(peer string, group int64, credentials string) (*db.F
 	if err != nil {
 		return nil, nil, nil, "", err
 	}
-	if ref, err := teleportModelReference(mode, profile.Harness); err != nil {
+	if mode == claudeSubscriptionMode {
+		if profile.Harness != "" && profile.Harness != harness.DefaultName {
+			return nil, nil, nil, "", errors.New("a teleport on the sender's Claude subscription lands as Claude Code only")
+		}
+	} else if ref, err := teleportModelReference(mode, profile.Harness); err != nil {
 		return nil, nil, nil, "", err
 	} else if mode != "local" {
 		mode = "proxy:" + ref
@@ -283,6 +287,12 @@ func processTeleportLanding(rt *fedRuntime, t *db.FederationTeleport) {
 		}
 	}
 	if o.State != "ready" {
+		return
+	}
+	// A landing on the sender's Claude subscription waits a little for its
+	// token, which the sender's dashboard sends right after the offer; past
+	// that it lands offline, for the owner to send the token again.
+	if t.Credentials == claudeSubscriptionMode && !offerClaudeSubscriptionHeld(t.Peer, t.Offer) && time.Since(o.CreatedAt) < claudeSubscriptionTeleportWait {
 		return
 	}
 	fedBundleMu.Lock()
@@ -537,6 +547,9 @@ func pendingTeleportCredentials(peer, requested string) (string, error) {
 	if !allowed {
 		return "", errors.New("credential mode is not allowed by the receiver landing policy")
 	}
+	if mode == claudeSubscriptionMode {
+		return mode, nil
+	}
 	if mode != "local" {
 		ref, err := teleportModelReference(mode, "")
 		if err != nil {
@@ -628,8 +641,15 @@ func teleportModelReference(mode, launchHarness string) (string, error) {
 	return name + "@" + peer.InstanceID, nil
 }
 func applyTeleportModelCredentials(b *agentbundle.Bundle, mode string) error {
-	ref, err := teleportModelReference(mode, b.Manifest.Agent.Harness)
-	if err != nil {
+	ref := "off"
+	var err error
+	if mode == claudeSubscriptionMode {
+		// The sender's subscription replaces any gateway route; the token
+		// itself reaches the launch through the import's context.
+		if h := b.Manifest.Agent.Harness; h != "" && h != harness.DefaultName {
+			return errors.New("a teleport on the sender's Claude subscription runs Claude Code only")
+		}
+	} else if ref, err = teleportModelReference(mode, b.Manifest.Agent.Harness); err != nil {
 		return err
 	}
 	var profile spawnProfileJSON
