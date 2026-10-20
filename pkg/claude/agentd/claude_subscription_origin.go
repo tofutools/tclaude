@@ -115,14 +115,16 @@ func writeClaudeSubscriptionToken(token string) error {
 	return werr
 }
 
-var peerSpawnTail = regexp.MustCompile(`^groups/[^/]+/spawn$`)
+// claudeSubscriptionTail names the peer routes that carry this operator's
+// token: a spawn, and sending it again for an agent that runs on it.
+var claudeSubscriptionTail = regexp.MustCompile(`^(groups/[^/]+/spawn|agents/[^/]+/claude-subscription)$`)
 
 // prepareClaudeSubscriptionPush swaps a remote spawn's
 // "claude_subscription": true for this operator's token. It runs only for
 // the local operator's own dashboard, never for a peer acting through this
 // node, and only toward a peer that keeps the token in memory.
 func prepareClaudeSubscriptionPush(r *http.Request, body []byte, peer *db.FederationPeer) ([]byte, error) {
-	if r.Method != http.MethodPost || !peerSpawnTail.MatchString(r.PathValue("tail")) || !bytes.Contains(body, []byte(`"claude_subscription"`)) {
+	if r.Method != http.MethodPost || !claudeSubscriptionTail.MatchString(r.PathValue("tail")) || !bytes.Contains(body, []byte(`"claude_subscription"`)) {
 		return body, nil
 	}
 	var fields map[string]json.RawMessage
@@ -150,7 +152,7 @@ func prepareClaudeSubscriptionPush(r *http.Request, body []byte, peer *db.Federa
 		}
 		encoded, _ := json.Marshal(token)
 		fields["claude_subscription_token"] = encoded
-		recordFederationAudit("federation.claude_subscription.send", peer.InstanceID, "", "", "spawn "+r.PathValue("tail"), 202)
+		recordFederationAudit("federation.claude_subscription.send", peer.InstanceID, "", "", r.PathValue("tail"), 202)
 	}
 	out, err := json.Marshal(fields)
 	if err != nil || len(out) > fedPeerViewBodyLimit {

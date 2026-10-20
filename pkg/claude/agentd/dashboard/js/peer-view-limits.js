@@ -169,6 +169,10 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   // Its lifecycle, through the regular dialogs (peer_actions.go refuses
   // their local-only options). A restart stops the agent first.
   'restart': ['groups.members.stop', 'groups.members.resume'],
+  // Sending a Claude subscription token again, or switching the agent to
+  // the node's own login (claude_subscription_agent.go).
+  'claude-subscription': ['groups.members.resume'],
+  'claude-login-local': ['groups.members.resume'],
   'retire-agent': ['groups.members.retire'],
   'clone': ['groups.members.clone'],
   // Unrestricted trust only (the local_dashboard routes).

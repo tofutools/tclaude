@@ -956,6 +956,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror familiar" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this familiar into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
     <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
     <${RestartMenuItem} member=${member} />
+    <${SubscriptionMenuItems} member=${member} />
     <${SandboxRestartMenuItem} member=${member} />
     <${SandboxImplMenuItem} member=${member} />
     <${MenuSeparator} />
@@ -1061,6 +1062,16 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
   >${member.title || '(unnamed)'}<//><${PresenceBadge} member=${member} /><${SubscriptionBadge} member=${member} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
 }
 
+// SubscriptionMenuItems: the owner of a lost subscription token sends it
+// again; anyone may switch an agent on a subscription to the node's own login.
+function SubscriptionMenuItems({ member }) {
+  const sub = member.claude_subscription;
+  if (!sub?.peer) return null;
+  const mine = sub.peer === fleetState.fleet.value?.self?.id;
+  return html`${!sub.held && mine ? html`<${MenuButton} member=${member} act="claude-subscription" attrs=${{ 'data-online': member.online ? '1' : '0' }} regular="◆ send my subscription again…" title="This node forgot your Claude subscription token (its tclaude restarted). Send it again in an encrypted request, so the agent can start." />` : null}
+    <${MenuButton} member=${member} act="claude-login-local" regular="◆ use the node's own login…" title="Stop running this agent on the Claude subscription it was spawned on: from its next start it uses the Claude login of the node it runs on." />`;
+}
+
 // SubscriptionBadge marks an agent that runs Claude Code on a peer operator's
 // own Claude subscription, handed over in memory only: once the node no
 // longer holds the token (its tclaude restarted), a relaunch refuses.
@@ -1071,8 +1082,13 @@ function SubscriptionBadge({ member }) {
   const owner = who.local ? 'your' : `${who.name || sub.label || 'a peer'}'s`;
   const title = sub.held
     ? `Runs on ${owner} own Claude subscription. The token is held in memory on the node running it, never on its disk or in the agent's environment; it ends with the agent.`
-    : `Runs on ${owner} own Claude subscription, but the node running it no longer holds the token (its tclaude restarted), so it cannot be restarted or resumed. Spawn a new agent to continue.`;
-  return html`<span class=${`presence-badge subscription-badge${sub.held ? '' : ' lost'}`} style=${who.color ? `--nc:${who.color}` : undefined} title=${title} data-subscription=${sub.held ? 'held' : 'lost'}>◆ ${owner} subscription${sub.held ? '' : ' (token gone)'}</span>`;
+    : `Runs on ${owner} own Claude subscription, but the node running it no longer holds the token (its tclaude restarted), so it cannot start until ${who.local ? 'you send it' : 'its owner sends it'} again or it switches to the node's own login.`;
+  const text = `◆ ${owner} subscription${sub.held ? '' : ' (token gone)'}`;
+  if (sub.held) return html`<span class="presence-badge subscription-badge" style=${who.color ? `--nc:${who.color}` : undefined} title=${title} data-subscription="held">${text}</span>`;
+  // A lost token is actionable: its owner sends it again, anyone else may
+  // switch the agent to the node's own login (subscription-relaunch.js).
+  return html`<button type="button" class="presence-badge subscription-badge lost" style=${who.color ? `--nc:${who.color}` : undefined} title=${`${title} Click to ${who.local ? 'send it again' : 'switch it to the node\'s own login'}.`}
+    data-subscription="lost" data-act="claude-subscription" ...${menuMemberAttrs(member, 'agent')} data-online=${member.online ? '1' : '0'}>${text}</button>`;
 }
 
 // PresenceBadge marks a visiting agent with its home, and a returned one with

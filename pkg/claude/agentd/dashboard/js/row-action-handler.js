@@ -22,6 +22,7 @@ import {
   openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
   openTaskLinkDialog, openLaunchTargetDialog } from './action-dialog-controller.js';
 import { launchAgent } from './launch-target-dialog.js';
+import { ensureClaudeSubscription, switchToOwnLogin } from './subscription-relaunch.js';
 import { fleetState } from './fleet-state.js';
 import {
   openDeleteAgentDialog, openRetireAgentDialog, openShutdownAgentDialog,
@@ -328,7 +329,19 @@ export async function handleRowAction(action) {
         });
         return;
       }
+      case 'claude-subscription': {
+        // The subscription badge (token gone) and the ⚙ menu: restore the
+        // token or switch the login, then wake an offline agent.
+        if (!(await ensureClaudeSubscription({ agent, label, node, verb: data.online === '1' ? 'restart it later' : 'wake it' }))) return;
+        if (data.online !== '1') await resumeAgentReq(agent, label, false, node);
+        return;
+      }
+      case 'claude-login-local': {
+        await switchToOwnLogin({ agent, label, node });
+        return;
+      }
       case 'restart': {
+        if (!(await ensureClaudeSubscription({ agent, label, node, verb: 'restart it' }))) return;
         const confirmed = await confirmModal({
           title: `Restart ${label}?`,
           body: 'This stops and restarts the same conversation under its current launch configuration, re-resolving sandbox-profile rules. The server will refuse unless the agent is fully idle with no background agents or shell commands.',
@@ -672,6 +685,7 @@ export async function handleRowAction(action) {
         // online is read from data-* set by agentStatusDot.
         const online = data.online === '1';
         if (!online) {
+          if (!(await ensureClaudeSubscription({ agent, label, node, verb: 'wake it' }))) return;
           await resumeAgentReq(agent, label, false, node);
           return;
         }
@@ -714,6 +728,7 @@ export async function handleRowAction(action) {
         // Open the reincarnate modal pre-populated with this
         // agent. The modal enforces the required follow_up and
         // handles the POST + refresh.
+        if (!(await ensureClaudeSubscription({ agent, label, node, verb: 'reincarnate it' }))) return;
         openReincarnateAgentDialog(agent, label, node);
         return;
       }

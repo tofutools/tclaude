@@ -163,3 +163,17 @@ func TestClaudeSubscriptionTokenStore(t *testing.T) {
 	require.Equal(t, 200, code)
 	require.Equal(t, false, out["set"])
 }
+
+func TestClaudeSubscriptionRelaunchBlockedBeforeStopping(t *testing.T) {
+	setupTestDB(t)
+	resetClaudeSubscriptions(t)
+	agentID, _, err := db.EnsureAgentForConv("conv-blocked", "test")
+	require.NoError(t, err)
+	require.NoError(t, claudeSubscriptionRelaunchBlocked(agentID), "an agent on this node's own login")
+	require.NoError(t, holdClaudeSubscription(agentID, claudeSubscriptionHandoff{peer: "inst_peer", token: testSubscriptionToken}))
+	require.NoError(t, claudeSubscriptionRelaunchBlocked(agentID), "the token is held")
+	dropClaudeSubscription(agentID)
+	err = claudeSubscriptionRelaunchBlocked(agentID)
+	require.True(t, isClaudeSubscriptionLost(err), "%v", err)
+	require.ErrorContains(t, err, "can send it again")
+}

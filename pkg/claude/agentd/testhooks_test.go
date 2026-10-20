@@ -2287,3 +2287,12 @@ func SetProfileStoreDirForTest(dir string) func() {
 func TermSessionNameForTest(convID, which string) string {
 	return termSessionName(convID, which)
 }
+
+// ForgetClaudeSubscriptionsForTest drops every in-memory Claude subscription
+// token, as a daemon restart does; the agents' markers stay.
+func ForgetClaudeSubscriptionsForTest() {
+	claudeSubscriptions.Lock()
+	claudeSubscriptions.agents = map[string]claudeSubscriptionHandoff{}
+	claudeSubscriptions.armed = map[string]bool{}
+	claudeSubscriptions.Unlock()
+}

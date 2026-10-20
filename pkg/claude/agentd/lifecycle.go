@@ -1966,6 +1966,9 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		FastMode:                launchConfig.FastMode,
 	}); err != nil {
 		res.Action = "error"
+		if isClaudeSubscriptionLost(err) {
+			res.Action = "error:" + claudeSubscriptionLostCode
+		}
 		res.Detail = "spawn: " + err.Error()
 		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
 			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *resumePolicy.Previous); cleanupErr != nil {

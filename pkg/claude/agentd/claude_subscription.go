@@ -135,14 +135,46 @@ func takeRequestClaudeSubscription(request int64) (claudeSubscriptionHandoff, bo
 	return p.claudeSubscriptionHandoff, true
 }
 
-// errClaudeSubscriptionLost explains a relaunch that would otherwise quietly
-// use this node's own Claude login.
+// claudeSubscriptionLostError explains a relaunch that would otherwise
+// quietly use this node's own Claude login. Its code lets the dashboard offer
+// the owner to send the token again, or anyone to switch the agent to this
+// node's own login.
+type claudeSubscriptionLostError struct {
+	peer string
+	msg  string
+}
+
+func (e *claudeSubscriptionLostError) Error() string { return e.msg }
+
+// claudeSubscriptionLostCode is the error code (and resume action suffix)
+// for a relaunch refused because the token is gone.
+const claudeSubscriptionLostCode = "claude_subscription_lost"
+
 func errClaudeSubscriptionLost(peer string) error {
 	who := peer
 	if p, _ := db.GetFederationPeer(peer); p != nil {
 		who = peerDisplay(p)
 	}
-	return fmt.Errorf("this agent runs on %s's Claude subscription, and this node no longer holds the token (it is kept in memory only, so a daemon restart forgets it); spawn a new agent from %s with its subscription", who, who)
+	return &claudeSubscriptionLostError{peer: peer, msg: fmt.Sprintf("this agent runs on %s's Claude subscription, and this node no longer holds the token (it is kept in memory only, so a daemon restart forgets it); %s can send it again, or switch the agent to this node's own login", who, who)}
+}
+
+// isClaudeSubscriptionLost reports a launch refused for a missing token.
+func isClaudeSubscriptionLost(err error) bool {
+	var lost *claudeSubscriptionLostError
+	return errors.As(err, &lost)
+}
+
+// claudeSubscriptionRelaunchBlocked is the refusal a relaunch of agentID
+// would meet, checked before anything is stopped.
+func claudeSubscriptionRelaunchBlocked(agentID string) error {
+	marker, err := db.GetAgentClaudeSubscription(agentID)
+	if err != nil || marker == nil {
+		return nil
+	}
+	if _, ok := heldClaudeSubscription(agentID); ok {
+		return nil
+	}
+	return errClaudeSubscriptionLost(marker.Peer)
 }
 
 // applyClaudeSubscription marks a launch of an agent that runs on a peer's

@@ -86,6 +86,12 @@ func dashboardRestartAgent(w http.ResponseWriter, _ *http.Request, convSelector 
 		writeError(w, http.StatusConflict, "relaunch_profile", err.Error())
 		return
 	}
+	// Nor stop an agent whose Claude subscription token is gone: it could
+	// not come back until its owner sends the token again.
+	if err := claudeSubscriptionRelaunchBlocked(agentID); err != nil {
+		writeError(w, http.StatusConflict, claudeSubscriptionLostCode, err.Error())
+		return
+	}
 
 	// Preserve any attached human terminal across the stop/resume gap. The
 	// handoff is best-effort and self-expiring; its deferred finish returns the
