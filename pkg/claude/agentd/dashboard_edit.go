@@ -409,6 +409,9 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			handleAgentMorph(w, asDashboardHumanPeer(r), res.ConvID)
 			return
+		case "claude-subscription":
+			dashboardAgentClaudeSubscription(w, r, convSelector)
+			return
 		case "reincarnate":
 			if r.Method != http.MethodPost {
 				http.Error(w, "POST only", http.StatusMethodNotAllowed)

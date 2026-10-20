@@ -115,14 +115,20 @@ func writeClaudeSubscriptionToken(token string) error {
 	return werr
 }
 
-var peerSpawnTail = regexp.MustCompile(`^groups/[^/]+/spawn$`)
+// claudeSubscriptionTail names the peer routes that carry this operator's
+// token: a spawn, and sending it again for an agent that runs on it.
+// claudeSubscriptionSendVerb audits a spawn that carried this operator's
+// token to a peer; a later resend to that peer requires one.
+const claudeSubscriptionSendVerb = "federation.claude_subscription.send"
+
+var claudeSubscriptionTail = regexp.MustCompile(`^(groups/[^/]+/spawn|agents/[^/]+/claude-subscription)$`)
 
 // prepareClaudeSubscriptionPush swaps a remote spawn's
 // "claude_subscription": true for this operator's token. It runs only for
 // the local operator's own dashboard, never for a peer acting through this
 // node, and only toward a peer that keeps the token in memory.
 func prepareClaudeSubscriptionPush(r *http.Request, body []byte, peer *db.FederationPeer) ([]byte, error) {
-	if r.Method != http.MethodPost || !peerSpawnTail.MatchString(r.PathValue("tail")) || !bytes.Contains(body, []byte(`"claude_subscription"`)) {
+	if r.Method != http.MethodPost || !claudeSubscriptionTail.MatchString(r.PathValue("tail")) || !bytes.Contains(body, []byte(`"claude_subscription"`)) {
 		return body, nil
 	}
 	var fields map[string]json.RawMessage
@@ -144,13 +150,26 @@ func prepareClaudeSubscriptionPush(r *http.Request, body []byte, peer *db.Federa
 		if err != nil || cat == nil || cat.ClaudeSubscription != 1 {
 			return nil, fmt.Errorf("%s cannot run an agent on your Claude subscription yet; update tclaude there", peerDisplay(peer))
 		}
+		// Sending it again only goes to a node this operator once spawned on
+		// their subscription: a peer's own claim that an agent runs on it
+		// cannot draw the token out of this node.
+		resend := !strings.HasPrefix(r.PathValue("tail"), "groups/")
+		if resend {
+			if sent, err := db.HasAuditLog(claudeSubscriptionSendVerb, "remote:"+peer.InstanceID); err != nil || !sent {
+				return nil, fmt.Errorf("you never spawned an agent on your Claude subscription on %s, so it is not sent there", peerDisplay(peer))
+			}
+		}
 		token, _, err := readClaudeSubscriptionToken()
 		if err != nil {
 			return nil, errors.New("set your Claude subscription token first (Fleet config → Model gateways → My Claude subscription)")
 		}
 		encoded, _ := json.Marshal(token)
 		fields["claude_subscription_token"] = encoded
-		recordFederationAudit("federation.claude_subscription.send", peer.InstanceID, "", "", "spawn "+r.PathValue("tail"), 202)
+		verb := claudeSubscriptionSendVerb
+		if resend {
+			verb = "federation.claude_subscription.resend_send"
+		}
+		recordFederationAudit(verb, peer.InstanceID, "", "", r.PathValue("tail"), 202)
 	}
 	out, err := json.Marshal(fields)
 	if err != nil || len(out) > fedPeerViewBodyLimit {

@@ -5,6 +5,7 @@
 // stays separate from refresh.js so the snapshot poll/reconciler never becomes
 // an imperative action controller.
 
+import { ensureClaudeSubscription } from './subscription-relaunch.js';
 import { fetchListFull } from './list-paging.js';
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import { refresh } from './refresh.js';
@@ -466,7 +467,7 @@ export async function openCleanupModal(options = {}) {
 // the recreate opt-in is never automatic. The internal `recreate` flag is
 // set only on that second call.
 // node names another node's agent (the fused Groups view); blank is the page's.
-export async function resumeAgentReq(conv, label, recreate, node = '') {
+export async function resumeAgentReq(conv, label, recreate, node = '', retried = false) {
   // Optimistic waking indicator: record the pending wake (keyed by the same
   // agent_id-or-conv_id handle the dot's data-agent carries, which is what
   // arrives here) and repaint. The render path folds this set into the row's
@@ -517,6 +518,14 @@ export async function resumeAgentReq(conv, label, recreate, node = '') {
     return resumeAgentReq(conv, label, true, node);
   }
   const action = String(out.action || '');
+  // The agent runs on a Claude subscription token its node no longer holds:
+  // offer to send it again (its owner) or switch the login, then retry once.
+  if (action === 'error:claude_subscription_lost' && !retried) {
+    clearPendingWake(conv);
+    if (await ensureClaudeSubscription({ agent: conv, label, node, verb: 'wake it', lost: true })) return resumeAgentReq(conv, label, recreate, node, true);
+    toast(`wake ${label}: ${out.detail || 'its Claude subscription token is gone'}`, true);
+    return false;
+  }
   if (action === 'error' || action.startsWith('error:')) {
     const detail = out.detail ? ` — ${out.detail}` : '';
     toast(`wake ${label}: ${action}${detail}`, true);

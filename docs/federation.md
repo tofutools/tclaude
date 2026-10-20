@@ -2325,7 +2325,17 @@ encrypted request, and only for this node's own operator. The receiving node:
   own login.
 
 The member row shows a **◆ \<name\>'s subscription** badge. When the token is
-gone, the badge says so; spawn a new agent to continue. Clones, moves,
+gone, the badge says so, and a resume, restart or reincarnate does not stop or
+start anything. Instead, a dialog offers:
+- **the subscription's owner:** send the token again. Their own node adds it to
+  an encrypted `POST /api/agents/{id}/claude-subscription`.
+- **anyone else who may relaunch the agent:** switch it to the node's own login
+  (`DELETE` on the same route), billed there from then on. Over the peer view
+  this means the owner or an unrestricted peer.
+
+The agent's ⚙ menu offers both explicitly: "send my subscription again" and
+"use the node's own login". A restart checks the token before it stops the
+agent. Clones, moves,
 teleports and manual `conv resume` on the receiving node do not carry the
 subscription: a moved agent runs on its destination's own login. A receiver
 whose requester-pays policy is `required` accepts a subscription spawn without

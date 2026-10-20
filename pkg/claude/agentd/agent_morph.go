@@ -864,6 +864,12 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 	if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
 		return fail(http.StatusConflict, "relaunch_profile", "the new form cannot be launched: "+err.Error())
 	}
+	// Nor stop an agent whose Claude subscription token is gone.
+	if agentID, _ := db.AgentIDForConv(convID); agentID != "" {
+		if err := claudeSubscriptionRelaunchBlocked(agentID); err != nil {
+			return fail(http.StatusConflict, claudeSubscriptionLostCode, err.Error())
+		}
+	}
 	clientHandoff := beginAgentRestartTmuxHandoff(live.TmuxSession)
 	defer clientHandoff.finishForConv(convID)
 	stopped := escalateShutdownUnderLaunchLock(convID, shutdownGrace)

@@ -142,6 +142,11 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	// The deferred finish covers every error path: it switches back to a still
 	// live old pane when shutdown failed, or removes the bridge if no useful
 	// target survived.
+	// An agent whose Claude subscription token is gone could not come back.
+	if err := claudeSubscriptionRelaunchBlocked(agentID); err != nil {
+		writeError(w, http.StatusConflict, claudeSubscriptionLostCode, err.Error())
+		return
+	}
 	clientHandoff := beginAgentRestartTmuxHandoff(liveSession.TmuxSession)
 	defer clientHandoff.finishForConv(convID)
 

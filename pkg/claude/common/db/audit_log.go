@@ -120,6 +120,17 @@ func insertAuditLog(x auditExecer, e AuditLogEntry) (int64, error) {
 
 // InsertAuditLog records one audit row. Callers treat the error as
 // best-effort: a logging failure must never fail the underlying command.
+// HasAuditLog reports whether any entry records verb by actorLabel.
+func HasAuditLog(verb, actorLabel string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var found int
+	err = d.QueryRow(`SELECT EXISTS(SELECT 1 FROM audit_log WHERE verb = ? AND actor_label = ?)`, verb, actorLabel).Scan(&found)
+	return found == 1, err
+}
+
 func InsertAuditLog(e AuditLogEntry) (int64, error) {
 	d, err := Open()
 	if err != nil {

@@ -208,6 +208,12 @@ func peerViewRules() map[string]peerViewRule {
 	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"resume", PermGroupsMembersResume}, {"restart", PermGroupsMembersResume}, {"sandbox-restart", PermGroupsMembersResume}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
 		rules["POST /api/agents/{id}/"+action.tail] = peerViewRule{feature: "lifecycle." + action.tail, requires: action.permission, group: true, write: servePeerAgentAction}
 	}
+	// The owner of an agent's Claude subscription sends the token again after
+	// this node forgot it; the owner or an unrestricted peer may instead
+	// switch the agent to this node's own login.
+	for _, method := range []string{"POST", "DELETE"} {
+		rules[method+" /api/agents/{id}/claude-subscription"] = peerViewRule{feature: "lifecycle.claude-subscription", requires: PermGroupsMembersResume, group: true, write: servePeerAgentClaudeSubscription}
+	}
 	// PR links only reach a peer inside the complete (unrestricted) snapshot,
 	// so the hover cards behind them are held the same way.
 	rules["GET /api/pr-checks"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRChecks)}

@@ -25,6 +25,16 @@ func SetAgentClaudeSubscription(agentID, peer string) error {
 	return err
 }
 
+// DeleteAgentClaudeSubscription moves an agent back to this node's own login.
+func DeleteAgentClaudeSubscription(agentID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM agent_claude_subscriptions WHERE agent_id = ?`, agentID)
+	return err
+}
+
 // GetAgentClaudeSubscription returns nil for an agent on this node's own login.
 func GetAgentClaudeSubscription(agentID string) (*AgentClaudeSubscription, error) {
 	d, err := Open()

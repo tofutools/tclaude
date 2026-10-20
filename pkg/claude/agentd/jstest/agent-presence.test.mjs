@@ -85,7 +85,10 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   assert.equal(host.querySelector('[data-subscription="held"]').textContent, "◆ forge's subscription");
   const lost = host.querySelector('[data-subscription="lost"]');
   assert.equal(lost.textContent, '◆ your subscription (token gone)');
-  assert.match(lost.getAttribute('title'), /no longer holds the token.*Spawn a new agent/);
+  assert.match(lost.getAttribute('title'), /no longer holds the token.*until you send it again or it switches to the node's own login.*Click to send it again/);
+  assert.equal(lost.tagName, 'BUTTON', 'a lost token is actionable');
+  assert.equal(lost.dataset.act, 'claude-subscription');
+  assert.equal(lost.dataset.agent, 'agt_1');
   const modes = [...host.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode);
   assert.deepEqual(modes, ['move', 'teleport', 'clone', 'morph'], 'recall home shows only on a visiting agent');
   const recall = [...host.querySelectorAll('tr.away-placeholder [data-act="send-elsewhere"]')].map((b) => b.dataset.mode);

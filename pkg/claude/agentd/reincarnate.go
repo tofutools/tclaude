@@ -694,6 +694,10 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	launchFailed := func(err error) {
 		rollbackHandoff()
 		rollbackSandbox(true)
+		if isClaudeSubscriptionLost(err) {
+			writeError(w, http.StatusConflict, claudeSubscriptionLostCode, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 	}

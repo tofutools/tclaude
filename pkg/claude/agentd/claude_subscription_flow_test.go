@@ -118,3 +118,56 @@ func TestPeerSpawnRequestOnTheirClaudeSubscription(t *testing.T) {
 	require.True(t, found, "the approved launch runs on the subscription")
 	require.False(t, strings.Contains(req.Brief+req.Reason, fakeSubscriptionToken))
 }
+
+// After the receiving daemon forgot the token, a relaunch refuses with a code
+// the dashboard recognizes; the owner sends the token again and the agent
+// resumes on it, or switches it to the node's own login.
+func TestClaudeSubscriptionResendAndSwitchLogin(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveGroup("crew")
+	spawns := recordSpawns(t)
+	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	call := func(method, path string, body any) (int, string) {
+		rec := testharness.Serve(h, testharness.JSONRequest(t, method, path, body))
+		return rec.Code, rec.Body.String()
+	}
+	code, body := call("POST", "/api/groups/crew/spawn?as=local", map[string]any{"name": "helper", "initial_message": "hi", "claude_subscription_token": fakeSubscriptionToken})
+	require.Equal(t, 200, code, body)
+	agentID := spawns()[len(spawns())-1].ClaudeSubscriptionAgentID
+	a, err := db.GetAgent(agentID)
+	require.NoError(t, err)
+	f.Stop(a.CurrentConvID, true)
+
+	agentd.ForgetClaudeSubscriptionsForTest()
+	code, body = call("POST", "/api/agents/"+agentID+"/resume", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"action":"error:claude_subscription_lost"`)
+	_, body = call("GET", "/api/snapshot", nil)
+	require.Contains(t, body, `"held":false`)
+
+	// Only a body carrying the token re-arms it; the owner's node fills it in.
+	code, body = call("POST", "/api/agents/"+agentID+"/claude-subscription", map[string]any{})
+	require.Equal(t, 400, code, body)
+	code, body = call("POST", "/api/agents/"+agentID+"/claude-subscription", map[string]any{"claude_subscription_token": fakeSubscriptionToken})
+	require.Equal(t, 200, code, body)
+	require.NotContains(t, body, fakeSubscriptionToken)
+	code, body = call("POST", "/api/agents/"+agentID+"/resume", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"action":"resumed"`)
+
+	// Switching to this node's own login drops the marker and the token.
+	f.Stop(a.CurrentConvID, true)
+	code, body = call("DELETE", "/api/agents/"+agentID+"/claude-subscription", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"switched":true`)
+	marker, err := db.GetAgentClaudeSubscription(agentID)
+	require.NoError(t, err)
+	require.Nil(t, marker)
+	code, body = call("POST", "/api/agents/"+agentID+"/resume", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"action":"resumed"`)
+	_, body = call("GET", "/api/snapshot", nil)
+	require.NotContains(t, body, `"claude_subscription"`)
+}
