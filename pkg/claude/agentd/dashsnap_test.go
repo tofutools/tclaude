@@ -1293,6 +1293,12 @@ func baseStates() []dashsnap.State {
       !drawer.querySelector('.human-notification-drawer-actions .primary')) {
     throw new Error('groups-notification-reader: reader content/actions missing');
   }
+  // The action bar must fit the drawer and keep every button one height.
+  var actions = drawer.querySelector('.human-notification-drawer-actions');
+  if (actions.scrollWidth > actions.clientWidth) throw new Error('groups-notification-reader: action buttons overflow the drawer');
+  var heights = Array.prototype.map.call(actions.querySelectorAll(':scope button, :scope > .mail-download > button'),
+    function(b){ return Math.round(b.getBoundingClientRect().height); });
+  if (new Set(heights).size !== 1) throw new Error('groups-notification-reader: action buttons differ in height: ' + heights.join(','));
   // Opening the reader must not mark the message read; the state chip and the
   // agent marker both stay unread until the operator uses "Mark read". The
   // visual matrix reuses one DB fixture across both skins, so this also keeps

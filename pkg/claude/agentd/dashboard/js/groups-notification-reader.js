@@ -436,7 +436,7 @@ export function GroupsNotificationReader({
         })}>
         ${message.read ? 'Mark unread' : 'Mark read'}
       </button><${LockReason} why=${markLock} />
-      <span class="grow"></span>
+      <span class="human-notification-drawer-actions-break" aria-hidden="true"></span>
       <${MessageDownloadMenu} message=${message} node=${peer} toast=${toast} />
       <button type="button" class="danger human-notification-drawer-delete" disabled=${!!deleteLock}
         title=${deleteLock ? undefined : `Permanently delete this notification${peer ? ` on ${peerName}` : ''}`} onClick=${remove}>Delete</button><${LockReason} why=${deleteLock} />
