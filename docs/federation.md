@@ -1026,7 +1026,7 @@ Each TCP connection becomes one **hub stream**. The route id, stream id and
 an ephemeral X25519 key travel in sealed control envelopes. The two
 instances derive per-direction ChaCha20-Poly1305 keys, so the hub relays
 ciphertext it cannot read, and a truncated stream is detected, not mistaken
-for a clean end. The hub limits each instance to 16 concurrent streams and
+for a clean end. The hub limits each instance to 128 concurrent streams and
 10 MiB/s by default (`tclaude-hub serve --max-streams`,
 `--stream-bytes-per-second`).
 
