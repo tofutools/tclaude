@@ -334,6 +334,10 @@ export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = g
 // (group@node names; group-reorder.js keeps it), else node order.
 const fusedOrder = (list) => sortGroupsByPref(list, dashPrefs, FUSED_GROUP_ORDER_KEY);
 
+// FOLLOW_CLICK_TARGETS are the clicks in a group that move the toolbar to its
+// node: on something that acts, not on the group's plain text or empty space.
+const FOLLOW_CLICK_TARGETS = 'summary, button, a[href], input, select, textarea, label, [data-act], [role="button"], [role="menuitem"]';
+
 // MergedGroups is the fused Groups view: the Groups listing (GroupsLensList,
 // as on one node's view, under the same toolbar and its filter, view and
 // lens state in `groups`) over the ticked nodes' groups, named group@node. This node's own groups (home, on
@@ -530,7 +534,9 @@ export function MergedGroups({
   // The Groups toolbar's node-wide controls (global defaults, + new group)
   // follow one of the listed nodes (toolbar-node.js): each node's defaults as
   // its snapshot carries them, and the node of the group last clicked,
-  // right-clicked or dropped onto. Hover, focus and polls do not move it.
+  // right-clicked or dropped onto. Hover, focus and polls do not move it, nor
+  // does a click on a group's plain text or empty space: that is often just
+  // the click away from the toolbar's own node chip, which it would undo.
   const toolbarList = active && merged ? merged.fleet_nodes.map(({ node }) => {
     const snap = snapOf(node.id);
     return {
@@ -542,7 +548,10 @@ export function MergedGroups({
   useEffect(() => () => setToolbarNodes([]), []);
   useEffect(() => {
     if (!host) return undefined;
-    const follow = (event) => pickToolbarNode(event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode || '');
+    const follow = (event) => {
+      if (event.type === 'click' && !event.target?.closest?.(FOLLOW_CLICK_TARGETS)) return;
+      pickToolbarNode(event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode || '');
+    };
     const kinds = ['click', 'contextmenu', 'drop'];
     for (const kind of kinds) host.addEventListener(kind, follow, true);
     return () => { for (const kind of kinds) host.removeEventListener(kind, follow, true); };
