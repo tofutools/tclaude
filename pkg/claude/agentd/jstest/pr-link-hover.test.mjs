@@ -8,6 +8,14 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const PR = 'https://github.com/tofutools/tclaude/pull/3090';
 
+
+// leave moves the pointer off a PR popover and waits out its close grace.
+async function leave(harness, root) {
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, HOVER_CLOSE_MS + 20)));
+}
+
 test('diff blocks split five ways with a block for each non-zero side', async (t) => {
   const harness = await createPreactHarness(t);
   const { diffBlocks } = await harness.importDashboardModule('js/pr-link-hover.js');
@@ -96,7 +104,7 @@ test('hovering the PR link opens a details card', async (t) => {
     await harness.act(() => new Promise((resolve) => setTimeout(resolve, 800)));
     assert.equal(calls.length, 2, 'a resolved card does not keep polling');
 
-    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    await leave(harness, root);
     assert.equal(mounted.container.querySelector('.prd-panel'), null);
   } finally {
     await mounted.unmount();

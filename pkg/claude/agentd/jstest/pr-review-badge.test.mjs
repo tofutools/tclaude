@@ -9,6 +9,14 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const PR = 'https://github.com/tofutools/tclaude/pull/3046';
 
+
+// leave moves the pointer off a PR popover and waits out its close grace.
+async function leave(harness, root) {
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, HOVER_CLOSE_MS + 20)));
+}
+
 test('review state collapses decision and counts', async (t) => {
   const harness = await createPreactHarness(t);
   const { prReviewState, prReviewLabel, readyToMerge } = await harness.importDashboardModule('js/pr-review-model.js');
@@ -94,8 +102,57 @@ test('the review pill opens a reviewer panel without fetching', async (t) => {
     assert.deepEqual(links, [PR, `${PR}/files`]);
     assert.deepEqual(calls, [], 'the panel reads the snapshot; hovering costs no request');
 
-    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    await leave(harness, root);
     assert.equal(mounted.container.querySelector('.rv-panel'), null);
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+test('a PR popover follows hover and keyboard focus only, never a click', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRReviewBadge } = await harness.importDashboardModule('js/pr-review-badge.js');
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  const reviews = { approved: 1, reviewers_known: true, reviewers: [{ login: 'alice', state: 'approved' }] };
+  const mounted = await harness.mount(harness.html`
+    <${PRReviewBadge} url=${PR} prNumber=${3046} reviews=${reviews} prState="open" />
+  `);
+  const panel = () => mounted.container.querySelector('.rv-panel');
+  const wait = (ms) => harness.act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+  try {
+    const root = mounted.container.querySelector('.rv-hover');
+    const badge = mounted.container.querySelector('.rv-badge');
+    let focusVisible = false;
+    badge.matches = (selector) => (selector === ':focus-visible' ? focusVisible : false);
+
+    // Clicking the link focuses it; that focus must not hold the panel open
+    // once the pointer has gone (e.g. off to the link's target and back).
+    await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
+    await harness.act(() => { harness.fireEvent(badge, 'focusin'); });
+    await harness.act(() => { harness.fireEvent(badge, 'click'); });
+    assert.ok(panel(), 'hovering opens the panel');
+    await leave(harness, root);
+    assert.equal(panel(), null, 'a clicked, still-focused link does not pin the panel');
+
+    // A brief slip off the badge is forgiven.
+    await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
+    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    await wait(HOVER_CLOSE_MS / 4);
+    assert.ok(panel(), 'the panel survives the close grace');
+    await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
+    await wait(HOVER_CLOSE_MS + 20);
+    assert.ok(panel(), 'returning within the grace keeps it open');
+
+    // Leaving the page closes it even though no mouseleave ever arrives.
+    await harness.act(() => { harness.fireEvent(globalThis.window, 'blur'); });
+    assert.equal(panel(), null, 'the window losing focus closes the panel');
+
+    // Keyboard focus still opens it.
+    focusVisible = true;
+    await harness.act(() => { harness.fireEvent(badge, 'focusin'); });
+    assert.ok(panel(), 'keyboard focus opens the panel');
+    await harness.act(() => { harness.fireEvent(badge, 'focusout', { relatedTarget: harness.document.body }); });
+    assert.equal(panel(), null);
   } finally {
     await mounted.unmount();
   }

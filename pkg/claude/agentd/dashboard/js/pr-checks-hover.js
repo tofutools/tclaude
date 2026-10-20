@@ -355,6 +355,98 @@ export function touchOnly() {
     && window.matchMedia('(hover: none)').matches;
 }
 
+// HOVER_CLOSE_MS is how long a popover outlives the pointer leaving it, so a
+// cursor that slips off the badge or the panel for a moment does not drop it.
+export const HOVER_CLOSE_MS = 200;
+
+// keyboardFocus reports whether focus arrived from the keyboard. A click on a
+// link focuses it too, and that focus survives the trip to the link's target:
+// the browser hands it back when the dashboard regains focus. Opening on any
+// focus therefore left the panel stuck open on return, with the pointer long
+// gone. :focus-visible is the browser's own "show a focus indicator" call,
+// true for Tab and false for a mouse click. A DOM without the pseudo-class
+// counts as keyboard, keeping focus a way in rather than none.
+function keyboardFocus(target) {
+  try {
+    return target?.matches?.(':focus-visible') !== false;
+  } catch {
+    return true;
+  }
+}
+
+// useHoverPopover is the open/close state the PR popovers (link card, CI pill,
+// review pill) share. The panel shows while the pointer is over the badge or
+// the panel (HOVER_CLOSE_MS grace on leave), while keyboard focus is inside
+// them, or, on a hoverless device, after a tap. A click never pins it: on a
+// pointer device the click just follows the link. Leaving the page — the
+// window losing focus or the tab going hidden — closes it outright, because
+// no mouseleave arrives while the pointer is away on the link's target.
+export function useHoverPopover(rootRef) {
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  // tapped exists only for hoverless devices, where a tap opens the panel
+  // instead of navigating. On a pointer device it is never set.
+  const [tapped, setTapped] = useState(false);
+  // lingering covers the grace after the pointer leaves. It is apart from
+  // hovered so the link card's hover-intent fetch counts real dwell only.
+  const [lingering, setLingering] = useState(false);
+  const leaveTimer = useRef(0);
+  const open = hovered || lingering || focused || tapped;
+
+  const cancelLeave = () => {
+    if (leaveTimer.current) globalThis.clearTimeout(leaveTimer.current);
+    leaveTimer.current = 0;
+  };
+  const close = () => {
+    cancelLeave();
+    setHovered(false); setLingering(false); setFocused(false); setTapped(false);
+  };
+
+  useEffect(() => cancelLeave, []);
+
+  useEffect(() => {
+    if (!tapped) return undefined;
+    const onPointerDown = (event) => {
+      if (!rootRef.current?.contains(event.target)) close();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [tapped]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onVisibility = () => { if (document.visibilityState === 'hidden') close(); };
+    window.addEventListener('blur', close);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', close);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [open]);
+
+  const rootProps = {
+    onMouseEnter: () => { cancelLeave(); setLingering(false); setHovered(true); },
+    onMouseLeave: () => {
+      cancelLeave();
+      setHovered(false);
+      setLingering(true);
+      leaveTimer.current = globalThis.setTimeout(() => {
+        leaveTimer.current = 0;
+        setLingering(false);
+      }, HOVER_CLOSE_MS);
+    },
+    onFocusIn: (event) => { if (keyboardFocus(event.target)) setFocused(true); },
+    onFocusOut: (event) => { if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false); },
+  };
+  const onTriggerClick = (event) => {
+    if (!touchOnly()) return; // pointer devices: let the link navigate
+    event.preventDefault();
+    if (tapped) close(); else setTapped(true);
+  };
+
+  return { open, hovered, focused, tapped, close, rootProps, onTriggerClick };
+}
+
 // usePRChecks owns the poll lifecycle: it fetches on open, re-polls while the
 // panel stays open, and drops both on close. The last good payload is kept
 // across polls so a transient failure (or the daemon's own cold cache) never
@@ -492,26 +584,10 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
 export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
   const rootRef = useRef(null);
   const instanceID = useId();
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  // tapped exists only for hoverless devices, where a tap opens the panel
-  // instead of navigating. On a pointer device it is never set.
-  const [tapped, setTapped] = useState(false);
-  const open = hovered || focused || tapped;
+  const { open, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
   const state = usePRChecks(open ? url : '', open);
   const panelRef = useRef(null);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
-
-  const close = () => { setHovered(false); setFocused(false); setTapped(false); };
-
-  useEffect(() => {
-    if (!tapped) return undefined;
-    const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [tapped]);
 
   if (!url || !summary || !(summary.total > 0)) return null;
   const denominator = checkDenominator(summary);
@@ -524,10 +600,7 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
     <span
       ref=${rootRef}
       class=${`ci-hover${final ? ' ci-final' : ''}${open ? ' is-open' : ''}${placement ? ` ci-place-${placement.placement}` : ''}`}
-      onMouseEnter=${() => setHovered(true)}
-      onMouseLeave=${() => setHovered(false)}
-      onFocusIn=${() => setFocused(true)}
-      onFocusOut=${(event) => { if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false); }}
+      ...${rootProps}
     >
       <a
         class=${`ci-badge ci-${stateName}`}
@@ -538,11 +611,7 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
         aria-label=${badgeTitle(summary, prNumber)}
-        onClick=${(event) => {
-          if (!touchOnly()) return; // pointer devices: let the link navigate
-          event.preventDefault();
-          if (tapped) close(); else setTapped(true);
-        }}
+        onClick=${onTriggerClick}
         onKeyDown=${(event) => {
           if (event.key !== 'Escape') return;
           event.preventDefault();
