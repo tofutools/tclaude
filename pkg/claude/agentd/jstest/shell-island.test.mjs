@@ -614,6 +614,10 @@ test('footer open PR titles open the PR details card unless turned off', async (
   assert.match(card.querySelector('.prd-title').textContent, /Hover me\s+#4/);
   assert.equal(card.querySelector('.prd-repo').textContent.trim(), 'acme/app');
   await harness.act(() => harness.fireEvent(hoverRoot(), 'mouseleave'));
+  // The card lingers briefly after the pointer leaves; wait that out so the
+  // Escape below reaches a title with no card open.
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, HOVER_CLOSE_MS + 20)));
   const title = c.querySelector('a.open-pr-title');
   await harness.act(() => harness.fireEvent(title, 'keydown', { key: 'Escape' }));
   assertAbsent(c.querySelector('#open-prs-popover'), 'Escape on a title with no card open closes the popover');
