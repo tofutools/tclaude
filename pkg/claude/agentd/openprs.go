@@ -824,7 +824,7 @@ func unionLocallyKnownOpenPRs(
 		}
 	}
 
-		// Retain the first locally observed URL for deterministic output, but let a
+	// Retain the first locally observed URL for deterministic output, but let a
 	// later source supply the title when the branch cache had none.
 	candidates := make(map[string]locallyKnownPR, len(localPRs))
 	order := make([]string, 0, len(localPRs))
