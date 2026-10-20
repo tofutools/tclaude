@@ -383,7 +383,8 @@ GitHub" action. Drafts are muted grey and stay out of **Needs attention** by
 default; select that filter to reveal its **Include drafts** checkbox. Open PRs
 are ordered by repository name, then numeric PR number, so CI and activity
 updates do not move rows. Titles come from GitHub; newly discovered PRs show
-`repo#number` until their title is fetched. The Closed filter stays newest first.
+`repo#number` until their title is fetched. The Closed filter stays newest first. Pull requests in
+archived repositories are never listed, in your own list or a colleague's.
 
 Hovering a title in the popover opens the same PR details card as the `#1234`
 links in the Groups tab; untick **Hover details** in the popover's footer if

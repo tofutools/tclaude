@@ -43,7 +43,7 @@ const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first)
     nodes{
       ... on PullRequest{
         number title url isDraft updatedAt reviewDecision
-        repository{nameWithOwner}
+        repository{nameWithOwner isArchived}
         commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
           __typename
           ... on CheckRun{name status conclusion detailsUrl startedAt completedAt}
@@ -53,8 +53,22 @@ const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first)
     }
   }`
 
-const authoredOpenPRGraphQLQuery = "query($q:String!,$first:Int!){\n" +
-	authoredOpenPRSearchFragment + "\n}"
+const authoredOpenPRGraphQLQuery = "query($q:String!,$first:Int!,$qa:String!,$afirst:Int!){\n" +
+	authoredOpenPRSearchFragment + "\n" + authoredArchivedPRSearchFragment + "\n}"
+
+// Pull requests in archived repositories are never listed: both searches
+// carry archived:false, and the decoder drops any node whose repository
+// reports isArchived anyway. The search therefore never indexes such a PR,
+// so the snapshot's union of locally known PRs (unionLocallyKnownOpenPRs)
+// would add it straight back from an agent's branch link. This third, URL-
+// only search names the operator's open PRs in archived repositories so the
+// union can leave them out too, still within the one request per tick.
+const authoredArchivedPRSearchFragment = `  archived: search(query:$qa,type:ISSUE,first:$afirst){
+    nodes{ ... on PullRequest{ url } }
+  }`
+
+// authoredArchivedPRLimit bounds the archived-repository exclusion search.
+const authoredArchivedPRLimit = 50
 
 // authoredOpenPRReviewsSelection is the reviewer list spliced into the open
 // search right after reviewDecision when reviews are due (see prreviews.go).
@@ -73,8 +87,9 @@ func withAuthoredOpenPRReviews(query string) string {
 // tick. Closed pull requests deliberately carry no check rollup: CI state on
 // something already merged or abandoned is noise, and the rollup is the
 // expensive half of the response.
-const authoredRecentPRGraphQLQuery = "query($q:String!,$first:Int!,$qr:String!,$rfirst:Int!){\n" +
-	authoredOpenPRSearchFragment + "\n" + authoredRecentPRSearchFragment + "\n}"
+const authoredRecentPRGraphQLQuery = "query($q:String!,$first:Int!,$qr:String!,$rfirst:Int!,$qa:String!,$afirst:Int!){\n" +
+	authoredOpenPRSearchFragment + "\n" + authoredRecentPRSearchFragment + "\n" +
+	authoredArchivedPRSearchFragment + "\n}"
 
 // authoredRecentPRSearchFragment is the recently closed search, shared with
 // the tracked-authors query (trackedprs.go) for the same reason as the open
@@ -84,7 +99,7 @@ const authoredRecentPRSearchFragment = `  recent: search(query:$qr,type:ISSUE,fi
     nodes{
       ... on PullRequest{
         number title url isDraft updatedAt state mergedAt closedAt
-        repository{nameWithOwner}
+        repository{nameWithOwner isArchived}
       }
     }
   }`
@@ -150,6 +165,10 @@ type dashboardAuthoredOpenPRs struct {
 	// ordered by last update, so a truncated page is not even "the N most
 	// recently closed".
 	RecentTruncated bool `json:"recent_truncated,omitempty"`
+	// ArchivedPRs are the operator's open PRs in archived repositories, kept
+	// in the cache only so the snapshot's local union can exclude them; the
+	// snapshot clears it before sending.
+	ArchivedPRs []string `json:"archived_prs,omitempty"`
 	// Error is set only on a tracked author's list (trackedprs.go) whose
 	// last search GitHub refused, e.g. a login that does not exist.
 	Error string `json:"error,omitempty"`
@@ -377,7 +396,7 @@ func authoredPRSearchArgs(login string, windowDays int, now time.Time, withRevie
 		since := now.UTC().AddDate(0, 0, -windowDays).Format("2006-01-02")
 		query = authoredRecentPRGraphQLQuery
 		extra = []string{
-			"-f", "qr=author:" + login + " is:closed type:pr closed:>=" + since + " sort:updated-desc",
+			"-f", "qr=author:" + login + " is:closed type:pr archived:false closed:>=" + since + " sort:updated-desc",
 			"-F", "rfirst=" + strconv.Itoa(authoredRecentPRLimit),
 		}
 	}
@@ -387,8 +406,10 @@ func authoredPRSearchArgs(login string, windowDays int, now time.Time, withRevie
 	args := []string{
 		"api", "--hostname", "github.com", "graphql",
 		"-f", "query=" + query,
-		"-f", "q=author:" + login + " is:open type:pr sort:updated-desc",
+		"-f", "q=author:" + login + " is:open type:pr archived:false sort:updated-desc",
 		"-F", "first=" + strconv.Itoa(authoredOpenPRLimit),
+		"-f", "qa=author:" + login + " is:open type:pr archived:true",
+		"-F", "afirst=" + strconv.Itoa(authoredArchivedPRLimit),
 	}
 	return append(args, extra...)
 }
@@ -420,6 +441,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 					} `json:"latestOpinionatedReviews"`
 					Repository struct {
 						NameWithOwner string `json:"nameWithOwner"`
+						IsArchived    bool   `json:"isArchived"`
 					} `json:"repository"`
 					Commits struct {
 						Nodes []struct {
@@ -449,9 +471,15 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 					ClosedAt   string `json:"closedAt"`
 					Repository struct {
 						NameWithOwner string `json:"nameWithOwner"`
+						IsArchived    bool   `json:"isArchived"`
 					} `json:"repository"`
 				} `json:"nodes"`
 			} `json:"recent"`
+			Archived struct {
+				Nodes []struct {
+					URL string `json:"url"`
+				} `json:"nodes"`
+			} `json:"archived"`
 		} `json:"data"`
 		Errors []struct {
 			Message string `json:"message"`
@@ -467,16 +495,24 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 	view := dashboardAuthoredOpenPRs{
 		Available: true,
 		Login:     login,
-		SearchURL: "https://github.com/pulls?q=" + url.QueryEscape("is:open is:pr author:"+login),
+		SearchURL: "https://github.com/pulls?q=" + url.QueryEscape("is:open is:pr archived:false author:"+login),
 		Total:     payload.Data.Search.IssueCount,
 		Truncated: payload.Data.Search.IssueCount > authoredOpenPRLimit,
 		Items:     []dashboardAuthoredOpenPR{},
 		Recent:    []dashboardAuthoredOpenPR{},
 	}
 	checksByURL := make(map[string]prChecksInfo)
+	for _, node := range payload.Data.Archived.Nodes {
+		if _, ok := githubPRRefFromURL(node.URL); ok {
+			view.ArchivedPRs = append(view.ArchivedPRs, strings.TrimSpace(node.URL))
+		}
+	}
 	for _, node := range payload.Data.Search.Nodes {
 		ref, ok := githubPRRefFromURL(node.URL)
-		if !ok || node.Number <= 0 || ref.number != node.Number {
+		if !ok || node.Number <= 0 || ref.number != node.Number || node.Repository.IsArchived {
+			if node.Repository.IsArchived {
+				view.Total = max(0, view.Total-1)
+			}
 			continue
 		}
 		item := dashboardAuthoredOpenPR{
@@ -514,7 +550,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 	sortAuthoredOpenPRs(view.Items)
 	for _, node := range payload.Data.Recent.Nodes {
 		ref, ok := githubPRRefFromURL(node.URL)
-		if !ok || node.Number <= 0 || ref.number != node.Number {
+		if !ok || node.Number <= 0 || ref.number != node.Number || node.Repository.IsArchived {
 			continue
 		}
 		state := "closed"
@@ -640,7 +676,7 @@ func applyRecentPRWindow(view dashboardAuthoredOpenPRs, cfg *config.Config, logi
 	view.RecentSearchURL = ""
 	if windowDays > 0 {
 		view.RecentSearchURL = "https://github.com/pulls?q=" + url.QueryEscape(
-			"is:closed is:pr author:"+login+" closed:>="+
+			"is:closed is:pr archived:false author:"+login+" closed:>="+
 				time.Now().UTC().AddDate(0, 0, -windowDays).Format("2006-01-02"))
 	}
 	return view
@@ -780,7 +816,15 @@ func unionLocallyKnownOpenPRs(
 		}
 	}
 
-	// Retain the first locally observed URL for deterministic output, but let a
+	// An open PR the search left out because its repository is archived must
+	// not come back in through an agent's branch link.
+	for _, rawURL := range view.ArchivedPRs {
+		if key := prStateKey(rawURL); key != "" {
+			known[key] = struct{}{}
+		}
+	}
+
+		// Retain the first locally observed URL for deterministic output, but let a
 	// later source supply the title when the branch cache had none.
 	candidates := make(map[string]locallyKnownPR, len(localPRs))
 	order := make([]string, 0, len(localPRs))

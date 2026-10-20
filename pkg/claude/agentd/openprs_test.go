@@ -74,16 +74,54 @@ func TestAuthoredPRSearchArgsSelectQueryAndWindow(t *testing.T) {
 
 	recent := authoredPRSearchArgs("octocat", 3, now, false)
 	assert.Contains(t, recent, "query="+authoredRecentPRGraphQLQuery)
-	assert.Contains(t, recent, "qr=author:octocat is:closed type:pr closed:>=2026-08-10 sort:updated-desc")
+	assert.Contains(t, recent, "qr=author:octocat is:closed type:pr archived:false closed:>=2026-08-10 sort:updated-desc")
 	assert.Contains(t, recent, "rfirst=50")
-	assert.Contains(t, recent, "q=author:octocat is:open type:pr sort:updated-desc",
+	assert.Contains(t, recent, "q=author:octocat is:open type:pr archived:false sort:updated-desc",
 		"the open search is identical either way")
+	for _, args := range [][]string{open, recent} {
+		assert.Contains(t, args, "qa=author:octocat is:open type:pr archived:true",
+			"both shapes name the open PRs in archived repositories, for the local union")
+	}
 
 	// Both query shapes must embed the SAME open search: the two-search shape
 	// is what a default configuration runs, so a divergent copy would strand
 	// every default install on a stale rollup selection.
 	assert.Contains(t, authoredOpenPRGraphQLQuery, authoredOpenPRSearchFragment)
 	assert.Contains(t, authoredRecentPRGraphQLQuery, authoredOpenPRSearchFragment)
+}
+
+// Pull requests in archived repositories are never listed: not from the
+// search (should GitHub ignore the qualifier), and not via the local union of
+// agent branch links, which the archived-only search feeds.
+func TestAuthoredOpenPRsExcludeArchivedRepositories(t *testing.T) {
+	data := []byte(`{"data":{
+		"search":{"issueCount":2,"nodes":[
+			{"number":1,"title":"live","url":"https://github.com/acme/app/pull/1","repository":{"nameWithOwner":"acme/app"},"commits":{"nodes":[]}},
+			{"number":2,"title":"frozen","url":"https://github.com/acme/old/pull/2","repository":{"nameWithOwner":"acme/old","isArchived":true},"commits":{"nodes":[]}}]},
+		"recent":{"issueCount":1,"nodes":[
+			{"number":3,"title":"frozen too","url":"https://github.com/acme/old/pull/3","state":"MERGED","mergedAt":"2026-08-13T09:00:00Z","repository":{"nameWithOwner":"acme/old","isArchived":true}}]},
+		"archived":{"nodes":[{"url":"https://github.com/acme/old/pull/9"}]}}}`)
+	view, _, err := decodeAuthoredOpenPRGraphQL(data, "octocat")
+	require.NoError(t, err)
+	require.Len(t, view.Items, 1)
+	assert.Equal(t, 1, view.Items[0].Number)
+	assert.Equal(t, 1, view.Total, "an archived PR does not count")
+	assert.Empty(t, view.Recent)
+	assert.Equal(t, []string{"https://github.com/acme/old/pull/9"}, view.ArchivedPRs)
+
+	states := make(prStateIndex)
+	now := time.Now()
+	states.add("https://github.com/acme/old/pull/9", "open", now)
+	states.add("https://github.com/acme/app/pull/5", "open", now)
+	got := unionLocallyKnownOpenPRs(view, []locallyKnownPR{
+		{URL: "https://github.com/acme/old/pull/9/files"},
+		{URL: "https://github.com/acme/app/pull/5"},
+	}, states, nil)
+	numbers := []int{}
+	for _, pr := range got.Items {
+		numbers = append(numbers, pr.Number)
+	}
+	assert.Equal(t, []int{1, 5}, numbers, "an agent's branch link does not bring an archived PR back")
 }
 
 func TestFilterRecentAuthoredPRsEnforcesTheExactWindow(t *testing.T) {
