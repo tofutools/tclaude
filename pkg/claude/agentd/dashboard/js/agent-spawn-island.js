@@ -809,6 +809,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         operatorSet.current.delete(field);
       }
       profileOverrides.current.clear();
+      // A kept sync choice stays the operator's for the next profile switch.
+      if (keptWorktree.includes('syncWorktree')) profileOverrides.current.add('syncWorktree');
       const previous = findSpawnProfile(profiles, draftRef.current.profile);
       // Clear resets with the picker treated as unusable, so a kept name must
       // re-sync its new worktree against the real picker state.

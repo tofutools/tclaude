@@ -1225,6 +1225,14 @@ test('Preact agent-spawn profile clear keeps user text and the operator\'s workt
     assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
     assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch',
       'a hand-edited new-worktree branch survives Clear');
+
+    setValue(picker, 'codex-profile');
+    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await flush(harness);
+    assert.equal(host.querySelector('#agent-spawn-name').value, 'bar');
+    assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
+    assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch',
+      'the branch stays the operator\'s through a profile switch after Clear');
   } finally {
     mounted.cleanup();
   }
