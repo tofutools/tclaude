@@ -33,6 +33,7 @@ import {
   nativeCodexRegistryWarningFor,
   prepareSpawnDraft,
   replaceSpawnProfile,
+  spawnUserText,
   selectedDefaultProfile,
   selectSpawnGroup,
   selectSpawnHarness,
@@ -762,17 +763,19 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       operatorSet.current.clear();
       profileOverrides.current.clear();
       setPeerPrompts(basePeerPrompts.current);
-      setDraft((before) => ({ ...baseline, group: before.group }));
+      const previous = findSpawnProfile(profiles, draftRef.current.profile);
+      setDraft((before) => ({ ...baseline, group: before.group, ...spawnUserText(before, previous, baseline) }));
       return;
     }
     const profile = findSpawnProfile(profiles, handle);
     if (!profile) return;
+    const previous = findSpawnProfile(profiles, draftRef.current.profile);
     touched.current.add('profile');
     if (!isLocalRef(handle)) {
       operatorSet.current.add('profile');
       const next = replaceSpawnProfile(draftRef.current, profile, context, {
         autoFocus: actions.autoFocusDefault(), rememberedEffort, pickerUsable: false,
-        preservedFields: new Set(profileOverrides.current),
+        preservedFields: new Set(profileOverrides.current), previousProfile: previous, prefill: baseline,
       });
       setPeerPrompts([...(next.promptRefs || [])]);
       setDraft({ ...remoteSpawnPins(next, remote.options, operatorSet.current), profile: handle });
@@ -784,17 +787,20 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     setPeerPrompts(basePeerPrompts.current);
     const filled = replaceSpawnProfile(draftRef.current, { ...profile, name: profile.localName }, context, {
       autoFocus: actions.autoFocusDefault(), rememberedEffort, pickerUsable: false,
+      previousProfile: previous, prefill: baseline,
     });
     setDraft((current) => {
       const before = {
         ...baseline, group: current.group,
-        ...Object.fromEntries(['name', 'descr', 'initialMessage', 'role', 'cwd'].map((key) => [key, current[key]])),
+        ...Object.fromEntries(['descr', 'role', 'cwd'].map((key) => [key, current[key]])),
+        ...spawnUserText(current, previous, baseline),
         promptRefs: [...new Set([...basePeerPrompts.current, ...(current.promptRefs || []).filter((ref) => isLocalRef(ref) || !peerPrompts.includes(ref))])],
       };
       const next = { ...before, profile: handle };
       for (const field of ['name', 'descr', 'initialMessage', 'role']) {
         if (String(filled[field] || '').trim() && !profileOverrides.current.has(field)) next[field] = filled[field];
       }
+      Object.assign(next, spawnUserText(current, previous, baseline));
       const overrides = { harness: ['harness'], model: ['model', 'customModel'], effort: ['effort'] };
       for (const [field, keys] of Object.entries(overrides)) {
         if (!remote.options.overrides[field] || !String(filled[field] || '').trim()) continue;
@@ -808,19 +814,33 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   };
   const changeLocalProfile = (handle) => {
     if (!handle) {
+      // The worktree choices the operator made survive Clear, as they survive a
+      // profile switch; collect them before Clear marks every field touched.
+      const keptWorktree = WORKTREE_SELECTION_FIELDS.filter((field) => touched.current.has(field));
+      if (profileOverrides.current.has('syncWorktree')) keptWorktree.push('syncWorktree');
       for (const field of PROFILE_OWNED_FIELDS) {
         touched.current.add(field);
         // Clearing resets these to defaults: no longer the operator's values.
         operatorSet.current.delete(field);
       }
       profileOverrides.current.clear();
-      setDraft((before) => clearSpawnProfileFields(before, context, {
-        autoFocus: actions.autoFocusDefault(), rememberedEffort,
-      }));
+      // A kept sync choice stays the operator's for the next profile switch.
+      if (keptWorktree.includes('syncWorktree')) profileOverrides.current.add('syncWorktree');
+      const previous = findSpawnProfile(profiles, draftRef.current.profile);
+      // Clear resets with the picker treated as unusable, so a kept name must
+      // re-sync its new worktree against the real picker state.
+      setDraft((before) => {
+        const cleared = clearSpawnProfileFields(before, context, {
+          autoFocus: actions.autoFocusDefault(), rememberedEffort, previousProfile: previous,
+        });
+        for (const field of keptWorktree) cleared[field] = before[field];
+        return syncSpawnWorktree(cleared, worktrees.isRepo);
+      });
       return;
     }
     touched.current.add('profile');
     const profile = findSpawnProfile(profiles, handle);
+    const previous = findSpawnProfile(profiles, draftRef.current.profile);
     if (profile) {
       const preservedFields = new Set(profileOverrides.current);
       for (const field of WORKTREE_SELECTION_FIELDS) {
@@ -832,6 +852,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           rememberedEffort,
           pickerUsable: worktrees.isRepo,
           preservedFields,
+          previousProfile: previous,
         }),
         profile: handle,
       }));
@@ -1777,7 +1798,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label">New branch</span>
       <input id="agent-spawn-wt-branch" type="text" value=${draft.worktreeBranch} disabled=${busy}
         onInput=${(event) => {
-          touched.current.add('worktreeBranch'); touched.current.add('syncWorktree');
+          // Editing the branch also claims the new-worktree selection it belongs
+          // to, which name sync may have made, so a profile change keeps both.
+          touched.current.add('worktree'); touched.current.add('worktreeBranch'); touched.current.add('syncWorktree');
           profileOverrides.current.add('syncWorktree');
           setDraft((before) => ({ ...before, worktreeBranch: event.currentTarget.value, syncWorktree: false }));
         }}

@@ -1011,8 +1011,26 @@ export function applySpawnProfile(
   return syncSpawnWorktree(next, pickerUsable);
 }
 
+// The free-text fields a profile can pre-fill, keyed by draft field.
+const PROFILE_TEXT_FIELDS = { name: 'agent_name', initialMessage: 'initial_message' };
+
+// The draft's free-text values that are the operator's own input rather than
+// a pre-fill: non-empty and different both from what the previous profile put
+// there and from the optional prefill draft (a remote spawn's peer pre-fill,
+// which a local profile without its own value leaves in place). A profile
+// change never clears or replaces these.
+export function spawnUserText(draft, previousProfile, prefill = null) {
+  const kept = {};
+  for (const [field, key] of Object.entries(PROFILE_TEXT_FIELDS)) {
+    const value = text(draft[field]);
+    if (value && value !== text(previousProfile?.[key])
+      && value !== text(prefill?.[field])) kept[field] = draft[field];
+  }
+  return kept;
+}
+
 export function clearSpawnProfileFields(draft, context, {
-  autoFocus = true, rememberedEffort = () => '',
+  autoFocus = true, rememberedEffort = () => '', previousProfile = null, prefill = null,
 } = {}) {
   const defaults = createSpawnDraft({
     groups: context.groups,
@@ -1026,6 +1044,7 @@ export function clearSpawnProfileFields(draft, context, {
     ...draft,
     profile: '',
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
+    ...spawnUserText(draft, previousProfile, prefill),
     promptRefs: groupDefaultPrompts(context.groups, draft.group),
     harness: defaults.harness,
     model: defaults.model,
@@ -1065,18 +1084,22 @@ export function clearSpawnProfileFields(draft, context, {
 // operator made in this open dialog. Location fields are deliberately outside
 // clearSpawnProfileFields and survive naturally; callers include explicitly
 // touched worktree-selection fields in preservedFields because reset-time sync
-// can otherwise clear a pending new-worktree selection.
+// can otherwise clear a pending new-worktree selection. A name or initial
+// message the operator wrote (see spawnUserText) outranks the new profile's
+// pre-fill; one the previous profile pre-filled is swapped for the new one's.
 export function replaceSpawnProfile(draft, profile, context, {
   autoFocus = true,
   rememberedEffort = () => '',
   pickerUsable = false,
   preservedFields = [],
+  previousProfile = null,
+  prefill = null,
 } = {}) {
-  const reset = clearSpawnProfileFields(draft, context, { autoFocus, rememberedEffort });
+  const reset = clearSpawnProfileFields(draft, context, { autoFocus, rememberedEffort, previousProfile, prefill });
   const applied = applySpawnProfile(
     reset, profile, context, rememberedEffort, pickerUsable,
   );
-  const next = { ...applied };
+  const next = { ...applied, ...spawnUserText(draft, previousProfile, prefill) };
   for (const field of preservedFields) {
     if (field !== 'profile' && Object.hasOwn(draft, field)) next[field] = draft[field];
   }

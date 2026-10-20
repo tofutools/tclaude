@@ -295,15 +295,60 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(noSyncProfile.syncWorktree, false);
 
   const cleared = model.clearSpawnProfileFields({
-    ...noSyncProfile, name: 'worker', role: 'lead', owner: true,
+    ...noSyncProfile, name: 'worker', initialMessage: 'ship it', role: 'lead', owner: true,
     permissionOverrides: { x: 'deny' }, profile: 'group-default',
   }, context, { autoFocus: true, rememberedEffort: remembered });
-  assert.equal(cleared.name, '');
+  assert.equal(cleared.name, 'worker', 'Clear keeps the operator\'s agent name');
+  assert.equal(cleared.initialMessage, 'ship it', 'Clear keeps the operator\'s initial message');
   assert.equal(cleared.role, '');
   assert.equal(cleared.owner, false);
   assert.equal(cleared.syncWorktree, true, 'Clear restores the blank-form sync default');
   assert.deepEqual(cleared.permissionOverrides, {});
   assert.equal(cleared.cwd, '/manual', 'Clear leaves location state alone');
+
+  const previousProfile = { name: 'a', agent_name: 'a-agent', initial_message: 'a brief' };
+  const prefilled = model.clearSpawnProfileFields({
+    ...draft, name: 'a-agent', initialMessage: 'a brief', profile: 'a',
+  }, context, { rememberedEffort: remembered, previousProfile });
+  assert.equal(prefilled.name, '', 'Clear drops the previous profile\'s pre-filled name');
+  assert.equal(prefilled.initialMessage, '', 'Clear drops the previous profile\'s pre-filled message');
+
+  const swapped = model.replaceSpawnProfile(
+    { ...draft, name: 'a-agent', initialMessage: 'a brief', profile: 'a' },
+    { name: 'c', agent_name: 'lead', initial_message: 'lead it' }, context,
+    { rememberedEffort: remembered, previousProfile },
+  );
+  assert.equal(swapped.name, 'lead', 'A pre-fill is swapped for the new profile\'s');
+  assert.equal(swapped.initialMessage, 'lead it');
+
+  const edited = model.replaceSpawnProfile(
+    { ...draft, name: 'a-agent', initialMessage: 'a brief, then my notes', profile: 'a' },
+    { name: 'c', agent_name: 'lead', initial_message: 'lead it' }, context,
+    { rememberedEffort: remembered, previousProfile },
+  );
+  assert.equal(edited.name, 'lead', 'An untouched pre-filled name follows the new profile');
+  assert.equal(edited.initialMessage, 'a brief, then my notes', 'Edited text outranks the new profile\'s pre-fill');
+
+  const dropped = model.replaceSpawnProfile(
+    { ...draft, name: 'a-agent', initialMessage: 'my own brief', profile: 'a' },
+    { name: 'b', role: 'reviewer' }, context, { rememberedEffort: remembered, previousProfile },
+  );
+  assert.equal(dropped.name, '', 'A pre-fill the new profile does not repeat is cleared');
+  assert.equal(dropped.initialMessage, 'my own brief', 'User text survives a profile without one');
+
+  const peerPrefilled = model.replaceSpawnProfile(
+    { ...draft, name: 'worker', profile: 'local:l' },
+    { name: 'p', agent_name: 'reviewer' }, context,
+    { rememberedEffort: remembered, previousProfile: { name: 'local:l' }, prefill: { name: 'worker' } },
+  );
+  assert.equal(peerPrefilled.name, 'reviewer', 'A remote peer pre-fill is not user text');
+  const localToLocal = model.replaceSpawnProfile(
+    { ...draft, name: 'alpha', initialMessage: 'brief A', profile: 'local:l1' },
+    { name: 'l2' }, context,
+    { rememberedEffort: remembered, previousProfile: { name: 'local:l1', agent_name: 'alpha', initial_message: 'brief A' }, prefill: { name: 'peer-default' } },
+  );
+  assert.equal(localToLocal.name, '', 'The previous profile\'s pre-fill does not ride onto one without its own');
+  assert.equal(localToLocal.initialMessage, '');
 });
 
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {
@@ -1138,6 +1183,56 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
     assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
     assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch',
       'an explicitly chosen new worktree and custom branch survive profile replacement');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+test('Preact agent-spawn profile clear keeps user text and the operator\'s worktree choice', async (t) => {
+  const mounted = await mountSpawn(t, {
+    loadWorktrees: async () => ({
+      repo: '/repo', isRepo: true, empty: false, hasCommits: true, repoRoot: '/repo',
+      worktrees: [], branches: ['main'], defaultBranch: 'main', subRepos: [],
+    }),
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    await settleWorktrees(harness);
+    assert.equal(selectedValue(host.querySelector('#agent-spawn-load-profile')), 'group-default');
+
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'bar');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    const message = host.querySelector('#agent-spawn-init-msg');
+    setValue(message, 'my brief');
+    await harness.act(() => harness.fireEvent(message, 'input'));
+    // The new worktree comes from name sync, not an explicit pick.
+    assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
+    const branch = host.querySelector('#agent-spawn-wt-branch');
+    setValue(branch, 'manual-branch');
+    await harness.act(() => harness.fireEvent(branch, 'input'));
+
+    const picker = host.querySelector('#agent-spawn-load-profile');
+    setValue(picker, '');
+    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await flush(harness);
+
+    assert.equal(host.querySelector('#agent-spawn-name').value, 'bar');
+    assert.equal(host.querySelector('#agent-spawn-init-msg').value, 'my brief');
+    assert.equal(host.querySelector('#agent-spawn-role').value, '', 'the profile\'s role is cleared');
+    assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
+    assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch',
+      'a hand-edited new-worktree branch survives Clear');
+
+    setValue(picker, 'codex-profile');
+    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await flush(harness);
+    assert.equal(host.querySelector('#agent-spawn-name').value, 'bar');
+    assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
+    assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch',
+      'the branch stays the operator\'s through a profile switch after Clear');
   } finally {
     mounted.cleanup();
   }
