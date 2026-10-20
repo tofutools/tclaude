@@ -217,7 +217,7 @@ const PR_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pul
 
 // prKey folds a GitHub PR URL to owner/repo#number, case-insensitively, so a
 // /files suffix or a differently-cased owner still names the same PR.
-function prKey(raw) {
+export function prKey(raw) {
   const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)(?:[/?#].*)?$/i.exec(String(raw || '').trim());
   return m ? `${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : '';
 }
@@ -245,9 +245,98 @@ export function peerPRAgents(peers) {
   return byPR;
 }
 
-export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAttention = false, peers = []) {
+// Ignored PRs. The operator can set a PR aside for a while or for good: it
+// leaves every list and count of the footer PR popover and waits under the
+// Ignored filter until it is brought back or its time runs out. The set is
+// one DB-backed dashboard pref holding a JSON object keyed by prKey; each
+// entry keeps enough of the PR (title, repository, number) to stay listable
+// after it drops out of the authored search, e.g. once it merges.
+export const OPEN_PR_IGNORE_DURATIONS = Object.freeze([
+  { id: '1d', label: '1 day', ms: 24 * 3600e3 },
+  { id: '7d', label: '1 week', ms: 7 * 24 * 3600e3 },
+  { id: '30d', label: '30 days', ms: 30 * 24 * 3600e3 },
+  { id: 'forever', label: 'Permanently', ms: 0 },
+]);
+// Bounds on the stored set. The byte budget is what keeps the pref under the
+// daemon's 64 KiB value cap (and the browser's keepalive body quota): past
+// it, the oldest ignores are evicted on save.
+const IGNORED_PRS_MAX = 200;
+const IGNORED_PR_TEXT_MAX = 200;
+const IGNORED_PRS_MAX_BYTES = 48 * 1024;
+
+const ignoredText = (value) => String(value || '').slice(0, IGNORED_PR_TEXT_MAX);
+
+function ignoredEntryActive(entry, now) {
+  return !!entry && (entry.until === 0 || entry.until > now);
+}
+
+// parseIgnoredPRs reads the stored pref, dropping malformed and expired
+// entries. A null or corrupt value is an empty set.
+export function parseIgnoredPRs(raw, now = Date.now()) {
+  const out = Object.create(null);
+  let parsed;
+  try { parsed = JSON.parse(raw || '{}'); } catch (_) { return out; }
+  if (!parsed || typeof parsed !== 'object') return out;
+  for (const entry of Object.values(parsed)) {
+    const key = prKey(entry?.url);
+    if (!key || !PR_URL_RE.test(entry.url)) continue;
+    const until = Number(entry.until);
+    const at = Number(entry.at);
+    if (!Number.isFinite(until) || until < 0 || !Number.isFinite(at)) continue;
+    const clean = {
+      url: entry.url, title: ignoredText(entry.title), repository: ignoredText(entry.repository),
+      number: Math.max(0, Math.trunc(Number(entry.number) || 0)), until, at,
+    };
+    if (ignoredEntryActive(clean, now)) out[key] = clean;
+  }
+  return out;
+}
+
+// ignorePR returns a new set with pr ignored for durationMs (0 = for good).
+// Past the cap, the oldest ignores make room.
+export function ignorePR(ignored, pr, durationMs, now = Date.now()) {
+  const key = prKey(pr?.url);
+  if (!key || !PR_URL_RE.test(pr.url)) return ignored;
+  const next = { ...ignored };
+  next[key] = {
+    url: pr.url, title: ignoredText(pr.title), repository: ignoredText(pr.repository),
+    number: Math.max(0, Math.trunc(Number(pr.number) || 0)),
+    until: durationMs > 0 ? now + durationMs : 0, at: now,
+  };
+  const keys = Object.keys(next);
+  if (keys.length > IGNORED_PRS_MAX) {
+    keys.sort((a, b) => next[a].at - next[b].at)
+      .slice(0, keys.length - IGNORED_PRS_MAX).forEach((k) => { delete next[k]; });
+  }
+  return next;
+}
+
+export function unignorePR(ignored, url) {
+  const key = prKey(url);
+  if (!key || !(key in ignored)) return ignored;
+  const next = { ...ignored };
+  delete next[key];
+  return next;
+}
+
+// serializeIgnoredPRs is the pref value for a set, or '' when it is empty
+// (the caller removes the pref then). Expired entries are dropped, and the
+// oldest ignores go first if the value would outgrow its byte budget.
+export function serializeIgnoredPRs(ignored, now = Date.now()) {
+  const entries = Object.entries(ignored || {}).filter(([, e]) => ignoredEntryActive(e, now))
+    .sort(([, a], [, b]) => a.at - b.at);
+  const encoder = new TextEncoder();
+  while (entries.length) {
+    const value = JSON.stringify(Object.fromEntries(entries));
+    if (encoder.encode(value).length <= IGNORED_PRS_MAX_BYTES) return value;
+    entries.shift();
+  }
+  return '';
+}
+
+export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAttention = false, peers = [], ignored = null, now = Date.now()) {
   const source = snapshot?.authored_open_prs;
-  if (!source?.available) return { available: false, items: [], total: 0, recentCount: 0, recentWindowDays: 0 };
+  if (!source?.available) return { available: false, items: [], total: 0, recentCount: 0, recentWindowDays: 0, ignoredCount: 0 };
   const peerAgents = peerPRAgents(peers);
   const attach = (pr) => {
     if (pr?.agent_id || !peerAgents.size) return pr;
@@ -255,12 +344,24 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
     return ref ? { ...pr, ...ref } : pr;
   };
   const sane = (list) => (list || []).filter((pr) => PR_URL_RE.test(pr?.url || '')).map(attach);
-  const all = sane(source.items);
+  const activeIgnores = Object.entries(ignored || {}).filter(([, entry]) => ignoredEntryActive(entry, now));
+  const ignoredKeys = new Set(activeIgnores.map(([key]) => key));
+  const notIgnored = (pr) => !ignoredKeys.has(prKey(pr?.url));
+  const allWithIgnored = sane(source.items);
+  const all = allWithIgnored.filter(notIgnored);
   // The recent list is deliberately kept out of `all`: the trigger count, the
   // attention/unattached tallies and their filters are about OPEN work, and a
   // merged PR must never inflate them.
   const recentWindowDays = Math.max(0, Number(source.recent_window_days || 0));
-  const recent = recentWindowDays > 0 ? sane(source.recent) : [];
+  const recentWithIgnored = recentWindowDays > 0 ? sane(source.recent) : [];
+  const recent = recentWithIgnored.filter(notIgnored);
+  // An ignored PR the snapshot still lists renders from its live row; one
+  // that has dropped out (merged long ago, beyond a truncated page) renders
+  // from what was stored when it was ignored.
+  const liveByKey = new Map([...recentWithIgnored, ...allWithIgnored].map((pr) => [prKey(pr.url), pr]));
+  const ignoredItems = activeIgnores
+    .sort(([, a], [, b]) => b.at - a.at)
+    .map(([key, entry]) => ({ ...(liveByKey.get(key) || entry), ignored: { until: entry.until, at: entry.at } }));
   // A clean run that is still in flight needs time, not operator attention.
   // Everything terminal (red or green) is ready for a decision, while a PR
   // with no checks at all is ready for the operator to notice that absence.
@@ -276,7 +377,8 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
     return checks.state === 'failing' || checks.state === 'passing';
   };
   const showingRecent = filter === 'recent' && recentWindowDays > 0;
-  const filtered = showingRecent ? recent : all.filter((pr) => {
+  const showingIgnored = filter === 'ignored';
+  const filtered = showingIgnored ? ignoredItems : showingRecent ? recent : all.filter((pr) => {
     if (filter === 'attention') return needsAttention(pr);
     if (filter === 'ready') return readyToMerge(pr);
     if (filter === 'unattached') return !pr?.agent_id;
@@ -286,10 +388,12 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
   return {
     available: true,
     alwaysShow: !!source.always_show,
-    total: Number(source.total || all.length),
-    truncated: showingRecent ? !!source.recent_truncated : !!source.truncated,
+    // The daemon's total counts beyond a truncated page; only the ignored
+    // PRs this page shows can be taken off it.
+    total: Math.max(0, Number(source.total || allWithIgnored.length) - (allWithIgnored.length - all.length)),
+    truncated: showingIgnored ? false : showingRecent ? !!source.recent_truncated : !!source.truncated,
     updatedAt: source.updated_at || '',
-    searchURL: showingRecent ? searchURL(source.recent_search_url) : searchURL(source.search_url),
+    searchURL: showingIgnored ? '' : showingRecent ? searchURL(source.recent_search_url) : searchURL(source.search_url),
     attention: all.filter(needsAttention).length,
     ready: all.filter(readyToMerge).length,
     unattached: all.filter((pr) => !pr?.agent_id).length,
@@ -297,6 +401,8 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
     recentCount: recent.length,
     recentWindowDays,
     showingRecent,
+    showingIgnored,
+    ignoredCount: ignoredItems.length,
     items: filtered,
   };
 }

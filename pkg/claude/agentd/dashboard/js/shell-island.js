@@ -8,6 +8,11 @@ import { ActivityHover } from './activity-hover.js';
 import {
   footerMetaView,
   authoredOpenPRsView,
+  ignorePR,
+  OPEN_PR_IGNORE_DURATIONS,
+  parseIgnoredPRs,
+  serializeIgnoredPRs,
+  unignorePR,
   globalActivityView,
   messagesBadgeView,
   usageView,
@@ -15,6 +20,7 @@ import {
 } from './shell-model.js';
 import { PRChecksBadge } from './pr-checks-hover.js';
 import { PRReviewBadge } from './pr-review-badge.js';
+import { PRLinkHover } from './pr-link-hover.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 import { dashPrefs } from './prefs.js';
 import { featureNeeds, featureState, needsSuffix } from './peer-view-limits.js';
@@ -26,6 +32,10 @@ import { fusedDock } from './dock-nodes.js';
 const html = htm.bind(h);
 const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
 const OPEN_PRS_INCLUDE_DRAFTS_PREF = 'tclaude.dash.open-prs.include-drafts-attention';
+const OPEN_PRS_IGNORED_PREF = 'tclaude.dash.open-prs.ignored';
+// Title hover cards are on unless the operator turns them off: a card can
+// cover a good part of the list, so the popover keeps a checkbox for it.
+const OPEN_PRS_TITLE_DETAILS_PREF = 'tclaude.dash.open-prs.title-details';
 
 function UsageToken({ token }) {
   if (token.kind === 'cost') {
@@ -176,33 +186,104 @@ function FooterMeta({ state }) {
   `;
 }
 
+function ignoredUntilLabel(ignored) {
+  return ignored.until ? `ignored until ${new Date(ignored.until).toLocaleDateString()}` : 'ignored permanently';
+}
+
 // A closed/merged row is dotted by its terminal state instead of its CI state
 // — checks on something already landed say nothing useful — and it drops the
-// "no active agent" note, which only means something for open work.
-function OpenPRRow({ pr, showFinalCI = false }) {
+// "no active agent" note, which only means something for open work. An
+// ignored row says until when instead, and offers only its way back.
+function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = null, onRestore = null }) {
   const terminal = pr.state === 'merged' || pr.state === 'closed';
   const draft = !!pr.draft && !terminal;
+  const ignored = pr.ignored || null;
   const dot = terminal ? pr.state : (draft ? 'draft' : (pr?.checks?.state || 'unknown'));
+  const titleText = pr.title || `Pull request #${pr.number}`;
+  const prState = terminal ? pr.state : (draft ? 'draft' : 'open');
   return html`
-    <li class=${`open-pr-row${draft ? ' is-draft' : ''}`}>
+    <li class=${`open-pr-row${draft ? ' is-draft' : ''}${ignored ? ' is-ignored' : ''}`}>
       <span class=${`open-pr-state open-pr-state-${dot}`} aria-hidden="true"></span>
       <span class="open-pr-main">
-        <a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${pr.title || `Pull request #${pr.number}`}</a>
+        ${titleDetails
+          ? html`<${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${prState}
+              linkClass="open-pr-title" label=${titleText} describe=${titleText} />`
+          : html`<a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${titleText}</a>`}
         <span class="open-pr-meta">
           <span>${pr.repository}</span><span> · #${pr.number}</span>
-          ${terminal ? html`<span> · ${pr.state}${pr.closed_at ? ` ${new Date(pr.closed_at).toLocaleDateString()}` : ''}</span>` : null}
-          ${!terminal && pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : null}
-          ${!terminal && !pr.agent_title ? html`<span> · no active agent</span>` : null}
-          ${!terminal && pr.local ? html`<span title="Known from local agent activity; not yet in GitHub's authored search"> · via agent</span>` : null}
-          ${draft ? html`<span class="open-pr-draft-label">Draft</span>` : null}
+          ${ignored ? html`<span> · ${ignoredUntilLabel(ignored)}</span>` : null}
+          ${!ignored && terminal ? html`<span> · ${pr.state}${pr.closed_at ? ` ${new Date(pr.closed_at).toLocaleDateString()}` : ''}</span>` : null}
+          ${!ignored && !terminal && pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : null}
+          ${!ignored && !terminal && !pr.agent_title ? html`<span> · no active agent</span>` : null}
+          ${!ignored && !terminal && pr.local ? html`<span title="Known from local agent activity; not yet in GitHub's authored search"> · via agent</span>` : null}
+          ${!ignored && draft ? html`<span class="open-pr-draft-label">Draft</span>` : null}
         </span>
       </span>
       <span class="open-pr-badges">
-        <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
-          summary=${terminal && !showFinalCI ? null : pr.checks} />
-        ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
+        ${ignored ? html`<button type="button" class="open-pr-restore"
+            aria-label=${`Bring back pull request #${pr.number}`} onClick=${() => onRestore?.(pr)}>Restore</button>` : html`
+          <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
+            summary=${terminal && !showFinalCI ? null : pr.checks} />
+          ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
+          ${onIgnore && !terminal ? html`<button type="button" class="open-pr-ignore"
+            aria-label=${`Ignore pull request #${pr.number}…`} title="Ignore…"
+            onClick=${() => onIgnore(pr)}>⊘</button>` : null}
+        `}
       </span>
     </li>
+  `;
+}
+
+// IgnorePRDialog confirms an ignore and picks how long it lasts. It is drawn
+// inside the popover rather than as the page's modal, so the popover's own
+// hover and outside-click handling keep treating it as part of the popover.
+function IgnorePRDialog({ pr, onCancel, onConfirm }) {
+  const [duration, setDuration] = useState('7d');
+  const okRef = useRef(null);
+  useLayoutEffect(() => { okRef.current?.focus(); }, []);
+  const chosen = OPEN_PR_IGNORE_DURATIONS.find((d) => d.id === duration) || OPEN_PR_IGNORE_DURATIONS[0];
+  return html`
+    <div class="open-prs-confirm-backdrop" onClick=${(event) => { if (event.currentTarget === event.target) onCancel(); }}>
+      <div class="open-prs-confirm" role="alertdialog" aria-modal="true"
+        aria-labelledby="open-prs-confirm-title" aria-describedby="open-prs-confirm-body"
+        onKeyDown=${(event) => {
+          if (event.key === 'Tab') {
+            // aria-modal: keep Tab inside the dialog.
+            const focusable = [...event.currentTarget.querySelectorAll('input:checked, button')];
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey ? document.activeElement === first : document.activeElement === last) {
+              event.preventDefault();
+              (event.shiftKey ? last : first)?.focus();
+            }
+            return;
+          }
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          event.stopPropagation();
+          onCancel();
+        }}>
+        <h4 id="open-prs-confirm-title">Ignore pull request #${pr.number}?</h4>
+        <p id="open-prs-confirm-body">
+          <span class="open-prs-confirm-pr">${pr.title || pr.url}</span>
+          It leaves these lists and counts and waits under Ignored, where you can bring it back.
+        </p>
+        <fieldset class="open-prs-confirm-durations">
+          <legend>Ignore for</legend>
+          ${OPEN_PR_IGNORE_DURATIONS.map((d) => html`
+            <label key=${d.id}>
+              <input type="radio" name="open-prs-ignore-duration" value=${d.id}
+                checked=${duration === d.id} onChange=${() => setDuration(d.id)} />
+              <span>${d.label}</span>
+            </label>
+          `)}
+        </fieldset>
+        <div class="open-prs-confirm-buttons">
+          <button type="button" onClick=${onCancel}>Cancel</button>
+          <button ref=${okRef} type="button" class="confirm-danger" onClick=${() => onConfirm(chosen.ms)}>Ignore</button>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -216,6 +297,16 @@ function OpenPRs({ state }) {
   // state: enabling it reveals the cached snapshot summary but changes no
   // daemon setting and triggers no terminal-PR refresh on its own.
   const [showFinalCI, setShowFinalCI] = useState(false);
+  const [ignored, setIgnored] = useState(() => parseIgnoredPRs(dashPrefs.getItem(OPEN_PRS_IGNORED_PREF)));
+  const [confirmIgnore, setConfirmIgnore] = useState(null);
+  // Where focus goes back to once the ignore dialog closes or a Restore
+  // removes its own row: the ⊘ button that opened the dialog while it is
+  // still mounted, the popover trigger otherwise.
+  const returnFocus = useRef(null);
+  const [focusBack, setFocusBack] = useState(0);
+  const [titleDetails, setTitleDetails] = useState(
+    () => dashPrefs.getItem(OPEN_PRS_TITLE_DETAILS_PREF) !== '0',
+  );
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
@@ -225,14 +316,32 @@ function OpenPRs({ state }) {
   const dock = fusedDock.value;
   const peers = dock ? (dock.nodes || []).filter((n) => n.id !== dock.page)
     .map((n) => ({ name: n.name, snapshot: dock.snapshots?.[n.id] })) : [];
-  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers);
+  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers, ignored);
+  const saveIgnored = (next) => {
+    const value = serializeIgnoredPRs(next);
+    // Re-read what was stored: serialization may have evicted old entries.
+    setIgnored(parseIgnoredPRs(value));
+    if (value) dashPrefs.setItem(OPEN_PRS_IGNORED_PREF, value);
+    else dashPrefs.removeItem(OPEN_PRS_IGNORED_PREF);
+  };
+  const askIgnore = (pr) => {
+    returnFocus.current = document.activeElement;
+    setConfirmIgnore(pr);
+  };
+  const closeIgnoreDialog = () => {
+    setConfirmIgnore(null);
+    setFocusBack((n) => n + 1);
+  };
   // The indicator is permanent by default (dashboard.always_show_open_prs), so
   // the popover must open at zero open PRs too — that is where the recently
   // closed list lives. It still stays out of the footer entirely until the
   // daemon has resolved a GitHub identity, since a fixed "Open PRs 0" would be
   // a lie when `gh` is missing or logged out.
-  const visible = view.available && (view.total > 0 || view.alwaysShow);
-  const open = visible && (hovered || pinned);
+  // Ignored PRs keep it reachable too: they can only be brought back from it.
+  const visible = view.available && (view.total > 0 || view.alwaysShow || view.ignoredCount > 0);
+  // An open ignore confirmation holds the popover open: the pointer may
+  // wander off while the operator picks a duration.
+  const open = visible && (hovered || pinned || !!confirmIgnore);
 
   const cancelHoverClose = () => {
     if (hoverCloseTimer.current === null) return;
@@ -252,30 +361,42 @@ function OpenPRs({ state }) {
   };
 
   useEffect(() => () => cancelHoverClose(), []);
+  useEffect(() => {
+    if (!focusBack) return;
+    const target = returnFocus.current;
+    returnFocus.current = null;
+    if (target?.isConnected && rootRef.current?.contains(target)) target.focus();
+    else rootRef.current?.querySelector('.open-prs-trigger')?.focus();
+  }, [focusBack]);
 
   useEffect(() => {
-    if (!pinned) return undefined;
+    if (!pinned && !confirmIgnore) return undefined;
     const outside = (event) => {
       if (rootRef.current?.contains(event.target)) return;
       cancelHoverClose();
       setPinned(false);
       setHovered(false);
+      setConfirmIgnore(null);
     };
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
-  }, [pinned]);
+  }, [pinned, confirmIgnore]);
   useEffect(() => {
     if (!open) return undefined;
     const escape = (event) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
+      if (confirmIgnore) {
+        closeIgnoreDialog();
+        return;
+      }
       setPinned(false);
       setHovered(false);
       rootRef.current?.querySelector('.open-prs-trigger')?.focus();
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
-  }, [open]);
+  }, [open, confirmIgnore]);
 
   if (!visible) return null;
   const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
@@ -284,7 +405,7 @@ function OpenPRs({ state }) {
   const recentLabel = `Closed ${view.recentWindowDays}d`;
   // "recent" selected while the window is configured off falls back to the
   // open list, so the Open chip — not a vanished chip — must read as active.
-  const openFilterActive = !view.showingRecent && filter !== 'attention' && filter !== 'ready' && filter !== 'unattached';
+  const openFilterActive = !view.showingRecent && !view.showingIgnored && filter !== 'attention' && filter !== 'ready' && filter !== 'unattached';
   return html`
     <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${leave}>
@@ -299,8 +420,15 @@ function OpenPRs({ state }) {
         <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label="Your pull requests">
           <div class="open-prs-head"><strong>Your pull requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
           ${view.items.length
-            ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} showFinalCI=${view.showingRecent && showFinalCI} />`)}</ul>`
-            : html`<p class="open-prs-empty">${view.showingRecent
+            ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr}
+                showFinalCI=${view.showingRecent && showFinalCI} titleDetails=${titleDetails}
+                onIgnore=${askIgnore} onRestore=${(target) => {
+                  saveIgnored(unignorePR(ignored, target.url));
+                  setFocusBack((n) => n + 1);
+                }} />`)}</ul>`
+            : html`<p class="open-prs-empty">${view.showingIgnored
+              ? 'No ignored pull requests.'
+              : view.showingRecent
               ? `Nothing merged or closed in the last ${view.recentWindowDays} day(s).`
               : (openFilterActive && view.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
           <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
@@ -313,8 +441,11 @@ function OpenPRs({ state }) {
             ${view.recentWindowDays > 0 ? html`<button class=${view.showingRecent ? 'active' : ''} aria-pressed=${view.showingRecent}
               title=${`Pull requests you merged or closed in the last ${view.recentWindowDays} day(s)`}
               onClick=${() => setFilter('recent')}>${recentLabel} ${view.recentCount}</button>` : null}
+            ${view.ignoredCount > 0 || view.showingIgnored ? html`<button class=${view.showingIgnored ? 'active' : ''} aria-pressed=${view.showingIgnored}
+              title="Pull requests you set aside; bring them back from here"
+              onClick=${() => setFilter('ignored')}>Ignored ${view.ignoredCount}</button>` : null}
           </div>
-          ${view.searchURL || view.showingRecent || (filter === 'attention' && view.hasDrafts) ? html`<div class="open-prs-foot">
+          <div class="open-prs-foot">
             <span>${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}${view.searchURL ? html`<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">${view.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a>` : null}</span>
             ${view.showingRecent ? html`<label class="open-prs-final-ci"
               title="Show the last cached CI result. Closed and merged pull requests are never refreshed.">
@@ -332,7 +463,23 @@ function OpenPRs({ state }) {
                 }} />
               <span>Include drafts</span>
             </label>` : null}
-          </div>` : null}
+            <label class="open-prs-title-details"
+              title="Show a pull request's details card when hovering its title">
+              <input type="checkbox" checked=${titleDetails}
+                onChange=${(event) => {
+                  const checked = event.currentTarget.checked;
+                  setTitleDetails(checked);
+                  dashPrefs.setItem(OPEN_PRS_TITLE_DETAILS_PREF, checked ? '1' : '0');
+                }} />
+              <span>Hover details</span>
+            </label>
+          </div>
+          ${confirmIgnore ? html`<${IgnorePRDialog} pr=${confirmIgnore}
+            onCancel=${closeIgnoreDialog}
+            onConfirm=${(ms) => {
+              saveIgnored(ignorePR(ignored, confirmIgnore, ms));
+              closeIgnoreDialog();
+            }} />` : null}
         </div>
       ` : null}
     </span>

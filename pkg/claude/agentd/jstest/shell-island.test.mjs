@@ -531,3 +531,100 @@ test('Codex snapshot usage renders with a saved cost mode and switches to percen
   assert.equal(dashPrefs.getItem(pref), 'usage');
   await mounted.unmount();
 });
+
+test('footer open PRs ignores a PR after confirming, and brings it back', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { dashPrefs }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  dashPrefs.removeItem('tclaude.dash.open-prs.ignored');
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, total: 2, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Keep', repository: 'acme/app' },
+      { number: 2, url: 'https://github.com/acme/app/pull/2', title: 'Stale idea', repository: 'acme/app' },
+    ],
+  } }));
+  const c = mounted.container;
+  const trigger = getByRole(c, 'button', { name: /Open PRs/ });
+  await harness.act(() => trigger.click());
+  const titles = () => [...c.querySelectorAll('.open-pr-title')].map((node) => node.textContent);
+
+  const ignoreButton = getByRole(c, 'button', { name: /Ignore pull request #2/ });
+  ignoreButton.focus();
+  await harness.act(() => ignoreButton.click());
+  const dialog = c.querySelector('[role="alertdialog"]');
+  assert.ok(dialog, 'ignoring asks first');
+  assert.match(dialog.textContent, /Stale idea/);
+  await harness.act(() => harness.fireEvent(dialog, 'keydown', { key: 'Escape' }));
+  assertAbsent(c.querySelector('[role="alertdialog"]'));
+  assert.ok(c.querySelector('#open-prs-popover'), 'Escape cancels the dialog, not the popover');
+  assert.equal(harness.document.activeElement?.getAttribute('aria-label'), 'Ignore pull request #2…',
+    'focus returns to the button that opened the dialog');
+  assert.deepEqual(titles(), ['Keep', 'Stale idea']);
+
+  await harness.act(() => getByRole(c, 'button', { name: /Ignore pull request #2/ }).click());
+  const forever = getByLabelText(c, 'Permanently');
+  forever.checked = true;
+  await harness.act(() => harness.fireEvent(forever, 'change'));
+  await harness.act(() => getByRole(c, 'button', { name: /^Ignore$/ }).click());
+  assertAbsent(c.querySelector('[role="alertdialog"]'));
+  assert.deepEqual(titles(), ['Keep']);
+  assert.match(c.querySelector('.open-prs-count').textContent, /^1$/);
+  const stored = JSON.parse(dashPrefs.getItem('tclaude.dash.open-prs.ignored'));
+  assert.equal(stored['acme/app#2'].until, 0, 'the choice is persisted as permanent');
+
+  await harness.act(() => getByRole(c, 'button', { name: /Ignored 1/ }).click());
+  assert.deepEqual(titles(), ['Stale idea']);
+  assert.match(c.querySelector('.open-pr-meta').textContent, /ignored permanently/);
+  await harness.act(() => getByRole(c, 'button', { name: /Bring back pull request #2/ }).click());
+  assert.equal(dashPrefs.getItem('tclaude.dash.open-prs.ignored'), null);
+  await harness.act(() => getByRole(c, 'button', { name: /Open 2/ }).click());
+  assert.deepEqual(titles(), ['Keep', 'Stale idea']);
+  await mounted.unmount();
+});
+
+test('footer open PR titles open the PR details card unless turned off', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { dashPrefs }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  dashPrefs.removeItem('tclaude.dash.open-prs.title-details');
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, total: 1, items: [
+      { number: 4, url: 'https://github.com/acme/app/pull/4', title: 'Hover me', repository: 'acme/app' },
+    ],
+  } }));
+  const c = mounted.container;
+  await harness.act(() => getByRole(c, 'button', { name: /Open PRs/ }).click());
+  const hoverRoot = () => c.querySelector('.open-pr-main > .prd-hover');
+  assert.ok(hoverRoot(), 'on by default');
+  await harness.act(() => harness.fireEvent(hoverRoot(), 'mouseenter'));
+  const card = c.querySelector('.prd-panel');
+  assert.ok(card, 'the shared PR details card opens on the title');
+  assert.match(card.querySelector('.prd-title').textContent, /Hover me\s+#4/);
+  assert.equal(card.querySelector('.prd-repo').textContent.trim(), 'acme/app');
+  await harness.act(() => harness.fireEvent(hoverRoot(), 'mouseleave'));
+  const title = c.querySelector('a.open-pr-title');
+  await harness.act(() => harness.fireEvent(title, 'keydown', { key: 'Escape' }));
+  assertAbsent(c.querySelector('#open-prs-popover'), 'Escape on a title with no card open closes the popover');
+  await harness.act(() => getByRole(c, 'button', { name: /Open PRs/ }).click());
+
+  const toggle = getByLabelText(c, 'Hover details');
+  toggle.checked = false;
+  await harness.act(() => harness.fireEvent(toggle, 'change'));
+  assertAbsent(hoverRoot());
+  assert.equal(c.querySelector('a.open-pr-title').textContent, 'Hover me', 'a plain link again');
+  assert.equal(dashPrefs.getItem('tclaude.dash.open-prs.title-details'), '0');
+  dashPrefs.removeItem('tclaude.dash.open-prs.title-details');
+  await mounted.unmount();
+});
