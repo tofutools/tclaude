@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/binary"
@@ -190,8 +191,9 @@ func TestFederationPeerViewProxyWireAndFailures(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "not_trusted")
 }
 
-// A peer's reply reaches the browser gzipped, as the local snapshot does,
-// keeping the peer's Vary next to the proxy's own.
+// A peer's reply crosses the hub gzipped when the peer can, and reaches the
+// browser gzipped, as the local snapshot does, keeping the peer's Vary next
+// to the proxy's own.
 func TestFederationPeerViewProxyGzipsReplies(t *testing.T) {
 	fh := newFedHarness(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
@@ -204,8 +206,15 @@ func TestFederationPeerViewProxyGzipsReplies(t *testing.T) {
 	conn := acceptOutboundPeerView(t, p, 0)
 	wire := readPeerViewWire(t, conn)
 	require.Equal(t, "/api/snapshot?static_version=v1", wire.URI)
+	require.Equal(t, "gzip", wire.Header.Get("Accept-Encoding"), "the proxy asks the peer for a gzipped body")
 	body := `{"groups":[],"static_version":"v1","static_unchanged":true}`
-	writePeerViewWire(t, conn, peerViewWire{Status: 200, Header: http.Header{"Content-Type": {"application/json"}, "Vary": {"Cookie"}}, Body: []byte(body)})
+	// The peer answers gzipped, as a current one does; the proxy unpacks it.
+	var packed bytes.Buffer
+	zw := gzip.NewWriter(&packed)
+	_, err := zw.Write([]byte(body))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	writePeerViewWire(t, conn, peerViewWire{Status: 200, Header: http.Header{"Content-Type": {"application/json"}, "Content-Encoding": {"gzip"}, "Vary": {"Cookie"}}, Body: packed.Bytes()})
 	var rec *httptest.ResponseRecorder
 	select {
 	case rec = <-ch:
@@ -242,7 +251,21 @@ func TestFederationPeerViewIncomingDispatcherAndRevocation(t *testing.T) {
 	}
 	reply := exchange("/api/snapshot")
 	require.Equal(t, 200, reply.Status, string(reply.Body))
+	require.Empty(t, reply.Header.Get("Content-Encoding"), "a requester that does not ask gets a plain body")
 	require.Contains(t, string(reply.Body), "shown")
+	// A requester that asks gets the same reply gzipped.
+	c := openInboundPeerView(t, p)
+	writePeerViewWire(t, c, peerViewWire{Method: "GET", URI: "/api/snapshot", Header: http.Header{"Accept-Encoding": {"gzip"}}})
+	packed := readPeerViewWire(t, c)
+	_ = c.Close()
+	require.Equal(t, 200, packed.Status)
+	require.Equal(t, "gzip", packed.Header.Get("Content-Encoding"))
+	zr, err := gzip.NewReader(bytes.NewReader(packed.Body))
+	require.NoError(t, err)
+	unpacked, err := io.ReadAll(zr)
+	require.NoError(t, err)
+	require.Contains(t, string(unpacked), "shown")
+	require.NotContains(t, string(unpacked), "hidden-name")
 	require.NotContains(t, string(reply.Body), "hidden-name")
 	require.Contains(t, string(reply.Body), "peer_view")
 	// Cookie-like wire credentials never route the peer to local-human wrappers.
@@ -250,9 +273,9 @@ func TestFederationPeerViewIncomingDispatcherAndRevocation(t *testing.T) {
 	require.Equal(t, 403, reply.Status, string(reply.Body))
 	require.Contains(t, string(reply.Body), "local")
 	// Trust is checked at dispatch, not only when the stream was opened.
-	c := openInboundPeerView(t, p)
+	c = openInboundPeerView(t, p)
 	defer c.Close()
-	_, err := db.UntrustFederationPeer(p.id.ID())
+	_, err = db.UntrustFederationPeer(p.id.ID())
 	require.NoError(t, err)
 	writePeerViewWire(t, c, peerViewWire{Method: "GET", URI: "/api/snapshot"})
 	reply = readPeerViewWire(t, c)

@@ -205,6 +205,13 @@ func exchangePeerView(parent context.Context, rt *fedRuntime, peer *db.Federatio
 		}
 		return err
 	}
+	// Ask for a gzipped body: the peer compresses before sealing, and the reply
+	// is unpacked below, so every caller still sees plain JSON.
+	req.Header = req.Header.Clone()
+	if req.Header == nil {
+		req.Header = make(http.Header)
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
 	conn, err := rt.openPeerView(ctx, peer)
 	if err != nil {
 		return fedPeerViewReply{}, classify(err)
@@ -221,7 +228,7 @@ func exchangePeerView(parent context.Context, rt *fedRuntime, peer *db.Federatio
 	if err := readPeerViewFrame(conn, fedPeerViewResponseLimit, &reply); err != nil {
 		return fedPeerViewReply{}, classify(err)
 	}
-	return reply, nil
+	return gunzipPeerViewReply(reply)
 }
 
 func validPeerViewReply(reply fedPeerViewReply) bool {

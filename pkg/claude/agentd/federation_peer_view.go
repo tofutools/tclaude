@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -300,8 +302,57 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 			out = &peerViewResponse{header: make(http.Header)}
 			writeError(out, 502, "peer_response_too_large", "peer response exceeds limit")
 		}
-		_ = writePeerViewFrame(conn, fedPeerViewResponseLimit, fedPeerViewReply{Status: out.statusCode(), Header: peerViewReplyHeaders(out.Header()), Body: out.body.Bytes()})
+		reply := fedPeerViewReply{Status: out.statusCode(), Header: peerViewReplyHeaders(out.Header()), Body: out.body.Bytes()}
+		if acceptsGzip(wire.Header.Get("Accept-Encoding")) {
+			reply = gzipPeerViewReply(reply)
+		}
+		_ = writePeerViewFrame(conn, fedPeerViewResponseLimit, reply)
 	}()
+}
+
+// fedPeerViewGzipMin is the smallest reply body worth compressing.
+const fedPeerViewGzipMin = 1 << 10
+
+// gzipPeerViewReply compresses a reply body for a requester that asked for
+// gzip. The hub relays the stream encrypted end to end, so only the two nodes
+// can compress it, and only before sealing.
+func gzipPeerViewReply(reply fedPeerViewReply) fedPeerViewReply {
+	if len(reply.Body) < fedPeerViewGzipMin {
+		return reply
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(reply.Body); err != nil || zw.Close() != nil {
+		return reply
+	}
+	reply.Header = reply.Header.Clone()
+	reply.Header.Set("Content-Encoding", "gzip")
+	reply.Body = buf.Bytes()
+	return reply
+}
+
+// gunzipPeerViewReply restores a body the peer sent gzipped, holding it to
+// the same limit as an uncompressed one. A peer sends gzip only when asked
+// (exchangePeerView asks), and an older peer never does.
+func gunzipPeerViewReply(reply fedPeerViewReply) (fedPeerViewReply, error) {
+	if !strings.EqualFold(reply.Header.Get("Content-Encoding"), "gzip") {
+		return reply, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(reply.Body))
+	if err != nil {
+		return fedPeerViewReply{}, fmt.Errorf("peer reply: %w", err)
+	}
+	body, err := io.ReadAll(io.LimitReader(zr, fedPeerViewResponseBodyLimit+1))
+	if err != nil {
+		return fedPeerViewReply{}, fmt.Errorf("peer reply: %w", err)
+	}
+	if len(body) > fedPeerViewResponseBodyLimit {
+		return fedPeerViewReply{}, errors.New("peer reply exceeds limit")
+	}
+	reply.Header = reply.Header.Clone()
+	reply.Header.Del("Content-Encoding")
+	reply.Body = body
+	return reply, nil
 }
 
 func peerViewRequestHeaders(h http.Header) http.Header {
