@@ -27,7 +27,12 @@ func (s recordingSpawner) SpawnNew(a clcommon.SpawnArgs) error {
 	s.mu.Unlock()
 	return s.inner.SpawnNew(a)
 }
-func (s recordingSpawner) SpawnResume(a clcommon.SpawnArgs) error { return s.inner.SpawnResume(a) }
+func (s recordingSpawner) SpawnResume(a clcommon.SpawnArgs) error {
+	s.mu.Lock()
+	*s.news = append(*s.news, a)
+	s.mu.Unlock()
+	return s.inner.SpawnResume(a)
+}
 
 func recordSpawns(t *testing.T) func() []clcommon.SpawnArgs {
 	t.Helper()

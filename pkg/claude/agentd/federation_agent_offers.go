@@ -349,9 +349,20 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			writeError(w, 409, "teleport_frozen", "teleports are frozen by the operator")
 			return
 		}
-		if _, err := pendingTeleportCredentials(o.Peer, o.Descriptor.Teleport.Credentials); err != nil {
+		mode, err := pendingTeleportCredentials(o.Peer, o.Descriptor.Teleport.Credentials)
+		if err != nil {
 			writeError(w, 409, "teleport_credentials", err.Error())
 			return
+		}
+		// On the sender's Claude subscription: its token, when it arrived,
+		// goes to the launch; without it the agent lands offline, marked,
+		// for its owner to send it again.
+		if mode == claudeSubscriptionMode {
+			h, ok := takeOfferClaudeSubscription(o.Peer, o.Descriptor.ID)
+			if !ok {
+				h = claudeSubscriptionHandoff{peer: o.Peer}
+			}
+			r = r.WithContext(withClaudeSubscription(r.Context(), h))
 		}
 	}
 	if o.Descriptor.Teleport != nil && in.SkipHistory {

@@ -25,11 +25,14 @@ type teleportCredentials struct {
 	// proxy:<gateway>@<instance>. The asking peer's own gateways are never
 	// listed: it offers those itself, paid through a lease.
 	Shares []modelShare `json:"shares"`
+	// ClaudeSubscription says the asking operator's own Claude subscription
+	// can carry an agent landing here (still subject to Any or Allowed).
+	ClaudeSubscription bool `json:"claude_subscription"`
 }
 
 // servePeerTeleportCredentials answers GET /api/teleport-credentials?group=G.
 func servePeerTeleportCredentials(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
-	out := teleportCredentials{Allowed: []string{"local"}, Default: "local", Shares: []modelShare{}}
+	out := teleportCredentials{Allowed: []string{"local"}, Default: "local", Shares: []modelShare{}, ClaudeSubscription: true}
 	// Only a group the peer may send agents to is answered for, so a peer
 	// without a receive grant learns nothing (nor fans out to other peers).
 	g, err := db.GetAgentGroupByName(r.URL.Query().Get("group"))

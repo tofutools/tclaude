@@ -20,7 +20,7 @@ export function harnessDialect(harness) {
 // the source of a pull), source names a pull's source node, and selfIds are
 // the names a landing policy may use for this node. Each option is
 // {value, label, reason}; a reason disables it.
-export function modelAccessOptions({ dest, harness = '', creds = null, own = [], shares = [], pull = false, trust = '', source = '', sourceName = '', selfIds = [] }) {
+export function modelAccessOptions({ dest, harness = '', creds = null, own = [], shares = [], pull = false, trust = '', source = '', sourceName = '', selfIds = [], subscription = null }) {
   const dialect = harnessDialect(harness);
   const gatewayWhy = dialect === null ? `${harness} cannot use a model gateway` : '';
   const fits = (d) => !dialect || (d || 'anthropic') === dialect;
@@ -39,6 +39,15 @@ export function modelAccessOptions({ dest, harness = '', creds = null, own = [],
   const def = creds?.default && creds.default !== 'local' ? ` (${creds.default.replace(/^proxy:/, 'gateway ')})` : '';
   out.push({ value: '', label: `${dest}'s default${def}`, reason: '' });
   out.push({ value: 'local', label: `${dest}'s own login`, reason: pull || accepts('local') ? '' : `${dest} does not accept that from this node` });
+  // Your own Claude subscription: the offer names only the mode, and this
+  // dashboard sends the token to the receiver right after (claude_subscription_teleport.go).
+  if (!pull) {
+    const reason = harness && harness !== 'claude' ? 'it runs Claude Code only'
+      : !subscription?.set ? 'not set up: store a token under Fleet config → Model gateways → My Claude subscription'
+        : !creds?.claude_subscription ? `${dest} cannot run on it yet; update tclaude there`
+          : !accepts('claude-subscription') ? `${dest}'s landing policy does not list it` : '';
+    out.push({ value: 'claude-subscription', label: 'Your Claude subscription', reason });
+  }
   if (!pull) {
     for (const g of own) {
       if (!fits(g.dialect)) continue;

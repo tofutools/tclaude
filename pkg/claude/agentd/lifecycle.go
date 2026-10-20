@@ -5112,6 +5112,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	p.BundleHistory, _ = r.Context().Value(bundleHistoryContextKey{}).(*bundleHistoryLaunch)
 	p.ManagedInstructionResources, _ = r.Context().Value(managedInstructionLaunchContextKey{}).([]db.ManagedInstruction)
 	p.NoLaunch, _ = r.Context().Value(bundleNoLaunchContextKey{}).(bool)
+	// A worker on a peer's Claude subscription whose token has not arrived
+	// lands offline: it never starts on this node's own login.
+	if p.ClaudeSubscription.peer != "" && p.ClaudeSubscription.token == "" {
+		p.NoLaunch = true
+	}
 	if teleportAuthority != nil {
 		p.launchAuthority = teleportAuthority.check
 		p.nodeCapacityReserved = true
@@ -5168,7 +5173,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"group_default":  groupProfile,
 		"global_default": globalProfile,
 	}))
-	if p.ClaudeSubscription.token != "" {
+	if p.ClaudeSubscription.peer != "" {
 		if body.NonInteractive || (p.Harness != "" && p.Harness != harness.DefaultName) {
 			writeError(w, 400, "claude_subscription", "a peer's Claude subscription runs an ordinary Claude Code worker only")
 			return
@@ -7523,6 +7528,20 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
 	}
 	if p.NoLaunch {
+		if p.ClaudeSubscription.peer != "" && p.ClaudeSubscription.token == "" {
+			agentID := p.AgentID
+			if agentID == "" && preConvID != "" {
+				agentID, _ = db.AgentIDForConv(preConvID)
+			}
+			if agentID == "" {
+				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", "could not resolve the agent identity to mark for the Claude subscription"}
+			}
+			if err := db.SetAgentClaudeSubscription(agentID, p.ClaudeSubscription.peer); err != nil {
+				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", err.Error()}
+			}
+		}
 		return landSpawnOffline(p, spawnHarness, preConvID)
 	}
 	// A Linux route-capable group must launch the namespace helper with a

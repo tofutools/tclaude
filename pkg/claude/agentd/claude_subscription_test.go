@@ -200,4 +200,11 @@ func TestClaudeSubscriptionResendOnlyToANodeSpawnedOn(t *testing.T) {
 	out, err = push("agents/agt_x/claude-subscription")
 	require.NoError(t, err)
 	require.Contains(t, out, testSubscriptionToken)
+	// A teleport onto the subscription needs a peer that lands them (2).
+	_, err = push("teleport-subscription")
+	require.ErrorContains(t, err, "update tclaude there")
+	require.NoError(t, db.PutFederationCatalog(peer.InstanceID, `{"claude_subscription":2}`, time.Now()))
+	out, err = push("teleport-subscription")
+	require.NoError(t, err)
+	require.Contains(t, out, testSubscriptionToken)
 }
