@@ -162,6 +162,9 @@ test('a fused or peer view also lists the shown peers\' unattached agents, opene
     ['peer:inst_forge:g', true, 'forge', 'group_shell'],
   ], 'agents open as remote terminals; tclaude shells list too, killable there, attachable when they name their group; other sessions stay out');
   assert.match(peerRows[1].attachLock, /predates group shells/);
+  assert.equal(bg.hasPeerBackgroundAgent(peerRows), true, "a peer's background agent keeps its status catalog polled");
+  assert.equal(bg.hasPeerBackgroundAgent([...ROWS, ...peerRows.filter((row) => row.kind !== 'agent')]), false,
+    "local rows and peer shells take no peer status");
   assert.deepEqual(peerRows[2].shell, { group: 'ops', shell: 'group' });
   const [dirShell] = bg.peerBackgroundRows([{ kind: 'shell', tmux_session: 'd', agent_id: 'agt_scout', which: 'worktree', group: 'ops', label: 'scout' }], forge);
   const shells = [];
