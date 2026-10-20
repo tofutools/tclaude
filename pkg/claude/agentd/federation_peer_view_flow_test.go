@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -187,6 +188,38 @@ func TestFederationPeerViewProxyWireAndFailures(t *testing.T) {
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/peer/"+p.id.ID()+"/snapshot", nil))
 	require.Equal(t, 403, rec.Code)
 	require.Contains(t, rec.Body.String(), "not_trusted")
+}
+
+// A peer's reply reaches the browser gzipped, as the local snapshot does,
+// keeping the peer's Vary next to the proxy's own.
+func TestFederationPeerViewProxyGzipsReplies(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	p := fh.peer
+	h := agentd.BuildDashboardHandlerForTest()
+	req := testharness.JSONRequest(t, "GET", "/api/peer/"+p.id.ID()+"/snapshot?static_version=v1", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	ch := make(chan *httptest.ResponseRecorder, 1)
+	go func() { ch <- testharness.Serve(h, req) }()
+	conn := acceptOutboundPeerView(t, p, 0)
+	wire := readPeerViewWire(t, conn)
+	require.Equal(t, "/api/snapshot?static_version=v1", wire.URI)
+	body := `{"groups":[],"static_version":"v1","static_unchanged":true}`
+	writePeerViewWire(t, conn, peerViewWire{Status: 200, Header: http.Header{"Content-Type": {"application/json"}, "Vary": {"Cookie"}}, Body: []byte(body)})
+	var rec *httptest.ResponseRecorder
+	select {
+	case rec = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("proxy request did not finish")
+	}
+	require.Equal(t, 200, rec.Code)
+	require.Equal(t, "gzip", rec.Header().Get("Content-Encoding"))
+	require.ElementsMatch(t, []string{"Accept-Encoding", "Cookie"}, rec.Header().Values("Vary"))
+	zr, err := gzip.NewReader(rec.Body)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(zr)
+	require.NoError(t, err)
+	require.JSONEq(t, body, string(raw))
 }
 
 func TestFederationPeerViewIncomingDispatcherAndRevocation(t *testing.T) {

@@ -31,7 +31,7 @@ import { syncDashDefaultProfile } from './profiles.js';
 import { claimViewersRead, noteViewersRead } from './remote-viewers.js';
 import { claimRemoteInboxRead, readRemoteInboxes } from './remote-inbox.js';
 import { attachPageNotifications } from './peer-notifications.js';
-import { dashboardState } from './snapshot-store.js';
+import { dashboardState, restoreUnchangedStatics } from './snapshot-store.js';
 import { featureState } from './feature-state-registry.js';
 import {
   showShellStatus as showStatus,
@@ -214,11 +214,7 @@ export async function refresh(options) {
     // keeps the previous tick's rows for that list — a blip / a collapsed group
     // must not blank a section.
     const prevSnap = lastSnapshot || {};
-    if (data.static_unchanged && prevSnap.static_version === data.static_version) {
-      for (const key of ['slugs', 'templates', 'profiles', 'roles', 'saved_prompts', 'plugins_catalog']) {
-        data[key] = prevSnap[key];
-      }
-    }
+    restoreUnchangedStatics(data, prevSnap);
     // A restricted peer's page: its unread notifications, which its
     // snapshot withholds, read at their own cadence.
     attachPageNotifications(data);

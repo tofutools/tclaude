@@ -15,12 +15,15 @@ import (
 )
 
 func registerDashboardPeerRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/peer/{node}/{tail...}", handleDashboardPeer)
-	mux.HandleFunc("POST /api/peer/{node}/{tail...}", handleDashboardPeer)
+	// Gzipped like the local snapshot: a peer's snapshot is the same payload,
+	// and it reaches the browser raw otherwise.
+	handler := withGzip(handleDashboardPeer)
+	mux.HandleFunc("GET /api/peer/{node}/{tail...}", handler)
+	mux.HandleFunc("POST /api/peer/{node}/{tail...}", handler)
 	// Peer-granted routes change settings with the dashboard's own methods.
-	mux.HandleFunc("PATCH /api/peer/{node}/{tail...}", handleDashboardPeer)
-	mux.HandleFunc("PUT /api/peer/{node}/{tail...}", handleDashboardPeer)
-	mux.HandleFunc("DELETE /api/peer/{node}/{tail...}", handleDashboardPeer)
+	mux.HandleFunc("PATCH /api/peer/{node}/{tail...}", handler)
+	mux.HandleFunc("PUT /api/peer/{node}/{tail...}", handler)
+	mux.HandleFunc("DELETE /api/peer/{node}/{tail...}", handler)
 }
 
 func handleDashboardPeer(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +158,13 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		return
 	}
 	for key, values := range peerViewReplyHeaders(reply.Header) {
+		// Vary adds to the proxy's own (Accept-Encoding, from withGzip).
+		if key == "Vary" {
+			for _, v := range values {
+				w.Header().Add(key, v)
+			}
+			continue
+		}
 		w.Header()[key] = values
 	}
 	// Only a copy this daemon cached says how old it is; a peer's own Age

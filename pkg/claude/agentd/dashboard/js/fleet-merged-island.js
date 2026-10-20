@@ -10,7 +10,7 @@ import { buildGroupsView, groupsState } from './groups-state.js';
 import { listLimit, pagerOffset } from './list-paging.js';
 import { GroupsProcessScope } from './groups-process-scope.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
-import { dashboardState } from './snapshot-store.js';
+import { dashboardState, restoreUnchangedStatics } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
 import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './fleet-model.js';
 import { tickedNodes, withFused } from './fleet-scope.js';
@@ -180,9 +180,11 @@ function defaultSwitchNode(id) {
 export const MAX_IN_FLIGHT = 4;
 
 // snapshotURL addresses a node's snapshot: the peer proxy for a peer, this
-// node's own route for this node (read only from a peer's page).
-function snapshotURL(node) {
-  return node.local ? '/api/snapshot' : `/api/peer/${encodeURIComponent(node.id)}/snapshot`;
+// node's own route for this node (read only from a peer's page), with the
+// static_version of the copy already held.
+function snapshotURL(node, staticVersion = '') {
+  const query = staticVersion ? `?static_version=${encodeURIComponent(staticVersion)}` : '';
+  return (node.local ? '/api/snapshot' : `/api/peer/${encodeURIComponent(node.id)}/snapshot`) + query;
 }
 
 // usePeerSnapshots reads each node's dashboard snapshot (a peer's through the
@@ -224,9 +226,12 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
         // conditional peer read among polls within a second (peer_read_cache.go);
         // Age says how old the served copy is.
         const init = { credentials: 'same-origin', cache: 'no-store', ...(peer.local ? {} : { headers: { [PEER_POLL_HEADER]: String(MERGED_POLL_MS) } }) };
-        const res = await (peer.local ? localFetch : fetchImpl)(snapshotURL(peer), init);
+        // The last snapshot's static_version lets the node leave out the
+        // registries this view already holds, as the page's own poll does.
+        const prev = entriesRef.current[peer.id]?.snapshot || null;
+        const res = await (peer.local ? localFetch : fetchImpl)(snapshotURL(peer, prev?.static_version), init);
         if (res.ok) {
-          const snapshot = await res.json();
+          const snapshot = restoreUnchangedStatics(await res.json(), prev);
           const age = Number(res.headers?.get?.('Age')) || 0;
           commit(peer.id, { snapshot, receivedAt: now() - age * 1000, failure: null, failures: 0 });
           failures = 0;
