@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -176,4 +177,27 @@ func TestClaudeSubscriptionRelaunchBlockedBeforeStopping(t *testing.T) {
 	err = claudeSubscriptionRelaunchBlocked(agentID)
 	require.True(t, isClaudeSubscriptionLost(err), "%v", err)
 	require.ErrorContains(t, err, "can send it again")
+}
+
+// A resend only goes to a node this operator once spawned on with their
+// subscription, so a peer's claim about an agent cannot draw the token out.
+func TestClaudeSubscriptionResendOnlyToANodeSpawnedOn(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, writeClaudeSubscriptionToken(testSubscriptionToken))
+	peer := &db.FederationPeer{InstanceID: "inst_b", Label: "b"}
+	require.NoError(t, db.PutFederationCatalog(peer.InstanceID, `{"claude_subscription":1}`, time.Now()))
+	push := func(tail string) (string, error) {
+		r := httptest.NewRequest(http.MethodPost, "/api/peer/b/"+tail, nil)
+		r.SetPathValue("tail", tail)
+		out, err := prepareClaudeSubscriptionPush(r, []byte(`{"claude_subscription":true}`), peer)
+		return string(out), err
+	}
+	_, err := push("agents/agt_x/claude-subscription")
+	require.ErrorContains(t, err, "never spawned an agent on your Claude subscription")
+	out, err := push("groups/crew/spawn")
+	require.NoError(t, err)
+	require.Contains(t, out, testSubscriptionToken)
+	out, err = push("agents/agt_x/claude-subscription")
+	require.NoError(t, err)
+	require.Contains(t, out, testSubscriptionToken)
 }
