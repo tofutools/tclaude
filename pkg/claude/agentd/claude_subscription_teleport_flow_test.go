@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
@@ -44,6 +45,9 @@ func TestTeleportOnTheSendersClaudeSubscription(t *testing.T) {
 	code, body := send(d.ID)
 	require.Equal(t, 200, code, body)
 	require.Contains(t, body, `"held":"offer"`)
+	// The Offers dialog previews first: that must not use the token up.
+	preview := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"cwd": testutil.CanonicalTempDir(t)})
+	require.Equal(t, 200, preview.Code, preview.Body.String())
 	before := len(spawns())
 	land(d.ID)
 	launched := spawns()
@@ -77,4 +81,24 @@ func TestTeleportOnTheSendersClaudeSubscription(t *testing.T) {
 	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d3.ID).Status)
 	code, _ = send(d3.ID)
 	require.Equal(t, 409, code)
+}
+
+// The sender offers a teleport on the operator's own Claude subscription
+// with only the mode in the offer: no lease, no token.
+func TestTeleportSenderOffersOnlyTheSubscriptionMode(t *testing.T) {
+	fh := newFedHarness(t)
+	fedTeleportSource(t, fh)
+	require.NoError(t, db.GrantAgentPermissionWithScope(moveSourceConv, agentd.PermSelfTeleport, `{"peer":["`+fh.peer.id.ID()+`"]}`, "test"))
+	rec := fedSelfTeleport(t, fh, map[string]any{"peer": "bob", "group": "receiver", "credentials": "claude-subscription"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "sk-ant-")
+	var result struct {
+		Offer struct {
+			D bundletransfer.Descriptor `json:"offer"`
+		} `json:"offer"`
+	}
+	testharness.DecodeJSON(t, rec, &result)
+	require.NotNil(t, result.Offer.D.Teleport)
+	require.Equal(t, "claude-subscription", result.Offer.D.Teleport.Credentials)
+	require.Empty(t, result.Offer.D.Teleport.ModelLease)
 }

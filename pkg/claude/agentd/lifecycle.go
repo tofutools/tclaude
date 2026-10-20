@@ -7528,7 +7528,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
 	}
 	if p.NoLaunch {
-		if p.ClaudeSubscription.peer != "" && p.ClaudeSubscription.token == "" {
+		// Landing offline keeps the subscription: the marker always, and the
+		// token when it came, so a later start never uses this node's login.
+		if p.ClaudeSubscription.peer != "" {
 			agentID := p.AgentID
 			if agentID == "" && preConvID != "" {
 				agentID, _ = db.AgentIDForConv(preConvID)
@@ -7537,7 +7539,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", "could not resolve the agent identity to mark for the Claude subscription"}
 			}
-			if err := db.SetAgentClaudeSubscription(agentID, p.ClaudeSubscription.peer); err != nil {
+			mark := func() error { return db.SetAgentClaudeSubscription(agentID, p.ClaudeSubscription.peer) }
+			if p.ClaudeSubscription.token != "" {
+				mark = func() error { return holdClaudeSubscription(agentID, p.ClaudeSubscription) }
+			}
+			if err := mark(); err != nil {
 				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", err.Error()}
 			}

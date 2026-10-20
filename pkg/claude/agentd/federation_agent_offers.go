@@ -344,6 +344,7 @@ func federationOfferProvenance(o *db.FederationBundleOffer) map[string]any {
 // bundle importer. A durable reserved identity prevents an interrupted apply
 // from silently spawning another agent when the operator retries.
 func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.FederationBundleOffer, in *fedBundleImportRequest) {
+	subscriptionOffer := false
 	if o.Descriptor.Teleport != nil {
 		if teleportFrozen() {
 			writeError(w, 409, "teleport_frozen", "teleports are frozen by the operator")
@@ -356,9 +357,11 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		}
 		// On the sender's Claude subscription: its token, when it arrived,
 		// goes to the launch; without it the agent lands offline, marked,
-		// for its owner to send it again.
+		// for its owner to send it again. A preview only looks; the token is
+		// taken once an apply has launched (or may have).
 		if mode == claudeSubscriptionMode {
-			h, ok := takeOfferClaudeSubscription(o.Peer, o.Descriptor.ID)
+			subscriptionOffer = true
+			h, ok := peekOfferClaudeSubscription(o.Peer, o.Descriptor.ID)
 			if !ok {
 				h = claudeSubscriptionHandoff{peer: o.Peer}
 			}
@@ -645,6 +648,20 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 		rec = invoke(true, reserved)
+		// The launch holds its own copy of the token now. One that arrived
+		// while it landed offline without it goes to the landed agent.
+		defer func() {
+			if !subscriptionOffer || o.ImportAgent == "" {
+				return
+			}
+			if h, ok := takeOfferClaudeSubscription(o.Peer, o.Descriptor.ID); ok {
+				if marker, err := db.GetAgentClaudeSubscription(reserved); err == nil && marker != nil && marker.Peer == h.peer {
+					if _, held := heldClaudeSubscription(reserved); !held {
+						_ = holdClaudeSubscription(reserved, h)
+					}
+				}
+			}
+		}()
 		if rec.Code == 200 {
 			if err = db.SetFederationBundleOfferState("in", o.Peer, o.Descriptor.ID, "applied", ""); err != nil {
 				writeError(w, 500, "receipt", fmt.Sprintf("launch accepted as %s but storing receipt failed: %v", reserved, err))

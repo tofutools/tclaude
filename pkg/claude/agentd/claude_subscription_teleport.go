@@ -57,6 +57,16 @@ func offerClaudeSubscriptionHeld(peer, offer string) bool {
 	return ok && time.Now().Before(p.expires)
 }
 
+func peekOfferClaudeSubscription(peer, offer string) (claudeSubscriptionHandoff, bool) {
+	claudeSubscriptionOffers.Lock()
+	defer claudeSubscriptionOffers.Unlock()
+	p, ok := claudeSubscriptionOffers.held[offerKey(peer, offer)]
+	if !ok || time.Now().After(p.expires) {
+		return claudeSubscriptionHandoff{}, false
+	}
+	return p.claudeSubscriptionHandoff, true
+}
+
 func takeOfferClaudeSubscription(peer, offer string) (claudeSubscriptionHandoff, bool) {
 	claudeSubscriptionOffers.Lock()
 	defer claudeSubscriptionOffers.Unlock()
