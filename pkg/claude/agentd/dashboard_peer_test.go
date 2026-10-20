@@ -54,7 +54,6 @@ func TestPeerViewAdmissionQueuesForAFreedSlot(t *testing.T) {
 
 	got := make(chan bool, 1)
 	go func() { got <- rt.reservePeerViewWait(context.Background(), "queued", "peer", time.Now().Add(5*time.Second)) }()
-	time.Sleep(20 * time.Millisecond)
 	rt.releasePeerView("a")
 	select {
 	case ok := <-got:

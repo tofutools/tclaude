@@ -194,23 +194,30 @@ test("a failed sandbox preview says why on submit and loads again", async (t) =>
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${AgentSpawnApp} state=${state} actions=${actions} confirmDiscard=${async () => true} notify=${() => {}} />`, host);
   state.open({ groupName: 'build', target: { node: NODE, nodeId: NODE, name: 'forge', snapshot: { groups: [{ name: 'build' }], harnesses } } });
-  await flush(harness);
-  await harness.act(() => new Promise((r) => setTimeout(r, 600)));
-  await flush(harness);
   const q = (sel) => host.querySelector(sel);
+  // until polls the dialog until cond holds (debounced loads land on timers).
+  const until = async (cond, what) => {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      await flush(harness);
+      if (cond()) return;
+      await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+    }
+    assert.fail(`timed out waiting for ${what}`);
+  };
+  const preview = () => q('#agent-spawn-sandbox-profile-preview')?.textContent || '';
+  const worktreesLoading = () => /loading…/.test(q('#agent-spawn-worktree')?.textContent || 'loading…');
+  await until(() => !worktreesLoading() && /Could not preview sandbox policy/.test(preview()), 'the worktrees and the failed preview');
   const name = q('#agent-spawn-name');
   Object.defineProperty(name, 'value', { configurable: true, writable: true, value: 'w' });
   await harness.act(() => harness.fireEvent(name, 'input'));
   await flush(harness);
-  const submit = async () => {
-    await harness.act(() => q('#agent-spawn-submit').click());
-    await harness.act(() => new Promise((r) => setTimeout(r, 200)));
-    await flush(harness);
-  };
+  const submit = () => harness.act(() => q('#agent-spawn-submit').click());
   await submit();
-  assert.match(q('#agent-spawn-error')?.textContent || '', /could not load the sandbox policy preview \(.*concurrency limit.*\) — reloading it/);
+  await until(() => /could not load the sandbox policy preview \(.*concurrency limit.*\) — reloading it/.test(q('#agent-spawn-error')?.textContent || ''), 'the preview failure on submit');
   assert.deepEqual(spawned, [], 'nothing spawns on a failed preview');
+  await until(() => preview() && !/Could not preview/.test(preview()), 'the reloaded preview');
   await submit();
+  await until(() => spawned.length > 0, 'the spawn');
   assert.deepEqual(spawned, ['groups/build/spawn'], 'the reloaded preview lets the spawn through');
   await mounted.unmount();
 });
