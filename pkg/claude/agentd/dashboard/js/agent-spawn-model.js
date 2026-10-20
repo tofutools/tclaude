@@ -1011,6 +1011,10 @@ export function applySpawnProfile(
   return syncSpawnWorktree(next, pickerUsable);
 }
 
+// The agent name and initial message survive a profile change: they are the
+// operator's words for THIS spawn, and losing typed-out text to a profile
+// switch is far worse than keeping one the old profile pre-filled. A new
+// profile that names its own still replaces them in applySpawnProfile.
 export function clearSpawnProfileFields(draft, context, {
   autoFocus = true, rememberedEffort = () => '',
 } = {}) {
@@ -1025,7 +1029,7 @@ export function clearSpawnProfileFields(draft, context, {
   return syncSpawnWorktree({
     ...draft,
     profile: '',
-    name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
+    role: '', roleRefs: [], descr: '', task: '',
     promptRefs: groupDefaultPrompts(context.groups, draft.group),
     harness: defaults.harness,
     model: defaults.model,

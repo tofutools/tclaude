@@ -295,15 +295,29 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(noSyncProfile.syncWorktree, false);
 
   const cleared = model.clearSpawnProfileFields({
-    ...noSyncProfile, name: 'worker', role: 'lead', owner: true,
+    ...noSyncProfile, name: 'worker', initialMessage: 'ship it', role: 'lead', owner: true,
     permissionOverrides: { x: 'deny' }, profile: 'group-default',
   }, context, { autoFocus: true, rememberedEffort: remembered });
-  assert.equal(cleared.name, '');
+  assert.equal(cleared.name, 'worker', 'Clear keeps the operator\'s agent name');
+  assert.equal(cleared.initialMessage, 'ship it', 'Clear keeps the operator\'s initial message');
   assert.equal(cleared.role, '');
   assert.equal(cleared.owner, false);
   assert.equal(cleared.syncWorktree, true, 'Clear restores the blank-form sync default');
   assert.deepEqual(cleared.permissionOverrides, {});
   assert.equal(cleared.cwd, '/manual', 'Clear leaves location state alone');
+
+  const switched = model.replaceSpawnProfile(
+    { ...draft, name: 'worker', initialMessage: 'ship it', profile: 'a' },
+    { name: 'b', role: 'reviewer' }, context, { rememberedEffort: remembered },
+  );
+  assert.equal(switched.name, 'worker', 'Switching to a nameless profile keeps the name');
+  assert.equal(switched.initialMessage, 'ship it', 'Switching to a briefless profile keeps the message');
+  const named = model.replaceSpawnProfile(
+    { ...draft, name: 'worker', initialMessage: 'ship it', profile: 'a' },
+    { name: 'c', agent_name: 'lead', initial_message: 'lead it' }, context, { rememberedEffort: remembered },
+  );
+  assert.equal(named.name, 'lead', 'A profile that names its own agent still fills the name');
+  assert.equal(named.initialMessage, 'lead it');
 });
 
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {

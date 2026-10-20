@@ -747,7 +747,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       operatorSet.current.clear();
       profileOverrides.current.clear();
       setPeerPrompts(basePeerPrompts.current);
-      setDraft((before) => ({ ...baseline, group: before.group }));
+      setDraft((before) => ({ ...baseline, group: before.group, name: before.name || baseline.name, initialMessage: before.initialMessage || baseline.initialMessage }));
       return;
     }
     const profile = findSpawnProfile(profiles, handle);
