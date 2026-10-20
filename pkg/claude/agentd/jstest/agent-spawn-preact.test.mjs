@@ -335,6 +335,13 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   );
   assert.equal(dropped.name, '', 'A pre-fill the new profile does not repeat is cleared');
   assert.equal(dropped.initialMessage, 'my own brief', 'User text survives a profile without one');
+
+  const peerPrefilled = model.replaceSpawnProfile(
+    { ...draft, name: 'worker', profile: 'local:l' },
+    { name: 'p', agent_name: 'reviewer' }, context,
+    { rememberedEffort: remembered, previousProfile: { name: 'local:l' }, prefill: { name: 'worker' } },
+  );
+  assert.equal(peerPrefilled.name, 'reviewer', 'A remote peer pre-fill is not user text');
 });
 
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {
@@ -1169,6 +1176,44 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
     assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
     assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch',
       'an explicitly chosen new worktree and custom branch survive profile replacement');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+test('Preact agent-spawn profile clear keeps user text and the operator\'s worktree choice', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    await flush(harness);
+    assert.equal(selectedValue(host.querySelector('#agent-spawn-load-profile')), 'group-default');
+
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'bar');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    const message = host.querySelector('#agent-spawn-init-msg');
+    setValue(message, 'my brief');
+    await harness.act(() => harness.fireEvent(message, 'input'));
+    const worktree = host.querySelector('#agent-spawn-worktree');
+    setValue(worktree, '__new__');
+    await harness.act(() => harness.fireEvent(worktree, 'change'));
+    const branch = host.querySelector('#agent-spawn-wt-branch');
+    setValue(branch, 'manual-branch');
+    await harness.act(() => harness.fireEvent(branch, 'input'));
+
+    const picker = host.querySelector('#agent-spawn-load-profile');
+    setValue(picker, '');
+    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await flush(harness);
+
+    assert.equal(host.querySelector('#agent-spawn-name').value, 'bar');
+    assert.equal(host.querySelector('#agent-spawn-init-msg').value, 'my brief');
+    assert.equal(host.querySelector('#agent-spawn-role').value, '', 'the profile\'s role is cleared');
+    assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
+    assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch',
+      'a hand-edited new-worktree branch survives Clear');
   } finally {
     mounted.cleanup();
   }

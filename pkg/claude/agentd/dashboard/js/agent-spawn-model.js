@@ -1015,19 +1015,22 @@ export function applySpawnProfile(
 const PROFILE_TEXT_FIELDS = { name: 'agent_name', initialMessage: 'initial_message' };
 
 // The draft's free-text values that are the operator's own input rather than
-// the previous profile's pre-fill: non-empty and different from what that
-// profile put there. A profile change never clears or replaces these.
-export function spawnUserText(draft, previousProfile) {
+// a pre-fill: non-empty and different both from what the previous profile put
+// there and from the optional prefill draft (a remote spawn's peer pre-fill,
+// which a local profile without its own value leaves in place). A profile
+// change never clears or replaces these.
+export function spawnUserText(draft, previousProfile, prefill = null) {
   const kept = {};
   for (const [field, key] of Object.entries(PROFILE_TEXT_FIELDS)) {
     const value = text(draft[field]);
-    if (value && value !== text(previousProfile?.[key])) kept[field] = draft[field];
+    if (value && value !== text(previousProfile?.[key])
+      && value !== text(prefill?.[field])) kept[field] = draft[field];
   }
   return kept;
 }
 
 export function clearSpawnProfileFields(draft, context, {
-  autoFocus = true, rememberedEffort = () => '', previousProfile = null,
+  autoFocus = true, rememberedEffort = () => '', previousProfile = null, prefill = null,
 } = {}) {
   const defaults = createSpawnDraft({
     groups: context.groups,
@@ -1041,7 +1044,7 @@ export function clearSpawnProfileFields(draft, context, {
     ...draft,
     profile: '',
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
-    ...spawnUserText(draft, previousProfile),
+    ...spawnUserText(draft, previousProfile, prefill),
     promptRefs: groupDefaultPrompts(context.groups, draft.group),
     harness: defaults.harness,
     model: defaults.model,
@@ -1090,12 +1093,13 @@ export function replaceSpawnProfile(draft, profile, context, {
   pickerUsable = false,
   preservedFields = [],
   previousProfile = null,
+  prefill = null,
 } = {}) {
-  const reset = clearSpawnProfileFields(draft, context, { autoFocus, rememberedEffort, previousProfile });
+  const reset = clearSpawnProfileFields(draft, context, { autoFocus, rememberedEffort, previousProfile, prefill });
   const applied = applySpawnProfile(
     reset, profile, context, rememberedEffort, pickerUsable,
   );
-  const next = { ...applied, ...spawnUserText(draft, previousProfile) };
+  const next = { ...applied, ...spawnUserText(draft, previousProfile, prefill) };
   for (const field of preservedFields) {
     if (field !== 'profile' && Object.hasOwn(draft, field)) next[field] = draft[field];
   }

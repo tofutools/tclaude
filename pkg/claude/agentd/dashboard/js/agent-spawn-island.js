@@ -749,7 +749,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       profileOverrides.current.clear();
       setPeerPrompts(basePeerPrompts.current);
       const previous = findSpawnProfile(profiles, draftRef.current.profile);
-      setDraft((before) => ({ ...baseline, group: before.group, ...spawnUserText(before, previous) }));
+      setDraft((before) => ({ ...baseline, group: before.group, ...spawnUserText(before, previous, baseline) }));
       return;
     }
     const profile = findSpawnProfile(profiles, handle);
@@ -760,7 +760,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       operatorSet.current.add('profile');
       const next = replaceSpawnProfile(draftRef.current, profile, context, {
         autoFocus: actions.autoFocusDefault(), rememberedEffort, pickerUsable: false,
-        preservedFields: new Set(profileOverrides.current), previousProfile: previous,
+        preservedFields: new Set(profileOverrides.current), previousProfile: previous, prefill: baseline,
       });
       setPeerPrompts([...(next.promptRefs || [])]);
       setDraft({ ...remoteSpawnPins(next, remote.options, operatorSet.current), profile: handle });
@@ -777,14 +777,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       const before = {
         ...baseline, group: current.group,
         ...Object.fromEntries(['descr', 'role', 'cwd'].map((key) => [key, current[key]])),
-        ...spawnUserText(current, previous),
+        ...spawnUserText(current, previous, baseline),
         promptRefs: [...new Set([...basePeerPrompts.current, ...(current.promptRefs || []).filter((ref) => isLocalRef(ref) || !peerPrompts.includes(ref))])],
       };
       const next = { ...before, profile: handle };
       for (const field of ['name', 'descr', 'initialMessage', 'role']) {
         if (String(filled[field] || '').trim() && !profileOverrides.current.has(field)) next[field] = filled[field];
       }
-      Object.assign(next, spawnUserText(current, previous));
+      Object.assign(next, spawnUserText(current, previous, baseline));
       const overrides = { harness: ['harness'], model: ['model', 'customModel'], effort: ['effort'] };
       for (const [field, keys] of Object.entries(overrides)) {
         if (!remote.options.overrides[field] || !String(filled[field] || '').trim()) continue;
@@ -798,6 +798,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   };
   const changeLocalProfile = (handle) => {
     if (!handle) {
+      // The worktree choices the operator made survive Clear, as they survive a
+      // profile switch; collect them before Clear marks every field touched.
+      const keptWorktree = WORKTREE_SELECTION_FIELDS.filter((field) => touched.current.has(field));
+      if (profileOverrides.current.has('syncWorktree')) keptWorktree.push('syncWorktree');
       for (const field of PROFILE_OWNED_FIELDS) {
         touched.current.add(field);
         // Clearing resets these to defaults: no longer the operator's values.
@@ -807,9 +811,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       const previous = findSpawnProfile(profiles, draftRef.current.profile);
       // Clear resets with the picker treated as unusable, so a kept name must
       // re-sync its new worktree against the real picker state.
-      setDraft((before) => syncSpawnWorktree(clearSpawnProfileFields(before, context, {
-        autoFocus: actions.autoFocusDefault(), rememberedEffort, previousProfile: previous,
-      }), worktrees.isRepo));
+      setDraft((before) => {
+        const cleared = clearSpawnProfileFields(before, context, {
+          autoFocus: actions.autoFocusDefault(), rememberedEffort, previousProfile: previous,
+        });
+        for (const field of keptWorktree) cleared[field] = before[field];
+        return syncSpawnWorktree(cleared, worktrees.isRepo);
+      });
       return;
     }
     touched.current.add('profile');
