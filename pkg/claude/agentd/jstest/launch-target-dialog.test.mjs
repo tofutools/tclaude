@@ -183,6 +183,51 @@ test('with the teleport routes, teleport follows the move until its copy runs', 
   assert.match(s.toasts[1], /builder-1 runs on forge/, 'the outcome still arrives once the dialog is gone');
 });
 
+test('teleport picks the model access it lands on: the target\'s login, a gateway it accepts, or yours', async (t) => {
+  const sent = []; const asked = [];
+  const s = await mountDialog(t, {
+    agent: { ...AGENT, harness: 'claude' },
+    initialMode: 'teleport', teleport: true,
+    api: {
+      status: async () => STATUS,
+      teleport: async (id, b) => { sent.push([id, b]); return { move_id: 'mv_9', teleport_state: 'awaiting_running_confirmation' }; },
+      teleportCredentials: async (node, group) => { asked.push([node, group]); return { any: false, allowed: ['local', 'proxy:team@inst_lab'], default: 'local', requester_pays: 'allowed', shares: [{ peer: 'inst_lab', peer_name: 'lab', gateway: 'team', dialect: 'anthropic' }, { peer: 'inst_lab', peer_name: 'lab', gateway: 'oa', dialect: 'openai' }] }; },
+      models: async () => ({ disabled: false, gateways: { mine: { enabled: true, dialect: 'anthropic' } } }),
+    },
+    actions: { moveDetail: async () => ({ state: 'confirmed', disposition: 'landed', target_agent: 'agt_b1' }) },
+  });
+  await s.click(s.q('[data-lt-node="inst_forge"]'));
+  await s.change(s.q('#lt-group'), 'reviewers');
+  await s.settle();
+  assert.deepEqual(asked, [['inst_forge', 'reviewers']], 'asks the target what it accepts from this node');
+  const options = [...s.q('#lt-model-access').querySelectorAll('option')];
+  assert.deepEqual(options.map((o) => o.value), ['', 'local', 'proxy:mine@self', 'proxy:team@inst_lab'], 'an OpenAI gateway cannot serve Claude Code');
+  assert.match(options[2].textContent, /Your gateway mine \(you pay\).* — forge's landing policy does not list it/);
+  assert.equal(options[2].hasAttribute('disabled'), true);
+  assert.match(options[3].textContent, /lab's gateway team/);
+  await s.change(s.q('#lt-model-access'), 'proxy:team@inst_lab');
+  await s.click(s.q('#lt-ok'));
+  assert.deepEqual(sent, [['conv_b1', { peer: 'inst_forge', group: 'reviewers', credentials: 'proxy:team@inst_lab' }]]);
+});
+
+test('model access options follow trust, requester-pays and the harness', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/teleport-model-access.js');
+  const own = m.ownGateways({ disabled: false, gateways: { mine: { enabled: true }, off: { enabled: false } } });
+  const values = (opts) => opts.map((o) => [o.value, o.reason]);
+  assert.deepEqual(values(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true, requester_pays: 'allowed', shares: [] }, own })),
+    [['', ''], ['local', ''], ['proxy:mine@self', ''], ['proxy:off@self', 'this gateway is disabled']], 'unrestricted trust accepts any mode');
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true, requester_pays: 'off' }, own })[2].reason, 'forge does not take workers you pay for');
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { allowed: ['proxy:mine@node-a'] }, own, selfIds: ['inst_a', 'node-a'] })[2].reason, '', 'a landing policy names this node by its alias');
+  assert.notEqual(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { allowed: ['proxy:mine@inst_lab'] }, own, selfIds: ['inst_a'] })[2].reason, '', "another node's gateway of the same name is not ours");
+  assert.match(m.modelAccessOptions({ dest: 'forge', harness: 'claude', creds: { any: true }, own, trust: 'restricted' })[2].label, /needs a models\.proxy\.leased grant for forge/);
+  assert.equal(m.modelAccessOptions({ dest: 'forge', harness: 'gemini', creds: { any: true }, own })[2].reason, 'gemini cannot use a model gateway');
+  const pulled = [{ peer: 'inst_lab', gateway: 'oa', dialect: 'openai' }, { peer: 'inst_lab', gateway: 'an', dialect: 'anthropic' }, { peer: 'inst_forge', gateway: 'fo', dialect: 'openai' }];
+  assert.deepEqual(values(m.modelAccessOptions({ dest: 'this node', harness: 'codex', pull: true, own, shares: pulled, trust: 'unrestricted', source: 'inst_forge' })),
+    [['', ''], ['local', ''], ['proxy:oa@inst_lab', '']], "a pull offers the gateways shared with this node: not its own, nor the source's (that would be a lease)");
+  assert.match(m.modelAccessOptions({ dest: 'this node', harness: 'codex', pull: true, shares: pulled, trust: 'restricted', source: 'inst_forge', sourceName: 'forge' })[2].reason, /holds forge to its landing policy/);
+});
+
 test('recall from its home placeholder sends it straight home', async (t) => {
   const recalled = [];
   const r = await mountDialog(t, {

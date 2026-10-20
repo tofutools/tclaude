@@ -472,3 +472,39 @@ func TestFederation_TeleportFinalAuthorityRefusalReleasesUndispatchedReservation
 	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"apply": true, "cwd": cwd})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 }
+
+// The teleport dialog asks the receiving node which model access it accepts:
+// a restricted peer is held to the landing policy (local only without one),
+// while an unrestricted peer may land an agent on any gateway this node can
+// resolve, and may pay for it itself.
+func TestFederation_TeleportModelAccessForUnrestrictedPeers(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("receiver")
+	fh.f.HaveGroup("private")
+	fedReceiveAgents(t, fh, "receiver")
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	creds := func(group string, status int) map[string]any {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, http.MethodGet, "/api/teleport-credentials?group="+group, nil))
+		require.Equal(t, status, rec.Code, rec.Body.String())
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+	got := creds("receiver", 200)
+	require.Equal(t, false, got["any"])
+	require.Equal(t, []any{"local"}, got["allowed"])
+	require.Equal(t, "off", got["requester_pays"])
+	creds("private", 404)
+
+	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+	got = creds("receiver", 200)
+	require.Equal(t, true, got["any"])
+	require.Equal(t, "allowed", got["requester_pays"], "an unrestricted peer may pay for its own workers")
+
+	d := fedIncomingTeleport(t, fh, "proxy:main@bob", nil)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+	row, err := db.GetFederationTeleport("in", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Equal(t, "proxy:main@"+fh.peer.id.ID(), row.Credentials, "the alias is pinned to the gateway's instance")
+}

@@ -183,6 +183,9 @@ func peerViewRules() map[string]peerViewRule {
 	// Usage sharing: any trusted peer may ask which gateways it may use here;
 	// the answer covers only its own grants (an empty list without any).
 	rules["GET /api/model-shares"] = peerViewRule{feature: "models.shares", publicRead: true, serve: servePeerModelShares}
+	// A teleport dialog asks which model access the receiving group accepts
+	// from the asking peer; groups it may not send agents to answer 404.
+	rules["GET /api/teleport-credentials"] = peerViewRule{feature: "agents.teleport.credentials", publicRead: true, serve: servePeerTeleportCredentials}
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	// The Usage tab's Quota view reads the node's own subscription quota

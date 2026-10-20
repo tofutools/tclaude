@@ -2167,6 +2167,23 @@ mode uses provider credentials already on the receiver. Proxy mode uses the name
 silently fall back to each other. The chosen mode appears in the import preview,
 continuation briefing and audit.
 
+A peer the receiver trusts unrestricted acts there as its operator does: it may
+land an agent on any mode the receiver can resolve, whatever
+`credentials_allowed` lists, and its requester-pays policy defaults to `allowed`
+instead of `off` (an explicit profile or grant policy still decides).
+
+The dashboard's Teleport and Clone dialog offers this as **Model access**:
+- the receiver's default;
+- its own login (`local`);
+- your own gateways, paid by you through a lease (`proxy:<name>@self`);
+- gateways other nodes share with the receiver.
+
+It asks the receiver which modes it accepts (`GET /api/teleport-credentials?group=G`
+through the peer view), and greys out what it would refuse, with the reason. A
+gateway that speaks the wrong protocol for the agent's harness is not offered.
+Pulling a peer's agent here offers the gateways shared with this node, and only
+when that peer trusts this node unrestricted.
+
 Both sides durably charge attempts, including clones and failed launches. Under
 `federation.teleport.limits`, `per_hour`, `per_day`, `per_chain` and
 `revisit_minutes` default to 4, 12, 16 and 10. Landing policies can tighten these

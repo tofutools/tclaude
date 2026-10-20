@@ -12,6 +12,11 @@ func validRequesterPaysPolicy(s string) bool {
 }
 func requesterPaysPolicy(peer string, group int64, teleport bool) (string, error) {
 	mode := "off"
+	// An unrestricted peer acts here as this node's operator does, so it may
+	// pay for its own workers unless a profile or grant policy says otherwise.
+	if db.FederationPeerUnrestricted(peer) {
+		mode = "allowed"
+	}
 	assignment, err := db.GetFederationNodeProfileAssignment(peer)
 	if err != nil {
 		return "", err
