@@ -88,6 +88,14 @@ export function peerBackgroundRows(rows, peer) {
   });
 }
 
+// hasPeerBackgroundAgent reports whether rows list a peer's agent. Its status
+// light reads the federation session catalog (remote-session-status.js), so
+// that catalog has to be polled while such a row is listed, not only while a
+// remote pane is open: a backgrounded peer agent has no pane by definition.
+export function hasPeerBackgroundAgent(rows) {
+  return (rows || []).some((row) => row.node && row.kind === 'agent');
+}
+
 // peerShell is the openRemoteShell target of a peer's shell row, or null.
 function peerShell(row) {
   if (!row.group) return null;

@@ -16,7 +16,7 @@ import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import {
-  BackgroundTerminalsChip, backgroundPeers, backgroundTerminals, refreshBackgroundTerminals,
+  BackgroundTerminalsChip, backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
   startBackgroundTerminalsPoll, visibleBackgroundTerminals,
 } from './background-terminals.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
@@ -1800,7 +1800,10 @@ export function mountTerminalShellIsland({
   // unattached agents; a change of scope re-reads at once.
   const peers = () => (scope ? backgroundPeers(scope.view.peek(), remoteNodeID()) : []);
   const stopBackgroundPoll = startBackgroundTerminalsPoll({ peers });
-  const stopRemoteStatusPoll = startRemoteSessionStatusPoll({ hasRemote: () => hasRemotePane(state) });
+  // The background popover's peer agents light up from the same catalog.
+  const stopRemoteStatusPoll = startRemoteSessionStatusPoll({
+    hasRemote: () => hasRemotePane(state) || hasPeerBackgroundAgent(backgroundTerminals.peek()),
+  });
   let peerKey = null;
   const stopPeerWatch = scope ? effect(() => {
     const next = backgroundPeers(scope.view.value, remoteNodeID()).map((peer) => peer.id).join(',');
