@@ -16,7 +16,7 @@ import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } fr
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
 import {
-  ATTACH_ACTS, SHELL_ACTS, shellControl, limitHint, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, missingPullGrants, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
+  ATTACH_ACTS, SHELL_ACTS, shellControl, limitHint, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, missingPullGrants, needsSuffix, peerAction, refusedActsRule, spawnRequestRule, usableActSelectors,
   reasonTitles,
 } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
@@ -74,6 +74,8 @@ export function limitsCSS(nodes, { self, home = '' }) {
       ? usableActSelectors(peerView, ['send-elsewhere'], merged, { fused: true })
       : [...always.map((a) => `[data-act="${a}"]`), ...grantSelectors({ level: 'unrestricted' })];
     rules.push(refusedActsRule(scope, usable));
+    const request = id !== self ? spawnRequestRule(scope, peerView, merged) : '';
+    if (request) rules.push(request);
   }
   return rules.join('\n');
 }

@@ -275,7 +275,7 @@ func notifyFederationSpawnRequest(peer *db.FederationPeer, req *db.FederationSpa
 		body += "\nPlacement requirements (must match the chosen launch harness): " + req.Requirements
 	}
 	body += fedSpawnApprovalSettingsText(req.Overrides)
-	body += fmt.Sprintf(".\n\nBrief:\n%s\n\nDecide with `tclaude federation requests approve %d` (optionally --profile/--cwd/--harness/--model/--effort) or `tclaude federation requests deny %d`.",
+	body += fmt.Sprintf(".\n\nBrief:\n%s\n\nReview it on the dashboard's ⚙ Fleet config → Spawn requests page (approve, change its settings, or deny), or decide with `tclaude federation requests approve %d` (optionally --profile/--cwd/--harness/--model/--effort) or `tclaude federation requests deny %d`.",
 		req.Brief, req.ID, req.ID)
 	group := db.FederationHumanGroup(peer.InstanceID)
 	if _, err := db.InsertHumanMessage(&db.HumanMessage{FromTitle: from, GroupName: group, Subject: subject, Body: body}); err != nil {

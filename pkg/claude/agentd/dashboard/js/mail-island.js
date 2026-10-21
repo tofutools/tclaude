@@ -34,6 +34,7 @@ import { TTL_CHOICES, USAGE_PERM, parseUSD, ttlText } from './peer-access.js';
 import { LockReason, trustLock } from './lock-reason.js';
 import { slugInfo } from './fleet-admin-model.js';
 import { RemoteInboxSection } from './remote-inbox.js';
+import { openFleetPage } from './fleet-move-drop.js';
 
 const html = htm.bind(h);
 
@@ -576,6 +577,11 @@ function peerHumanActions(remote, peerView) {
   };
 }
 
+// SPAWN_REQUEST_SUBJECT is the subject of a peer's spawn request awaiting
+// this node's operator (federation_spawn.go notifyFederationSpawnRequest, and
+// a failed automatic launch returned to pending).
+const SPAWN_REQUEST_SUBJECT = /^remote spawn request #\d+( needs approval)?$/;
+
 function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
   if (model.access) {
@@ -594,11 +600,15 @@ function MessageReader({ current, controller, model }) {
   const remote = remoteNodeID();
   const peer = human && !remote ? peerOfMessage(message) : '';
   const ticket = peer ? awayTicket(message) : '';
+  // A peer's spawn request waits on this node's Spawn requests page.
+  const spawnRequest = human && !remote && !message.from_conv && String(message.group || '').startsWith('federation:') && SPAWN_REQUEST_SUBJECT.test(message.subject || '');
   let actions;
   if (human) {
     // A peer's notification is answered through its human-inbox routes, where
     // the peer allows it; this node's own routes would act on its own mail.
     const lead = !remote && html`<${Fragment}>
+      ${spawnRequest && html`<button data-act="review-spawn-request" class="primary" title="Approve, change or deny it on ⚙ Fleet config → Spawn requests"
+        onClick=${() => openFleetPage('spawns')}>review request…</button>`}
       ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
       ${peer && html`<button data-act="peer-mail-reply" title="Reply to this peer's operator"
         onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}</${Fragment}>`;

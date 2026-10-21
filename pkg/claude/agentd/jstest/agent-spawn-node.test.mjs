@@ -131,6 +131,20 @@ test('a spawn on an unrestricted peer or on this node opens the local dialog the
   await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted, profileName: 'heavy',
     prepare: async () => ({ options: { defaults: { profile: 'pinned' } } }) });
   assert.deepEqual([opened.at(-1).profileName, opened.pop().chosenProfile], ['pinned', ''], 'the grant\'s pinned profile still outranks, as on the peer');
+
+  // Without a spawn grant the operator is asked first: declining opens nothing.
+  const asked = [];
+  const operator = async () => ({ options: { approval: 'operator', defaults: {} } });
+  assert.equal(await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted, prepare: operator,
+    confirm: async (o) => { asked.push(o); return false; } }), null);
+  assert.equal(opened.length, 0, 'a declined request opens no dialog');
+  assert.match(asked[0].title, /Request an agent on forge/);
+  assert.match(asked[0].body, /spawn permission in build on forge.*Fleet config → Spawn requests/s);
+  await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted, prepare: operator, confirm: async () => true });
+  assert.equal(opened.pop().remote.options.approval, 'operator', 'an accepted request opens request mode');
+  await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted,
+    prepare: async () => ({ options: { approval: 'automatic', defaults: {} } }), confirm: async () => assert.fail('a spawn grant asks nothing') });
+  assert.ok(opened.pop().remote);
 });
 
 test("a node's spawn attachments go to it through this node, in chunks past the peer view's request limit", async (t) => {

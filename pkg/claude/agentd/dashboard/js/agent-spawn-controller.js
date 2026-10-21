@@ -1,6 +1,6 @@
 import { prepareRemoteSpawn } from './agent-spawn-remote.js';
 import { dashboardState } from './snapshot-store.js';
-import { shellToast } from './shell-state.js';
+import { shellConfirm, shellToast } from './shell-state.js';
 import { selfNodeID } from './node-api.js';
 
 let controller = null;
@@ -44,7 +44,7 @@ function nodeMode(nodeId, snapshot) {
 // local). It reads the peer's allowances first, so the dialog opens locked.
 // profileName, role and fastMode are what the opener chose (a palette or dock
 // spawn), as for a local spawn.
-export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, snapshot = null, profileName = '', role = '', fastMode = false, toast = shellToast, prepare = prepareRemoteSpawn } = {}) {
+export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, snapshot = null, profileName = '', role = '', fastMode = false, toast = shellToast, confirm = shellConfirm, prepare = prepareRemoteSpawn } = {}) {
   if (!groupName) {
     toast('Pick a group on the peer to spawn into (its ＋ button)', true);
     return null;
@@ -60,12 +60,25 @@ export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, 
     toast(`Could not ask ${node || 'the peer'} what a spawn may set: ${error?.message || error}`, true);
     return null;
   }
+  // Without a spawn grant the dialog sends a request the peer's operator
+  // decides: say so before the dialog, which otherwise reads as a spawn.
+  if (remote.options?.approval === 'operator' && !(await confirm(spawnRequestConfirm(node || 'the peer', groupName)))) return null;
   // The grant's pinned profile is the peer's default for this requester: it
   // outranks the group's default profile, as on the peer.
   // A chosen profile is the operator's pick (the dialog applies it as one, so
   // the request names it); a pin leaves nothing to choose.
   const pin = remote.options?.defaults?.profile || '';
   return requireController().open({ groupName, remote, role, fastMode, profileName: pin, chosenProfile: pin ? '' : profileName });
+}
+
+// spawnRequestConfirm is the question a spawn without a spawn grant asks
+// first: it becomes a request on the peer's Spawns page.
+export function spawnRequestConfirm(node, group) {
+  return {
+    title: `Request an agent on ${node}?`,
+    body: `You don't have spawn permission in ${group} on ${node}, so nothing launches right away. You can fill in a spawn request instead: ${node}'s operator reviews it on their ⚙ Fleet config → Spawn requests page, may change its settings, and approves or denies it. The answer arrives in your Messages tab.`,
+    okLabel: 'Write request…',
+  };
 }
 
 export function refreshAgentSpawnSandboxPolicy() {
