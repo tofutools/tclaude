@@ -316,6 +316,11 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
 }
 
 test('the admin view reads status only while shown and lists trusted and waiting peers', async (t) => {
+  // The status poll's jitter must not land on the viewers poll's 5 s, or the
+  // count below mistakes one for the other: pin it to its low end (4 s).
+  const random = Math.random;
+  Math.random = () => 0;
+  t.after(() => { Math.random = random; });
   const s = await setup(t);
   assert.equal(s.log.length, 0, 'hidden view reads nothing');
   await s.show();
@@ -329,6 +334,7 @@ test('the admin view reads status only while shown and lists trusted and waiting
   assert.equal(s.q('#fleet-waiting').querySelectorAll('tbody tr').length, 1);
   // The status poll; the live-viewers poll (5 s) runs alongside on Peers.
   assert.equal(s.timers.queue.filter((q) => q.ms !== 5000).length, 1);
+  assert.equal(s.timers.queue.find((q) => q.ms !== 5000).ms, 4000, 'the status poll, jittered');
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   await s.harness.act(() => { s.activeTab.value = 'groups'; });
   assert.equal(s.timers.queue.length, 0, 'leaving the view stops both polls');

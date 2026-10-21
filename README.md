@@ -51,7 +51,7 @@ harness CLI.
 
 ```bash
 brew install tofutools/tap/tclaude                 # Homebrew, or:
-go install github.com/tofutools/tclaude@latest     # Go 1.26+
+go install github.com/tofutools/tclaude@latest     # Go 1.27+
 ```
 
 Prebuilt archives are on the
