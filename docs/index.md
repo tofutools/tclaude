@@ -89,7 +89,7 @@ itself.
 
 === "Go"
 
-    Requires Go 1.26+ and tmux:
+    Requires Go 1.27+ and tmux:
 
     ```bash
     go install github.com/tofutools/tclaude@latest

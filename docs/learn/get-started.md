@@ -12,7 +12,7 @@ and it starts, stops and manages them.
 
 ```bash
 brew install tofutools/tap/tclaude                 # Homebrew, or:
-go install github.com/tofutools/tclaude@latest     # Go 1.26+
+go install github.com/tofutools/tclaude@latest     # Go 1.27+
 ```
 
 Homebrew also installs tmux. With `go install`, install tmux yourself.
