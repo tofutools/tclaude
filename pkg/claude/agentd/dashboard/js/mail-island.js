@@ -35,6 +35,7 @@ import { LockReason, trustLock } from './lock-reason.js';
 import { slugInfo } from './fleet-admin-model.js';
 import { RemoteInboxSection } from './remote-inbox.js';
 import { openFleetPage } from './fleet-move-drop.js';
+import { createFleetAdminActions } from './fleet-admin-actions.js';
 
 const html = htm.bind(h);
 
@@ -580,7 +581,24 @@ function peerHumanActions(remote, peerView) {
 // SPAWN_REQUEST_SUBJECT is the subject of a peer's spawn request awaiting
 // this node's operator (federation_spawn.go notifyFederationSpawnRequest, and
 // a failed automatic launch returned to pending).
-const SPAWN_REQUEST_SUBJECT = /^remote spawn request #\d+( needs approval)?$/;
+const SPAWN_REQUEST_SUBJECT = /^remote spawn request #(\d+)( needs approval)?$/;
+
+// ReviewSpawnRequest offers the review of the request a notification names
+// while it still waits: the same peer's, and pending. A peer's mail can carry
+// any subject, and an old notice outlives its decision.
+function ReviewSpawnRequest({ id, instance, load = () => createFleetAdminActions().spawnRequests() }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setOpen(false);
+    load().then((rows) => {
+      if (live) setOpen((rows || []).some((r) => String(r?.id) === id && r?.instance === instance && r?.status === 'pending'));
+    }, () => {});
+    return () => { live = false; };
+  }, [id, instance]);
+  return open ? html`<button data-act="review-spawn-request" class="primary" title="Approve, change or deny it on ⚙ Fleet config → Spawn requests"
+    onClick=${() => openFleetPage('spawns')}>review request…</button>` : null;
+}
 
 function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
@@ -601,14 +619,14 @@ function MessageReader({ current, controller, model }) {
   const peer = human && !remote ? peerOfMessage(message) : '';
   const ticket = peer ? awayTicket(message) : '';
   // A peer's spawn request waits on this node's Spawn requests page.
-  const spawnRequest = human && !remote && !message.from_conv && String(message.group || '').startsWith('federation:') && SPAWN_REQUEST_SUBJECT.test(message.subject || '');
+  const spawnRequest = human && !remote && !message.from_conv && String(message.group || '').startsWith('federation:')
+    ? SPAWN_REQUEST_SUBJECT.exec(message.subject || '') : null;
   let actions;
   if (human) {
     // A peer's notification is answered through its human-inbox routes, where
     // the peer allows it; this node's own routes would act on its own mail.
     const lead = !remote && html`<${Fragment}>
-      ${spawnRequest && html`<button data-act="review-spawn-request" class="primary" title="Approve, change or deny it on ⚙ Fleet config → Spawn requests"
-        onClick=${() => openFleetPage('spawns')}>review request…</button>`}
+      ${spawnRequest && html`<${ReviewSpawnRequest} id=${spawnRequest[1]} instance=${String(message.group).slice('federation:'.length)} load=${controller.spawnRequests} />`}
       ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
       ${peer && html`<button data-act="peer-mail-reply" title="Reply to this peer's operator"
         onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}</${Fragment}>`;
