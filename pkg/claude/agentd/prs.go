@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -389,6 +390,12 @@ type recentlyMergedPRPollBackoff struct {
 
 func (b *recentlyMergedPRPollBackoff) next(attempted bool, err error) (delay time.Duration, warn, recovered bool, previousFailures int) {
 	previousFailures = b.failures
+	if errors.Is(err, errGitHubBackoff) {
+		// Paused by the shared rate-limit backoff, which logged it: wait it
+		// out without counting a failure.
+		remaining, _ := gitHubBackoffRemaining(time.Now())
+		return max(recentlyMergedPRPollInterval, remaining), false, false, previousFailures
+	}
 	if err != nil {
 		b.failures++
 		delay = recentlyMergedPRRetryDelay(b.failures)
@@ -596,7 +603,7 @@ func recentlyMergedPRResultLimit(targetCount int) int {
 func liveRecentlyMergedPRsResolver(repos []string, resultLimit int) ([]presentedPRInfo, error) {
 	login, ok := cachedGitHubLogin()
 	if !ok {
-		return nil, fmt.Errorf("resolve active GitHub login")
+		return nil, errGitHubLoginUnresolved()
 	}
 	searchRepos := boundedRecentlyMergedPRSearchRepos(login, repos)
 	if len(repos) > 0 && len(searchRepos) == 0 {

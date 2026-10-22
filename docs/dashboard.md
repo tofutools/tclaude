@@ -397,9 +397,14 @@ choice are stored with the other dashboard preferences.
 tab of their own, next to **You**, up to eight people. A colleague's tab has
 the same filters except Unattached, the same CI and review badges, hover
 details and ignore button; their PRs never count toward the footer indicator.
-One GitHub GraphQL request a minute covers every tracked person (an open and a
-recently closed search each), and GitHub only returns pull requests your `gh`
-login can see. The list lives in the daemon's database, not `config.json`;
+Each tracked person gets one GitHub GraphQL request a minute (an open and a
+recently closed search). The requests run at most two at a time, spread across
+the minute. If one person's request fails, their tab keeps its last list while
+the others refresh. If someone's search keeps timing out on GitHub, it is fetched
+less often and with a shorter list for a while. If GitHub rate-limits your
+token, agentd pauses all its background GitHub calls for 5 minutes, doubling up
+to 30 minutes while the limit holds. GitHub only returns pull requests your
+`gh` login can see. The list lives in the daemon's database, not `config.json`;
 ✕ on a tab stops tracking that person.
 
 A review pill follows the CI pill on open, non-draft PRs: a person icon

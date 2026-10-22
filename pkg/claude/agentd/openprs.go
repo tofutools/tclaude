@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -28,6 +29,11 @@ const (
 	// The recent list is a "what did I just land" glance, not an archive, so it
 	// stays well below the open-PR page size.
 	authoredRecentPRLimit = 50
+	// authoredOpenPRSearchTimeout bounds the poll's gh subprocess. One search
+	// already takes ~6s on GitHub, which itself gives up at ~10s; the shared
+	// 12s branchLinkCmdTimeout killed gh before slow networks got GitHub's
+	// answer back, so this only adds headroom for network latency.
+	authoredOpenPRSearchTimeout = 20 * time.Second
 )
 
 // One GraphQL search returns the operator's cross-repository PR list and the
@@ -181,14 +187,21 @@ func startAuthoredOpenPRPoller(stop <-chan struct{}) {
 			case <-stop:
 				return
 			case <-timer.C:
+				started := time.Now()
 				err := pollAuthoredOpenPRs()
 				delay := authoredOpenPRPollInterval
-				if err != nil {
+				if errors.Is(err, errGitHubBackoff) {
+					// Paused by the shared rate-limit backoff, which logged it:
+					// wait it out rather than counting a failure.
+					remaining, _ := gitHubBackoffRemaining(time.Now())
+					delay = max(delay, remaining)
+				} else if err != nil {
 					failures++
 					delay = authoredOpenPRRetryDelay(failures)
 					if failures == 1 || delay > authoredOpenPRRetryDelay(failures-1) {
 						slog.Warn("open-prs: GitHub search failed; keeping last good cache",
-							"error", err, "consecutive_failures", failures,
+							"error", err, "kind", classifyGHError(err), "consecutive_failures", failures,
+							"duration", time.Since(started).Round(time.Millisecond),
 							"retry_in", delay, "module", "agentd")
 					}
 				} else if failures > 0 {
@@ -330,7 +343,7 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	login, ok := cachedGitHubLogin()
 	if !ok {
 		setAuthoredOpenPRActiveLogin("")
-		return dashboardAuthoredOpenPRs{}, fmt.Errorf("resolve active GitHub login")
+		return dashboardAuthoredOpenPRs{}, errGitHubLoginUnresolved()
 	}
 	// Switch the snapshot's cache namespace as soon as the local credential
 	// identity is known, before the network search. If the request then fails,
@@ -345,7 +358,7 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	fetchWindowDays := max(windowDays, 1)
 	now := time.Now()
 	withReviews := authoredOpenPRReviewsDue(now)
-	out, err := runInDirWithError("", "gh", authoredPRSearchArgs(login, fetchWindowDays, now, withReviews)...)
+	out, err := runInDirWithTimeout("", authoredOpenPRSearchTimeout, "gh", authoredPRSearchArgs(login, fetchWindowDays, now, withReviews)...)
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
 	}
