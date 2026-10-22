@@ -124,7 +124,7 @@ func TestTrackedPRSlowAuthors(t *testing.T) {
 	recordTrackedPRSearch("Bob", timeout, true, now.Add(time.Minute))
 	due, _ = planTrackedPRSearches(authors, now.Add(2*time.Minute))
 	assert.Equal(t, []string{"alice"}, due)
-	due, limits = planTrackedPRSearches(authors, now.Add(4*time.Minute))
+	due, _ = planTrackedPRSearches(authors, now.Add(4*time.Minute))
 	assert.Equal(t, authors, due, "the deferral expires")
 
 	// A success ends the streak but keeps the smaller page for a while.
@@ -133,7 +133,7 @@ func TestTrackedPRSlowAuthors(t *testing.T) {
 	due, limits = planTrackedPRSearches(authors, now.Add(6*time.Minute))
 	assert.Equal(t, authors, due, "one timeout after a success does not defer")
 	assert.Equal(t, trackedPRDegradedOpenLimit, limits["Bob"])
-	due, limits = planTrackedPRSearches(authors, now.Add(5*time.Minute+trackedPRDegradedFor))
+	_, limits = planTrackedPRSearches(authors, now.Add(5*time.Minute+trackedPRDegradedFor))
 	assert.Equal(t, trackedPROpenLimit, limits["Bob"], "the full page comes back")
 
 	// A 5xx when no other author got through is GitHub's outage, not Bob.
