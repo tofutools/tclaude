@@ -3,6 +3,7 @@ package agentd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -64,11 +65,11 @@ var htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
 // nonJSONBodySnippet returns a short, printable summary of a response body
 // that is not JSON: an HTML page's title, otherwise its first characters.
-// JSON bodies return "" — the caller decodes those, and gh already echoes
-// their message on stderr.
+// Valid JSON returns "" — the caller decodes it, and gh already echoes its
+// message on stderr — but a truncated JSON body is summarized like any other.
 func nonJSONBodySnippet(stdout []byte) string {
 	body := bytes.TrimSpace(stdout)
-	if len(body) == 0 || body[0] == '{' || body[0] == '[' {
+	if len(body) == 0 || json.Valid(body) {
 		return ""
 	}
 	if m := htmlTitlePattern.FindSubmatch(body); m != nil {

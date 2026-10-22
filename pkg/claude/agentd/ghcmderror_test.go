@@ -30,6 +30,10 @@ func TestSubprocessErrorShapes(t *testing.T) {
 	assert.NotContains(t, err.Error(), "response:")
 	assert.Equal(t, ghErrSecondaryRateLimit, classifyGHError(err))
 
+	// A truncated JSON body is not decodable, so it is summarized.
+	err = subprocessError(context.Background(), time.Second, exitErr, "", []byte(`{"message":`))
+	assert.EqualError(t, err, `response: {"message":: exit status 1`)
+
 	// Nothing to add: the bare error.
 	assert.Same(t, exitErr, subprocessError(context.Background(), time.Second, exitErr, "  ", nil))
 
