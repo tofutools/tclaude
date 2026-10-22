@@ -56,7 +56,8 @@ const (
 	// trackedPRSearchParallelism caps the per-author requests in flight.
 	trackedPRSearchParallelism = 2
 	// trackedPRSearchSpread is the window a regular tick spreads its request
-	// starts over; a kicked tick (an author was just added) does not wait.
+	// starts over; a kicked tick (an author was just added) does not wait, and
+	// a kick during a regular tick drops the rest of its spacing.
 	trackedPRSearchSpread = trackedPRPollInterval / 2
 )
 
@@ -146,9 +147,11 @@ func startTrackedPRAuthorsPoller(stop <-chan struct{}) {
 			case <-timer.C:
 			}
 			started := time.Now()
-			authors, failed, err := pollTrackedPRAuthors(spread)
+			authors, failed, err := pollTrackedPRAuthors(spread, stop)
 			logTrackedPRAuthorFailures(authorFailures, authors, failed, err)
-			delay := trackedPRPollInterval
+			// The interval runs from the tick's start, so the spacing does not
+			// stretch the cadence.
+			delay := max(trackedPRPollInterval-time.Since(started), trackedPRPollInterval/4)
 			if err != nil {
 				failures++
 				delay = trackedPRRetryDelay(failures)
@@ -221,12 +224,12 @@ type trackedPRAuthorResult struct {
 }
 
 // pollTrackedPRAuthors searches every tracked author, starting the requests
-// across spread, and caches each author's list under the active identity, the
+// across spread (see trackedPRStartPacer), and caches each author's list under the active identity, the
 // same namespacing as the operator's own list so a gh account switch never
 // shows the old account's view. It returns the authors searched and the
 // request error of each one that failed; err is set only when the whole tick
 // failed — no identity, or every author's request failed.
-func pollTrackedPRAuthors(spread time.Duration) (authors []string, failed map[string]error, err error) {
+func pollTrackedPRAuthors(spread time.Duration, stop <-chan struct{}) (authors []string, failed map[string]error, err error) {
 	authors = loadTrackedPRAuthors()
 	if len(authors) == 0 {
 		return nil, nil, nil
@@ -239,7 +242,8 @@ func pollTrackedPRAuthors(spread time.Duration) (authors []string, failed map[st
 	now := time.Now()
 	reviewsMark := trackedPRReviewsFetchedAt.Load()
 	withReviews := trackedPRReviewsDue(now)
-	results := trackedPRResolver(authors, cfg.RecentPRWindowDays(), now, withReviews, spread)
+	results := trackedPRResolver(authors, cfg.RecentPRWindowDays(), now, withReviews,
+		trackedPRStartPacer(spread/time.Duration(len(authors)), stop))
 	failed = map[string]error{}
 	for _, result := range results {
 		if result.err != nil {
@@ -331,17 +335,45 @@ func trackedPRSearchArgs(authors []string, windowDays int, now time.Time, withRe
 	return append(args, values...)
 }
 
+// errTrackedPRTickStopped marks the authors a tick skipped at shutdown.
+var errTrackedPRTickStopped = fmt.Errorf("tracked PR poll stopped")
+
+// trackedPRStartPacer waits step between a tick's request starts. A kick (an
+// author was just added) ends the waiting for the rest of the tick and is
+// re-queued, so the tick that searches the new author follows right after
+// this one. It returns false once stop closes: skip the remaining requests.
+func trackedPRStartPacer(step time.Duration, stop <-chan struct{}) func() bool {
+	return func() bool {
+		if step <= 0 {
+			return true
+		}
+		timer := time.NewTimer(step)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-trackedPRKick:
+			step = 0
+			kickTrackedPRAuthorsPoller()
+		case <-stop:
+			return false
+		}
+		return true
+	}
+}
+
 // liveTrackedPRResolver sends one request per author, at most
-// trackedPRSearchParallelism in flight, with request starts spaced evenly
-// across spread. Results come back in authors' order.
-func liveTrackedPRResolver(authors []string, windowDays int, now time.Time, withReviews bool, spread time.Duration) []trackedPRAuthorResult {
+// trackedPRSearchParallelism in flight, calling beforeNext between starts.
+// Results come back in authors' order.
+func liveTrackedPRResolver(authors []string, windowDays int, now time.Time, withReviews bool, beforeNext func() bool) []trackedPRAuthorResult {
 	results := make([]trackedPRAuthorResult, len(authors))
-	step := spread / time.Duration(len(authors))
 	slots := make(chan struct{}, trackedPRSearchParallelism)
 	var wg sync.WaitGroup
 	for i, author := range authors {
-		if i > 0 && step > 0 {
-			time.Sleep(step)
+		if i > 0 && !beforeNext() {
+			for j := i; j < len(authors); j++ {
+				results[j] = trackedPRAuthorResult{view: dashboardAuthoredOpenPRs{Login: authors[j]}, err: errTrackedPRTickStopped}
+			}
+			break
 		}
 		slots <- struct{}{}
 		wg.Go(func() {
