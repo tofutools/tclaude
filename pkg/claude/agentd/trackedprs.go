@@ -130,21 +130,33 @@ func startTrackedPRAuthorsPoller(stop <-chan struct{}) {
 				}
 			case <-timer.C:
 			}
-			err := pollTrackedPRAuthors()
+			started := time.Now()
+			authors, err := pollTrackedPRAuthors()
 			delay := trackedPRPollInterval
 			if err != nil {
 				failures++
-				delay = min(trackedPRPollInterval<<min(failures, 4), trackedPRMaxBackoff)
-				if failures == 1 {
+				delay = trackedPRRetryDelay(failures)
+				if failures == 1 || delay > trackedPRRetryDelay(failures-1) {
 					slog.Warn("tracked-prs: GitHub search failed; keeping last good cache",
-						"error", err, "retry_in", delay, "module", "agentd")
+						"error", err, "kind", classifyGHError(err), "consecutive_failures", failures,
+						"authors", authors, "duration", time.Since(started).Round(time.Millisecond),
+						"retry_in", delay, "module", "agentd")
 				}
-			} else {
+			} else if failures > 0 {
+				slog.Info("tracked-prs: GitHub search recovered",
+					"previous_failures", failures, "authors", authors, "module", "agentd")
 				failures = 0
 			}
 			timer.Reset(delay)
 		}
 	}()
+}
+
+func trackedPRRetryDelay(failures int) time.Duration {
+	if failures <= 0 {
+		return trackedPRPollInterval
+	}
+	return min(trackedPRPollInterval<<min(failures, 4), trackedPRMaxBackoff)
 }
 
 func kickTrackedPRAuthorsPoller() {
@@ -157,15 +169,15 @@ func kickTrackedPRAuthorsPoller() {
 // pollTrackedPRAuthors runs one search for every tracked author and caches
 // each author's list under the active identity, the same namespacing as the
 // operator's own list so a gh account switch never shows the old account's
-// view.
-func pollTrackedPRAuthors() error {
+// view. It reports how many authors it searched for the poller's log line.
+func pollTrackedPRAuthors() (int, error) {
 	authors := loadTrackedPRAuthors()
 	if len(authors) == 0 {
-		return nil
+		return 0, nil
 	}
 	self, ok := cachedGitHubLogin()
 	if !ok {
-		return errTrackedPRNoActiveIdentity
+		return len(authors), errTrackedPRNoActiveIdentity
 	}
 	cfg, _ := config.Load()
 	now := time.Now()
@@ -173,7 +185,7 @@ func pollTrackedPRAuthors() error {
 	withReviews := trackedPRReviewsDue(now)
 	views, err := trackedPRResolver(authors, cfg.RecentPRWindowDays(), now, withReviews)
 	if err != nil {
-		return err
+		return len(authors), err
 	}
 	if withReviews {
 		// An add during this search reset the mark to 0; keep that reset so
@@ -207,7 +219,7 @@ func pollTrackedPRAuthors() error {
 				"error", err, "author", view.Login, "module", "agentd")
 		}
 	}
-	return nil
+	return len(authors), nil
 }
 
 func trackedPRReviewsDue(now time.Time) bool {
@@ -349,7 +361,16 @@ func decodeTrackedPRGraphQL(data []byte, authors []string, windowDays int) ([]da
 func liveTrackedPRGraphQL(args []string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), trackedPRSearchTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, "gh", args...).Output()
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		// Keep gh's stderr ("gh: HTTP 502") and the error page's title: when
+		// stdout does not decode, this error is all the poller can log.
+		return out, subprocessError(ctx, trackedPRSearchTimeout, err, stderr.String(), out)
+	}
+	return out, nil
 }
 
 func liveTrackedPRUserLookup(login string) (exists, known bool) {

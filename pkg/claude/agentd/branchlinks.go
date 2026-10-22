@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -670,7 +669,15 @@ func runInDir(dir, name string, args ...string) string {
 // missing binaries, authentication failures, and API/rate-limit errors without
 // dumping an unbounded subprocess response into output.log.
 func runInDirWithError(dir, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), branchLinkCmdTimeout)
+	return runInDirWithTimeout(dir, branchLinkCmdTimeout, name, args...)
+}
+
+// runInDirWithTimeout is runInDirWithError under a caller-chosen timeout. A
+// timeout is reported as "timed out after <timeout>", not the "signal:
+// killed" of the context's kill, and a non-JSON error page on stdout is
+// summarized into the error (see subprocessError).
+func runInDirWithTimeout(dir string, timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
@@ -678,14 +685,7 @@ func runInDirWithError(dir, name string, args ...string) (string, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		detail := strings.Join(strings.Fields(stderr.String()), " ")
-		if len(detail) > 500 {
-			detail = detail[:500] + "..."
-		}
-		if detail != "" {
-			return "", fmt.Errorf("%s: %w", detail, err)
-		}
-		return "", err
+		return "", subprocessError(ctx, timeout, err, stderr.String(), out)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
