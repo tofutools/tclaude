@@ -2271,25 +2271,16 @@ func resumeLaunchCmd(
 	harnessName, sessionID, convID string,
 	extraArgs []string,
 ) (string, string, *harness.Harness, error) {
-	var proof *session.StackedSandboxProof
-	cmd, cleanupPath, h, err := resumeLaunchCmdWithStackedProof(
-		harnessName,
-		sessionID,
-		convID,
-		extraArgs,
-		&proof,
-		nil,
-	)
-	if proof != nil {
-		proof.Cleanup()
-	}
-	return cmd, cleanupPath, h, err
+	return resumeLaunchCmdWithEffectiveSandbox(
+		harnessName, sessionID, convID, extraArgs, nil)
 }
 
-func resumeLaunchCmdWithStackedProof(
+// resumeLaunchCmdWithEffectiveSandbox is resumeLaunchCmd that also hands back
+// the effective sandbox snapshot the launch was rendered from, so a caller can
+// disclose its access notices.
+func resumeLaunchCmdWithEffectiveSandbox(
 	harnessName, sessionID, convID string,
 	extraArgs []string,
-	proofOut **session.StackedSandboxProof,
 	effectiveSandboxOut **sandboxpolicy.Snapshot,
 ) (string, string, *harness.Harness, error) {
 	h, err := harness.ResolveSpawnable(harnessName)
@@ -2307,7 +2298,6 @@ func resumeLaunchCmdWithStackedProof(
 		return "", "", nil, err
 	}
 	outerLayer := implementation.UsesTclaudeLayer()
-	stacked := implementation.UsesNestedHarnessSandbox()
 	// Declared beside outerLayer because it answers the same kind of question
 	// for every gate below: whether this launch has an access boundary at all.
 	unconfined := implementation.OmitsOSConfinement()
@@ -2324,11 +2314,6 @@ func resumeLaunchCmdWithStackedProof(
 		}
 		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return "", "", nil, err
-		}
-		if stacked {
-			if err := session.ValidateStackedSandboxHarness(h); err != nil {
-				return "", "", nil, err
-			}
 		}
 	}
 	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
@@ -2438,14 +2423,11 @@ func resumeLaunchCmdWithStackedProof(
 		// a file rule — the Linux tclaude-layer — the outer applier takes it
 		// from the snapshot's mount plan, not from these lists.
 		for _, grant := range sandboxpolicy.DirectoryGrants(launchFilesystem) {
-			// These lists become the HARNESS's own sandbox dirs, which under the
-			// stacked implementation is the nested wall running inside the
-			// namespace tclaude built. So a remapped grant contributes the path
-			// it occupies there — matching sandboxSnapshotDirs on the fresh-launch
-			// side. Skipping it instead would have bwrap mount the directory while
-			// the inner wall silently blocked it, and only on resume. The outer
-			// layer does not read these lists; it takes the projection from the
-			// snapshot itself.
+			// These lists become the HARNESS's own sandbox dirs, which describe
+			// the namespace the harness runs in. So a remapped grant contributes
+			// the path it occupies there — matching sandboxSnapshotDirs on the
+			// fresh-launch side. The outer layer does not read these lists; it
+			// takes the projection from the snapshot itself.
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:
 				writeDirs = append(writeDirs, grant.GuestPath())
@@ -2678,7 +2660,7 @@ func resumeLaunchCmdWithStackedProof(
 		}
 	}
 	harnessBuiltinMode, err = resumeHarnessBuiltinModeForImplementation(
-		h, harnessBuiltinMode, implementation, stacked,
+		h, harnessBuiltinMode, implementation,
 	)
 	if err != nil {
 		return "", "", nil, err
@@ -2840,7 +2822,7 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
-	if (!outerLayer || stacked) && h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
+	if !outerLayer && h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
 		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
 		if requireSplitPolicy {
@@ -2879,10 +2861,6 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("revalidate strict-Home Codex resume capability: %w", err)
 		}
 	}
-	if stacked {
-		spec = h.NestedSandbox.PrepareLaunch(spec)
-	}
-	var stackedProof *session.StackedSandboxProof
 	var layerSpec session.TclaudeLayerLaunchSpec
 	binary := ""
 	if outerLayer {
@@ -2913,7 +2891,7 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, resolveErr
 		}
 		var harnessReadPaths []string
-		if !stacked && h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
+		if h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
 			root == sandboxpolicy.RootConstructed {
 			// The same resolution `session new` performs: a constructed root
 			// cannot see a Gemini or Node installed under the home directory.
@@ -2925,7 +2903,7 @@ func resumeLaunchCmdWithStackedProof(
 			spec.ExecutableInterpreter = resolved.Interpreter
 			harnessReadPaths = resolved.ReadPaths
 		}
-		if !stacked && h.Name == harness.PiName && runtime.GOOS == "linux" &&
+		if h.Name == harness.PiName && runtime.GOOS == "linux" &&
 			root == sandboxpolicy.RootConstructed {
 			resolved, resolveErr := harness.ResolvePiLaunchExecutable()
 			if resolveErr != nil {
@@ -2955,18 +2933,6 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("build resumed tclaude’s sandbox launch spec: %w", specErr)
 		}
 		layerSpec = launchSpec
-		if stacked {
-			stackedProof, err = session.ProbeStackedSandbox(
-				binary,
-				launchSpec,
-				h,
-				resumeCwd,
-			)
-			if err != nil {
-				return "", "", nil, err
-			}
-			spec.ExecutablePath = stackedProof.Executable.Path
-		}
 	}
 	spec, err = h.PrepareHostControlSandboxLaunch(spec)
 	if err != nil {
@@ -2984,30 +2950,10 @@ func resumeLaunchCmdWithStackedProof(
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
 	if outerLayer {
-		if stacked {
-			cmd, err = session.WrapTclaudeLayerStackedSpec(
-				binary,
-				layerSpec,
-				stackedProof.ManifestPath,
-				stackedProof.ManifestSHA256,
-				stackedProof.ReadyPath,
-				true,
-				cmd,
-			)
-		} else {
-			cmd, err = session.WrapTclaudeLayerSpec(binary, layerSpec, cmd)
-		}
+		cmd, err = session.WrapTclaudeLayerSpec(binary, layerSpec, cmd)
 		if err != nil {
-			if stackedProof != nil {
-				stackedProof.Cleanup()
-			}
 			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude’s sandbox: %w", err)
 		}
-	}
-	if proofOut != nil {
-		*proofOut = stackedProof
-	} else if stackedProof != nil {
-		stackedProof.Cleanup()
 	}
 	if effectiveSandboxOut != nil {
 		*effectiveSandboxOut = effectiveSandbox
@@ -3019,18 +2965,9 @@ func resumeHarnessBuiltinModeForImplementation(
 	h *harness.Harness,
 	recordedMode string,
 	implementation sandboxpolicy.Implementation,
-	stacked bool,
 ) (string, error) {
 	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
 		return harness.TclaudeLayerHarnessBuiltinMode(h)
-	}
-	if stacked {
-		switch h.Name {
-		case harness.DefaultName:
-			return harness.ClaudeSandboxOn, nil
-		case harness.CodexName:
-			return harness.SandboxManagedProfile, nil
-		}
 	}
 	return recordedMode, nil
 }
@@ -3473,14 +3410,12 @@ func createSessionForConv(conv *SessionEntry) error {
 	// relaunched with `codex resume <id>`, the way the web-dashboard / agentd
 	// resume path already does (JOH-217). Resolution failures (an unspawnable
 	// or unknown harness) surface here rather than spawning a broken command.
-	var stackedProof *session.StackedSandboxProof
 	var launchEffectiveSandbox *sandboxpolicy.Snapshot
-	launchCmd, profilePath, h, err := resumeLaunchCmdWithStackedProof(
+	launchCmd, profilePath, h, err := resumeLaunchCmdWithEffectiveSandbox(
 		conv.Harness,
 		sessionID,
 		conv.SessionID,
 		clcommon.ExtractClaudeExtraArgs(),
-		&stackedProof,
 		&launchEffectiveSandbox,
 	)
 	if err != nil {
@@ -3490,9 +3425,6 @@ func createSessionForConv(conv *SessionEntry) error {
 		for _, notice := range launchEffectiveSandbox.Effective.AccessNotices {
 			fmt.Printf("Warning: %s\n", notice.Detail)
 		}
-	}
-	if stackedProof != nil {
-		defer stackedProof.Cleanup()
 	}
 	// The same gate `tclaude conv resume` applies, for the same reason: this
 	// launch cannot produce the Copilot API channel either. There is no flag
@@ -3537,27 +3469,10 @@ func createSessionForConv(conv *SessionEntry) error {
 	// resume command carries the same env exports and sandbox dir lists as a
 	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
 	// ps-visible-credentials exposure the spawn path already fixed.
-	if stackedProof != nil {
-		if err := stackedProof.Revalidate(); err != nil {
-			return session.StackedEngineBindingRefusal(h, err)
-		}
-	}
 	launchStarted := time.Now()
 	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd, h.Name,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		return err
-	}
-	if stackedProof != nil {
-		if err := session.WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {
-			_ = clcommon.TmuxCommand(
-				"kill-session",
-				"-t",
-				clcommon.ExactTarget(tmuxSession),
-			).Run()
-			return session.StackedEngineBindingRefusal(h, err)
-		}
-		stackedProof.Cleanup()
-		stackedProof = nil
 	}
 
 	pid := session.ParsePIDFromTmux(tmuxSession)
@@ -3574,13 +3489,8 @@ func createSessionForConv(conv *SessionEntry) error {
 		return err
 	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
-	switch resumeImplementation {
-	case sandboxpolicy.ImplementationTclaudeLayer:
+	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
 		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(conv.SessionID)
-	case sandboxpolicy.ImplementationStacked:
-		launchOSSandbox = session.StackedLaunchOSSandbox(
-			h, resumeTclaudeLayerNetworkPosture(conv.SessionID),
-		)
 	}
 	state := &session.SessionState{
 		ID:                       sessionID,
@@ -3618,11 +3528,6 @@ func createSessionForConv(conv *SessionEntry) error {
 	fmt.Println("Attaching... (Ctrl+B D to detach)")
 
 	return session.AttachToSession(sessionID, tmuxSession, false)
-}
-
-func resumeTclaudeLayerNetworkPosture(convID string) sandboxpolicy.NetworkPosture {
-	posture, _, _ := resumeTclaudeLayerPostures(convID)
-	return posture
 }
 
 // resumeTclaudeLayerLaunchOSSandbox describes the boundary a resume rebuilds.

@@ -324,8 +324,7 @@ func PredictAccessEnforcement(
 	if h == nil {
 		return PredictedAccessEnforcement{}, fmt.Errorf("access prediction requires a resolved harness")
 	}
-	if implementation == sandboxpolicy.ImplementationHarnessBuiltin ||
-		implementation.UsesNestedHarnessSandbox() {
+	if implementation == sandboxpolicy.ImplementationHarnessBuiltin {
 		if err := ValidateHarnessBuiltinOSSandbox(h); err != nil {
 			return PredictedAccessEnforcement{}, err
 		}
@@ -969,10 +968,7 @@ func accessEnforcementTable(
 //
 // Three conditions, each load-bearing:
 //
-//   - tclaude-layer proper. The stacked implementation composes this root with
-//     a harness-native inner sandbox whose interaction with a constructed
-//     host-open root has no smoke evidence, and an unproven combination may not
-//     raise a capability rating.
+//   - tclaude-layer proper: the root is built by tclaude's own layer.
 //   - A harness whose tclaude-layer renderer supports a constructed root.
 //     Claude Code, Codex, Copilot, and Gemini CLI render the pane inside that root;
 //     OpenCode renders its agentd-owned tool server there while its attach pane

@@ -312,7 +312,6 @@ with a non-zero count):
 | 👁+N | N monitors still watching (log tail, CI poll, websocket) |
 | 🚫 | agentd has refused N brokered callbacks from this session |
 | 🔒 | Sandbox confined |
-| 🔒² | Sandbox stacked (two layers) |
 | ⚠ | Sandbox off, unknown, or not enforced |
 | 📱 | Remote control armed (Claude Code; best-known state) |
 | ⚡ | Codex fast mode |
@@ -338,7 +337,7 @@ over a second, breaks the time down by phase (process-table resolution,
 database reads, pane facts and whether the shared tmux cache or a live probe
 answered them, ancestry walk, applying the event) so the stall can be placed.
 The sandbox badge's tooltip breaks down status,
-implementation (TClaude / CC+TClaude / CC / None), profile, and cgroup memory
+implementation (tclaude’s built-in sandbox / the harness's own, e.g. CC / None), profile, and cgroup memory
 and CPU limits; clicking it temporarily disables or restores the sandbox
 (not available for Codex built-in sandboxes). See
 [Sandboxing](sandboxing.md). Clicking 📱 opens the live session in a web

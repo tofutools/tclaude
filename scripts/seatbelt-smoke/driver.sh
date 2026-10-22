@@ -113,18 +113,6 @@ if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
   exit 1
 fi
 
-refusal_log="$RUNNER_TEMP/stacked-seatbelt-refusal.log"
-set +e
-go test ./pkg/claude/session -run '^TestStackedSandboxDarwinRefusal$' -count=1 -v -timeout=30s |
-  tee "$refusal_log"
-pipeline_status=("${PIPESTATUS[@]}")
-set -e
-if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]] ||
-  ! grep -q '^--- PASS: TestStackedSandboxDarwinRefusal ' "$refusal_log"; then
-  echo "::error::TestStackedSandboxDarwinRefusal did not report an explicit pass"
-  exit 1
-fi
-
 printf '%s\n' \
   "Seatbelt smoke evidence complete:" \
   "--- PASS: TestTclaudeLayerDarwinSmoke" \
@@ -132,5 +120,4 @@ printf '%s\n' \
   "--- PASS: TestPinnedProxyHarnessCooperationDarwin" \
   "--- PASS: TestPinnedProxyHarnessCooperationDarwinFailureControl" \
   "--- PASS: TestOpenCodeProxyCooperationDarwin" \
-  "--- PASS: TestOpenCodeProxyCooperationDarwinFailureControl" \
-  "--- PASS: TestStackedSandboxDarwinRefusal"
+  "--- PASS: TestOpenCodeProxyCooperationDarwinFailureControl"

@@ -70,19 +70,6 @@ func sandboxImplementationUnavailable(msg string) *spawnFailure {
 var tclaudeLayerHostAvailability = session.TclaudeLayerHostAvailability
 var tclaudeLayerServerHostAvailability = session.TclaudeLayerServerHostAvailability
 
-// stackedSandboxHostAvailability is separately indirected because the inner
-// harness engine may not be installed on a unit-test host even when the
-// simulated outer layer is available.
-var stackedSandboxHostAvailability = func(h *harness.Harness) error {
-	_, err := session.StackedSandboxAvailability(h)
-	return err
-}
-
-// stackedAppArmorNestedBlockLikely is the same kind of seam for the host
-// heuristic behind the stacked AppArmor hint: a flow test must be able to
-// describe both host shapes without owning the machine it runs on.
-var stackedAppArmorNestedBlockLikely = session.LikelyAppArmorNestedBwrapBlock
-
 // validateSandboxImplementationForHarness normalizes a sandbox-implementation
 // value and gates it on the harness through the capability path
 // (session.ValidateTclaudeLayerHarness), never a harness-name switch here.
@@ -108,11 +95,6 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 	if strings.TrimSpace(raw) != "" &&
 		implementation == sandboxpolicy.ImplementationHarnessBuiltin {
 		if err := harness.ValidateHarnessBuiltinOSSandbox(h); err != nil {
-			return "", err
-		}
-	}
-	if implementation.UsesNestedHarnessSandbox() {
-		if err := session.ValidateStackedSandboxHarness(h); err != nil {
 			return "", err
 		}
 	}
@@ -142,19 +124,13 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 // (it also drops OpenCode's own command filter).
 //
 // The capability gates that describe what tclaude will actually run still apply
-// unchanged, so a harness that cannot host the outer layer or a nested sandbox is
-// still refused.
+// unchanged, so a harness that cannot host the outer layer is still refused.
 func validateAssignedSandboxImplementation(
 	h *harness.Harness, raw string,
 ) (string, error) {
 	implementation, err := sandboxpolicy.NormalizeImplementation(raw)
 	if err != nil {
 		return "", err
-	}
-	if implementation.UsesNestedHarnessSandbox() {
-		if err := session.ValidateStackedSandboxHarness(h); err != nil {
-			return "", err
-		}
 	}
 	if implementation.UsesTclaudeLayer() {
 		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
@@ -321,25 +297,11 @@ func sandboxImplementationHostFailure(harnessName, implementation string) *spawn
 		availability = tclaudeLayerServerHostAvailability
 	}
 	if err := availability(); err != nil {
-		if normalized.UsesNestedHarnessSandbox() {
-			return sandboxImplementationUnavailable(
-				fmt.Sprintf("stacked requested — refused: missing capability stacked_outer_tclaude_layer: %v; "+
-					"refusing rather than falling back to tclaude’s sandbox or harness-builtin", err))
-		}
 		return sandboxImplementationUnavailable(
 			fmt.Sprintf("sandbox implementation %s is not available on this host: %v; "+
 				"refusing the launch rather than falling back to %s",
 				sandboxpolicy.ImplementationTclaudeLayer, err,
 				sandboxpolicy.ImplementationHarnessBuiltin))
-	}
-	if normalized.UsesNestedHarnessSandbox() {
-		h, resolveErr := harness.ResolveSpawnable(harnessName)
-		if resolveErr != nil {
-			return sandboxImplementationUnavailable(resolveErr.Error())
-		}
-		if availabilityErr := stackedSandboxHostAvailability(h); availabilityErr != nil {
-			return sandboxImplementationUnavailable(availabilityErr.Error())
-		}
 	}
 	return nil
 }

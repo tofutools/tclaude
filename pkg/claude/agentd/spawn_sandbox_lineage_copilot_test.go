@@ -162,10 +162,6 @@ func TestSandboxLineageCopilotParentOutboundMatrix(t *testing.T) {
 			Implementation: sandboxpolicy.ImplementationHarnessBuiltin,
 		},
 		{
-			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
-			Implementation: sandboxpolicy.ImplementationStacked,
-		},
-		{
 			Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxInherit,
 			Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 		},
@@ -178,21 +174,6 @@ func TestSandboxLineageCopilotParentOutboundMatrix(t *testing.T) {
 			}
 		})
 	}
-}
-
-// The `stacked` exclusion, stated on the harness it matters most for. Stacked
-// runs Copilot's own experimental MXC policy nested inside tclaude's, so the
-// effective confinement is the unreviewed intersection of two policies while
-// the row names one.
-func TestSandboxLineageCopilotRejectsStackedOnBothSides(t *testing.T) {
-	stacked := spawnLineageSandbox{
-		Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
-		Implementation: sandboxpolicy.ImplementationStacked,
-	}
-	require.False(t, spawnSandboxLineageAllowed(
-		spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff},
-		stacked), "a stacked Copilot child is not the reviewed topology")
-	require.False(t, copilotProvenLineageLaunch(stacked))
 }
 
 // Every non-Copilot verdict must be byte-for-byte what PR1 left behind. The

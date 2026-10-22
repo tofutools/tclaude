@@ -11,8 +11,8 @@ import (
 
 // lineageMatrixCase is one admission decision of the pre-TCL-989 matrix. The
 // whole set is replayed below with the implementation field blank (a legacy
-// row), explicitly harness-builtin, and explicitly stacked — none of which may
-// change a single verdict.
+// row) and explicitly harness-builtin — neither of which may change a single
+// verdict.
 type lineageMatrixCase struct {
 	parentHarness string
 	parentMode    string
@@ -66,14 +66,12 @@ func sandboxLineageMatrix() []lineageMatrixCase {
 }
 
 // The whole existing admission matrix must be byte-for-byte unchanged once the
-// implementation axis travels with a launch — for a legacy blank row, for an
-// explicit harness-builtin, and for stacked (whose modes still mean exactly
-// what the matrix thinks they mean).
+// implementation axis travels with a launch — for a legacy blank row and for an
+// explicit harness-builtin.
 func TestSandboxLineageMatrixUnchangedAcrossNonSingleWallImplementations(t *testing.T) {
 	for _, implementation := range []sandboxpolicy.Implementation{
 		"", // legacy row / never chose
 		sandboxpolicy.ImplementationHarnessBuiltin,
-		sandboxpolicy.ImplementationStacked,
 	} {
 		for _, tc := range sandboxLineageMatrix() {
 			got := spawnSandboxLineageAllowed(
@@ -168,26 +166,6 @@ func TestSandboxLineageRefusesTclaudeLayerChildFromNarrowerCodexParent(t *testin
 	}
 }
 
-// The mapping keys on the EXACT tclaude-layer constant. `stacked` runs the
-// harness's own sandbox nested inside tclaude's, so its Claude `off` really is
-// a stood-down harness wall inside another one and must not borrow the
-// single-wall class.
-func TestSandboxLineageDoesNotMapStackedChildren(t *testing.T) {
-	stackedOff := spawnLineageSandbox{
-		Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff,
-		Implementation: sandboxpolicy.ImplementationStacked,
-	}
-	inheritParent := spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit}
-	require.False(t, spawnSandboxLineageAllowed(inheritParent, stackedOff),
-		"a stacked Claude off child must keep the fully-open classification")
-
-	stackedDanger := spawnLineageSandbox{
-		Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull,
-		Implementation: sandboxpolicy.ImplementationStacked,
-	}
-	require.False(t, spawnSandboxLineageAllowed(inheritParent, stackedDanger))
-}
-
 // PR2 admits Copilot in exactly ONE pair. Every other spelling stays refused
 // even from the most permissive parent there is — which is the case that would
 // break first, because Claude `off` returns true for every other child in the
@@ -197,7 +175,6 @@ func TestSandboxLineageRefusesEveryUnprovenCopilotChild(t *testing.T) {
 		"",
 		sandboxpolicy.ImplementationHarnessBuiltin,
 		sandboxpolicy.ImplementationTclaudeLayer,
-		sandboxpolicy.ImplementationStacked,
 		sandboxpolicy.ImplementationOff,
 	} {
 		for _, mode := range []string{
@@ -226,6 +203,14 @@ func TestNormalizeLineageImplementationDefaultsToHarnessBuiltin(t *testing.T) {
 	}
 	require.Equal(t, sandboxpolicy.ImplementationTclaudeLayer,
 		normalizeLineageImplementation(string(sandboxpolicy.ImplementationTclaudeLayer)))
-	require.Equal(t, sandboxpolicy.ImplementationStacked,
-		normalizeLineageImplementation(string(sandboxpolicy.ImplementationStacked)))
+	// The retired stacked implementation always ran inside tclaude's wall, so
+	// a legacy row reads as the tclaude-layer it now normalizes to.
+	require.Equal(t, sandboxpolicy.ImplementationTclaudeLayer,
+		normalizeLineageImplementation("stacked"))
+}
+
+func TestDashboardSandboxImplementationShowsLegacyStackedAsTclaudeLayer(t *testing.T) {
+	require.Equal(t, "tclaude-layer", dashboardSandboxImplementation("stacked"))
+	require.Equal(t, "", dashboardSandboxImplementation(""), "unset stays unset, not harness-builtin")
+	require.Equal(t, "bogus", dashboardSandboxImplementation("bogus"))
 }

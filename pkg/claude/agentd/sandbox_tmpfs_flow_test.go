@@ -250,9 +250,7 @@ func TestStoredTmpfsReachesTheEffectiveProfileAndMountPlan(t *testing.T) {
 
 // The enforcement preview must be capability-honest: the cell may claim
 // enforcement only where a mount namespace tclaude wholly owns exists, and
-// every other surface is bucketed Refused with the mount named — including
-// `stacked`, whose inner harness-native wall would block writes to a mount the
-// outer layer created.
+// every other surface is bucketed Refused with the mount named.
 func TestSandboxProfileTmpfsEnforcementPreviewIsCapabilityHonest(t *testing.T) {
 	f := newFlow(t)
 	draft := map[string]any{
@@ -267,7 +265,6 @@ func TestSandboxProfileTmpfsEnforcementPreviewIsCapabilityHonest(t *testing.T) {
 		outcome        string
 	}{
 		{"linux tclaude-layer", "tclaude-layer", "linux", harness.AccessPredictionEnforced},
-		{"linux stacked", "stacked", "linux", harness.AccessPredictionRefused},
 		{"darwin tclaude-layer", "tclaude-layer", "darwin", harness.AccessPredictionRefused},
 		{"linux harness-builtin", "harness-builtin", "linux", harness.AccessPredictionRefused},
 	} {

@@ -111,7 +111,7 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	// a machine-global daemon. Paths are daemon-minted but still shell-quoted.
 	// The app-server, not the remote TUI, owns model tool execution. Give it
 	// every execution-posture argument the ordinary TUI receives: the complete
-	// managed profile (or raw sandbox), stacked-backend pin, approval posture,
+	// managed profile (or raw sandbox), approval posture,
 	// service tier, and authoritative tool environment. Codex accepts these
 	// global options before the app-server subcommand.
 	server := binary + codexAppServerHookTrustArgs(spec) + codexAppServerSandboxArgs(spec) +
@@ -160,11 +160,6 @@ func codexSandboxArgs(spec SpawnSpec) string {
 	} else if spec.HarnessBuiltinMode != "" {
 		args += " --sandbox " + clcommon.ShellQuoteArg(spec.HarnessBuiltinMode)
 	}
-	if spec.StrongNestedSandbox {
-		// Verified against codex-cli 0.145.0: false selects the bwrap/seccomp
-		// backend exercised by the stacked capability probe.
-		args += " -c " + clcommon.ShellQuoteArg("features.use_legacy_landlock=false")
-	}
 	return args
 }
 
@@ -212,9 +207,6 @@ func codexAppServerSandboxArgs(spec SpawnSpec) string {
 		// supported -c seam is semantic: config/read and model tools see it.
 		args += " -c " + clcommon.ShellQuoteArg(
 			"sandbox_mode="+codexTOMLString(spec.HarnessBuiltinMode))
-	}
-	if spec.StrongNestedSandbox {
-		args += " -c " + clcommon.ShellQuoteArg("features.use_legacy_landlock=false")
 	}
 	return args
 }

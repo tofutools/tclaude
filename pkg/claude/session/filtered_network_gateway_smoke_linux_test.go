@@ -154,7 +154,7 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 	require.NoError(t, os.MkdirAll(smokeHome, 0o700))
 	require.NoError(t, os.MkdirAll(helperDir, 0o700))
 	t.Setenv("HOME", smokeHome)
-	prepareStackedSmokeControlPlane(t)
+	prepareSmokeControlPlane(t)
 	helperBinary := filepath.Join(helperDir, "filtered-smoke-helper")
 	copyTestBinary(t, os.Args[0], helperBinary)
 

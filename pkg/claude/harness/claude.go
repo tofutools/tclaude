@@ -52,7 +52,6 @@ func init() {
 		Sandbox:            claudeSandbox{},
 		TclaudeLayerMode:   ClaudeSandboxOff,
 		BuiltinOSSandbox:   true,
-		NestedSandbox:      claudeNestedSandbox{},
 		HostControlSandbox: claudeTmuxHostControlSandbox{},
 		// Claude Code's approval posture IS its permission mode; claudeApproval
 		// carries the `--permission-mode` enum (+ an inherit default that adds

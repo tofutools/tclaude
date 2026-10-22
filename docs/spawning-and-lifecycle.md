@@ -108,9 +108,7 @@ messaging, interactive approval, and remote-control options do not apply to
 this mode. Successful non-shell runs print stdout only; failed runs retain
 stderr, and shell runs always forward both streams. The harness-native and
 `tclaude-layer` sandbox implementations are
-supported for Claude, Codex, and shell. Linux Claude/Codex stacked launches use
-the same live nested-engine probe and immutable launch binding as interactive
-workers; an unavailable boundary refuses the launch rather than dropping a wall.
+supported for Claude, Codex, and shell.
 Linux `resource-only` launches require a temporary cgroup even without ceilings.
 On Linux, a configured resource limit is applied through a temporary cgroup.
 A configured resource limit also
@@ -118,7 +116,7 @@ refuses the run on macOS or when the Linux daemon lacks a delegated cgroup.
 Sandbox-profile `agent_directories` receive fresh private per-run bindings and
 writable grants. Ordered `pre_launch` blocks run after profile environment
 export and before the harness, with the same authority as an interactive launch:
-inside the outer sandbox for `tclaude-layer`/`stacked`, in the host bootstrap
+inside the outer sandbox for `tclaude-layer`, in the host bootstrap
 shell for `harness-builtin`/`resource-only`. `off` omits sandbox profiles, as it
 does for interactive workers, so profile setup is not applied. Bash is required for scripts;
 a failed block aborts launch and names the block.

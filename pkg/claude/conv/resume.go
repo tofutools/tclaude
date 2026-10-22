@@ -192,14 +192,12 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	// with `codex resume <id>`, Claude Code with `claude --resume <id>`.
 	// Resolution failures (an unknown / unspawnable harness) surface here
 	// rather than spawning a broken command (JOH-218).
-	var stackedProof *session.StackedSandboxProof
 	var launchEffectiveSandbox *sandboxpolicy.Snapshot
-	launchCmd, profilePath, h, err := resumeLaunchCmdWithStackedProof(
+	launchCmd, profilePath, h, err := resumeLaunchCmdWithEffectiveSandbox(
 		rc.Harness,
 		sessionID,
 		rc.ConvID,
 		clcommon.ExtractClaudeExtraArgs(),
-		&stackedProof,
 		&launchEffectiveSandbox,
 	)
 	if err != nil {
@@ -210,9 +208,6 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		for _, notice := range launchEffectiveSandbox.Effective.AccessNotices {
 			fmt.Fprintf(stdout, "Warning: %s\n", notice.Detail)
 		}
-	}
-	if stackedProof != nil {
-		defer stackedProof.Cleanup()
 	}
 	// Before anything is launched: a conversation that chose the Copilot API
 	// drive cannot get it from here, so this either refuses with the daemon
@@ -288,30 +283,11 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	// resume command carries the same env exports and sandbox dir lists as a
 	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
 	// ps-visible-credentials exposure the spawn path already fixed.
-	if stackedProof != nil {
-		if err := stackedProof.Revalidate(); err != nil {
-			fmt.Fprintf(stderr, "%v\n", session.StackedEngineBindingRefusal(h, err))
-			return 1
-		}
-	}
 	launchStarted := time.Now()
 	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, rc.ProjectPath, launchCmd, h.Name,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
 		return 1
-	}
-	if stackedProof != nil {
-		if err := session.WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {
-			_ = clcommon.TmuxCommand(
-				"kill-session",
-				"-t",
-				clcommon.ExactTarget(tmuxSession),
-			).Run()
-			fmt.Fprintf(stderr, "%v\n", session.StackedEngineBindingRefusal(h, err))
-			return 1
-		}
-		stackedProof.Cleanup()
-		stackedProof = nil
 	}
 
 	// Get PID and save state (starts as idle, waiting for user input).
@@ -329,13 +305,8 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		return 1
 	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
-	switch resumeImplementation {
-	case sandboxpolicy.ImplementationTclaudeLayer:
+	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
 		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(rc.ConvID)
-	case sandboxpolicy.ImplementationStacked:
-		launchOSSandbox = session.StackedLaunchOSSandbox(
-			h, resumeTclaudeLayerNetworkPosture(rc.ConvID),
-		)
 	}
 	state := &session.SessionState{
 		ID:                       sessionID,

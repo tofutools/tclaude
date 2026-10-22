@@ -553,17 +553,9 @@ func TestTclaudeLayerWinchRelayRefusesCombinedEngines(t *testing.T) {
 	require.NoError(t, err)
 
 	code, err := runTclaudeLayerWinchRelay(
-		[]string{"/bin/true"}, nil, stackedRelayBindingOptions{
+		[]string{"/bin/true"}, nil, tclaudeLayerRelayOptions{
 			ProxyPolicy:    proxyPolicy,
 			FilteredPolicy: packetPolicy,
-		})
-	assert.Equal(t, 125, code)
-	assert.ErrorContains(t, err, "cannot be combined")
-
-	code, err = runTclaudeLayerWinchRelay(
-		[]string{"/bin/true"}, nil, stackedRelayBindingOptions{
-			ProxyPolicy:  proxyPolicy,
-			ManifestPath: "/tmp/manifest.json",
 		})
 	assert.Equal(t, 125, code)
 	assert.ErrorContains(t, err, "cannot be combined")
@@ -604,7 +596,7 @@ func TestTclaudeLayerWinchRelayStartsAProxySandbox(t *testing.T) {
 
 	code, err := runTclaudeLayerWinchRelay(
 		[]string{fakeBwrap, "--", "/bin/true"}, nil,
-		stackedRelayBindingOptions{ProxyPolicy: policy})
+		tclaudeLayerRelayOptions{ProxyPolicy: policy})
 	// The stand-in never runs a bootstrap, so no listener is ever handed out.
 	// The supervisor must survive its start sequence and then fail closed on
 	// the missing handoff — reporting it, rather than dying on the way there or
@@ -703,14 +695,14 @@ func TestTclaudeLayerUnixRelayFDsFollowTheDeployedEngine(t *testing.T) {
 func TestWinchRelayPreservationRequiresAnEnginePolicy(t *testing.T) {
 	code, err := runTclaudeLayerWinchRelay(
 		[]string{"/bin/true"}, nil,
-		stackedRelayBindingOptions{PreserveFDs: 2})
+		tclaudeLayerRelayOptions{PreserveFDs: 2})
 	assert.Equal(t, 125, code)
 	assert.ErrorContains(t, err, "requires a filtering engine policy")
 
 	// A count this supervisor never renders is refused whichever engine asks.
 	code, err = runTclaudeLayerWinchRelay(
 		[]string{"/bin/true"}, nil,
-		stackedRelayBindingOptions{PreserveFDs: 3, ProxyPolicy: "x"})
+		tclaudeLayerRelayOptions{PreserveFDs: 3, ProxyPolicy: "x"})
 	assert.Equal(t, 125, code)
 	assert.ErrorContains(t, err, "requires the route-helper one-fd or OpenCode two-fd contract")
 }
@@ -918,7 +910,7 @@ func TestProxyNetworkFloorMasksHostNameMappings(t *testing.T) {
 // Asserting the arithmetic instead — that the constant equals first-fd plus an
 // offset — would only restate the assumption the argument already encodes. The
 // layout it depends on (bubblewrap's status pipe at fd 3, then this engine's
-// files, with no stacked binding in between) is enforced elsewhere by refusals;
+// files) is enforced elsewhere by refusals;
 // this observes the result rather than trusting that chain.
 func TestProxyNetworkHostsFileReachesTheNamedDescriptor(t *testing.T) {
 	plan := proxyBridgeTestPlan(t,
@@ -938,7 +930,7 @@ func TestProxyNetworkHostsFileReachesTheNamedDescriptor(t *testing.T) {
 
 	_, err = runTclaudeLayerWinchRelay(
 		[]string{fakeBwrap, "--", "/bin/true"}, nil,
-		stackedRelayBindingOptions{ProxyPolicy: policy})
+		tclaudeLayerRelayOptions{ProxyPolicy: policy})
 	// The stand-in hands out no listener, so the launch fails closed after the
 	// descriptors are in place. What is under test is what it read.
 	require.Error(t, err)

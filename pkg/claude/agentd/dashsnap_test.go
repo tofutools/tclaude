@@ -5294,7 +5294,7 @@ func sandboxMountPathDashSnapJS(mode string) string {
     if(help.getAttribute('aria-expanded')!=='true'){
       throw new Error('mount-editor: the help disclosure did not open');
     }
-    if(!panel.textContent.includes('Linux tclaude-layer or stacked only')){
+    if(!panel.textContent.includes('tclaude’s sandbox on Linux only')){
       throw new Error('mount-editor: the platform caveat is missing from the panel');
     }
     filesystem.scrollIntoView({block:'center'});

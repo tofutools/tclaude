@@ -373,11 +373,6 @@ func TestRelaunchProfileForSpawn_FreezesSandboxImplementation(t *testing.T) {
 			implementation: string(sandboxpolicy.ImplementationTclaudeLayer),
 			want:           string(sandboxpolicy.ImplementationTclaudeLayer),
 		},
-		{
-			name:           "stacked",
-			implementation: string(sandboxpolicy.ImplementationStacked),
-			want:           string(sandboxpolicy.ImplementationStacked),
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			profile := relaunchProfileForSpawn(spawnParams{

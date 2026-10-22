@@ -357,39 +357,6 @@ func TestSandboxRestart_RefusesCodexHarnessBuiltinUnlock(t *testing.T) {
 		"the server must refuse before stopping the live Codex conversation")
 }
 
-func TestSandboxRestart_RefusesCodexStackedUnlock(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
-		func(*harness.Harness) error { return nil },
-	))
-	f := newFlow(t)
-	f.HaveGroup("crew")
-
-	source := f.AsHuman().SpawnWith("crew", map[string]any{
-		"name":                   "codex-stacked-source",
-		"harness":                harness.CodexName,
-		"sandbox_implementation": string(sandboxpolicy.ImplementationStacked),
-	})
-	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
-
-	f.SetSessionStatus(source.ConvID, "idle")
-	unlock := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
-		testharness.JSONRequest(t, http.MethodPost,
-			"/api/agents/"+source.ConvID+"/sandbox-restart",
-			map[string]any{"action": "unlock"}))
-	require.Equalf(t, http.StatusConflict, unlock.Code, "unlock body=%s", unlock.Body.String())
-	assert.Contains(t, unlock.Body.String(), "Codex restores the persisted sandbox policy on resume")
-
-	_, active, err := db.TemporaryHarnessBuiltinModeForConv(source.ConvID)
-	require.NoError(t, err)
-	assert.False(t, active, "a refused unlock must not persist a temporary override")
-	row, err := db.FindSessionByConvID(source.ConvID)
-	require.NoError(t, err)
-	require.NotNil(t, row)
-	assert.Equal(t, "idle", row.Status,
-		"the server must refuse before removing either stacked sandbox layer")
-}
-
 func TestSandboxRestart_AllowsCodexTclaudeLayerUnlock(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
@@ -421,12 +388,8 @@ func TestSandboxRestart_AllowsCodexTclaudeLayerUnlock(t *testing.T) {
 
 func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
-		func(*harness.Harness) error { return nil },
-	))
 	for _, implementation := range []sandboxpolicy.Implementation{
 		sandboxpolicy.ImplementationTclaudeLayer,
-		sandboxpolicy.ImplementationStacked,
 	} {
 		t.Run(string(implementation), func(t *testing.T) {
 			f := newFlow(t)
@@ -485,13 +448,7 @@ func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
 			// no-inner-wall posture, not the `on` the spawn request asked for
 			// (TCL-989). Replaying `off` reproduces the source launch exactly:
 			// the launch boundary would force `on` back down to `off` anyway.
-			// Stacked keeps its requested mode — its nested contract is chosen
-			// separately and this resolver deliberately leaves it alone.
-			wantMode := harness.ClaudeSandboxOn
-			if implementation == sandboxpolicy.ImplementationTclaudeLayer {
-				wantMode = harness.ClaudeSandboxOff
-			}
-			assert.Equal(t, wantMode, mode,
+			assert.Equal(t, harness.ClaudeSandboxOff, mode,
 				"restore must replay the mode the durable launch recorded")
 		})
 	}
@@ -499,12 +456,8 @@ func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
 
 func TestSandboxRestart_RestoresAfterTemporaryReincarnation(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
-		func(*harness.Harness) error { return nil },
-	))
 	for _, implementation := range []sandboxpolicy.Implementation{
 		sandboxpolicy.ImplementationTclaudeLayer,
-		sandboxpolicy.ImplementationStacked,
 	} {
 		t.Run(string(implementation), func(t *testing.T) {
 			f := newFlow(t)

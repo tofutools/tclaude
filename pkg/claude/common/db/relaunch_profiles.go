@@ -460,7 +460,7 @@ func SetTemporaryHarnessBuiltinMode(
 		// The restore caller passes the already-resolved normal implementation.
 		// Besides keeping a normal clear idempotent, this repairs temporary
 		// overrides created by versions that projected harness-builtin over the
-		// durable tclaude-layer/stacked value; lifecycle recovered that value
+		// durable tclaude-layer value; lifecycle recovered that value
 		// from the pre-override session history before reaching this write.
 		if profile.TemporaryHarnessBuiltinMode != nil &&
 			strings.TrimSpace(normalImplementation) != "" {

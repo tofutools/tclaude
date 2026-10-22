@@ -92,23 +92,6 @@ func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
 	return "", fmt.Errorf("Darwin route slots are unsupported on this platform")
 }
 
-func tclaudeLayerStackedCommand(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	string,
-	string,
-	string,
-	bool,
-	string,
-) (string, error) {
-	return "", fmt.Errorf("stacked tclaude’s sandbox is not supported on this platform")
-}
-
 func tclaudeLayerServerCommand(
 	string,
 	[]string,

@@ -11,7 +11,7 @@ import (
 
 // pi has no sandbox, so its only confined launch is tclaude's wall around pi's
 // `off`. That launch joins the walled-off class with Copilot's and Gemini's;
-// a pi outside the wall, or stacked, is no proof of anything.
+// a pi outside the wall is no proof of anything.
 func TestSandboxLineagePiOnlyTheWalledLaunchIsProven(t *testing.T) {
 	walled := spawnLineageSandbox{
 		Harness: harness.PiName, HarnessBuiltinMode: harness.PiSandboxOff,
@@ -29,8 +29,6 @@ func TestSandboxLineagePiOnlyTheWalledLaunchIsProven(t *testing.T) {
 	for _, unproven := range []spawnLineageSandbox{
 		{Harness: harness.PiName, HarnessBuiltinMode: harness.PiSandboxOff,
 			Implementation: sandboxpolicy.ImplementationHarnessBuiltin},
-		{Harness: harness.PiName, HarnessBuiltinMode: harness.PiSandboxOff,
-			Implementation: sandboxpolicy.ImplementationStacked},
 		{Harness: harness.PiName, HarnessBuiltinMode: ""},
 	} {
 		require.False(t, piProvenLineageLaunch(unproven))

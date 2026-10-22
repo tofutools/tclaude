@@ -725,7 +725,6 @@ func TestConfinedShellCanDelegateOnlyConfinedChildren(t *testing.T) {
 	}
 	for _, implementation := range []sandboxpolicy.Implementation{
 		sandboxpolicy.ImplementationOff, sandboxpolicy.ImplementationHarnessBuiltin,
-		sandboxpolicy.ImplementationStacked,
 	} {
 		unconfined := parent
 		unconfined.Implementation = implementation
@@ -813,7 +812,7 @@ func TestSandboxProfileCapabilityFailureRefusesFileGrantWithoutMountNamespace(t 
 
 	failure := sandboxProfileCapabilityFailure(
 		harness.DefaultName, harness.ClaudeSandboxOn, snapshot,
-		string(sandboxpolicy.ImplementationStacked),
+		string(sandboxpolicy.ImplementationHarnessBuiltin),
 	)
 	require.NotNil(t, failure)
 	assert.Equal(t, "unsupported_sandbox_profile_file_grant", failure.Kind)

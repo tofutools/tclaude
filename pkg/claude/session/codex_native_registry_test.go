@@ -105,7 +105,6 @@ func TestCodexNativeRegistryApplicableOnlyToBuiltinSandboxAppServer(t *testing.T
 		{true, harness.DefaultName, harness.SandboxManagedProfile, builtin},
 		{true, harness.CodexName, harness.SandboxDangerFull, builtin},
 		{true, harness.CodexName, harness.SandboxManagedProfile, string(sandboxpolicy.ImplementationTclaudeLayer)},
-		{true, harness.CodexName, harness.SandboxManagedProfile, string(sandboxpolicy.ImplementationStacked)},
 	} {
 		assert.False(t, CodexNativeRegistryApplicable(test.appServer, test.harnessName,
 			test.sandbox, test.implementation))

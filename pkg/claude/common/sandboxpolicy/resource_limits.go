@@ -124,7 +124,7 @@ func ResourceCgroupRequired(limits ResourceLimits, implementation Implementation
 // per-agent cgroup at all.
 //
 // Beyond the required cases, a Linux launch that tclaude's own layer wraps
-// (`tclaude-layer`, and `stacked` on top of it) asks for one opportunistically.
+// (`tclaude-layer`) asks for one opportunistically.
 // tclaude already owns that workload's outer boundary and forks it itself, so
 // the same accounting a limitless `resource-only` launch is selected for —
 // memory.peak, cpu.stat, host-OOM attribution, one kill handle for everything

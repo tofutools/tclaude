@@ -454,27 +454,6 @@ func TestCopilotLineage_RefusalTable(t *testing.T) {
 	}
 }
 
-// TestCopilotLineage_StackedIsNotTheProvenTopology keeps `stacked` out on the
-// path an operator would actually reach it from. Nesting Copilot's own
-// experimental MXC policy inside tclaude's produces an effective confinement
-// nobody reviewed while the row would name one wall.
-func TestCopilotLineage_StackedIsNotTheProvenTopology(t *testing.T) {
-	f := newCopilotFlow(t)
-	f.HaveGroup("alpha")
-	const parent = "parent-cop4-aaaa-bbbb-cccc-111111111111"
-	haveLineageParent(t, f, "alpha", parent, harness.DefaultName,
-		harness.ClaudeSandboxOff, "", "bypassPermissions")
-
-	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
-		"name":                   "worker",
-		"harness":                harness.CopilotName,
-		"sandbox_implementation": string(sandboxpolicy.ImplementationStacked),
-		"approval":               harness.CopilotApprovalAllowTools,
-	})
-	require.NotEqualf(t, http.StatusOK, resp.Code,
-		"stacked is not the reviewed Copilot topology; body=%s", resp.Raw)
-}
-
 // TestCopilotLineage_TemplatePathCarriesTheImplementation covers the OTHER
 // spawn boundary. Templates, waves and process adapters never pass through the
 // HTTP request path, so executeSpawn re-runs the guard itself — and the

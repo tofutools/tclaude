@@ -75,29 +75,17 @@ func TestSandboxToolPresence_SpawnFailureResumesChecking(t *testing.T) {
 	assert.Equal(t, 2, calls, "the latch is dropped, so the next poll looks again")
 }
 
-// Independent keys must not share a latch — finding bwrap cannot be allowed to
-// imply the Claude engine is installed.
+// Independent keys must not share a latch — finding the interactive host's
+// tooling cannot be allowed to imply the server boundary's is present.
 func TestSandboxToolPresence_KeysAreIndependent(t *testing.T) {
 	resetSandboxImplHostProbeCache()
 	t.Cleanup(resetSandboxImplHostProbeCache)
 
-	missing := errors.New("codex is not on PATH")
+	missing := errors.New("bwrap is not on PATH")
 	require.NoError(t, sandboxToolPresence(sandboxToolLayerHost, func() error { return nil }))
 	assert.ErrorIs(t,
-		sandboxToolPresence(stackedEngineToolKey("codex"), func() error { return missing }),
+		sandboxToolPresence(sandboxToolLayerServerHost, func() error { return missing }),
 		missing)
-}
-
-// OpenCode owns no sandbox, so "stacked" is not a capability it can lack: it
-// must be ABSENT from the catalog rather than listed as unavailable, which
-// would read as a missing dependency the operator could install.
-func TestSandboxImplCatalog_OmitsOpenCodeFromStacked(t *testing.T) {
-	resetSandboxImplHostProbeCache()
-	t.Cleanup(resetSandboxImplHostProbeCache)
-
-	catalog := buildSandboxImplCatalog()
-	assert.NotContains(t, catalog.Stacked, "opencode",
-		"OpenCode has no nested sandbox; stacking is meaningless for it")
 }
 
 // The reset contract that matters is not invalidateSandboxToolingPresence in

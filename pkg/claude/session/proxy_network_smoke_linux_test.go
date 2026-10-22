@@ -471,7 +471,7 @@ func runProxyEngineLaunch(
 	require.NoError(t, os.MkdirAll(smokeHome, 0o700))
 	require.NoError(t, os.MkdirAll(helperDir, 0o700))
 	t.Setenv("HOME", smokeHome)
-	prepareStackedSmokeControlPlane(t)
+	prepareSmokeControlPlane(t)
 	for name, source := range input.WorkspaceBinaries {
 		copyTestBinary(t, source, filepath.Join(helperDir, name))
 	}

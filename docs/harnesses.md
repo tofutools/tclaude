@@ -454,8 +454,7 @@ like one, every spawn surface warns when it is the only boundary. For a real
 wall, use `--sandbox-impl tclaude-layer`, which puts tclaude's own OS sandbox
 (bubblewrap on Linux, Seatbelt on macOS) around the tool-executing server.
 The explicit `off` mode removes path scoping but keeps approval and tool
-governance active. OpenCode has no `stacked` contract; that selection is
-refused by name.
+governance active.
 
 **Approvals.** `--ask-for-approval` is a tclaude-compiled per-session
 permission policy: `deny` *(default — edits and web tools denied)*, `ask`

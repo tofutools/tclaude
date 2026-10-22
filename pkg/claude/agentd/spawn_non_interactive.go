@@ -64,11 +64,16 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if seconds < 1 || seconds > 24*3600 {
 		return bad("invalid_timeout", "non-interactive timeout must be between 1 second and 24 hours")
 	}
-	layer := p.SandboxImplementation == "tclaude-layer" || p.SandboxImplementation == "stacked"
-	if p.SandboxImplementation != "" && p.SandboxImplementation != "harness-builtin" &&
-		p.SandboxImplementation != "off" && p.SandboxImplementation != "resource-only" && !layer {
-		return bad("unsupported_sandbox", "non-interactive runs cannot replay this sandbox implementation")
+	if p.SandboxImplementation != "" {
+		// Normalize before comparing raw strings: a stored legacy value maps
+		// onto the implementation it now means.
+		implementation, err := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
+		if err != nil {
+			return bad("unsupported_sandbox", "non-interactive runs cannot replay this sandbox implementation")
+		}
+		p.SandboxImplementation = string(implementation)
 	}
+	layer := p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
 	if snapshot := p.EffectiveSandbox; snapshot != nil {
 		effective := snapshot.Effective
 		if !layer && (effective.NetworkAccess == sandboxpolicy.NetworkAccessNone || effective.Network != nil ||
@@ -273,16 +278,8 @@ func (w bestEffortPaneWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-type oneShotLayerOptions struct {
-	preLaunch string
-	stacked   bool
-	cleanup   func()
-}
-
-func prepareNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv []string, preLaunch string) (string, func(), error) {
-	opts := &oneShotLayerOptions{preLaunch: preLaunch, stacked: p.SandboxImplementation == "stacked", cleanup: func() {}}
-	wrapped, err := wrapOneShotLayer(h, p.Cwd, p.EffectiveSandbox, p.GitWorktreeWriteDirs, argv, opts)
-	return wrapped, opts.cleanup, err
+func prepareNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv []string, preLaunch string) (string, error) {
+	return wrapOneShotLayer(h, p.Cwd, p.EffectiveSandbox, p.GitWorktreeWriteDirs, argv, preLaunch)
 }
 
 // wrapOneShotWithTclaudeLayer renders a one-shot argv as a shell command run
@@ -291,11 +288,11 @@ func prepareNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, ar
 func wrapOneShotWithTclaudeLayer(
 	h *harness.Harness, cwd string, snapshot *sandboxpolicy.Snapshot, gitWriteDirs, argv []string,
 ) (string, error) {
-	return wrapOneShotLayer(h, cwd, snapshot, gitWriteDirs, argv, nil)
+	return wrapOneShotLayer(h, cwd, snapshot, gitWriteDirs, argv, "")
 }
 
 func wrapOneShotLayer(
-	h *harness.Harness, cwd string, snapshot *sandboxpolicy.Snapshot, gitWriteDirs, argv []string, opts *oneShotLayerOptions,
+	h *harness.Harness, cwd string, snapshot *sandboxpolicy.Snapshot, gitWriteDirs, argv []string, preLaunch string,
 ) (string, error) {
 	var harnessReadPaths []string
 	if runtime.GOOS == "linux" {
@@ -400,24 +397,9 @@ func wrapOneShotLayer(
 	if err != nil {
 		return "", err
 	}
-	if opts != nil && opts.stacked {
-		proof, err := session.ProbeStackedSandbox(binary, spec, h, cwd)
-		if err != nil {
-			return "", err
-		}
-		opts.cleanup = proof.Cleanup
-		argv[0] = proof.Executable.Path
-		command := "exec " + quoteOneShotArgv(argv)
-		if opts.preLaunch != "" {
-			command = opts.preLaunch + command
-			command = "exec " + quoteOneShotArgv(append(clcommon.BootstrapShellArgv(), "-c", command))
-		}
-		return session.WrapTclaudeLayerStackedSpec(binary, spec,
-			proof.ManifestPath, proof.ManifestSHA256, proof.ReadyPath, true, command)
-	}
 	command := "exec " + quoteOneShotArgv(argv)
-	if opts != nil && opts.preLaunch != "" {
-		command = opts.preLaunch + command
+	if preLaunch != "" {
+		command = preLaunch + command
 		// The ordinary pane bootstrap uses Bash too. Run the fragments in
 		// that shell inside the outer wall, not in the host /bin/sh wrapper.
 		command = "exec " + quoteOneShotArgv(append(clcommon.BootstrapShellArgv(), "-c", command))

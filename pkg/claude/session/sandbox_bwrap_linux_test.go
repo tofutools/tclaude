@@ -5,7 +5,6 @@ package session
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -24,7 +23,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"golang.org/x/sys/unix"
 )
 
@@ -163,171 +161,6 @@ func TestResolveTclaudeLayerRefusesMissingBwrapAndRecordsOffVerdict(t *testing.T
 	})
 	assert.Equal(t, "off", row.OSSandboxState)
 	assert.Equal(t, "tclaude-layer unavailable", row.OSSandboxSource)
-}
-
-func TestStackedRelayBindsRehashedOpenEngineDescriptor(t *testing.T) {
-	proof, err := prepareStackedSandboxProof(
-		harness.MustGet(harness.CodexName),
-		codexBindingTestExecutable(t),
-	)
-	require.NoError(t, err)
-	t.Cleanup(proof.Cleanup)
-
-	args, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
-		ManifestPath:   proof.ManifestPath,
-		ManifestSHA256: proof.ManifestSHA256,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		for _, file := range files {
-			_ = file.Close()
-		}
-	})
-	require.NotEmpty(t, files)
-	seals, err := unix.FcntlInt(files[0].Fd(), unix.F_GET_SEALS, 0)
-	require.NoError(t, err)
-	assert.Equal(t,
-		unix.F_SEAL_SEAL|unix.F_SEAL_SHRINK|unix.F_SEAL_GROW|unix.F_SEAL_WRITE,
-		seals,
-	)
-	joined := strings.Join(args, " ")
-	assert.Contains(t, joined,
-		"--tmpfs "+stackedBoundCodexRuntimeRoot)
-	assert.Contains(t, joined,
-		"--perms 0500 --file 4 "+proof.Executable.Path)
-	assert.Contains(t, joined,
-		filepath.Join(stackedBoundCodexRuntimeRoot, "codex-resources", "bwrap"))
-	assert.Contains(t, joined,
-		"--remount-ro "+stackedBoundCodexRuntimeRoot)
-	assert.NotContains(t, joined,
-		"--ro-bind-data 4 "+proof.Executable.Path)
-	assert.NotContains(t, joined, "/proc/self/fd/")
-}
-
-func TestStackedRelayRefusesChangedManifestAuthority(t *testing.T) {
-	proof, err := prepareStackedSandboxProof(
-		harness.MustGet(harness.CodexName),
-		codexBindingTestExecutable(t),
-	)
-	require.NoError(t, err)
-	t.Cleanup(proof.Cleanup)
-
-	manifest := readStackedBindingManifest(t, proof.ManifestPath)
-	manifest.Engine.SHA256 = strings.Repeat("0", 64)
-	writeStackedBindingManifest(t, proof.ManifestPath, manifest)
-
-	_, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
-		ManifestPath:   proof.ManifestPath,
-		ManifestSHA256: proof.ManifestSHA256,
-	})
-	for _, file := range files {
-		_ = file.Close()
-	}
-	require.ErrorContains(t, err, "manifest changed after capability probe")
-}
-
-func TestStackedRelayOmitsConsumedProbeHelperFromFinalClaudeLaunch(t *testing.T) {
-	managed := t.TempDir()
-	restore := harness.SetClaudeManagedSettingsRootForTest(managed)
-	t.Cleanup(restore)
-	proof, err := prepareStackedSandboxProof(
-		harness.MustGet(harness.DefaultName),
-		harness.NestedSandboxExecutable{
-			Path:    os.Args[0],
-			Version: "test",
-		},
-	)
-	require.NoError(t, err)
-	t.Cleanup(proof.Cleanup)
-
-	require.NoError(t, proof.completeProbe())
-	manifest := readStackedBindingManifest(t, proof.ManifestPath)
-	require.Nil(t, manifest.ProbeHelper)
-	data, err := json.Marshal(manifest)
-	require.NoError(t, err)
-	require.Equal(t, proof.ManifestSHA256, stackedBindingDigest(data))
-
-	args, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
-		ManifestPath:   proof.ManifestPath,
-		ManifestSHA256: proof.ManifestSHA256,
-	})
-	require.NoError(t, err)
-	for _, file := range files {
-		_ = file.Close()
-	}
-	joined := strings.Join(args, " ")
-	assert.NotContains(t, joined, probehelper.BoundPath)
-	assert.Contains(t, joined, "--perms 0500 --file 4 "+proof.Executable.Path)
-}
-
-func TestStackedRelayRefusesReadinessInsideConsumedStageRoot(t *testing.T) {
-	proof, err := prepareStackedSandboxProof(
-		harness.MustGet(harness.CodexName),
-		codexBindingTestExecutable(t),
-	)
-	require.NoError(t, err)
-	t.Cleanup(proof.Cleanup)
-
-	_, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
-		ManifestPath:   proof.ManifestPath,
-		ManifestSHA256: proof.ManifestSHA256,
-		Consume:        true,
-		ReadyPath:      filepath.Join(proof.stageRoot, "ready"),
-	})
-	for _, file := range files {
-		_ = file.Close()
-	}
-	require.ErrorContains(t, err, "readiness path must be outside the staging root")
-}
-
-func TestWriteStackedBindingReadyRefusesSymlink(t *testing.T) {
-	root := t.TempDir()
-	target := filepath.Join(root, "target")
-	link := filepath.Join(root, "ready")
-	require.NoError(t, os.Symlink(target, link))
-	require.Error(t, writeStackedBindingReady(link))
-	_, err := os.Stat(target)
-	require.ErrorIs(t, err, os.ErrNotExist)
-}
-
-func TestStackedRelayCreatesFreshClaudePolicyRootWithoutHostDirectory(t *testing.T) {
-	managed := t.TempDir()
-	restore := harness.SetClaudeManagedSettingsRootForTest(managed)
-	t.Cleanup(restore)
-	proof, err := prepareStackedSandboxProof(
-		harness.MustGet(harness.DefaultName),
-		harness.NestedSandboxExecutable{
-			Path:    os.Args[0],
-			Version: "test",
-		},
-	)
-	require.NoError(t, err)
-	t.Cleanup(proof.Cleanup)
-
-	args, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
-		ManifestPath:   proof.ManifestPath,
-		ManifestSHA256: proof.ManifestSHA256,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		for _, file := range files {
-			_ = file.Close()
-		}
-	})
-	joined := strings.Join(args, " ")
-	assert.Contains(t, joined, "--tmpfs /etc")
-	assert.Contains(t, joined, "--dir /etc/claude-code")
-	assert.Contains(t, joined, "--remount-ro /etc")
-	assert.NotContains(t, joined, "--tmpfs /etc/claude-code")
-	assert.Contains(t, joined,
-		"--tmpfs "+stackedBoundExecutableRoot)
-	assert.Contains(t, joined,
-		"--perms 0500 --file 4 "+proof.Executable.Path)
-	assert.Contains(t, joined,
-		"--perms 0500 --file 5 "+probehelper.BoundPath)
-	assert.Contains(t, joined,
-		"--remount-ro "+stackedBoundExecutableRoot)
-	assert.NotContains(t, joined, "/proc/self/fd/")
 }
 
 func TestResolveTclaudeLayerRefusesUnavailableUserNamespace(t *testing.T) {
@@ -514,7 +347,7 @@ func TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit(t *testing
 		code, err := runTclaudeLayerWinchRelay(
 			[]string{fakeBwrap},
 			winch,
-			stackedRelayBindingOptions{},
+			tclaudeLayerRelayOptions{},
 		)
 		done <- result{code: code, err: err}
 	}()

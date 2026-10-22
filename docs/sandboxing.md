@@ -13,7 +13,7 @@ Three ideas carry this page:
 - A **profile** is what you author: a JSON capability bundle.
 - **`--sandbox`** is the harness's *own* sandbox mode — a per-harness setting.
 - **`--sandbox-impl`** is *who enforces* confinement — the harness itself,
-  tclaude’s built-in sandbox, both stacked, a resource-only cgroup, or nobody.
+  tclaude’s built-in sandbox, a resource-only cgroup, or nobody.
 
 Egress filtering has its own page ([Network filtering](network-filtering.md)),
 and credential-less workflows that make strict profiles livable have theirs
@@ -54,21 +54,6 @@ same layer. The values:
   along. That boundary is a bonus, not the posture — a host with no delegated
   cgroup gets a `resource_cgroup_unavailable` notice and the wall it asked for,
   where `resource-only` refuses. An authored ceiling still fails closed.
-- **tclaude + harness sandboxes (`stacked`)** (Linux only, Claude Code and current-backend
-  Codex) — both walls at once: tclaude's outer sandbox with the harness's real
-  inner sandbox kept active (Claude Code forced `on` with
-  `enableWeakerNestedSandbox: false`; Codex forced onto a managed profile with
-  legacy Landlock disabled). Every fresh launch and resume probes the real
-  inner engine inside the exact outer spec before the pane is committed; the
-  harness executable is copied to launch-owned staging, hashed, and
-  descriptor-bound so the final process executes the proved bytes. Any gap
-  refuses with `stacked requested — refused: missing capability <name>…;
-  refusing rather than falling back`. A successful stack shows the `🔒²` badge
-  and reports its implementation as `CC+TClaude` or `Codex+TClaude`. Stacked
-  refuses on stock Ubuntu 24.04+, whose `bwrap-userns-restrict` AppArmor policy
-  denies the nested bubblewrap its in-namespace `CAP_SYS_ADMIN`; the documented
-  workaround is host-wide and costs Ubuntu's user-namespace defense-in-depth.
-  OpenCode and macOS nested Seatbelt have no stacked contract and refuse.
 - **`resource-only`** (Linux only) — no access confinement at all: the harness
   runs in its native no-confinement mode, but every launch creates and joins a
   per-launch cgroup. With `resource_limits` authored you get CPU, memory and
@@ -85,6 +70,10 @@ same layer. The values:
   `danger-full-access`), composed profile policy omitted, resource limits
   refused. Because it is recorded, a group or global default cannot silently
   re-sandbox the conversation on a later relaunch.
+
+The former `stacked` value (tclaude's sandbox with the harness's own sandbox
+nested inside it) has been removed; conversations, profiles, and templates
+that recorded it resume as tclaude’s built-in sandbox (`tclaude-layer`).
 
 Select it wherever agents are spawned: `tclaude session new --sandbox-impl`,
 `tclaude agent spawn --sandbox-impl`, a spawn profile's Sandbox field, or the
@@ -166,10 +155,8 @@ The axes:
       containing directory and reopen the entries that must stay reachable.
     - **Enforcement needs tclaude’s sandbox on Linux.** Binding one file requires a
       mount namespace whose whole boundary tclaude owns. Seatbelt,
-      `harness-builtin`, `resource-only`/`off`, and `stacked` all refuse with
-      `unsupported_sandbox_profile_file_grant`. `stacked` refuses even on Linux:
-      its inner harness-native wall is fed from directory lists, so the outer
-      bind would land while the inner wall still blocked the path.
+      `harness-builtin`, and `resource-only`/`off` all refuse with
+      `unsupported_sandbox_profile_file_grant`.
 - **Carve-outs work in both directions.** A narrower row shadows a broader one:
   a narrow `write` reopens beneath a `deny`, and a narrow `deny` hides beneath
   an allow. This most-specific-wins shape is the whole strictness mechanism —
@@ -185,12 +172,10 @@ The axes:
   be the same kind as the source — there the sandbox root *is* the host root, so
   bubblewrap has nowhere to create one; a constructed root creates it.
   Enforcement needs a real mount namespace, so it works only under
-  tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox.
+  tclaude’s sandbox on Linux.
   Seatbelt (a path filter, not a mount namespace) and `harness-builtin` refuse the launch with
   `unsupported_sandbox_profile_mount_path` rather than falling back to the
-  host path. **`stacked` carries directory rows only**: a row naming a file is
-  refused there whether or not it is remapped, so projecting a *file* needs
-  tclaude’s sandbox alone.
+  host path.
 - **`tmpfs`** — rows of `{path, size?}` mounting a temporary filesystem *inside*
   the sandbox: `{"path": "/scratch", "size": "512MiB"}`. This is the one thing a
   `filesystem` row cannot express — writable space backed by no host directory
@@ -210,11 +195,8 @@ The axes:
   for the same reason `mount_path` needs one; `filesystem_root: separate` is
   usually the answer for a path like `/scratch`. Enforcement needs a mount
   namespace whose whole boundary tclaude owns, so it works only with
-  tclaude’s sandbox alone on Linux — Seatbelt, `harness-builtin`, `resource-only`/`off`
-  and `stacked` all refuse with `unsupported_sandbox_profile_tmpfs`. `stacked`
-  refuses even on Linux: the outer layer would mount the tmpfs and the inner
-  harness-native wall, fed from host-path directory lists, would then deny the
-  harness's own tools every write to it.
+  tclaude’s sandbox on Linux — Seatbelt, `harness-builtin`, and `resource-only`/`off`
+  all refuse with `unsupported_sandbox_profile_tmpfs`.
 - **`harness_config`** — `read` | `write`, omitted meaning the default
   read-only floor over the harness's own config surface. See
   [The harness-config floor](#the-harness-config-floor) below. Composes
@@ -252,7 +234,7 @@ The axes:
   `Delegate=cpu memory pids`, which the refusal names. All three blank means no
   cgroup probing at all, except under `resource-only` (which
   always creates its cgroup) and when launching with tclaude’s sandbox on
-  Linux, alone or combined with the harness’s sandbox (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
+  Linux (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
   hosts without delegated controllers refuse by default every cgroup a launch
   cannot proceed without — an authored ceiling under any implementation, and
   `resource-only` even with no ceiling; the dashboard's "allow launch without
@@ -368,7 +350,7 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    floor over the rest of the directory intact. A floored *file* is reopened the
    same way — `{"path": "~/.claude/settings.json", "access": "write"}` — since a
    row may name a single file, though that row needs tclaude’s sandbox on Linux
-   and is refused under `stacked` and `harness-builtin` like any other file row.
+   and is refused under `harness-builtin` like any other file row.
 2. `"harness_config": "write"` turns the whole floor off, restoring the
    pre-floor posture — but only when nothing else in the chain pins it.
    Composition is strictest-wins, so an explicit `"read"` in any included,
@@ -399,8 +381,7 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    wider than its recorded parent's — an agent holding the slug can pin the
    floor on a child, but can only pass `write` down if it already has it.
 
-The floor applies with tclaude’s sandbox, alone or combined with the
-harness’s sandbox.
+The floor applies with tclaude’s sandbox.
 Under `harness-builtin` the harness's own policy governs and the axis is
 inert; under `resource-only`/`off` nothing is enforced by design. Lineage
 treats it like any other containment rule: a floored parent cannot spawn an
@@ -520,7 +501,7 @@ that can faithfully enforce it:
 | Codex legacy Landlock, or a raw `--sandbox` mode | refused |
 | Any other harness under `harness-builtin` | refused |
 
-tclaude’s sandbox, alone or combined with the harness’s sandbox, enforces the
+tclaude’s sandbox enforces the
 shape itself on both platforms. The gate keys on the rules tclaude will *emit*, not just the
 rows you authored: a bare `deny ~` with no reopens of your own still becomes a
 split policy, because the launch contract adds its own reopens.
@@ -782,7 +763,7 @@ cannot `send-keys` at tclaude's tmux server.
   escape is out of scope (the trust boundary is the Unix UID); and the sandbox
   badge is a launch-time verdict — resume re-resolves it.
 
-The dashboard badges the posture per agent: `🔒` sandbox on, `🔒²` stacked,
+The dashboard badges the posture per agent: `🔒` sandbox on,
 `⚠` off or unknown, nothing for plain inherit. An unsandboxed-autonomy warning
 fires wherever auto-approval pairs with an unprovable sandbox. The
 [credential proxies](proxies.md) are what make denying `~/.ssh` and
@@ -986,109 +967,6 @@ The launch snapshot records a degradation notice with network reason
 renders a warning badge and the exact notice rather than claiming a sandbox
 lock or changing the recorded OS-sandbox verdict.
 
-### Stacked refuses on AppArmor-restricted hosts
-
-On a stock Ubuntu 24.04 or newer host, `--sandbox-impl stacked` refuses at
-launch even though everything it needs looks installed. This is the host, not a
-broken install, and the refusal is the correct outcome.
-
-**Symptom.** The launch ends with a named capability refusal —
-`stacked_claude_inner_policy` or `stacked_claude_srt_probe` for Claude Code
-(which one depends on how far the inner harness got), `stacked_codex_bwrap_backend`
-for Codex — and the detail carries an inner `bwrap` complaint along the lines
-of *No permissions to create a new namespace*. tclaude’s sandbox alone
-on the same host works fine: the outer wall is not the problem.
-
-**Cause.** Ubuntu ships and enforces an AppArmor policy,
-`/etc/apparmor.d/bwrap-userns-restrict`, whose whole purpose is to let `bwrap`
-create a user namespace while denying capabilities to what runs inside it. The
-outer bwrap is permitted; its children are pivoted into the policy's
-`unpriv_bwrap` child profile, whose rule is `audit deny capability,` — all
-capabilities, not one. The inner bwrap needs `CAP_SYS_ADMIN` *within the user
-namespace it just created* — normally free, because it owns that namespace —
-but AppArmor's `capable` check applies to the profile regardless of namespace
-ownership. So the second wall can never be built while that policy is
-enforcing. The kernel audit line, which names whichever capability was asked
-for first, is the proof:
-
-```text
-apparmor="DENIED" operation="capable" class="cap" profile="unpriv_bwrap" comm="bwrap" capname="sys_admin"
-```
-
-**What is not the cause.** The userns sysctls are a red herring here.
-`kernel.apparmor_restrict_unprivileged_userns=0` alone does *not* fix it, and
-the denial reproduces with `kernel.unprivileged_userns_clone=1`: the deny is
-profile-local. CI is blind to this failure because its runners do not ship the
-policy, so a green nested-namespace assumption pin says nothing about your
-laptop.
-
-**Diagnose it without root.** If the policy file exists and nothing disables
-it, this is almost certainly what you are hitting:
-
-```bash
-ls -l /etc/apparmor.d/bwrap-userns-restrict   # present on stock Ubuntu 24.04+
-ls -l /etc/apparmor.d/disable/                # an entry here means it is unloaded
-ls -l /etc/apparmor.d/force-complain/         # an entry here means it only logs
-grep -n 'flags=(' /etc/apparmor.d/bwrap-userns-restrict   # `complain` here means the same
-```
-
-Confirm it, with root, from the audit log and the loaded-profile list:
-
-```bash
-sudo dmesg | grep -F 'profile="unpriv_bwrap"'
-sudo aa-status | grep -F bwrap
-```
-
-**Workaround, and what it costs.** Both halves are required, and the reason is
-worth understanding before you run them: the policy is also what *grants*
-`/usr/bin/bwrap` its `userns` permission. Unload it and bwrap becomes
-unconfined — at which point the global unprivileged-userns restriction, which
-the profile had been standing in front of, applies to it. So unloading alone
-breaks the outer wall too, and the sysctl alone leaves the child-profile deny
-in place. Persist the sysctl and unload the policy:
-
-```bash
-echo 'kernel.apparmor_restrict_unprivileged_userns = 0' \
-  | sudo tee /etc/sysctl.d/99-tclaude-userns.conf
-sudo sysctl --system
-sudo ln -s /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
-sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
-```
-
-This is a **host-wide security trade-off, not a tclaude setting**: it removes
-Ubuntu's defence-in-depth around unprivileged user namespaces for every process
-on the machine, including ones that have nothing to do with tclaude.
-tclaude’s sandbox alone needs none of this. Decide accordingly, and prefer
-the temporary form when you only want to observe stacked once:
-
-```bash
-sudo aa-complain /etc/apparmor.d/bwrap-userns-restrict
-sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-# … run the stacked launch …
-sudo aa-enforce /etc/apparmor.d/bwrap-userns-restrict
-sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
-```
-
-**Reversal** of the persistent form is symmetric — reload the policy and drop
-the sysctl file:
-
-```bash
-sudo rm /etc/apparmor.d/disable/bwrap-userns-restrict
-sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
-sudo rm /etc/sysctl.d/99-tclaude-userns.conf
-sudo sysctl --system
-```
-
-Expect the dashboard's stacked *availability* to look green on such a host
-anyway: that disclosure resolves the harness engine only, and the live nested
-round-trip at launch is the authority. What the dashboard does add is a warning
-that stacked is *likely* blocked when it sees this shape — the policy file
-present, with no `disable/` or `force-complain/` entry — with a link here, and
-the launch refusal names the same likely cause when its own output matches. Both
-are guesses made from what an unprivileged daemon can read, not determinations:
-agentd cannot read `dmesg` or `aa-status`. The supported posture for these hosts
-is still open; what stands today is that stacked fails closed and says so.
-
 ### An untrusted `bwrap`
 
 **Symptom.** Every launch with tclaude’s sandbox refuses with `tclaude’s sandbox could not
@@ -1190,7 +1068,6 @@ cause, not a restored pre-flight contract.
 | `…was a regular file when this rule was authored and is now a directory` | The pathname a file row named was replaced by a directory; re-author the row if that is intended |
 | `git add -A`: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths |
 | Launch refused, `…reopen_under_deny` | Claude Code not sandbox `on`, or Codex not Linux managed-profile with a verified probe |
-| `stacked` refused on Ubuntu 24.04+ | The `bwrap-userns-restrict` AppArmor policy denies nested bubblewrap |
 | `could not resolve a trusted bubblewrap (bwrap)` | A group/world-writable component above `bwrap` — see [an untrusted `bwrap`](#an-untrusted-bwrap) |
 | Pane dies instantly, `refused: the host denied this process permission to execute bubblewrap` | The tmux server's confinement forbids the exec — see [where the probe runs](#where-the-sandbox-capability-probe-runs) |
 | Profile looks strict, nothing is denied | Claude Code sandbox `inherit`/`off` — the deny rows are emitted but the sandbox never engages |

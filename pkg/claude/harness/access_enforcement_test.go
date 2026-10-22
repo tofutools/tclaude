@@ -253,15 +253,6 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Empty(t, notices,
 		"an unset socket axis must not acquire a constructed root under host-open network")
 
-	// The stacked implementation composes this root with a harness-native inner
-	// sandbox that has no smoke evidence for the combination, so it keeps the
-	// pre-TCL-798 rating.
-	caps, err = accessEnforcementForTargetForTest(
-		h, sandboxpolicy.ImplementationStacked, hostOpenClosedSockets, ClaudeSandboxOff, "linux",
-	)
-	require.NoError(t, err)
-	assert.Equal(t, EnforceNone, caps.socketClosed)
-
 	// A deny entry renders the filtered posture instead of host-open. Its
 	// private network namespace and constructed root enforce the same full
 	// socket boundary as closed networking.
@@ -309,36 +300,6 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.AccessModeClosed,
 		rendered.UnixSockets.Mode)
-
-	// An authored filtered posture can still be widened to host-open when the
-	// target cannot enforce its network rules. Do not let that widening smuggle
-	// an unsupported host-open constructed root past the explicit harness and
-	// implementation gate.
-	for _, tc := range []struct {
-		name           string
-		harness        *Harness
-		implementation sandboxpolicy.Implementation
-		mode           string
-	}{
-		{
-			name: "stacked", harness: h,
-			implementation: sandboxpolicy.ImplementationStacked,
-			mode:           ClaudeSandboxOff,
-		},
-	} {
-		t.Run("filtered fallback "+tc.name, func(t *testing.T) {
-			fallbackCaps, fallbackErr := accessEnforcementForTargetForTest(
-				tc.harness, tc.implementation, blockedBaselineClosedSockets,
-				tc.mode, "linux",
-			)
-			require.NoError(t, fallbackErr)
-			assert.Equal(t, EnforceNone, fallbackCaps.socketClosed)
-			_, _, fallbackErr = PlanAccessEnforcement(
-				blockedBaselineClosedSockets, fallbackCaps)
-			require.ErrorContains(t, fallbackErr,
-				`unix_sockets "closed" cannot be enforced with open network access`)
-		})
-	}
 
 	// The public resolver consumes the same axes rather than returning a static
 	// per-target capability descriptor. Unlike the table helper above it reads
@@ -571,8 +532,6 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 		{"Codex tclaude", MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer, SandboxDangerFull},
 		{"OpenCode tclaude", MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer, OpenCodeSandboxTclaudeLayer},
 		{"Shell tclaude", MustGet(ShellName), sandboxpolicy.ImplementationTclaudeLayer, ShellSandboxOff},
-		{"Claude stacked", Default(), sandboxpolicy.ImplementationStacked, ClaudeSandboxOn},
-		{"Codex stacked", MustGet(CodexName), sandboxpolicy.ImplementationStacked, SandboxManagedProfile},
 	}
 	for _, target := range targets {
 		for _, platform := range []string{"linux", "darwin"} {
@@ -1727,11 +1686,6 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "darwin", true)
 	require.ErrorContains(t, err, "requires tclaude’s sandbox on Linux")
-	_, err = accessEnforcementTable(
-		h, sandboxpolicy.ImplementationStacked, axes,
-		OpenCodeSandboxTclaudeLayer, "linux", true)
-	require.ErrorContains(t, err, "requires tclaude’s sandbox on Linux")
-	require.ErrorContains(t, err, `harness "opencode", sandbox implementation "stacked", platform "linux"`)
 }
 
 func TestExplicitSeparateFilesystemRootRequiresProvenLinuxLayer(t *testing.T) {
@@ -1750,7 +1704,6 @@ func TestExplicitSeparateFilesystemRootRequiresProvenLinuxLayer(t *testing.T) {
 		platform       string
 	}{
 		{sandboxpolicy.ImplementationHarnessBuiltin, "linux"},
-		{sandboxpolicy.ImplementationStacked, "linux"},
 		{sandboxpolicy.ImplementationTclaudeLayer, "darwin"},
 	} {
 		_, err := accessEnforcementTable(

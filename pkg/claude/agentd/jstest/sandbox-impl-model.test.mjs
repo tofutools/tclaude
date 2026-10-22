@@ -1,7 +1,5 @@
-//ci:reads docs/sandboxing.md
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -16,17 +14,11 @@ const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in', descr: 'Current behavior: {harness} owns containment.' },
     { value: 'tclaude-layer', label: 'tclaude’s built-in sandbox', descr: 'Linux only' },
-    { value: 'stacked', label: 'tclaude + {harness} sandboxes' },
     { value: 'off', label: 'Off', descr: 'Disables OS-level confinement.' },
   ],
   default: 'harness-builtin',
   host_available: true,
   server_host_available: true,
-  stacked: {
-    claude: { available: true, executable_identity: '/bin/srt|1' },
-    opencode: { available: false, unavailable_reason: 'no reviewed nested OS-sandbox contract' },
-    unsupported: { available: false, unavailable_reason: 'no reviewed nested OS-sandbox contract' },
-  },
 };
 
 const modeHelp = JSON.parse(readFileSync(new URL('./mode-help-fixture.json', import.meta.url), 'utf8'));
@@ -34,12 +26,12 @@ const modeHelp = JSON.parse(readFileSync(new URL('./mode-help-fixture.json', imp
 const harnesses = [
   {
     name: 'claude', display_name: 'Claude Code', models: ['sonnet'],
-    can_tclaude_layer: true, can_stacked: true, can_builtin_os_sandbox: true,
+    can_tclaude_layer: true, can_builtin_os_sandbox: true,
     can_sandbox: true, sandbox_modes: ['inherit', 'on', 'off'], default_sandbox: 'inherit',
   },
   {
     name: 'codex', display_name: 'Codex CLI', models: [],
-    can_tclaude_layer: true, can_stacked: true, can_builtin_os_sandbox: true,
+    can_tclaude_layer: true, can_builtin_os_sandbox: true,
     can_sandbox: true,
     sandbox_modes: ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
     default_sandbox: 'tclaude-agent',
@@ -87,10 +79,6 @@ test('sandbox mode help tells the truth for the selected implementation', async 
     modeHelp['opencode/sandbox/tclaude-layer'],
     'an inherited OpenCode implementation never shadows its dedicated mode help',
   );
-  assert.match(
-    model.harnessBuiltinModeHelpForImplementation(off, 'stacked', 'claude'),
-    /outer mounts and the harness's real nested OS sandbox both enforce/,
-  );
 });
 
 test('sandbox-implementation view gates on the harness, discloses on the host', async (t) => {
@@ -112,7 +100,7 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   assert.equal(claude.sandboxImplDefault, 'harness-builtin');
   assert.deepEqual(
     claude.sandboxImplOptions.map((o) => o.value),
-    ['harness-builtin', 'tclaude-layer', 'stacked', 'off'],
+    ['harness-builtin', 'tclaude-layer', 'off'],
   );
 
   // Read from the capability flag, not the harness NAME — so a later workstream
@@ -123,7 +111,7 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   assert.equal(opencode.sandboxImplCanBuiltin, false);
   assert.deepEqual(
     opencode.sandboxImplOptions.map((o) => o.value),
-    ['tclaude-layer', 'stacked', 'off'],
+    ['tclaude-layer', 'off'],
     'OpenCode must never offer a harness-builtin OS sandbox that does not exist',
   );
   // A blank row for OpenCode resolves to harness-builtin server-side, which is
@@ -206,10 +194,6 @@ test('the harness-owned option is named after the actual harness', async (t) => 
   const builtin = claude.sandboxImplOptions.find((o) => o.value === 'harness-builtin');
   assert.equal(builtin.label, 'Claude Code built-in');
   assert.equal(builtin.descr, 'Current behavior: Claude Code owns containment.');
-  assert.equal(
-    claude.sandboxImplOptions.find((o) => o.value === 'stacked').label,
-    'tclaude + Claude Code sandboxes',
-  );
   // Options without the placeholder are passed through untouched.
   assert.equal(
     claude.sandboxImplOptions.find((o) => o.value === 'tclaude-layer').label,
@@ -351,114 +335,26 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   // OpenCode has a row backed by the relay-free server capability.
   const oc = model.spawnCapabilityView({ harness: 'opencode' }, context);
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, oc).warn, false);
-
-  const stacked = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
-  assert.equal(stacked.warn, false);
-  assert.match(stacked.text, /fresh model-free allowed\/denied round-trip/);
-
-  const refused = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, oc);
-  assert.equal(refused.warn, true);
-  assert.match(refused.text, /Apply or launch will refuse/);
 });
 
-test('a likely AppArmor nested-bwrap block warns and links the guide', async (t) => {
-  const harness = await createPreactHarness(t);
-  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
-  const context = {
-    harnesses,
-    sandboxImpl: { ...sandboxImpl, stacked_apparmor_nested_bwrap_likely: true },
-  };
-  const view = model.spawnCapabilityView({ harness: 'claude' }, context);
-
-  // The engine resolved, so per-harness availability still says AVAILABLE on
-  // exactly this host. Without this branch the operator would meet the block
-  // as a failed launch after a green hint.
-  assert.equal(view.sandboxImplStackedAvailability.available, true);
-  const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
-  assert.equal(hint.warn, true);
-  assert.match(hint.text, /Likely blocked on this host/);
-  assert.match(hint.text, /bwrap-userns-restrict/);
-  assert.match(hint.text, /probably refuse/, 'says likely, never asserts the deny');
-  assert.equal(hint.doc.href, model.SANDBOX_APPARMOR_DOC.href);
-  assert.match(hint.doc.href, /#stacked-refuses-on-apparmor-restricted-hosts$/);
-
-  // A link to a heading that no longer exists is worse than no link, so the
-  // anchor is pinned to the guide rather than trusted to survive an edit.
-  const guide = readFileSync(new URL('../../../../docs/sandboxing.md', import.meta.url), 'utf8');
-  assert.ok(
-    guide.includes('### Stacked refuses on AppArmor-restricted hosts'),
-    'docs/sandboxing.md must still carry the heading the hint links to',
-  );
-
-  // The hint is scoped to stacked: the single-layer wall works on such a host,
-  // so claiming otherwise under tclaude-layer would be a fresh overclaim.
-  assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view).warn, false);
-  assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view).doc, undefined);
-
-  // A host without the policy keeps the plain launch-probe copy and no link.
-  const clean = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
-  const plain = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, clean);
-  assert.equal(plain.warn, false);
-  assert.equal(plain.doc, undefined);
-});
-
-// The hint is only useful if the link actually reaches the DOM. Both the spawn
-// dialog and the profile editor render this component, so one test covers the
-// surfacing for both — and would catch a call site that went back to
-// interpolating plain text and silently dropped the link.
-test('the rendered hint carries its documentation link', async (t) => {
+// Both the spawn dialog and the profile editor render this component, so one
+// test covers the surfacing for both.
+test('the rendered hint keeps its text and warning styling', async (t) => {
   const harness = await createPreactHarness(t);
   const { SandboxImplHint } = await harness.importDashboardModule('js/sandbox-impl-hint.js');
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
-  const view = model.spawnCapabilityView({ harness: 'claude' }, {
-    harnesses,
-    sandboxImpl: { ...sandboxImpl, stacked_apparmor_nested_bwrap_likely: true },
-  });
-  const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
+  const view = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
+  const hint = model.sandboxImplHintFor({ sandboxImpl: 'off' }, view);
 
   const rendered = await harness.mount(
     harness.html`<${SandboxImplHint} hint=${hint} id="hint" />`,
   );
   const node = rendered.container.querySelector('#hint');
   assert.ok(node.classList.contains('warn'), 'a warning hint keeps its warn styling');
-  assert.match(node.textContent, /Likely blocked on this host/);
-  const link = node.querySelector('a');
-  assert.equal(link.getAttribute('href'), model.SANDBOX_APPARMOR_DOC.href);
-  assert.equal(link.getAttribute('rel'), 'noopener');
-  assert.equal(link.getAttribute('target'), '_blank');
-  assert.equal(link.textContent, model.SANDBOX_APPARMOR_DOC.label);
+  assert.equal(node.textContent, hint.text);
 
-  // A hint without a doc renders no anchor at all, and no hint renders nothing.
-  const plain = await harness.mount(harness.html`<${SandboxImplHint}
-    hint=${{ warn: false, text: 'Launch checks sandbox availability.' }} id="plain" />`);
-  assertAbsent(plain.container.querySelector('#plain a'));
   const absent = await harness.mount(harness.html`<${SandboxImplHint} hint=${null} />`);
   assert.equal(absent.container.textContent, '');
-});
-
-test('the AppArmor link rides along with an already-unavailable stacked reason', async (t) => {
-  const harness = await createPreactHarness(t);
-  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
-  const context = {
-    harnesses,
-    sandboxImpl: {
-      ...sandboxImpl,
-      stacked_apparmor_nested_bwrap_likely: true,
-      stacked: { ...sandboxImpl.stacked, claude: { available: false, unavailable_reason: 'claude is not on PATH' } },
-    },
-  };
-  const view = model.spawnCapabilityView({ harness: 'claude' }, context);
-
-  const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
-  assert.equal(hint.warn, true);
-  // The concrete refusal keeps the lead. The policy is named as a SECOND wall
-  // to clear rather than as an explanation of this refusal — it is not one, and
-  // claiming otherwise would send the operator to change host security policy
-  // over a missing binary.
-  assert.match(hint.text, /claude is not on PATH/);
-  assert.match(hint.text, /will likely block the nested sandbox too/);
-  assert.doesNotMatch(hint.text, /likely cause/);
-  assert.equal(hint.doc.href, model.SANDBOX_APPARMOR_DOC.href);
 });
 
 test('an unavailable host warns with the concrete reason and the real consequence', async (t) => {
@@ -477,7 +373,7 @@ test('an unavailable host warns with the concrete reason and the real consequenc
   // Still selectable — the row is rendered and the option list is intact.
   assert.equal(view.showSandboxImpl, true);
   assert.equal(view.sandboxImplHostAvailable, false);
-  assert.equal(view.sandboxImplOptions.length, 4);
+  assert.equal(view.sandboxImplOptions.length, 3);
 
   const hint = model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view);
   assert.equal(hint.warn, true);
@@ -528,8 +424,6 @@ test('the spawn request omits an untouched row and sends an explicit one', async
 
   const layered = model.buildSpawnRequest({ ...base, sandboxImpl: 'tclaude-layer' }, context, null);
   assert.equal(layered.body.sandbox_implementation, 'tclaude-layer');
-  const stacked = model.buildSpawnRequest({ ...base, sandboxImpl: 'stacked' }, context, null);
-  assert.equal(stacked.body.sandbox_implementation, 'stacked');
   const off = model.buildSpawnRequest({ ...base, sandboxImpl: 'off' }, context, null);
   assert.equal(off.body.sandbox_implementation, 'off');
   assert.equal(off.body.omit_sandbox_profiles, true,
@@ -578,9 +472,9 @@ test('the spawn request omits an untouched row and sends an explicit one', async
   // The browser never erases an incapable selection: the server is the refusal
   // authority and the inline warning tells the operator what apply will do.
   const unsupported = model.buildSpawnRequest(
-    { ...base, harness: 'unsupported', sandboxImpl: 'stacked' }, context, null,
+    { ...base, harness: 'unsupported', sandboxImpl: 'tclaude-layer' }, context, null,
   );
-  assert.equal(unsupported.body.sandbox_implementation, 'stacked');
+  assert.equal(unsupported.body.sandbox_implementation, 'tclaude-layer');
 });
 
 test('the unenforced-network override is wire-sparse and fresh-dialog only', async (t) => {
@@ -617,15 +511,15 @@ test('the unenforced-network override is wire-sparse and fresh-dialog only', asy
     'a harness switch requires a fresh explicit authorization');
 });
 
-test('switching to an incapable harness preserves stacked and keeps its warning visible', async (t) => {
+test('switching to an incapable harness preserves the selection and keeps its warning visible', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
   const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
 
   const switched = model.selectSpawnHarness(
-    { group: 'crew', harness: 'claude', sandboxImpl: 'stacked' }, 'unsupported', context,
+    { group: 'crew', harness: 'claude', sandboxImpl: 'harness-builtin' }, 'opencode', context,
   );
-  assert.equal(switched.sandboxImpl, 'stacked');
+  assert.equal(switched.sandboxImpl, 'harness-builtin');
   const view = model.spawnCapabilityView(switched, context);
   assert.equal(view.showSandboxImpl, true);
   assert.equal(model.sandboxImplHintFor(switched, view).warn, true);

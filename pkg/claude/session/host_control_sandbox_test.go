@@ -14,7 +14,7 @@ type fakeHostControlSandbox struct {
 	denyPath string
 }
 
-func TestOneShotLaunchPostureCarriesOuterPolicyIntoInnerWall(t *testing.T) {
+func TestOneShotLaunchPostureCarriesPolicyIntoHarnessWall(t *testing.T) {
 	h, err := harness.Resolve(harness.DefaultName)
 	require.NoError(t, err)
 	cache := testutil.CanonicalTempDir(t)
@@ -23,7 +23,7 @@ func TestOneShotLaunchPostureCarriesOuterPolicyIntoInnerWall(t *testing.T) {
 		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "GOCACHE", Value: cache}},
 	}, nil)
 	posture, err := OneShotLaunchPosture(testutil.CanonicalTempDir(t), h,
-		harness.ClaudeSandboxOn, "default", false, &snapshot, sandboxpolicy.ImplementationStacked)
+		harness.ClaudeSandboxOn, "default", false, &snapshot, sandboxpolicy.ImplementationHarnessBuiltin)
 	require.NoError(t, err)
 	require.Contains(t, posture.SandboxWriteDirs, cache)
 	require.Equal(t, cache, posture.ShellEnvironment["GOCACHE"])

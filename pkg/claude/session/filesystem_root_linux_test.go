@@ -36,7 +36,7 @@ func TestExplicitFilesystemRootLaunchPostureUsesProvenTargetMatrix(t *testing.T)
 
 	_, err = TclaudeLayerLaunchRootPosture(
 		harness.MustGet(harness.CodexName),
-		sandboxpolicy.ImplementationStacked,
+		sandboxpolicy.ImplementationHarnessBuiltin,
 		sandboxpolicy.NetworkHostOpen,
 		effective,
 	)

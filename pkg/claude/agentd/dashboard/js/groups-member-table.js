@@ -280,7 +280,7 @@ export function FastModeBadge({ member }) {
 // the Groups tab only needs the resolved ON/OFF summary now.
 function osSandboxBadge(mode, state, unverified, implementation) {
   if (state === 'on') {
-    const danger = implementation === 'tclaude-layer' || implementation === 'stacked'
+    const danger = implementation === 'tclaude-layer'
       ? false
       : implementation && implementation !== 'harness-builtin'
         ? true
@@ -299,7 +299,6 @@ function osSandboxBadge(mode, state, unverified, implementation) {
 function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
-  const stacked = member.state?.sandbox_implementation === 'stacked';
   const unenforcedOverride = (member.state?.sandbox_access_notices || []).some((notice) =>
     notice?.class === 'degradation'
       && notice?.axis === 'network'
@@ -314,12 +313,9 @@ function sandboxIndicator(member) {
       !!member.state?.os_sandbox_unverified, member.state?.sandbox_implementation || '');
     if (!badge) return null;
     if (unenforcedOverride) {
-      return { status: 'NOT ENFORCED', danger: true, offline, glyph: '' };
+      return { status: 'NOT ENFORCED', danger: true, offline };
     }
-    return {
-      status: badge.status, danger: badge.danger, offline,
-      glyph: stacked && !badge.danger ? '🔒²' : '',
-    };
+    return { status: badge.status, danger: badge.danger, offline };
   }
   if (!mode || mode === 'inherit') return null;
   // These modes explicitly do not provide OS confinement. OpenCode's
@@ -339,9 +335,6 @@ function sandboxImplementationLabel(member, badge) {
   if (badge.status === 'OFF') return 'None';
   const implementation = member.state?.sandbox_implementation || 'harness-builtin';
   if (implementation === 'tclaude-layer') return 'tclaude’s built-in sandbox';
-  if (implementation === 'stacked') {
-    return `tclaude + ${harnessLabels(member.state?.harness || 'claude').short} sandboxes`;
-  }
   if (implementation === 'harness-builtin') {
     return harnessLabels(member.state?.harness || 'claude').short;
   }
@@ -391,7 +384,7 @@ function codexOwnSandboxUnlockUnsupported(member, unlocked) {
   const state = member.state || {};
   const implementation = state.sandbox_implementation || 'harness-builtin';
   return !unlocked && state.harness === 'codex'
-    && (implementation === 'harness-builtin' || implementation === 'stacked');
+    && implementation === 'harness-builtin';
 }
 
 function sandboxTooltip(member, badge, actionable, unlocked) {
@@ -449,18 +442,6 @@ const SANDBOX_FIDELITY = new Map([
   // TCL-781 + TCL-790 rulings: Darwin OpenCode legacy shared XDG state.
   [`tclaude-layer\0tclaude-layer (Seatbelt/sandbox-exec; OpenCode tool-executing server confined; mutable XDG privacy covers data/cache/state only; config-base writes are not redirected); ${OPENCODE_LEGACY_NOTE}`,
     'Known partial boundary: the attach pane stayed outside; mutable XDG privacy covered data/cache/state only, and config-base writes were not redirected. Legacy shared XDG state was recorded.'],
-  // TCL-790 ruling: a host-open stacked outer wall retains ambient host sockets.
-  ['stacked\0Stacked: tclaude bwrap (host-open) + Claude SRT bwrap/seccomp',
-    'Known partial boundary: both recorded walls were active, but the outer wall retained host networking and ambient host Unix sockets.'],
-  // TCL-790 ruling: a host-open stacked outer wall retains ambient host sockets.
-  ['stacked\0Stacked: tclaude bwrap (host-open) + Codex bwrap managed profile',
-    'Known partial boundary: both recorded walls were active, but the outer wall retained host networking and ambient host Unix sockets.'],
-  // TCL-790 ruling: isolated stacked launches record both walls plus namespace fidelity.
-  ['stacked\0Stacked: tclaude bwrap (isolated network/PIDs; constructed root) + Claude SRT bwrap/seccomp',
-    'Recorded fidelity: both walls were active inside an isolated network/PID namespace and constructed root.'],
-  // TCL-790 ruling: isolated stacked launches record both walls plus namespace fidelity.
-  ['stacked\0Stacked: tclaude bwrap (isolated network/PIDs; constructed root) + Codex bwrap managed profile',
-    'Recorded fidelity: both walls were active inside an isolated network/PID namespace and constructed root.'],
 ]);
 
 function sandboxRecordedDetails(member) {
@@ -469,7 +450,7 @@ function sandboxRecordedDetails(member) {
   const source = state.os_sandbox_source || state.sandbox_mode_source || '';
   const lines = [
     `Status: ${state.os_sandbox_state || state.sandbox_mode || 'Not recorded'}`,
-    `Implementation: ${implementation === 'tclaude-layer' || implementation === 'stacked'
+    `Implementation: ${implementation === 'tclaude-layer'
       ? sandboxImplementationLabel(member, { status: 'ON' }) : implementation}`,
     // Named for what it holds (TCL-1023): this is the HARNESS'S OWN sandbox
     // setting, not tclaude's enforcement. A tclaude-layer launch stands the
@@ -513,7 +494,7 @@ export function SandboxBadge({ member, showDetails = false }) {
     data-act=${actionable ? 'sandbox-restart' : null}
     data-action=${actionable ? action : null}
     ...${actionable ? memberAttrs(member) : {}}
-    aria-label=${title} title=${title}>${badge.danger ? '⚠' : (badge.glyph || '🔒')}</span>${showDetails ? html`<button
+    aria-label=${title} title=${title}>${badge.danger ? '⚠' : '🔒'}</span>${showDetails ? html`<button
     type="button" class="sandbox-details-chevron" data-act="sandbox-details"
     data-details=${sandboxRecordedDetails(member)} ...${memberAttrs(member)}
     title="Recorded sandbox details" aria-label="Recorded sandbox details">›</button>` : null}</span>`;

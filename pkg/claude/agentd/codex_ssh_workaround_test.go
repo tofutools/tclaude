@@ -44,7 +44,7 @@ func TestSSHWorkaroundAppliesToEveryTclaudeLayerHarness(t *testing.T) {
 		harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName,
 	} {
 		for _, implementation := range []sandboxpolicy.Implementation{
-			sandboxpolicy.ImplementationTclaudeLayer, sandboxpolicy.ImplementationStacked,
+			sandboxpolicy.ImplementationTclaudeLayer,
 		} {
 			assert.True(t, codexSSHWorkaroundApplies(
 				harnessName, harness.SandboxDangerFull,
@@ -80,7 +80,7 @@ func TestSSHWorkaroundAppliesToEveryTclaudeLayerHarness(t *testing.T) {
 		string(sandboxpolicy.ImplementationHarnessBuiltin), &ordinary))
 	assert.True(t, sshWorkaroundImplementationEligible(
 		harness.DefaultName, harness.SandboxDangerFull,
-		string(sandboxpolicy.ImplementationStacked)))
+		string(sandboxpolicy.ImplementationTclaudeLayer)))
 	assert.False(t, sshWorkaroundImplementationEligible(
 		harness.DefaultName, harness.SandboxDangerFull,
 		string(sandboxpolicy.ImplementationOff)))
@@ -234,13 +234,4 @@ func TestSSHWorkaroundProfilePreservesIntentAcrossSandboxComposition(t *testing.
 	require.NotNil(t, layeredClaude)
 	require.NotNil(t, layeredClaude.SSHWorkaround)
 	assert.Equal(t, runtime.GOOS == "linux", *layeredClaude.SSHWorkaround)
-
-	stackedClaude, fail := buildProfileFromJSON(spawnProfileJSON{
-		Name: "stacked-claude", Harness: harness.DefaultName,
-		SandboxImplementation: "stacked", SSHWorkaround: &on,
-	})
-	require.Nil(t, fail)
-	require.NotNil(t, stackedClaude)
-	require.NotNil(t, stackedClaude.SSHWorkaround)
-	assert.Equal(t, runtime.GOOS == "linux", *stackedClaude.SSHWorkaround)
 }

@@ -207,6 +207,32 @@ func TestJSReadsDocsHeuristic(t *testing.T) {
 	}
 }
 
+// A Node suite's directive is credited to the nearest Go package above it,
+// the one whose test runs the suite. No real suite declares a doc read today,
+// so the crediting is pinned on a synthetic tree.
+func TestJSReadsDirectiveCreditsRunningGoPackage(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("pkg/runner/runner_test.go", "package runner\n")
+	write("pkg/runner/suites/a.test.mjs", "//ci:reads docs/guide.md\nimport test from 'node:test';\n")
+	scan, err := scanGoDirs(root)
+	if err != nil {
+		t.Fatalf("scanGoDirs: %v", err)
+	}
+	if got, want := scan.docReaders["docs/guide.md"], []string{"pkg/runner"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("docReaders[docs/guide.md] = %v, want %v", got, want)
+	}
+}
+
 // The directive only matters if a doc change reaches its declaring package
 // and nothing else, so pin the round trip against the real tree.
 func TestDocChangesSelectOnlyDeclaredReaders(t *testing.T) {
@@ -218,12 +244,6 @@ func TestDocChangesSelectOnlyDeclaredReaders(t *testing.T) {
 	got, reason := s.mapChangedFiles([]string{"docs/dashboard.md"})
 	if reason != "" || !got[agentd] {
 		t.Errorf("docs/dashboard.md mapped to (%v, %q), want %s selected", got, reason, agentd)
-	}
-	// A Node suite's directive is credited to the Go package that runs it.
-	const jstest = agentd + "/jstest"
-	got, reason = s.mapChangedFiles([]string{"docs/sandboxing.md"})
-	if reason != "" || !got[jstest] {
-		t.Errorf("docs/sandboxing.md mapped to (%v, %q), want %s selected", got, reason, jstest)
 	}
 	// A doc no test reads selects nothing, rather than the full shard.
 	for _, doc := range []string{"docs/federation.md", "README.md", "mkdocs.yml"} {

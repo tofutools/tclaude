@@ -619,7 +619,7 @@ func TestResolveTclaudeLayerCodexProbeSelectsTheLaunchPermissionProfile(t *testi
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
 		`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`), 0o600))
 
-	// tclaude passes `-p <profile>` itself on the stacked path, so it never
+	// tclaude passes `-p <profile>` itself for a managed profile, so it never
 	// reaches the ExtraArgs gate. The profile layers its own config above the
 	// base user config and can carry provider routing, so a probe that did not
 	// select it would read a different config than the launch gets.

@@ -145,24 +145,6 @@ func resolveBwrapServerBinary(
 	return resolveBwrapBinary(posture, root)
 }
 
-func tclaudeLayerStackedCommand(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	string,
-	string,
-	string,
-	bool,
-	string,
-) (string, error) {
-	return "", fmt.Errorf(
-		"stacked tclaude’s sandbox is refused on macOS: nested Seatbelt is unsupported")
-}
-
 func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs []string,

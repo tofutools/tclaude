@@ -9,7 +9,6 @@ const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in' },
     { value: 'tclaude-layer', label: 'tclaude’s built-in sandbox' },
-    { value: 'stacked', label: 'tclaude + {harness} sandboxes' },
     { value: 'off', label: 'Off' },
   ],
   default: 'harness-builtin',
@@ -262,7 +261,7 @@ test('OpenCode profile editor preserves explicit sandbox and tool overrides', as
 
   const sandbox = host.querySelector('#profile-editor-sandbox-impl');
   assert.deepEqual([...sandbox.options].map((option) => option.value),
-    ['', 'tclaude-layer', 'stacked', 'off']);
+    ['', 'tclaude-layer', 'off']);
   assert.equal(selectedValue(sandbox), 'off');
   const approval = host.querySelector('#profile-editor-approval');
   assert.equal(selectedValue(approval), 'deny',
@@ -330,7 +329,6 @@ test('profile editor names the harness-owned sandbox after the selected harness'
       'Unset (resolved defaults at spawn)',
       'Claude Code built-in',
       'tclaude’s built-in sandbox',
-      'tclaude + Claude Code sandboxes',
       'Off',
     ],
   );
@@ -358,7 +356,6 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [
       'Unset (resolved defaults at spawn)',
       'tclaude’s built-in sandbox (recommended)',
-      'tclaude + OpenCode sandboxes',
       'Off',
     ],
   );
@@ -2292,9 +2289,9 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     network: { mode: 'list', allow: [{ domain: 'api.anthropic.com', ports: [443] }] },
     unix_sockets: { mode: 'closed' },
   }, options: { group: 'crew' }, catalog: [
-    { name: 'claude', display_name: 'Claude Code', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
-    { name: 'codex', display_name: 'Codex', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
-    { name: 'opencode', display_name: 'OpenCode', can_builtin_os_sandbox: false, can_tclaude_layer: true, can_stacked: false },
+    { name: 'claude', display_name: 'Claude Code', can_builtin_os_sandbox: true, can_tclaude_layer: true },
+    { name: 'codex', display_name: 'Codex', can_builtin_os_sandbox: true, can_tclaude_layer: true },
+    { name: 'opencode', display_name: 'OpenCode', can_builtin_os_sandbox: false, can_tclaude_layer: true },
   ] });
   const predictions = [];
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
@@ -2359,7 +2356,6 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     [
       'Codex built-in sandbox',
       'tclaude’s built-in sandbox',
-      'tclaude + Codex sandboxes',
     ],
   );
   await waitForCondition(harness,
@@ -3897,8 +3893,6 @@ test('profile SSH workaround covers managed Codex and tclaude sandbox layers', a
   assert.equal(model.profilePayload(claude, null, catalog).ssh_workaround, false);
 	const layeredClaude = { ...claude, sandbox_implementation: 'tclaude-layer', ssh_workaround: true };
 	assert.equal(model.profilePayload(layeredClaude, null, catalog).ssh_workaround, true);
-	const stackedClaude = { ...claude, sandbox_implementation: 'stacked', ssh_workaround: true };
-	assert.equal(model.profilePayload(stackedClaude, null, catalog).ssh_workaround, true);
 });
 
 // TCL-865. The editor exposes two different resolutions next to each other, and
@@ -3923,7 +3917,7 @@ test('sandbox editor separates resolved launch defaults from composed sandbox la
     options: { group: 'crew' },
     catalog: [{
       name: 'claude', display_name: 'Claude Code',
-      can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true,
+      can_builtin_os_sandbox: true, can_tclaude_layer: true,
     }],
   });
   const axis = (outcome) => ({ tier: '1 write rule', outcome, detail: 'resolver-owned detail' });
@@ -4051,7 +4045,7 @@ test('mount-path control discloses a projection and refuses it on a deny row', a
   const mountHelpBody = mountHelp.nextElementSibling;
   assert.match(mountHelpBody.textContent, /not visible inside the sandbox at all/,
     'the disclosure states what the host path stops being');
-  assert.match(mountHelpBody.textContent, /tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox/);
+  assert.match(mountHelpBody.textContent, /tclaude’s sandbox on Linux only/);
   assert.match(mountHelpBody.textContent, /never fall back to exposing the host path/);
   assert.match(mountHelpBody.textContent, /\/srv\/corpus/,
     'it names the row it belongs to, not "the host directory"');

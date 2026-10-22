@@ -137,7 +137,6 @@ func TestChildSandboxGrantsDirWrite(t *testing.T) {
 	// the no-cwd-write exemption there.
 	for _, implementation := range []string{
 		string(sandboxpolicy.ImplementationTclaudeLayer),
-		string(sandboxpolicy.ImplementationStacked),
 		"not-an-implementation",
 	} {
 		assert.Truef(t, childSandboxGrantsDirWrite(

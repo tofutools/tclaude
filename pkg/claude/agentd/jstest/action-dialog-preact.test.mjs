@@ -387,7 +387,7 @@ test("another node's sandbox picker reads that node's posture and catalog and as
     getSnapshot: () => ({ harnesses: [], sandbox_impl: {} }),
     fetchImpl: async (url, options = {}) => {
       requests.push([url, options.method || 'GET']);
-      return new Response(JSON.stringify(replies[url] || { sandbox_implementation: 'stacked' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify(replies[url] || { sandbox_implementation: 'tclaude-layer' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
     notify: () => {},
     refresh: async () => {},
@@ -397,7 +397,7 @@ test("another node's sandbox picker reads that node's posture and catalog and as
   assert.deepEqual(actions.sandboxModes('codex', posture.catalog), ['workspace-write'], "the node's harness, not the page's");
   assert.equal(actions.sandboxImplOptions('codex', posture.catalog).length, 1);
   state.openSandboxImpl({ conv: 'c1', node: 'inst_forge7' });
-  await actions.assignSandboxImpl({ conv: 'c1', node: 'inst_forge7', implementation: 'stacked' }, state.dialog.value);
+  await actions.assignSandboxImpl({ conv: 'c1', node: 'inst_forge7', implementation: 'tclaude-layer' }, state.dialog.value);
   assert.deepEqual(requests.at(-1), ['/api/peer/inst_forge7/agents/c1/sandbox-impl', 'POST']);
   assert.equal(state.dialog.value, null);
 });

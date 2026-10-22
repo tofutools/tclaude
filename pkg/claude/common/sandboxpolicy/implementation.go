@@ -12,14 +12,21 @@ type Implementation string
 const (
 	ImplementationHarnessBuiltin Implementation = "harness-builtin"
 	ImplementationTclaudeLayer   Implementation = "tclaude-layer"
-	ImplementationStacked        Implementation = "stacked"
 	ImplementationResourceOnly   Implementation = "resource-only"
 	ImplementationOff            Implementation = "off"
 )
 
+// legacyImplementationStacked is the retired "stacked" implementation: tclaude's
+// outer layer with the harness's own sandbox kept active inside it. Nested
+// sandboxing is no longer supported, but agents, profiles, templates and
+// session rows recorded before its removal may still carry the value, so
+// NormalizeImplementation reads it as tclaude-layer: those launches keep
+// tclaude's own wall rather than becoming un-resumable or losing confinement.
+const legacyImplementationStacked = "stacked"
+
 // UsesTclaudeLayer reports whether tclaude owns an outer OS boundary.
 func (implementation Implementation) UsesTclaudeLayer() bool {
-	return implementation == ImplementationTclaudeLayer || implementation == ImplementationStacked
+	return implementation == ImplementationTclaudeLayer
 }
 
 // OmitsOSConfinement reports whether an implementation deliberately stands down
@@ -36,12 +43,6 @@ func (implementation Implementation) UsesTclaudeLayer() bool {
 func (implementation Implementation) OmitsOSConfinement() bool {
 	return implementation == ImplementationOff ||
 		implementation == ImplementationResourceOnly
-}
-
-// UsesNestedHarnessSandbox reports whether the harness's native OS sandbox is
-// intentionally active beneath the tclaude-owned outer boundary.
-func (implementation Implementation) UsesNestedHarnessSandbox() bool {
-	return implementation == ImplementationStacked
 }
 
 // SupportsMountPaths reports whether an implementation on a platform can
@@ -87,19 +88,22 @@ func ValidateMountPathSupport(
 }
 
 // NormalizeImplementation validates a launch's sandbox implementation.
-// Empty retains the legacy harness-owned behavior.
+// Empty retains the legacy harness-owned behavior. The retired "stacked" value
+// maps to tclaude-layer (see legacyImplementationStacked).
 func NormalizeImplementation(value string) (Implementation, error) {
 	implementation := Implementation(strings.TrimSpace(value))
 	if implementation == "" {
 		return ImplementationHarnessBuiltin, nil
 	}
 	switch implementation {
-	case ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked,
+	case ImplementationHarnessBuiltin, ImplementationTclaudeLayer,
 		ImplementationResourceOnly, ImplementationOff:
 		return implementation, nil
+	case legacyImplementationStacked:
+		return ImplementationTclaudeLayer, nil
 	default:
-		return "", fmt.Errorf("invalid sandbox implementation %q (want %s, %s, %s, %s, or %s)",
-			value, ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked,
+		return "", fmt.Errorf("invalid sandbox implementation %q (want %s, %s, %s, or %s)",
+			value, ImplementationHarnessBuiltin, ImplementationTclaudeLayer,
 			ImplementationResourceOnly, ImplementationOff)
 	}
 }

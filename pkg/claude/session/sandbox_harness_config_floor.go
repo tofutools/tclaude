@@ -55,8 +55,8 @@ import (
 //     value outright as a launch contract. Humans may set it; agents need the
 //     `sandbox.harness-config` permission, and lineage still applies.
 //
-// The floor covers only what tclaude itself enforces: tclaude-layer and
-// stacked. Under harness-builtin the harness's own policy governs, and under
+// The floor covers only what tclaude itself enforces: tclaude-layer. Under
+// harness-builtin the harness's own policy governs, and under
 // resource-only/off nothing is enforced by design.
 //
 // Note the asymmetry with Claude Code's Bash-only deny list: a bubblewrap

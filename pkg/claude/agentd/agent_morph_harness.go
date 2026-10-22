@@ -76,11 +76,7 @@ func viewMorphSandbox(convID string, implementation sandboxpolicy.Implementation
 		if names := morphSandboxProfiles(convID); names != "" {
 			v.Tclaude = "on (profile " + names + "), unchanged"
 		}
-		if implementation.UsesNestedHarnessSandbox() {
-			v.Harness = dst.Name + " " + mode + ", inside the tclaude sandbox"
-		} else {
-			v.Harness = dst.Name + " " + mode + ", stood down inside the tclaude sandbox"
-		}
+		v.Harness = dst.Name + " " + mode + ", stood down inside the tclaude sandbox"
 	case implementation.OmitsOSConfinement():
 		v.Tclaude = "off"
 		if implementation == sandboxpolicy.ImplementationResourceOnly {

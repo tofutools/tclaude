@@ -984,25 +984,6 @@ func SetFilteredNetworkPrerequisiteForTest(
 	return func() { probeFilteredNetworkPrerequisite = previous }
 }
 
-// SetStackedSandboxHostAvailabilityForTest swaps the inner-engine probe used
-// by the launch gate so flow tests do not depend on a real harness executable
-// being installed on the test host.
-func SetStackedSandboxHostAvailabilityForTest(fn func(*harness.Harness) error) func() {
-	prev := stackedSandboxHostAvailability
-	stackedSandboxHostAvailability = fn
-	return func() { stackedSandboxHostAvailability = prev }
-}
-
-// SetStackedAppArmorLikelyForTest swaps the host heuristic behind the stacked
-// AppArmor hint. Same reason as above in reverse: the answer depends on which
-// distro's policy files the test host happens to carry, so both branches are
-// only reachable through the seam. Returns a restore function for t.Cleanup.
-func SetStackedAppArmorLikelyForTest(likely bool) func() {
-	prev := stackedAppArmorNestedBlockLikely
-	stackedAppArmorNestedBlockLikely = func() bool { return likely }
-	return func() { stackedAppArmorNestedBlockLikely = prev }
-}
-
 // SetTclaudeLayerHostAvailabilitiesForTest independently controls the
 // interactive-pane and relay-free-server capability disclosures.
 func SetTclaudeLayerHostAvailabilitiesForTest(

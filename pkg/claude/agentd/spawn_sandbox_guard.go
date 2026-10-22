@@ -839,12 +839,6 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 // copilotProvenLineageLaunch reports the single Copilot launch pair this
 // project has reviewed for detached agent-to-agent spawning: tclaude's own OS
 // wall (`tclaude-layer`) with Copilot's command sandbox asserted off.
-//
-// The implementation comparison is EXACT rather than UsesTclaudeLayer(), which
-// would also accept `stacked`. Stacked runs Copilot's own experimental MXC
-// policy nested inside tclaude's, so the effective confinement is the
-// unreviewed intersection of two policies while the row names one — the very
-// shape the launch boundary refuses for this harness.
 func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 	return s.Harness == harness.CopilotName &&
 		s.HarnessBuiltinMode == harness.CopilotSandboxOff &&
@@ -856,7 +850,7 @@ func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 // `off` is enforced rather than asserted (GEMINI_SANDBOX=false outranks its
 // settings), but the mode is still ambiguous on its own — as a harness-builtin
 // row it is an unconfined agent — so only the implementation separates the
-// two, exactly as for Copilot. Gemini has no reviewed stacked topology.
+// two, exactly as for Copilot.
 func geminiProvenLineageLaunch(s spawnLineageSandbox) bool {
 	return s.Harness == harness.GeminiName &&
 		s.HarnessBuiltinMode == harness.GeminiSandboxOff &&
@@ -916,14 +910,10 @@ func piProvenLineageLaunch(s spawnLineageSandbox) bool {
 // exactly by TestSandboxLineageParentAuthorityVerdictDelta, over every
 // (harness, mode, implementation) triple a session row can actually hold.
 //
-// Only the exact `tclaude-layer` implementation enters here. `stacked` runs the
-// harness's own sandbox nested inside tclaude's, so its mode still means what
-// the matrix thinks it means and must not be reinterpreted — and in practice a
-// stacked launch already records the confined mode (stackedSandboxLaunchMode
-// forces Claude `on` / the Codex managed profile), so there is nothing here to
-// remap for it. An implementation of `off` records the same no-confinement mode
-// a tclaude-layer launch does, and there it is the literal truth: nothing is
-// enforcing, and the mode must keep its face value.
+// Only the `tclaude-layer` implementation enters here. An implementation of
+// `off` records the same no-confinement mode a tclaude-layer launch does, and
+// there it is the literal truth: nothing is enforcing, and the mode must keep
+// its face value.
 func lineageConfinementMode(s spawnLineageSandbox) string {
 	if s.Implementation != sandboxpolicy.ImplementationTclaudeLayer {
 		return s.HarnessBuiltinMode
@@ -985,8 +975,7 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 		//
 		// Everything else fails closed: a blank/legacy row (which predates this
 		// harness carrying a posture at all and asserts nothing), an explicit
-		// harness-builtin, `stacked` (Copilot's own policy nested inside
-		// tclaude's, an intersection nobody reviewed), implementation `off`, and
+		// harness-builtin, implementation `off`, and
 		// the `inherit` mode, whose posture is decided by a settings file
 		// tclaude neither controls nor is notified about. The launch boundary
 		// re-verifies the assert-off claim separately on every path that starts

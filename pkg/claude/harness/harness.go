@@ -185,11 +185,6 @@ type Harness struct {
 	// harness-defined built-in tool group. OpenCode supplies this catalog for
 	// bash/glob/grep/lsp/task/skill; Claude Code and Codex leave it nil.
 	ToolGovernance ToolGovernanceCatalog
-	// NestedSandbox is the optional, reviewed contract for running this
-	// harness's real OS sandbox beneath tclaude's outer layer. nil means the
-	// harness is not stackable; callers must refuse rather than infer behavior
-	// from the harness name or fall back to a single wall.
-	NestedSandbox NestedSandboxContract
 	// HostControlSandbox is the optional harness-native launch preparation that
 	// keeps an agent from reaching tclaude's host control plane. nil means the
 	// harness has no reviewed implementation; callers preserve its launch
@@ -374,12 +369,6 @@ type Harness struct {
 	//
 	// OpenCode leaves it false: no trust dialog, hence no record to seed.
 	DirTrust bool
-}
-
-// SupportsNestedSandbox reports whether the harness owns an explicit stacked
-// sandbox contract. Host and engine availability are separate live checks.
-func (h *Harness) SupportsNestedSandbox() bool {
-	return h != nil && h.NestedSandbox != nil
 }
 
 // SupportsDirTrust reports whether tclaude can pre-trust a launch directory

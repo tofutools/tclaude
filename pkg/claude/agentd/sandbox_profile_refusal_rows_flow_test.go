@@ -148,15 +148,11 @@ func TestSandboxProfileEnforcementRefusalNeverMasksAWholeRequestError(t *testing
 	}{{
 		name:    "unknown implementation",
 		query:   "for=tclaude-layer%2Fclaude%2Flinux&for=not-an-implementation",
-		message: "implementation: off, resource-only, harness-builtin, tclaude-layer, stacked",
+		message: "implementation: off, resource-only, harness-builtin, tclaude-layer;",
 	}, {
 		name:    "unsupported platform",
 		query:   "for=tclaude-layer%2Fclaude%2Flinux&for=tclaude-layer%2Fclaude%2Fwindows",
 		message: "platform: linux, darwin",
-	}, {
-		name:    "stacked outside linux",
-		query:   "for=tclaude-layer%2Fclaude%2Flinux&for=stacked%2Fclaude%2Fdarwin",
-		message: "stacked sandbox prediction is supported only on linux",
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := profileReq(t, f, http.MethodGet,

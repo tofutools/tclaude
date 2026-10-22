@@ -152,7 +152,7 @@ const TMPFS_HELP = 'Empty writable filesystems that exist only for the life of t
   + 'backed by no host directory at all — scratch space, a throwaway build tree, a node_modules that '
   + 'must never touch the host. A mount hides whatever was at that sandbox path, and a narrower '
   + 'filesystem rule beneath it still applies. Requires tclaude’s sandbox on Linux: a tmpfs is a mount, so '
-  + 'Seatbelt, harness-builtin, resource-only/off and stacked all refuse the launch rather than '
+  + 'Seatbelt, harness-builtin and resource-only/off all refuse the launch rather than '
   + 'starting without it. Leave the size blank for the kernel default of half of host RAM — worth '
   + 'setting, because an agent can fill an uncapped one.';
 const PRE_LAUNCH_HELP = 'Named bash blocks for setup that declarative environment or directory '
@@ -246,10 +246,10 @@ function sandboxEvaluationHarnesses(catalog) {
   // The daemon owns registered harnesses and their capabilities. An absent
   // catalog must not invent a stale subset of available evaluation targets.
   return (Array.isArray(catalog) ? catalog : []).filter((entry) =>
-    entry.can_builtin_os_sandbox || entry.can_tclaude_layer || entry.can_stacked);
+    entry.can_builtin_os_sandbox || entry.can_tclaude_layer);
 }
 
-function sandboxEvaluationImplementations(harness, platform, catalog) {
+function sandboxEvaluationImplementations(harness, catalog) {
   const entry = sandboxEvaluationHarnesses(catalog)
     .find((candidate) => candidate.name === harness);
   if (!entry) return [];
@@ -264,7 +264,6 @@ function sandboxEvaluationImplementations(harness, platform, catalog) {
     ]);
   }
   if (entry.can_tclaude_layer) options.push(['tclaude-layer', 'tclaude’s built-in sandbox']);
-  if (entry.can_stacked && platform === 'linux') options.push(['stacked', `tclaude + ${entry.display_name || harness} sandboxes`]);
   return options;
 }
 
@@ -1186,13 +1185,6 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       sandboxImplCanBuiltin: hEntry?.can_builtin_os_sandbox !== false,
       sandboxImplHarness: harnessLabel,
       sandboxImplHarnessName: hEntry?.name || '',
-      sandboxImplCanStacked: !!hEntry?.can_stacked,
-      sandboxImplStackedAvailability: sandboxImpl?.stacked?.[hEntry?.name] || {},
-      // A profile may legitimately pin stacked for a DIFFERENT machine — that
-      // is the whole reason this editor discloses instead of refusing — so the
-      // AppArmor answer is passed as what it is: a fact about the host running
-      // this dashboard. The hint copy says "on this host" for the same reason.
-      sandboxImplStackedAppArmorLikely: !!sandboxImpl?.stacked_apparmor_nested_bwrap_likely,
       sandboxImplHostAvailable: hEntry?.tclaude_layer_server_boundary
         ? sandboxImpl?.server_host_available !== false
         : sandboxImpl?.host_available !== false,
@@ -1778,7 +1770,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const predictionPauseReason = predictionDraftError || predictionAccessErrors[0] || '';
   const predictionPaused = !!predictionDraft.name.trim() && !!predictionPauseReason;
   const evaluationImplementations = sandboxEvaluationImplementations(
-    evaluateHarness, evaluatePlatform, descriptor.catalog,
+    evaluateHarness, descriptor.catalog,
   );
   const evaluationTarget = sandboxEvaluationTarget(
     evaluateHarness, evaluateImplementation, evaluatePlatform,
@@ -1881,7 +1873,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <option value="read">Read-only (pinned)</option>
         <option value="write">Writable (opt out of the floor)</option>
       </select></label></div>
-      <div class="sbx-resource-intro">The harness config floor binds the harness's own settings file and its hook/skill/agent/command directories read-only, so a confined agent cannot rewrite the policy that confines it or drop code that runs in your next unsandboxed session. It applies under tclaude’s sandbox, alone or combined with the harness’s sandbox. Writable restores the old posture; a single surface can also be reopened with an explicit write row at or below it.</div>
+      <div class="sbx-resource-intro">The harness config floor binds the harness's own settings file and its hook/skill/agent/command directories read-only, so a confined agent cannot rewrite the policy that confines it or drop code that runs in your next unsandboxed session. It applies under tclaude’s sandbox. Writable restores the old posture; a single surface can also be reopened with an explicit write row at or below it.</div>
       <div class="sbx-resource-intro">A separate root exposes only the fixed read-only OS/runtime surface and the directory mounts in this policy. Network or Unix-socket restrictions can still require it even when “inherit” is selected. Explicit separation currently requires tclaude’s sandbox on Linux.</div>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0 || globalHarnessNotes.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
@@ -1893,7 +1885,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
         ${showGlobalFilesystem && globalHarnessNotes.map(([name, note]) => html`<div key=${name} class="sbx-resource-intro">${note}</div>`)}
       </div>`}
-      <div class="sbx-rows">${draft.filesystem.map((row, index) => { const denied = (row.access || 'read') === 'deny'; const mountPath = (row.mount_path || '').trim(); const mountOpen = mountPathRow === index; const mountInvalid = denied && !!mountPath; const hostPath = row._resolved_path || row.path || 'the host directory'; const mountHelpID = `sandbox-profile-editor-mount-help-${index}`; const mountHelp = `The agent sees this path instead of the host path; ${hostPath} is not visible inside the sandbox at all. Leave it empty to expose the path at its own location. tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox: mounting a directory somewhere else needs a mount namespace (a single file needs tclaude’s sandbox alone). macOS Seatbelt and harness-builtin sandboxes cannot do it and refuse the launch — they never fall back to exposing the host path instead.`; const mountHelpContent = html`<span>The agent sees this path instead of the host path; <strong>${hostPath} is not visible inside the sandbox at all</strong>. Leave it empty to expose the path at its own location.</span><br/><span><strong>tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox.</strong> Mounting a directory somewhere else needs a mount namespace. A row naming a single FILE needs tclaude’s sandbox alone — stacked refuses it, remapped or not. macOS Seatbelt and harness-builtin sandboxes cannot do it and refuse the launch — they never fall back to exposing the host path instead.</span>`; const mountLabel = mountInvalid ? `A deny rule must not carry a mount path; this profile will be refused until ${mountPath} is removed` : denied ? 'A deny always applies to the host path' : mountPath ? `Mounts inside the sandbox at ${mountPath}` : 'Mount at a different sandbox path'; return html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" hidden=${!!actions.catalogNode} onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory (type the path directly for a single file)' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button>${/* The SET state is deliberately loud. The value itself lives in a popover, so this glyph is the only signal a reviewer scrolling the table gets that the row projects its directory somewhere else; a quiet toggle would let a remapped row read as an ordinary same-path grant. */ ''}<button type="button" class=${`sbx-mount-btn${mountPath && !denied ? ' is-set' : ''}${mountInvalid ? ' is-invalid' : ''}`} id=${`sandbox-profile-editor-mount-toggle-${index}`} disabled=${denied} aria-expanded=${denied ? undefined : mountOpen} aria-controls=${mountOpen && !denied ? `sandbox-profile-editor-mount-panel-${index}` : undefined} aria-label=${`Filesystem row ${index + 1}: ${mountLabel}`} title=${mountLabel} onClick=${() => { setMountHelpOpen(''); setMountPathRow(mountOpen ? -1 : index); }}>⤳</button><button type="button" onClick=${() => { setMountHelpOpen(''); setMountPathRow(-1); setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) })); }}>×</button></div>${mountOpen && !denied && html`<div key=${`mount-${index}`} class="sbx-mount-panel" id=${`sandbox-profile-editor-mount-panel-${index}`} onKeyDown=${(event) => { if (event.key !== 'Escape') return; /* Close just this panel. Without it Escape reaches the Overlay and starts the whole modal's discard-confirm flow, which is a wildly disproportionate answer to dismissing one popover. */ event.stopPropagation(); event.preventDefault(); setMountHelpOpen(''); setMountPathRow(-1); document.getElementById(`sandbox-profile-editor-mount-toggle-${index}`)?.focus(); }}><div class="sbx-mount-title">Mount inside the sandbox at<${SandboxHelp}><${HelpDisclosure} id=${mountHelpID} label="Mount path" help=${mountHelp} content=${mountHelpContent} open=${mountHelpOpen === mountHelpID} setOpen=${setMountHelpOpen}/></${SandboxHelp}></div><div class="sbx-mount-row"><input class="sbx-path" value=${row.mount_path || ''} placeholder="/data" ref=${(node) => { /* Preact does not implement autofocus, and the document's autofocus-processed flag is already set by the modal's name field, so the browser will not honor it either. Focus the field explicitly when the panel first mounts. */ if (node && !node.dataset.focused) { node.dataset.focused = '1'; node.focus(); } }} onInput=${(event) => setFS(index, { mount_path: event.currentTarget.value })}/><button type="button" disabled=${!mountPath} onClick=${() => setFS(index, { mount_path: '' })}>clear</button></div></div>`}`; })}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add path</button>
+      <div class="sbx-rows">${draft.filesystem.map((row, index) => { const denied = (row.access || 'read') === 'deny'; const mountPath = (row.mount_path || '').trim(); const mountOpen = mountPathRow === index; const mountInvalid = denied && !!mountPath; const hostPath = row._resolved_path || row.path || 'the host directory'; const mountHelpID = `sandbox-profile-editor-mount-help-${index}`; const mountHelp = `The agent sees this path instead of the host path; ${hostPath} is not visible inside the sandbox at all. Leave it empty to expose the path at its own location. tclaude’s sandbox on Linux only: mounting a path somewhere else needs a mount namespace. macOS Seatbelt and harness-builtin sandboxes cannot do it and refuse the launch — they never fall back to exposing the host path instead.`; const mountHelpContent = html`<span>The agent sees this path instead of the host path; <strong>${hostPath} is not visible inside the sandbox at all</strong>. Leave it empty to expose the path at its own location.</span><br/><span><strong>tclaude’s sandbox on Linux only.</strong> Mounting a path somewhere else needs a mount namespace. macOS Seatbelt and harness-builtin sandboxes cannot do it and refuse the launch — they never fall back to exposing the host path instead.</span>`; const mountLabel = mountInvalid ? `A deny rule must not carry a mount path; this profile will be refused until ${mountPath} is removed` : denied ? 'A deny always applies to the host path' : mountPath ? `Mounts inside the sandbox at ${mountPath}` : 'Mount at a different sandbox path'; return html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" hidden=${!!actions.catalogNode} onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory (type the path directly for a single file)' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button>${/* The SET state is deliberately loud. The value itself lives in a popover, so this glyph is the only signal a reviewer scrolling the table gets that the row projects its directory somewhere else; a quiet toggle would let a remapped row read as an ordinary same-path grant. */ ''}<button type="button" class=${`sbx-mount-btn${mountPath && !denied ? ' is-set' : ''}${mountInvalid ? ' is-invalid' : ''}`} id=${`sandbox-profile-editor-mount-toggle-${index}`} disabled=${denied} aria-expanded=${denied ? undefined : mountOpen} aria-controls=${mountOpen && !denied ? `sandbox-profile-editor-mount-panel-${index}` : undefined} aria-label=${`Filesystem row ${index + 1}: ${mountLabel}`} title=${mountLabel} onClick=${() => { setMountHelpOpen(''); setMountPathRow(mountOpen ? -1 : index); }}>⤳</button><button type="button" onClick=${() => { setMountHelpOpen(''); setMountPathRow(-1); setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) })); }}>×</button></div>${mountOpen && !denied && html`<div key=${`mount-${index}`} class="sbx-mount-panel" id=${`sandbox-profile-editor-mount-panel-${index}`} onKeyDown=${(event) => { if (event.key !== 'Escape') return; /* Close just this panel. Without it Escape reaches the Overlay and starts the whole modal's discard-confirm flow, which is a wildly disproportionate answer to dismissing one popover. */ event.stopPropagation(); event.preventDefault(); setMountHelpOpen(''); setMountPathRow(-1); document.getElementById(`sandbox-profile-editor-mount-toggle-${index}`)?.focus(); }}><div class="sbx-mount-title">Mount inside the sandbox at<${SandboxHelp}><${HelpDisclosure} id=${mountHelpID} label="Mount path" help=${mountHelp} content=${mountHelpContent} open=${mountHelpOpen === mountHelpID} setOpen=${setMountHelpOpen}/></${SandboxHelp}></div><div class="sbx-mount-row"><input class="sbx-path" value=${row.mount_path || ''} placeholder="/data" ref=${(node) => { /* Preact does not implement autofocus, and the document's autofocus-processed flag is already set by the modal's name field, so the browser will not honor it either. Focus the field explicitly when the panel first mounts. */ if (node && !node.dataset.focused) { node.dataset.focused = '1'; node.focus(); } }} onInput=${(event) => setFS(index, { mount_path: event.currentTarget.value })}/><button type="button" disabled=${!mountPath} onClick=${() => setFS(index, { mount_path: '' })}>clear</button></div></div>`}`; })}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add path</button>
       ${/* `|| null` rather than a bare boolean: where `open` is not a settable
            DOM property, Preact falls back to setAttribute, and setting it to
            `false` still leaves the attribute present (i.e. open). null removes
@@ -1968,7 +1960,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <label title=${EVALUATION_TARGET_TITLE}>Agent harness <select id="sandbox-profile-editor-evaluate-harness" value=${evaluateHarness} onChange=${(event) => {
           const nextHarness = event.currentTarget.value;
           const implementations = sandboxEvaluationImplementations(
-            nextHarness, evaluatePlatform, descriptor.catalog,
+            nextHarness, descriptor.catalog,
           );
           setEvaluateHarness(nextHarness);
           if (!implementations.some(([value]) => value === evaluateImplementation)) {
@@ -1986,14 +1978,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     : html`<option value="harness-builtin">${RESOLVED_DEFAULTS_LABEL}</option>`}
         </select></label>
         <label title=${EVALUATION_TARGET_TITLE}>Operating system <select id="sandbox-profile-editor-evaluate-platform" value=${evaluatePlatform} disabled=${!evaluateHarness} onChange=${(event) => {
-          const nextPlatform = event.currentTarget.value;
-          const implementations = sandboxEvaluationImplementations(
-            evaluateHarness, nextPlatform, descriptor.catalog,
-          );
-          setEvaluatePlatform(nextPlatform);
-          if (!implementations.some(([value]) => value === evaluateImplementation)) {
-            setEvaluateImplementation(implementations[0]?.[0] || 'harness-builtin');
-          }
+          setEvaluatePlatform(event.currentTarget.value);
         }}>
           ${evaluateHarness ? html`
             <option value="linux">Linux</option>

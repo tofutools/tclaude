@@ -96,23 +96,16 @@ func TestSpawnProfile_RejectsOpenCodeHarnessBuiltinAtAuthoring(t *testing.T) {
 		"OpenCode has no built-in OS sandbox; its access-control mode is a command filter, not confinement")
 }
 
-func TestSpawnProfile_StackedRoundTripsAndOpenCodeRefuses(t *testing.T) {
+// The retired `stacked` implementation is a legacy spelling of tclaude's
+// built-in sandbox: a profile carrying it saves as tclaude-layer rather than
+// pinning a value no launch path implements anymore.
+func TestSpawnProfile_LegacyStackedSavesAsTclaudeLayer(t *testing.T) {
 	f := newFlow(t)
-	for _, harnessName := range []string{"claude", "codex"} {
-		name := harnessName + "-stacked"
-		rec := createProfile(t, f, map[string]any{
-			"name": name, "harness": harnessName, "sandbox_implementation": "stacked",
-		})
-		require.Equalf(t, http.StatusCreated, rec.Code,
-			"%s stacked profile body=%s", harnessName, rec.Body.String())
-		assert.Equal(t, "stacked", readProfile(t, f, name)["sandbox_implementation"])
-	}
 	rec := createProfile(t, f, map[string]any{
-		"name": "opencode-stacked", "harness": "opencode", "sandbox_implementation": "stacked",
+		"name": "legacy-stacked", "harness": "claude", "sandbox_implementation": "stacked",
 	})
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "missing capability stacked_inner_harness_sandbox")
-	assert.Contains(t, rec.Body.String(), "refusing rather than falling back")
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "tclaude-layer", readProfile(t, f, "legacy-stacked")["sandbox_implementation"])
 }
 
 // OpenCode's authoritative server is now the process inside the outer layer,
@@ -230,32 +223,6 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.False(t, present)
 	})
 
-	// The AppArmor hint is the one disclosure that must fire while everything
-	// else looks healthy: per-harness stacked availability resolves the engine
-	// and reports available on exactly the hosts whose policy denies the nested
-	// wall. So the flag is asserted independently of availability, in both
-	// directions, and stays absent when the shape is not there.
-	t.Run("a likely AppArmor nested-bwrap block is disclosed", func(t *testing.T) {
-		f := newFlow(t)
-		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
-		t.Cleanup(agentd.SetStackedAppArmorLikelyForTest(true))
-
-		catalog := snapshotSandboxImpl(t, f)
-		assert.Equal(t, true, catalog["host_available"],
-			"the heuristic must not be confused with an unavailable host")
-		assert.Equal(t, true, catalog["stacked_apparmor_nested_bwrap_likely"])
-	})
-
-	t.Run("no AppArmor claim on a host without the policy", func(t *testing.T) {
-		f := newFlow(t)
-		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
-		t.Cleanup(agentd.SetStackedAppArmorLikelyForTest(false))
-
-		catalog := snapshotSandboxImpl(t, f)
-		_, present := catalog["stacked_apparmor_nested_bwrap_likely"]
-		assert.False(t, present, "silence, rather than a false claim, is the default")
-	})
-
 	t.Run("options label supported sandbox implementations", func(t *testing.T) {
 		f := newFlow(t)
 		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
@@ -266,11 +233,11 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.Equal(t, "harness-builtin", catalog["default"],
 			"the default must remain the legacy implementation")
 		options, _ := catalog["options"].([]any)
-		require.Len(t, options, 5)
-		assert.Equal(t, "off", options[4].(map[string]any)["value"],
+		require.Len(t, options, 4)
+		assert.Equal(t, "off", options[3].(map[string]any)["value"],
 			"off must stay last: it is the floor of the list, and resource-only "+
 				"sits directly above it as the same posture plus a cgroup")
-		var sawTclaudeLayer, sawStacked, sawBuiltin, sawResourceOnly bool
+		var sawTclaudeLayer, sawBuiltin, sawResourceOnly bool
 		for _, raw := range options {
 			option, _ := raw.(map[string]any)
 			assert.NotEqual(t, true, option["experimental"])
@@ -294,11 +261,8 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 				assert.Contains(t, option["descr"], "{harness} owns OS-level containment")
 				continue
 			}
-			if option["value"] == "stacked" {
-				sawStacked = true
-				assert.Equal(t, "tclaude + {harness} sandboxes", option["label"])
-				continue
-			}
+			assert.NotEqual(t, "stacked", option["value"],
+				"the retired stacked implementation must not be offered")
 			if option["value"] != "tclaude-layer" {
 				continue
 			}
@@ -308,7 +272,6 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 				"the platform caveat must be stated, not implied")
 		}
 		assert.True(t, sawTclaudeLayer, "the catalog must offer the tclaude layer")
-		assert.True(t, sawStacked, "the catalog must always offer stacked")
 		assert.True(t, sawBuiltin, "the catalog must always offer the harness-owned option")
 		assert.True(t, sawResourceOnly,
 			"the catalog must offer the limits-only posture; without it the only way "+
