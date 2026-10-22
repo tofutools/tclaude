@@ -2163,7 +2163,7 @@ func SeedAuthoredOpenPRsForTest(login, repoURL string, prs []AuthoredOpenPRForTe
 
 // SetTrackedPRSourcesForTest swaps every GitHub seam behind the footer's
 // colleague tabs: the active gh identity, the add-time user lookup, and the
-// aliased GraphQL search, which receives the real argv and returns a canned
+// per-author GraphQL search, which receives the real argv and returns a canned
 // response for the production decoder.
 func SetTrackedPRSourcesForTest(self string, exists func(login string) bool, search func(args []string) ([]byte, error)) func() {
 	prevConfigured, prevEnv := githubConfiguredLoginResolver, githubEnvironmentTokenPresent
@@ -2185,8 +2185,9 @@ func SetTrackedPRSourcesForTest(self string, exists func(login string) bool, sea
 }
 
 // PollTrackedPRAuthorsForTest runs one colleague-tabs poll synchronously.
+// Requests are not staggered.
 func PollTrackedPRAuthorsForTest() error {
-	_, err := pollTrackedPRAuthors()
+	_, _, err := pollTrackedPRAuthors(0)
 	return err
 }
 

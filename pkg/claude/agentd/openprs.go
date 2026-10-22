@@ -28,6 +28,11 @@ const (
 	// The recent list is a "what did I just land" glance, not an archive, so it
 	// stays well below the open-PR page size.
 	authoredRecentPRLimit = 50
+	// authoredOpenPRSearchTimeout bounds the poll's gh subprocess. One search
+	// already takes ~6s on GitHub, which itself gives up at ~10s; the shared
+	// 12s branchLinkCmdTimeout killed gh before slow networks got GitHub's
+	// answer back, so this only adds headroom for network latency.
+	authoredOpenPRSearchTimeout = 20 * time.Second
 )
 
 // One GraphQL search returns the operator's cross-repository PR list and the
@@ -347,7 +352,7 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	fetchWindowDays := max(windowDays, 1)
 	now := time.Now()
 	withReviews := authoredOpenPRReviewsDue(now)
-	out, err := runInDirWithError("", "gh", authoredPRSearchArgs(login, fetchWindowDays, now, withReviews)...)
+	out, err := runInDirWithTimeout("", authoredOpenPRSearchTimeout, "gh", authoredPRSearchArgs(login, fetchWindowDays, now, withReviews)...)
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
 	}

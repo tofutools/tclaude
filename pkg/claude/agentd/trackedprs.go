@@ -22,10 +22,17 @@ import (
 // operator names other GitHub users and the popover lists their open (and
 // recently closed) pull requests next to the operator's own.
 //
-// Cost is the design constraint. Every tracked author rides ONE GraphQL
-// request per tick — an aliased open search, plus a recently closed search
-// when that window is on, per author — on a slower cadence than the
-// operator's own list, which also drives Groups badges. GitHub search only
+// Cost is the design constraint. Each tracked author gets one GraphQL request
+// per tick — an open search, plus an aliased recently closed search when that
+// window is on — on a slower cadence than the operator's own list, which also
+// drives Groups badges. The requests are deliberately not aliased into one:
+// GitHub cuts a GraphQL request off at 10s of server time, one author's search
+// with check rollups already costs ~5–6s, so two or more authors in one
+// request failed every tick with a 502. Per-author requests also let one slow
+// or refused author keep its last good list while the others refresh. They
+// run at most trackedPRSearchParallelism at a time and are staggered across
+// the interval, since GitHub's secondary rate limits count server CPU time and
+// discourage bursts of concurrent expensive searches. GitHub search only
 // returns pull requests the operator's gh credential can see, so "PRs we can
 // reach" needs no extra filtering.
 //
@@ -43,9 +50,14 @@ const (
 	trackedPROpenLimit      = 50
 	trackedPRRecentLimit    = 30
 	trackedPRCachePrefix    = "tracked_author_prs_v1_"
-	// trackedPRSearchTimeout bounds the one aliased request; eight authors
-	// with check rollups is a much larger query than a branch lookup.
-	trackedPRSearchTimeout = 30 * time.Second
+	// trackedPRSearchTimeout bounds one author's request. GitHub gives up at
+	// ~10s server-side; the rest covers network latency.
+	trackedPRSearchTimeout = 20 * time.Second
+	// trackedPRSearchParallelism caps the per-author requests in flight.
+	trackedPRSearchParallelism = 2
+	// trackedPRSearchSpread is the window a regular tick spreads its request
+	// starts over; a kicked tick (an author was just added) does not wait.
+	trackedPRSearchSpread = trackedPRPollInterval / 2
 )
 
 var (
@@ -53,7 +65,7 @@ var (
 	// trackedPRUserLookup reports whether a GitHub user exists; known is
 	// false when GitHub could not be asked (offline, logged out).
 	trackedPRUserLookup = liveTrackedPRUserLookup
-	// trackedPRGraphQL runs the aliased search and returns its stdout even
+	// trackedPRGraphQL runs one author's search and returns its stdout even
 	// when gh exits non-zero; tests swap in a canned GitHub response.
 	trackedPRGraphQL = liveTrackedPRGraphQL
 	// trackedPRKick wakes the poller when an author is added, so the new tab
@@ -117,11 +129,14 @@ func startTrackedPRAuthorsPoller(stop <-chan struct{}) {
 		timer := time.NewTimer(0)
 		defer timer.Stop()
 		failures := 0
+		authorFailures := map[string]int{}
 		for {
+			spread := trackedPRSearchSpread
 			select {
 			case <-stop:
 				return
 			case <-trackedPRKick:
+				spread = 0
 				if !timer.Stop() {
 					select {
 					case <-timer.C:
@@ -131,7 +146,8 @@ func startTrackedPRAuthorsPoller(stop <-chan struct{}) {
 			case <-timer.C:
 			}
 			started := time.Now()
-			authors, err := pollTrackedPRAuthors()
+			authors, failed, err := pollTrackedPRAuthors(spread)
+			logTrackedPRAuthorFailures(authorFailures, authors, failed, err)
 			delay := trackedPRPollInterval
 			if err != nil {
 				failures++
@@ -152,6 +168,36 @@ func startTrackedPRAuthorsPoller(stop <-chan struct{}) {
 	}()
 }
 
+// logTrackedPRAuthorFailures logs one author's failure streak when it starts
+// and when it ends, while other authors still refresh. A tick where every
+// author failed (err != nil) is the poller's own failure line instead.
+func logTrackedPRAuthorFailures(streaks map[string]int, authors []string, failed map[string]error, err error) {
+	if err != nil {
+		return
+	}
+	tracked := make(map[string]bool, len(authors))
+	for _, author := range authors {
+		key := strings.ToLower(author)
+		tracked[key] = true
+		if ferr, bad := failed[author]; bad {
+			streaks[key]++
+			if streaks[key] == 1 {
+				slog.Warn("tracked-prs: GitHub search failed for one author; keeping its last good list",
+					"author", author, "error", ferr, "kind", classifyGHError(ferr), "module", "agentd")
+			}
+		} else if streaks[key] > 0 {
+			slog.Info("tracked-prs: GitHub search recovered for one author",
+				"author", author, "previous_failures", streaks[key], "module", "agentd")
+			delete(streaks, key)
+		}
+	}
+	for key := range streaks {
+		if !tracked[key] {
+			delete(streaks, key)
+		}
+	}
+}
+
 func trackedPRRetryDelay(failures int) time.Duration {
 	if failures <= 0 {
 		return trackedPRPollInterval
@@ -166,33 +212,53 @@ func kickTrackedPRAuthorsPoller() {
 	}
 }
 
-// pollTrackedPRAuthors runs one search for every tracked author and caches
-// each author's list under the active identity, the same namespacing as the
-// operator's own list so a gh account switch never shows the old account's
-// view. It reports how many authors it searched for the poller's log line.
-func pollTrackedPRAuthors() (int, error) {
-	authors := loadTrackedPRAuthors()
+// trackedPRAuthorResult is one author's search outcome. err is a failed
+// request (a timeout, a 5xx, the network): that author keeps its cached list
+// untouched. A refusal GitHub answered is view.Error instead.
+type trackedPRAuthorResult struct {
+	view dashboardAuthoredOpenPRs
+	err  error
+}
+
+// pollTrackedPRAuthors searches every tracked author, starting the requests
+// across spread, and caches each author's list under the active identity, the
+// same namespacing as the operator's own list so a gh account switch never
+// shows the old account's view. It returns the authors searched and the
+// request error of each one that failed; err is set only when the whole tick
+// failed — no identity, or every author's request failed.
+func pollTrackedPRAuthors(spread time.Duration) (authors []string, failed map[string]error, err error) {
+	authors = loadTrackedPRAuthors()
 	if len(authors) == 0 {
-		return 0, nil
+		return nil, nil, nil
 	}
 	self, ok := cachedGitHubLogin()
 	if !ok {
-		return len(authors), errTrackedPRNoActiveIdentity
+		return authors, nil, errTrackedPRNoActiveIdentity
 	}
 	cfg, _ := config.Load()
 	now := time.Now()
 	reviewsMark := trackedPRReviewsFetchedAt.Load()
 	withReviews := trackedPRReviewsDue(now)
-	views, err := trackedPRResolver(authors, cfg.RecentPRWindowDays(), now, withReviews)
-	if err != nil {
-		return len(authors), err
+	results := trackedPRResolver(authors, cfg.RecentPRWindowDays(), now, withReviews, spread)
+	failed = map[string]error{}
+	for _, result := range results {
+		if result.err != nil {
+			failed[result.view.Login] = result.err
+		}
+	}
+	if len(failed) == len(results) {
+		return authors, failed, results[0].err
 	}
 	if withReviews {
 		// An add during this search reset the mark to 0; keep that reset so
 		// the kicked poll fetches the new author's reviewers.
 		trackedPRReviewsFetchedAt.CompareAndSwap(reviewsMark, now.UnixNano())
 	}
-	for _, view := range views {
+	for _, result := range results {
+		if result.err != nil {
+			continue
+		}
+		view := result.view
 		if view.Error != "" {
 			// Keep an earlier good list, flagged with the refusal, rather
 			// than blanking the tab.
@@ -219,7 +285,7 @@ func pollTrackedPRAuthors() (int, error) {
 				"error", err, "author", view.Login, "module", "agentd")
 		}
 	}
-	return len(authors), nil
+	return authors, failed, nil
 }
 
 func trackedPRReviewsDue(now time.Time) bool {
@@ -227,8 +293,9 @@ func trackedPRReviewsDue(now time.Time) bool {
 	return last == 0 || now.Sub(time.Unix(0, last)) >= authoredOpenPRReviewInterval
 }
 
-// trackedPRSearchArgs builds the `gh api graphql` argv for one tick: the
-// shared open and recently closed fragments, aliased u<i>/r<i> per author.
+// trackedPRSearchArgs builds the `gh api graphql` argv for the given authors:
+// the shared open and recently closed fragments, aliased u<i>/r<i> per author.
+// The poller passes one author per request (see the file comment).
 func trackedPRSearchArgs(authors []string, windowDays int, now time.Time, withReviews bool) []string {
 	vars := []string{"$first:Int!"}
 	if windowDays > 0 {
@@ -264,19 +331,42 @@ func trackedPRSearchArgs(authors []string, windowDays int, now time.Time, withRe
 	return append(args, values...)
 }
 
-func liveTrackedPRResolver(authors []string, windowDays int, now time.Time, withReviews bool) ([]dashboardAuthoredOpenPRs, error) {
+// liveTrackedPRResolver sends one request per author, at most
+// trackedPRSearchParallelism in flight, with request starts spaced evenly
+// across spread. Results come back in authors' order.
+func liveTrackedPRResolver(authors []string, windowDays int, now time.Time, withReviews bool, spread time.Duration) []trackedPRAuthorResult {
+	results := make([]trackedPRAuthorResult, len(authors))
+	step := spread / time.Duration(len(authors))
+	slots := make(chan struct{}, trackedPRSearchParallelism)
+	var wg sync.WaitGroup
+	for i, author := range authors {
+		if i > 0 && step > 0 {
+			time.Sleep(step)
+		}
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			results[i] = searchTrackedPRAuthor(author, windowDays, now, withReviews)
+		})
+	}
+	wg.Wait()
+	return results
+}
+
+func searchTrackedPRAuthor(author string, windowDays int, now time.Time, withReviews bool) trackedPRAuthorResult {
 	// gh exits non-zero when GraphQL reports any error, even with partial
 	// data — a tracked login that no longer exists is exactly that — so the
 	// output is decoded whether or not the call failed.
+	authors := []string{author}
 	out, runErr := trackedPRGraphQL(trackedPRSearchArgs(authors, windowDays, now, withReviews))
 	views, err := decodeTrackedPRGraphQL(out, authors, windowDays)
 	if err != nil {
 		if runErr != nil {
-			return nil, runErr
+			err = runErr
 		}
-		return nil, err
+		return trackedPRAuthorResult{view: dashboardAuthoredOpenPRs{Login: author}, err: err}
 	}
-	return views, nil
+	return trackedPRAuthorResult{view: views[0]}
 }
 
 // decodeTrackedPRGraphQL splits the aliased response into one list per author
