@@ -96,6 +96,7 @@ const (
 	ghErrAuth               = "auth"
 	ghErrGHMissing          = "gh_missing"
 	ghErrDecode             = "decode"
+	ghErrBackoff            = "backoff"
 	ghErrOther              = "other"
 )
 
@@ -107,6 +108,9 @@ var ghHTTP5xxPattern = regexp.MustCompile(`(?i)HTTP 5\d\d|bad gateway|service un
 func classifyGHError(err error) string {
 	if err == nil {
 		return ""
+	}
+	if errors.Is(err, errGitHubBackoff) {
+		return ghErrBackoff
 	}
 	if errors.Is(err, errCommandTimedOut) {
 		return ghErrTimeoutLocal

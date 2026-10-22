@@ -675,8 +675,23 @@ func runInDirWithError(dir, name string, args ...string) (string, error) {
 // runInDirWithTimeout is runInDirWithError under a caller-chosen timeout. A
 // timeout is reported as "timed out after <timeout>", not the "signal:
 // killed" of the context's kill, and a non-JSON error page on stdout is
-// summarized into the error (see subprocessError).
+// summarized into the error (see subprocessError). A gh call that would reach
+// GitHub is refused while the shared rate-limit backoff holds (ghbackoff.go),
+// and its outcome feeds that backoff.
 func runInDirWithTimeout(dir string, timeout time.Duration, name string, args ...string) (string, error) {
+	if name == "gh" {
+		if err := gitHubBackoffGate(args); err != nil {
+			return "", err
+		}
+	}
+	out, err := runInDirWithTimeoutUngated(dir, timeout, name, args...)
+	if name == "gh" {
+		noteGitHubResult(args, err)
+	}
+	return out, err
+}
+
+func runInDirWithTimeoutUngated(dir string, timeout time.Duration, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)

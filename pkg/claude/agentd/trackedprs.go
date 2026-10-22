@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -48,8 +49,14 @@ const (
 	trackedPRPollInterval   = 60 * time.Second
 	trackedPRMaxBackoff     = 10 * time.Minute
 	trackedPROpenLimit      = 50
-	trackedPRRecentLimit    = 30
-	trackedPRCachePrefix    = "tracked_author_prs_v1_"
+	// trackedPRDegradedOpenLimit is the smaller open page an author whose
+	// search timed out on GitHub gets for trackedPRDegradedFor: the check
+	// rollups of every PR on the page are what make a prolific author's
+	// search run past GitHub's 10s limit.
+	trackedPRDegradedOpenLimit = 20
+	trackedPRDegradedFor       = time.Hour
+	trackedPRRecentLimit       = 30
+	trackedPRCachePrefix       = "tracked_author_prs_v1_"
 	// trackedPRSearchTimeout bounds one author's request. GitHub gives up at
 	// ~10s server-side; the rest covers network latency.
 	trackedPRSearchTimeout = 20 * time.Second
@@ -152,7 +159,12 @@ func startTrackedPRAuthorsPoller(stop <-chan struct{}) {
 			// The interval runs from the tick's start, so the spacing does not
 			// stretch the cadence.
 			delay := max(trackedPRPollInterval-time.Since(started), trackedPRPollInterval/4)
-			if err != nil {
+			if errors.Is(err, errGitHubBackoff) {
+				// Paused by the shared rate-limit backoff, which logged it:
+				// wait it out rather than counting a failure.
+				remaining, _ := gitHubBackoffRemaining(time.Now())
+				delay = max(delay, remaining)
+			} else if err != nil {
 				failures++
 				delay = trackedPRRetryDelay(failures)
 				if failures == 1 || delay > trackedPRRetryDelay(failures-1) {
@@ -182,7 +194,11 @@ func logTrackedPRAuthorFailures(streaks map[string]int, authors []string, failed
 	for _, author := range authors {
 		key := strings.ToLower(author)
 		tracked[key] = true
-		if ferr, bad := failed[author]; bad {
+		ferr, bad := failed[author]
+		if bad && !trackedPRFailureCounts(ferr) {
+			continue
+		}
+		if bad {
 			streaks[key]++
 			if streaks[key] == 1 {
 				slog.Warn("tracked-prs: GitHub search failed for one author; keeping its last good list",
@@ -199,6 +215,14 @@ func logTrackedPRAuthorFailures(streaks map[string]int, authors []string, failed
 			delete(streaks, key)
 		}
 	}
+}
+
+// trackedPRFailureCounts reports whether an author's error is a failed
+// search, as opposed to a search not sent this tick: deferred after repeated
+// timeouts, paused by the shared rate-limit backoff, or cut by shutdown.
+func trackedPRFailureCounts(err error) bool {
+	return !errors.Is(err, errTrackedPRAuthorDeferred) && !errors.Is(err, errGitHubBackoff) &&
+		!errors.Is(err, errTrackedPRTickStopped)
 }
 
 func trackedPRRetryDelay(failures int) time.Duration {
@@ -223,12 +247,13 @@ type trackedPRAuthorResult struct {
 	err  error
 }
 
-// pollTrackedPRAuthors searches every tracked author, starting the requests
-// across spread (see trackedPRStartPacer), and caches each author's list under the active identity, the
-// same namespacing as the operator's own list so a gh account switch never
-// shows the old account's view. It returns the authors searched and the
-// request error of each one that failed; err is set only when the whole tick
-// failed — no identity, or every author's request failed.
+// pollTrackedPRAuthors searches every tracked author that is due (see
+// trackedPRSlowAuthors), starting the requests across spread (see
+// trackedPRStartPacer), and caches each author's list under the active
+// identity, the same namespacing as the operator's own list so a gh account
+// switch never shows the old account's view. It returns the tracked authors
+// and the error of each one not refreshed; err is set only when the whole
+// tick failed — no identity, or every request sent failed.
 func pollTrackedPRAuthors(spread time.Duration, stop <-chan struct{}) (authors []string, failed map[string]error, err error) {
 	authors = loadTrackedPRAuthors()
 	if len(authors) == 0 {
@@ -242,15 +267,27 @@ func pollTrackedPRAuthors(spread time.Duration, stop <-chan struct{}) (authors [
 	now := time.Now()
 	reviewsMark := trackedPRReviewsFetchedAt.Load()
 	withReviews := trackedPRReviewsDue(now)
-	results := trackedPRResolver(authors, cfg.RecentPRWindowDays(), now, withReviews,
-		trackedPRStartPacer(spread/time.Duration(len(authors)), stop))
+	due, openLimits := planTrackedPRSearches(authors, now)
 	failed = map[string]error{}
-	for _, result := range results {
-		if result.err != nil {
-			failed[result.view.Login] = result.err
+	for _, author := range authors {
+		if _, ok := openLimits[author]; !ok {
+			failed[author] = errTrackedPRAuthorDeferred
 		}
 	}
-	if len(failed) == len(results) {
+	if len(due) == 0 {
+		return authors, failed, nil
+	}
+	results := trackedPRResolver(due, openLimits, cfg.RecentPRWindowDays(), now, withReviews,
+		trackedPRStartPacer(spread/time.Duration(len(due)), stop))
+	sentFailed := 0
+	for _, result := range results {
+		recordTrackedPRSearch(result.view.Login, result.err, now)
+		if result.err != nil {
+			failed[result.view.Login] = result.err
+			sentFailed++
+		}
+	}
+	if sentFailed == len(results) {
 		return authors, failed, results[0].err
 	}
 	if withReviews {
@@ -300,7 +337,7 @@ func trackedPRReviewsDue(now time.Time) bool {
 // trackedPRSearchArgs builds the `gh api graphql` argv for the given authors:
 // the shared open and recently closed fragments, aliased u<i>/r<i> per author.
 // The poller passes one author per request (see the file comment).
-func trackedPRSearchArgs(authors []string, windowDays int, now time.Time, withReviews bool) []string {
+func trackedPRSearchArgs(authors []string, openLimit, windowDays int, now time.Time, withReviews bool) []string {
 	vars := []string{"$first:Int!"}
 	if windowDays > 0 {
 		vars = append(vars, "$rfirst:Int!")
@@ -328,7 +365,7 @@ func trackedPRSearchArgs(authors []string, windowDays int, now time.Time, withRe
 	if withReviews {
 		query = strings.ReplaceAll(query, "updatedAt reviewDecision", "updatedAt reviewDecision"+authoredOpenPRReviewsSelection)
 	}
-	args = append(args, "-f", "query="+query, "-F", "first="+strconv.Itoa(trackedPROpenLimit))
+	args = append(args, "-f", "query="+query, "-F", "first="+strconv.Itoa(openLimit))
 	if windowDays > 0 {
 		args = append(args, "-F", "rfirst="+strconv.Itoa(trackedPRRecentLimit))
 	}
@@ -337,6 +374,84 @@ func trackedPRSearchArgs(authors []string, windowDays int, now time.Time, withRe
 
 // errTrackedPRTickStopped marks the authors a tick skipped at shutdown.
 var errTrackedPRTickStopped = fmt.Errorf("tracked PR poll stopped")
+
+// errTrackedPRAuthorDeferred marks an author whose search is backed off after
+// repeated timeouts.
+var errTrackedPRAuthorDeferred = fmt.Errorf("tracked PR search deferred after repeated timeouts")
+
+// trackedPRSlowAuthors remembers authors whose search times out on GitHub.
+// Retrying such a request as-is cannot succeed, and every attempt still
+// counts toward GitHub's secondary rate limits, which charge server time. So
+// a timeout drops the author's open page to trackedPRDegradedOpenLimit for
+// trackedPRDegradedFor, and a second timeout in a row defers their next
+// search with a backoff that doubles up to trackedPRMaxBackoff. The other
+// authors keep their normal cadence.
+var trackedPRSlowAuthors = struct {
+	sync.Mutex
+	byLogin map[string]*trackedPRSlowAuthor
+}{byLogin: map[string]*trackedPRSlowAuthor{}}
+
+type trackedPRSlowAuthor struct {
+	timeouts      int
+	deferUntil    time.Time
+	degradedUntil time.Time
+}
+
+// planTrackedPRSearches returns the authors due a search this tick and the
+// open page size for each of them.
+func planTrackedPRSearches(authors []string, now time.Time) ([]string, map[string]int) {
+	trackedPRSlowAuthors.Lock()
+	defer trackedPRSlowAuthors.Unlock()
+	tracked := make(map[string]bool, len(authors))
+	due := make([]string, 0, len(authors))
+	limits := make(map[string]int, len(authors))
+	for _, author := range authors {
+		key := strings.ToLower(author)
+		tracked[key] = true
+		slow := trackedPRSlowAuthors.byLogin[key]
+		if slow != nil && now.Before(slow.deferUntil) {
+			continue
+		}
+		due = append(due, author)
+		limits[author] = trackedPROpenLimit
+		if slow != nil && now.Before(slow.degradedUntil) {
+			limits[author] = trackedPRDegradedOpenLimit
+		}
+	}
+	for key := range trackedPRSlowAuthors.byLogin {
+		if !tracked[key] {
+			delete(trackedPRSlowAuthors.byLogin, key)
+		}
+	}
+	return due, limits
+}
+
+// recordTrackedPRSearch updates an author's timeout state from one search.
+func recordTrackedPRSearch(author string, err error, now time.Time) {
+	key := strings.ToLower(author)
+	trackedPRSlowAuthors.Lock()
+	defer trackedPRSlowAuthors.Unlock()
+	slow := trackedPRSlowAuthors.byLogin[key]
+	switch kind := classifyGHError(err); {
+	case err == nil:
+		if slow != nil {
+			slow.timeouts = 0
+			if !now.Before(slow.degradedUntil) {
+				delete(trackedPRSlowAuthors.byLogin, key)
+			}
+		}
+	case kind == ghErrGitHubTimeout || kind == ghErrGitHub5xx || kind == ghErrTimeoutLocal:
+		if slow == nil {
+			slow = &trackedPRSlowAuthor{}
+			trackedPRSlowAuthors.byLogin[key] = slow
+		}
+		slow.timeouts++
+		slow.degradedUntil = now.Add(trackedPRDegradedFor)
+		if slow.timeouts >= 2 {
+			slow.deferUntil = now.Add(min(trackedPRPollInterval<<min(slow.timeouts-1, 4), trackedPRMaxBackoff))
+		}
+	}
+}
 
 // trackedPRStartPacer waits step between a tick's request starts. A kick (an
 // author was just added) ends the waiting for the rest of the tick and is
@@ -361,10 +476,10 @@ func trackedPRStartPacer(step time.Duration, stop <-chan struct{}) func() bool {
 	}
 }
 
-// liveTrackedPRResolver sends one request per author, at most
-// trackedPRSearchParallelism in flight, calling beforeNext between starts.
-// Results come back in authors' order.
-func liveTrackedPRResolver(authors []string, windowDays int, now time.Time, withReviews bool, beforeNext func() bool) []trackedPRAuthorResult {
+// liveTrackedPRResolver sends one request per author, asking for
+// openLimits[author] open PRs, at most trackedPRSearchParallelism in flight,
+// calling beforeNext between starts. Results come back in authors' order.
+func liveTrackedPRResolver(authors []string, openLimits map[string]int, windowDays int, now time.Time, withReviews bool, beforeNext func() bool) []trackedPRAuthorResult {
 	results := make([]trackedPRAuthorResult, len(authors))
 	slots := make(chan struct{}, trackedPRSearchParallelism)
 	var wg sync.WaitGroup
@@ -378,20 +493,20 @@ func liveTrackedPRResolver(authors []string, windowDays int, now time.Time, with
 		slots <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-slots }()
-			results[i] = searchTrackedPRAuthor(author, windowDays, now, withReviews)
+			results[i] = searchTrackedPRAuthor(author, openLimits[author], windowDays, now, withReviews)
 		})
 	}
 	wg.Wait()
 	return results
 }
 
-func searchTrackedPRAuthor(author string, windowDays int, now time.Time, withReviews bool) trackedPRAuthorResult {
+func searchTrackedPRAuthor(author string, openLimit, windowDays int, now time.Time, withReviews bool) trackedPRAuthorResult {
 	// gh exits non-zero when GraphQL reports any error, even with partial
 	// data — a tracked login that no longer exists is exactly that — so the
 	// output is decoded whether or not the call failed.
 	authors := []string{author}
-	out, runErr := trackedPRGraphQL(trackedPRSearchArgs(authors, windowDays, now, withReviews))
-	views, err := decodeTrackedPRGraphQL(out, authors, windowDays)
+	out, runErr := trackedPRGraphQL(trackedPRSearchArgs(authors, openLimit, windowDays, now, withReviews))
+	views, err := decodeTrackedPRGraphQL(out, authors, openLimit, windowDays)
 	if err != nil {
 		if runErr != nil {
 			err = runErr
@@ -405,7 +520,7 @@ func searchTrackedPRAuthor(author string, windowDays int, now time.Time, withRev
 // by re-shaping each alias pair into the operator search's response and
 // running the shared decoder. An error whose path names one alias marks only
 // that author; any other error fails the tick.
-func decodeTrackedPRGraphQL(data []byte, authors []string, windowDays int) ([]dashboardAuthoredOpenPRs, error) {
+func decodeTrackedPRGraphQL(data []byte, authors []string, openLimit, windowDays int) ([]dashboardAuthoredOpenPRs, error) {
 	var payload struct {
 		Data   map[string]json.RawMessage `json:"data"`
 		Errors []struct {
@@ -465,7 +580,7 @@ func decodeTrackedPRGraphQL(data []byte, authors []string, windowDays int) ([]da
 		if err != nil {
 			return nil, err
 		}
-		view.Truncated = view.Total > trackedPROpenLimit
+		view.Truncated = view.Total > openLimit
 		view.RecentWindowDays = windowDays
 		if windowDays > 0 {
 			view.RecentTruncated = len(view.Recent) >= trackedPRRecentLimit
@@ -480,13 +595,17 @@ func decodeTrackedPRGraphQL(data []byte, authors []string, windowDays int) ([]da
 	return views, nil
 }
 
-func liveTrackedPRGraphQL(args []string) ([]byte, error) {
+func liveTrackedPRGraphQL(args []string) (out []byte, err error) {
+	if err := gitHubBackoffGate(args); err != nil {
+		return nil, err
+	}
+	defer func() { noteGitHubResult(args, err) }()
 	ctx, cancel := context.WithTimeout(context.Background(), trackedPRSearchTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, err = cmd.Output()
 	if err != nil {
 		// Keep gh's stderr ("gh: HTTP 502") and the error page's title: when
 		// stdout does not decode, this error is all the poller can log.

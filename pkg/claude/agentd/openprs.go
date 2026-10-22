@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -189,7 +190,12 @@ func startAuthoredOpenPRPoller(stop <-chan struct{}) {
 				started := time.Now()
 				err := pollAuthoredOpenPRs()
 				delay := authoredOpenPRPollInterval
-				if err != nil {
+				if errors.Is(err, errGitHubBackoff) {
+					// Paused by the shared rate-limit backoff, which logged it:
+					// wait it out rather than counting a failure.
+					remaining, _ := gitHubBackoffRemaining(time.Now())
+					delay = max(delay, remaining)
+				} else if err != nil {
 					failures++
 					delay = authoredOpenPRRetryDelay(failures)
 					if failures == 1 || delay > authoredOpenPRRetryDelay(failures-1) {

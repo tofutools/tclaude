@@ -2136,6 +2136,9 @@ func SetTrackedPRSourcesForTest(self string, exists func(login string) bool, sea
 	return func() {
 		githubConfiguredLoginResolver, githubEnvironmentTokenPresent = prevConfigured, prevEnv
 		trackedPRUserLookup, trackedPRGraphQL = prevLookup, prevSearch
+		trackedPRSlowAuthors.Lock()
+		clear(trackedPRSlowAuthors.byLogin)
+		trackedPRSlowAuthors.Unlock()
 		setAuthoredOpenPRActiveLogin("")
 		githubLoginCache.Lock()
 		githubLoginCache.login = ""
