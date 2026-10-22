@@ -406,13 +406,19 @@ jobs:
           done
           for protocol in TCP6 UDP6; do
             token="filtered-fixture-$protocol"
+            # socat 1.8 (Ubuntu 26.04) ends a UDP client with an empty
+            # datagram, which leaves the UDP6-RECVFROM fork listener unable to
+            # answer the smoke's later datagrams on this port; shut-none keeps
+            # the probe to its one datagram.
+            shutdown=""
+            if [[ "$protocol" == UDP6 ]]; then shutdown=",shut-none"; fi
             # `|| true` inside the substitution, exactly as
             # fixture::prove_reachable does it: under `set -e -o pipefail` a
             # socat that fails — the very case this checks — would abort the
             # step here, so the annotation below could never be reached.
             reply=$(
               printf '%s' "$token" |
-                timeout 5 socat -T 2 -t 2 - "$protocol:[fd00:823::10]:41001" || true
+                timeout 5 socat -T 2 -t 2 - "$protocol:[fd00:823::10]:41001$shutdown" || true
             )
             if [[ "$reply" != "$token" ]]; then
               echo "::error::IPv6 filtered-network fixture failed direct $protocol round trip"
