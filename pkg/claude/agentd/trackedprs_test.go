@@ -113,31 +113,42 @@ func TestTrackedPRSlowAuthors(t *testing.T) {
 	assert.Equal(t, map[string]int{"alice": trackedPROpenLimit, "Bob": trackedPROpenLimit}, limits)
 
 	// One timeout: still searched, with the smaller page.
-	recordTrackedPRSearch("Bob", timeout, now)
-	recordTrackedPRSearch("alice", errors.New("gh: Could not resolve to a User"), now)
+	recordTrackedPRSearch("Bob", timeout, true, now)
+	recordTrackedPRSearch("alice", errors.New("gh: Could not resolve to a User"), true, now)
 	due, limits = planTrackedPRSearches(authors, now.Add(time.Minute))
 	assert.Equal(t, authors, due, "a non-timeout failure changes nothing")
 	assert.Equal(t, trackedPRDegradedOpenLimit, limits["Bob"])
 	assert.Equal(t, trackedPROpenLimit, limits["alice"])
 
 	// A second timeout in a row defers Bob's next search.
-	recordTrackedPRSearch("Bob", timeout, now.Add(time.Minute))
+	recordTrackedPRSearch("Bob", timeout, true, now.Add(time.Minute))
 	due, _ = planTrackedPRSearches(authors, now.Add(2*time.Minute))
 	assert.Equal(t, []string{"alice"}, due)
 	due, limits = planTrackedPRSearches(authors, now.Add(4*time.Minute))
 	assert.Equal(t, authors, due, "the deferral expires")
 
 	// A success ends the streak but keeps the smaller page for a while.
-	recordTrackedPRSearch("Bob", nil, now.Add(4*time.Minute))
-	recordTrackedPRSearch("Bob", timeout, now.Add(5*time.Minute))
+	recordTrackedPRSearch("Bob", nil, true, now.Add(4*time.Minute))
+	recordTrackedPRSearch("Bob", timeout, true, now.Add(5*time.Minute))
 	due, limits = planTrackedPRSearches(authors, now.Add(6*time.Minute))
 	assert.Equal(t, authors, due, "one timeout after a success does not defer")
 	assert.Equal(t, trackedPRDegradedOpenLimit, limits["Bob"])
 	due, limits = planTrackedPRSearches(authors, now.Add(5*time.Minute+trackedPRDegradedFor))
 	assert.Equal(t, trackedPROpenLimit, limits["Bob"], "the full page comes back")
 
+	// A 5xx when no other author got through is GitHub's outage, not Bob.
+	recordTrackedPRSearch("alice", timeout, false, now.Add(7*time.Minute))
+	recordTrackedPRSearch("alice", timeout, false, now.Add(8*time.Minute))
+	due, limits = planTrackedPRSearches(authors, now.Add(9*time.Minute))
+	assert.Contains(t, due, "alice")
+	assert.Equal(t, trackedPROpenLimit, limits["alice"])
+	// GitHub saying it could not respond in time is always the search.
+	recordTrackedPRSearch("alice", errors.New("gh: We couldn't respond to your request in time"), false, now.Add(9*time.Minute))
+	_, limits = planTrackedPRSearches(authors, now.Add(10*time.Minute))
+	assert.Equal(t, trackedPRDegradedOpenLimit, limits["alice"])
+
 	// Removing an author forgets them.
-	planTrackedPRSearches([]string{"alice"}, now)
+	planTrackedPRSearches([]string{"carol"}, now)
 	trackedPRSlowAuthors.Lock()
 	assert.Empty(t, trackedPRSlowAuthors.byLogin)
 	trackedPRSlowAuthors.Unlock()

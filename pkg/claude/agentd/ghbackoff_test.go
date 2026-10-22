@@ -58,12 +58,32 @@ func TestGitHubBackoff(t *testing.T) {
 	remaining, _ = gitHubBackoffRemaining(after)
 	assert.Equal(t, ghBackoffMax, remaining)
 
-	// A success resets the doubling.
+	// A success in flight when a pause began does not reset the doubling.
+	noteGitHubResultAt(nil, after.Add(time.Minute))
+	after = after.Add(ghBackoffMax)
+	noteGitHubResultAt(secondary, after)
+	remaining, _ = gitHubBackoffRemaining(after)
+	assert.Equal(t, ghBackoffMax, remaining)
+
+	// A success after the pause resets the doubling.
 	after = after.Add(ghBackoffMax)
 	noteGitHubResultAt(nil, after)
 	noteGitHubResultAt(secondary, after)
 	remaining, _ = gitHubBackoffRemaining(after)
 	assert.Equal(t, ghBackoffMin, remaining)
+}
+
+func TestPollersWaitOutGitHubBackoff(t *testing.T) {
+	resetGitHubBackoffForTest(t)
+	noteGitHubResultAt(errors.New("gh: You have exceeded a secondary rate limit"), time.Now())
+	assert.ErrorIs(t, errGitHubLoginUnresolved(), errGitHubBackoff,
+		"an unresolved login during a pause is the pause, not a failure")
+
+	var b recentlyMergedPRPollBackoff
+	delay, warn, _, _ := b.next(true, gitHubBackoffGate([]string{"api", "search/issues"}))
+	assert.False(t, warn)
+	assert.Greater(t, delay, ghBackoffMin-time.Minute)
+	assert.Zero(t, b.failures, "a pause is not a failed poll")
 }
 
 func TestRunInDirWithTimeoutHonoursGitHubBackoff(t *testing.T) {

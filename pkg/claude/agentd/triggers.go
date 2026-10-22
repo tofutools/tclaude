@@ -98,7 +98,7 @@ func startTriggerSourcePollers(stop <-chan struct{}) {
 			attempted, err := pollRecentlyMergedPRs()
 			var warn bool
 			delay, warn, _, _ = backoff.next(attempted, err)
-			if warn && !errors.Is(err, errGitHubBackoff) {
+			if warn {
 				slog.Warn("triggers: merged PR poll failed", "error", err)
 			}
 		}

@@ -57,6 +57,16 @@ func gitHubBackoffRemaining(now time.Time) (time.Duration, string) {
 	return 0, ""
 }
 
+// errGitHubLoginUnresolved is the pollers' error when the active gh login is
+// unknown. While paused, the `gh api user` behind it was never sent, so the
+// error wraps errGitHubBackoff and the poller waits out the pause instead.
+func errGitHubLoginUnresolved() error {
+	if remaining, _ := gitHubBackoffRemaining(time.Now()); remaining > 0 {
+		return fmt.Errorf("resolve active GitHub login: %w", errGitHubBackoff)
+	}
+	return errors.New("resolve active GitHub login")
+}
+
 // gitHubBackoffGate returns errGitHubBackoff while paused, for a gh call that
 // would reach GitHub.
 func gitHubBackoffGate(args []string) error {
@@ -84,7 +94,11 @@ func noteGitHubResultAt(err error, now time.Time) {
 	defer ghBackoff.Unlock()
 	switch kind {
 	case "":
-		ghBackoff.streak = 0
+		// Only a success after the pause ends the doubling: one that was in
+		// flight when it began says nothing about the token now.
+		if !now.Before(ghBackoff.until) {
+			ghBackoff.streak = 0
+		}
 		return
 	case ghErrSecondaryRateLimit, ghErrRateLimit:
 	default:

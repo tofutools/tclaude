@@ -82,8 +82,7 @@ var (
 	trackedPRReviewsFetchedAt atomic.Int64
 	// trackedPRAuthorsEditMu serializes the endpoint's load-modify-save, so
 	// two quick adds cannot drop one another.
-	trackedPRAuthorsEditMu       sync.Mutex
-	errTrackedPRNoActiveIdentity = fmt.Errorf("resolve active GitHub login")
+	trackedPRAuthorsEditMu sync.Mutex
 )
 
 // loadTrackedPRAuthors returns the tracked logins in the order they were
@@ -261,7 +260,7 @@ func pollTrackedPRAuthors(spread time.Duration, stop <-chan struct{}) (authors [
 	}
 	self, ok := cachedGitHubLogin()
 	if !ok {
-		return authors, nil, errTrackedPRNoActiveIdentity
+		return authors, nil, errGitHubLoginUnresolved()
 	}
 	cfg, _ := config.Load()
 	now := time.Now()
@@ -281,10 +280,18 @@ func pollTrackedPRAuthors(spread time.Duration, stop <-chan struct{}) (authors [
 		trackedPRStartPacer(spread/time.Duration(len(due)), stop))
 	sentFailed := 0
 	for _, result := range results {
-		recordTrackedPRSearch(result.view.Login, result.err, now)
+		if result.err != nil {
+			sentFailed++
+		}
+	}
+	// A 5xx or a local timeout is that author's slow search only when
+	// another author's search got through; when all failed it is GitHub or
+	// the network.
+	isolated := sentFailed < len(results)
+	for _, result := range results {
+		recordTrackedPRSearch(result.view.Login, result.err, isolated, now)
 		if result.err != nil {
 			failed[result.view.Login] = result.err
-			sentFailed++
 		}
 	}
 	if sentFailed == len(results) {
@@ -427,7 +434,11 @@ func planTrackedPRSearches(authors []string, now time.Time) ([]string, map[strin
 }
 
 // recordTrackedPRSearch updates an author's timeout state from one search.
-func recordTrackedPRSearch(author string, err error, now time.Time) {
+// isolated reports that another author's search in the same tick succeeded.
+// GitHub's own "couldn't respond in time" always counts. A 5xx (GitHub's
+// search timeout usually arrives as a 502) or our local timeout counts only
+// when isolated, so an outage does not mark every author slow.
+func recordTrackedPRSearch(author string, err error, isolated bool, now time.Time) {
 	key := strings.ToLower(author)
 	trackedPRSlowAuthors.Lock()
 	defer trackedPRSlowAuthors.Unlock()
@@ -440,7 +451,7 @@ func recordTrackedPRSearch(author string, err error, now time.Time) {
 				delete(trackedPRSlowAuthors.byLogin, key)
 			}
 		}
-	case kind == ghErrGitHubTimeout || kind == ghErrGitHub5xx || kind == ghErrTimeoutLocal:
+	case kind == ghErrGitHubTimeout || (isolated && (kind == ghErrGitHub5xx || kind == ghErrTimeoutLocal)):
 		if slow == nil {
 			slow = &trackedPRSlowAuthor{}
 			trackedPRSlowAuthors.byLogin[key] = slow

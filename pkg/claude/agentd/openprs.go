@@ -343,7 +343,7 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	login, ok := cachedGitHubLogin()
 	if !ok {
 		setAuthoredOpenPRActiveLogin("")
-		return dashboardAuthoredOpenPRs{}, fmt.Errorf("resolve active GitHub login")
+		return dashboardAuthoredOpenPRs{}, errGitHubLoginUnresolved()
 	}
 	// Switch the snapshot's cache namespace as soon as the local credential
 	// identity is known, before the network search. If the request then fails,
