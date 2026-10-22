@@ -87,7 +87,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only == 'false'
     name: Sandbox v2 bubblewrap smoke
-    runs-on: ubuntu-latest
+    # Pinned while the filtered-network smokes fail on ubuntu-26.04 (IPv6 UDP
+    # through the packet gateway); the follow-up runs this job on both images.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
