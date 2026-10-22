@@ -120,7 +120,7 @@ Retired agents and past conversations are kept. Open **▾ view** and tick
 **show retired** and **show conversations**. Two blocks appear at the
 bottom of **Groups**:
 
-<!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
+<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
 ![The Groups view with show retired and show conversations ticked. The Retired block lists bob with a reinstate button, and the Conversations block lists a past conversation, "fix the flaky login test", with a promote button.](../assets/learn-dashboard-resume.png)
 
 - **Retired** lists retired agents. **reinstate** makes `bob` an agent

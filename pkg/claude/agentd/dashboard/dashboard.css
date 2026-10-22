@@ -21637,7 +21637,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
    the same violet surface, parchment fields and gilded actions as those.
    The manager renders inside #agent-spawn-modal (no portal), whose blanket
    wizard button rule carries two ids. The doubled id ties it and wins by
-   coming later in this file (dashsnap asserts Save prompt stays primary). */
+   coming later in this file (keeps Save prompt primary). */
 body.wizard #saved-prompts-manage-modal .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;

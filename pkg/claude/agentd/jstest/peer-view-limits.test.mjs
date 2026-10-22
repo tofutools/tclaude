@@ -50,7 +50,7 @@ test('on a peer view, blocked controls are greyed and clicks never reach their h
   assert.equal(tab('costs').classList.contains('pv-off'), true);
   assert.equal(tab('costs').getAttribute('title'), 'forge does not share costs with you (needs costs.read)');
   // linkedom does not order capture before target listeners, so assert the
-  // guard's decision (the dashsnap peer-view state proves the browser order).
+  // guard's decision (the real browser order is not covered by an automated test).
   const prevented = Object.fromEntries(['retire', 'dot', 'menu', 'group-create-open', 'filter'].map((id) => [id, harness.fireEvent(doc.getElementById(id), 'click').defaultPrevented]));
   assert.deepEqual(prevented, { retire: true, dot: true, menu: false, 'group-create-open': true, filter: false }, 'mutations (the power dot included) and management controls are stopped; view-only controls work');
   assert.equal(toasts.length, 3);

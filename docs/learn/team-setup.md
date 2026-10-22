@@ -22,7 +22,7 @@ Open the `hello` group's **⚙** menu, next to the group name, and choose
 > Work on your own branch and open a pull request when a change is ready.
 > Run go test ./... before you push.
 
-<!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
+<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
 ![The Group settings dialog for hello. The Startup context field holds three lines about the project, and Re-inject after compact is set to identity + startup context.](../assets/learn-dashboard-group-settings.png)
 
 Click **Save settings**. Every agent you start in `hello` from now on gets

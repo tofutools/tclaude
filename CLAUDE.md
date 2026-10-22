@@ -117,19 +117,15 @@ Keep new tests focused on user-visible surfaces such as CLI/API results,
 conversation listings, and dashboard snapshots. Avoid asserting on simulator
 internals when a production read path can be exercised instead.
 
-For manual dashboard visual smoke, first check that Linux-side Chrome/Chromium
-exists, then run:
-
-```bash
-TCLAUDE_DASHSNAP=1 TCLAUDE_DASHSNAP_SHARD=1/4 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 600s
-```
-
-Run shards `1/4` through `4/4` to cover the full matrix (each takes a few
-minutes; an unsharded full run needs `-timeout 1800s`). See "Visual smoke
-testing" in `docs/dashboard.md`.
-
-The visual smoke harness is optional and environment-dependent; it is not wired
-into CI.
+The dashboard visual smoke harness (`pkg/claude/agentd/dashsnap`, its
+`TCLAUDE_DASHSNAP` browser tests, and the `TCLAUDE_DOCSHOTS` docs/Learn
+screenshot generators) has been removed. CI never ran its browser
+tests (all env-gated), yet its go-rod browser driver pinned old, API-incompatible
+`ysmood/*` modules into `go.mod` and broke `go get -u`. To bring it back, find
+the removal commit with
+`git log --diff-filter=D --oneline -- pkg/claude/agentd/dashsnap` and
+restore from its parent. `scripts/e2e/drive` still uses go-rod, but as its own
+nested module (`scripts/e2e/drive/go.mod`), so it stays out of the main module.
 
 ## UI design proposals: mock, render, notify
 
@@ -145,8 +141,7 @@ decision needs. Instead:
    --window-size=WxH --hide-scrollbars file:///path/to/mock.html`.
    Under an agent sandbox, point `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and
    `XDG_DATA_HOME` at a disposable writable directory first — Chrome's crashpad
-   ignores `--user-data-dir` and aborts when `~/.config` is unwritable (same
-   trick as `pkg/claude/agentd/dashsnap`).
+   ignores `--user-data-dir` and aborts when `~/.config` is unwritable.
 3. Send the rendered image to the operator with
    `tclaude agent notify-human -a out.png` plus a short assessment and a
    recommendation, and let the human pick. Note that notify-human is

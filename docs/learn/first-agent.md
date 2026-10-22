@@ -33,7 +33,7 @@ as the agent's working directory. Set:
 - **Name**: `alice`;
 - **Initial msg**: `Read this project and tell me in three sentences what it does.`
 
-<!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
+<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
 ![The spawn dialog, joining group hello. Name is alice, the initial message asks for a three-sentence summary of the project, and Harness and Model are left at their defaults.](../assets/learn-dashboard-spawn.png)
 
 Because the directory is a git repository, the dialog also prepares a new

@@ -73,7 +73,7 @@ EOF
 case ${1:-} in
 build)
 	mkdir -p "$BIN"
-	(cd "$REPO" && go build -o "$BIN/" . ./cmd/... && go build -o "$BIN/drive" ./scripts/e2e/drive)
+	(cd "$REPO" && go build -o "$BIN/" . ./cmd/... && go -C scripts/e2e/drive build -o "$BIN/drive" .)
 	ls "$BIN"
 	;;
 up)

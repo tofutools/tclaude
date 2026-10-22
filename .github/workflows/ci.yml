@@ -83,6 +83,11 @@ jobs:
         with:
           version: v2.14.0
 
+      # scripts/e2e/drive is its own module (keeps go-rod out of go.mod), so
+      # the root ./... build, lint and test above never compile it.
+      - name: Vet e2e drive module
+        run: go -C scripts/e2e/drive vet ./...
+
   sandbox-v2-smoke:
     needs: changes
     if: needs.changes.outputs.docs_only == 'false'

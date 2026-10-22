@@ -46,7 +46,7 @@ Back in **Groups**, `bob` and `carol` appear in `hello` as `alice` starts
 them. Each works in its own worktree and branch, so they do not get in each
 other's way:
 
-<!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
+<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
 ![The Groups view. The hello group lists carol, working, and bob, idle, each in its own worktree on a branch with a pull request, and alice, the owner, on main.](../assets/learn-dashboard-lead-team.png)
 
 The workers got the group's startup context and `alice`'s task when they

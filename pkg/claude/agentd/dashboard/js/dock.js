@@ -715,7 +715,7 @@ export function bindDock() {
   // Re-home the toolbar globals off ANY change to body.dock-open, not only the
   // applyDockOpen path (JOH-390 item 4). The production toggle always routes
   // through applyDockOpen, but this keeps the controls correctly placed if the
-  // class is flipped directly (e.g. the dashsnap visual harness sets it), so the
+  // class is flipped directly (e.g. by test or automation code), so the
   // move can never desync from the visible open state. The change-guard in
   // syncDockActions makes the extra body-class mutations a no-op.
   new MutationObserver(() => syncDockActions(document.body.classList.contains('dock-open')))

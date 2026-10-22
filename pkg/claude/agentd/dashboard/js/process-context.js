@@ -260,7 +260,7 @@ export function unauthorizedProfiles(message = '') {
 }
 
 // processRunApi is the start-a-run seam the Groups Processes lens uses; tests
-// and dashsnap swap the fetch underneath.
+// swap the fetch underneath.
 export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } = {}) {
   return {
     async listTemplates() {

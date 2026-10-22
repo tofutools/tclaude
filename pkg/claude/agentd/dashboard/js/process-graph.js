@@ -229,8 +229,8 @@ function labelUnitWidth(unit) {
   // disconnected SVG text can be measured. Wide Latin glyphs are not allowed
   // to consume the ordinary half-em budget; CJK, emoji, combining clusters,
   // and the ellipsis receive a full-em allowance. The clip rectangle remains
-  // the final hard geometry boundary, while Chrome dashsnap verifies that each
-  // emitted line fits without relying on that clip.
+  // the final hard geometry boundary; that each emitted line fits without
+  // relying on the clip is not checked in a real browser.
   if (Array.from(unit).some((character) => character.codePointAt(0) > 0xff)) return 1.1;
   if (/^[WM@#%&QOGmw]$/u.test(unit)) return 1.15;
   if (/^[A-Z]$/u.test(unit)) return 0.8;

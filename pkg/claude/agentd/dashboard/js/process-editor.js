@@ -323,7 +323,7 @@ export class ProcessTemplateEditor {
     this.validation = new LiveValidation(this, options.validation || {});
     this.updateChrome();
     void this.loadCustomSnippets();
-    // Test/automation handle (dashsnap drives states through this; not an API).
+    // Test/automation handle (not an API).
     this.mount.__processEditor = this;
   }
 
