@@ -1778,16 +1778,14 @@ dialog markup, or a blanket filename exception.
 
 ## Visual smoke testing (contributors)
 
-`TCLAUDE_DASHSNAP=1 TCLAUDE_DASHSNAP_SHARD=1/4 go test ./pkg/claude/agentd/
--run TestDashSnap -v -count=1 -timeout 600s` renders the dashboard matrix
-with the host's Chrome/Chromium and writes screenshots for manual review; run
-shards 1/4 through 4/4 (a few minutes each; an unsharded run needs
-`-timeout 1800s`). Optional, environment-dependent, and not wired into CI.
-
-The Groups screenshot at the top of this page and in the README comes from a
-separate, realistic mixed-harness fleet: `TCLAUDE_DOCSHOTS=1 go test
-./pkg/claude/agentd/ -run TestDocShots -v -count=1` writes it under
-`dashsnap-out/docshots-*/`; copy it into `docs/assets/` to refresh the docs.
+The headless-Chrome visual smoke harness (`TCLAUDE_DASHSNAP`) and the
+screenshot generators behind the Groups image and the Learn tutorial images
+(`TCLAUDE_DOCSHOTS`, `scripts/docs/learn-images.sh`) have been removed: they
+were opt-in, never ran in CI, and their go-rod dependency kept breaking
+dependency updates. The images in `docs/assets/` are now maintained by hand. To
+restore the harness, find the removal commit with
+`git log --diff-filter=D --oneline -- pkg/claude/agentd/dashsnap` and
+check the files out from its parent.
 
 ### Pull or sync group repositories
 

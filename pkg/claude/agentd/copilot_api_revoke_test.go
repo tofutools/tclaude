@@ -110,7 +110,7 @@ var copilotAPIPostureWriters = []struct {
 //     Resolving to types.Object via go/packages would fix this and the name
 //     collisions below; it was judged too heavy for what it buys here.
 //   - It walks two directories, NOT two packages: `.` and `../session`, top level
-//     only. agentd's own subpackages (dashboard/, dashsnap/, jstest/, starters/)
+//     only. agentd's own subpackages (dashboard/, jstest/, starters/)
 //     are not walked, and neither is any third package.
 //   - It constrains references, not behaviour, so it says nothing about ROUTING.
 //     A revoke that writes no record and instead teaches [copilotAPIDriven] to

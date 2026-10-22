@@ -46,8 +46,7 @@ import (
 // one means re-reading Linear's schema by hand. Its API answers `__type`
 // introspection with no credential, which is the cheapest way to do that.
 //
-// Opt-in and network-dependent, like the dashsnap harness: it is not wired
-// into CI. Run it with
+// Opt-in and network-dependent: it is not wired into CI. Run it with
 //
 //	TCLAUDE_LINEAR_SCHEMA_CHECK=1 go test ./pkg/claude/agentd/ -run 'TestLinear.*MatchLiveSchema' -v
 func TestLinearQueryDocumentsMatchLiveSchema(t *testing.T) {

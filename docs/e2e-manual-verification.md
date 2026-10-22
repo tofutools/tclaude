@@ -15,7 +15,7 @@ The tooling lives in `scripts/e2e/`:
 |---|---|
 | `e2e.sh` | builds the binaries; starts and stops the hub, nodes, mock APIs and browser; runs a node's CLI |
 | `mockapi.py` | a stdlib mock of the Anthropic Messages API, so agents run without credentials or token spend |
-| `drive/` | a small go-rod CLI that drives one long-lived headless Chrome a step at a time |
+| `drive/` | a small go-rod CLI that drives one long-lived headless Chrome a step at a time (its own Go module, so go-rod stays out of the main `go.mod`) |
 
 ## Requirements
 

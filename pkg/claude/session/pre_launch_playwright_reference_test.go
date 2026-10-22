@@ -212,8 +212,7 @@ func stripPlaywrightFromPath(t *testing.T) string {
 
 // Opt-in end-to-end smoke against the real binary: render a local HTML file and
 // check the PNG comes out at the requested size. Off by default — it drives a
-// real browser, which is far too slow and network-dependent for CI, the same
-// reason the dashboard's visual smoke is gated behind TCLAUDE_DASHSNAP.
+// real browser, which is far too slow and network-dependent for CI.
 //
 //	TCLAUDE_PLAYWRIGHT_SMOKE=1 go test ./pkg/claude/session/ -run TestPlaywrightReferenceRendersAPNG -v
 func TestPlaywrightReferenceRendersAPNG(t *testing.T) {
