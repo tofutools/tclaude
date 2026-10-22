@@ -64,6 +64,6 @@ func TestTrackedPRResolverKeepsGHCause(t *testing.T) {
 		return []byte("<html><title>Unicorn! &middot; GitHub</title></html>"), cause
 	}
 	_, err := liveTrackedPRResolver([]string{"alice", "bob"}, 0, time.Now(), false)
-	assert.EqualError(t, err, "gh: HTTP 502; response: Unicorn! &middot; GitHub: exit status 1",
+	assert.EqualError(t, err, "gh: HTTP 502; response: Unicorn! · GitHub: exit status 1",
 		"an undecodable body reports gh's cause, not a bare exit status")
 }

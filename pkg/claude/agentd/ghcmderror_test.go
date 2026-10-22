@@ -19,7 +19,7 @@ func TestSubprocessErrorShapes(t *testing.T) {
 	page := []byte("<!DOCTYPE html>\n<html><head><title>Unicorn! &middot; GitHub</title></head><body>" +
 		"No server is currently available to service your request.</body></html>")
 	err := subprocessError(context.Background(), time.Second, exitErr, "gh: HTTP 502\n", page)
-	assert.EqualError(t, err, "gh: HTTP 502; response: Unicorn! &middot; GitHub: exit status 1")
+	assert.EqualError(t, err, "gh: HTTP 502; response: Unicorn! · GitHub: exit status 1")
 	assert.ErrorIs(t, err, exitErr)
 	assert.Equal(t, ghErrGitHub5xx, classifyGHError(err))
 
@@ -49,10 +49,11 @@ func TestSubprocessErrorShapes(t *testing.T) {
 
 func TestClassifyGHError(t *testing.T) {
 	for msg, want := range map[string]string{
-		"gh: API rate limit exceeded for user ID 1. (HTTP 403)":                                ghErrRateLimit,
-		"gh: We couldn't respond to your request in time. Sorry about that. (HTTP 504)":        ghErrGitHubTimeout,
-		"gh: HTTP 503: exit status 1":                                                          ghErrGitHub5xx,
-		"gh: Bad credentials (HTTP 401)":                                                       ghErrAuth,
+		"gh: API rate limit exceeded for user ID 1. (HTTP 403)":                                                                  ghErrRateLimit,
+		"gh: We couldn't respond to your request in time. Sorry about that. (HTTP 504)":                                          ghErrGitHubTimeout,
+		"gh: Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.": ghErrGitHubTimeout,
+		"gh: HTTP 503: exit status 1":    ghErrGitHub5xx,
+		"gh: Bad credentials (HTTP 401)": ghErrAuth,
 		`Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host`: ghErrNetwork,
 		"error connecting to api.github.com":                                                   ghErrNetwork,
 		"decode tracked PR search: invalid character '<'":                                      ghErrDecode,

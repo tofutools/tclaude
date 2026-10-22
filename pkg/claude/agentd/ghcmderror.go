@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -71,7 +72,7 @@ func nonJSONBodySnippet(stdout []byte) string {
 		return ""
 	}
 	if m := htmlTitlePattern.FindSubmatch(body); m != nil {
-		body = m[1]
+		body = []byte(html.UnescapeString(string(m[1])))
 	}
 	printable := strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {
@@ -126,7 +127,8 @@ func classifyGHError(err error) string {
 		return ghErrSecondaryRateLimit
 	case contains("rate limit", "http 429", "rate_limited"):
 		return ghErrRateLimit
-	case contains("couldn't respond to your request in time", "timedout", "http 504", "gateway time"):
+	case contains("couldn't respond to your request in time", "may be the result of a timeout",
+		"timedout", "http 504", "gateway time"):
 		return ghErrGitHubTimeout
 	case ghHTTP5xxPattern.MatchString(err.Error()):
 		return ghErrGitHub5xx
