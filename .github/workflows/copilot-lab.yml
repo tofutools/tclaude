@@ -272,9 +272,18 @@ jobs:
           # without this knob the raw sysctl error would preempt the descriptive
           # gate below, which was written for precisely that case.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 || true
+          # Ubuntu 26.04's bwrap-userns-restrict profile grants /usr/bin/bwrap
+          # its user namespace regardless of that knob, so also cap user
+          # namespaces at zero — the denial a nested container presents — and
+          # restore the cap afterwards.
+          max_userns=$(sysctl -n user.max_user_namespaces)
+          sudo sysctl -w user.max_user_namespaces=0
+          status=0
           go test ./pkg/claude/harness/copilotfixture/... \
             -run 'TestCopilotNativeSandbox' -v -count=1 -parallel 8 -timeout 900s 2>&1 \
-            | tee "$RUNNER_TEMP/copilot-lab-nobackend.log"
+            | tee "$RUNNER_TEMP/copilot-lab-nobackend.log" || status=$?
+          sudo sysctl -w "user.max_user_namespaces=$max_userns"
+          exit "$status"
 
       - name: Require the backend-denied arm to have run
         if: matrix.platform == 'linux'
