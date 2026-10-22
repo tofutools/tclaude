@@ -2185,7 +2185,10 @@ func SetTrackedPRSourcesForTest(self string, exists func(login string) bool, sea
 }
 
 // PollTrackedPRAuthorsForTest runs one colleague-tabs poll synchronously.
-func PollTrackedPRAuthorsForTest() error { return pollTrackedPRAuthors() }
+func PollTrackedPRAuthorsForTest() error {
+	_, err := pollTrackedPRAuthors()
+	return err
+}
 
 // RecheckFederationRouteAuthorityForTest runs the periodic watcher's authority
 // check immediately, so revocation flows need not race its five-second ticker.

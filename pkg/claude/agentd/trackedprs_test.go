@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -51,4 +53,17 @@ func TestDecodeTrackedPRGraphQLFailureShapes(t *testing.T) {
 		assert.Len(t, views[0].Items, 1)
 		assert.Equal(t, "cannot be searched", views[1].Error)
 	}
+}
+
+func TestTrackedPRResolverKeepsGHCause(t *testing.T) {
+	prev := trackedPRGraphQL
+	t.Cleanup(func() { trackedPRGraphQL = prev })
+	cause := subprocessError(context.Background(), time.Second, errors.New("exit status 1"),
+		"gh: HTTP 502", []byte("<html><title>Unicorn! &middot; GitHub</title></html>"))
+	trackedPRGraphQL = func([]string) ([]byte, error) {
+		return []byte("<html><title>Unicorn! &middot; GitHub</title></html>"), cause
+	}
+	_, err := liveTrackedPRResolver([]string{"alice", "bob"}, 0, time.Now(), false)
+	assert.EqualError(t, err, "gh: HTTP 502; response: Unicorn! &middot; GitHub: exit status 1",
+		"an undecodable body reports gh's cause, not a bare exit status")
 }

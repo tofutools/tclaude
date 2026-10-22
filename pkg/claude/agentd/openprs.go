@@ -181,6 +181,7 @@ func startAuthoredOpenPRPoller(stop <-chan struct{}) {
 			case <-stop:
 				return
 			case <-timer.C:
+				started := time.Now()
 				err := pollAuthoredOpenPRs()
 				delay := authoredOpenPRPollInterval
 				if err != nil {
@@ -188,7 +189,8 @@ func startAuthoredOpenPRPoller(stop <-chan struct{}) {
 					delay = authoredOpenPRRetryDelay(failures)
 					if failures == 1 || delay > authoredOpenPRRetryDelay(failures-1) {
 						slog.Warn("open-prs: GitHub search failed; keeping last good cache",
-							"error", err, "consecutive_failures", failures,
+							"error", err, "kind", classifyGHError(err), "consecutive_failures", failures,
+							"duration", time.Since(started).Round(time.Millisecond),
 							"retry_in", delay, "module", "agentd")
 					}
 				} else if failures > 0 {
