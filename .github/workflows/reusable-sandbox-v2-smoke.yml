@@ -1,0 +1,735 @@
+name: Sandbox v2 bubblewrap smoke
+
+# Reusable job shared by ci.yml, release.yml and manual-release.yml. Each caller
+# keeps its own gate (needs/if/permissions) on the calling job, so this file holds
+# only the job body and is the single place to change it.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox-v2-smoke:
+    name: Sandbox v2 bubblewrap smoke (${{ matrix.os }})
+    # Both supported Ubuntu LTS images: 26.04 confines differently (AppArmor,
+    # kernel, nftables, socat 1.8), so a pass on one says little about the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node for OpenCode smoke
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The passt source archive is fetched from passt.top, which intermittently
+      # answers 502/504. Restoring it from the Actions cache means only a cache
+      # miss depends on upstream. The archive is stored under its SHA-256 and
+      # smoke::download_extract_tar_xz verifies it on every use, so correctness
+      # does not rest on the key: a stale or wrong cached copy is discarded and
+      # downloaded again. The key follows the file that pins the passt release.
+      - name: Cache pinned passt source archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/smoke-archive-cache
+          # This job pins the archive inline below, so the key also follows
+          # this workflow file; otherwise a bumped inline pin would keep hitting
+          # a cache without its archive and download on every run.
+          key: smoke-passt-source-sandbox-${{ runner.os }}-${{ hashFiles('scripts/lib/smoke/packet-floor.sh', '.github/workflows/reusable-sandbox-v2-smoke.yml') }}
+
+      - name: Install Linux sandbox prerequisites
+        shell: bash
+        env:
+          SMOKE_ARCHIVE_CACHE: ${{ runner.temp }}/smoke-archive-cache
+        run: |
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          if declare -F smoke::apt_update >/dev/null 2>&1; then
+            smoke::apt_update
+          else
+            echo "::warning title=Missing smoke helper::smoke::apt_update was not found after sourcing common.sh. This checkout may predate the helper; rebase onto main is the likely fix. Falling back to plain apt-get update without Microsoft-source isolation."
+            if ! sudo apt-get update; then
+              echo "::error::apt-get update failed while using the stale-PR fallback; inspect the apt output above"
+              exit 1
+            fi
+          fi
+          # socat backs the network smoke listeners below, and Claude Code's
+          # embedded sandbox runtime discovers rg and socat at runtime; keep
+          # both explicit so a runner-image change cannot turn a real-engine
+          # smoke into an accidental dependency check.
+          sudo apt-get install --yes bubblewrap iproute2 nftables passt ripgrep socat
+          # Ubuntu's packaged pasta predates the synthetic host-loopback
+          # controls required by the filtered gateway. Build a reproducible
+          # smoke prerequisite from the exact upstream release exercised here.
+          if declare -F smoke::download_extract_tar_xz >/dev/null 2>&1; then
+            smoke::download_extract_tar_xz \
+              https://passt.top/passt/snapshot/passt-2026_07_28.f8df3f1.tar.xz \
+              fcfeb5fbdf775bcc48edc1d5eac8a6d57bc333f8e67b714149376d36061416f0 \
+              "$RUNNER_TEMP/passt"
+          else
+            echo "::warning title=Missing smoke helper::smoke::download_extract_tar_xz was not found after sourcing common.sh; using a single clone for this stale checkout."
+            git clone --quiet --depth 1 \
+              --branch 2026_07_28.f8df3f1 \
+              https://passt.top/passt \
+              "$RUNNER_TEMP/passt"
+            test "$(git -C "$RUNNER_TEMP/passt" rev-parse HEAD)" = \
+              "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
+          fi
+          make -C "$RUNNER_TEMP/passt" pasta
+          # Install into a dedicated root-owned path: hosted runners
+          # deliberately leave /usr/local/bin writable, which must fail the
+          # production executable trust walk. A pasta-only prefix also avoids
+          # shadowing the Actions-managed Go toolchain with /usr/bin/go.
+          sudo install -d -o root -g root -m 0755 \
+            /usr/lib/tclaude-filtered \
+            /usr/lib/tclaude-filtered/bin
+          sudo install -o root -g root -m 0755 \
+            "$RUNNER_TEMP/passt/passt" /usr/lib/tclaude-filtered/bin/pasta
+          # The hosted image also carries an older /usr/local/bin/pasta.
+          # Prepend the secure dedicated path for this and all later steps, and
+          # assert the same resolution the production prerequisite will use.
+          echo "/usr/lib/tclaude-filtered/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/tclaude-filtered/bin:$PATH"
+          test "$(command -v pasta)" = "/usr/lib/tclaude-filtered/bin/pasta"
+          pasta --version
+
+      - name: Install pinned OpenCode smoke binary
+        run: |
+          npm install --global opencode-ai@1.18.6
+          opencode --version
+
+      - name: Install pinned Copilot smoke binary
+        run: |
+          npm install --global @github/copilot@1.0.77
+          copilot --version
+
+      - name: Install pinned pi smoke binary
+        run: |
+          npm install --global @earendil-works/pi-coding-agent@1.1.0
+          pi --version
+
+      # The pinned evidence tests below (filtered model endpoint, Codex
+      # effective-config seam, Codex system-config layer) require exactly
+      # these Claude Code and Codex versions.
+      - name: Install pinned Claude Code and Codex engines
+        shell: bash
+        run: |
+          npm install --global @openai/codex@0.145.0
+
+          claude_version=2.1.220
+          claude_platform=linux-x64
+          claude_base_url=https://downloads.claude.ai/claude-code-releases
+          claude_manifest="$RUNNER_TEMP/claude-manifest.json"
+          claude_binary="$RUNNER_TEMP/claude-$claude_version"
+          curl_args=(
+            --fail
+            --location
+            --silent
+            --show-error
+            --max-time 60
+            --retry 2
+            --retry-all-errors
+          )
+
+          curl "${curl_args[@]}" \
+            --output "$claude_manifest" \
+            "$claude_base_url/$claude_version/manifest.json"
+          claude_checksum=$(node -e '
+            const fs = require("fs");
+            const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            process.stdout.write(manifest.platforms[process.argv[2]]?.checksum ?? "");
+          ' "$claude_manifest" "$claude_platform")
+          if [[ ! "$claude_checksum" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Missing Claude Code checksum for $claude_platform" >&2
+            exit 1
+          fi
+
+          curl "${curl_args[@]}" \
+            --output "$claude_binary" \
+            "$claude_base_url/$claude_version/$claude_platform/claude"
+          echo "$claude_checksum  $claude_binary" | sha256sum --check
+
+          mkdir -p "$HOME/.local/bin" "$HOME/.local/share/claude/versions"
+          install -m 0755 \
+            "$claude_binary" \
+            "$HOME/.local/share/claude/versions/$claude_version"
+          ln -sfn \
+            "$HOME/.local/share/claude/versions/$claude_version" \
+            "$HOME/.local/bin/claude"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/claude" --version
+          codex --version
+
+      - name: Unlock and probe bubblewrap user namespace support
+        shell: bash
+        run: |
+          restriction=kernel.apparmor_restrict_unprivileged_userns
+          kernel=$(uname -a)
+
+          set +e
+          before=$(sysctl -n "$restriction" 2>&1)
+          unlock_output=$(sudo sysctl -w "$restriction=0" 2>&1)
+          unlock_status=$?
+          after=$(sysctl -n "$restriction" 2>&1)
+          readback_status=$?
+          bwrap_output=$(bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true 2>&1)
+          bwrap_status=$?
+          set -e
+
+          printf 'before: %s=%s\n' "$restriction" "$before"
+          printf '%s\n' "$unlock_output"
+          printf 'after: %s=%s\n' "$restriction" "$after"
+          printf '%s\n' "$bwrap_output"
+          printf 'bubblewrap exit code: %s\n' "$bwrap_status"
+
+          if [ "$unlock_status" -ne 0 ] ||
+             [ "$readback_status" -ne 0 ] ||
+             [ "$after" != "0" ] ||
+             [ "$bwrap_status" -ne 0 ]; then
+            if [ -z "$bwrap_output" ]; then
+              bwrap_output="<no output>"
+            fi
+            {
+              echo "### Sandbox v2 bubblewrap smoke prerequisite failed"
+              echo
+              echo "The real bubblewrap smoke was not executed. The GitHub runner image or AppArmor policy likely changed."
+              echo
+              printf '**Image:** %s %s\n\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+              echo "**Kernel:**"
+              echo '```text'
+              printf '%s\n' "$kernel"
+              echo '```'
+              printf '**Sysctl before:** %s\n\n' "$before"
+              printf '**Sysctl write exit code:** %s\n\n' "$unlock_status"
+              echo "**Sysctl write output:**"
+              echo '```text'
+              printf '%s\n' "$unlock_output"
+              echo '```'
+              printf '**Sysctl after:** %s (read exit code %s)\n\n' "$after" "$readback_status"
+              printf '**Bubblewrap exit code:** %s\n\n' "$bwrap_status"
+              echo "**Bubblewrap output:**"
+              echo '```text'
+              printf '%s\n' "$bwrap_output"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::sandbox v2 bubblewrap smoke prerequisite failed; see the step summary for runner diagnostics"
+            exit 1
+          fi
+
+      - name: Build tclaude for authenticated smoke
+        run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+
+      - name: Run bubblewrap platform assumptions
+        env:
+          TCLAUDE_SANDBOX_ASSUMPTIONS: "1"
+        run: |
+          assumption_log="$RUNNER_TEMP/bubblewrap-assumptions.log"
+          go test ./pkg/claude/sandboxassumptions -run '^TestBubblewrapAssumptions$' -count=1 -v -timeout=180s |
+            tee "$assumption_log"
+          if ! grep -q '^--- PASS: TestBubblewrapAssumptions ' "$assumption_log"; then
+            {
+              echo "### Bubblewrap assumption suite did not complete"
+              echo
+              echo "The hardware-backed bubblewrap contract did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestBubblewrapAssumptions did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run sandbox v2 bubblewrap smoke
+        env:
+          TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-layer-bubblewrap-smoke.log"
+          go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=180s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerHostSmoke ' "$smoke_log"; then
+            {
+              echo "### Sandbox v2 bubblewrap smoke did not complete"
+              echo
+              echo "The test command exited successfully without reporting that the named real smoke passed."
+              echo "The test name, build constraints, or smoke gate likely changed; see the test log."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Sandbox v2 bubblewrap smoke did not report an explicit pass (TestTclaudeLayerHostSmoke)"
+            exit 1
+          fi
+          if ! grep -qE '^ *--- PASS: TestTclaudeLayerHostSmoke/host-network-constructed-root ' "$smoke_log"; then
+            {
+              echo "### Sandbox v2 host-network constructed-root arm did not pass"
+              echo
+              echo "TCL-798's Linux socket capability under network=open rests on this arm's"
+              echo "explicit pass. A skipped or renamed subtest is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerHostSmoke/host-network-constructed-root did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run filtered-network gateway smoke
+        shell: bash
+        env:
+          TCLAUDE_FILTERED_NETWORK_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+          TCLAUDE_FILTERED_ALLOWED_ADDR: 198.18.0.10
+          TCLAUDE_FILTERED_ADJACENT_ADDR: 198.18.0.200
+          TCLAUDE_FILTERED_ALLOWED_PREFIX: 198.18.0.0/25
+          TCLAUDE_FILTERED_ALLOWED_ADDR6: "fd00:823::10"
+          TCLAUDE_FILTERED_ADJACENT_ADDR6: "fd00:823::200"
+          TCLAUDE_FILTERED_ALLOWED_PREFIX6: "fd00:823::/120"
+          TCLAUDE_FILTERED_ALLOWED_PORT: "41001"
+          TCLAUDE_FILTERED_DENIED_PORT: "41002"
+          TCLAUDE_FILTERED_UDP_SOURCE_PORT: "20000"
+        run: |
+          namespace=tclaude-filtered-target
+          host_link=tclflt0
+          peer_link=tclflt1
+          hosts_backup="$RUNNER_TEMP/tclaude-filtered-hosts.before"
+          sudo cp /etc/hosts "$hosts_backup"
+          # TCL-881: the same two teardown helpers the proxy shards use, from
+          # the shared library, so every smoke job and the shards share one
+          # implementation rather than copies that drift.
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          # smoke::kill_listener needs pkill (procps): without it the cleanup
+          # would silently degrade to killing the sudo wrapper only, which is
+          # the defect this job just fixed.
+          command -v pkill >/dev/null || {
+            echo "::error::pkill (procps) is required by the smoke fixture cleanup"
+            exit 1
+          }
+          server_pids=()
+          cleanup() {
+            # smoke::kill_listener signals the socat itself and not only the
+            # sudo wrapper holding it, which is what leaves a bound port behind.
+            smoke::kill_listener "${server_pids[@]:-}"
+            sudo ip netns del "$namespace" 2>/dev/null || true
+            sudo ip link del "$host_link" 2>/dev/null || true
+            sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
+          }
+          # EXIT alone would let a cancelled job — GitHub sends SIGINT first —
+          # exit 0 with its fixture half torn down.
+          smoke::trap_cleanup cleanup
+
+          # pasta preserves a guest UDP flow's source port on its host-side
+          # socket. Keep the smoke's source outside the host allocator's range,
+          # and fail as a fixture error if a real listener already owns it.
+          udp_source_port="$TCLAUDE_FILTERED_UDP_SOURCE_PORT"
+          read -r ephemeral_low ephemeral_high \
+            </proc/sys/net/ipv4/ip_local_port_range
+          if (( udp_source_port >= ephemeral_low && udp_source_port <= ephemeral_high )); then
+            echo "::error::Filtered-network UDP source port $udp_source_port is inside host ephemeral range $ephemeral_low-$ephemeral_high"
+            exit 1
+          fi
+          if ss -H -lun "sport = :$udp_source_port" | grep -q .; then
+            echo "::error::Filtered-network UDP source port $udp_source_port is already bound on the host"
+            ss -H -lunp "sport = :$udp_source_port" || true
+            exit 1
+          fi
+
+          sudo ip netns add "$namespace"
+          sudo ip link add "$host_link" type veth peer name "$peer_link"
+          sudo ip link set "$peer_link" netns "$namespace"
+          sudo ip link set dev "$host_link" addrgenmode none
+          sudo ip netns exec "$namespace" ip link set dev "$peer_link" addrgenmode none
+          sudo ip link set "$host_link" up
+          sudo ip address add 198.18.0.1/24 dev "$host_link"
+          sudo ip -6 address add fe80::823:1/64 dev "$host_link" nodad
+          sudo ip -6 address add fd00:823::1/64 dev "$host_link" nodad
+          sudo ip netns exec "$namespace" ip link set lo up
+          sudo ip netns exec "$namespace" ip link set "$peer_link" up
+          sudo ip netns exec "$namespace" ip address add 198.18.0.10/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip address add 198.18.0.200/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 address add fe80::823:2/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:823::10/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:823::200/64 dev "$peer_link" nodad
+          {
+            echo "198.18.0.200 exact-host.filtered.test sibling.filtered.test exact-domain.filtered.test child.exact-domain.filtered.test tree.filtered.test child.tree.filtered.test tree.filtered.test.attacker.invalid"
+            echo "fd00:823::200 exact-host.filtered.test sibling.filtered.test exact-domain.filtered.test child.exact-domain.filtered.test tree.filtered.test child.tree.filtered.test tree.filtered.test.attacker.invalid"
+          } | sudo tee -a /etc/hosts >/dev/null
+
+          sudo ip -6 address show dev "$host_link"
+          sudo ip -6 route show dev "$host_link"
+          sudo ip netns exec "$namespace" ip -6 address show dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 route show dev "$peer_link"
+
+          for address in 198.18.0.10 198.18.0.200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP4-LISTEN:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-tcp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP4-RECVFROM:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-udp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          for address in fd00:823::10 fd00:823::200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP6-LISTEN:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-tcp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP6-RECVFROM:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-udp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          sleep 1
+          listener_dump=$(sudo ip netns exec "$namespace" ss -lntu6)
+          printf '%s\n' "$listener_dump"
+          for address in fd00:823::10 fd00:823::200; do
+            for port in 41001 41002; do
+              for protocol in tcp udp; do
+                endpoint="[$address]:$port"
+                if ! awk -v protocol="$protocol" -v endpoint="$endpoint" \
+                  '$1 == protocol && $5 == endpoint { found = 1 } END { exit !found }' \
+                  <<<"$listener_dump"; then
+                  echo "::error::IPv6 filtered-network fixture failed to bind $protocol $endpoint"
+                  exit 1
+                fi
+              done
+            done
+          done
+          for protocol in TCP6 UDP6; do
+            token="filtered-fixture-$protocol"
+            # socat 1.8 (Ubuntu 26.04) ends a UDP client with an empty
+            # datagram, which leaves the UDP6-RECVFROM fork listener unable to
+            # answer the smoke's later datagrams on this port; shut-none keeps
+            # the probe to its one datagram.
+            shutdown=""
+            if [[ "$protocol" == UDP6 ]]; then shutdown=",shut-none"; fi
+            # `|| true` inside the substitution, exactly as
+            # fixture::prove_reachable does it: under `set -e -o pipefail` a
+            # socat that fails — the very case this checks — would abort the
+            # step here, so the annotation below could never be reached.
+            reply=$(
+              printf '%s' "$token" |
+                timeout 5 socat -T 2 -t 2 - "$protocol:[fd00:823::10]:41001$shutdown" || true
+            )
+            if [[ "$reply" != "$token" ]]; then
+              echo "::error::IPv6 filtered-network fixture failed direct $protocol round trip"
+              exit 1
+            fi
+          done
+
+          smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
+          go test ./pkg/claude/session \
+            -run '^(TestTclaudeLayerFilteredNetwork(DNS)?(Deny)?Smoke|TestCopilotTclaudeLayerNetworkSmoke|TestPiTclaudeLayerSmoke)$' \
+            -count=1 -v -timeout=180s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkSmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network gateway smoke did not complete"
+              echo
+              echo "The named real boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute IPv4/IPv6 CIDR+port TCP+UDP allow and deny cases, synthetic host loopback, capability drop, and fail-closed pasta teardown."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestCopilotTclaudeLayerNetworkSmoke ' "$smoke_log"; then
+            {
+              echo "### Copilot tclaude-layer network smoke did not complete"
+              echo
+              echo "The real production Copilot spawner did not pass inside both the host-network constructed root and the private routed namespace."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestCopilotTclaudeLayerNetworkSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestPiTclaudeLayerSmoke ' "$smoke_log"; then
+            {
+              echo "### pi tclaude-layer smoke did not complete"
+              echo
+              echo "The real production pi spawner did not pass inside both the host-network constructed root and the private routed namespace."
+              echo "tclaude's sandbox is pi's only boundary, so its state-directory grants and read-only floor rest on this explicit pass."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPiTclaudeLayerSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDNSSmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network DNS boundary smoke did not complete"
+              echo
+              echo "The named M2c boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute exact host/domain/subdomain and suffix-deny cases, shared-IP reuse, TTL expiry, fresh-answer refresh, and established-flow continuation for both Claude and Codex tclaude-layer launches."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkDNSSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDenySmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network deny boundary smoke did not complete"
+              echo
+              echo "The named deny boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute deny-wins CIDR overlap and port cases for IPv4/IPv6 TCP+UDP across Claude and Codex tclaude-layer launches, plus fail-closed teardown."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkDenySmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDNSDenySmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network DNS deny boundary smoke did not complete"
+              echo
+              echo "The named DNS deny boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute deny-wins name/port/shared-IP cases, negative TTL expiry and refresh, and established-TCP cuts across Claude and Codex tclaude-layer launches."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkDNSDenySmoke did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run pinned filtered model endpoint evidence
+        env:
+          TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-filtered-model-endpoints.log"
+          go test ./pkg/claude/session \
+            -run '^TestPinnedFilteredModelEndpointEvidence$' \
+            -count=1 -v -timeout=60s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestPinnedFilteredModelEndpointEvidence ' "$smoke_log"; then
+            {
+              echo "### Pinned filtered model endpoint evidence did not complete"
+              echo
+              echo "The named real Claude/Codex origin audit did not report an explicit pass."
+              echo "A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+              echo "The smoke must execute Claude 2.1.220 API-key traffic and Codex 0.145.0 API-key, ChatGPT, and token-refresh traffic, refusing every undeclared origin."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedFilteredModelEndpointEvidence did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run pinned Codex effective-config seam evidence
+        env:
+          TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-codex-effective-config.log"
+          go test ./pkg/claude/session \
+            -run '^TestPinnedCodexEffectiveConfigSeam$' \
+            -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestPinnedCodexEffectiveConfigSeam ' "$smoke_log"; then
+            {
+              echo "### Pinned Codex effective-config seam evidence did not complete"
+              echo
+              echo "The named real Codex effective-config read did not report an explicit pass."
+              echo "A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+              echo "The smoke must resolve provider routing through Codex 0.145.0's own app-server config/read, including its layer precedence."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedCodexEffectiveConfigSeam did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run pinned Codex system-config layer evidence
+        env:
+          TCLAUDE_CODEX_SYSTEM_LAYER_SMOKE: "1"
+        run: |
+          # Machine-wide, so it is staged here and removed immediately after —
+          # every other pinned-harness step has already run by this point and
+          # must not inherit this routing override.
+          sudo mkdir -p /etc/codex
+          printf 'openai_base_url = "https://system-layer.example/v1"\n' |
+            sudo tee /etc/codex/config.toml >/dev/null
+          smoke_log="$RUNNER_TEMP/tclaude-codex-system-layer.log"
+          set +e
+          go test ./pkg/claude/session \
+            -run '^TestPinnedCodexSystemConfigLayerEvidence$' \
+            -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          status=${PIPESTATUS[0]}
+          set -e
+          sudo rm -f /etc/codex/config.toml
+          if [ "$status" -ne 0 ] ||
+             ! grep -q '^--- PASS: TestPinnedCodexSystemConfigLayerEvidence ' "$smoke_log"; then
+            {
+              echo "### Pinned Codex system-config layer evidence did not complete"
+              echo
+              echo "The launch seam no longer refuses an external /etc/codex provider override; it relies on Codex's own merge including the system layer."
+              echo "This step is the evidence for that removed refusal. A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedCodexSystemConfigLayerEvidence did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run OpenCode executor sandbox smoke
+        env:
+          TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/opencode-tclaude-layer-smoke.log"
+          go test ./pkg/claude/agentd -run '^TestOpenCodeTclaudeLayerExecutorSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestOpenCodeTclaudeLayerExecutorSmoke ' "$smoke_log"; then
+            {
+              echo "### OpenCode executor sandbox smoke did not complete"
+              echo
+              echo "The real OpenCode serve/attach/tool/identity smoke did not report an explicit pass."
+              echo "The job provisions a pinned OpenCode binary and uses the same AppArmor userns unlock as the sandbox v2 host smoke."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestOpenCodeTclaudeLayerExecutorSmoke did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run OpenCode filtered-network activation smoke
+        shell: bash
+        env:
+          TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+          TCLAUDE_FILTERED_ALLOWED_ADDR: 198.18.1.10
+          TCLAUDE_FILTERED_ADJACENT_ADDR: 198.18.1.200
+          TCLAUDE_FILTERED_ALLOWED_ADDR6: "fd00:824::10"
+          TCLAUDE_FILTERED_ADJACENT_ADDR6: "fd00:824::200"
+          TCLAUDE_FILTERED_ALLOWED_PREFIX6: "fd00:824::/120"
+          TCLAUDE_FILTERED_ALLOWED_PORT: "41001"
+          TCLAUDE_FILTERED_DENIED_PORT: "41002"
+        run: |
+          # The deny cases need live adjacent targets and resolvable names. The
+          # gateway smoke's own fixture is torn down with its step, so this
+          # boundary provisions an independent namespace on its own subnet.
+          namespace=tclaude-opencode-deny-target
+          host_link=tclocd0
+          peer_link=tclocd1
+          hosts_backup="$RUNNER_TEMP/tclaude-opencode-deny-hosts.before"
+          sudo cp /etc/hosts "$hosts_backup"
+          # TCL-881: the same two teardown helpers the proxy shards use, from
+          # the shared library, so every smoke job and the shards share one
+          # implementation rather than copies that drift.
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          # smoke::kill_listener needs pkill (procps): without it the cleanup
+          # would silently degrade to killing the sudo wrapper only, which is
+          # the defect this job just fixed.
+          command -v pkill >/dev/null || {
+            echo "::error::pkill (procps) is required by the smoke fixture cleanup"
+            exit 1
+          }
+          server_pids=()
+          cleanup() {
+            # smoke::kill_listener signals the socat itself and not only the
+            # sudo wrapper holding it, which is what leaves a bound port behind.
+            smoke::kill_listener "${server_pids[@]:-}"
+            sudo ip netns del "$namespace" 2>/dev/null || true
+            sudo ip link del "$host_link" 2>/dev/null || true
+            sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
+          }
+          # EXIT alone would let a cancelled job — GitHub sends SIGINT first —
+          # exit 0 with its fixture half torn down.
+          smoke::trap_cleanup cleanup
+
+          sudo ip netns add "$namespace"
+          sudo ip link add "$host_link" type veth peer name "$peer_link"
+          sudo ip link set "$peer_link" netns "$namespace"
+          sudo ip link set dev "$host_link" addrgenmode none
+          sudo ip netns exec "$namespace" ip link set dev "$peer_link" addrgenmode none
+          sudo ip link set "$host_link" up
+          sudo ip address add 198.18.1.1/24 dev "$host_link"
+          sudo ip -6 address add fe80::824:1/64 dev "$host_link" nodad
+          sudo ip -6 address add fd00:824::1/64 dev "$host_link" nodad
+          sudo ip netns exec "$namespace" ip link set lo up
+          sudo ip netns exec "$namespace" ip link set "$peer_link" up
+          sudo ip netns exec "$namespace" ip address add 198.18.1.10/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip address add 198.18.1.200/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 address add fe80::824:2/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:824::10/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:824::200/64 dev "$peer_link" nodad
+          # Both names share the adjacent address on purpose: the DNS deny case
+          # proves a negative lease cuts an address an allowed name also uses.
+          {
+            echo "198.18.1.200 oc-exact-host.filtered.test oc-sibling.filtered.test"
+            echo "fd00:824::200 oc-exact-host.filtered.test oc-sibling.filtered.test"
+          } | sudo tee -a /etc/hosts >/dev/null
+
+          for address in 198.18.1.10 198.18.1.200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP4-LISTEN:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/opencode-deny-tcp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP4-RECVFROM:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/opencode-deny-udp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          for address in fd00:824::10 fd00:824::200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP6-LISTEN:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/opencode-deny-tcp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP6-RECVFROM:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/opencode-deny-udp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          sleep 1
+          listener_dump=$(sudo ip netns exec "$namespace" ss -lntu)
+          printf '%s\n' "$listener_dump"
+          for endpoint in 198.18.1.10:41001 198.18.1.10:41002 \
+            198.18.1.200:41001 198.18.1.200:41002 \
+            "[fd00:824::10]:41001" "[fd00:824::10]:41002" \
+            "[fd00:824::200]:41001" "[fd00:824::200]:41002"; do
+            for protocol in tcp udp; do
+              if ! awk -v protocol="$protocol" -v endpoint="$endpoint" \
+                '$1 == protocol && $5 == endpoint { found = 1 } END { exit !found }' \
+                <<<"$listener_dump"; then
+                echo "::error::OpenCode deny fixture failed to bind $protocol $endpoint"
+                exit 1
+              fi
+            done
+          done
+
+          # Prove the fixture is reachable from the host before the smoke runs,
+          # so a routing fault reads as a fixture error rather than an opaque
+          # deny-probe failure inside the sandbox.
+          for endpoint in "TCP4:198.18.1.10:41001" "TCP6:[fd00:824::10]:41001"; do
+            token="opencode-deny-fixture-$endpoint"
+            # Tolerate a failing round trip here: the explicit check below is
+            # the diagnostic, not the shell's -e abort.
+            reply=$(printf '%s' "$token" | timeout 5 socat -T 2 -t 2 - "$endpoint" || true)
+            if [[ "$reply" != "$token" ]]; then
+              echo "::error::OpenCode deny fixture failed a direct round trip to $endpoint"
+              exit 1
+            fi
+          done
+
+          smoke_log="$RUNNER_TEMP/opencode-filtered-network-smoke.log"
+          go test ./pkg/claude/agentd -run '^TestOpenCodeFilteredNetworkExecutorSmoke$' -count=1 -v -timeout=240s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestOpenCodeFilteredNetworkExecutorSmoke ' "$smoke_log"; then
+            {
+              echo "### OpenCode filtered-network activation smoke did not complete"
+              echo
+              echo "The pinned real OpenCode explicit-provider and packet-boundary proof did not report an explicit pass."
+              echo "A skip, missing/renamed test, config-isolation regression, or zero-test success is a hard failure."
+              echo "The smoke must prove the executing server consumes only the inspected provider route, then allow authored model/TCP/UDP traffic, deny an unauthorised port, and enforce deny-wins overlap in both directions plus the DNS negative-lease cut."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestOpenCodeFilteredNetworkExecutorSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q 'opencode-filtered-deny-helper PASS' "$smoke_log"; then
+            {
+              echo "### OpenCode filtered-network deny boundary did not execute"
+              echo
+              echo "The smoke passed without the real bash tool reporting the deny probes."
+              echo "The OpenCode deny capability cell claims enforcement only while this marker is produced by an executed run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::OpenCode filtered-network deny probes did not execute"
+            exit 1
+          fi

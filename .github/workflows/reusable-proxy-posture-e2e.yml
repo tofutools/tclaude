@@ -1,0 +1,41 @@
+name: Proxy posture end-to-end
+
+# Reusable job shared by ci.yml, release.yml and manual-release.yml. Each caller
+# keeps its own gate (needs/if/permissions) on the calling job, so this file holds
+# only the job body and is the single place to change it.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  proxy-posture-e2e:
+    name: Proxy posture end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The passt source archive is fetched from passt.top, which intermittently
+      # answers 502/504. Restoring it from the Actions cache means only a cache
+      # miss depends on upstream. The archive is stored under its SHA-256 and
+      # smoke::download_extract_tar_xz verifies it on every use, so correctness
+      # does not rest on the key: a stale or wrong cached copy is discarded and
+      # downloaded again. The key follows the file that pins the passt release.
+      - name: Cache pinned passt source archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/smoke-archive-cache
+          key: smoke-passt-source-${{ runner.os }}-${{ hashFiles('scripts/lib/smoke/packet-floor.sh') }}
+
+      - name: Run end-to-end proxy-posture smokes
+        shell: bash
+        env:
+          SMOKE_ARCHIVE_CACHE: ${{ runner.temp }}/smoke-archive-cache
+        run: scripts/proxy-posture-e2e/run.sh

@@ -15,8 +15,9 @@
 HARNESS_CLAUDE_VERSION="2.1.220"
 HARNESS_CODEX_VERSION="0.145.0"
 # Kept in step with the OpenCode pin the executor-smoke jobs in
-# .github/workflows/ci.yml provision, so the carriage answer this shard records
-# is about the same binary those smokes exercise. A carriage result is a fact
+# .github/workflows/ (ci.yml and the reusable-sandbox-v2-*.yml smokes)
+# provision, so the carriage answer this shard records is about the same
+# binary those smokes exercise. A carriage result is a fact
 # about a version, not about OpenCode forever.
 HARNESS_OPENCODE_VERSION="1.18.6"
 # The Gemini CLI version the adapter in pkg/claude/harness is pinned to

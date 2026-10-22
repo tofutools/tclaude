@@ -1,0 +1,33 @@
+name: Lint
+
+# Reusable job shared by ci.yml, release.yml and manual-release.yml. Each caller
+# keeps its own gate (needs/if/permissions) on the calling job, so this file holds
+# only the job body and is the single place to change it.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+
+      # scripts/e2e/drive is its own module (keeps go-rod out of go.mod), so
+      # the root ./... build, lint and test above never compile it.
+      - name: Vet e2e drive module
+        run: go -C scripts/e2e/drive vet ./...

@@ -1,0 +1,117 @@
+name: Filtered-network proxy smoke
+
+# Reusable job shared by ci.yml, release.yml and manual-release.yml. Each caller
+# keeps its own gate (needs/if/permissions) on the calling job, so this file holds
+# only the job body and is the single place to change it.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  filtered-proxy-smoke:
+    name: Filtered-network proxy smoke (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      # One red shard must not cancel its sibling. The two halves are
+      # independent evidence, and losing the other half's result to a
+      # cancellation would turn one failure into two unknowns.
+      fail-fast: false
+      matrix:
+        # The shard NAMES are the only thing this workflow knows. Which flows
+        # each shard runs lives in scripts/filtered-proxy-smoke/shards.txt;
+        # which harnesses each flow launches lives in the flow itself
+        # (flow::harnesses), and a shard's install set is DERIVED as the union
+        # of its flows' declarations. The entrypoint refuses to start unless
+        # every flow in the manifest belongs to some shard — so adding a smoke
+        # stays a repo change, and a flow assigned to no shard fails the run
+        # instead of quietly vanishing from both jobs.
+        shard: [session, agentd]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Asked of the toolchain rather than spelled out. A hardcoded
+      # ~/.cache/go-build that ever stopped being GOCACHE (XDG_CACHE_HOME set in
+      # the image, a setup-go change) would make the cache step below a silent
+      # no-op: actions/cache warns that the path does not exist, the job stays
+      # green, and the smoke quietly goes back to compiling everything cold.
+      - name: Resolve the Go build cache directory
+        shell: bash
+        run: echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+
+      # The BUILD cache, keyed on this job AND ITS SHARD — the two legs compile
+      # different test binaries, and one key for both would have them
+      # overwriting each other's entry every run. That scoping is the whole
+      # point: this job compiles large linux-tagged test binaries no other job in
+      # the workflow builds, while setup-go's own entry above is keyed on go.mod
+      # and the platform but NOT on the job — so it is saved by whichever job
+      # finishes first, usually one that compiled none of them.
+      #
+      # setup-go's cache is deliberately left ON even so. It is useless for this
+      # job's build output, but it is what keeps GOMODCACHE populated, since
+      # every job in the workflow fills that same module entry. Turning it off
+      # was tried and measured: the job then downloads the whole module graph
+      # inside the smoke step, which is slower and newly able to fail on a
+      # proxy.golang.org hiccup. It did, on the first run of that experiment.
+      #
+      # Deliberately no commit sha in the key. A hit means no save, so the entry
+      # is written once per go.mod/go.sum hash instead of once per run — a
+      # several-hundred-MB upload per run would exhaust the repo's 10 GB cache
+      # budget in a day and cost more than the compile it saves. What the entry
+      # carries is the stdlib and dependency build output, which is the bulk of
+      # a cold compile and turns over only with the dependencies themselves.
+      #
+      # The key is shared by every caller (ci.yml, release.yml and
+      # manual-release.yml). GitHub scopes a PR run's cache to that PR, but every
+      # branch can read the default branch's — so it is release.yml's run on
+      # main that populates what PR runs restore.
+      - name: Cache Go build output
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.GOCACHE }}
+          key: gobuild-filtered-proxy-smoke-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum', 'go.mod') }}
+          restore-keys: |
+            gobuild-filtered-proxy-smoke-${{ matrix.shard }}-${{ runner.os }}-
+
+      # Node is needed by the entrypoint to install the pinned harnesses and to
+      # read their release manifest.
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: lts/*
+
+      # Caches the pinned Claude Code artifact. MEASURED WORTH, stated so nobody
+      # mistakes this for a speedup lever: the fresh download took 2.5s on a
+      # cache miss, so this saves ~2s, not the ~50MB-download cost it looks like
+      # it should. It is kept because it is cheap and because it bounds the
+      # damage from a slow vendor CDN, not because it moves the job's wall-clock.
+      # The lever is the flow's own runtime.
+      #
+      # The key is the hash of lib/harnesses.sh, which is where the pins live: a
+      # conservative superset, so an unrelated edit to that file costs a
+      # re-download and can never serve an artifact belonging to a different
+      # pin. Correctness does not rest on the key either way —
+      # harnesses::install_claude verifies the published sha256 and the version
+      # against whatever file it actually uses, restored or freshly downloaded.
+      - name: Cache pinned harness artifacts
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/smoke-harness-cache
+          key: smoke-harness-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('scripts/filtered-proxy-smoke/lib/harnesses.sh') }}
+
+      # The shard reaches the script through env: rather than being spliced into
+      # the shell line, matching the sibling test job's use of matrix values.
+      # Nothing user-controlled can reach a matrix value here, so this is
+      # consistency and lint-quiet rather than a live injection fix.
+      - name: Run filtered-network proxy smokes
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: scripts/filtered-proxy-smoke/run.sh --shard "$SHARD"
