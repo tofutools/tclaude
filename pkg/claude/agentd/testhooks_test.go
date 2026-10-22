@@ -2146,7 +2146,7 @@ func SetTrackedPRSourcesForTest(self string, exists func(login string) bool, sea
 // PollTrackedPRAuthorsForTest runs one colleague-tabs poll synchronously.
 // Requests are not staggered.
 func PollTrackedPRAuthorsForTest() error {
-	_, _, err := pollTrackedPRAuthors(0)
+	_, _, err := pollTrackedPRAuthors(0, nil)
 	return err
 }
 

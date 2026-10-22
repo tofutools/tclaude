@@ -63,10 +63,36 @@ func TestTrackedPRResolverKeepsGHCause(t *testing.T) {
 	trackedPRGraphQL = func([]string) ([]byte, error) {
 		return []byte("<html><title>Unicorn! &middot; GitHub</title></html>"), cause
 	}
-	results := liveTrackedPRResolver([]string{"alice", "bob"}, 0, time.Now(), false, 0)
+	results := liveTrackedPRResolver([]string{"alice", "bob"}, 0, time.Now(), false, func() bool { return true })
 	if assert.Len(t, results, 2) {
 		assert.Equal(t, "bob", results[1].view.Login)
 		assert.EqualError(t, results[1].err, "gh: HTTP 502; response: Unicorn! · GitHub: exit status 1",
 			"an undecodable body reports gh's cause, not a bare exit status")
 	}
+}
+
+func TestTrackedPRStartPacer(t *testing.T) {
+	// No spacing: never blocks.
+	assert.True(t, trackedPRStartPacer(0, nil)())
+
+	// A kick ends the spacing for the rest of the tick and stays queued.
+	for len(trackedPRKick) > 0 {
+		<-trackedPRKick
+	}
+	t.Cleanup(func() {
+		for len(trackedPRKick) > 0 {
+			<-trackedPRKick
+		}
+	})
+	pace := trackedPRStartPacer(time.Hour, nil)
+	kickTrackedPRAuthorsPoller()
+	assert.True(t, pace())
+	assert.True(t, pace(), "no further waiting once kicked")
+	assert.Len(t, trackedPRKick, 1, "the kick is re-queued for the next tick")
+
+	// Stop skips the remaining requests.
+	<-trackedPRKick
+	stop := make(chan struct{})
+	close(stop)
+	assert.False(t, trackedPRStartPacer(time.Hour, stop)())
 }
