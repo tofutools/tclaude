@@ -157,6 +157,7 @@ smoke::require_shard_harness_coverage "${known_harnesses[@]}"
 # nowhere while both legs stay green. Read-only, and skipped for a workflow whose
 # job does not pass --shard, so this holds before and after the job split.
 smoke::require_workflow_shards filtered-proxy-smoke \
+  "$repo_root/.github/workflows/reusable-filtered-proxy-smoke.yml" \
   "$repo_root/.github/workflows/ci.yml" \
   "$repo_root/.github/workflows/release.yml" \
   "$repo_root/.github/workflows/manual-release.yml"
