@@ -69,25 +69,6 @@ const CASES = [
     tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: tclaude-agent\nClick to temporarily disable',
   },
   {
-    name: 'a stacked implementation names both active layers',
-    state: {
-      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
-      os_sandbox_unverified: true, sandbox_implementation: 'stacked',
-      sandbox_profiles: [{ scope: 'global', name: 'stacked-agents' }],
-    },
-    glyph: '🔒²', danger: false,
-    tooltip: 'Status: ON\nImplementation: tclaude + CC sandboxes\nProfile: stacked-agents\nClick to temporarily disable',
-  },
-  {
-    name: 'a stacked Codex implementation names both active layers',
-    state: {
-      harness: 'codex', sandbox_mode: 'workspace-write', os_sandbox_state: 'on',
-      sandbox_implementation: 'stacked',
-    },
-    glyph: '🔒²', danger: false,
-    tooltip: 'Status: ON\nImplementation: tclaude + Codex sandboxes\nProfile: None\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox.',
-  },
-  {
     name: 'an unknown implementation earns no lock',
     state: {
       harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
@@ -353,21 +334,6 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
     const mounted = await mount({
       harness: 'codex', sandbox_mode: 'tclaude-agent', os_sandbox_state: 'on',
       sandbox_implementation: 'harness-builtin',
-    });
-    try {
-      const badge = mounted.container.querySelector('.sandbox-badge');
-      assert.equal(badge.getAttribute('role'), 'note');
-      assert.equal(badge.hasAttribute('data-act'), false);
-      assert.match(badge.title, /Codex restores its persisted sandbox policy/);
-    } finally {
-      await mounted.unmount();
-    }
-  });
-
-  await t.test('a stacked Codex lock does not offer an unreliable full unlock', async () => {
-    const mounted = await mount({
-      harness: 'codex', sandbox_mode: 'workspace-write', os_sandbox_state: 'on',
-      sandbox_implementation: 'stacked',
     });
     try {
       const badge = mounted.container.querySelector('.sandbox-badge');

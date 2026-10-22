@@ -222,11 +222,6 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "has no built-in OS sandbox",
 		"OpenCode's TCL-793 refusal must happen before any prediction is returned")
-
-	rec = profileReq(t, f, http.MethodGet,
-		"/v1/sandbox-profiles/socket-wall/enforcement?for=stacked%2Fclaude%2Fdarwin", nil)
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "stacked sandbox prediction is supported only on linux")
 }
 
 func TestSandboxProfileEnforcementPredictsFilesystemEnvironmentAndAgentDirectories(t *testing.T) {

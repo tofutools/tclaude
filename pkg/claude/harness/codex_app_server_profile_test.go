@@ -83,7 +83,6 @@ func TestCodexSpawnerAppServerMirrorsExecutionPosture(t *testing.T) {
 			`default_permissions="tclaude-agent-1234567890abcdef"`,
 			`permissions.tclaude-agent-1234567890abcdef={extends=":workspace",filesystem={},network={enabled=true,unix_sockets={}}}`,
 		},
-		StrongNestedSandbox:        true,
 		ApprovalPolicy:             "never",
 		BypassHookTrust:            true,
 		FastMode:                   FastModeOn,
@@ -101,7 +100,6 @@ func TestCodexSpawnerAppServerMirrorsExecutionPosture(t *testing.T) {
 	for _, want := range []string{
 		`bypass_hook_trust=true`,
 		`default_permissions="tclaude-agent-1234567890abcdef"`,
-		`features.use_legacy_landlock=false`,
 		`approval_policy="never"`,
 		`service_tier="fast"`,
 		`shell_environment_policy.set.GOBIN="/tmp/go bin"`,

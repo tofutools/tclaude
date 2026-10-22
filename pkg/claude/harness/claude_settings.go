@@ -27,9 +27,6 @@ import (
 func claudeSettingsJSON(spec SpawnSpec) string {
 	settings := map[string]any{}
 	if block := claudeSandboxBlock(spec.HarnessBuiltinMode); block != nil {
-		if spec.StrongNestedSandbox {
-			block["enableWeakerNestedSandbox"] = false
-		}
 		settings["sandbox"] = block
 	}
 	if dirs := withoutCanonicalAgentdDir(normalizedSandboxWriteDirs(spec.SandboxWriteDirs)); len(dirs) > 0 &&

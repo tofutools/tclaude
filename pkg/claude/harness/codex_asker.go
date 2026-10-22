@@ -39,9 +39,6 @@ func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 
 	hasLaunchContainment := false
 	if posture := spec.LaunchPosture; posture != nil {
-		if posture.StrongNestedSandbox {
-			argv = append(argv, "-c", "features.use_legacy_landlock=false")
-		}
 		// These are top-level Codex options, so they must precede `exec`.
 		// `exec resume` lacks its own --sandbox/--ask-for-approval/-p
 		// switches but inherits the top-level configuration exactly like

@@ -21,11 +21,6 @@ import (
 //   - macOS Seatbelt and the harness-builtin sandboxes take DIRECTORY lists.
 //     A file dropped into one of those lists is at best ignored and at worst an
 //     argument error, so the rule would look authored and enforce nothing.
-//   - `stacked` refuses too, even on Linux. Its inner wall is a harness-native
-//     sandbox fed from the same directory lists, so tclaude's outer bind would
-//     land while the inner wall still blocked the path. A rule enforced by one
-//     wall and silently dropped by the other is worse than a refusal, because
-//     only the refusal says which.
 //
 // The refusals are named, never a fallback. Mounting the containing directory
 // instead would expose paths the operator did not authorize, which is the same

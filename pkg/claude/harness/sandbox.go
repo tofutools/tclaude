@@ -176,10 +176,8 @@ func ResolveNativeHarnessBuiltinMode(
 // OpenCode's rules still run first and unchanged: its native `tclaude-layer`
 // mode names the same topology from the mode axis, so pairing it with another
 // implementation, or pairing an explicit `off` with tclaude-layer, stays an
-// error rather than being silently forced into agreement. Only the exact
-// `tclaude-layer` implementation forces a mode; `stacked` deliberately does
-// not, because its nested contract is chosen by stackedSandboxLaunchMode and is
-// not the single-wall posture.
+// error rather than being silently forced into agreement. Only the
+// `tclaude-layer` implementation forces a mode.
 func ResolveSandboxImplementationMode(
 	h *Harness, mode string,
 	implementation sandboxpolicy.Implementation,

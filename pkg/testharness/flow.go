@@ -200,13 +200,6 @@ func resolveLaunchOSSandbox(
 	}
 	switch normalized, implErr := sandboxpolicy.NormalizeImplementation(implementation); {
 	case implErr != nil:
-	case normalized == sandboxpolicy.ImplementationStacked:
-		// Production records the placeholder verdict verbatim: the nested
-		// engine's live round-trip is not yet part of the launch.
-		return harness.LaunchOSSandbox{
-			State:  "off",
-			Source: "stacked requested; live nested engine round-trip pending",
-		}
 	case normalized == sandboxpolicy.ImplementationTclaudeLayer:
 		return session.TclaudeLayerLaunchOSSandboxForHarness(
 			h.Name,

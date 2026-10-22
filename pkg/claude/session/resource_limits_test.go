@@ -61,8 +61,6 @@ func TestResourceCgroupFailureActionNeverRefusesAnOpportunisticBoundary(t *testi
 		ResourceCgroupFailureAction(accounting, sandboxpolicy.ImplementationTclaudeLayer, false, false),
 		"the confinement the operator chose the layer for is enforced either way, so a "+
 			"fresh launch has no posture decision a refusal could inform")
-	assert.Equal(t, DiscloseMissingResourceAccounting,
-		ResourceCgroupFailureAction(accounting, sandboxpolicy.ImplementationStacked, false, false))
 	assert.Equal(t, RefuseResourceCgroupFailure,
 		ResourceCgroupFailureAction(sandboxpolicy.ResourceLimits{CPU: &cpu},
 			sandboxpolicy.ImplementationTclaudeLayer, false, false),

@@ -3,7 +3,6 @@ package agentd
 import (
 	"sync"
 
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -42,21 +41,12 @@ import (
 // INSTALLED, not WORKING. Nothing that refuses a launch may read this.
 
 // sandboxToolKey identifies one required external tool in the presence table.
-// Stable strings rather than an enum so a harness-derived key can be composed.
 type sandboxToolKey string
 
 const (
 	sandboxToolLayerHost       sandboxToolKey = "tclaude-layer-host"
 	sandboxToolLayerServerHost sandboxToolKey = "tclaude-layer-server-host"
 )
-
-// stackedEngineToolKey is the per-harness nested-sandbox engine key. Only
-// harnesses that OWN a nested sandbox get one: OpenCode has no sandbox of its
-// own, so stacking is meaningless for it and it is absent from this table
-// rather than reported as a missing tool.
-func stackedEngineToolKey(harnessName string) sandboxToolKey {
-	return sandboxToolKey("stacked-engine:" + harnessName)
-}
 
 // The presence predicates are indirected so flow tests can describe a host
 // shape without owning the machine they run on. They mirror the launch-side
@@ -66,12 +56,6 @@ func stackedEngineToolKey(harnessName string) sandboxToolKey {
 var (
 	tclaudeLayerHostPresence       = session.TclaudeLayerHostToolingPresence
 	tclaudeLayerServerHostPresence = session.TclaudeLayerServerHostToolingPresence
-	stackedEnginePresence          = func(h *harness.Harness) error {
-		if err := session.ValidateStackedSandboxHarness(h); err != nil {
-			return err
-		}
-		return h.NestedSandbox.EnginePresence()
-	}
 )
 
 var sandboxToolingMu sync.Mutex

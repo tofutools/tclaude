@@ -211,15 +211,12 @@ func TestValidateMountPathSupportRefusesOutsideLinuxTclaudeLayer(t *testing.T) {
 	}
 	require.NoError(t, ValidateMountPathSupport(
 		grants, ImplementationTclaudeLayer, "linux"))
-	require.NoError(t, ValidateMountPathSupport(
-		grants, ImplementationStacked, "linux"))
 
 	for _, tc := range []struct {
 		implementation Implementation
 		goos           string
 	}{
 		{ImplementationTclaudeLayer, "darwin"},
-		{ImplementationStacked, "darwin"},
 		{ImplementationHarnessBuiltin, "linux"},
 		{ImplementationHarnessBuiltin, "darwin"},
 	} {

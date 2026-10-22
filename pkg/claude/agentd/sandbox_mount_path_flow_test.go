@@ -108,7 +108,6 @@ func TestSandboxProfileMountPathEnforcementPreviewIsCapabilityHonest(t *testing.
 		outcome        string
 	}{
 		{"linux tclaude-layer", "tclaude-layer", harness.DefaultName, "linux", harness.AccessPredictionEnforced},
-		{"linux stacked", "stacked", harness.DefaultName, "linux", harness.AccessPredictionEnforced},
 		{"darwin tclaude-layer", "tclaude-layer", harness.DefaultName, "darwin", harness.AccessPredictionRefused},
 		{"linux harness-builtin", "harness-builtin", harness.DefaultName, "linux", harness.AccessPredictionRefused},
 	} {

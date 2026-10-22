@@ -66,7 +66,7 @@ func defaultCodexNativeRegistryOptions() (CodexNativeRegistryOptions, error) {
 }
 
 // CodexNativeRegistryApplicable is deliberately narrower than "app-server".
-// The tclaude-layer and stacked implementations already confine the executor
+// The tclaude-layer implementation already confines the executor
 // themselves and must not acquire a host-level setup dependency.
 func CodexNativeRegistryApplicable(appServer bool, harnessName, sandboxMode, implementation string) bool {
 	impl, err := sandboxpolicy.NormalizeImplementation(implementation)

@@ -86,7 +86,6 @@ func recordableLineageLaunches(t *testing.T) []recordableLineageLaunch {
 			for _, impl := range []sandboxpolicy.Implementation{
 				sandboxpolicy.ImplementationHarnessBuiltin,
 				sandboxpolicy.ImplementationTclaudeLayer,
-				sandboxpolicy.ImplementationStacked,
 				sandboxpolicy.ImplementationOff,
 			} {
 				recorded, err := harness.ResolveSandboxImplementationMode(h, resolved, impl)
@@ -111,8 +110,8 @@ func recordableLineageLaunches(t *testing.T) []recordableLineageLaunch {
 // Read the list as the answer to "who will start seeing refusals": ONLY parents
 // recorded with sandbox_implementation=tclaude-layer, and only the Claude and
 // Codex ones — the two harnesses whose tclaude-layer launch records a mode that
-// spells no-confinement. A row with the implementation unset, harness-builtin,
-// stacked or off keeps every verdict it has, which covers every launch made
+// spells no-confinement. A row with the implementation unset, harness-builtin
+// or off keeps every verdict it has, which covers every launch made
 // before the implementation axis existed.
 func TestSandboxLineageParentAuthorityVerdictDelta(t *testing.T) {
 	launches := recordableLineageLaunches(t)
@@ -147,37 +146,26 @@ func TestSandboxLineageParentAuthorityVerdictDelta(t *testing.T) {
 		"reading the parent's implementation must never GRANT authority")
 	require.Equal(t, []string{
 		"claude/off[tclaude-layer] -> claude/inherit[harness-builtin]",
-		"claude/off[tclaude-layer] -> claude/inherit[stacked]",
 		"claude/off[tclaude-layer] -> claude/off[harness-builtin]",
 		"claude/off[tclaude-layer] -> claude/off[off]",
-		"claude/off[tclaude-layer] -> claude/off[stacked]",
 		"claude/off[tclaude-layer] -> codex/danger-full-access[harness-builtin]",
 		"claude/off[tclaude-layer] -> codex/danger-full-access[off]",
-		"claude/off[tclaude-layer] -> codex/danger-full-access[stacked]",
 		"claude/off[tclaude-layer] -> opencode/access-control[harness-builtin]",
-		"claude/off[tclaude-layer] -> opencode/access-control[stacked]",
 		"claude/off[tclaude-layer] -> opencode/off[harness-builtin]",
 		"claude/off[tclaude-layer] -> opencode/off[off]",
-		"claude/off[tclaude-layer] -> opencode/off[stacked]",
 		"claude/off[tclaude-layer] -> opencode/tclaude-layer[tclaude-layer]",
 		"claude/off[tclaude-layer] -> shell/off[harness-builtin]",
 		"claude/off[tclaude-layer] -> shell/off[off]",
-		"claude/off[tclaude-layer] -> shell/off[stacked]",
 		"codex/danger-full-access[tclaude-layer] -> claude/off[harness-builtin]",
 		"codex/danger-full-access[tclaude-layer] -> claude/off[off]",
-		"codex/danger-full-access[tclaude-layer] -> claude/off[stacked]",
 		"codex/danger-full-access[tclaude-layer] -> codex/danger-full-access[harness-builtin]",
 		"codex/danger-full-access[tclaude-layer] -> codex/danger-full-access[off]",
-		"codex/danger-full-access[tclaude-layer] -> codex/danger-full-access[stacked]",
 		"codex/danger-full-access[tclaude-layer] -> opencode/access-control[harness-builtin]",
-		"codex/danger-full-access[tclaude-layer] -> opencode/access-control[stacked]",
 		"codex/danger-full-access[tclaude-layer] -> opencode/off[harness-builtin]",
 		"codex/danger-full-access[tclaude-layer] -> opencode/off[off]",
-		"codex/danger-full-access[tclaude-layer] -> opencode/off[stacked]",
 		"codex/danger-full-access[tclaude-layer] -> opencode/tclaude-layer[tclaude-layer]",
 		"codex/danger-full-access[tclaude-layer] -> shell/off[harness-builtin]",
 		"codex/danger-full-access[tclaude-layer] -> shell/off[off]",
-		"codex/danger-full-access[tclaude-layer] -> shell/off[stacked]",
 	}, tightened)
 }
 

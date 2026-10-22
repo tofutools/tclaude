@@ -20,7 +20,6 @@ func TestAgentProgramUnconfinedReason(t *testing.T) {
 		unconfined     bool
 	}{
 		{"tclaude layer", sandboxpolicy.ImplementationTclaudeLayer, harness.CodexName, harness.SandboxDangerFull, "", false},
-		{"stacked", sandboxpolicy.ImplementationStacked, harness.DefaultName, "", "on", false},
 		{"sandbox-impl off", sandboxpolicy.ImplementationOff, harness.DefaultName, "", "", true},
 		{"resource-only", sandboxpolicy.ImplementationResourceOnly, harness.DefaultName, "", "", true},
 		{"codex workspace-write", sandboxpolicy.ImplementationHarnessBuiltin, harness.CodexName, harness.SandboxWorkspaceWrite, "", false},

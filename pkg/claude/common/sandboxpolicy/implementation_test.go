@@ -17,7 +17,8 @@ func TestNormalizeImplementation(t *testing.T) {
 		{name: "empty defaults to legacy behavior", want: ImplementationHarnessBuiltin},
 		{name: "harness builtin", value: " harness-builtin ", want: ImplementationHarnessBuiltin},
 		{name: "tclaude layer", value: "tclaude-layer", want: ImplementationTclaudeLayer},
-		{name: "stacked", value: "stacked", want: ImplementationStacked},
+		// stacked was removed; stored values keep tclaude's own wall.
+		{name: "legacy stacked", value: " stacked ", want: ImplementationTclaudeLayer},
 		{name: "off", value: "off", want: ImplementationOff},
 		{name: "resource only", value: " resource-only ", want: ImplementationResourceOnly},
 		{name: "invalid", value: "automatic", wantErr: "invalid sandbox implementation"},
@@ -43,13 +44,12 @@ func TestResourceOnlyEnforcesLimitsWithoutClaimingConfinement(t *testing.T) {
 			"resource-only exactly as it reads off")
 	assert.False(t, ImplementationResourceOnly.UsesTclaudeLayer(),
 		"resource-only must not take any bubblewrap or namespace path")
-	assert.False(t, ImplementationResourceOnly.UsesNestedHarnessSandbox())
 	assert.False(t, SupportsMountPaths(ImplementationResourceOnly, "linux"),
 		"remapping a host path needs a mount namespace, which a cgroup is not")
 
 	assert.True(t, ImplementationOff.OmitsOSConfinement())
 	for _, implementation := range []Implementation{
-		ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked,
+		ImplementationHarnessBuiltin, ImplementationTclaudeLayer,
 	} {
 		assert.Falsef(t, implementation.OmitsOSConfinement(),
 			"%s owns an access boundary", implementation)

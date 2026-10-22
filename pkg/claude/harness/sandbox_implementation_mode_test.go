@@ -78,12 +78,11 @@ func TestResolveSandboxImplementationModeKeepsOpenCodeConflicts(t *testing.T) {
 	require.Error(t, err, "the tclaude-layer MODE must still require the implementation")
 }
 
-// stacked runs the harness's own sandbox nested inside tclaude's, so its mode
-// still means what it says and must not be reinterpreted as the single wall.
+// Outside tclaude-layer the harness's own mode still means what it says and
+// must not be reinterpreted as the single wall.
 func TestResolveSandboxImplementationModeLeavesNonTclaudeLayerAlone(t *testing.T) {
 	for _, implementation := range []sandboxpolicy.Implementation{
 		sandboxpolicy.ImplementationHarnessBuiltin,
-		sandboxpolicy.ImplementationStacked,
 	} {
 		for _, tc := range []struct{ harness, mode string }{
 			{DefaultName, ClaudeSandboxOn},

@@ -122,8 +122,8 @@ worker.
 
 | Harness | Ask sandbox support |
 | --- | --- |
-| Claude Code | Outer wall, stacked, or a verified confined native sandbox capable of the authored rules |
-| Codex | Outer wall, stacked, or a confined native sandbox capable of the authored rules |
+| Claude Code | Outer wall or a verified confined native sandbox capable of the authored rules |
+| Codex | Outer wall or a confined native sandbox capable of the authored rules |
 | Gemini CLI | Outer wall; its native sandbox cannot represent the requested profile |
 | Copilot CLI | Refused: foreground policy replay is not supported |
 | OpenCode | Refused: foreground policy replay is not supported |
@@ -135,8 +135,8 @@ Set **Ask — sandbox → Off** (`ask.sandbox=off`) to retain direct asks, selec
 ask profile for Claude, Codex, or Gemini, or use a tracked worker. Foreground
 replay for Copilot/OpenCode and pi isolated-state lifetime are known follow-ups.
 
-Directory provisioning, pre-launch scripts, native profiles, outer and stacked
-walls, and resource limits share the one-shot worker launch preparation.
+Directory provisioning, pre-launch scripts, native profiles, the outer wall,
+and resource limits share the one-shot worker launch preparation.
 Foreground stdio and terminal process-group behavior are preserved. Cleanup
 reaps a delegated cgroup when available. Without proof that all descendants
 have stopped, per-run directories are retained until a boot change; the stderr

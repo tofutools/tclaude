@@ -163,15 +163,4 @@ func TestSpawnSandboxLineage_UnprovenCopilotChildStillRestricted(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
 	assert.Contains(t, string(resp.Raw), "sandbox_restricted")
-
-	// `stacked` reaches the guard as a tclaude-layer variant and must NOT
-	// borrow the proven pair's admission: it runs Copilot's own policy nested
-	// inside tclaude's, an intersection nobody reviewed.
-	stacked := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
-		"name":                   "stacked-worker",
-		"harness":                harness.CopilotName,
-		"sandbox_implementation": string(sandboxpolicy.ImplementationStacked),
-		"approval":               harness.CopilotApprovalAllowTools,
-	})
-	require.NotEqualf(t, http.StatusOK, stacked.Code, "spawn body=%s", stacked.Raw)
 }

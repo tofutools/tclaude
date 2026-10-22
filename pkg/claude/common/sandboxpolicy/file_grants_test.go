@@ -213,8 +213,6 @@ func TestSupportsFileGrants(t *testing.T) {
 	assert.True(t, SupportsFileGrants(ImplementationTclaudeLayer, "linux"))
 	assert.False(t, SupportsFileGrants(ImplementationTclaudeLayer, "darwin"),
 		"Seatbelt is a path filter over the host namespace, with no mount to make")
-	assert.False(t, SupportsFileGrants(ImplementationStacked, "linux"),
-		"the inner harness wall is fed from directory lists that cannot carry a file")
 	assert.False(t, SupportsFileGrants(ImplementationHarnessBuiltin, "linux"))
 	assert.False(t, SupportsFileGrants(ImplementationResourceOnly, "linux"))
 	assert.False(t, SupportsFileGrants(ImplementationOff, "linux"))
@@ -239,7 +237,6 @@ func TestValidateFileGrantSupport(t *testing.T) {
 		goos           string
 	}{
 		{ImplementationTclaudeLayer, "darwin"},
-		{ImplementationStacked, "linux"},
 		{ImplementationHarnessBuiltin, "linux"},
 		{ImplementationResourceOnly, "linux"},
 		{ImplementationOff, "linux"},

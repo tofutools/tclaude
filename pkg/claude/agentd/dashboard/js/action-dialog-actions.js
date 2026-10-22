@@ -328,17 +328,6 @@ export function createActionDialogActions({
       const snapshot = nodeCatalog || getSnapshot() || {};
       const catalog = snapshot.sandbox_impl || {};
       const harness = findSpawnHarness(snapshot.harnesses, harnessName);
-      if (implementation === 'stacked') {
-        if (harness && !harness.can_stacked) {
-          return `${harness.display_name || harnessName} has no nested sandbox to stack under tclaude’s sandbox.`;
-        }
-        const stacked = catalog.stacked?.[harnessName];
-        if (stacked && !stacked.available) return stacked.unavailable_reason || 'the stacked engine is unavailable on this host.';
-        if (catalog.stacked_apparmor_nested_bwrap_likely) {
-          return 'this host most likely denies the nested bubblewrap that stacked needs (AppArmor bwrap-userns-restrict).';
-        }
-        return '';
-      }
       if (implementation === 'tclaude-layer') {
         const serverBoundary = !!harness?.tclaude_layer_server_boundary;
         const available = serverBoundary ? catalog.server_host_available : catalog.host_available;

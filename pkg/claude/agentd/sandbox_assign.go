@@ -109,10 +109,9 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	requested := strings.TrimSpace(body.Implementation)
 	if requested == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("implementation is required (%s, %s, %s, %s, or %s)",
+			fmt.Sprintf("implementation is required (%s, %s, %s, or %s)",
 				sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationTclaudeLayer,
-				sandboxpolicy.ImplementationStacked, sandboxpolicy.ImplementationResourceOnly,
-				sandboxpolicy.ImplementationOff))
+				sandboxpolicy.ImplementationResourceOnly, sandboxpolicy.ImplementationOff))
 		return
 	}
 	// Judge the VALUE before the state conflicts below, so a misspelling is a 400

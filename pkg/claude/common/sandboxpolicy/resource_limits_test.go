@@ -100,14 +100,11 @@ func TestResourceCgroupRequiredCoversLimitlessResourceOnly(t *testing.T) {
 	assert.False(t, ResourceCgroupRequired(ResourceLimits{}, ImplementationOff))
 	assert.False(t, ResourceCgroupRequired(ResourceLimits{}, ImplementationTclaudeLayer),
 		"the layer's own boundary is opportunistic; a host without one must still launch it")
-	assert.False(t, ResourceCgroupRequired(ResourceLimits{}, ImplementationStacked))
 }
 
 func TestResourceCgroupRequestedAddsTheOpportunisticLayerBoundary(t *testing.T) {
 	assert.True(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationTclaudeLayer, "linux"),
 		"tclaude already owns this workload's boundary, so the accounting is there for the taking")
-	assert.True(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationStacked, "linux"),
-		"stacked is the same outer layer with the harness's own sandbox kept inside it")
 	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationTclaudeLayer, "darwin"),
 		"Seatbelt has no cgroup beneath it; trying would report a degradation every launch")
 	assert.True(t, ResourceCgroupRequested(ResourceLimits{Memory: "1GiB"}, ImplementationTclaudeLayer, "darwin"),

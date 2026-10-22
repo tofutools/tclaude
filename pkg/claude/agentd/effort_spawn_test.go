@@ -275,7 +275,6 @@ func TestSessionArgs_SandboxImplementationLeavesBuiltinUnpinnedAndReplaysExplici
 
 	for _, implementation := range []sandboxpolicy.Implementation{
 		sandboxpolicy.ImplementationTclaudeLayer,
-		sandboxpolicy.ImplementationStacked,
 		sandboxpolicy.ImplementationOff,
 	} {
 		for name, args := range map[string][]string{

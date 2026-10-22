@@ -87,9 +87,7 @@ type ExecutionBoundaryInput struct {
 	HarnessLookupName         string
 	HarnessExecutable         string
 	HarnessExecutableResolved bool
-	HarnessSandboxPath        string
 	HarnessRuntimeRoots       []string
-	HarnessRuntimeBindings    []StackedSandboxRuntimeBinding
 	LauncherBinary            string
 	LauncherBinaryResolved    bool
 	Cwd                       string
@@ -132,28 +130,16 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 		}
 		out.Harness.HostPath = resolved
 		out.Harness.SandboxPath = resolved
-		if sandboxPath := strings.TrimSpace(input.HarnessSandboxPath); sandboxPath != "" {
-			out.Harness.SandboxPath = sandboxPath
-		}
 		out.Harness.Resolution = "absolute executable resolved before sandbox launch"
 	} else if candidate := resolveRecordedPATHExecutable(input.HarnessLookupName, basePATH, input.Cwd); candidate != "" {
 		out.Harness.HostPath = candidate
 		out.Harness.SandboxPath = candidate
 		out.Harness.Resolution = "resolved from launch PATH before exec"
 	}
-	if len(input.HarnessRuntimeBindings) == 0 {
-		for _, root := range out.Harness.RuntimeRoots {
-			out.AutomaticEntries = append(out.AutomaticEntries, ExecutionNamespaceEntry{
-				Kind: "bind", Source: root, Target: root, Access: "read-only", Origin: "harness runtime closure",
-			})
-		}
-	} else {
-		for _, binding := range input.HarnessRuntimeBindings {
-			out.AutomaticEntries = append(out.AutomaticEntries, ExecutionNamespaceEntry{
-				Kind: "bind", Source: binding.HostPath, Target: binding.SandboxPath,
-				Access: "read-only", Origin: "staged nested harness runtime closure",
-			})
-		}
+	for _, root := range out.Harness.RuntimeRoots {
+		out.AutomaticEntries = append(out.AutomaticEntries, ExecutionNamespaceEntry{
+			Kind: "bind", Source: root, Target: root, Access: "read-only", Origin: "harness runtime closure",
+		})
 	}
 	preLaunch := input.PreLaunch
 	if input.LayerSpec == nil {

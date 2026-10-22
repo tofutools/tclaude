@@ -157,7 +157,6 @@ export function launchSetting(harness, key) {
 export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
 export const CODEX_NATIVE_REGISTRY_SETUP_DOC = 'https://github.com/tofutools/tclaude/blob/main/docs/codex-native-permission-registry.md';
 export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
-export const SANDBOX_IMPL_STACKED = 'stacked';
 export const SANDBOX_IMPL_OFF = 'off';
 export const SANDBOX_IMPL_RESOURCE_ONLY = 'resource-only';
 
@@ -194,16 +193,6 @@ export function harnessBuiltinModeIsOff(harnessName, mode) {
   return !!offMode && text(mode) === offMode;
 }
 
-// SANDBOX_APPARMOR_DOC is the operator guide a hint links to when this host
-// most likely denies the nested bwrap stacked needs. The docs own the
-// explanation, the workaround, and its host-wide trade-off; the hint stays one
-// sentence and points here rather than growing its own copy of them.
-export const SANDBOX_APPARMOR_DOC = {
-  href: 'https://github.com/tofutools/tclaude/blob/main/docs/sandboxing.md'
-    + '#stacked-refuses-on-apparmor-restricted-hosts',
-  label: 'why, and how to allow it',
-};
-
 // The per-harness mode help describes the harness-owned sandbox. Under the
 // tclaude layer that sandbox is deliberately off while the outer OS wall
 // renders the same sandbox-profile policy, so reusing (for example) Claude
@@ -225,12 +214,6 @@ export function harnessBuiltinModeHelpForImplementation(help, implementation, ha
     && (harnessName === 'claude' || harnessName === 'codex')) {
     return "The harness's own sandbox is off by design. tclaude’s built-in sandbox enforces "
       + 'sandbox-profile filesystem rules as OS mounts; any environment entries also apply.';
-  }
-  if (text(implementation) === SANDBOX_IMPL_STACKED
-    && (harnessName === 'claude' || harnessName === 'codex')) {
-    return "The tclaude outer mounts and the harness's real nested OS sandbox both enforce "
-      + 'the launch policy. A fresh engine round-trip must succeed before launch; '
-      + 'environment entries also apply.';
   }
   return text(help);
 }
@@ -298,9 +281,6 @@ function sandboxImplView(harness, context) {
     sandboxImplCanBuiltin: canBuiltinOSSandbox,
     sandboxImplHarness: harnessLabel,
     sandboxImplHarnessName: text(harness?.name),
-    sandboxImplCanStacked: !!harness?.can_stacked,
-    sandboxImplStackedAvailability: catalog.stacked?.[text(harness?.name)] || {},
-    sandboxImplStackedAppArmorLikely: !!catalog.stacked_apparmor_nested_bwrap_likely,
     sandboxImplHostAvailable: serverBoundary
       ? catalog.server_host_available !== false
       : catalog.host_available !== false,
@@ -373,8 +353,7 @@ export function approvalControlsVisibleFor(draft, resolvedImplementation = '') {
   if (text(draft?.harness) !== 'codex') return true;
   const explicit = text(draft?.sandboxImpl ?? draft?.sandbox_implementation);
   const implementation = explicit || text(resolvedImplementation);
-  const codexOwnsSandbox = implementation === SANDBOX_IMPL_DEFAULT
-    || implementation === SANDBOX_IMPL_STACKED;
+  const codexOwnsSandbox = implementation === SANDBOX_IMPL_DEFAULT;
   return codexOwnsSandbox && text(draft?.sandbox) !== 'danger-full-access';
 }
 
@@ -470,55 +449,6 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
           + 'its access-control mode is a command filter, not confinement; '
           + "use tclaude’s built-in sandbox or spawn with the sandbox off."
         : 'No built-in OS sandbox; access-control is a command filter, not confinement.',
-    };
-  }
-  if (value === SANDBOX_IMPL_STACKED) {
-    if (!view.sandboxImplCanStacked) {
-      return {
-        warn: true,
-        text: `Stacked is not available for ${view.sandboxImplHarness || 'this harness'}: `
-          + 'there is no reviewed nested OS-sandbox contract. Apply or launch will refuse; the selection is preserved.',
-      };
-    }
-    const availability = view.sandboxImplStackedAvailability || {};
-    const appArmor = view.sandboxImplStackedAppArmorLikely
-      ? { doc: SANDBOX_APPARMOR_DOC }
-      : null;
-    if (view.sandboxImplHostAvailable && availability.available !== false) {
-      // The availability answer above only resolved the engine, so on a host
-      // carrying Ubuntu's enforcing bwrap policy it says "available" while the
-      // launch probe will refuse. Say so here rather than let the operator
-      // discover it from a failed launch — and say "likely", because reading
-      // the policy file is not the same as watching the deny.
-      if (appArmor) {
-        return {
-          warn: true,
-          ...appArmor,
-          text: 'Likely blocked on this host: an enforcing '
-            + 'bwrap-userns-restrict AppArmor policy denies the nested bwrap, so the launch '
-            + 'round-trip will probably refuse. Availability above resolves the engine only.',
-        };
-      }
-      return {
-        warn: false,
-        text: 'Launch performs a fresh model-free allowed/denied round-trip through '
-          + "the harness's real nested engine inside the exact tclaude outer boundary.",
-      };
-    }
-    const reason = text(availability.unavailable_reason)
-      || view.sandboxImplHostReason
-      || 'this host cannot create both sandbox walls';
-    return {
-      warn: true,
-      ...(appArmor || {}),
-      // The concrete reason keeps the lead — it is what the probe actually
-      // said. The policy is named as a SECOND wall to clear, not as an
-      // explanation of this one, because it is neither.
-      text: `Not available on this host: ${reason}. Selecting it will refuse the launch, not fall back.`
-        + (appArmor
-          ? ' An enforcing bwrap-userns-restrict AppArmor policy on this host will likely block'
-            + ' the nested sandbox too, once that reason is fixed.'
-          : ''),
     };
   }
   if (value !== SANDBOX_IMPL_TCLAUDE_LAYER) return null;

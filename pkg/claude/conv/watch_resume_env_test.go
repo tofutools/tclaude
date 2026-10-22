@@ -68,8 +68,8 @@ func TestResumeTclaudeLayerNetworkPostureIncludesDefaultAllowDenies(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 
-	assert.Equal(t, sandboxpolicy.NetworkFiltered,
-		resumeTclaudeLayerNetworkPosture(resumeConvClaude),
+	posture, _, _ := resumeTclaudeLayerPostures(resumeConvClaude)
+	assert.Equal(t, sandboxpolicy.NetworkFiltered, posture,
 		"a resumed open+deny launch must never be reported or probed as host-open")
 }
 
@@ -405,11 +405,10 @@ func TestWatchResumeRefreshesSocketMaterializationForAdapterAndSavedState(t *tes
 	}))
 
 	var launchSnapshot *sandboxpolicy.Snapshot
-	_, profilePath, _, err := resumeLaunchCmdWithStackedProof(
+	_, profilePath, _, err := resumeLaunchCmdWithEffectiveSandbox(
 		harness.CodexName,
 		resumeConvCodex[:8],
 		resumeConvCodex,
-		nil,
 		nil,
 		&launchSnapshot,
 	)
@@ -459,8 +458,8 @@ func TestStandaloneResumeDoesNotInheritUnenforcedNetworkAuthorization(t *testing
 	}))
 
 	var launchSnapshot *sandboxpolicy.Snapshot
-	_, profilePath, _, err := resumeLaunchCmdWithStackedProof(
-		harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil, nil,
+	_, profilePath, _, err := resumeLaunchCmdWithEffectiveSandbox(
+		harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil,
 		&launchSnapshot)
 	if runtime.GOOS == "linux" {
 		require.Error(t, err)

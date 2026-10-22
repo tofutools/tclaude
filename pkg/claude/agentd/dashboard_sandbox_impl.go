@@ -4,7 +4,6 @@ import (
 	"runtime"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // dashboardSandboxImpl is the sandbox-IMPLEMENTATION catalog the spawn dialog
@@ -50,36 +49,6 @@ type dashboardSandboxImpl struct {
 	// refusal.
 	ServerHostAvailable         bool   `json:"server_host_available"`
 	ServerHostUnavailableReason string `json:"server_host_unavailable_reason,omitempty"`
-	// Stacked is per-harness because each descriptor owns a different real
-	// engine entry point, and carries only harnesses that HAVE a nested sandbox
-	// — OpenCode owns none, so stacking is not a capability it can lack and it
-	// is absent rather than reported unavailable. Same installed-not-working
-	// semantics as the fields above: it says the engine is on PATH, not that it
-	// sandboxes. Launch always re-resolves and completes the nested round-trip
-	// inside the exact outer spec.
-	Stacked map[string]dashboardStackedAvailability `json:"stacked"`
-	// StackedAppArmorLikely says the host most likely denies the nested bwrap
-	// stacked needs, because Ubuntu's bwrap-userns-restrict AppArmor policy is
-	// present and neither unloaded nor in complain mode.
-	//
-	// It is host-wide rather than per-harness: the denying layer is the host's
-	// policy, not any engine. It is also the only field here that can warn at
-	// all in this case — the per-harness availability above resolves the engine
-	// and reports AVAILABLE on exactly these hosts, because nothing short of
-	// the launch-time round-trip tries the nested wall. Hence "likely": the
-	// dashboard may point at the guide, never decide.
-	StackedAppArmorLikely bool `json:"stacked_apparmor_nested_bwrap_likely,omitempty"`
-}
-
-// dashboardStackedAvailability discloses whether a harness's nested-sandbox
-// engine is INSTALLED. It carried an ExecutableIdentity (path|version|size|
-// mtime) until the poll stopped executing `<engine> --version` to obtain it —
-// the field had no reader in the dashboard, so paying a process launch per
-// minute to populate it bought nothing. The launch still freezes the exact
-// identity it probes, where it is load-bearing.
-type dashboardStackedAvailability struct {
-	Available         bool   `json:"available"`
-	UnavailableReason string `json:"unavailable_reason,omitempty"`
 }
 
 type dashboardSandboxImplOption struct {
@@ -118,12 +87,6 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 					"requires bwrap and unprivileged user namespaces.",
 			},
 			{
-				Value: string(sandboxpolicy.ImplementationStacked),
-				Label: "tclaude + {harness} sandboxes",
-				Descr: "Runs {harness} inside tclaude’s sandbox and requires a live " +
-					"model-free round-trip through {harness}'s real nested OS sandbox. Linux Claude/Codex only.",
-			},
-			{
 				Value: string(sandboxpolicy.ImplementationResourceOnly),
 				Label: "Resource limits only",
 				Descr: "No OS-level access confinement, but the launch runs in its own cgroup " +
@@ -138,7 +101,6 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 			},
 		},
 		Default: string(sandboxpolicy.ImplementationHarnessBuiltin),
-		Stacked: map[string]dashboardStackedAvailability{},
 	}
 	if err := sandboxToolPresence(sandboxToolLayerHost, tclaudeLayerHostPresence); err != nil {
 		out.HostUnavailableReason = err.Error()
@@ -152,27 +114,5 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 	} else {
 		out.ServerHostAvailable = true
 	}
-	// Only harnesses that own a nested sandbox appear here. OpenCode has none,
-	// so "stacked" is not a capability it can lack — it is simply not a member
-	// of this map, which is what SupportsNestedSandbox already gates.
-	for _, name := range harness.Names() {
-		h, err := harness.ResolveSpawnable(name)
-		if err != nil || !h.SupportsNestedSandbox() {
-			continue
-		}
-		value := dashboardStackedAvailability{}
-		if err := sandboxToolPresence(stackedEngineToolKey(h.Name), func() error {
-			return stackedEnginePresence(h)
-		}); err != nil {
-			value.UnavailableReason = err.Error()
-		} else {
-			value.Available = true
-		}
-		out.Stacked[name] = value
-	}
-	// Uncached on purpose: this is four stats of world-readable paths, not a
-	// fork, and an operator who just unloaded the policy should see the hint
-	// go away on the next poll rather than a TTL later.
-	out.StackedAppArmorLikely = stackedAppArmorNestedBlockLikely()
 	return out
 }

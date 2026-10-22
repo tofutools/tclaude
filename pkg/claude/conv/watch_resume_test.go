@@ -125,7 +125,6 @@ func TestResumeHarnessBuiltinModeForImplementationMapsOpenCodeTclaudeLayer(t *te
 		opencode,
 		harness.OpenCodeSandboxAccessControl,
 		sandboxpolicy.ImplementationTclaudeLayer,
-		false,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, harness.OpenCodeSandboxTclaudeLayer, got)

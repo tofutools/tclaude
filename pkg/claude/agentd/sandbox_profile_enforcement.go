@@ -730,10 +730,9 @@ func flattenSandboxProfileForDraftInspection(
 // defaultSandboxProfilePredictionTarget is the preview's launch target when the
 // operator has overridden none of the target controls. It shares
 // resolveLaunchDefaults with the spawn dialog so the preview and the dialog can
-// never disagree about what a launch would resolve, then applies the two
-// adjustments that belong to PREDICTION rather than to launch resolution: under
-// stacked the harness's own built-in mode is what gets predicted, and OpenCode's
-// implementation-specific mode has to be derived.
+// never disagree about what a launch would resolve, then applies the one
+// adjustment that belongs to PREDICTION rather than to launch resolution:
+// OpenCode's implementation-specific mode has to be derived.
 func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnforcementTargetRequest, string, error) {
 	defaults, fail, err := resolveLaunchDefaults(groupName, "", "")
 	if fail != nil {
@@ -742,16 +741,12 @@ func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnfo
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
-	harnessBuiltinMode := defaults.sandbox
-	if defaults.implementation == sandboxpolicy.ImplementationStacked {
-		harnessBuiltinMode = predictedBuiltinMode(defaults.harness.Name)
-	}
 	// The PREDICTION describes what the harness's own sandbox will be set to,
 	// which is what a capability evaluator can reason about; a tclaude-layer
 	// launch's forced single-wall mode would describe the stood-down inner wall
 	// instead (TCL-989).
-	harnessBuiltinMode, err = harness.ResolveNativeHarnessBuiltinMode(
-		defaults.harness, harnessBuiltinMode, defaults.implementation)
+	harnessBuiltinMode, err := harness.ResolveNativeHarnessBuiltinMode(
+		defaults.harness, defaults.sandbox, defaults.implementation)
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
@@ -1142,13 +1137,7 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 	if platform != "linux" && platform != "darwin" {
 		return parsedSandboxProfileEnforcementTarget{}, invalidSandboxProfileTarget(raw)
 	}
-	if implementation == sandboxpolicy.ImplementationStacked && platform != "linux" {
-		return parsedSandboxProfileEnforcementTarget{}, fmt.Errorf(
-			`invalid --for target %q: stacked sandbox prediction is supported only on linux`,
-			raw,
-		)
-	}
-	// Refuse rather than degrade, exactly as stacked does. A cgroup budget is a
+	// Refuse rather than degrade. A cgroup budget is a
 	// Linux mechanism; off Linux this implementation is byte-for-byte `off`,
 	// and accepting it would predict a posture the platform cannot produce.
 	if implementation == sandboxpolicy.ImplementationResourceOnly && platform != "linux" {
@@ -1165,7 +1154,7 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 func invalidSandboxProfileTarget(raw string) error {
 	return fmt.Errorf(
 		`invalid --for target %q (want implementation[/harness[/platform]]; `+
-			`implementation: off, resource-only, harness-builtin, tclaude-layer, stacked; `+
+			`implementation: off, resource-only, harness-builtin, tclaude-layer; `+
 			`harness: claude, codex, opencode, copilot, gemini, pi; platform: linux, darwin)`,
 		raw,
 	)
@@ -1199,9 +1188,6 @@ func resolveSandboxProfilePredictionMode(
 		if err != nil {
 			return "", err
 		}
-	}
-	if target.implementation == sandboxpolicy.ImplementationStacked {
-		mode = predictedBuiltinMode(target.harness.Name)
 	}
 	return harness.ResolveNativeHarnessBuiltinMode(
 		target.harness, mode, target.implementation)

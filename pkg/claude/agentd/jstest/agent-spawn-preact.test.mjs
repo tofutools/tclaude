@@ -98,16 +98,11 @@ const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in' },
     { value: 'tclaude-layer', label: 'tclaude’s built-in sandbox' },
-    { value: 'stacked', label: 'tclaude + {harness} sandboxes' },
     { value: 'off', label: 'Off' },
   ],
   default: 'harness-builtin',
   host_available: true,
   server_host_available: true,
-  stacked: {
-    claude: { available: true },
-    codex: { available: true },
-  },
 };
 
 function deferred() {
@@ -235,9 +230,6 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(model.approvalControlsVisibleFor({
     harness: 'codex', sandbox: 'danger-full-access', sandboxImpl: 'harness-builtin',
   }), false, 'Codex native sandbox Off cannot produce a boundary approval');
-  assert.equal(model.approvalControlsVisibleFor({
-    harness: 'codex', sandbox: 'tclaude-agent', sandboxImpl: 'stacked',
-  }), true, 'stacked still runs Codex inside its own sandbox');
   assert.equal(model.approvalControlsVisibleFor({
     harness: 'claude', sandbox: 'off', sandboxImpl: 'off',
   }), true, 'Claude Code permission controls are independent of sandboxing');
@@ -1012,7 +1004,7 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
     'OpenCode has no built-in OS sandbox, so it has no nested mode control');
   const openCodeSandbox = host.querySelector('#agent-spawn-sandbox-impl');
   assert.deepEqual([...openCodeSandbox.options].map((option) => option.value),
-    ['', 'tclaude-layer', 'stacked', 'off']);
+    ['', 'tclaude-layer', 'off']);
   assert.equal(host.querySelector('#agent-spawn-sandbox-profile-row').hidden, false);
   const openCodeTools = host.querySelector('#agent-spawn-tools');
   assert.equal(openCodeTools.closest('.cron-create-row').hidden, false);
@@ -1727,9 +1719,6 @@ test('SSH workaround covers managed Codex and every tclaude sandbox layer harnes
   const layeredClaude = { ...claude, name: 'layered-claude', sandboxImpl: 'tclaude-layer' };
   assert.equal(model.spawnCapabilityView(layeredClaude, context).sshWorkaroundAvailable, true);
   assert.equal(model.buildSpawnRequest(layeredClaude, context, null, []).body.ssh_workaround, true);
-  const stackedClaude = { ...claude, name: 'stacked-claude', sandboxImpl: 'stacked' };
-  assert.equal(model.spawnCapabilityView(stackedClaude, context).sshWorkaroundAvailable, true);
-  assert.equal(model.buildSpawnRequest(stackedClaude, context, null, []).body.ssh_workaround, true);
 });
 
 // TCL-609: a policy loaded for a previous selection (or still in flight) must

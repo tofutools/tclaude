@@ -310,10 +310,6 @@ func TestValidateTmpfsSupportRefusesOutsidePlainLinuxTclaudeLayer(t *testing.T) 
 		goos           string
 	}{
 		{ImplementationTclaudeLayer, "darwin"},
-		// stacked refuses even on Linux: the inner harness-native wall is fed
-		// from host-path directory lists and would deny every write to a mount
-		// the outer layer created.
-		{ImplementationStacked, "linux"},
 		{ImplementationHarnessBuiltin, "linux"},
 		{ImplementationResourceOnly, "linux"},
 		{ImplementationOff, "linux"},

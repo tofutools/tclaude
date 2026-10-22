@@ -114,9 +114,9 @@ func TestResumeLaunchCmd_ResourceOnlyDisclosesInertAccessRules(t *testing.T) {
 	}))
 
 	var effectiveSandbox *sandboxpolicy.Snapshot
-	_, _, _, resumeErr := resumeLaunchCmdWithStackedProof(
+	_, _, _, resumeErr := resumeLaunchCmdWithEffectiveSandbox(
 		harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil,
-		nil, &effectiveSandbox,
+		&effectiveSandbox,
 	)
 	require.NoError(t, resumeErr)
 	require.NotNil(t, effectiveSandbox)

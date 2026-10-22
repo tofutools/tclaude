@@ -41,7 +41,7 @@ func TestCopilotTclaudeLayerNetworkSmoke(t *testing.T) {
 			" session " + tclaudeLayerWinchRelayCommand
 	}
 	t.Cleanup(func() { tclaudeLayerRelayPrefix = previousRelay })
-	prepareStackedSmokeControlPlane(t)
+	prepareSmokeControlPlane(t)
 
 	for _, tc := range []struct {
 		name            string

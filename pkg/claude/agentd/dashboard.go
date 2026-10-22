@@ -1465,10 +1465,6 @@ type dashboardHarness struct {
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
 	// never a harness-name switch in the dialog.
 	CanTclaudeLayer bool `json:"can_tclaude_layer"`
-	// CanStacked reports only descriptor applicability. The option remains
-	// visible even when false so the UI can explain that apply/launch will
-	// refuse instead of silently erasing an operator selection.
-	CanStacked bool `json:"can_stacked"`
 	// TclaudeLayerServerBoundary tells disclosure surfaces to use the
 	// relay-free server capability probe rather than the interactive pane
 	// probe. It does not grant the capability; CanTclaudeLayer remains the gate.
@@ -1547,7 +1543,6 @@ func buildHarnessCatalog() []dashboardHarness {
 			// the dialog must not offer what the launch will reject.
 			CanTclaudeLayer: session.ValidateTclaudeLayerHarness(h.Name) == nil &&
 				strings.TrimSpace(h.TclaudeLayerMode) != "",
-			CanStacked:                 h.SupportsNestedSandbox(),
 			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
 		}
 		if h.SupportsModelProxy() {
@@ -2495,7 +2490,7 @@ func stateForConvInSessionsBatched(
 		// exited override below only touches Status/StatusDetail.
 		Harness:                  pick.Harness,
 		HarnessBuiltinMode:       pick.HarnessBuiltinMode,
-		SandboxImplementation:    pick.SandboxImplementation,
+		SandboxImplementation:    dashboardSandboxImplementation(pick.SandboxImplementation),
 		HarnessBuiltinModeSource: pick.HarnessBuiltinModeSource,
 		OSSandboxState:           pick.OSSandboxState,
 		OSSandboxSource:          pick.OSSandboxSource,
@@ -3376,9 +3371,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// two of them reach the host:
 	//
 	//   - buildSandboxImplCatalog FORKS bwrap to probe namespace availability
-	//     (twice — interactive and server boundary — plus a pidfd probe and a
-	//     per-harness nested-engine resolution) whenever its 60 s disclosure
-	//     cache expires. At a 2 s poll that is one poll in thirty paying a
+	//     (twice — interactive and server boundary — plus a pidfd probe)
+	//     whenever its 60 s disclosure cache expires. At a 2 s poll that is one poll in thirty paying a
 	//     multi-fork bill: exactly the shape of an occasional
 	//     multi-hundred-ms spike in an otherwise ~13 ms request.
 	//   - buildHarnessCatalog used to cost ~500 ms whenever OpenCode's model
@@ -4306,4 +4300,18 @@ func labelForConv(convID string) string {
 		return convID[:8]
 	}
 	return convID
+}
+
+// dashboardSandboxImplementation shows a session row's recorded implementation
+// in its normalized spelling, so a row recorded under the retired "stacked"
+// value reads as the tclaude-layer it now resumes as. Empty and unrecognized
+// values pass through unchanged.
+func dashboardSandboxImplementation(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	if implementation, err := sandboxpolicy.NormalizeImplementation(raw); err == nil {
+		return string(implementation)
+	}
+	return raw
 }

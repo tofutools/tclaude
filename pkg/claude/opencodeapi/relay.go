@@ -18,6 +18,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+// The private argv modes below share probehelper's dispatch prefix. Its
+// "stacked_probe" wording is historical (the retired stacked sandbox introduced
+// it); the values are exec tokens of running OpenCode processes and must stay
+// stable across upgrades.
 const InheritedUnixRelayMode = "__tclaude_stacked_probe_opencode_unix_relay"
 const UnixAttachShimMode = "__tclaude_stacked_probe_opencode_unix_attach"
 const UnixLaunchMode = "__tclaude_stacked_probe_opencode_unix_launch"

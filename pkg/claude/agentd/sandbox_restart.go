@@ -122,8 +122,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		// harness mode is already sandbox-off; the temporary transition only
 		// removes tclaude's independently controlled outer boundary.
 		if h.Name == harness.CodexName &&
-			(implementation == sandboxpolicy.ImplementationHarnessBuiltin ||
-				implementation == sandboxpolicy.ImplementationStacked) {
+			implementation == sandboxpolicy.ImplementationHarnessBuiltin {
 			writeError(w, http.StatusConflict, "unsupported",
 				fmt.Sprintf("Codex cannot restart this conversation without its own sandbox under implementation %q because Codex restores the persisted sandbox policy on resume; choose tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox", implementation))
 			return

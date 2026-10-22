@@ -63,7 +63,7 @@ func sandboxImplShowCmd() *cobra.Command {
 
 type sandboxImplSetParams struct {
 	Agent          string `pos:"true" help:"Agent selector: title, full conv-id, or 8+-char prefix"`
-	Implementation string `pos:"true" help:"harness-builtin | tclaude-layer | stacked | resource-only | off"`
+	Implementation string `pos:"true" help:"harness-builtin | tclaude-layer | resource-only | off"`
 	Sandbox        string `long:"sandbox" optional:"true" help:"Pin the harness-builtin sandbox mode recorded alongside the implementation. Omitted, the agent's recorded mode is carried through the same resolution a launch applies."`
 	JSON           bool   `long:"json" help:"Emit the stable JSON object instead of the human view"`
 	AskHuman       string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
@@ -107,7 +107,6 @@ func sandboxImplementationChoices() []string {
 	return []string{
 		string(sandboxpolicy.ImplementationHarnessBuiltin),
 		string(sandboxpolicy.ImplementationTclaudeLayer),
-		string(sandboxpolicy.ImplementationStacked),
 		string(sandboxpolicy.ImplementationResourceOnly),
 		string(sandboxpolicy.ImplementationOff),
 	}
@@ -252,12 +251,8 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 // sandboxImplementationDisplayName is human-facing only; JSON and command
 // arguments retain the stable implementation values.
 func sandboxImplementationDisplayName(value string) string {
-	switch sandboxpolicy.Implementation(value) {
-	case sandboxpolicy.ImplementationTclaudeLayer:
+	if sandboxpolicy.Implementation(value) == sandboxpolicy.ImplementationTclaudeLayer {
 		return "tclaude’s built-in sandbox"
-	case sandboxpolicy.ImplementationStacked:
-		return "tclaude + harness sandboxes"
-	default:
-		return value
 	}
+	return value
 }

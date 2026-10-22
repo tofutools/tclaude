@@ -169,15 +169,6 @@ func TestCodexAsker_NoisyCaptureStderr(t *testing.T) {
 	}
 }
 
-func TestCodexAskerStackedLaunchPinsReviewedBackend(t *testing.T) {
-	h, err := Resolve(CodexName)
-	require.NoError(t, err)
-	posture := h.NestedSandbox.PrepareLaunch(SpawnSpec{PermissionProfile: "private-one-shot"})
-	argv := h.Ask.BuildAskArgv(AskSpec{Print: true, Prompt: "task", LaunchPosture: &posture})
-	require.Contains(t, argv, "features.use_legacy_landlock=false")
-	require.Contains(t, argv, "private-one-shot")
-}
-
 func TestCodexAskInteractivePosturePrecedesResume(t *testing.T) {
 	argv := codexAsker{}.BuildAskArgv(AskSpec{ResumeID: "existing", Prompt: "next", LaunchPosture: &SpawnSpec{PermissionProfile: "ask-profile", ApprovalPolicy: ApprovalNever}})
 	require.Equal(t, []string{"codex", "-p", "ask-profile", "--ask-for-approval", "never", "resume", "existing", "next"}, argv)

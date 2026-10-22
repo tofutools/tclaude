@@ -25,7 +25,7 @@ type ModelTransportLaunchContext struct {
 	Environment []sandboxpolicy.EnvironmentEntry
 	ExtraArgs   []string
 	// PermissionProfile is the Codex permission profile the launch will pass as
-	// `-p <name>`. tclaude sets this itself on the stacked path, so it is not
+	// `-p <name>`. tclaude sets this itself for a managed profile, so it is not
 	// covered by the ExtraArgs gate; the profile layers
 	// $CODEX_HOME/<name>.config.toml above the base user config and can carry
 	// provider routing, so the effective-config probe has to select it too or

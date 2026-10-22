@@ -37,15 +37,10 @@ func TestValidateAssignedSandboxImplementationAllowsTheHarnessBuiltinDefault(t *
 	}
 }
 
-// The capability gates that describe what tclaude will actually run must survive
-// the relaxation above.
+// The value validation must survive the relaxation above.
 func TestValidateAssignedSandboxImplementationStillGatesCapabilities(t *testing.T) {
 	h, err := harness.Resolve(harness.OpenCodeName)
 	require.NoError(t, err)
-	_, err = validateAssignedSandboxImplementation(
-		h, string(sandboxpolicy.ImplementationStacked))
-	assert.Error(t, err, "OpenCode owns no nested sandbox to stack under the outer layer")
-
 	_, err = validateAssignedSandboxImplementation(h, "resource_only")
 	assert.Error(t, err, "an unknown value is still invalid")
 }
@@ -61,7 +56,6 @@ func TestSandboxImplementationForcesLaunchMode(t *testing.T) {
 		sandboxpolicy.ImplementationResourceOnly:   true,
 		sandboxpolicy.ImplementationTclaudeLayer:   true,
 		sandboxpolicy.ImplementationHarnessBuiltin: false,
-		sandboxpolicy.ImplementationStacked:        false,
 	}
 	claude, err := harness.Resolve(harness.DefaultName)
 	require.NoError(t, err)

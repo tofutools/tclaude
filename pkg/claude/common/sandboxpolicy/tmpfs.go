@@ -204,11 +204,6 @@ func cloneTmpfsMounts(in []TmpfsMount) []TmpfsMount {
 //     deny a path; it cannot conjure a filesystem at one.
 //   - harness-builtin sandboxes receive path lists and confine the harness in
 //     the host namespace. There is nowhere to express a mount.
-//   - `stacked` refuses too, even on Linux. tclaude's outer layer would mount
-//     the tmpfs, and then the inner harness-native wall — fed from the same
-//     directory lists, which carry host paths only — would deny the harness's
-//     own tools every write to it. A scratch directory the agent can see and
-//     cannot use is worse than a refusal, because only the refusal says why.
 //   - `resource-only` and `off` stand every access boundary down and build no
 //     namespace at all.
 func SupportsTmpfsMounts(implementation Implementation, goos string) bool {

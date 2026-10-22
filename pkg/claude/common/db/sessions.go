@@ -816,11 +816,14 @@ func PreTemporaryUnlockSandboxImplementationForConv(convID string) (string, erro
 				continue
 			}
 		case string(sandboxpolicy.ImplementationTclaudeLayer),
-			string(sandboxpolicy.ImplementationStacked):
+			// "stacked" is the retired nested implementation. Rows recorded
+			// before its removal still name it; it now launches as
+			// tclaude-layer (see sandboxpolicy.NormalizeImplementation).
+			"stacked":
 			if !temporaryTail {
 				return "", nil
 			}
-			return item.implementation, nil
+			return string(sandboxpolicy.ImplementationTclaudeLayer), nil
 		default:
 			// An unknown implementation breaks the launch-history tail. Do not
 			// infer across evidence this version cannot interpret.

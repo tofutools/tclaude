@@ -87,7 +87,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only == 'false'
     name: Sandbox v2 bubblewrap smoke
-    runs-on: ubuntu-latest
+    # Pinned while the filtered-network smokes fail on ubuntu-26.04 (IPv6 UDP
+    # through the packet gateway); the follow-up runs this job on both images.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -132,9 +134,10 @@ jobs:
               exit 1
             fi
           fi
-          # Claude's embedded SRT discovers rg and socat at runtime; keep them
-          # explicit so a runner-image change cannot turn the real nested smoke
-          # into an accidental dependency check.
+          # socat backs the network smoke listeners below, and Claude Code's
+          # embedded sandbox runtime discovers rg and socat at runtime; keep
+          # both explicit so a runner-image change cannot turn a real-engine
+          # smoke into an accidental dependency check.
           sudo apt-get install --yes bubblewrap iproute2 nftables passt ripgrep socat
           # Ubuntu's packaged pasta predates the synthetic host-loopback
           # controls required by the filtered gateway. Build a reproducible
@@ -186,7 +189,10 @@ jobs:
           npm install --global @earendil-works/pi-coding-agent@1.1.0
           pi --version
 
-      - name: Install pinned stacked sandbox engines
+      # The pinned evidence tests below (filtered model endpoint, Codex
+      # effective-config seam, Codex system-config layer) require exactly
+      # these Claude Code and Codex versions.
+      - name: Install pinned Claude Code and Codex engines
         shell: bash
         run: |
           npm install --global @openai/codex@0.145.0
@@ -790,25 +796,6 @@ jobs:
               echo "The OpenCode deny capability cell claims enforcement only while this marker is produced by an executed run."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::OpenCode filtered-network deny probes did not execute"
-            exit 1
-          fi
-
-      - name: Run stacked real-engine smoke
-        env:
-          TCLAUDE_STACKED_SANDBOX_SMOKE: "1"
-          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
-        run: |
-          smoke_log="$RUNNER_TEMP/stacked-sandbox-smoke.log"
-          go test ./pkg/claude/session -run '^TestStackedSandboxHostSmoke$' -count=1 -v -timeout=180s |
-            tee "$smoke_log"
-          if ! grep -q '^--- PASS: TestStackedSandboxHostSmoke ' "$smoke_log"; then
-            {
-              echo "### Stacked sandbox smoke did not complete"
-              echo
-              echo "The exact Claude embedded-SRT/Codex nested-engine matrix did not report an explicit pass."
-              echo "Both host-open and isolated tclaude outer postures are hard requirements."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::TestStackedSandboxHostSmoke did not report an explicit pass"
             exit 1
           fi
 

@@ -26,10 +26,7 @@ const BootstrapShellFallback = "/bin/sh"
 // not be reached by either mechanism; bash can. An exported function shadowing
 // `pwd` would make the canonicalization check pass unconditionally — exactly the
 // path-substitution attack that guard exists to stop — and one shadowing
-// `printf` would forge the readiness verdict the parent waits on. The same
-// threat is already named in sandbox_stacked.go's probe environment: "Never
-// inherit credentials, shell startup controls, or exported Bash functions that
-// could spoof one of its fail-closed utility checks."
+// `printf` would forge the readiness verdict the parent waits on.
 //
 // Only passed when the resolved interpreter is bash: the fallback's option set
 // is not tclaude's to assume.

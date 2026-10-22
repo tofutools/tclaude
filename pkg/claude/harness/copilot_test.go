@@ -98,7 +98,7 @@ func TestCopilotDescriptor(t *testing.T) {
 	// are a pattern-compiler contract of their own, and the approval catalog
 	// emits neither.
 	if h.ToolGovernance != nil ||
-		h.NestedSandbox != nil || h.HostControlSandbox != nil || h.AskTimeout != nil {
+		h.HostControlSandbox != nil || h.AskTimeout != nil {
 		t.Fatalf("copilot must not advertise unverified contracts: %+v", h)
 	}
 	if h.SupportsAutoReview() {
@@ -325,7 +325,7 @@ func TestCopilotBuildCommand(t *testing.T) {
 			spec: SpawnSpec{
 				HarnessBuiltinMode: "read-only", AutoReview: true,
 				RemoteControl: true, BypassHookTrust: true, PermissionProfile: "tclaude-agent",
-				AskUserQuestionTimeout: "5m", StrongNestedSandbox: true,
+				AskUserQuestionTimeout: "5m",
 			},
 			want: cp("copilot"),
 		},

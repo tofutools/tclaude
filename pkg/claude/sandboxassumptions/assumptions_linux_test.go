@@ -37,10 +37,6 @@ func TestBubblewrapAssumptions(t *testing.T) {
 		t.Fatalf("find bubblewrap: %v", err)
 	}
 
-	runLinuxAssumption(t, "NestedUserNamespaces",
-		"session.resolveBwrapServerBinary, session.tclaudeLayerProbeArgs, "+
-			"session.StackedSandboxAvailability, session.ProbeStackedSandbox",
-		func(t *testing.T) { assumeNestedUserNamespaces(t, bwrap) })
 	runLinuxAssumption(t, "NewSessionDisconnectsControllingTTY",
 		"session.bwrapArgs, session.runTclaudeLayerWinchRelay, "+
 			"session.signalPinnedTclaudeLayerGroup",
@@ -73,11 +69,9 @@ func TestBubblewrapAssumptions(t *testing.T) {
 			"session.resourceDelegationDeniedHint",
 		func(t *testing.T) { assumeCgroupIsolation(t, bwrap) })
 	runLinuxAssumption(t, "SealedMemfdMaterializesExecutable",
-		"session.prepareStackedRelayBinding exact-engine binding",
+		"session.sealedFilteredNetworkData bootstrap image materialized with "+
+			"bwrap --file by the filtered-network and proxy engines",
 		func(t *testing.T) { assumeSealedMemfdMaterialization(t, bwrap) })
-	runLinuxAssumption(t, "MissingPolicyChildUnderReadOnlyParent",
-		"session.prepareStackedRelayBinding absent /etc/claude-code branch",
-		func(t *testing.T) { assumeMissingPolicyChild(t, bwrap) })
 }
 
 func runLinuxAssumption(
@@ -90,78 +84,6 @@ func runLinuxAssumption(
 		t.Logf("production reliance: %s", reliance)
 		test(t)
 	})
-}
-
-func assumeNestedUserNamespaces(t *testing.T, bwrap string) {
-	t.Helper()
-	inner := []string{
-		bwrap,
-		"--die-with-parent",
-		"--ro-bind", "/", "/",
-		"--dev", "/dev",
-		"--proc", "/proc",
-		"--", "/usr/bin/true",
-	}
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{
-			name: "host-open",
-			args: []string{
-				"--die-with-parent",
-				"--ro-bind", "/", "/",
-				"--dev", "/dev",
-				"--proc", "/proc",
-			},
-		},
-		{
-			name: "isolated-constructed-root",
-			args: constructedRootArgs(t),
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			args := append([]string(nil), tc.args...)
-			args = append(args, "--")
-			args = append(args, inner...)
-			runBwrap(t, bwrap, args, nil)
-		})
-	}
-}
-
-func constructedRootArgs(t *testing.T) []string {
-	t.Helper()
-	args := []string{
-		"--die-with-parent",
-		"--unshare-net",
-		"--unshare-pid",
-		"--tmpfs", "/",
-		"--dev", "/dev",
-		"--proc", "/proc",
-		"--tmpfs", "/tmp",
-	}
-	for _, path := range []string{
-		"/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32", "/libx32", "/etc",
-	} {
-		info, err := os.Lstat(path)
-		switch {
-		case err == nil:
-		case os.IsNotExist(err):
-			continue
-		default:
-			t.Fatalf("inspect constructed-root source %s: %v", path, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			target, readErr := os.Readlink(path)
-			if readErr != nil {
-				t.Fatalf("read constructed-root symlink %s: %v", path, readErr)
-			}
-			args = append(args, "--symlink", target, path)
-			continue
-		}
-		args = append(args, "--ro-bind", path, path)
-	}
-	return args
 }
 
 func assumeNewSessionDisconnectsTTY(t *testing.T, bwrap string) {
@@ -614,43 +536,6 @@ func assumeSealedMemfdMaterialization(t *testing.T, bwrap string) {
 	}
 }
 
-func assumeMissingPolicyChild(t *testing.T, bwrap string) {
-	t.Helper()
-	parent := canonicalTempDir(t)
-	child := filepath.Join(parent, "claude-code")
-	policy := filepath.Join(child, "managed-settings.json")
-	payload, err := os.CreateTemp("", "tclaude-policy-assumption-*")
-	if err != nil {
-		t.Fatalf("create policy payload: %v", err)
-	}
-	defer func() {
-		_ = payload.Close()
-		_ = os.Remove(payload.Name())
-	}()
-	if _, err := payload.WriteString(`{"sandbox":{"enabled":true}}`); err != nil {
-		t.Fatalf("write policy payload: %v", err)
-	}
-	if _, err := payload.Seek(0, io.SeekStart); err != nil {
-		t.Fatalf("rewind policy payload: %v", err)
-	}
-	cmd := helperCommand(
-		bwrap,
-		[]string{
-			"--die-with-parent",
-			"--ro-bind", "/", "/",
-			"--tmpfs", parent,
-			"--dir", child,
-			"--perms", "0400",
-			"--file", "3", policy,
-			"--remount-ro", parent,
-		},
-		"verify-policy-root",
-		map[string]string{"ASSUME_POLICY_FILE": policy},
-	)
-	cmd.ExtraFiles = []*os.File{payload}
-	runCommand(t, cmd, 10*time.Second)
-}
-
 func TestBubblewrapAssumptionHelper(t *testing.T) {
 	mode := os.Getenv(linuxAssumptionHelperEnv)
 	if mode == "" {
@@ -966,15 +851,6 @@ func helperEnv(mode string, values map[string]string) []string {
 		env = append(env, key+"="+value)
 	}
 	return env
-}
-
-func runBwrap(t *testing.T, binary string, args []string, env []string) {
-	t.Helper()
-	cmd := exec.Command(binary, args...)
-	if env != nil {
-		cmd.Env = env
-	}
-	runCommand(t, cmd, 15*time.Second)
 }
 
 func waitCommand(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {

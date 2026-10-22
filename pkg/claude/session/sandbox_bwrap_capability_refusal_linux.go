@@ -10,8 +10,7 @@ import (
 )
 
 // tclaudeLayerRefusalPrefix is the marker every tclaude-layer capability
-// refusal carries, matching the vocabulary the stacked tier already uses
-// ("stacked requested — refused: …"). The pane's dying output is the only
+// refusal carries ("… requested — refused: …"). The pane's dying output is the only
 // channel a relay-side refusal has, so the phrase has to be recognisable as a
 // REFUSAL by a human reading `docs/sandboxing.md` rather than as one more
 // process error.

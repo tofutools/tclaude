@@ -147,7 +147,16 @@ func prepareOneShotLaunch(p spawnParams, h *harness.Harness, askSpec harness.Ask
 	hostFailure := func(kind, message string) (*PreparedOneShotLaunch, *spawnFailure) {
 		return nil, &spawnFailure{Status: 502, Kind: kind, Msg: message}
 	}
-	layer := p.SandboxImplementation == "tclaude-layer" || p.SandboxImplementation == "stacked"
+	if p.SandboxImplementation != "" {
+		// Normalize before comparing raw strings: a stored legacy value maps
+		// onto the implementation it now means.
+		normalized, err := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
+		if err != nil {
+			return bad("unsupported_sandbox", err.Error())
+		}
+		p.SandboxImplementation = string(normalized)
+	}
+	layer := p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
 	if p.EffectiveSandbox != nil && len(p.EffectiveSandbox.Effective.AgentDirectories) > 0 {
 		run, err := newOneShotDirectoryRunForOwner(foreground)
 		if err != nil {
@@ -175,23 +184,9 @@ func prepareOneShotLaunch(p spawnParams, h *harness.Harness, askSpec harness.Ask
 		return bad("invalid_prompt", "a non-interactive prompt is required")
 	}
 	mode := p.HarnessBuiltinMode
-	if p.SandboxImplementation == "stacked" {
-		if err := session.ValidateStackedSandboxHarness(h); err != nil {
-			return bad("unsupported_sandbox", err.Error())
-		}
-		// As runNew does, force the reviewed inner wall before generating a
-		// managed profile; the requested native mode must not skip that step.
-		if h.Name == harness.CodexName {
-			mode = harness.SandboxManagedProfile
-		} else {
-			mode = harness.ClaudeSandboxOn
-		}
-	}
 	postureSnapshot := p.EffectiveSandbox
 	if layer {
-		if p.SandboxImplementation != "stacked" {
-			mode = h.TclaudeLayerMode
-		}
+		mode = h.TclaudeLayerMode
 	}
 	implementation, err := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
 	if err != nil {
@@ -240,12 +235,6 @@ func prepareOneShotLaunch(p spawnParams, h *harness.Harness, askSpec harness.Ask
 			posture.HarnessBuiltinMode = ""
 			posture.PermissionProfile = name
 		}
-		if p.SandboxImplementation == "stacked" {
-			if err := session.ValidateStackedSandboxHarness(h); err != nil {
-				return bad("unsupported_sandbox", err.Error())
-			}
-			posture = h.NestedSandbox.PrepareLaunch(posture)
-		}
 		askSpec.Prompt, askSpec.LaunchPosture = prompt, &posture
 		if remover, ok := h.Ask.(harness.EphemeralSessionRemover); ok && askSpec.Ephemeral && h.PreMintsAskConvID() {
 			// The harness persists the turn anyway; pin its id so the
@@ -259,8 +248,7 @@ func prepareOneShotLaunch(p spawnParams, h *harness.Harness, askSpec harness.Ask
 		return bad("unsupported_harness", "harness returned an empty command")
 	}
 	if layer {
-		wrapped, cleanup, wrapErr := prepareNonInteractiveWithTclaudeLayer(p, h, argv, preLaunch)
-		prepared.cleanup = append(prepared.cleanup, cleanup)
+		wrapped, wrapErr := prepareNonInteractiveWithTclaudeLayer(p, h, argv, preLaunch)
 		if wrapErr != nil {
 			return bad("unsupported_sandbox", oneShotPolicyFailure(p.EffectiveSandbox, wrapErr))
 		}
