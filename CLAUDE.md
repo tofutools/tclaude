@@ -119,8 +119,8 @@ internals when a production read path can be exercised instead.
 
 The dashboard visual smoke harness (`pkg/claude/agentd/dashsnap`, its
 `TCLAUDE_DASHSNAP` browser tests, and the `TCLAUDE_DOCSHOTS` docs/Learn
-screenshot generators) has been removed. CI never ran it (every test was
-env-gated), yet its go-rod browser driver pinned old, API-incompatible
+screenshot generators) has been removed. CI never ran its browser
+tests (all env-gated), yet its go-rod browser driver pinned old, API-incompatible
 `ysmood/*` modules into `go.mod` and broke `go get -u`. To bring it back, find
 the removal commit with
 `git log --diff-filter=D --oneline -- pkg/claude/agentd/dashsnap` and
@@ -141,8 +141,7 @@ decision needs. Instead:
    --window-size=WxH --hide-scrollbars file:///path/to/mock.html`.
    Under an agent sandbox, point `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and
    `XDG_DATA_HOME` at a disposable writable directory first — Chrome's crashpad
-   ignores `--user-data-dir` and aborts when `~/.config` is unwritable (same
-   trick as `pkg/claude/agentd/dashsnap`).
+   ignores `--user-data-dir` and aborts when `~/.config` is unwritable.
 3. Send the rendered image to the operator with
    `tclaude agent notify-human -a out.png` plus a short assessment and a
    recommendation, and let the human pick. Note that notify-human is

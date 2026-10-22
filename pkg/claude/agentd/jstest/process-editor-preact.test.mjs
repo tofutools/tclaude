@@ -795,8 +795,8 @@ test('legacy illegal-side mutation rejections render whole in the status line wi
   // into the message. LinkeDOM does no layout, so this pins content integrity
   // only — that the maximal token survives projection whole and the recovery
   // clause still trails it. The geometry (that it wraps inside the clipping
-  // mount instead of overflowing) is pinned by the real-Chrome dashsnap case
-  // process-editor-legacy-edge-error-row, in both skins.
+  // mount instead of overflowing) needs a real browser and has no automated
+  // check.
   const maximal = 'x'.repeat(512);
   editor.model.edges.push({ from: 'end', outcome: maximal, to: 'ordinary' });
   await harness.act(() => editor.refresh());

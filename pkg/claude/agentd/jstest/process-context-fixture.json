@@ -1,5 +1,5 @@
 {
-  "_comment": "GET /v1/process/context fixture (agreed tcl-f2cpfb shape) for the G3 jstests and dashsnap states. Times are relative to _now; dashsnap shifts them to the real clock and rebinds performer refs to the seeded members by name.",
+  "_comment": "GET /v1/process/context fixture (agreed tcl-f2cpfb shape) for the G3 jstests. Times are relative to _now.",
   "_now": "2026-10-14T12:04:00Z",
   "runs": {
     "run_release": {

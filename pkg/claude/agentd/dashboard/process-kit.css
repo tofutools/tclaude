@@ -230,7 +230,7 @@ button.pk-gnode { cursor: pointer; }
   position: relative; font-size: 9px; font-weight: 600; text-align: center; white-space: normal; line-height: 1.1; max-width: 70%;
 }
 
-/* S1 reference sheet (js/process-kit-sheet.js; dashsnap only, not routed). */
+/* S1 reference sheet (js/process-kit-sheet.js; jstests only, not routed). */
 .pk-sheet { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 16px 24px; color: var(--pk-text); }
 .pk-sheet-box { background: var(--pk-chip-bg); border: 1px solid var(--pk-line); border-radius: 10px; padding: 12px 14px; overflow: auto; }
 .pk-sheet-box h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; }

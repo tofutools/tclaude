@@ -1,8 +1,8 @@
 // process-kit-sheet.js -- the S1 reference sheet for the process UI kit: every
 // node kind, run/node state, scope chip, run badge, overlay icon and two
 // mini-graphs, rendered from sample run projections. It is not routed in the
-// dashboard; the dashsnap "process-kit-s1" state and the kit's jstests mount
-// it so both themes of the shared vocabulary stay reviewable in one image.
+// dashboard; the kit's jstests mount it so both themes of the shared
+// vocabulary stay reviewable in one place.
 
 import { h, render } from 'preact';
 import htm from 'htm';

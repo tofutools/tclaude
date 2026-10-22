@@ -62,8 +62,8 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// padding-inline-end only after DIRECT children, not deep-descendant
 	// overflow). #dock-hscroll-pad is the fix — a scroll-content spacer that
 	// hscroll.js parks --dock-w past the widest content so it can be scrolled
-	// clear of the dock. Verified end-to-end by the dashsnap dock-wide-scroll
-	// state (self-checking: it throws if the tail doesn't clear).
+	// clear of the dock. Only the rule's presence is pinned here; the geometry
+	// itself has no automated end-to-end check.
 	must("#dock-hscroll-pad {", "the horizontal-scroll clearance spacer has a CSS rule")
 	must(`id="dock-hscroll-pad"`, "the clearance spacer exists in the markup")
 	must("pad.classList.add('on')", "hscroll.js parks the clearance spacer past the content when the dock overflows")
