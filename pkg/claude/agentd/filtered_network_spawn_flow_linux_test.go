@@ -701,11 +701,28 @@ func TestProxyEngineSpawnDoesNotGateOnThePacketPrerequisite(t *testing.T) {
 // of the refusal's breadth — a broad grant refuses the proxy engine even from
 // an operator who never meant to reach a resolver, and the remedy text says so.
 func TestProxyEngineSpawnRefusesAResolverReachingFilesystemGrant(t *testing.T) {
+	testharness.ClearModelTransportProxyEnv(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
+	// The packet engine gates its filtered posture on the host's live
+	// pasta/nft/namespace probe. Left unstubbed, the packet case's outcome
+	// depended on the test host: where the probe fails the policy silently
+	// widens to open and the spawn succeeds for that reason alone, and where it
+	// passes the filtered model-transport check runs for real. Pin the probe so
+	// the parity case is always judged on the filtered path it claims to cover.
+	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
+		func() session.FilteredNetworkPrerequisite {
+			return session.FilteredNetworkPrerequisite{
+				Detected: true,
+				Detail:   "test namespace, pasta, and nft readiness",
+			}
+		},
+	))
+	var filteredPostures []sandboxpolicy.NetworkPosture
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
 		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
 			_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
+			filteredPostures = append(filteredPostures, posture)
 			return harness.LaunchOSSandbox{
 				State:           "on",
 				Source:          "test proxy floor",
@@ -740,12 +757,17 @@ func TestProxyEngineSpawnRefusesAResolverReachingFilesystemGrant(t *testing.T) {
 					Mode: sandboxpolicy.AccessModeList,
 					Allow: []sandboxpolicy.NetworkAllowEntry{
 						{Domain: "example.com", Ports: []int{443}},
+						// The API-key Codex route resolved from CODEX_HOME
+						// above, so the filtered model-transport preflight is
+						// satisfied and cannot be what decides either case.
+						{Domain: "api.openai.com", Ports: []int{443}},
 					},
 					Engine: tc.engine,
 				},
 			})
 			require.NoError(t, err)
 
+			filteredPostures = nil
 			resp := f.AsHuman().SpawnWith("crew", map[string]any{
 				"name":                   tc.profile + "-worker",
 				"harness":                harness.CodexName,
@@ -755,6 +777,8 @@ func TestProxyEngineSpawnRefusesAResolverReachingFilesystemGrant(t *testing.T) {
 			})
 			if !tc.wantRefusal {
 				require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+				require.Contains(t, filteredPostures, sandboxpolicy.NetworkFiltered,
+					"the packet case must be judged on the filtered path, not widened to open")
 				return
 			}
 			require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
