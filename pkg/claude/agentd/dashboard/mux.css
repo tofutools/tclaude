@@ -161,8 +161,10 @@ body.hide-costs .mux-cost-toggle { display: none; }
   background: #815b00;
 }
 .mux-tab-attention:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
-/* A collapsed stack hides its members' tabs; the pill inherits their alert. */
-.mux-group-attention { flex: none; }
+/* A collapsed stack hides its members' tabs; the pill inherits their alert,
+   and clicking it opens the first hidden notification. */
+.mux-group-attention { flex: none; cursor: pointer; }
+.mux-group-attention:hover { background: #815b00; }
 .mux-tab-close {
   background: none; border: none; color: inherit; cursor: pointer;
   font-size: 15px; line-height: 1; padding: 0 2px; opacity: 0.6;

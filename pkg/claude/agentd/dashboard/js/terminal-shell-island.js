@@ -446,39 +446,43 @@ function unreadNotificationLabel(pane, count) {
   return `${count} unread notification${count === 1 ? '' : 's'} from ${label} — open quick reader`;
 }
 
+// openPaneNotification raises the quick reader on one of a pane's unread
+// notifications. The sender is identified from the message itself: it carries
+// both the stable agent id and the sending conversation generation, where the
+// pane seed holds only whichever one the launcher happened to have.
+function openPaneNotification(pane, message, launcher, returnFocus) {
+  const node = paneRemoteNode(pane);
+  return openHumanNotificationReader({
+    sender: {
+      agent: message.from_agent || '',
+      conv: message.from_conv || '',
+      label: message.from_title || pane.label || 'this agent',
+      // A peer's agent: its notification lives there.
+      ...(node ? { node, nodeName: pane.seed.remote.peerLabel || '' } : {}),
+    },
+    messageID: message.id,
+    launcher,
+    returnFocus: returnFocus || null,
+  });
+}
+
 // TabAttention is the Terminals-tab twin of the Groups member row's yellow "!"
 // glyph, and opens the very same quick reader. The strip is cramped and clips
 // its own overflow, so the glyph sits inline in the tab and states its content
 // in the tooltip instead of hovering a preview card.
 function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
   const messages = suppliedMessages ?? paneUnreadNotifications(pane, snapshot?.value);
-  const node = paneRemoteNode(pane);
   if (!messages.length) return null;
   const message = messages[0];
-  const label = pane.label || 'this agent';
   const subject = message.subject || '(no subject)';
   const title = `${unreadNotificationLabel(pane, messages.length)}\n\n${subject}`;
   const open = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    // Identify the sender from the message itself: it carries both the stable
-    // agent id and the sending conversation generation, where the pane seed
-    // holds only whichever one the launcher happened to have.
-    openHumanNotificationReader({
-      sender: {
-        agent: message.from_agent || '',
-        conv: message.from_conv || '',
-        label: message.from_title || label,
-        // A peer's agent: its notification lives there.
-        ...(node ? { node, nodeName: pane.seed.remote.peerLabel || '' } : {}),
-      },
-      messageID: message.id,
-      launcher: event.currentTarget,
-      // The glyph can disappear under focus — the operator marks the message
-      // read from the reader, or a reply does — so the tab, not the glyph, is
-      // the surface focus can reliably come back to.
-      returnFocus: event.currentTarget.closest('.mux-tab') || null,
-    });
+    // The glyph can disappear under focus — the operator marks the message
+    // read from the reader, or a reply does — so the tab, not the glyph, is
+    // the surface focus can reliably come back to.
+    openPaneNotification(pane, message, event.currentTarget, event.currentTarget.closest('.mux-tab'));
   };
   return html`
     <button
@@ -784,11 +788,25 @@ function GroupStack({
   // A collapsed stack hides every tab but the active one, and with them their
   // attention glyphs. The pill carries a hint so a notification inside a folded
   // stack is still visible from the strip.
-  const hiddenUnread = group.collapsed
+  const hiddenNotifications = group.collapsed
     ? panes
       .filter((pane) => !visible.includes(pane))
-      .reduce((total, pane) => total + paneUnreadNotifications(pane, snapshot?.value, peerNotifications).length, 0)
-    : 0;
+      .flatMap((pane) => paneUnreadNotifications(pane, snapshot?.value, peerNotifications)
+        .map((message) => ({ pane, message })))
+    : [];
+  const hiddenUnread = hiddenNotifications.length;
+  // The pill hint opens the quick reader on the first hidden notification,
+  // like a tab's own glyph would. It is a span inside the pill button (a
+  // button may not nest another), so it is a pointer shortcut only; keyboard
+  // users expand the stack and reach the tab glyphs.
+  const openHiddenNotification = (event) => {
+    const first = hiddenNotifications[0];
+    if (!first) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openPaneNotification(first.pane, first.message, event.currentTarget.closest('.mux-group-pill'),
+      event.currentTarget.closest('.mux-group-pill'));
+  };
   const openMenuAt = (event) => {
     const keyboard = event.type === 'keydown';
     if (keyboard && event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return false;
@@ -872,7 +890,8 @@ function GroupStack({
           <span class="mux-group-name">${group.name}</span>
           <span class="mux-group-count" aria-hidden="true">${panes.length}</span>
           ${hiddenUnread ? html`<span class="human-notification-attention-glyph mux-group-attention"
-            aria-hidden="true">!</span>` : null}
+            aria-hidden="true" title=${`${hiddenUnread} unread notification${hiddenUnread === 1 ? '' : 's'} in a collapsed tab — open quick reader`}
+            onClick=${openHiddenNotification} onDblClick=${(event) => event.stopPropagation()}>!</span>` : null}
         </button>
       `}
       ${visible.map((pane) => renderTab(pane))}

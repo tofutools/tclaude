@@ -47,8 +47,14 @@ export function memberUnreadHumanCount(member, snapshot) {
   return memberHumanMessages(member, snapshot, true).length;
 }
 
-export function groupHasUnreadHumanNotifications(members, snapshot) {
-  return (members || []).some((member) => memberUnreadHumanCount(member, snapshot) > 0);
+// firstUnreadHumanNotification picks the notification a group-level hint
+// opens: the first unread one, in snapshot order, sent by one of members.
+export function firstUnreadHumanNotification(members, snapshot) {
+  for (const message of unreadHumanMessages(snapshot)) {
+    const member = (members || []).find((candidate) => senderMatchesMember(message, candidate));
+    if (member) return { member, message };
+  }
+  return null;
 }
 
 export function hasUnreadHumanNotifications(snapshot) {

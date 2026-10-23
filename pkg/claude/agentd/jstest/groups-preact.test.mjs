@@ -1728,3 +1728,35 @@ test("another node's group profile picker offers no new profile: its editor save
   const here = createGroupsActions({ state, refresh: async () => {}, fetchImpl: async () => ({ ok: true, text: async () => '' }) });
   assert.equal(here.newProfileLock(), '');
 });
+
+test('a group header\'s notification hint opens the quick reader without folding the group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
+  const alpha = {
+    name: 'alpha',
+    members: [{ conv_id: 'conv-a', agent_id: 'agt_a', title: 'builder', online: true, state: { status: 'working' } }],
+  };
+  const { state, host, mounted } = await mountGroups(t, harness, [alpha], actions);
+  await harness.act(() => state.publish({
+    ...snapshot([alpha]),
+    messages_unread: 1,
+    messages: [{ id: 7, from_agent: 'agt_a', from_conv: 'conv-a', subject: 'decide', read: false }],
+  }));
+  const details = host.querySelector('details[data-group-key="alpha"]');
+  const hint = details.querySelector('summary .group-activity button.human-notification-hint');
+  assert.ok(hint, 'the group-level hint is a button');
+
+  const opened = [];
+  const listen = (event) => opened.push(event.detail);
+  harness.document.addEventListener('tclaude:open-human-notification', listen);
+  t.after(() => harness.document.removeEventListener('tclaude:open-human-notification', listen));
+  const wasOpen = details.open;
+  harness.fireEvent(hint, 'click');
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].messageId, 7);
+  assert.equal(opened[0].sender.agent, 'agt_a');
+  assert.equal(details.open, wasOpen, 'the click does not toggle the group');
+
+  await mounted.unmount();
+  host.remove();
+});

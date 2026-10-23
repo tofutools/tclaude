@@ -706,3 +706,38 @@ test('footer open PRs tracks colleagues in their own tabs', async (t) => {
   dashPrefs.removeItem('tclaude.dash.open-prs.ignored');
   await mounted.unmount();
 });
+
+test('the header\'s global notification hint opens the quick reader on the first unread notification', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, island] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${island.GlobalActivity} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, {
+    groups: [{ name: 'g', members: [{ conv_id: 'c', online: true, state: { status: 'working' } }] }],
+    ungrouped: [],
+    activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' },
+    messages_unread: 1,
+    // A sender-less daemon notice is newest, but the reader cannot key on it.
+    messages: [
+      { id: 10, from_title: 'Fleet health', read: false },
+      { id: 9, from_agent: 'agt_x', from_conv: 'conv-x', from_title: 'x', read: false },
+    ],
+  }));
+  const hint = mounted.container.querySelector('button.human-notification-hint');
+  assert.ok(hint, 'the global hint is its own button');
+  assertAbsent(mounted.container.querySelector('.activity-hover-trigger .human-notification-hint'),
+    'the hint is not nested inside the activity trigger button');
+  const opened = [];
+  const listen = (event) => opened.push(event.detail);
+  harness.document.addEventListener('tclaude:open-human-notification', listen);
+  t.after(() => harness.document.removeEventListener('tclaude:open-human-notification', listen));
+  harness.fireEvent(hint, 'click');
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].messageId, 9);
+  assert.equal(opened[0].sender.agent, 'agt_x');
+  await mounted.unmount();
+});
