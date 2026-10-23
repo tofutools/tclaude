@@ -234,9 +234,12 @@ function GlobalActivity({ state, groupsState }) {
     : 'Activity across all groups';
   // The hint opens the quick reader on the first unread notification. It is a
   // sibling of the activity trigger rather than inside it — a button may not
-  // nest another — and stays a plain marker when only the unread count is
-  // known (no row to open).
-  const first = hasNotifications ? unreadHumanMessages(snapshot)[0] : null;
+  // nest another — and stays a plain marker when no unread row names an agent
+  // to open (only the count is known, or only daemon notices such as worktree
+  // cleanup, which carry no sender for the reader to key on).
+  const first = hasNotifications
+    ? unreadHumanMessages(snapshot).find((message) => message.from_agent || message.from_conv) || null
+    : null;
   const openReader = (event) => {
     event.preventDefault();
     event.stopPropagation();

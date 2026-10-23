@@ -721,7 +721,11 @@ test('the header\'s global notification hint opens the quick reader on the first
     ungrouped: [],
     activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' },
     messages_unread: 1,
-    messages: [{ id: 9, from_agent: 'agt_x', from_conv: 'conv-x', from_title: 'x', read: false }],
+    // A sender-less daemon notice is newest, but the reader cannot key on it.
+    messages: [
+      { id: 10, from_title: 'Fleet health', read: false },
+      { id: 9, from_agent: 'agt_x', from_conv: 'conv-x', from_title: 'x', read: false },
+    ],
   }));
   const hint = mounted.container.querySelector('button.human-notification-hint');
   assert.ok(hint, 'the global hint is its own button');
