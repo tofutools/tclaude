@@ -321,6 +321,56 @@ func TestOpenCodeModelCatalogFallsBackForZeroPricedOpenAISubscription(t *testing
 	}
 }
 
+func TestOpenCodeModelCatalogFallsBackToAnthropicAPIRates(t *testing.T) {
+	// A Claude Pro/Max sign-in zeroes the anthropic provider's rates, and a
+	// model newer than OpenCode's catalog may carry no cost at all; both price
+	// from the Anthropic API table. Rates OpenCode does report stay native.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/config/providers", r.URL.Path)
+		_, _ = w.Write([]byte(`{"providers":[{"id":"anthropic","models":{` +
+			`"claude-fable-5-5":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1000000}},` +
+			`"claude-haiku-5-5":{"limit":{"context":1000000}},` +
+			`"claude-opus-5-5":{"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":1.5}},"limit":{"context":1000000}},` +
+			`"claude-opus-9":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1000000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "oc-anthropic-price", ConvID: "ses-anthropic-price", ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+
+	_, prices, err := fetchOpenCodeModelCatalog(context.Background(), runtime)
+	require.NoError(t, err)
+
+	fable := prices["anthropic/claude-fable-5-5"]
+	assert.Equal(t, openCodeModelPrice{Input: 10, Output: 50, Cache: openCodeCachePrice{Read: 0.25, Write: 12.5}}, fable)
+	assert.Equal(t, openCodeModelPrice{Input: 1, Output: 2, Cache: openCodeCachePrice{Read: 0.1, Write: 1.5}},
+		prices["anthropic/claude-opus-5-5"], "nonzero native rates stay authoritative")
+	assert.Equal(t, openCodeModelPrice{}, prices["anthropic/claude-opus-9"],
+		"a model tclaude cannot price keeps OpenCode's zero rates")
+
+	haiku, ok := prices["anthropic/claude-haiku-5-5"]
+	require.True(t, ok, "a cost-less cataloged model is priced from the API table")
+	require.Len(t, haiku.Tiers, 1)
+	assert.Equal(t, "context", haiku.Tiers[0].Tier.Type)
+	assert.Equal(t, float64(100_000), haiku.Tiers[0].Tier.Size)
+
+	zero := 0.0
+	projected := projectOpenCodeMessageCost(openCodeContextUsage{
+		MessageID: "msg", ProviderID: "anthropic", ModelID: "claude-fable-5-5", ReportedCost: &zero,
+		Input: 1_000, Output: 100, Reasoning: 50, CacheRead: 200, CacheWrite: 10,
+	}, prices, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
+	require.True(t, projected.eligible)
+	assert.InDelta(t, 0.017675, projected.usd, 1e-12)
+
+	long := projectOpenCodeMessageCost(openCodeContextUsage{
+		MessageID: "msg-long", ProviderID: "anthropic", ModelID: "claude-haiku-5-5", ReportedCost: &zero,
+		Input: 300_000, Output: 100_000, CacheRead: 100_000, CacheWrite: 10_000,
+	}, prices, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
+	require.True(t, long.eligible)
+	assert.InDelta(t, 0.41125, long.usd, 1e-12, "prompts over 100K tokens use Haiku 5.5's long-context rates")
+}
+
 func TestOpenCodeVirtualCostRetainsHistoryAcrossTransientCatalogFailure(t *testing.T) {
 	setupTestDB(t)
 	resetOpenCodeLimitCacheForTest()
