@@ -749,12 +749,13 @@ func logLinesWithPrefix(t *testing.T, logs *bytes.Buffer, prefix string) []map[s
 	return out
 }
 
-// A statusline client gives up after three seconds and exits. When the
-// daemon is slow enough to lose that race, the caller pid is gone by the
-// time the daemon looks — which is the client's timeout, not an ancestry
-// mismatch, and not an agent whose telemetry is stuck. It must be logged
-// as what it is and must NOT badge the row or count as a refusal, because
-// the client retries on its own.
+// A brokered caller can exit before the daemon looks at it: the harness
+// abandoned it (a superseded statusline render, an exiting agent), or the
+// client timed out on a slow daemon. Neither is an ancestry mismatch or an
+// agent whose telemetry is stuck. It must be logged as what it is and must
+// NOT badge the row or count as a refusal, because the client retries on
+// its own. A caller that vanished promptly is the harness's doing, so the
+// line is INFO; see TestNoteCallerGone_LevelFollowsTheCallersWait.
 func TestBrokerRefusals_AVanishedCallerIsLoggedNotBadged(t *testing.T) {
 	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
@@ -793,9 +794,10 @@ func TestBrokerRefusals_AVanishedCallerIsLoggedNotBadged(t *testing.T) {
 	assert.Zero(t, row.State.BrokerRefusals, "the row the caller claimed is not badged")
 
 	assert.Empty(t, refusalLogLines(t, logs), "no refusal line either")
-	gone := logLinesWithPrefix(t, logs, "broker: caller exited before its callback could be verified")
+	gone := logLinesWithPrefix(t, logs, "broker: caller exited before the daemon handled its callback")
 	require.Len(t, gone, 1, "got %s", logs.String())
-	assert.Equal(t, "WARN", gone[0]["level"])
+	assert.Equal(t, "INFO", gone[0]["level"], "a prompt exit is not the daemon's fault")
+	assert.Contains(t, gone[0], "request_age_ms")
 	assert.EqualValues(t, gonePID, gone[0]["caller_pid"])
 	assert.Equal(t, brokerLayerLabel, gone[0]["claimed_session"])
 	assert.Equal(t, "Stop", gone[0]["event"])

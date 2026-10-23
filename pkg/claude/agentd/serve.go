@@ -456,8 +456,10 @@ func runServe(p *serveParams) error {
 		Handler:           withIdentity(buildMux()),
 		ReadHeaderTimeout: 5 * time.Second,
 		// Stash the underlying *net.UnixConn so the identity middleware
-		// can read peer credentials from it.
+		// can read peer credentials from it, and the accept time so a
+		// brokered handler can tell how long its caller had been waiting.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			ctx = withConnAcceptedAt(ctx, time.Now())
 			if uc, ok := c.(*net.UnixConn); ok {
 				ctx = context.WithValue(ctx, unixConnKey{}, uc)
 				return context.WithValue(ctx, httpProxyProofSubjectKey{}, &httpProxyProofSubject{})

@@ -1,6 +1,9 @@
 package agentd
 
 import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -439,4 +442,50 @@ func TestBrokerRefusals_DismissRouteRequiresDashboardAuth(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	total, _ = brokerRefusals.counts()
 	assert.Zero(t, total)
+}
+
+// A caller that vanished promptly was dropped by its harness and is INFO;
+// one that waited at least half its client's timeout plausibly timed out on
+// a slow daemon and is a WARN. The connection's accept time wins over the
+// handler's start when both are known.
+func TestNoteCallerGone_LevelFollowsTheCallersWait(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cases := []struct {
+		name     string
+		endpoint string
+		conn     time.Duration // 0: not recorded
+		request  time.Duration
+		want     string
+	}{
+		{"prompt statusline", "/v1/whoami/statusline", 20 * time.Millisecond, 5 * time.Millisecond, "INFO"},
+		{"statusline near its timeout", "/v1/whoami/statusline", 2500 * time.Millisecond, 10 * time.Millisecond, "WARN"},
+		{"no accept time falls back to the handler", "/v1/whoami/statusline", 0, 2 * time.Second, "WARN"},
+		{"hook well inside its timeout", "/v1/whoami/hook", 2500 * time.Millisecond, 10 * time.Millisecond, "INFO"},
+		{"hook near its timeout", "/v1/whoami/hook", 15 * time.Second, 10 * time.Millisecond, "WARN"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(ResetBrokerLimiterForTest())
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			ctx := brokerRefusalContext{Endpoint: tc.endpoint, CallerPID: 42, requestStartedAt: now.Add(-tc.request)}
+			if tc.conn > 0 {
+				ctx.connAcceptedAt = now.Add(-tc.conn)
+			}
+			newTestRefusalRecorder(&now).noteCallerGone(ctx)
+
+			var rec map[string]any
+			require.NoError(t, json.Unmarshal(logs.Bytes(), &rec), "log %q", logs.String())
+			assert.Equal(t, tc.want, rec["level"])
+			assert.EqualValues(t, tc.request.Milliseconds(), rec["request_age_ms"])
+			if tc.conn > 0 {
+				assert.EqualValues(t, tc.conn.Milliseconds(), rec["conn_age_ms"])
+			} else {
+				assert.NotContains(t, rec, "conn_age_ms")
+			}
+		})
+	}
 }

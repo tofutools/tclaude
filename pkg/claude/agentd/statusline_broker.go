@@ -122,13 +122,13 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 		return
 	}
-	refusal := brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, procs: procs}
+	refusal := brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, procs: procs,
+		connAcceptedAt: connAcceptedAt(r.Context()), requestStartedAt: timing.start}
 	if row != nil {
 		refusal.Resolved = row.ID
 	}
 	if !procs.exists(p.PID) {
-		// See hook_broker.go: a vanished caller is the client's timeout,
-		// not a refusal to badge.
+		// See hook_broker.go: a vanished caller is not a refusal to badge.
 		brokerRefusals.noteCallerGone(refusal)
 		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
 		return
