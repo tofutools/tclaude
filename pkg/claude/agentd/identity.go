@@ -2215,3 +2215,18 @@ func readSessionFile(pid int) string {
 // context, since net/http hides the underlying conn from handlers. The Server's
 // ConnContext hook puts it there.
 type unixConnKey struct{}
+
+// connAcceptedAtKey carries when the server accepted the request's
+// connection, set by the same ConnContext hook.
+type connAcceptedAtKey struct{}
+
+func withConnAcceptedAt(ctx context.Context, at time.Time) context.Context {
+	return context.WithValue(ctx, connAcceptedAtKey{}, at)
+}
+
+// connAcceptedAt is the connection's accept time, or zero when the server
+// did not record one.
+func connAcceptedAt(ctx context.Context) time.Time {
+	at, _ := ctx.Value(connAcceptedAtKey{}).(time.Time)
+	return at
+}

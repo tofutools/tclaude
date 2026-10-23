@@ -328,11 +328,15 @@ generation, or ancestry). The first refusal of an episode always logs; later
 ones within ten seconds are counted per resolved row (per caller pid for
 callers no row resolved for), and the next permitted line reports how many
 were suppressed. A caller that had already exited when the daemon got to it
-is not a refusal: the client timed out and will retry, so no badge is set and
-the daemon logs `broker: caller exited before its callback could be verified`
-instead. Seeing that line regularly means the daemon is too slow to answer a
-statusline render within its client's three-second budget; the companion
-`broker: slow brokered request` WARN, written when a brokered callback takes
+is not a refusal: a later callback replaces it, so no badge is set and the daemon logs
+`broker: caller exited before the daemon handled its callback` instead, with
+how long the caller had been waiting (`conn_age_ms`, `request_age_ms`). A
+caller that vanished promptly was dropped by its harness — Claude Code
+abandons a statusline render a newer redraw supersedes, and an exiting agent
+takes its last callbacks with it — so that line is INFO. It is a WARN only
+when the caller had waited at least half its client's budget (three seconds
+for a statusline render, twenty for a hook), which points at a slow daemon;
+the companion `broker: slow brokered request` WARN, written when a brokered callback takes
 over a second, breaks the time down by phase (process-table resolution,
 database reads, pane facts and whether the shared tmux cache or a live probe
 answered them, ancestry walk, applying the event) so the stall can be placed.

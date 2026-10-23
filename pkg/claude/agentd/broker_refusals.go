@@ -364,17 +364,53 @@ func brokerClaimReason(fallback, claimed, proofDetail string) string {
 // limiter's bucket map; the NUL prefix cannot collide with a session id.
 const brokerCallerGoneKey = "\x00caller-gone"
 
+// brokerClientTimeouts mirrors how long each brokered endpoint's client
+// waits for the daemon: renderBrokerTimeout (pkg/claude/statusbar) and
+// hookBrokerTimeout (pkg/claude/session). Change one, change the other.
+var brokerClientTimeouts = map[string]time.Duration{
+	"/v1/whoami/statusline": 3 * time.Second,
+	"/v1/whoami/hook":       20 * time.Second,
+}
+
 // noteCallerGone logs a brokered request whose caller process had already
-// exited — the client's own timeout fired while the daemon was busy — and
-// deliberately records NO refusal: the badge and counter mean an agent's
-// telemetry is stuck, and a render the client retries is not that. It is
-// still a WARN, because a daemon losing this race is a daemon that is too
-// slow, and the operator should see that with the caller pid and the row
-// it concerned. Throttled per resolved row (one bucket for unplaced
-// callers) like the refusal line, since a busy daemon loses the race in
-// bursts.
+// exited, and deliberately records NO refusal: the badge and counter mean an
+// agent's telemetry is stuck, and a lost callback the harness replaces with
+// the next one is not that.
+//
+// Two things end a caller early, and the request's age tells them apart:
+//
+//   - The harness dropped it. Claude Code starts a statusline process per
+//     redraw and abandons one still in flight when a newer redraw starts;
+//     an agent exiting takes its last callbacks with it. The process is
+//     gone within milliseconds of connecting, the daemon is not at fault,
+//     and this is the common case — logged at INFO.
+//   - The client timed out waiting for a slow daemon. The age is then at
+//     least half the client's timeout, and that is worth a WARN
+//     (alongside the slow-request WARN from brokerTiming).
+//
+// The age is measured from the connection's accept when known (it covers
+// the identity middleware too), else from the handler's start. Throttled per
+// resolved row (one bucket for unplaced callers) like the refusal line, and
+// separately per level so frequent INFO lines cannot swallow a WARN.
 func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
+	now := r.clock()
+	var ageAttrs []any
+	var age time.Duration
+	if !ctx.requestStartedAt.IsZero() {
+		age = now.Sub(ctx.requestStartedAt)
+		ageAttrs = append(ageAttrs, "request_age_ms", age.Milliseconds())
+	}
+	if !ctx.connAcceptedAt.IsZero() {
+		age = now.Sub(ctx.connAcceptedAt)
+		ageAttrs = append(ageAttrs, "conn_age_ms", age.Milliseconds())
+	}
+	timeout, ok := brokerClientTimeouts[ctx.Endpoint]
+	warn := ok && age >= timeout/2
+
 	key := brokerCallerGoneKey
+	if warn {
+		key += ":warn"
+	}
 	if ctx.Resolved != "" {
 		key += ":row:" + ctx.Resolved
 	}
@@ -390,6 +426,7 @@ func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
 		"claimed_session", auditClip(ctx.Claimed, brokerRefusalLogClip),
 		"suppressed_since_last_log", suppressed - 1,
 	}
+	attrs = append(attrs, ageAttrs...)
 	if ctx.Detail != "" {
 		attrs = append(attrs, "detail", ctx.Detail)
 	}
@@ -397,8 +434,14 @@ func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
 		attrs = append(attrs, "event", auditClip(ctx.Event, brokerRefusalLogClip))
 	}
 	attrs = append(attrs, "module", "hooks")
-	slog.Warn("broker: caller exited before its callback could be verified; "+
-		"the client timed out while the daemon was busy and will retry, so nothing is badged", attrs...)
+	if warn {
+		slog.Warn("broker: caller exited before the daemon handled its callback, after waiting at least half "+
+			"its timeout; the daemon may be too slow. The client retries, so nothing is badged", attrs...)
+		return
+	}
+	slog.Info("broker: caller exited before the daemon handled its callback "+
+		"(typically a render superseded by the harness, or the agent exiting); "+
+		"a later callback replaces it, so nothing is badged", attrs...)
 }
 
 // noteOrphanedSessionEnd logs, at info and without recording a refusal, a
@@ -439,6 +482,11 @@ type brokerRefusalContext struct {
 	// when the claim loaded no row. Like Claimed it is caller-selected, so
 	// it is only ever an owner for liveness; see brokerCallerOwner.
 	claimedTmux string
+	// connAcceptedAt is when the daemon accepted the caller's connection
+	// and requestStartedAt when the handler began; zero when unknown. They
+	// date a caller that vanished; see noteCallerGone.
+	connAcceptedAt   time.Time
+	requestStartedAt time.Time
 }
 
 // brokerCallerOwnerMaxDepth bounds the ancestry walk in brokerCallerOwner.

@@ -229,17 +229,18 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	}
 	refusal := brokerRefusalContext{
 		Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, Event: req.Input.HookEventName,
-		procs: procs,
+		procs: procs, connAcceptedAt: connAcceptedAt(r.Context()), requestStartedAt: timing.start,
 	}
 	if row != nil {
 		refusal.Resolved = row.ID
 	}
 	if !procs.exists(p.PID) {
-		// The client gave up (its own timeout) and exited before the daemon
-		// got here. Nothing can be delivered to it and it retries on its
-		// own, so this is logged as what it is rather than badged as a
-		// refusal — the badge means "this agent's telemetry is stuck",
-		// which a timed-out render is not.
+		// The caller exited before the daemon got here — usually the
+		// harness abandoning it, occasionally the client's own timeout.
+		// Nothing can be delivered to it and a later callback takes its
+		// place, so this is logged rather than badged as a refusal — the
+		// badge means "this agent's telemetry is stuck", which a lost
+		// callback is not. See noteCallerGone.
 		brokerRefusals.noteCallerGone(refusal)
 		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
 		return
