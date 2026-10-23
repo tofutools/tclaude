@@ -753,8 +753,8 @@ func logLinesWithPrefix(t *testing.T, logs *bytes.Buffer, prefix string) []map[s
 // abandoned it (a superseded statusline render, an exiting agent), or the
 // client timed out on a slow daemon. Neither is an ancestry mismatch or an
 // agent whose telemetry is stuck. It must be logged as what it is and must
-// NOT badge the row or count as a refusal, because the client retries on
-// its own. A caller that vanished promptly is the harness's doing, so the
+// NOT badge the row or count as a refusal, because a later callback
+// replaces it. A caller that vanished promptly is the harness's doing, so the
 // line is INFO; see TestNoteCallerGone_LevelFollowsTheCallersWait.
 func TestBrokerRefusals_AVanishedCallerIsLoggedNotBadged(t *testing.T) {
 	t.Cleanup(agentd.ResetBrokerRefusalsForTest())

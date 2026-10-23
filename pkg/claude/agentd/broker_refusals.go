@@ -390,9 +390,27 @@ var brokerClientTimeouts = map[string]time.Duration{
 //
 // The age is measured from the connection's accept when known (it covers
 // the identity middleware too), else from the handler's start. Throttled per
-// resolved row (one bucket for unplaced callers) like the refusal line.
+// resolved row (one bucket for unplaced callers) like the refusal line, and
+// separately per level so frequent INFO lines cannot swallow a WARN.
 func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
+	now := r.clock()
+	var ageAttrs []any
+	var age time.Duration
+	if !ctx.requestStartedAt.IsZero() {
+		age = now.Sub(ctx.requestStartedAt)
+		ageAttrs = append(ageAttrs, "request_age_ms", age.Milliseconds())
+	}
+	if !ctx.connAcceptedAt.IsZero() {
+		age = now.Sub(ctx.connAcceptedAt)
+		ageAttrs = append(ageAttrs, "conn_age_ms", age.Milliseconds())
+	}
+	timeout, ok := brokerClientTimeouts[ctx.Endpoint]
+	warn := ok && age >= timeout/2
+
 	key := brokerCallerGoneKey
+	if warn {
+		key += ":warn"
+	}
 	if ctx.Resolved != "" {
 		key += ":row:" + ctx.Resolved
 	}
@@ -401,7 +419,6 @@ func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
 	if !log {
 		return
 	}
-	now := r.clock()
 	attrs := []any{
 		"endpoint", ctx.Endpoint,
 		"caller_pid", ctx.CallerPID,
@@ -409,15 +426,7 @@ func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
 		"claimed_session", auditClip(ctx.Claimed, brokerRefusalLogClip),
 		"suppressed_since_last_log", suppressed - 1,
 	}
-	var age time.Duration
-	if !ctx.requestStartedAt.IsZero() {
-		age = now.Sub(ctx.requestStartedAt)
-		attrs = append(attrs, "request_age_ms", age.Milliseconds())
-	}
-	if !ctx.connAcceptedAt.IsZero() {
-		age = now.Sub(ctx.connAcceptedAt)
-		attrs = append(attrs, "conn_age_ms", age.Milliseconds())
-	}
+	attrs = append(attrs, ageAttrs...)
 	if ctx.Detail != "" {
 		attrs = append(attrs, "detail", ctx.Detail)
 	}
@@ -425,14 +434,14 @@ func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
 		attrs = append(attrs, "event", auditClip(ctx.Event, brokerRefusalLogClip))
 	}
 	attrs = append(attrs, "module", "hooks")
-	if timeout, ok := brokerClientTimeouts[ctx.Endpoint]; ok && age >= timeout/2 {
+	if warn {
 		slog.Warn("broker: caller exited before the daemon handled its callback, after waiting at least half "+
 			"its timeout; the daemon may be too slow. The client retries, so nothing is badged", attrs...)
 		return
 	}
 	slog.Info("broker: caller exited before the daemon handled its callback "+
 		"(typically a render superseded by the harness, or the agent exiting); "+
-		"the client retries, so nothing is badged", attrs...)
+		"a later callback replaces it, so nothing is badged", attrs...)
 }
 
 // noteOrphanedSessionEnd logs, at info and without recording a refusal, a

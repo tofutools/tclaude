@@ -489,3 +489,24 @@ func TestNoteCallerGone_LevelFollowsTheCallersWait(t *testing.T) {
 		})
 	}
 }
+
+// Frequent prompt-exit INFO lines on a row must not throttle away the WARN
+// a slow daemon earns on that same row.
+func TestNoteCallerGone_InfoDoesNotSwallowAWarn(t *testing.T) {
+	t.Cleanup(ResetBrokerLimiterForTest())
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	now := time.Unix(1_700_000_000, 0)
+	rec := newTestRefusalRecorder(&now)
+	base := brokerRefusalContext{Endpoint: "/v1/whoami/statusline", CallerPID: 42, Resolved: "row-1"}
+	prompt, slow := base, base
+	prompt.requestStartedAt = now.Add(-5 * time.Millisecond)
+	slow.requestStartedAt = now.Add(-2500 * time.Millisecond)
+	rec.noteCallerGone(prompt)
+	rec.noteCallerGone(slow)
+
+	assert.Contains(t, logs.String(), `"level":"WARN"`, "got %s", logs.String())
+}

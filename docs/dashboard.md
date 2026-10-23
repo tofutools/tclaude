@@ -328,7 +328,7 @@ generation, or ancestry). The first refusal of an episode always logs; later
 ones within ten seconds are counted per resolved row (per caller pid for
 callers no row resolved for), and the next permitted line reports how many
 were suppressed. A caller that had already exited when the daemon got to it
-is not a refusal: the client retries, so no badge is set and the daemon logs
+is not a refusal: a later callback replaces it, so no badge is set and the daemon logs
 `broker: caller exited before the daemon handled its callback` instead, with
 how long the caller had been waiting (`conn_age_ms`, `request_age_ms`). A
 caller that vanished promptly was dropped by its harness — Claude Code
