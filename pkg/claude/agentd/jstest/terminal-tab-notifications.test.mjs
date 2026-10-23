@@ -143,6 +143,17 @@ test('a collapsed tab stack carries the alert of the tabs it hides', async (t) =
   assert.match(host.querySelector('.mux-group-pill').getAttribute('aria-label'),
     /1 unread notification in a collapsed tab/);
 
+  // The pill's hint opens the hidden notification without folding the stack.
+  const opened = [];
+  const listen = (event) => opened.push(event.detail);
+  harness.document.addEventListener('tclaude:open-human-notification', listen);
+  t.after(() => harness.document.removeEventListener('tclaude:open-human-notification', listen));
+  harness.fireEvent(host.querySelector('.mux-group-attention'), 'click');
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].messageId, 42);
+  assert.equal(opened[0].sender.agent, 'agt_one');
+  assert.ok(host.querySelector('.mux-tab-group.collapsed'), 'clicking the hint does not expand the stack');
+
   await harness.act(() => terminalShellState.toggleGroupCollapsed(group.id));
   assert.equal(host.querySelectorAll('.mux-group-attention').length, 0,
     'an expanded stack shows the alert on the member tab itself');

@@ -1684,6 +1684,26 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   width: 15px; height: 15px; font-size: 10px;
   pointer-events: none;
 }
+/* Where the hint can name a notification to open (the group header, the
+   global activity row) it is a button raising the same quick reader as the
+   member-row glyph. The doubled class outranks the broad themed
+   `body.<theme> header button` skins, which would pad it into a pill. */
+.human-notification-hint.human-notification-hint-button,
+body.slop header .human-notification-hint.human-notification-hint-button,
+body.wizard header .human-notification-hint.human-notification-hint-button {
+  appearance: none; margin: 0; padding: 0;
+  border: 1px solid #ffd76a; border-radius: 50%;
+  background: #5d4300; color: #fff3c4;
+  font-family: inherit; font-size: 10px; font-weight: 900; line-height: 1;
+  pointer-events: auto; cursor: pointer;
+}
+.human-notification-hint.human-notification-hint-button:hover,
+.human-notification-hint.human-notification-hint-button:focus-visible {
+  background: #815b00;
+}
+.human-notification-hint.human-notification-hint-button:focus-visible {
+  outline: 2px solid #58a6ff; outline-offset: 1px;
+}
 /* The quick reader is a right-side panel and is geometrically the palette
    dock's twin: it spans ONLY the content area — from --dock-top (nav's live
    viewport-bottom, kept in sync by js/dock.js as the chrome scrolls away) down

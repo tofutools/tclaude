@@ -978,6 +978,24 @@ function SudoBadge({ grants, conv }) {
   return html`<span class="sudo-badge" data-act="sudo-manage" data-conv=${grants[0].conv_id || conv || ''} title=${title}>🔓</span>`;
 }
 
+// openMemberNotification raises the quick reader on one of member's
+// notifications — the row glyph and the group header's hint share it.
+export function openMemberNotification(member, message, launcher, returnFocus = null) {
+  return openHumanNotificationReader({
+    sender: {
+      agent: member.agent_id || '',
+      conv: member.conv_id || '',
+      label: member.title || member.conv_id,
+      // Another node's agent (the fused view): its notification lives there.
+      ...(member.fleet_node?.id && !isPageNode(member.fleet_node.id)
+        ? { node: member.fleet_node.id, nodeName: member.fleet_node.name || '' } : {}),
+    },
+    messageID: message?.id || null,
+    launcher,
+    returnFocus: returnFocus || null,
+  });
+}
+
 function HumanNotificationAttention({ member, snapshot }) {
   const unread = memberUnreadHumanCount(member, snapshot);
   if (!unread) return null;
@@ -989,19 +1007,8 @@ function HumanNotificationAttention({ member, snapshot }) {
   const openReader = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    openHumanNotificationReader({
-      sender: {
-        agent: member.agent_id || '',
-        conv: member.conv_id || '',
-        label,
-        // Another node's agent (the fused view): its notification lives there.
-        ...(member.fleet_node?.id && !isPageNode(member.fleet_node.id)
-          ? { node: member.fleet_node.id, nodeName: member.fleet_node.name || '' } : {}),
-      },
-      messageID: message?.id || null,
-      launcher: event.currentTarget,
-      returnFocus: event.currentTarget.closest('.rowname')?.querySelector('.rowname-text') || null,
-    });
+    openMemberNotification(member, message, event.currentTarget,
+      event.currentTarget.closest('.rowname')?.querySelector('.rowname-text'));
   };
   return html`<button type="button" class="human-notification-attention"
     ...${memberAttrs(member)}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  groupHasUnreadHumanNotifications,
+  firstUnreadHumanNotification,
   hasUnreadHumanNotifications,
   humanNotificationSenderQuery,
   memberUnreadHumanCount,
@@ -20,8 +20,9 @@ test('member unread count prefers stable agent identity across generations', () 
   };
   assert.equal(memberUnreadHumanCount(alice, snapshot), 1);
   assert.equal(memberUnreadHumanCount(bob, snapshot), 1);
-  assert.equal(groupHasUnreadHumanNotifications([alice], snapshot), true);
-  assert.equal(groupHasUnreadHumanNotifications([{ agent_id: 'agt_none' }], snapshot), false);
+  assert.deepEqual(firstUnreadHumanNotification([bob, alice], snapshot),
+    { member: alice, message: snapshot.messages[0] }, 'the first unread row in snapshot order wins');
+  assert.equal(firstUnreadHumanNotification([{ agent_id: 'agt_none' }], snapshot), null);
 });
 
 test('legacy notifications fall back to the sending conversation id', () => {

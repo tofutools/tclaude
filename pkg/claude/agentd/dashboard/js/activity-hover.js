@@ -68,6 +68,7 @@ export function ActivityHover({
   title,
   details,
   wizard = false,
+  badge = null,
   children,
 }) {
   const rootRef = useRef(null);
@@ -116,6 +117,7 @@ export function ActivityHover({
       onFocusIn=${() => setFocused(true)}
       onFocusOut=${onBlur}
     >
+      ${badge}
       <button
         id=${id}
         type="button"

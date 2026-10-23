@@ -22,7 +22,9 @@ import { PRChecksBadge } from './pr-checks-hover.js';
 import { PRReviewBadge } from './pr-review-badge.js';
 import { PRLinkHover } from './pr-link-hover.js';
 import { nodeFetch } from './node-api.js';
-import { hasUnreadHumanNotifications } from './human-notification-attention.js';
+import {
+  hasUnreadHumanNotifications, openHumanNotificationReader, unreadHumanMessages,
+} from './human-notification-attention.js';
 import { dashPrefs } from './prefs.js';
 import { featureNeeds, featureState, needsSuffix } from './peer-view-limits.js';
 import { UsageNodePill, peerUsageState, usagePeak, useUsageNode } from './usage-nodes.js';
@@ -230,6 +232,29 @@ function GlobalActivity({ state, groupsState }) {
   const label = hasNotifications
     ? 'Activity across all groups · one or more agents have unread notifications'
     : 'Activity across all groups';
+  // The hint opens the quick reader on the first unread notification. It is a
+  // sibling of the activity trigger rather than inside it — a button may not
+  // nest another — and stays a plain marker when only the unread count is
+  // known (no row to open).
+  const first = hasNotifications ? unreadHumanMessages(snapshot)[0] : null;
+  const openReader = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openHumanNotificationReader({
+      sender: { agent: first.from_agent || '', conv: first.from_conv || '', label: first.from_title || '' },
+      messageID: first.id,
+      launcher: event.currentTarget,
+      returnFocus: event.currentTarget.parentElement?.querySelector('.activity-hover-trigger') || null,
+    });
+  };
+  const hintLabel = 'One or more agents have unread notifications — open the latest in the quick reader';
+  const badge = first
+    ? html`<button type="button" class="human-notification-hint human-notification-hint-button"
+        title=${hintLabel} aria-label=${hintLabel} onClick=${openReader}>!</button>`
+    : hasNotifications
+      ? html`<span class="human-notification-hint" aria-hidden="true"
+          title="One or more agents have unread notifications">!</span>`
+      : null;
   return html`
     <${ActivityHover}
       id="global-activity"
@@ -238,9 +263,8 @@ function GlobalActivity({ state, groupsState }) {
       title=${view.title || null}
       details=${view.details}
       wizard=${wizard}
+      badge=${badge}
     >
-      ${hasNotifications ? html`<span class="human-notification-hint"
-        aria-hidden="true" title="One or more agents have unread notifications">!</span>` : null}
       <${ActivityModes} modes=${view.modes} />
     </${ActivityHover}>
   `;

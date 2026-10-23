@@ -20,7 +20,7 @@ import {
   buildGroupTree, groupMembersView, realGroupOpen, virtualGroupOpen,
 } from './groups-view-model.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
-import { MemberTable } from './groups-member-table.js';
+import { MemberTable, openMemberNotification } from './groups-member-table.js';
 import { GroupFederationMarker } from './group-federation-marker.js';
 import { GroupProcessGraphs } from './groups-process-indicators.js';
 import {
@@ -28,7 +28,7 @@ import {
 } from './groups-processes.js';
 import { subgroupsSectionAuto, subgroupsSectionOpen } from './groups-fused-sections.js';
 import { featureState } from './feature-state-registry.js';
-import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
+import { firstUnreadHumanNotification } from './human-notification-attention.js';
 import { groupQueuedSpawns } from './queued-spawns.js';
 
 const html = htm.bind(h);
@@ -41,11 +41,22 @@ function GroupActivity({ members, snapshot }) {
   const summary = activitySummary(members);
   const modes = activityModeViews(summary, snapshot?.activity_bots);
   if (!modes.length) return null;
-  const attention = groupHasUnreadHumanNotifications(members, snapshot);
+  const attention = firstUnreadHumanNotification(members, snapshot);
+  // The hint opens the quick reader on that notification, as the member row's
+  // own glyph does; it sits in the group's <summary>, so the click must not
+  // also fold the group.
+  const openReader = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openMemberNotification(attention.member, attention.message, event.currentTarget,
+      event.currentTarget.closest('summary'));
+  };
+  const hintLabel = `A member of this group has unread notifications — open ${attention?.member.title || 'it'} in the quick reader`;
   return html`<span class="group-activity"
     aria-label=${attention ? `${summary.summaryText} · a member has unread notifications` : null}>
-    ${attention ? html`<span class="human-notification-hint" aria-hidden="true"
-      title="A member of this group has unread notifications">!</span>` : null}
+    ${attention ? html`<button type="button" class="human-notification-hint human-notification-hint-button"
+      draggable=${false} title=${hintLabel} aria-label=${hintLabel}
+      onClick=${openReader}>!</button>` : null}
     <${ActivityModes} modes=${modes} modeTitles />
   </span>`;
 }
