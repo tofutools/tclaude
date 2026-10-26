@@ -83,6 +83,7 @@ func nonInteractiveUnsupportedOption(p *SpawnParams) string {
 		{"--fast-mode", p.FastMode != ""},
 		{"--trust-dir", p.TrustDir},
 		{"--harness-config", p.HarnessConfig != ""},
+		{"--usage-profile", len(p.UsageProfiles) > 0},
 	} {
 		if option.set {
 			return option.name

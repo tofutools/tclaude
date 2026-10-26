@@ -67,6 +67,11 @@ func TestUsageRulesAPI_ManageAndRead(t *testing.T) {
 		rec = usageCall(t, f, "", http.MethodPost, "/v1/usage/agents/"+worker+"/adjust", map[string]any{"rule_key": bad, "extra_budget": 5})
 		require.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", bad, rec.Body.String())
 	}
+	rec = usageCall(t, f, "", http.MethodPost, "/v1/usage/agents/"+worker+"/adjust", map[string]any{"exempt": true, "rule_key": "budget", "extra_budget": 5})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	overrides, err := db.ListUsageAgentOverrides()
+	require.NoError(t, err)
+	require.Empty(t, overrides, "a rejected adjustment writes nothing, not even its valid half")
 	rec = usageCall(t, f, "", http.MethodPost, "/v1/usage/agents/"+worker+"/adjust", map[string]any{"snooze_minutes": 30, "rule_key": "profile:default:BUDGET", "extra_budget": 5})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	rec = usageCall(t, f, "", http.MethodPost, "/v1/usage/profiles", map[string]any{"name": "42", "rules": []any{budgetRule}})
@@ -75,6 +80,20 @@ func TestUsageRulesAPI_ManageAndRead(t *testing.T) {
 	// An agent may read, even its own view, but not change anything.
 	require.NoError(t, db.GrantAgentPermission(worker, agentd.PermUsageRead, "test"))
 	rec = usageCall(t, f, worker, http.MethodGet, "/v1/usage/rules", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var agentView struct {
+		Limits    []json.RawMessage `json:"limits"`
+		Overrides []json.RawMessage `json:"overrides"`
+		Agents    []json.RawMessage `json:"agents"`
+		Statuses  []json.RawMessage `json:"statuses"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &agentView))
+	assert.Len(t, agentView.Limits, 1, "an agent sees the rules")
+	assert.Empty(t, agentView.Overrides, "but not other agents' adjustments")
+	assert.Empty(t, agentView.Agents)
+	assert.Empty(t, agentView.Statuses)
+
+	rec = usageCall(t, f, "", http.MethodGet, "/v1/usage/rules", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var overview struct {
 		Profiles []struct {

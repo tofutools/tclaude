@@ -120,15 +120,23 @@ func TestUsageRuleFiringsDedupeAndPrune(t *testing.T) {
 	ok, err = InsertUsageRuleFiring(repeat, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
+	pctRepeat := life
+	pctRepeat.StepKey = "notify@50+p2"
+	ok, err = InsertUsageRuleFiring(pctRepeat, nil)
+	require.NoError(t, err)
+	require.True(t, ok)
 	times, err = UsageRuleFiringTimes("limit:1", "agt_x", "lifetime|b=20")
 	require.NoError(t, err)
 	require.Len(t, times, 1, "repeats are not anchors")
 
 	n, err := PruneUsageRuleFirings(time.Now().Add(-120 * 24 * time.Hour))
 	require.NoError(t, err)
-	require.Equal(t, int64(2), n, "the old monthly firing and the old lifetime repeat")
+	require.Equal(t, int64(2), n, "the old monthly firing and the old lifetime timer repeat")
 	rest, err := ListUsageRuleFiringsSince(time.Time{})
 	require.NoError(t, err)
-	require.Len(t, rest, 1)
-	require.Equal(t, "agt_x", rest[0].Subject)
+	require.Len(t, rest, 2, "a lifetime base crossing and percentage repeat stay: Due would list them again")
+	for _, f := range rest {
+		require.Equal(t, "agt_x", f.Subject)
+		require.NotContains(t, f.StepKey, "+t")
+	}
 }

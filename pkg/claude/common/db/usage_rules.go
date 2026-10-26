@@ -493,17 +493,18 @@ func UsageRuleFiringTimes(ruleKey, subject, periodKey string) (map[string]time.T
 	return out, rows.Err()
 }
 
-// PruneUsageRuleFirings drops firings older than before. A lifetime-period
-// base crossing is kept: its span never rolls over, so dropping it would
-// re-fire the step. Repeats can go: their occurrence numbers only grow, so a
-// pruned one is never owed again.
+// PruneUsageRuleFirings drops firings older than before. In a lifetime span
+// the base crossing and percentage repeats are kept: the span never rolls
+// over, and at a stable value Due keeps listing the same newest "+p<n>", so
+// dropping either would re-fire it. Timer repeats can go: their occurrence
+// numbers only grow with time, so a pruned one is never owed again.
 func PruneUsageRuleFirings(before time.Time) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
 	res, err := d.Exec(`DELETE FROM usage_rule_firings
-		WHERE fired_at < ? AND (period_key NOT LIKE 'lifetime|%' OR instr(step_key, '+') > 0)`, dbTimeBoundary(before))
+		WHERE fired_at < ? AND (period_key NOT LIKE 'lifetime|%' OR instr(step_key, '+t') > 0)`, dbTimeBoundary(before))
 	if err != nil {
 		return 0, err
 	}

@@ -127,6 +127,20 @@ func handleUsageRulesOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	if classify(peerFromContext(r.Context())) != classHuman {
+		// An agent reads the rules, not its peers: their budgets, overrides
+		// and agent-layer assignments stay with the operator (usage self
+		// shows an agent its own).
+		out.Statuses, out.Overrides, out.Agents = []usageStatusView{}, []*db.UsageAgentOverride{}, []usageAgentRefView{}
+		out.Groups, out.SpawnProfiles = []string{}, []string{}
+		kept := out.Assignments[:0]
+		for _, a := range out.Assignments {
+			if a.Scope != db.UsageScopeAgent {
+				kept = append(kept, a)
+			}
+		}
+		out.Assignments = kept
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -560,7 +574,8 @@ func handleUsageAssignmentsSet(w http.ResponseWriter, r *http.Request) {
 	if !decodeUsageBody(w, r, &body) {
 		return
 	}
-	scopeID, status, err := resolveUsageAssignmentTarget(strings.TrimSpace(body.Scope), strings.TrimSpace(body.Target))
+	body.Scope, body.Target = strings.TrimSpace(body.Scope), strings.TrimSpace(body.Target)
+	scopeID, status, err := resolveUsageAssignmentTarget(body.Scope, body.Target)
 	if err != nil {
 		writeError(w, status, "invalid_target", err.Error())
 		return
@@ -642,6 +657,26 @@ func handleUsageAgentAdjust(w http.ResponseWriter, r *http.Request) {
 	if !decodeUsageBody(w, r, &body) {
 		return
 	}
+	// Validate the whole request before the first write, so a rejected
+	// request changes nothing.
+	var extKey string
+	if body.ExtraBudget != nil {
+		if extra := *body.ExtraBudget; extra < 0 || extra > 1e6 || extra != extra {
+			writeError(w, http.StatusBadRequest, "invalid_extension", "extra_budget must be between 0 and 1000000")
+			return
+		}
+		if extKey, err = canonicalUsageRuleKey(body.RuleKey); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_extension", err.Error())
+			return
+		}
+	} else if body.RuleKey != "" {
+		writeError(w, http.StatusBadRequest, "invalid_extension", "rule_key needs extra_budget")
+		return
+	}
+	if body.SnoozeMinutes != nil && (*body.SnoozeMinutes < 0 || *body.SnoozeMinutes > 7*24*60) {
+		writeError(w, http.StatusBadRequest, "invalid_snooze", "snooze_minutes must be between 0 and 10080 (a week)")
+		return
+	}
 	overrides, err := db.ListUsageAgentOverrides()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -657,13 +692,9 @@ func handleUsageAgentAdjust(w http.ResponseWriter, r *http.Request) {
 			exempt = *body.Exempt
 		}
 		if body.SnoozeMinutes != nil {
-			switch m := *body.SnoozeMinutes; {
-			case m < 0 || m > 7*24*60:
-				writeError(w, http.StatusBadRequest, "invalid_snooze", "snooze_minutes must be between 0 and 10080 (a week)")
-				return
-			case m == 0:
+			if m := *body.SnoozeMinutes; m == 0 {
 				snooze = time.Time{}
-			default:
+			} else {
 				snooze = time.Now().Add(time.Duration(m) * time.Minute)
 			}
 		}
@@ -673,23 +704,10 @@ func handleUsageAgentAdjust(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.ExtraBudget != nil {
-		extra := *body.ExtraBudget
-		if extra < 0 || extra > 1e6 || extra != extra {
-			writeError(w, http.StatusBadRequest, "invalid_extension", "extra_budget must be between 0 and 1000000")
-			return
-		}
-		key, err := canonicalUsageRuleKey(body.RuleKey)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_extension", err.Error())
-			return
-		}
-		if err := db.SetUsageBudgetExtension(agentID, key, extra); err != nil {
+		if err := db.SetUsageBudgetExtension(agentID, extKey, *body.ExtraBudget); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-	} else if body.RuleKey != "" {
-		writeError(w, http.StatusBadRequest, "invalid_extension", "rule_key needs extra_budget")
-		return
 	}
 	reevaluateUsageRules()
 	overrides, err = db.ListUsageAgentOverrides()

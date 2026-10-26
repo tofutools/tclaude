@@ -21655,7 +21655,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .spend-limit-banner .spend-limit-manage { margin-left: auto; }
 
 /* ─── Usage limits & budgets (usage-rules.js) ─────────────────────── */
-.cron-create-modal.usage-rules-modal { width: min(880px, calc(100vw - 32px)); }
+.cron-create-modal.usage-rules-modal { min-width: 0; width: min(880px, calc(100vw - 32px)); }
 .usage-rules-tabs { margin: 0 0 4px; }
 .usage-rules-tab { display: flex; flex-direction: column; gap: 8px; }
 .usage-rules-tab h4 { margin: 10px 0 2px; font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; }

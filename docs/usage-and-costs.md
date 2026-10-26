@@ -224,7 +224,10 @@ one agent: `--extra` adds budget to one of its rules, `--snooze` holds its
 steps for a while, and `--exempt` takes it out of usage profiles (shared
 limits still count it).
 
-Reading rules needs `usage.read`. Changing them needs `usage-rules.manage`.
+Reading rules needs `usage.read`; an agent reading them sees the limits,
+profiles and shared assignments but not other agents' budgets or
+adjustments (`usage self` shows its own). Changing them needs
+`usage-rules.manage`.
 That permission is not default-granted and group ownership does not confer it,
 because an agent holding it could lift its own budget.
 

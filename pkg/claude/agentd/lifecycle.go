@@ -3574,7 +3574,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.NonInteractive && (body.ReplyTo != "" || body.Role != "" ||
 		body.RoleRef != "" || len(body.RoleRefs) > 0 || body.Descr != "" ||
 		body.TaskURL != "" || body.TaskLabel != "" || body.AutoFocus || body.AutoFocusWeb ||
-		body.IsOwner || len(body.PermissionOverrides) > 0 || body.RemoteControl != nil ||
+		body.IsOwner || len(body.PermissionOverrides) > 0 || len(body.UsageProfiles) > 0 || body.RemoteControl != nil ||
 		body.CopilotAPI != nil || body.CodexAppServer != nil || body.PiDrive != nil || body.AutoReview) {
 		writeError(w, http.StatusBadRequest, "invalid_request",
 			"non-interactive spawn does not accept identity (other than name), messaging, or interactive drive settings")
