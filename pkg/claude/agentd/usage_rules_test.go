@@ -2,7 +2,9 @@ package agentd
 
 import (
 	"errors"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,6 +31,7 @@ func newUsageRulesFixture(t *testing.T) *usageRulesFixture {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.stopped = append(f.stopped, conv)
+		delete(f.alive, "tmux-"+conv) // a stopped agent's pane is gone
 		return memberOpResult{ConvID: conv, Action: "killed"}
 	}
 	usageRulesLiveSessions = func() (map[string]struct{}, error) { return f.alive, nil }
@@ -126,6 +129,22 @@ func TestUsageRules_AgentLadder(t *testing.T) {
 	require.Equal(t, []string{"conv-a"}, f.stopped)
 	pollUsageRules(now)
 	require.Equal(t, []string{"conv-a"}, f.stopped, "a hard stop fires once")
+
+	// Resumed while still past the hard stop: stopped again, and the
+	// operator is told why.
+	f.alive["tmux-conv-a"] = struct{}{}
+	pollUsageRules(now)
+	require.Equal(t, []string{"conv-a", "conv-a"}, f.stopped, "a hard stop stays in force for its period")
+	require.True(t, slices.ContainsFunc(f.operatorSubjects(), func(s string) bool { return strings.Contains(s, "still past its hard stop") }),
+		"%v", f.operatorSubjects())
+
+	// Extending the budget lifts it.
+	agentID, err := db.AgentIDForConv("conv-a")
+	require.NoError(t, err)
+	require.NoError(t, db.SetUsageBudgetExtension(agentID, usageProfileRuleKey(p.ID, "budget"), 20))
+	f.alive["tmux-conv-a"] = struct{}{}
+	pollUsageRules(now)
+	require.Len(t, f.stopped, 2, "an extended budget re-arms the ladder below the stop")
 }
 
 func TestUsageRules_LayerResolution(t *testing.T) {
@@ -133,6 +152,7 @@ func TestUsageRules_LayerResolution(t *testing.T) {
 	f.agent("conv-a", 6)
 	f.agent("conv-b", 6)
 	c := f.agent("conv-c", 6)
+	d := f.agent("conv-d", 6)
 	notifyAt := func(name string, at float64) usagerules.Rule {
 		return usagerules.Rule{Name: name, Period: usagerules.PeriodDay, Budget: 10,
 			Steps: []usagerules.Step{{At: at, Notify: []usagerules.Target{usagerules.TargetAgent}}}}
@@ -141,6 +161,7 @@ func TestUsageRules_LayerResolution(t *testing.T) {
 	g1p := profileWith(t, "g1", notifyAt("g1", 20))
 	g2p := profileWith(t, "g2", notifyAt("g2", 30))
 	own := profileWith(t, "own", notifyAt("own", 40))
+	linked := profileWith(t, "linked", notifyAt("linked", 50))
 	g1, err := db.CreateAgentGroup("g1", "")
 	require.NoError(t, err)
 	g2, err := db.CreateAgentGroup("g2", "")
@@ -148,13 +169,14 @@ func TestUsageRules_LayerResolution(t *testing.T) {
 	for _, m := range []struct {
 		group int64
 		conv  string
-	}{{g1, "conv-b"}, {g2, "conv-b"}, {g1, "conv-c"}} {
+	}{{g1, "conv-b"}, {g2, "conv-b"}, {g1, "conv-c"}, {g1, "conv-d"}} {
 		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: m.group, ConvID: m.conv}))
 	}
 	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{global.ID}, ""))
 	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGroup, db.UsageGroupScopeID(g1), []int64{g1p.ID}, ""))
 	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGroup, db.UsageGroupScopeID(g2), []int64{g2p.ID, g1p.ID}, ""))
 	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeAgent, c, []int64{own.ID}, ""))
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeAgent, d, []int64{linked.ID}, usageLinkedSourcePrefix+"reviewer"))
 
 	pollUsageRules(time.Now())
 	// a: no group, no own → global. b: both groups apply, g1 once.
@@ -162,6 +184,8 @@ func TestUsageRules_LayerResolution(t *testing.T) {
 	require.Equal(t, []string{`Usage budget: 60% of "global"`}, f.agentSubjects("conv-a"))
 	require.Equal(t, []string{`Usage budget: 60% of "g1"`, `Usage budget: 60% of "g2"`}, f.agentSubjects("conv-b"))
 	require.Equal(t, []string{`Usage budget: 60% of "own"`}, f.agentSubjects("conv-c"))
+	// d: a spawn profile's linked profile adds to its group's, never sheds it.
+	require.Equal(t, []string{`Usage budget: 60% of "g1"`, `Usage budget: 60% of "linked"`}, f.agentSubjects("conv-d"))
 }
 
 func TestUsageRules_GlobalAndGroupLimits(t *testing.T) {

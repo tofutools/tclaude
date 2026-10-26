@@ -170,3 +170,42 @@ func TestUsageLimits_LegacyConversionIsIdempotent(t *testing.T) {
 	require.Len(t, limits, 1)
 	assert.Equal(t, 20.0, limits[0].Rule.Budget)
 }
+
+// Scenario: cloning is a way to get a new agent, so it neither sheds the
+// source's own usage profiles nor gets past a limit that blocks spawns.
+func TestUsageLimits_CloneKeepsProfilesAndHonorsBlock(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetHumanMessageNotifierForTest(func(_, _, _, _, _ string) {}))
+	const src = "srca-aaaa-bbbb-cccc-111111111111"
+	f.HaveConvWithTitle(src, "worker")
+	f.HaveAliveSession(src, "spwn-src-001", "tclaude-spwn-src-001", f.TestCwd("work"))
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", src)
+	srcAgent, _, err := db.EnsureAgentForConv(src, "spawn")
+	require.NoError(t, err)
+	p := &db.UsageProfile{Name: "tight", Rules: []usagerules.Rule{{Name: "budget", Period: usagerules.PeriodLifetime, Budget: 5,
+		Steps: []usagerules.Step{{At: 100, Notify: []usagerules.Target{usagerules.TargetOperator}}}}}}
+	require.NoError(t, db.CreateUsageProfile(p))
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeAgent, srcAgent, []int64{p.ID}, "spawn"))
+
+	c := f.AsHuman().CloneFresh(src)
+	cloneAgent, err := db.AgentIDForConv(c.NewConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, cloneAgent)
+	assignments, err := db.ListUsageProfileAssignments()
+	require.NoError(t, err)
+	var cloneProfiles []int64
+	for _, a := range assignments {
+		if a.Scope == db.UsageScopeAgent && a.ScopeID == cloneAgent {
+			cloneProfiles = append(cloneProfiles, a.ProfileID)
+		}
+	}
+	assert.Equal(t, []int64{p.ID}, cloneProfiles, "the clone keeps the source's own budget")
+
+	seedAgentCostSession(t, "src-session", src, 30)
+	blockSpawnLimit(t, db.UsageScopeGlobal, 0, 25)
+	agentd.PollUsageRulesForTest(time.Now())
+	resp := f.AsHuman().CloneWith(src, map[string]any{"no_copy_conv": true})
+	require.Equal(t, http.StatusConflict, resp.Code, "body=%s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "usage_limit_reached")
+}

@@ -175,7 +175,7 @@ function AssignmentsTab({ overview, busy, onAssign }) {
   const agentRows = [...new Set((overview.assignments || []).filter((a) => a.scope === 'agent').map((a) => a.scope_id))];
   const pickable = (overview.agents || []).filter((a) => !agentRows.includes(a.id));
   return html`<div class="usage-rules-tab">
-    <p class="modal-hint">An agent uses the profiles of its nearest non-empty layer: agent › its groups (combined) › global default. A spawn profile's usage profiles are copied onto each agent it spawns.</p>
+    <p class="modal-hint">An agent uses the profiles of its nearest non-empty layer: agent › its groups (combined) › global default. A spawn profile's usage profiles are added to each agent it spawns, on top of its group or global ones; an agent's own assignment replaces them.</p>
     <h4>Global default</h4>
     ${row('global', '', 'All agents')}
     <h4>Groups</h4>

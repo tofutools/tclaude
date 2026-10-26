@@ -775,9 +775,9 @@ func resolveSpawnUsageProfiles(w http.ResponseWriter, r *http.Request, refs []st
 // applySpawnUsageProfiles records a freshly spawned agent's own usage
 // profiles: the explicit choice, else those linked to the first of the given
 // spawn profiles (the named one, the group default, the global default) that
-// has any. The
-// copy is an agent-layer assignment, so it takes precedence over the group
-// and global defaults and later edits to the link do not move running agents.
+// has any. The explicit choice (human-only) replaces the group and global
+// layers; a linked copy adds to them (usageLinkedLayer). Later edits to the
+// link do not move running agents.
 //
 // A spawn still PENDING when the handler returns (its conversation id came
 // too late) has no agent to record against yet; it falls back to its group
@@ -814,7 +814,7 @@ func applySpawnUsageProfiles(agentID, convID string, explicit []int64, spawnProf
 				}
 			}
 			if len(ids) > 0 {
-				source = "spawn profile " + sp.Name
+				source = usageLinkedSourcePrefix + sp.Name
 				break
 			}
 		}

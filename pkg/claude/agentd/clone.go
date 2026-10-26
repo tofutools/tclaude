@@ -1671,6 +1671,11 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	// A clone is a new agent, so a usage limit blocking spawns blocks it too.
+	if fail := checkUsageSpawnBlockForGroups(policyGroups); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 
 	// Rate limit: refuse a second clone of the same source within
 	// CloneCooldown — but only for agent-initiated clones. The gate
@@ -1857,6 +1862,10 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	copied, err := applyClonedIdentity(newAgentID, granter, members, oldPerms, oldOwnedIDs)
 	if err != nil {
 		failClone(newAgentID, "identity", "copy the source's groups and permissions to the clone: "+err.Error())
+		return
+	}
+	if err := copyAgentUsageAssignments(target, newAgentID); err != nil {
+		failClone(newAgentID, "identity", "copy the source's usage profiles to the clone: "+err.Error())
 		return
 	}
 

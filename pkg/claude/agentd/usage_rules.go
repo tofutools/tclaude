@@ -289,8 +289,21 @@ func loadUsageRulesState(now time.Time) (*usageRulesState, error) {
 	return st, nil
 }
 
+// usageLinkedLayer is the layer of an agent's profiles copied from a spawn
+// profile's link. Unlike an explicit agent assignment it adds to the layer
+// the agent inherits instead of replacing it, so neither a default spawn
+// profile's link nor an agent choosing a spawn profile can shed a group or
+// global budget.
+const usageLinkedLayer = "spawn_profile"
+
+// usageLinkedSourcePrefix marks an agent assignment copied from a spawn
+// profile link (applySpawnUsageProfiles).
+const usageLinkedSourcePrefix = "spawn profile "
+
 // effectiveUsageProfiles resolves the profiles that apply to one agent and
-// the layer they came from: "agent", "group" or "global" ("" when none).
+// the layer they came from: "agent", "group" or "global" ("" when none), or
+// "spawn_profile" / "spawn_profile+group" / "spawn_profile+global" when a
+// spawn profile's linked profiles add to the inherited layer.
 func effectiveUsageProfiles(agentID string, groupIDs []int64, assignments []db.UsageProfileAssignment, profiles map[int64]*db.UsageProfile) ([]*db.UsageProfile, string) {
 	groupScope := map[string]bool{}
 	for _, id := range groupIDs {
@@ -301,6 +314,8 @@ func effectiveUsageProfiles(agentID string, groupIDs []int64, assignments []db.U
 	for _, a := range assignments {
 		var layer string
 		switch {
+		case a.Scope == db.UsageScopeAgent && a.ScopeID == agentID && strings.HasPrefix(a.Source, usageLinkedSourcePrefix):
+			layer = usageLinkedLayer
 		case a.Scope == db.UsageScopeAgent && a.ScopeID == agentID:
 			layer = db.UsageScopeAgent
 		case a.Scope == db.UsageScopeGroup && groupScope[a.ScopeID]:
@@ -323,12 +338,31 @@ func effectiveUsageProfiles(agentID string, groupIDs []int64, assignments []db.U
 		seen[layer][p.ID] = true
 		byLayer[layer] = append(byLayer[layer], p)
 	}
-	for _, layer := range []string{db.UsageScopeAgent, db.UsageScopeGroup, db.UsageScopeGlobal} {
+	if ps := byLayer[db.UsageScopeAgent]; len(ps) > 0 {
+		return ps, db.UsageScopeAgent
+	}
+	var inherited []*db.UsageProfile
+	inheritedLayer := ""
+	for _, layer := range []string{db.UsageScopeGroup, db.UsageScopeGlobal} {
 		if ps := byLayer[layer]; len(ps) > 0 {
-			return ps, layer
+			inherited, inheritedLayer = ps, layer
+			break
 		}
 	}
-	return nil, ""
+	linked := byLayer[usageLinkedLayer]
+	if len(linked) == 0 {
+		return inherited, inheritedLayer
+	}
+	out := append([]*db.UsageProfile(nil), linked...)
+	for _, p := range inherited {
+		if !seen[usageLinkedLayer][p.ID] {
+			out = append(out, p)
+		}
+	}
+	if inheritedLayer == "" {
+		return out, usageLinkedLayer
+	}
+	return out, usageLinkedLayer + "+" + inheritedLayer
 }
 
 func (st *usageRulesState) evaluateAgents() {
@@ -569,6 +603,44 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 			continue
 		}
 		st.act(t, f, value, pct)
+	}
+	if !r.DryRun {
+		st.enforceStandingStops(t, pct, firedNow, baseFired)
+	}
+}
+
+// enforceStandingStops keeps a fired hard stop in force for the rest of its
+// period: an agent in scope that runs again (resumed, or started after the
+// stop fired, perhaps while every agent was offline) is stopped again while
+// the value stays at or above the step. Extending the budget re-keys the
+// period and lifts it; snoozing or exempting an agent pauses its profile
+// rules, so the operator can let one agent finish.
+func (st *usageRulesState) enforceStandingStops(t usageRuleTarget, pct float64, firedNow map[string]bool, baseFired func(string) (time.Time, bool)) {
+	for _, step := range t.rule.Steps {
+		if step.Action != usagerules.ActionHardStop || pct < step.At || firedNow[step.Key()] {
+			continue
+		}
+		if _, ok := baseFired(step.Key()); !ok {
+			continue
+		}
+		for _, conv := range st.runningConvs(t.agents) {
+			res := usageRulesHardStop(conv)
+			slog.Info("usage rules: hard stop still in force", "rule", t.ruleKey, "subject", t.subject, "conv", conv, "result", res.Action, "detail", res.Detail)
+			title := agent.CachedTitle(conv)
+			if title == "" {
+				title = conv
+			}
+			msg := &db.HumanMessage{FromTitle: "Usage limits", GroupName: t.group, CreatedAt: st.now,
+				Subject: fmt.Sprintf("Stopped %s again: %q is still past its hard stop", title, t.rule.Name),
+				Body: fmt.Sprintf("%s was running while %q (%s) stands at %.0f%% of its budget, past the hard stop at %g%%. Extend the budget, or snooze or exempt the agent, to let it run.",
+					title, t.rule.Name, t.owner, pct, step.At)}
+			if _, err := db.InsertHumanMessage(msg); err != nil {
+				slog.Warn("usage rules: record re-stop message", "error", err)
+			} else {
+				dispatchHumanMessageNotification("", msg.FromTitle, t.group, msg.Subject, msg.Body)
+			}
+		}
+		return
 	}
 }
 

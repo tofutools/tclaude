@@ -165,10 +165,13 @@ Profiles are assigned at layers: the **global default**, a **group**, and an
 **agent**. The nearest non-empty layer wins as a whole: the agent's own
 profiles, else the profiles of every group it belongs to (all of them apply,
 each with its own counter), else the global default. A spawn profile can
-carry usage profiles too. Spawning through it copies them onto the new agent
-as its own assignment, so they outrank the group and global defaults. A
-human can also pick a spawned agent's profiles explicitly
-(`tclaude agent spawn --usage-profile …`).
+carry usage profiles too. Spawning through it copies them onto the new agent,
+where they apply on top of its group or global profiles; they never replace
+them, so neither a default spawn profile nor an agent picking a spawn profile
+sheds a budget. To replace the inherited layers, a human picks a spawned
+agent's profiles explicitly (`tclaude agent spawn --usage-profile …`) or
+assigns profiles to the agent. A clone keeps its source's own profiles, and a
+limit that blocks spawns blocks clones too.
 
 ### Readings, timing and edge cases
 
@@ -179,6 +182,12 @@ human can also pick a spawned agent's profiles explicitly
   ladder at the new amount; a new period starts it over.
 - A stopped agent's steps wait until it runs again, so a hard stop crossed
   while it was offline still applies on resume.
+- A hard stop stays in force for the rest of its period: an agent in scope
+  that runs again while the value is still past the step is stopped again on
+  the next evaluation, and the operator is told. Extend the budget, or snooze
+  or exempt the agent, to let it run.
+- A group limit counts the current members' spend, so an agent leaving the
+  group takes its spend for the period with it.
 - Quota-window limits act only on a current reading.
 - Ignored and peer-billed conversations do not count, as in the Costs view.
 

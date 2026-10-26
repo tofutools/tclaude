@@ -122,8 +122,47 @@ func checkUsageSpawnBlock(g *db.AgentGroup) *spawnFailure {
 		Status: http.StatusConflict,
 		Kind:   "usage_limit_reached",
 		Msg: fmt.Sprintf("%s %q blocks new spawns until its %s rolls over; raise its budget or disable it "+
-			"(dashboard Config → Usage, or `tclaude usage limits`) to spawn now", scope, l.Rule.Name, usagePeriodNoun(l.Rule.Period)),
+			"(dashboard Usage limits & budgets, or `tclaude usage limit set`) to spawn now", scope, l.Rule.Name, usagePeriodNoun(l.Rule.Period)),
 	}
+}
+
+// checkUsageSpawnBlockForGroups refuses a new agent joining groups (none:
+// only global limits apply) while a limit blocks any of them.
+func checkUsageSpawnBlockForGroups(groups []*db.AgentGroup) *spawnFailure {
+	if len(groups) == 0 {
+		return checkUsageSpawnBlock(nil)
+	}
+	for _, g := range groups {
+		if fail := checkUsageSpawnBlock(g); fail != nil {
+			return fail
+		}
+	}
+	return nil
+}
+
+// copyAgentUsageAssignments gives a clone its source's agent-layer usage
+// profiles, so cloning never sheds a budget set on the agent itself.
+func copyAgentUsageAssignments(sourceConv, cloneAgentID string) error {
+	sourceID, err := db.AgentIDForConv(sourceConv)
+	if err != nil || sourceID == "" {
+		return err
+	}
+	assignments, err := db.ListUsageProfileAssignments()
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	source := ""
+	for _, a := range assignments {
+		if a.Scope == db.UsageScopeAgent && a.ScopeID == sourceID {
+			ids = append(ids, a.ProfileID)
+			source = a.Source
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return db.SetUsageProfileAssignments(db.UsageScopeAgent, cloneAgentID, ids, source)
 }
 
 func usagePeriodNoun(p usagerules.Period) string {
