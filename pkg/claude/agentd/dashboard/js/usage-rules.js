@@ -261,7 +261,12 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
     <h4>${limit.id ? `Edit limit "${limit.rule.name}"` : 'New limit'}</h4>
     <div class="usage-rule-fields">
       <label>Scope <select aria-label="Limit scope" value=${scope} disabled=${busy || !!limit.id}
-        onChange=${(e) => touch(setScope)(e.currentTarget.value)}>
+        onChange=${(e) => {
+          const next = e.currentTarget.value;
+          touch(setScope)(next);
+          // Quota windows are account-wide: a group limit measures spend.
+          if (next !== 'global' && draft.metric === 'window_pct') setDraft({ ...draft, metric: 'total_usd', period: 'month', window: '', budget: 500 });
+        }}>
         <option value="global">Global (whole instance)</option>
         <option value="group" disabled=${!(overview.groups || []).length}>Group</option>
       </select></label>
@@ -270,7 +275,7 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
       <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
     </div>
     <${RuleEditor} draft=${draft} scope=${scope} windows=${overview.windows || []} disabled=${busy}
-      onChange=${touch((next) => setDraft(scope === 'group' && next.metric === 'window_pct' ? { ...next, metric: 'total_usd' } : next))}/>
+      onChange=${touch(setDraft)}/>
     <div role="alert" class="cron-create-error">${error}</div>
     <div class="modal-buttons">
       <button type="button" disabled=${busy} onClick=${onCancel}>Back</button>
@@ -346,6 +351,8 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
       await work();
       if (done) shellToast(done);
       await reload();
+      // The daemon re-evaluates in the background; pick up its new readings.
+      setTimeout(() => { if (live.current) void reload(); }, 1500);
       return true;
     } catch (cause) {
       shellToast(cause.message, true);

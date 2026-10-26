@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usagerules"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // usage_rules_api.go — the HTTP surface for usage limits and usage profiles.
@@ -201,12 +201,8 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 	statuses, at := latestUsageRuleStatus()
 	out.Statuses = usageStatusViews(statuses)
 	out.LimitStatuses = usageStatusViews(latestUsageLimitStatus())
-	if usage, err := collectAccountUsage(time.Now(), 0); err == nil {
-		for _, w := range usage.Windows {
-			if spec := w.Provider + ":" + w.WindowName; !slices.Contains(out.Windows, spec) {
-				out.Windows = append(out.Windows, spec)
-			}
-		}
+	if specs, err := db.SubscriptionUsageWindowSpecs(); err == nil {
+		out.Windows = specs
 	}
 	if !at.IsZero() {
 		out.EvaluatedAt = at.UTC().Format(time.RFC3339Nano)
@@ -604,7 +600,7 @@ func resolveUsageAssignmentTarget(scope, target string) (string, int, error) {
 		}
 		return db.UsageGroupScopeID(g.ID), 0, nil
 	case db.UsageScopeAgent:
-		id, _, err := resolveAgentSelectorForResilience(target)
+		id, _, err := resolveUsageAgentSelector(target)
 		if err != nil {
 			return "", http.StatusNotFound, err
 		}
@@ -637,7 +633,7 @@ func handleUsageAgentAdjust(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermUsageRulesManage); !ok {
 		return
 	}
-	agentID, _, err := resolveAgentSelectorForResilience(r.PathValue("selector"))
+	agentID, _, err := resolveUsageAgentSelector(r.PathValue("selector"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent_not_found", err.Error())
 		return
@@ -811,4 +807,16 @@ func applySpawnUsageProfiles(agentID, convID string, explicit []int64, spawnProf
 	if err := db.SetUsageProfileAssignments(db.UsageScopeAgent, agentID, ids, source); err != nil {
 		slog.Warn("usage rules: assign spawned agent's usage profiles", "agent", agentID, "error", err)
 	}
+}
+
+// resolveUsageAgentSelector maps a selector to a stable agent id. A retired
+// agent's id resolves too, so its leftover assignments and overrides can be
+// cleared.
+func resolveUsageAgentSelector(sel string) (string, string, error) {
+	if proto.ValidAgentRef(sel) {
+		if a, err := db.GetAgent(sel); err == nil && a != nil && !a.Active() {
+			return a.AgentID, a.CurrentConvID, nil
+		}
+	}
+	return resolveAgentSelectorForResilience(sel)
 }

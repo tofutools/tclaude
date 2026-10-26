@@ -2267,7 +2267,7 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'saved-prompts':
       return html`<${SavedPromptsDialog} key=${`${descriptor.initial || ''}:${descriptor.clone ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'usage-rules':
-      return html`<${UsageRulesDialog} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${UsageRulesDialog} key=${`usage-rules:${descriptor.tab || ''}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-editor':
       return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${onState.sandboxProfiles.value || []} state=${onState} actions=${on} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-export':
