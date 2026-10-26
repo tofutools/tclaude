@@ -14,6 +14,8 @@ import { FusedUsageSummary, usePeerUsages } from './usage-nodes.js';
 import { fleetState } from './fleet-state.js';
 import { tickedNodes } from './fleet-scope.js';
 import { dashboardState } from './snapshot-store.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
+import { barTone, fmtAmount, periodLabel } from './usage-rules-model.js';
 
 export { topCostAgents };
 
@@ -213,6 +215,26 @@ function Overview({ quota, costs, wizard, open }) {
   </div>`;
 }
 
+// UsageLimits lists the live readings of the global and group limits
+// (snapshot usage.usage_limits) and opens their manager.
+function UsageLimits({ snapshot, wizard }) {
+  const w = (plain, wiz) => (wizard ? wiz : plain);
+  const limits = snapshot.value?.usage?.usage_limits || [];
+  const manage = () => openUsageRulesManager();
+  return html`<div class="usage-hub-limits">
+    <h3 class="usage-ov-heading">${w('Limits', 'Wards on the coffers')}
+      <button type="button" class="usage-limits-manage" id="usage-limits-manage" onClick=${manage}>${w('limits & budgets', 'wards & tithes')} ›</button></h3>
+    ${limits.length ? html`<div class="usage-hub-limit-list">${limits.map((limit) => html`<div key=${limit.rule_key}
+      class=${`usage-hub-limit ${limit.dry_run ? 'dry' : barTone(limit)}`} title=${limit.next ? `next: ${limit.next.action.replace('_', ' ')} at ${limit.next.at}%` : ''}>
+      <span class="usage-hub-limit-name">${limit.name}<span class="muted"> · ${limit.scope === 'group' ? `group ${limit.group}` : 'global'}${limit.metric === 'window_pct' ? '' : ` · ${periodLabel(limit.period)}`}</span></span>
+      <span class="usage-rule-bar"><span class="usage-rule-bar-fill" style=${`width:${Math.min(100, Math.max(0, limit.pct || 0))}%`}></span></span>
+      <span class="usage-hub-limit-figure">${fmtAmount(limit.metric, limit.value)} / ${fmtAmount(limit.metric, limit.budget)}${limit.reached ? ` · ${limit.reached.replace('_', ' ')}` : ''}${limit.dry_run ? ' · dry run' : ''}</span>
+    </div>`)}</div>`
+      : html`<div class="empty usage-hub-limits-empty">${w('No spend or quota limits set.', 'The coffers are unwarded.')}
+        <button type="button" class="tool" onClick=${manage}>${w('Set a limit…', 'Ward them…')}</button></div>`}
+  </div>`;
+}
+
 function subtabMeta(name, quota, costs) {
   if (name === 'quota' && quota.request.hasLoaded) {
     const count = quota.series.length;
@@ -286,6 +308,7 @@ export function UsageHubApp({ state, quotaState, costsState, fleet = fleetState,
       quota=${quotaState.view.value} costs=${costsState.view.value} />`}
     ${current.subview === 'overview' && html`<${Overview} quota=${quotaState.view.value}
       costs=${costsState.view.value} wizard=${wizard} open=${open} />`}
+    ${(current.subview === 'overview' || !current.showSubnav) && html`<${UsageLimits} snapshot=${snapshot} wizard=${wizard} />`}
   </div>`;
 }
 

@@ -5,6 +5,7 @@ import htm from 'htm';
 import { browserNotifyPermission, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -638,12 +639,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </${Panel}>
 
     <${Panel} id="costs" active=${active}>
-      <${Group} title="Spend limits">
-        ${['daily', 'monthly'].map(period => html`<${Setting} key=${period} title=${period === 'daily' ? 'Daily limit (USD)' : 'Monthly limit (USD)'} forId=${`cfg-cost-${period}-limit`} k=${`cost.${period}_limit_usd`}
-          summary="Estimated API ledger spend; blank or 0 disables. Warn at 80%, alert at 100%."
-          more=${html`Global across harnesses on this instance, using local calendar days/months. Amounts are unscaled cost-ledger estimates; subscription WHAT-IF amounts are excluded and subscription plans may not map to real charges. One notification per period and threshold, even after restarting the daemon or editing a limit. Spawns remain available.`}>
-          <${ConfigInput} type="number" id=${`cfg-cost-${period}-limit`} min="0" step="0.01" placeholder="Disabled" />
-        </${Setting}>`)}
+      <${Group} title="Usage limits">
+        <${Setting} title="Limits & budgets"
+          summary="Spend caps, quota guards and per-agent usage profiles live in their own manager."
+          more=${html`Global and group limits (for example "$500 a month, alert at 50%, wrap everyone up at 100%"), usage profiles that budget each agent, and per-agent extensions. The former daily/monthly spend limits were converted into global limits there.`}>
+          <button type="button" class="tool" id="cfg-open-usage-rules" onClick=${() => openUsageRulesManager()}>Open usage limits & budgets…</button>
+        </${Setting}>
       </${Group}>
       <${Group} title="Cost display">
         <${Setting} title="Cost display multipliers" wide k="cost.estimate_factor"

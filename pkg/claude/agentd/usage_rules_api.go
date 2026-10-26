@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,7 +81,21 @@ type usageRulesOverview struct {
 	Assignments []usageAssignmentView    `json:"assignments"`
 	Overrides   []*db.UsageAgentOverride `json:"overrides"`
 	Statuses    []usageStatusView        `json:"statuses"`
-	EvaluatedAt string                   `json:"evaluated_at,omitempty"`
+	// LimitStatuses is the latest reading of every enabled limit.
+	LimitStatuses []usageStatusView `json:"limit_statuses"`
+	EvaluatedAt   string            `json:"evaluated_at,omitempty"`
+	// Groups, SpawnProfiles and Agents name the assignment targets, so an
+	// editor can offer them without reading the rest of the dashboard.
+	Groups        []string            `json:"groups"`
+	SpawnProfiles []string            `json:"spawn_profiles"`
+	Agents        []usageAgentRefView `json:"agents"`
+	// Windows names the provider quota windows a window_pct limit can watch.
+	Windows []string `json:"windows"`
+}
+
+type usageAgentRefView struct {
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
 }
 
 func usageStatusViews(statuses []usageRuleStatus) []usageStatusView {
@@ -116,7 +131,8 @@ func handleUsageRulesOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func collectUsageRulesOverview() (usageRulesOverview, error) {
-	out := usageRulesOverview{Profiles: []*db.UsageProfile{}, Limits: []usageLimitView{}, Assignments: []usageAssignmentView{}, Overrides: []*db.UsageAgentOverride{}}
+	out := usageRulesOverview{Profiles: []*db.UsageProfile{}, Limits: []usageLimitView{}, Assignments: []usageAssignmentView{},
+		Overrides: []*db.UsageAgentOverride{}, Groups: []string{}, SpawnProfiles: []string{}, Agents: []usageAgentRefView{}, Windows: []string{}}
 	profiles, err := db.ListUsageProfiles()
 	if err != nil {
 		return out, err
@@ -133,7 +149,9 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 	groupNames := map[string]string{}
 	for _, g := range groups {
 		groupNames[db.UsageGroupScopeID(g.ID)] = g.Name
+		out.Groups = append(out.Groups, g.Name)
 	}
+	sort.Strings(out.Groups)
 	limits, err := db.ListUsageLimits()
 	if err != nil {
 		return out, err
@@ -149,6 +167,13 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 	if sps, err := db.ListSpawnProfiles(); err == nil {
 		for _, sp := range sps {
 			spawnProfiles[strconv.FormatInt(sp.ID, 10)] = sp.Name
+			out.SpawnProfiles = append(out.SpawnProfiles, sp.Name)
+		}
+	}
+	sort.Strings(out.SpawnProfiles)
+	if agents, err := db.ListActiveAgents(); err == nil {
+		for _, a := range agents {
+			out.Agents = append(out.Agents, usageAgentRefView{ID: a.AgentID, Title: agent.CachedTitle(a.CurrentConvID)})
 		}
 	}
 	for _, a := range assignments {
@@ -175,6 +200,14 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 	sort.Slice(out.Overrides, func(i, j int) bool { return out.Overrides[i].AgentID < out.Overrides[j].AgentID })
 	statuses, at := latestUsageRuleStatus()
 	out.Statuses = usageStatusViews(statuses)
+	out.LimitStatuses = usageStatusViews(latestUsageLimitStatus())
+	if usage, err := collectAccountUsage(time.Now(), 0); err == nil {
+		for _, w := range usage.Windows {
+			if spec := w.Provider + ":" + w.WindowName; !slices.Contains(out.Windows, spec) {
+				out.Windows = append(out.Windows, spec)
+			}
+		}
+	}
 	if !at.IsZero() {
 		out.EvaluatedAt = at.UTC().Format(time.RFC3339Nano)
 	}

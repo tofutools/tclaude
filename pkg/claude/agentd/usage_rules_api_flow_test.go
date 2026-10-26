@@ -45,7 +45,7 @@ func TestUsageRulesAPI_ManageAndRead(t *testing.T) {
 	f.HaveGroup("alpha")
 	const worker = "work-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("alpha", worker)
-	_, _, err := db.EnsureAgentForConv(worker, "spawn")
+	workerAgent, _, err := db.EnsureAgentForConv(worker, "spawn")
 	require.NoError(t, err)
 
 	rec := usageCall(t, f, "", http.MethodPost, "/v1/usage/profiles", map[string]any{"name": "default", "rules": []any{budgetRule}})
@@ -88,8 +88,17 @@ func TestUsageRulesAPI_ManageAndRead(t *testing.T) {
 			ProfileName string `json:"profile_name"`
 		} `json:"assignments"`
 		Overrides []db.UsageAgentOverride `json:"overrides"`
+		Groups    []string                `json:"groups"`
+		Agents    []struct {
+			ID string `json:"id"`
+		} `json:"agents"`
+		Windows []string `json:"windows"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &overview))
+	assert.Equal(t, []string{"alpha"}, overview.Groups, "the editor offers the groups to assign to")
+	require.NotEmpty(t, overview.Agents)
+	assert.Equal(t, workerAgent, overview.Agents[0].ID)
+	assert.NotNil(t, overview.Windows)
 	require.Len(t, overview.Profiles, 1)
 	require.Len(t, overview.Limits, 1)
 	assert.Equal(t, "alpha", overview.Limits[0].Group)

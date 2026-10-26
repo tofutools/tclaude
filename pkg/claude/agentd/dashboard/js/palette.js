@@ -61,6 +61,7 @@ import { buildProfileSpawnCommands } from './palette-spawn.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 import { openGroupImport, openSnapshots, openTemplatesManageModal } from './modal-templates.js';
 import { openSandboxProfilesManageModal } from './sandbox-profiles.js';
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
@@ -502,6 +503,13 @@ export function buildCommands(snapshot) {
     keywords: 'sandbox profiles profile manage policy filesystem environment network launch security'
       + ' wards ward protections boundaries realm',
     run: () => openSandboxProfilesManageModal(),
+  });
+  cmds.push({
+    icon: '💰', label: wiz('Manage usage limits & budgets…', 'Manage coffer wards & tithes…'),
+    hint: wiz('spend caps, quota guards, per-agent usage profiles and their alerts',
+      'caps on the coffers, mana guards and per-familiar tithes'),
+    keywords: 'usage limits budgets budget spend cap alert alerts cost costs quota profile profiles wrap up hard stop block spawn',
+    run: () => openUsageRulesManager(),
   });
   cmds.push({
     icon: '⇄', label: wiz('Manage cross-harness spawns…', 'Manage cross-realm summons…'),
