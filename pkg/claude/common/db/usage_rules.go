@@ -463,14 +463,16 @@ func ListUsageRuleFiringsSince(since time.Time) ([]UsageRuleFiring, error) {
 	return out, rows.Err()
 }
 
-// UsageRuleFiringTimes returns when each step key fired for one (rule,
-// subject, period) — the anchors for timer-based reminders.
+// UsageRuleFiringTimes returns when each step's base crossing fired for one
+// (rule, subject, period) — the anchors for timer-based reminders. Repeat
+// occurrences are left out.
 func UsageRuleFiringTimes(ruleKey, subject, periodKey string) (map[string]time.Time, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT step_key, fired_at FROM usage_rule_firings WHERE rule_key = ? AND subject = ? AND period_key = ?`,
+	rows, err := d.Query(`SELECT step_key, fired_at FROM usage_rule_firings
+		WHERE rule_key = ? AND subject = ? AND period_key = ? AND instr(step_key, '+') = 0`,
 		ruleKey, subject, periodKey)
 	if err != nil {
 		return nil, err
@@ -488,15 +490,17 @@ func UsageRuleFiringTimes(ruleKey, subject, periodKey string) (map[string]time.T
 	return out, rows.Err()
 }
 
-// PruneUsageRuleFirings drops firings older than before. Lifetime-period
-// firings are kept: their span never rolls over, so dropping them would
-// re-fire the step.
+// PruneUsageRuleFirings drops firings older than before. A lifetime-period
+// base crossing is kept: its span never rolls over, so dropping it would
+// re-fire the step. Repeats can go: their occurrence numbers only grow, so a
+// pruned one is never owed again.
 func PruneUsageRuleFirings(before time.Time) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`DELETE FROM usage_rule_firings WHERE fired_at < ? AND period_key NOT LIKE 'lifetime|%'`, dbTimeBoundary(before))
+	res, err := d.Exec(`DELETE FROM usage_rule_firings
+		WHERE fired_at < ? AND (period_key NOT LIKE 'lifetime|%' OR instr(step_key, '+') > 0)`, dbTimeBoundary(before))
 	if err != nil {
 		return 0, err
 	}
@@ -522,6 +526,32 @@ func AgentIDsByConv() (map[string]string, error) {
 			return nil, err
 		}
 		out[conv] = agent
+	}
+	return out, rows.Err()
+}
+
+// ListUsageRuleFiringsForSubject returns one (rule, subject)'s most recent
+// firings, newest first.
+func ListUsageRuleFiringsForSubject(ruleKey, subject string) ([]UsageRuleFiring, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT rule_key, subject, period_key, step_key, action, rule_name, value, budget, dry_run, fired_at
+		FROM usage_rule_firings WHERE rule_key = ? AND subject = ? ORDER BY fired_at DESC LIMIT 64`, ruleKey, subject)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []UsageRuleFiring
+	for rows.Next() {
+		var f UsageRuleFiring
+		var at dbTimestamp
+		if err := rows.Scan(&f.RuleKey, &f.Subject, &f.PeriodKey, &f.StepKey, &f.Action, &f.RuleName, &f.Value, &f.Budget, &f.DryRun, &at); err != nil {
+			return nil, err
+		}
+		f.FiredAt = at.time
+		out = append(out, f)
 	}
 	return out, rows.Err()
 }

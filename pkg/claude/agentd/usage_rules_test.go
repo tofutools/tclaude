@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"sort"
 	"sync"
 	"testing"
@@ -237,4 +238,78 @@ func TestUsageRules_BudgetChangeRearms(t *testing.T) {
 	require.NoError(t, err)
 	pollUsageRules(time.Now())
 	require.Equal(t, []string{`Usage budget: 50% of "budget"`, `Usage budget: 60% of "budget"`}, f.agentSubjects("conv-a"))
+}
+
+func TestUsageRules_OfflineAgentStepsWaitForResume(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 13)
+	delete(f.alive, "tmux-conv-a")
+	p := profileWith(t, "default", ladderRule())
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{p.ID}, ""))
+	pollUsageRules(time.Now())
+	require.Empty(t, f.agentSubjects("conv-a"))
+	require.Empty(t, f.operatorSubjects())
+
+	f.alive["tmux-conv-a"] = struct{}{}
+	pollUsageRules(time.Now())
+	require.Equal(t, []string{"conv-a"}, f.stopped, "a hard stop crossed while offline applies on resume")
+}
+
+func TestUsageRules_LivenessErrorSkipsTick(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 13)
+	p := profileWith(t, "default", ladderRule())
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{p.ID}, ""))
+	usageRulesLiveSessions = func() (map[string]struct{}, error) { return nil, errors.New("tmux down") }
+	pollUsageRules(time.Now())
+	firings, err := db.ListUsageRuleFiringsSince(time.Time{})
+	require.NoError(t, err)
+	require.Empty(t, firings, "nothing is used up while liveness is unknown")
+	usageRulesLiveSessions = func() (map[string]struct{}, error) { return f.alive, nil }
+	pollUsageRules(time.Now())
+	require.Equal(t, []string{"conv-a"}, f.stopped)
+}
+
+func TestUsageRules_JumpSendsOneMessagePerStep(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 9.5)
+	r := usagerules.Rule{Name: "nag", Period: usagerules.PeriodDay, Budget: 10, Steps: []usagerules.Step{
+		{At: 50, Notify: []usagerules.Target{usagerules.TargetAgent}, RepeatEveryPct: 10},
+	}}
+	p := profileWith(t, "default", r)
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{p.ID}, ""))
+	pollUsageRules(time.Now())
+	require.Len(t, f.agentSubjects("conv-a"), 1)
+	f.setCost("conv-a", 10.1)
+	pollUsageRules(time.Now())
+	require.Len(t, f.agentSubjects("conv-a"), 2, "the next repeat mark sends again")
+}
+
+func TestUsageRules_DryRunOffRearms(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 13)
+	r := ladderRule()
+	r.DryRun = true
+	p := profileWith(t, "default", r)
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{p.ID}, ""))
+	pollUsageRules(time.Now())
+	require.Empty(t, f.stopped)
+	p.Rules[0].DryRun = false
+	_, err := db.UpdateUsageProfile(p)
+	require.NoError(t, err)
+	pollUsageRules(time.Now())
+	require.Equal(t, []string{"conv-a"}, f.stopped)
+}
+
+func TestUsageRules_WindowResetJitterKeepsOneLadder(t *testing.T) {
+	setupTestDB(t)
+	st := &usageRulesState{now: time.Now()}
+	target := usageRuleTarget{ruleKey: "limit:1", subject: "global"}
+	first := time.Date(2026, 10, 28, 17, 59, 59, 900_000_000, time.UTC)
+	key := st.windowPeriodKey(target, first)
+	ok, err := db.InsertUsageRuleFiring(db.UsageRuleFiring{RuleKey: "limit:1", Subject: "global", PeriodKey: key + "|b=100", StepKey: "notify@80", Action: "notify"}, nil)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, key, st.windowPeriodKey(target, first.Add(600*time.Millisecond)))
+	require.NotEqual(t, key, st.windowPeriodKey(target, first.Add(5*time.Hour)))
 }

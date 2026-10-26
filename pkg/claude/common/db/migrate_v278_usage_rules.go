@@ -44,16 +44,6 @@ func migrateV277toV278(d *sql.DB) error {
 		) STRICT`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_profile_assignments_profile
 			ON usage_profile_assignments(profile_id)`,
-		`CREATE TRIGGER IF NOT EXISTS usage_profile_assignments_group_gone
-			AFTER DELETE ON agent_groups BEGIN
-				DELETE FROM usage_profile_assignments
-				WHERE scope = 'group' AND scope_id = CAST(OLD.id AS TEXT);
-			END`,
-		`CREATE TRIGGER IF NOT EXISTS usage_profile_assignments_agent_gone
-			AFTER DELETE ON agents BEGIN
-				DELETE FROM usage_profile_assignments
-				WHERE scope = 'agent' AND scope_id = OLD.agent_id;
-			END`,
 		`CREATE TABLE IF NOT EXISTS usage_limits (
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
 			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group')),
@@ -92,11 +82,37 @@ func migrateV277toV278(d *sql.DB) error {
 			PRIMARY KEY (rule_key, subject, period_key, step_key)
 		) STRICT`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_rule_firings_fired ON usage_rule_firings(fired_at)`,
-		`UPDATE schema_version SET version = 278`,
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("migrate v277→v278 (usage rules): %w", err)
 		}
+	}
+	for _, trigger := range []struct{ table, sql string }{
+		{"agent_groups", `CREATE TRIGGER IF NOT EXISTS usage_profile_assignments_group_gone
+			AFTER DELETE ON agent_groups BEGIN
+				DELETE FROM usage_profile_assignments
+				WHERE scope = 'group' AND scope_id = CAST(OLD.id AS TEXT);
+			END`},
+		{"agents", `CREATE TRIGGER IF NOT EXISTS usage_profile_assignments_agent_gone
+			AFTER DELETE ON agents BEGIN
+				DELETE FROM usage_profile_assignments
+				WHERE scope = 'agent' AND scope_id = OLD.agent_id;
+			END`},
+	} {
+		// A partial DB healed by an older migration test may lack the table.
+		var haveTable int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, trigger.table).Scan(&haveTable); err != nil {
+			return fmt.Errorf("migrate v277→v278 (probe %s): %w", trigger.table, err)
+		}
+		if haveTable == 0 {
+			continue
+		}
+		if _, err := tx.Exec(trigger.sql); err != nil {
+			return fmt.Errorf("migrate v277→v278 (usage rules): %w", err)
+		}
+	}
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 278`); err != nil {
+		return fmt.Errorf("migrate v277→v278 (version): %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("migrate v277→v278 (commit): %w", err)

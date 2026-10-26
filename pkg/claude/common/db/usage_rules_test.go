@@ -115,9 +115,18 @@ func TestUsageRuleFiringsDedupeAndPrune(t *testing.T) {
 	require.NoError(t, err)
 	require.WithinDuration(t, old, times["notify@50"], time.Millisecond)
 
+	repeat := life
+	repeat.StepKey = "notify@50+t3"
+	ok, err = InsertUsageRuleFiring(repeat, nil)
+	require.NoError(t, err)
+	require.True(t, ok)
+	times, err = UsageRuleFiringTimes("limit:1", "agt_x", "lifetime|b=20")
+	require.NoError(t, err)
+	require.Len(t, times, 1, "repeats are not anchors")
+
 	n, err := PruneUsageRuleFirings(time.Now().Add(-120 * 24 * time.Hour))
 	require.NoError(t, err)
-	require.Equal(t, int64(1), n)
+	require.Equal(t, int64(2), n, "the old monthly firing and the old lifetime repeat")
 	rest, err := ListUsageRuleFiringsSince(time.Time{})
 	require.NoError(t, err)
 	require.Len(t, rest, 1)

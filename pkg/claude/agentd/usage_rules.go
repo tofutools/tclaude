@@ -103,8 +103,8 @@ type usageRulesState struct {
 	groupsOf    map[string][]int64   // agent id → group ids
 	members     map[int64][]string   // group id → agent ids
 	groupNames  map[int64]string     // group id → name
-	alive       map[string]struct{}  // live tmux sessions; nil until needed
-	spend       *usageSpend          // nil until needed
+	alive       map[string]struct{}  // live tmux sessions
+	spend       *usageSpend          // the counted cost ledger
 	windows     []accountUsageWindow // nil until needed
 	windowsRead bool
 }
@@ -200,6 +200,12 @@ func loadUsageRulesState(now time.Time) (*usageRulesState, error) {
 		return nil, err
 	}
 	st.spend = newUsageSpend(mixedCostDeltasFromRows(rows), agentByConv)
+	// Liveness gates every agent-directed action. Without it a firing could
+	// be recorded (and so used up) without reaching anyone, so a failed
+	// listing skips the whole tick rather than evaluating blind.
+	if st.alive, err = usageRulesLiveSessions(); err != nil {
+		return nil, fmt.Errorf("list live sessions: %w", err)
+	}
 	return st, nil
 }
 
@@ -254,6 +260,12 @@ func (st *usageRulesState) evaluateAgents() {
 		if a == nil || a.CurrentConvID == "" {
 			continue // retired or unknown: nothing left to act on
 		}
+		if !isConvOnlineIn(a.CurrentConvID, st.alive) {
+			// A stopped agent spends nothing. Its due steps wait until it
+			// runs again, so a wrap-up or hard stop crossed while it was
+			// offline (late cost reports) still applies on resume.
+			continue
+		}
 		profiles, _ := effectiveUsageProfiles(agentID, st.groupsOf[agentID], st.assignments, st.profiles)
 		for _, p := range profiles {
 			for _, r := range p.Rules {
@@ -301,7 +313,7 @@ func (st *usageRulesState) evaluateLimit(l *db.UsageLimit) {
 			return // no current reading: never act on a stale or missing quota
 		}
 		resets, _ := time.Parse(time.RFC3339Nano, w.ResetsAt)
-		st.fire(target, w.Pct, usagerules.PeriodKey(r.Period, st.now, resets))
+		st.fire(target, w.Pct, st.windowPeriodKey(target, resets))
 		return
 	}
 	from := usagerules.PeriodStartDay(r.Period, st.now)
@@ -314,6 +326,36 @@ func (st *usageRulesState) evaluateLimit(l *db.UsageLimit) {
 		}
 	}
 	st.fire(target, value, usagerules.PeriodKey(r.Period, st.now, time.Time{}))
+}
+
+// usageWindowResetTolerance is how far apart two reported reset times of one
+// quota window may be. Providers jitter them by seconds between readings.
+const usageWindowResetTolerance = 10 * time.Minute
+
+// windowPeriodKey keys a quota-window span by its reset time, reusing the key
+// of an earlier firing whose reset lies within the tolerance, so jitter
+// across a minute boundary never splits one window into two ladders.
+func (st *usageRulesState) windowPeriodKey(t usageRuleTarget, resets time.Time) string {
+	key := usagerules.PeriodKey(usagerules.PeriodWindow, st.now, resets)
+	if resets.IsZero() {
+		return key
+	}
+	firings, err := db.ListUsageRuleFiringsForSubject(t.ruleKey, t.subject)
+	if err != nil {
+		slog.Warn("usage rules: read window firings", "rule", t.ruleKey, "error", err)
+		return key
+	}
+	for _, f := range firings {
+		span, _, _ := strings.Cut(f.PeriodKey, "|")
+		prev, err := time.Parse(time.RFC3339, span)
+		if err != nil {
+			continue
+		}
+		if d := prev.Sub(resets); d <= usageWindowResetTolerance && d >= -usageWindowResetTolerance {
+			return span
+		}
+	}
+	return key
 }
 
 // window returns the current reading of a "<provider>:<window>" quota.
@@ -356,6 +398,11 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 	r := t.rule
 	budget := r.Budget
 	periodKey := period + "|b=" + formatUsageBudget(budget)
+	if r.DryRun {
+		// A dry run keeps its own ledger, so switching it off re-arms the
+		// ladder for real instead of finding every step already fired.
+		periodKey += "|dry"
+	}
 	pct := usagerules.Pct(value, budget)
 	var fired map[string]time.Time
 	baseFired := func(key string) (time.Time, bool) {
@@ -369,8 +416,15 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 		at, ok := fired[key]
 		return at, ok
 	}
+	firedNow := map[string]bool{}
 	for _, f := range usagerules.Due(r, pct, st.now, baseFired) {
-		msg := usageRuleOperatorMessage(st, t, f, value, pct)
+		// A repeat owed in the same evaluation as its first crossing is
+		// recorded silently: the crossing's own message already says it.
+		quiet := f.Repeat && firedNow[f.Step.Key()]
+		var msg *db.HumanMessage
+		if !quiet {
+			msg = usageRuleOperatorMessage(st, t, f, value, pct)
+		}
 		inserted, err := db.InsertUsageRuleFiring(db.UsageRuleFiring{
 			RuleKey: t.ruleKey, Subject: t.subject, PeriodKey: periodKey, StepKey: f.Key,
 			Action: string(f.Step.Action), RuleName: r.Name, Value: value, Budget: budget,
@@ -381,6 +435,10 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 			continue
 		}
 		if !inserted {
+			continue
+		}
+		firedNow[f.Key] = true
+		if quiet {
 			continue
 		}
 		if msg != nil {
@@ -480,7 +538,7 @@ func usageRuleOperatorMessage(st *usageRulesState, t usageRuleTarget, f usagerul
 	if r.Metric != usagerules.MetricWindowPct {
 		body += " Amounts are estimates from the cost ledger."
 	}
-	return &db.HumanMessage{FromTitle: "Usage limits", Subject: subject, Body: body, CreatedAt: st.now}
+	return &db.HumanMessage{FromTitle: "Usage limits", GroupName: t.group, Subject: subject, Body: body, CreatedAt: st.now}
 }
 
 // act performs a fired step's effect on agents. Operator messages were
@@ -509,14 +567,6 @@ func (st *usageRulesState) act(t usageRuleTarget, f usagerules.Firing, value, pc
 // pane. Notices and stops only go to running agents: a stopped agent spends
 // nothing, and a backlog of stale budget notices would greet it on resume.
 func (st *usageRulesState) runningConvs(agentIDs []string) []string {
-	if st.alive == nil {
-		alive, err := usageRulesLiveSessions()
-		if err != nil {
-			slog.Warn("usage rules: list live sessions", "error", err)
-			return nil
-		}
-		st.alive = alive
-	}
 	var out []string
 	for _, id := range agentIDs {
 		a := st.agents[id]
