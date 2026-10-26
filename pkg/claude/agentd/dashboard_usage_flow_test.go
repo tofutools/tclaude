@@ -37,9 +37,9 @@ type dashUsageBudgets struct {
 type dashUsage struct {
 	UsageLimits []dashUsageLimit  `json:"usage_limits"`
 	Budgets     *dashUsageBudgets `json:"budgets"`
-	Available   bool             `json:"available"`
-	FiveHour    *dashUsageWin    `json:"five_hour"`
-	SevenDay    *dashUsageWin    `json:"seven_day"`
+	Available   bool              `json:"available"`
+	FiveHour    *dashUsageWin     `json:"five_hour"`
+	SevenDay    *dashUsageWin     `json:"seven_day"`
 	// TotalCostUSD is the month-to-date API cost summed from the
 	// session_cost_daily table — independent of Available, so an
 	// API-billing account shows a dollar figure where "usage: n/a"

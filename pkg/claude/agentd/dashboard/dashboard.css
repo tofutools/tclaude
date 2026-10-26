@@ -21707,6 +21707,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .usage-extend input { width: 8em; }
 .usage-rules-evaluated { font-size: 11px; }
 .usage-agent-own { border-bottom: 0; padding-bottom: 0; }
+.usage-linked-note { flex-basis: 100%; font-size: 0.85em; }
 .usage-profile-chip:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
 .agent-budget-badge { border: 0; font: inherit; font-size: 11px; padding: 0 5px; border-radius: 8px; margin-left: 5px; cursor: pointer; font-variant-numeric: tabular-nums; }
 .agent-budget-badge.ok { color: #3fb950; background: #12261a; }

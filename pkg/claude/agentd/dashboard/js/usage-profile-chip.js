@@ -39,16 +39,23 @@ function groupLimitLine(snapshot, group) {
 // sandbox-profile chips: the global default usage profile in the toolbar
 // (scope "global") or a group's usage profiles on its row (scope "group").
 // One profile is picked inline; several, or anything else, open the manager.
-export function UsageProfileChip({ scope, group = null, className = '', snapshot = dashboardState.snapshot,
-  api = usageRulesApi, onChanged = refreshSnapshot }) {
+//
+// target is the group's own name (a merged view suffixes it "@node"). editor,
+// on a group row, joins the row's inline-editor state ({active, begin(el),
+// end(restoreFocus)}), so the header stops dragging and other editors close
+// while the picker is open.
+export function UsageProfileChip({ scope, group = null, target = group?.name || '', className = '', editor = null,
+  snapshot = dashboardState.snapshot, api = usageRulesApi, onChanged = refreshSnapshot }) {
   const snap = snapshot.value;
   const budgets = budgetsOf(snap);
   // Usage rules are this node's own; a peer's page has no manager for them.
   const remote = Boolean(globalThis.__tclaudeRemoteNode?.id);
   const profiles = budgets?.profiles || [];
   const names = assignedUsageProfiles(budgets, scope, group);
-  const [editing, setEditing] = useState(false);
+  const [localEditing, setLocalEditing] = useState(false);
+  const editing = editor ? editor.active : localEditing;
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const selectRef = useRef(null);
   const triggerRef = useRef(null);
   const restoreFocus = useRef(false);
@@ -56,35 +63,41 @@ export function UsageProfileChip({ scope, group = null, className = '', snapshot
     if (editing) selectRef.current?.focus();
     else if (restoreFocus.current) { restoreFocus.current = false; triggerRef.current?.focus(); }
   }, [editing]);
+  const begin = (el) => (editor ? editor.begin(el) : setLocalEditing(true));
+  const end = (restore) => {
+    if (restore) restoreFocus.current = true;
+    if (editor) editor.end(restore); else setLocalEditing(false);
+  };
   const where = scope === 'global' ? 'Global default usage profile' : `Usage profiles for ${group?.name}`;
   const role = scope === 'global'
     ? 'budgets every agent whose group has none of its own'
     : "budgets each member of this group, replacing the global default; a spawn profile's usage profiles add to it";
-  const close = () => { restoreFocus.current = true; setEditing(false); };
+  const close = () => end(true);
   if (remote) return null;
   if (editing) {
     const current = names.length > 1 ? SEVERAL : names[0] || '';
     return html`<select ref=${selectRef} class="group-default-profile-select usage-profile-select" value=${current} disabled=${busy}
       aria-label=${where}
       onKeyDown=${(event) => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}
-      onBlur=${() => { if (!busy) setEditing(false); }}
+      onBlur=${() => { if (!busyRef.current) end(false); }}
       onChange=${async (event) => {
         const value = event.currentTarget.value;
         if (value === current) { close(); return; }
         if (value === MANAGE || value === NEW || value === SEVERAL) {
-          setEditing(false);
+          end(false);
           openUsageRulesManager({ tab: value === NEW ? 'profiles' : 'assignments' });
           return;
         }
+        busyRef.current = true;
         setBusy(true);
         try {
-          await api.assign(scope, scope === 'group' ? group.name : '', value ? [value] : []);
+          await api.assign(scope, scope === 'group' ? target : '', value ? [value] : []);
           shellToast(value ? `${where}: ${value}` : `${where} cleared`);
           await onChanged();
           close();
         } catch (cause) {
           shellToast(cause.message, true);
-        } finally { setBusy(false); }
+        } finally { busyRef.current = false; setBusy(false); }
       }}>
       <option value=${NEW}>＋ new usage profile…</option>
       <option value="">${scope === 'global' ? '(none)' : '(none — no group layer)'}</option>
@@ -98,10 +111,10 @@ export function UsageProfileChip({ scope, group = null, className = '', snapshot
     .filter(Boolean).join('\n');
   return html`<span ref=${triggerRef} class=${`${className} usage-profile-chip${names.length ? '' : ' unset'}`} tabindex="0" role="button"
     data-usage-scope=${scope} data-group=${group?.name} title=${title} aria-label=${title}
-    onClick=${(event) => { event.preventDefault(); event.stopPropagation(); setEditing(true); }}
+    onClick=${(event) => { event.preventDefault(); event.stopPropagation(); begin(event.currentTarget); }}
     onKeyDown=${(event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault(); event.stopPropagation(); setEditing(true);
+      event.preventDefault(); event.stopPropagation(); begin(event.currentTarget);
     }}
   ><span class="group-profile-icon">💰</span><span class="qo-text">${names.length ? ` ${names.join(', ')}` : ''}</span></span>`;
 }

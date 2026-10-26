@@ -152,3 +152,14 @@ test('profile editor builds the rules body', async (t) => {
   assert.match(host.querySelector('[role="alert"]').textContent, /give the profile a name/);
   await mounted.unmount();
 });
+
+test('agent assignments separate own profiles from spawn-profile-linked ones', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/usage-rules-model.js');
+  const assignments = [
+    { scope: 'agent', scope_id: 'a1', profile_name: 'own', source: 'operator' },
+    { scope: 'agent', scope_id: 'a1', profile_name: 'linked', source: 'spawn profile dev' },
+  ];
+  assert.deepEqual(model.assignedNames(assignments, 'agent', 'a1'), ['own']);
+  assert.deepEqual(model.linkedNames(assignments, 'a1'), { names: ['linked'], from: 'dev' });
+});

@@ -237,8 +237,16 @@ func ListUsageProfileAssignments() ([]UsageProfileAssignment, error) {
 // UsageGroupScopeID is a group's assignment scope id.
 func UsageGroupScopeID(groupID int64) string { return strconv.FormatInt(groupID, 10) }
 
+// UsageLinkedSourcePrefix marks an agent assignment copied from a spawn
+// profile's link ("spawn profile <name>"). Such assignments add to the
+// agent's inherited layer; an agent's other assignments replace it. Each
+// kind is set on its own, so editing one never rewrites the other.
+const UsageLinkedSourcePrefix = "spawn profile "
+
 // SetUsageProfileAssignments replaces the set of profiles assigned at one
-// layer. An empty set clears the layer, so the next layer out applies.
+// layer. An empty set clears the layer, so the next layer out applies. For
+// an agent, linked (UsageLinkedSourcePrefix) and own assignments are
+// separate sets: source picks which one is replaced.
 func SetUsageProfileAssignments(scope, scopeID string, profileIDs []int64, source string) error {
 	switch scope {
 	case UsageScopeGlobal:
@@ -259,7 +267,15 @@ func SetUsageProfileAssignments(scope, scopeID string, profileIDs []int64, sourc
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM usage_profile_assignments WHERE scope = ? AND scope_id = ?`, scope, scopeID); err != nil {
+	del := `DELETE FROM usage_profile_assignments WHERE scope = ? AND scope_id = ?`
+	if scope == UsageScopeAgent {
+		del += ` AND (substr(source, 1, ?) = ?) = ?`
+	}
+	args := []any{scope, scopeID}
+	if scope == UsageScopeAgent {
+		args = append(args, len(UsageLinkedSourcePrefix), UsageLinkedSourcePrefix, strings.HasPrefix(source, UsageLinkedSourcePrefix))
+	}
+	if _, err := tx.Exec(del, args...); err != nil {
 		return err
 	}
 	now := dbTime(time.Now())

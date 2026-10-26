@@ -310,10 +310,13 @@ function libraryOps(key) {
 
 // Usage profiles live in the usage rules store; the global default is their
 // global-layer assignment, which the ★ sets to that one profile.
-async function setUsageDefault(name) {
+// toggleUsageDefault adds a profile to the global default layer or takes it
+// out, leaving any other global profiles in place.
+async function toggleUsageDefault(name, current, isDefault) {
+  const next = isDefault ? current.filter((n) => n !== name) : [...current, name];
   try {
-    await usageRulesApi.assign('global', '', name ? [name] : []);
-    toast(name ? `global default usage profile → ${name}` : 'global default usage profile cleared');
+    await usageRulesApi.assign('global', '', next);
+    toast(isDefault ? `${name} removed from the global default usage profiles` : `${name} added to the global default usage profiles`);
     await refresh();
   } catch (error) {
     toast(error.message || String(error), true);
@@ -602,7 +605,7 @@ export const dockSections = Object.freeze([
     onNew: () => openUsageRulesManager({ tab: 'profiles', newProfile: true }),
     searchWords: ['usage profiles', 'budgets', 'tithes'],
     isDefault: (p, snap) => (snap?.usage?.budgets?.global || []).includes(p.name),
-    onToggleDefault: (p, isDefault) => setUsageDefault(isDefault ? '' : p.name),
+    onToggleDefault: (p, isDefault) => toggleUsageDefault(p.name, lastSnapshot?.usage?.budgets?.global || [], isDefault),
   },
 ]);
 

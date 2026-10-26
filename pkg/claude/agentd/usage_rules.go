@@ -298,7 +298,7 @@ const usageLinkedLayer = "spawn_profile"
 
 // usageLinkedSourcePrefix marks an agent assignment copied from a spawn
 // profile link (applySpawnUsageProfiles).
-const usageLinkedSourcePrefix = "spawn profile "
+const usageLinkedSourcePrefix = db.UsageLinkedSourcePrefix
 
 // effectiveUsageProfiles resolves the profiles that apply to one agent and
 // the layer they came from: "agent", "group" or "global" ("" when none), or

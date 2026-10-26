@@ -5,7 +5,7 @@ import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './manageme
 import { usageRulesApi } from './usage-rules-actions.js';
 import {
   LIMIT_PRESETS, PROFILE_PRESETS, actionsFor, agentReadings, agentTitle, assignedNames, barTone, blankRule,
-  blankStep, draftToRule, fmtAmount, metricsFor, periodsFor, profileUses, ruleSummary, ruleToDraft, snoozeActive,
+  blankStep, draftToRule, fmtAmount, linkedNames, metricsFor, periodsFor, profileUses, ruleSummary, ruleToDraft, snoozeActive,
 } from './usage-rules-model.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
@@ -144,6 +144,15 @@ function ProfilesTab({ overview, busy, onEdit }) {
   </div>`;
 }
 
+// LinkedNote names the profiles an agent's spawn profile added, which apply on
+// top of its group or global ones until it is given profiles of its own.
+function LinkedNote({ assignments, agentID }) {
+  const { names, from } = linkedNames(assignments, agentID);
+  if (!names.length) return null;
+  return html`<div class="usage-linked-note muted" title="Copied from the spawn profile at spawn; they add to the group or global profiles, and step aside while the agent has profiles of its own">
+    From spawn profile ${from}: ${names.join(', ')} (adds to its group or global profiles)</div>`;
+}
+
 // ProfileChips picks the ordered profile set for one assignment layer and
 // saves it at once.
 export function ProfileChips({ names, profiles, disabled, onChange, label }) {
@@ -170,6 +179,7 @@ function AssignmentsTab({ overview, busy, onAssign }) {
       <span class="usage-assign-target">${title}${sub ? html` <span class="muted">${sub}</span>` : null}</span>
       <${ProfileChips} names=${names} profiles=${profiles} disabled=${busy} label=${title}
         onChange=${(next) => onAssign(scope, target, next)}/>
+      ${scope === 'agent' ? html`<${LinkedNote} assignments=${overview.assignments} agentID=${target}/>` : null}
     </div>`;
   };
   const agentRows = [...new Set((overview.assignments || []).filter((a) => a.scope === 'agent').map((a) => a.scope_id))];
@@ -250,6 +260,7 @@ function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocu
           <${ProfileChips} names=${assignedNames(overview.assignments, 'agent', entry.agentID)} profiles=${overview.profiles || []}
             disabled=${busy} label=${entry.title || entry.agentID} onChange=${(next) => onAssign('agent', entry.agentID, next)}/>
         </div>
+        <${LinkedNote} assignments=${overview.assignments} agentID=${entry.agentID}/>
       </div>`;
     }) : html`<div class="template-empty">No agent is under a usage profile yet. Assign one on the Assignments tab.</div>`}
   </div>`;

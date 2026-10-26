@@ -935,7 +935,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
     <${FastModeMenuItem} member=${member} />
     <${MenuButton} member=${member} group=${group} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
-    ${member.agent_id && !snapshot?.peer_view && !(group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} group=${group} act="usage-budget" attrs=${{ onClick: (event) => {
+    ${member.agent_id && !snapshot?.peer_view && !(group?.fleet_node && !group.fleet_node.local) && !(member.fleet_node?.id && !isPageNode(member.fleet_node.id)) ? html`<${MenuButton} member=${member} group=${group} act="usage-budget" attrs=${{ onClick: (event) => {
       event.preventDefault();
       event.stopPropagation();
       interactions.closeMenu(true);

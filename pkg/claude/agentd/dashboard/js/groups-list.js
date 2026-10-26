@@ -417,6 +417,20 @@ function GroupLinkChips({ group, snapshot }) {
   return html`<span class="group-link-chips" tabindex="0" role="button" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${outgoing.map((link) => chip(link, 'out'))}${incoming.map((link) => chip(link, 'in'))}</span></span>`;
 }
 
+// GroupUsageProfileChip is the row's 💰 picker, joined to the row's
+// inline-editor state like the 🧠/🛡 chips and addressed by the group's own
+// name (a merged view shows it as name@node).
+function GroupUsageProfileChip({ group }) {
+  const interactions = useGroupsInteractions();
+  const editorKey = `group:${group.name}:usage_profile`;
+  const editor = {
+    active: interactions.editorKey === editorKey,
+    begin: (el) => interactions.beginEditor(editorKey, el),
+    end: (restore) => interactions.endEditor(editorKey, restore),
+  };
+  return html`<${UsageProfileChip} scope="group" group=${group} target=${fleetOwnName(group)} editor=${editor} className="group-usage-profile" />`;
+}
+
 // fleetOwnName is a merged-view group's name as its own node names it.
 function fleetOwnName(group) {
   const at = `@${group.fleet_node?.name}`;
@@ -502,7 +516,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
     ${away ? html`<span class="group-away-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
-    ${!group.fleet_node || group.fleet_node.local ? html`<${UsageProfileChip} scope="group" group=${group} className="group-usage-profile" />` : null}
+    ${!group.fleet_node || group.fleet_node.local ? html`<${GroupUsageProfileChip} group=${group} />` : null}
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />
     <${GroupFederationMarker} group=${group} />
     ${snapshot?.group_attachments_mode === 'fixed'

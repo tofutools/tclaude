@@ -140,3 +140,34 @@ func TestUsageRuleFiringsDedupeAndPrune(t *testing.T) {
 		require.NotContains(t, f.StepKey, "+t")
 	}
 }
+
+// An agent's own and spawn-profile-linked assignments are separate sets:
+// replacing one leaves the other.
+func TestUsageAgentAssignmentsKeepOwnAndLinkedApart(t *testing.T) {
+	setupTestDB(t)
+	var ids []int64
+	for _, name := range []string{"own", "linked", "other"} {
+		p := &UsageProfile{Name: name, Rules: []usagerules.Rule{{Name: "b", Period: usagerules.PeriodDay, Budget: 1,
+			Steps: []usagerules.Step{{At: 100, Action: usagerules.ActionWrapUp}}}}}
+		require.NoError(t, CreateUsageProfile(p))
+		ids = append(ids, p.ID)
+	}
+	agentRows := func() map[int64]string {
+		all, err := ListUsageProfileAssignments()
+		require.NoError(t, err)
+		out := map[int64]string{}
+		for _, a := range all {
+			if a.Scope == UsageScopeAgent && a.ScopeID == "agt_1" {
+				out[a.ProfileID] = a.Source
+			}
+		}
+		return out
+	}
+	require.NoError(t, SetUsageProfileAssignments(UsageScopeAgent, "agt_1", []int64{ids[1]}, UsageLinkedSourcePrefix+"reviewer"))
+	require.NoError(t, SetUsageProfileAssignments(UsageScopeAgent, "agt_1", []int64{ids[0]}, ""))
+	require.Equal(t, map[int64]string{ids[0]: "", ids[1]: UsageLinkedSourcePrefix + "reviewer"}, agentRows())
+	require.NoError(t, SetUsageProfileAssignments(UsageScopeAgent, "agt_1", []int64{ids[2]}, "spawn"))
+	require.Equal(t, map[int64]string{ids[2]: "spawn", ids[1]: UsageLinkedSourcePrefix + "reviewer"}, agentRows(), "own replaced, link kept")
+	require.NoError(t, SetUsageProfileAssignments(UsageScopeAgent, "agt_1", nil, ""))
+	require.Equal(t, map[int64]string{ids[1]: UsageLinkedSourcePrefix + "reviewer"}, agentRows(), "clearing own leaves the link")
+}
