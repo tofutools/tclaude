@@ -143,6 +143,7 @@ func maybeRefreshUsage() {
 		return
 	}
 	pollSpendLimits(cfg)
+	pollUsageRules(time.Now())
 	if !cfg.PollAnthropicUsageAPI() {
 		return
 	}
