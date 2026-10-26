@@ -209,3 +209,40 @@ func TestUsageLimits_CloneKeepsProfilesAndHonorsBlock(t *testing.T) {
 	require.Equal(t, http.StatusConflict, resp.Code, "body=%s", resp.Raw)
 	assert.Contains(t, string(resp.Raw), "usage_limit_reached")
 }
+
+// Scenario: the snapshot carries the compact usage-profile view behind the
+// toolbar and group-row 💰 pickers and each agent row's budget badge.
+func TestUsageLimits_SnapshotBudgets(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetHumanMessageNotifierForTest(func(_, _, _, _, _ string) {}))
+	snap := fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
+	assert.Nil(t, snap.Usage.Budgets, "no usage profiles, no budgets view")
+
+	f.HaveGroup("alpha")
+	alpha, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	const worker = "wrkr-aaaa-bbbb-cccc-111111111111"
+	f.HaveMember("alpha", worker)
+	agentID, _, err := db.EnsureAgentForConv(worker, "spawn")
+	require.NoError(t, err)
+	seedAgentCostSession(t, "worker-session", worker, 15)
+	mk := func(name string, budget float64) *db.UsageProfile {
+		p := &db.UsageProfile{Name: name, Rules: []usagerules.Rule{{Name: "budget", Period: usagerules.PeriodLifetime, Budget: budget,
+			Steps: []usagerules.Step{{At: 200, Notify: []usagerules.Target{usagerules.TargetOperator}}}}}}
+		require.NoError(t, db.CreateUsageProfile(p))
+		return p
+	}
+	standard, strict := mk("standard", 100), mk("strict", 20)
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{standard.ID}, ""))
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGroup, db.UsageGroupScopeID(alpha.ID), []int64{strict.ID}, ""))
+	agentd.PollUsageRulesForTest(time.Now())
+
+	snap = fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
+	require.NotNil(t, snap.Usage.Budgets)
+	assert.Len(t, snap.Usage.Budgets.Profiles, 2)
+	assert.Equal(t, []string{"standard"}, snap.Usage.Budgets.Global)
+	assert.Equal(t, []string{"strict"}, snap.Usage.Budgets.Groups[db.UsageGroupScopeID(alpha.ID)])
+	require.Contains(t, snap.Usage.Budgets.Agents, agentID)
+	assert.InDelta(t, 75, snap.Usage.Budgets.Agents[agentID].Pct, 0.01, "$15 of the group's $20")
+}

@@ -58,6 +58,9 @@ import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, delet
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
 import { openPresetCloneDialog } from './action-dialog-controller.js';
 import { managementController } from './management-controller.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
+import { usageRulesApi } from './usage-rules-actions.js';
+import { fmtAmount, periodLabel, ruleSummary } from './usage-rules-model.js';
 import { loadSandboxProfiles, sandboxProfileForWire, sandboxProfileSummary } from './sandbox-profiles-data.js';
 import { downloadBlob } from './paf-model.js';
 import { announceNodeChanged, selfNodeID } from './node-api.js';
@@ -305,6 +308,38 @@ function libraryOps(key) {
   };
 }
 
+// Usage profiles live in the usage rules store; the global default is their
+// global-layer assignment, which the ★ sets to that one profile.
+// toggleUsageDefault adds a profile to the global default layer or takes it
+// out, leaving any other global profiles in place.
+async function toggleUsageDefault(name, current, isDefault) {
+  const next = isDefault ? current.filter((n) => n !== name) : [...current, name];
+  try {
+    await usageRulesApi.assign('global', '', next);
+    toast(isDefault ? `${name} removed from the global default usage profiles` : `${name} added to the global default usage profiles`);
+    await refresh();
+  } catch (error) {
+    toast(error.message || String(error), true);
+  }
+}
+
+async function removeUsageProfile(p) {
+  const ok = await confirmModal({
+    title: 'Delete usage profile?',
+    body: `Delete the usage profile "${p.name}"? Every assignment of it goes too, so the agents using it fall back to their next layer.`,
+    meta: p.name,
+    okLabel: 'Delete profile',
+  });
+  if (!ok) return;
+  try {
+    await usageRulesApi.deleteProfile(p.id);
+    toast(`usage profile deleted: ${p.name}`);
+    await refresh();
+  } catch (error) {
+    toast(error.message || String(error), true);
+  }
+}
+
 async function removeSavedPrompt(name) {
   const ok = await confirmModal({
     title: 'Delete saved prompt?',
@@ -546,6 +581,31 @@ export const dockSections = Object.freeze([
     itemPath: (name) => `/api/sandbox-profiles/${encodeURIComponent(name)}`,
     listPath: '/api/sandbox-profiles',
     ...libraryOps('sandbox_profiles'),
+  },
+  {
+    key: 'usage_profiles',
+    // Budgets for each agent; global and group limits live in the manager.
+    afterProcesses: true,
+    icon: () => wizWord('💰', '💰'),
+    title: () => wizWord('Usage profiles', 'Tithes'),
+    empty: () => wizWord('no usage profiles yet', 'no tithes yet'),
+    items: (snap) => snap?.usage?.budgets?.profiles || [],
+    name: (p) => p.name,
+    chips: (p) => (p.rules || []).slice(0, 3).map((rule) => ({
+      text: rule.metric === 'window_pct' ? `${rule.window}` : `${fmtAmount(rule.metric, rule.budget)} ${periodLabel(rule.period)}`,
+      more: false, title: `${rule.name}: ${ruleSummary(rule)}`,
+    })),
+    fullChips: (p) => (p.rules || []).map((rule) => ({ text: `${rule.name}: ${ruleSummary(rule)}`, more: false })),
+    // Assigned through the 💰 pickers, not dropped.
+    drag: false,
+    onManageItem: (p) => openUsageRulesManager({ tab: 'profiles', profile: p.id }),
+    onCloneItem: (p) => openUsageRulesManager({ tab: 'profiles', profile: p.id, clone: true }),
+    onDeleteItem: (p) => removeUsageProfile(p),
+    onManageAll: () => openUsageRulesManager({ tab: 'profiles' }),
+    onNew: () => openUsageRulesManager({ tab: 'profiles', newProfile: true }),
+    searchWords: ['usage profiles', 'budgets', 'tithes'],
+    isDefault: (p, snap) => (snap?.usage?.budgets?.global || []).includes(p.name),
+    onToggleDefault: (p, isDefault) => toggleUsageDefault(p.name, lastSnapshot?.usage?.budgets?.global || [], isDefault),
   },
 ]);
 

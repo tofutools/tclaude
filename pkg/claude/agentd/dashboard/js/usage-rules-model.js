@@ -175,11 +175,26 @@ export function ruleSummary(rule) {
   return `${measured} — ${(rule.steps || []).map(stepSummary).join(', ')}${rule.dry_run ? ' (dry run)' : ''}`;
 }
 
-// assignedNames lists the profile names assigned at one layer.
+// LINKED_SOURCE marks an agent assignment copied from a spawn profile's
+// link: it adds to the agent's group or global profiles, where the agent's
+// own assignments replace them (db.UsageLinkedSourcePrefix).
+export const LINKED_SOURCE = 'spawn profile ';
+const linked = (a) => String(a.source || '').startsWith(LINKED_SOURCE);
+
+// assignedNames lists the profile names assigned at one layer; for an agent,
+// its own assignments (linkedNames lists the linked ones).
 export function assignedNames(assignments, scope, scopeName = '') {
   return (assignments || [])
     .filter((a) => a.scope === scope && (scope === 'global' || a.scope_name === scopeName || a.scope_id === scopeName))
+    .filter((a) => scope !== 'agent' || !linked(a))
     .map((a) => a.profile_name);
+}
+
+// linkedNames lists an agent's spawn-profile-linked profiles and the spawn
+// profile they came from.
+export function linkedNames(assignments, agentID) {
+  const rows = (assignments || []).filter((a) => a.scope === 'agent' && a.scope_id === agentID && linked(a));
+  return { names: rows.map((a) => a.profile_name), from: rows[0] ? rows[0].source.slice(LINKED_SOURCE.length) : '' };
 }
 
 // profileUses names where a profile is assigned, for its card.

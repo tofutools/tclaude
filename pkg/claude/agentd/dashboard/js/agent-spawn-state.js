@@ -60,6 +60,8 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
       // so the dialog reasons about one consistent snapshot.
       sandboxImpl: Object.freeze({ ...(snapshot.sandbox_impl || {}) }),
       sandboxProfiles: Object.freeze([...(snapshot.sandbox_profiles || [])]),
+      // This node's usage profiles (budgets), for the Usage profile pick.
+      usageProfiles: Object.freeze((snapshot.usage?.budgets?.profiles || []).map((p) => p.name)),
       userDefaultModel: String(snapshot.user_default_model || ''),
       // Freeze the console target with the rest of the launch context. If the
       // operator changes the preference while this dialog is open, this spawn

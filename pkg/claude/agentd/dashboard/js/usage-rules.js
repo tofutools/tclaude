@@ -5,7 +5,7 @@ import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './manageme
 import { usageRulesApi } from './usage-rules-actions.js';
 import {
   LIMIT_PRESETS, PROFILE_PRESETS, actionsFor, agentReadings, agentTitle, assignedNames, barTone, blankRule,
-  blankStep, draftToRule, fmtAmount, metricsFor, periodsFor, profileUses, ruleSummary, ruleToDraft, snoozeActive,
+  blankStep, draftToRule, fmtAmount, linkedNames, metricsFor, periodsFor, profileUses, ruleSummary, ruleToDraft, snoozeActive,
 } from './usage-rules-model.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
@@ -144,9 +144,18 @@ function ProfilesTab({ overview, busy, onEdit }) {
   </div>`;
 }
 
+// LinkedNote names the profiles an agent's spawn profile added, which apply on
+// top of its group or global ones until it is given profiles of its own.
+function LinkedNote({ assignments, agentID }) {
+  const { names, from } = linkedNames(assignments, agentID);
+  if (!names.length) return null;
+  return html`<div class="usage-linked-note muted" title="Copied from the spawn profile at spawn; they add to the group or global profiles, and step aside while the agent has profiles of its own">
+    From spawn profile ${from}: ${names.join(', ')} (adds to its group or global profiles)</div>`;
+}
+
 // ProfileChips picks the ordered profile set for one assignment layer and
 // saves it at once.
-function ProfileChips({ names, profiles, disabled, onChange, label }) {
+export function ProfileChips({ names, profiles, disabled, onChange, label }) {
   const free = profiles.filter((p) => !names.includes(p.name));
   return html`<span class="usage-assign-chips">
     ${names.map((name) => html`<span key=${name} class="agent-spawn-role-chip">
@@ -170,6 +179,7 @@ function AssignmentsTab({ overview, busy, onAssign }) {
       <span class="usage-assign-target">${title}${sub ? html` <span class="muted">${sub}</span>` : null}</span>
       <${ProfileChips} names=${names} profiles=${profiles} disabled=${busy} label=${title}
         onChange=${(next) => onAssign(scope, target, next)}/>
+      ${scope === 'agent' ? html`<${LinkedNote} assignments=${overview.assignments} agentID=${target}/>` : null}
     </div>`;
   };
   const agentRows = [...new Set((overview.assignments || []).filter((a) => a.scope === 'agent').map((a) => a.scope_id))];
@@ -195,8 +205,13 @@ function AssignmentsTab({ overview, busy, onAssign }) {
   </div>`;
 }
 
-function AgentsTab({ overview, busy, onAdjust }) {
-  const rows = agentReadings(overview);
+function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocus }) {
+  let rows = agentReadings(overview);
+  if (focus) {
+    // Opened from an agent's row: that agent alone, even with no budget yet.
+    rows = rows.filter((entry) => entry.agentID === focus);
+    if (!rows.length) rows = [{ agentID: focus, title: agentTitle(overview, focus), statuses: [], override: null }];
+  }
   // extending: the "<agent>|<rule key>" whose extra-budget field is open.
   const [extending, setExtending] = useState('');
   const [amount, setAmount] = useState('');
@@ -211,7 +226,8 @@ function AgentsTab({ overview, busy, onAdjust }) {
     onAdjust(entry.agentID, { rule_key: status.rule_key, extra_budget: value });
   };
   return html`<div class="usage-rules-tab">
-    <p class="modal-hint">Each agent's budgets from its usage profiles. Snoozed or exempt agents keep counting but nothing fires; extra budget raises one rule for one agent.</p>
+    <p class="modal-hint">Each agent's budgets from its usage profiles. Snoozed or exempt agents keep counting but nothing fires; extra budget raises one rule for one agent.
+      ${focus ? html` <button type="button" class="tool" onClick=${onClearFocus}>show all agents</button>` : null}</p>
     ${rows.length ? rows.map((entry) => {
       const snoozed = snoozeActive(entry.override);
       const exempt = !!entry.override?.exempt;
@@ -239,6 +255,12 @@ function AgentsTab({ overview, busy, onAdjust }) {
             onClick=${() => openExtend(entry, status)}>extend…</button>`}
         </div>`)}
         ${!entry.statuses.length ? html`<div class="muted">No active budgets.${exempt ? ' Exempt.' : ''}${snoozed ? ' Snoozed.' : ''}</div>` : null}
+        <div class="usage-assign-row usage-agent-own">
+          <span class="usage-assign-target muted" title="Profiles set on this agent replace its group and global ones">Own usage profiles</span>
+          <${ProfileChips} names=${assignedNames(overview.assignments, 'agent', entry.agentID)} profiles=${overview.profiles || []}
+            disabled=${busy} label=${entry.title || entry.agentID} onChange=${(next) => onAssign('agent', entry.agentID, next)}/>
+        </div>
+        <${LinkedNote} assignments=${overview.assignments} agentID=${entry.agentID}/>
       </div>`;
     }) : html`<div class="template-empty">No agent is under a usage profile yet. Assign one on the Assignments tab.</div>`}
   </div>`;
@@ -324,6 +346,24 @@ function ProfileEditor({ profile, busy, onSave, onDelete, onCancel, onDirty }) {
   </div>`;
 }
 
+// useSpawnProfileUsageLink loads the usage profiles linked to a spawn profile
+// (empty name: a new one) for the spawn-profile editor. enabled=false skips it
+// (a custom launch, or another node's profile).
+export function useSpawnProfileUsageLink(spawnProfile, enabled = true, api = usageRulesApi) {
+  const [link, setLink] = useState({ loaded: false, profiles: [], names: [] });
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let live = true;
+    api.overview().then((overview) => {
+      if (!live) return;
+      const names = spawnProfile ? assignedNames(overview.assignments, 'spawn_profile', spawnProfile) : [];
+      setLink({ loaded: true, profiles: overview.profiles || [], names });
+    }).catch(() => { if (live) setLink({ loaded: true, profiles: [], names: [] }); });
+    return () => { live = false; };
+  }, [spawnProfile, enabled]);
+  return link;
+}
+
 // UsageRulesDialog is the "Usage limits & budgets" manager: global/group
 // limits, usage profiles, their assignments and per-agent readings.
 // descriptor.tab picks the opening tab.
@@ -333,6 +373,8 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
   const [tab, setTab] = useState(USAGE_RULE_TABS.some((t) => t.id === descriptor?.tab) ? descriptor.tab : 'limits');
   const [editing, setEditing] = useState(null); // {kind: 'limit'|'profile', item}
   const [dirty, setDirty] = useState(false);
+  const [focusAgent, setFocusAgent] = useState(descriptor?.agent || '');
+  const deepLinked = useRef(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const live = useRef(true);
@@ -344,6 +386,16 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
     } catch (cause) { if (live.current) setLoadError(cause.message); }
   };
   useEffect(() => { live.current = true; void reload(); return () => { live.current = false; }; }, []);
+  // A dock card opens straight into its profile's editor (or a new one).
+  useEffect(() => {
+    if (!overview || deepLinked.current) return;
+    deepLinked.current = true;
+    const id = Number(descriptor?.profile || 0);
+    const profile = id ? (overview.profiles || []).find((p) => p.id === id) : null;
+    if (profile) setEditing({ kind: 'profile', item: descriptor?.clone ? { ...profile, id: 0, name: `${profile.name} copy` } : profile });
+    else if (descriptor?.newProfile) { setEditing({ kind: 'profile', item: { id: 0, name: '', descr: '', rules: [blankRule('agent')] } }); setDirty(true); }
+    if (descriptor?.clone) setDirty(true);
+  }, [overview]);
   const run = async (work, done = '') => {
     if (busyRef.current) return false;
     busyRef.current = true; setBusy(true);
@@ -382,6 +434,7 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
   const adjust = (agentID, body) => void run(() => api.adjust(agentID, body));
   const switchTab = async (id) => {
     if (editing) { if (dirty && !await confirmDiscard()) return; setEditing(null); setDirty(false); }
+    setFocusAgent('');
     setTab(id);
   };
   const markDirty = () => setDirty(true);
@@ -405,7 +458,8 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
   } else if (tab === 'assignments') {
     body = html`<${AssignmentsTab} overview=${overview} busy=${busy} onAssign=${assign}/>`;
   } else {
-    body = html`<${AgentsTab} overview=${overview} busy=${busy} onAdjust=${adjust}/>`;
+    body = html`<${AgentsTab} overview=${overview} busy=${busy} onAdjust=${adjust} onAssign=${assign}
+      focus=${focusAgent} onClearFocus=${() => setFocusAgent('')}/>`;
   }
   return html`<${Overlay} id="usage-rules-modal" labelledby="usage-rules-title" dialogClass="cron-create-modal usage-rules-modal"
     onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>

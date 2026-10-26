@@ -193,8 +193,19 @@ limit that blocks spawns blocks clones too.
 
 ### Managing rules
 
-In the dashboard, **Usage limits & budgets** (the Usage tab's Limits section,
-Config → Costs, the command palette, or the limit banner) has four tabs:
+In the dashboard, usage profiles sit beside the spawn and sandbox profiles:
+
+- **💰 chips**: in the Groups toolbar for the global default, and on each
+  group row for that group's profiles, next to the 🧠 and 🛡 chips. Pick one
+  profile inline; several open the manager.
+- **Spawn dialog**: a Usage profile field, inherited by default.
+- **Spawn profile editor**: the usage profiles that profile adds to its agents.
+- **Agent rows**: a 💰 badge once an agent has used half a budget or a step
+  has fired, and a "💰 usage budget…" entry in the row menu.
+- **Dock**: a Usage profiles section with ★ for the global default.
+
+**Usage limits & budgets** (the Usage tab's Limits section, Config → Costs,
+the command palette, the limit banner, or any of the above) has four tabs:
 
 - **Limits**: global and group limits with their live readings, an enable
   toggle, and presets (monthly or daily spend cap, quota window guard).

@@ -8,6 +8,7 @@ import {
 } from './resolved-defaults.js';
 import { pickToolbarNode, toolbarNode, toolbarNodes, toolbarRefusal, toolbarTarget } from './toolbar-node.js';
 import { featureState } from './peer-view-limits.js';
+import { UsageProfileChip } from './usage-profile-chip.js';
 
 const html = htm.bind(h);
 const NEW_PROFILE = '/new-profile';
@@ -207,6 +208,13 @@ function ToolbarProfileControl({ kind, state, actions }) {
   </select>${error ? html`<span id=${errorID} class="toolbar-profile-error" role="alert" title=${error}>⚠ ${error}</span>` : null}</${Fragment}>`;
 }
 
+// ToolbarUsageProfile is the 💰 global default usage profile. Usage rules are
+// this node's own, so it hides while the toolbar acts on another node.
+function ToolbarUsageProfile() {
+  if (toolbarTarget(toolbarNode.value) || remotePage()) return null;
+  return html`<${UsageProfileChip} scope="global" className="global-usage-profile"/>`;
+}
+
 export function mountToolbarProfilePickerIsland({ profileHost, sandboxHost, state, actions, registerCleanup }) {
   let unregister = null;
   let cleaned = false;
@@ -224,7 +232,7 @@ export function mountToolbarProfilePickerIsland({ profileHost, sandboxHost, stat
   try {
     unregister = registerToolbarProfilePickerController(Object.freeze({ open: state.open, update: state.update }));
     render(html`<${ToolbarNodeChip}/><${ToolbarProfileControl} kind="profile" state=${state} actions=${actions}/>`, profileHost);
-    render(html`<${ToolbarProfileControl} kind="sandbox" state=${state} actions=${actions}/>`, sandboxHost);
+    render(html`<${ToolbarProfileControl} kind="sandbox" state=${state} actions=${actions}/><${ToolbarUsageProfile}/>`, sandboxHost);
     registerCleanup(cleanup);
   } catch (error) {
     try { cleanup(); } catch (cleanupError) {

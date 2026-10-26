@@ -151,18 +151,34 @@ func copyAgentUsageAssignments(sourceConv, cloneAgentID string) error {
 	if err != nil {
 		return err
 	}
-	var ids []int64
-	source := ""
+	// Own and linked assignments are separate sets; copy each with its source.
+	type set struct {
+		source string
+		ids    []int64
+	}
+	var own, linked set
 	for _, a := range assignments {
-		if a.Scope == db.UsageScopeAgent && a.ScopeID == sourceID {
-			ids = append(ids, a.ProfileID)
-			source = a.Source
+		if a.Scope != db.UsageScopeAgent || a.ScopeID != sourceID {
+			continue
+		}
+		s := &own
+		if strings.HasPrefix(a.Source, db.UsageLinkedSourcePrefix) {
+			s = &linked
+		}
+		if len(s.ids) == 0 {
+			s.source = a.Source
+		}
+		s.ids = append(s.ids, a.ProfileID)
+	}
+	for _, s := range []set{own, linked} {
+		if len(s.ids) == 0 {
+			continue
+		}
+		if err := db.SetUsageProfileAssignments(db.UsageScopeAgent, cloneAgentID, s.ids, s.source); err != nil {
+			return err
 		}
 	}
-	if len(ids) == 0 {
-		return nil
-	}
-	return db.SetUsageProfileAssignments(db.UsageScopeAgent, cloneAgentID, ids, source)
+	return nil
 }
 
 func usagePeriodNoun(p usagerules.Period) string {

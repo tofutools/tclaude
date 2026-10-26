@@ -296,6 +296,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     roles: current.roles,
     sandboxImpl: current.sandboxImpl,
     userDefaultModel: current.userDefaultModel,
+    usageProfiles: current.usageProfiles || [],
     defaultTerminal: current.defaultTerminal,
     normalizeNames: current.normalizeNames,
     remoteSpawn: !!(current.remote || current.target),
@@ -1669,6 +1670,17 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         : sandboxPolicy.preview}
       open=${helpOpen === 'agent-spawn-sandbox-profile'} setOpen=${setHelpOpen}
       busy=${busy || view.sandboxProfilesDisabled} />
+    ${context.usageProfiles.length && !context.remoteSpawn ? html`<${HelpField} id="agent-spawn-usage-profile" label="Usage profile"
+      title="The budget and alerts this agent runs under. Inherited: the spawn profile's usage profiles on top of the group's (else the global default). A profile picked here replaces them."
+      value=${draft.usageProfile || ''}
+      options=${[
+        { value: '', label: '— inherited (spawn profile + group / global) —' },
+        ...context.usageProfiles.map((name) => ({ value: name, label: name })),
+      ]}
+      onChange=${(event) => update('usageProfile', event.currentTarget.value)}
+      help="Usage profiles budget each agent (see Usage limits & budgets). Leave inherited unless this agent needs its own budget."
+      open=${helpOpen === 'agent-spawn-usage-profile'} setOpen=${setHelpOpen}
+      busy=${busy} />` : null}
     <div class="cron-create-row" id="agent-spawn-allow-unenforced-sandbox-row"
       hidden=${!view.showSandboxImpl}>
       <span class="cron-create-label"></span>
