@@ -311,6 +311,7 @@ type codexModels struct{}
 // through to Codex.
 var codexKnownModels = []string{
 	"gpt-6.1-sol",
+	"gpt-6.1-terra",
 	"gpt-6-astra",
 	// Prepared ahead of release; the CLI remains the authority on availability.
 	"gpt-6-sol",
