@@ -52,6 +52,11 @@ var codexModelPrices = map[string]OpenAIModelPricing{
 		Short: OpenAIModelPrice{InputPerMTok: 2.00, CachedInputPerMTok: 0.10, CacheWritePerMTok: 2.50, OutputPerMTok: 10.00},
 		Long:  &OpenAIModelPrice{InputPerMTok: 4.00, CachedInputPerMTok: 0.20, CacheWritePerMTok: 5.00, OutputPerMTok: 15.00},
 	},
+	// https://developers.openai.com/api/docs/models/gpt-6.1-terra
+	"gpt-6.1-terra": {
+		Short: OpenAIModelPrice{InputPerMTok: 1.00, CachedInputPerMTok: 0.05, CacheWritePerMTok: 1.25, OutputPerMTok: 5.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 2.00, CachedInputPerMTok: 0.10, CacheWritePerMTok: 2.50, OutputPerMTok: 7.50},
+	},
 	// https://developers.openai.com/api/docs/models/gpt-6-sol
 	"gpt-6-sol": {
 		Short: OpenAIModelPrice{InputPerMTok: 2.00, CachedInputPerMTok: 0.20, CacheWritePerMTok: 2.50, OutputPerMTok: 10.00},
