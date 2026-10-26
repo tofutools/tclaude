@@ -63,8 +63,14 @@ func TestUsageRulesAPI_ManageAndRead(t *testing.T) {
 	var limit db.UsageLimit
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &limit))
 
-	rec = usageCall(t, f, "", http.MethodPost, "/v1/usage/agents/"+worker+"/adjust", map[string]any{"snooze_minutes": 30, "rule_key": "profile:1:budget", "extra_budget": 5})
+	for _, bad := range []string{"profile:1:nope", "profile:9:budget", "budget", "profile:default"} {
+		rec = usageCall(t, f, "", http.MethodPost, "/v1/usage/agents/"+worker+"/adjust", map[string]any{"rule_key": bad, "extra_budget": 5})
+		require.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", bad, rec.Body.String())
+	}
+	rec = usageCall(t, f, "", http.MethodPost, "/v1/usage/agents/"+worker+"/adjust", map[string]any{"snooze_minutes": 30, "rule_key": "profile:default:BUDGET", "extra_budget": 5})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = usageCall(t, f, "", http.MethodPost, "/v1/usage/profiles", map[string]any{"name": "42", "rules": []any{budgetRule}})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "all-digit names are ambiguous with ids: %s", rec.Body.String())
 
 	// An agent may read, even its own view, but not change anything.
 	require.NoError(t, db.GrantAgentPermission(worker, agentd.PermUsageRead, "test"))

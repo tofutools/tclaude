@@ -293,6 +293,10 @@ func (b *usageProfileBody) validate() (*db.UsageProfile, error) {
 	if !usageProfileNameRE.MatchString(b.Name) {
 		return nil, errors.New("profile name must be 1-64 letters, digits, spaces, '_', '.' or '-'")
 	}
+	if _, err := strconv.ParseInt(b.Name, 10, 64); err == nil {
+		// Profiles are addressed by id or name; an all-digit name would be ambiguous.
+		return nil, errors.New("profile name must not be only digits")
+	}
 	if len(b.Descr) > 500 {
 		return nil, errors.New("description is limited to 500 characters")
 	}
@@ -641,11 +645,16 @@ func handleUsageAgentAdjust(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ExtraBudget != nil {
 		extra := *body.ExtraBudget
-		if !strings.HasPrefix(body.RuleKey, "profile:") || extra < 0 || extra > 1e6 || extra != extra {
-			writeError(w, http.StatusBadRequest, "invalid_extension", "extra_budget needs a usage-profile rule_key and an amount between 0 and 1000000")
+		if extra < 0 || extra > 1e6 || extra != extra {
+			writeError(w, http.StatusBadRequest, "invalid_extension", "extra_budget must be between 0 and 1000000")
 			return
 		}
-		if err := db.SetUsageBudgetExtension(agentID, body.RuleKey, extra); err != nil {
+		key, err := canonicalUsageRuleKey(body.RuleKey)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_extension", err.Error())
+			return
+		}
+		if err := db.SetUsageBudgetExtension(agentID, key, extra); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
@@ -664,6 +673,30 @@ func handleUsageAgentAdjust(w http.ResponseWriter, r *http.Request) {
 		out = &db.UsageAgentOverride{AgentID: agentID}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// canonicalUsageRuleKey checks that "profile:<id-or-name>:<rule>" names an
+// existing rule of an existing usage profile and returns the engine's key,
+// so an extension can never be stored under a key nothing reads.
+func canonicalUsageRuleKey(key string) (string, error) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(key), "profile:")
+	ref, ruleName, ok2 := strings.Cut(rest, ":")
+	if !ok || !ok2 || ref == "" || ruleName == "" {
+		return "", errors.New(`rule_key must look like "profile:<profile>:<rule>" (see the rule_key values in 'tclaude usage rules --json')`)
+	}
+	p, err := resolveUsageProfileRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if p == nil {
+		return "", fmt.Errorf("no usage profile %q", ref)
+	}
+	for _, r := range p.Rules {
+		if strings.EqualFold(r.Name, ruleName) {
+			return usageProfileRuleKey(p.ID, r.Name), nil
+		}
+	}
+	return "", fmt.Errorf("usage profile %q has no rule %q", p.Name, ruleName)
 }
 
 // resolveSpawnUsageProfiles validates a spawn's explicit usage profiles
@@ -694,7 +727,8 @@ func resolveSpawnUsageProfiles(w http.ResponseWriter, r *http.Request, refs []st
 
 // applySpawnUsageProfiles records a freshly spawned agent's own usage
 // profiles: the explicit choice, else those linked to the first of the given
-// spawn profiles (the named one, then the group default) that has any. The
+// spawn profiles (the named one, the group default, the global default) that
+// has any. The
 // copy is an agent-layer assignment, so it takes precedence over the group
 // and global defaults and later edits to the link do not move running agents.
 //

@@ -390,6 +390,9 @@ func setLimit(p *limitSetParams, out io.Writer) error {
 		body["enabled"] = p.Enable
 	}
 	if p.File == "" && p.Name == "" && len(p.Step) == 0 {
+		if p.Budget != 0 || p.Metric != "" || p.Period != "" || p.Window != "" || p.DryRun {
+			return errors.New("set replaces the whole rule: give --name and --step along with the other rule flags, or --file")
+		}
 		if len(body) == 0 {
 			return errors.New("nothing to change: give rule flags, --file, --enable or --disable")
 		}
@@ -465,6 +468,9 @@ func setProfile(p *profileSetParams, out io.Writer) error {
 	}
 	for _, existing := range data.Profiles {
 		if strings.EqualFold(existing.Name, p.Profile) {
+			if p.Descr == "" {
+				body["descr"] = existing.Descr // keep the description unless replaced
+			}
 			return daemonDo(http.MethodPut, "/v1/usage/profiles/"+url.PathEscape(existing.Name), body, out)
 		}
 	}
