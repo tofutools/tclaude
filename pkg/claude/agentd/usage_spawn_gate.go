@@ -14,7 +14,6 @@ import (
 // usageSpawnBlock is a limit currently refusing spawns.
 type usageSpawnBlock struct {
 	limit *db.UsageLimit
-	group string
 }
 
 // activeUsageSpawnBlocks lists the enabled limits whose block_spawn step has
