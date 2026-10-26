@@ -29,19 +29,30 @@ func activeUsageSpawnBlocks(groupID int64, now time.Time) ([]usageSpawnBlock, er
 		return nil, err
 	}
 	var out []usageSpawnBlock
+	statuses, _ := latestUsageRuleStatus()
 	for _, l := range limits {
-		if !l.Enabled || l.Rule.DryRun || !usageRuleHasAction(l.Rule, usagerules.ActionBlockSpawn) {
+		if !l.Enabled || l.Rule.DryRun {
 			continue
 		}
 		if l.Scope == db.UsageScopeGroup && l.GroupID != groupID {
 			continue
 		}
-		firings, err := db.ListUsageRuleFiringsForSubject(usageLimitRuleKey(l.ID), usageLimitSubject(l))
+		step := usageBlockStep(l.Rule)
+		if step == nil {
+			continue
+		}
+		// The firing proves the step was crossed this period; the latest
+		// reading can still show the value back under it (a member left a
+		// group), and then the block no longer holds.
+		if s := usageLimitStatus(statuses, l.ID); s != nil && s.Pct < step.At {
+			continue
+		}
+		periods, err := db.UsageRuleFiringPeriods(usageLimitRuleKey(l.ID), usageLimitSubject(l), step.Key())
 		if err != nil {
 			return nil, err
 		}
-		for _, f := range firings {
-			if f.Action == string(usagerules.ActionBlockSpawn) && !f.DryRun && usageFiringInCurrentPeriod(l.Rule, f.PeriodKey, now) {
+		for _, period := range periods {
+			if usageFiringInCurrentPeriod(l.Rule, period, now) {
 				out = append(out, usageSpawnBlock{limit: l})
 				break
 			}
@@ -50,13 +61,24 @@ func activeUsageSpawnBlocks(groupID int64, now time.Time) ([]usageSpawnBlock, er
 	return out, nil
 }
 
-func usageRuleHasAction(r usagerules.Rule, a usagerules.Action) bool {
-	for _, s := range r.Steps {
-		if s.Action == a {
-			return true
+// usageBlockStep is the rule's block_spawn step, or nil. Validation allows
+// at most one step per action and threshold; the lowest blocking step wins.
+func usageBlockStep(r usagerules.Rule) *usagerules.Step {
+	for i := range r.Steps {
+		if r.Steps[i].Action == usagerules.ActionBlockSpawn {
+			return &r.Steps[i]
 		}
 	}
-	return false
+	return nil
+}
+
+func usageLimitStatus(statuses []usageRuleStatus, limitID int64) *usageRuleStatus {
+	for i := range statuses {
+		if statuses[i].LimitID == limitID && statuses[i].Scope != string(usagerules.ScopeAgent) {
+			return &statuses[i]
+		}
+	}
+	return nil
 }
 
 // usageFiringInCurrentPeriod reports whether a firing's period key names the

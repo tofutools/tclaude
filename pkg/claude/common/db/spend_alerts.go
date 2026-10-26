@@ -1,6 +1,10 @@
 package db
 
-import "strconv"
+import (
+	"encoding/json"
+	"strconv"
+	"time"
+)
 
 // InsertSpendAlert atomically records a threshold and its human message. The
 // independent ledger survives message deletion and concurrent dashboard polls.
@@ -35,14 +39,29 @@ func InsertSpendAlert(period, start string, threshold int, message *HumanMessage
 // the switch does not repeat them. stepKey maps a legacy threshold to the
 // new rule's step key; periodKey is the new firing period key.
 func ImportLegacySpendLimit(l *UsageLimit, periodName, periodStart, periodKey string, stepKey func(threshold int) string) error {
-	if err := CreateUsageLimit(l); err != nil {
+	rule, err := json.Marshal(l.Rule)
+	if err != nil {
 		return err
 	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	rows, err := d.Query(`SELECT threshold FROM spend_alerts WHERE period = ? AND period_start = ?`, periodName, periodStart)
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now()
+	res, err := tx.Exec(`INSERT INTO usage_limits (scope, group_id, rule, enabled, created_at, updated_at) VALUES (?, NULL, ?, ?, ?, ?)`,
+		UsageScopeGlobal, string(rule), l.Enabled, dbTime(now), dbTime(now))
+	if err != nil {
+		return err
+	}
+	if l.ID, err = res.LastInsertId(); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT threshold FROM spend_alerts WHERE period = ? AND period_start = ?`, periodName, periodStart)
 	if err != nil {
 		return err
 	}
@@ -59,12 +78,16 @@ func ImportLegacySpendLimit(l *UsageLimit, periodName, periodStart, periodKey st
 		return err
 	}
 	for _, t := range thresholds {
-		if _, err := InsertUsageRuleFiring(UsageRuleFiring{
-			RuleKey: "limit:" + strconv.FormatInt(l.ID, 10), Subject: "global", PeriodKey: periodKey,
-			StepKey: stepKey(t), Action: "notify", RuleName: l.Rule.Name, Budget: l.Rule.Budget,
-		}, nil); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_rule_firings
+			(rule_key, subject, period_key, step_key, action, rule_name, value, budget, dry_run, fired_at)
+			VALUES (?, 'global', ?, ?, 'notify', ?, 0, ?, 0, ?)`,
+			"limit:"+strconv.FormatInt(l.ID, 10), periodKey, stepKey(t), l.Rule.Name, l.Rule.Budget, dbTime(now)); err != nil {
 			return err
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	l.Scope, l.CreatedAt, l.UpdatedAt = UsageScopeGlobal, now, now
 	return nil
 }

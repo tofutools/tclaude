@@ -133,3 +133,40 @@ func TestUsageLimits_LegacySpendLimitsConvert(t *testing.T) {
 	assert.Equal(t, "notify", snap.Usage.UsageLimits[0].Reached)
 	assert.InDelta(t, 90, snap.Usage.UsageLimits[0].Pct, 0.01)
 }
+
+// Scenario: a one-shot spawn spends too, so a block covers it; moving the
+// blocking step above the current value lifts the block.
+func TestUsageLimits_BlockCoversOneShotsAndFollowsStep(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetHumanMessageNotifierForTest(func(_, _, _, _, _ string) {}))
+	f.HaveGroup("alpha")
+	seedAgentCostSession(t, "solo-session", "solo-conv", 30)
+	l := blockSpawnLimit(t, db.UsageScopeGlobal, 0, 25)
+	agentd.PollUsageRulesForTest(time.Now())
+
+	resp := f.AsHuman().SpawnWith("alpha", map[string]any{"alias": "once", "non_interactive": true, "initial_message": "do it"})
+	require.Equal(t, http.StatusConflict, resp.Code, "body=%s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "usage_limit_reached")
+
+	l.Rule.Steps[0].At = 150
+	_, err := db.UpdateUsageLimit(l)
+	require.NoError(t, err)
+	agentd.PollUsageRulesForTest(time.Now())
+	resp = f.AsHuman().SpawnWith("alpha", map[string]any{"alias": "w1"})
+	require.Equal(t, http.StatusOK, resp.Code, "the block step moved above the value; body=%s", resp.Raw)
+}
+
+// Scenario: a legacy value typed again (or left behind by a failed config
+// save) updates the converted limit instead of adding a duplicate.
+func TestUsageLimits_LegacyConversionIsIdempotent(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetHumanMessageNotifierForTest(func(_, _, _, _, _ string) {}))
+	require.NoError(t, config.Save(&config.Config{Cost: &config.CostConfig{DailyLimitUSD: 10}}))
+	agentd.PollUsageRulesForTest(time.Now())
+	require.NoError(t, config.Save(&config.Config{Cost: &config.CostConfig{DailyLimitUSD: 20}}))
+	agentd.PollUsageRulesForTest(time.Now())
+	limits, err := db.ListUsageLimits()
+	require.NoError(t, err)
+	require.Len(t, limits, 1)
+	assert.Equal(t, 20.0, limits[0].Rule.Budget)
+}

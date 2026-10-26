@@ -5200,6 +5200,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			p.RemoteJob.Harness = p.Harness
 			p.RemoteJob.Permissions = p.PermissionOverrides
 		}
+		// One-shots bypass executeSpawn but spend just the same.
+		if failure := checkUsageSpawnBlock(g); failure != nil {
+			writeError(w, failure.Status, failure.Kind, failure.Msg)
+			return
+		}
 		result, runErr := runNonInteractiveSpawn(r.Context(), p, body.RunTimeoutSeconds)
 		if runErr != nil {
 			writeError(w, runErr.Status, runErr.Kind, runErr.Msg)

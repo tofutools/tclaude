@@ -27,6 +27,10 @@ func migrateLegacySpendLimits(now time.Time) {
 		if cfg.Cost == nil {
 			return nil
 		}
+		limits, err := db.ListUsageLimits()
+		if err != nil {
+			return err
+		}
 		for _, legacy := range []struct {
 			amount *float64
 			name   string
@@ -52,6 +56,18 @@ func migrateLegacySpendLimits(now time.Time) {
 				*legacy.amount = 0
 				continue
 			}
+			// Idempotent: a value converted before (a failed config save, or a
+			// newer value typed into the old form) updates that limit rather
+			// than adding another one.
+			if existing := legacyUsageLimit(limits, legacy.name); existing != nil {
+				existing.Rule.Budget, existing.Enabled = r.Budget, true
+				if _, err := db.UpdateUsageLimit(existing); err != nil {
+					return err
+				}
+				slog.Info("usage rules: updated the global limit converted from a legacy spend limit", "period", legacy.legacy, "budget", r.Budget)
+				*legacy.amount = 0
+				continue
+			}
 			periodKey := usagerules.PeriodKey(r.Period, now, time.Time{}) + "|b=" + formatUsageBudget(r.Budget)
 			stepKey := func(threshold int) string {
 				return usagerules.Step{At: float64(threshold), Action: usagerules.ActionNotify}.Key()
@@ -68,4 +84,13 @@ func migrateLegacySpendLimits(now time.Time) {
 	if err != nil {
 		slog.Warn("usage rules: convert legacy spend limits", "error", err)
 	}
+}
+
+func legacyUsageLimit(limits []*db.UsageLimit, name string) *db.UsageLimit {
+	for _, l := range limits {
+		if l.Scope == db.UsageScopeGlobal && l.Rule.Name == name {
+			return l
+		}
+	}
+	return nil
 }
