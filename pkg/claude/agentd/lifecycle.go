@@ -3656,6 +3656,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !validateSpawnHarnessConfig(w, r, body.HarnessConfig) {
 		return
 	}
+	spawnUsageProfiles, usageOK := resolveSpawnUsageProfiles(w, r, body.UsageProfiles)
+	if !usageOK {
+		return
+	}
 
 	// Spawn guardrails — runaway-prevention for an agent that the human
 	// granted `groups.members.spawn`. The group's hard member cap (binds the human
@@ -5217,6 +5221,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if beforeExecuteSpawnForTest != nil {
 		beforeExecuteSpawnForTest()
 	}
+	p.UsageProfileIDs, p.UsageSpawnProfile = spawnUsageProfiles, namedProfile
 	outcome, fail := executeSpawn(g, p)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
@@ -5328,10 +5333,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
-	Arrival         *arrivalContext
-	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
-	launchAuthority func() error
-	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
+	// UsageProfileIDs are the usage profiles a human chose for this agent;
+	// UsageSpawnProfile is the explicitly named spawn profile whose linked
+	// usage profiles apply otherwise (see applySpawnUsageProfiles).
+	UsageProfileIDs   []int64
+	UsageSpawnProfile *db.SpawnProfile
+	Arrival           *arrivalContext
+	RemoteJob         *federationJobLaunch // trusted internal remote job boundary
+	launchAuthority   func() error
+	BundleHistory     *bundleHistoryLaunch // trusted internal bundle route only
 	// NoLaunch enrolls the agent and installs its history without starting a
 	// session: it lands offline and starts on resume. Trusted internal bundle
 	// route only, and only with BundleHistory.
@@ -6829,6 +6839,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 	defer db.NotifyStatusChanged()
+	defer func() {
+		// Every spawn surface gets its usage profiles here, so a trigger or
+		// process worker launched through a spawn profile carries its budget
+		// just like a dashboard spawn.
+		if outcome != nil {
+			applySpawnUsageProfiles(outcome.AgentID, outcome.ConvID, p.UsageProfileIDs,
+				p.UsageSpawnProfile, groupDefaultProfile(g), globalDefaultProfile())
+		}
+	}()
 	// A usage limit's block_spawn step refuses every fresh spawn it covers,
 	// whichever surface started it (dashboard, CLI, template, trigger, waves).
 	if failure := checkUsageSpawnBlock(g); failure != nil {

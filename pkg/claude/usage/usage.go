@@ -22,7 +22,7 @@ type Params struct {
 }
 
 func Cmd() *cobra.Command {
-	return boa.CmdT[Params]{Use: "usage", Short: "Show cached account quotas and usage forecasts", Long: "Read subscription usage for all observed providers through agentd.\nIncludes sample age, resets, and forecasts; no provider API requests are made.\nAgents require usage.read. --json replaces the old raw Anthropic API format.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *Params, cmd *cobra.Command, _ []string) {
+	return boa.CmdT[Params]{Use: "usage", Short: "Show cached account quotas and usage forecasts; manage usage limits and budgets", Long: "Read subscription usage for all observed providers through agentd.\nIncludes sample age, resets, and forecasts; no provider API requests are made.\nAgents require usage.read. --json replaces the old raw Anthropic API format.\n\nSubcommands manage usage limits (global or group budgets with one shared counter) and\nusage profiles (budgets applied to each agent separately); see 'tclaude usage rules'.", ParamEnrich: common.DefaultParamEnricher(), SubCmds: RuleCmds(), RunFunc: func(p *Params, cmd *cobra.Command, _ []string) {
 		if err := runUsage(p, cmd.OutOrStdout()); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Error:", err)
 			os.Exit(1)

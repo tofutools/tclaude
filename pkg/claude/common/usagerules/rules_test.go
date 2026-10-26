@@ -99,3 +99,25 @@ func TestDue(t *testing.T) {
 	require.Equal(t, []string{"notify@50", "notify@50+t2"}, keys(Due(timed, 60, now, fired)))
 	require.Equal(t, []string{"notify@50"}, keys(Due(timed, 60, now, func(string) (time.Time, bool) { return time.Time{}, false })))
 }
+
+func TestParseStep(t *testing.T) {
+	for spec, want := range map[string]Step{
+		"50:notify:agent":                    {At: 50, Action: ActionNotify, Notify: []Target{TargetAgent}},
+		"80%:notify:agent+operator:every=5%": {At: 80, Action: ActionNotify, Notify: []Target{TargetAgent, TargetOperator}, RepeatEveryPct: 5},
+		"90:notify:operator:every=30m":       {At: 90, Action: ActionNotify, Notify: []Target{TargetOperator}, RepeatEveryMinutes: 30},
+		"100:wrap-up":                        {At: 100, Action: ActionWrapUp},
+		"110:hard_stop":                      {At: 110, Action: ActionHardStop},
+		"100:block-spawn":                    {At: 100, Action: ActionBlockSpawn},
+	} {
+		got, err := ParseStep(spec)
+		require.NoError(t, err, spec)
+		require.Equal(t, want, got, spec)
+		again, err := ParseStep(FormatStep(got))
+		require.NoError(t, err)
+		require.Equal(t, got, again, "round trip %s", spec)
+	}
+	for _, bad := range []string{"50", "x:notify", "50:notify:agent:every=5", "50:notify:agent:every=x%"} {
+		_, err := ParseStep(bad)
+		require.Error(t, err, bad)
+	}
+}

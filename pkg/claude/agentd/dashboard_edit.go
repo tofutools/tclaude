@@ -117,6 +117,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	registerDashboardTemplateRoutes(mux)
 	registerDashboardSpawnProfileRoutes(mux)
 	registerDashboardSandboxProfileRoutes(mux)
+	registerDashboardUsageRuleRoutes(mux)
 	registerDashboardRoleRoutes(mux)
 	mux.HandleFunc("/api/saved-prompts", dashboardRolesRoute(handleSavedPrompts))
 	mux.HandleFunc("/api/saved-prompts/{name}", dashboardRolesRoute(handleSavedPromptByName))

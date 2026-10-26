@@ -808,7 +808,7 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		return nil, "invalid_cwd", fmt.Sprintf("launch directory %q is unavailable", cwd)
 	}
 
-	p := spawnParams{Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
+	p := spawnParams{UsageSpawnProfile: profile, Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
 		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true}
 	includeGroup := profile.IncludeGroupDefaultContext == nil || *profile.IncludeGroupDefaultContext
 	if includeGroup {
