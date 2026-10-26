@@ -555,3 +555,28 @@ func ListUsageRuleFiringsForSubject(ruleKey, subject string) ([]UsageRuleFiring,
 	}
 	return out, rows.Err()
 }
+
+// UsageRuleFiringPeriods returns the period keys under which one step of a
+// (rule, subject) has fired for real (dry runs excluded), newest first.
+func UsageRuleFiringPeriods(ruleKey, subject, stepKey string) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT period_key FROM usage_rule_firings
+		WHERE rule_key = ? AND subject = ? AND step_key = ? AND dry_run = 0 ORDER BY fired_at DESC LIMIT 16`,
+		ruleKey, subject, stepKey)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		out = append(out, key)
+	}
+	return out, rows.Err()
+}

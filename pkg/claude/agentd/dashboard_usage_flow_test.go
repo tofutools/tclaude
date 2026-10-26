@@ -15,15 +15,15 @@ import (
 
 // dashUsage mirrors agentd.dashboardUsage — the account-wide
 // subscription usage readout the dashboard renders in its top bar.
-type dashSpendLimit struct {
-	Period    string  `json:"period"`
-	SpendUSD  float64 `json:"spend_usd"`
-	LimitUSD  float64 `json:"limit_usd"`
-	Threshold int     `json:"threshold"`
+type dashUsageLimit struct {
+	Name    string  `json:"name"`
+	Scope   string  `json:"scope"`
+	Pct     float64 `json:"pct"`
+	Reached string  `json:"reached"`
 }
 
 type dashUsage struct {
-	SpendLimits []dashSpendLimit `json:"spend_limits"`
+	UsageLimits []dashUsageLimit `json:"usage_limits"`
 	Available   bool             `json:"available"`
 	FiveHour    *dashUsageWin    `json:"five_hour"`
 	SevenDay    *dashUsageWin    `json:"seven_day"`

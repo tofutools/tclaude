@@ -5200,6 +5200,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			p.RemoteJob.Harness = p.Harness
 			p.RemoteJob.Permissions = p.PermissionOverrides
 		}
+		// One-shots bypass executeSpawn but spend just the same.
+		if failure := checkUsageSpawnBlock(g); failure != nil {
+			writeError(w, failure.Status, failure.Kind, failure.Msg)
+			return
+		}
 		result, runErr := runNonInteractiveSpawn(r.Context(), p, body.RunTimeoutSeconds)
 		if runErr != nil {
 			writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
@@ -6824,6 +6829,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 	defer db.NotifyStatusChanged()
+	// A usage limit's block_spawn step refuses every fresh spawn it covers,
+	// whichever surface started it (dashboard, CLI, template, trigger, waves).
+	if failure := checkUsageSpawnBlock(g); failure != nil {
+		return nil, failure
+	}
 	releaseCapacity, capacityFailure := acquireNodeLaunch(&p)
 	if capacityFailure != nil {
 		return nil, capacityFailure

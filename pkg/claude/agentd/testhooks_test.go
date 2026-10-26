@@ -2282,3 +2282,10 @@ func ForgetClaudeSubscriptionsForTest() {
 	claudeSubscriptions.armed = map[string]bool{}
 	claudeSubscriptions.Unlock()
 }
+
+// PollUsageRulesForTest runs one usage-rule evaluation, as the usage poller
+// tick does (legacy spend-limit conversion first).
+func PollUsageRulesForTest(now time.Time) {
+	migrateLegacySpendLimits(now)
+	pollUsageRules(now)
+}
