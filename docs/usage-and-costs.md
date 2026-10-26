@@ -100,7 +100,7 @@ skip usage recorded before the copy landed.
 
 Agents ignored from the dashboard's Costs view (the ⊘ row button) are left
 out of every summary and breakdown here, as they are from the dashboard
-totals and spend-limit alerts. Restore them from the Costs view's **Ignored**
+totals and usage limits. Restore them from the Costs view's **Ignored**
 list.
 
 An agent whose model calls went through a peer's model gateway (usage
@@ -118,29 +118,102 @@ your own account.
 Cost data covers recorded tclaude sessions, not the provider's entire invoice.
 Model attribution follows the dashboard's Costs view: each conversation/day slice uses the
 last observed model. `generated_at` is the response time, not proof that all
-sessions have recently reported costs. These queries do not enforce spending limits. Configurable alert thresholds
+sessions have recently reported costs. These queries do not enforce budgets; usage limits and budgets
 are described below.
 
-## Estimated spend limits and alerts
+## Usage limits and budgets
 
-Set **Config → Costs → Spend limits** in the dashboard, or edit the `cost`
-block in `~/.tclaude/config.json`:
+tclaude can watch spend and quota usage against budgets you set, and act as
+they fill up. There are two kinds of rule, which work differently:
 
-```json
-{"cost":{"daily_limit_usd":20,"monthly_limit_usd":300}}
+- **Limits** measure a total with **one shared counter**: the whole instance
+  (a global limit, e.g. "$500 a month"), one group's members (a group limit),
+  or a provider's account quota window (global only, e.g. Anthropic's 5-hour
+  window).
+- **Usage profiles** are named sets of **per-agent** rules. Each agent a
+  profile applies to gets **its own counter**, e.g. "any agent: tell it at
+  $5, ask it to wrap up at $15, stop it at $18".
+
+Every rule is a metric, a period, a budget and a ladder of steps:
+
+| Part | Values |
+| --- | --- |
+| Metric | `total_usd` (the Costs view's figure: recorded API spend, else the subscription-equivalent estimate), `real_usd`, `whatif_usd`, `window_pct` (global limits only) |
+| Period | `day`, `week`, `month` (daemon-local calendar), `lifetime` (usage profiles only: the agent's whole life, across reincarnations) |
+| Step | a threshold in percent of the budget plus an action |
+
+Step actions:
+
+- `notify` messages the agent (its inbox) and/or the operator (Messages,
+  plus a desktop notification when enabled). It can repeat every N percent
+  or every N minutes while the value stays above the threshold.
+- `wrap-up` asks the agent to stop starting new work, write a handoff
+  summary, send it to whoever assigned the work, and stay idle.
+- `hard-stop` kills the agent's process.
+- `block-spawn` (limits only) refuses every new spawn the limit covers,
+  including the operator's, until the period rolls over or the limit is
+  raised, disabled or removed.
+
+On a limit, agent-directed steps reach every running agent in its scope.
+Every step other than a plain agent notify also tells the operator, so
+nothing drastic happens silently. A rule in **dry run** only tells the
+operator what each step would have done.
+
+### Which usage profiles apply to an agent
+
+Profiles are assigned at layers: the **global default**, a **group**, and an
+**agent**. The nearest non-empty layer wins as a whole: the agent's own
+profiles, else the profiles of every group it belongs to (all of them apply,
+each with its own counter), else the global default. A spawn profile can
+carry usage profiles too. Spawning through it copies them onto the new agent
+as its own assignment, so they outrank the group and global defaults. A
+human can also pick a spawned agent's profiles explicitly
+(`tclaude agent spawn --usage-profile …`).
+
+### Readings, timing and edge cases
+
+- Rules are evaluated every three minutes on the daemon's usage timer, even
+  with the dashboard closed. Costs can be reported late, so leave some room
+  between a wrap-up and a hard stop.
+- A step fires once per period and budget. Raising a budget re-arms its
+  ladder at the new amount; a new period starts it over.
+- A stopped agent's steps wait until it runs again, so a hard stop crossed
+  while it was offline still applies on resume.
+- Quota-window limits act only on a current reading.
+- Ignored and peer-billed conversations do not count, as in the Costs view.
+
+### Managing rules
+
+```bash
+tclaude usage rules                       # limits, profiles, assignments, readings
+tclaude usage limit add --name monthly --period month --budget 500 \
+  --step 50:notify:operator --step 90:wrap-up --step 100:block-spawn
+tclaude usage limit add --scope group --group backend --name weekly \
+  --period week --budget 100 --step 80:notify:agent+operator:every=5%
+tclaude usage limit add --name 5h --metric window_pct --window anthropic:five_hour \
+  --step 90:notify:operator --step 98:wrap-up
+tclaude usage profile set default --name budget --period lifetime --budget 20 \
+  --step 50:notify:agent --step 80:notify:agent+operator \
+  --step 100:wrap-up --step 120:hard-stop
+tclaude usage assign --scope global --profile default
+tclaude usage assign --scope group --target backend --profile strict
+tclaude usage assign --scope spawn_profile --target reviewer --profile cheap
+tclaude usage adjust worker-1 --rule profile:1:budget --extra 10
+tclaude usage adjust worker-1 --snooze 60
+tclaude usage self                        # an agent's own budgets
 ```
 
-Limits are global across harnesses on this instance. Zero or an absent setting
-turns off that period. Daily and monthly periods follow the daemon's local
-calendar. The dashboard shows a banner at 80% and at 100%; each threshold also
-sends one notification through the existing notify-human path to Messages and,
-if enabled, desktop notifications. Threshold records survive daemon restarts,
-message deletion, and edits to limits. A jump past both thresholds records both.
-The daemon checks every three minutes on its usage timer even when the dashboard is closed; checks
-use the latest recorded ledger, so newly reported costs can arrive later.
+A step is `AT:ACTION[:TARGETS][:every=N%|every=Nm]`. `--file` reads a rule
+(or, for `profile set`, an array of rules) as JSON instead. `adjust` changes
+one agent: `--extra` adds budget to one of its rules, `--snooze` holds its
+steps for a while, and `--exempt` takes it out of usage profiles (shared
+limits still count it).
 
-Amounts are **estimates from the API cost ledger**, before display multipliers.
-Subscription WHAT-IF equivalents are excluded; subscription plans may not map
-to actual charges. These are per-instance estimates, not a provider invoice or
-model-gateway budgets. Alerts do not stop or confirm spawns; a soft spawn gate
-is a possible follow-up.
+Reading rules needs `usage.read`. Changing them needs `usage-rules.manage`.
+That permission is not default-granted and group ownership does not confer it,
+because an agent holding it could lift its own budget.
+
+The former **Spend limits** settings (`cost.daily_limit_usd`,
+`cost.monthly_limit_usd`) are converted on the next usage tick into global
+limits on recorded API spend with operator alerts at 80% and 100%, and are
+removed from `config.json`.

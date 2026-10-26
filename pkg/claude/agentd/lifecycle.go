@@ -3656,6 +3656,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !validateSpawnHarnessConfig(w, r, body.HarnessConfig) {
 		return
 	}
+	spawnUsageProfiles, usageOK := resolveSpawnUsageProfiles(w, r, body.UsageProfiles)
+	if !usageOK {
+		return
+	}
 
 	// Spawn guardrails — runaway-prevention for an agent that the human
 	// granted `groups.members.spawn`. The group's hard member cap (binds the human
@@ -5222,6 +5226,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	applySpawnUsageProfiles(outcome.AgentID, outcome.ConvID, spawnUsageProfiles, namedProfile, groupProfile)
 
 	// executeSpawn intentionally re-reads default profiles as a safety net for
 	// non-HTTP callers. If state changed after the handler snapshot, report the

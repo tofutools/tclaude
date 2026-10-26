@@ -313,3 +313,33 @@ func TestUsageRules_WindowResetJitterKeepsOneLadder(t *testing.T) {
 	require.Equal(t, key, st.windowPeriodKey(target, first.Add(600*time.Millisecond)))
 	require.NotEqual(t, key, st.windowPeriodKey(target, first.Add(5*time.Hour)))
 }
+
+func TestUsageRules_AgentAdjustments(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	a := f.agent("conv-a", 11)
+	b := f.agent("conv-b", 11)
+	c := f.agent("conv-c", 11)
+	p := profileWith(t, "default", ladderRule())
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{p.ID}, ""))
+	require.NoError(t, db.SetUsageAgentOverride(a, true, time.Time{}))
+	require.NoError(t, db.SetUsageAgentOverride(b, false, time.Now().Add(time.Hour)))
+	require.NoError(t, db.SetUsageBudgetExtension(c, usageProfileRuleKey(p.ID, "budget"), 10))
+
+	pollUsageRules(time.Now())
+	require.Empty(t, f.agentSubjects("conv-a"), "exempt")
+	require.Empty(t, f.agentSubjects("conv-b"), "snoozed")
+	require.Equal(t, []string{`Usage budget: 55% of "budget"`}, f.agentSubjects("conv-c"), "11 of 10+10")
+	require.Empty(t, f.stopped)
+
+	statuses, _ := latestUsageRuleStatus()
+	paused := map[string]string{}
+	for _, s := range statuses {
+		paused[s.AgentID] = s.Paused
+	}
+	require.Equal(t, map[string]string{a: "exempt", b: "snoozed", c: ""}, paused)
+
+	// The snooze ends: the steps it held fire now.
+	require.NoError(t, db.SetUsageAgentOverride(b, false, time.Time{}))
+	pollUsageRules(time.Now())
+	require.Contains(t, f.agentSubjects("conv-b"), `Usage budget reached: please wrap up ("budget")`)
+}

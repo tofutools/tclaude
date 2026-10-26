@@ -59,6 +59,8 @@ type usageRuleStatus struct {
 	AgentID   string            `json:"agent_id,omitempty"`
 	ProfileID int64             `json:"profile_id,omitempty"`
 	Profile   string            `json:"profile,omitempty"`
+	Layer     string            `json:"layer,omitempty"`  // agent | group | global: where the profile came from
+	Paused    string            `json:"paused,omitempty"` // exempt | snoozed | offline: steps wait
 	Name      string            `json:"name"`
 	Metric    usagerules.Metric `json:"metric"`
 	Period    usagerules.Period `json:"period"`
@@ -175,6 +177,7 @@ type usageRulesState struct {
 	windows     []accountUsageWindow // nil until needed
 	windowsRead bool
 	statuses    []usageRuleStatus
+	overrides   map[string]*db.UsageAgentOverride // per-agent operator adjustments
 }
 
 // pollUsageRules evaluates every enabled limit and every agent's effective
@@ -230,6 +233,9 @@ func loadUsageRulesState(now time.Time) (*usageRulesState, error) {
 	st.profiles = make(map[int64]*db.UsageProfile, len(profiles))
 	for _, p := range profiles {
 		st.profiles[p.ID] = p
+	}
+	if st.overrides, err = db.ListUsageAgentOverrides(); err != nil {
+		return nil, err
 	}
 	agents, err := db.ListActiveAgents()
 	if err != nil {
@@ -334,24 +340,38 @@ func (st *usageRulesState) evaluateAgents() {
 		if a == nil || a.CurrentConvID == "" {
 			continue // retired or unknown: nothing left to act on
 		}
-		if !isConvOnlineIn(a.CurrentConvID, st.alive) {
-			// A stopped agent spends nothing. Its due steps wait until it
-			// runs again, so a wrap-up or hard stop crossed while it was
-			// offline (late cost reports) still applies on resume.
-			continue
+		// A stopped agent spends nothing: its due steps wait until it runs
+		// again, so a wrap-up or hard stop crossed while it was offline (late
+		// cost reports) still applies on resume. A snoozed agent's steps
+		// wait for the snooze to end; an exempt agent's never fire. All three
+		// still report their readings.
+		paused := ""
+		override := st.overrides[agentID]
+		switch {
+		case override != nil && override.Exempt:
+			paused = "exempt"
+		case override != nil && override.SnoozeUntil.After(st.now):
+			paused = "snoozed"
+		case !isConvOnlineIn(a.CurrentConvID, st.alive):
+			paused = "offline"
 		}
-		profiles, _ := effectiveUsageProfiles(agentID, st.groupsOf[agentID], st.assignments, st.profiles)
+		profiles, layer := effectiveUsageProfiles(agentID, st.groupsOf[agentID], st.assignments, st.profiles)
 		for _, p := range profiles {
 			for _, r := range p.Rules {
+				key := usageProfileRuleKey(p.ID, r.Name)
+				if override != nil {
+					r.Budget += override.Extensions[key]
+				}
 				value := sumUsageSlices(slices, r.Metric, usagerules.PeriodStartDay(r.Period, st.now))
 				st.fire(usageRuleTarget{
-					ruleKey: fmt.Sprintf("profile:%d:%s", p.ID, strings.ToLower(r.Name)),
+					ruleKey: key,
 					subject: agentID,
 					scope:   usagerules.ScopeAgent,
 					rule:    r,
 					owner:   "usage profile " + p.Name,
 					agents:  []string{agentID},
-					status:  usageRuleStatus{AgentID: agentID, ProfileID: p.ID, Profile: p.Name},
+					paused:  paused,
+					status:  usageRuleStatus{AgentID: agentID, ProfileID: p.ID, Profile: p.Name, Layer: layer, Paused: paused},
 				}, value, usagerules.PeriodKey(r.Period, st.now, time.Time{}))
 			}
 		}
@@ -462,7 +482,14 @@ type usageRuleTarget struct {
 	owner   string   // human-readable origin, e.g. "usage profile default"
 	group   string   // group name for a group limit
 	agents  []string // agent ids agent-directed steps reach
+	paused  string   // non-empty: report the reading, fire nothing
 	status  usageRuleStatus
+}
+
+// usageProfileRuleKey keys one usage-profile rule; budget extensions and
+// firings refer to it.
+func usageProfileRuleKey(profileID int64, ruleName string) string {
+	return fmt.Sprintf("profile:%d:%s", profileID, strings.ToLower(ruleName))
 }
 
 func usageLimitRuleKey(id int64) string { return "limit:" + strconv.FormatInt(id, 10) }
@@ -495,6 +522,9 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 	status.Value, status.Budget, status.Pct, status.DryRun = value, budget, pct, r.DryRun
 	status.Reached, status.ReachedAt, status.Next = usageStatusFor(r, value)
 	st.statuses = append(st.statuses, status)
+	if t.paused != "" {
+		return
+	}
 	var fired map[string]time.Time
 	baseFired := func(key string) (time.Time, bool) {
 		if fired == nil {

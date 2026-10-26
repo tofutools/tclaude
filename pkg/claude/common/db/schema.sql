@@ -575,6 +575,12 @@ CREATE TRIGGER spawn_profile_name_not_alias_update
 			SELECT RAISE(ABORT, 'spawn profile handle already exists');
 		END;
 
+CREATE TRIGGER usage_profile_assignments_spawn_profile_gone
+			AFTER DELETE ON spawn_profiles BEGIN
+				DELETE FROM usage_profile_assignments
+				WHERE scope = 'spawn_profile' AND scope_id = CAST(OLD.id AS TEXT);
+			END;
+
 CREATE TABLE "ask_threads" (
 			term_key   TEXT NOT NULL,
 			cwd        TEXT NOT NULL,
@@ -1973,7 +1979,7 @@ CREATE TABLE usage_profiles (
 		) STRICT;
 
 CREATE TABLE usage_profile_assignments (
-			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group', 'agent')),
+			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group', 'agent', 'spawn_profile')),
 			scope_id   TEXT NOT NULL DEFAULT '',
 			profile_id INTEGER NOT NULL REFERENCES usage_profiles(id) ON DELETE CASCADE,
 			source     TEXT NOT NULL DEFAULT '',

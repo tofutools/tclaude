@@ -21,6 +21,9 @@ const (
 	UsageScopeGlobal = "global"
 	UsageScopeGroup  = "group"
 	UsageScopeAgent  = "agent"
+	// UsageScopeSpawnProfile links usage profiles to a spawn profile; a spawn
+	// through it copies them onto the new agent as agent-layer assignments.
+	UsageScopeSpawnProfile = "spawn_profile"
 )
 
 // ErrUsageProfileNameTaken reports a duplicate usage profile name.
@@ -240,7 +243,7 @@ func SetUsageProfileAssignments(scope, scopeID string, profileIDs []int64, sourc
 	switch scope {
 	case UsageScopeGlobal:
 		scopeID = ""
-	case UsageScopeGroup, UsageScopeAgent:
+	case UsageScopeGroup, UsageScopeAgent, UsageScopeSpawnProfile:
 		if strings.TrimSpace(scopeID) == "" {
 			return fmt.Errorf("usage profile assignment: %s scope needs an id", scope)
 		}
@@ -579,4 +582,106 @@ func UsageRuleFiringPeriods(ruleKey, subject, stepKey string) ([]string, error) 
 		out = append(out, key)
 	}
 	return out, rows.Err()
+}
+
+// UsageAgentOverride is the operator's per-agent adjustment: exempt from
+// every usage-profile rule, or snoozed until a time. Extensions add budget to
+// one rule, keyed by its rule key (see agentd usage rules).
+type UsageAgentOverride struct {
+	AgentID     string             `json:"agent_id"`
+	Exempt      bool               `json:"exempt,omitempty"`
+	SnoozeUntil time.Time          `json:"snooze_until,omitzero"`
+	Extensions  map[string]float64 `json:"extensions,omitempty"`
+}
+
+// ListUsageAgentOverrides returns every agent with an override or extension.
+func ListUsageAgentOverrides() (map[string]*UsageAgentOverride, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]*UsageAgentOverride{}
+	get := func(id string) *UsageAgentOverride {
+		if out[id] == nil {
+			out[id] = &UsageAgentOverride{AgentID: id}
+		}
+		return out[id]
+	}
+	rows, err := d.Query(`SELECT agent_id, exempt, snooze_until FROM usage_agent_overrides`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id string
+		var exempt bool
+		var snooze int64
+		if err := rows.Scan(&id, &exempt, &snooze); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		o := get(id)
+		o.Exempt = exempt
+		if snooze > 0 {
+			o.SnoozeUntil = time.Unix(0, snooze)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	rows, err = d.Query(`SELECT agent_id, rule_key, extra FROM usage_budget_extensions`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, key string
+		var extra float64
+		if err := rows.Scan(&id, &key, &extra); err != nil {
+			return nil, err
+		}
+		o := get(id)
+		if o.Extensions == nil {
+			o.Extensions = map[string]float64{}
+		}
+		o.Extensions[key] = extra
+	}
+	return out, rows.Err()
+}
+
+// SetUsageAgentOverride stores an agent's exempt flag and snooze time; a zero
+// override deletes the row.
+func SetUsageAgentOverride(agentID string, exempt bool, snoozeUntil time.Time) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	if !exempt && snoozeUntil.IsZero() {
+		_, err = d.Exec(`DELETE FROM usage_agent_overrides WHERE agent_id = ?`, agentID)
+		return err
+	}
+	var snooze int64
+	if !snoozeUntil.IsZero() {
+		snooze = snoozeUntil.UnixNano()
+	}
+	_, err = d.Exec(`INSERT INTO usage_agent_overrides (agent_id, exempt, snooze_until, updated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(agent_id) DO UPDATE SET exempt = excluded.exempt, snooze_until = excluded.snooze_until, updated_at = excluded.updated_at`,
+		agentID, exempt, snooze, dbTime(time.Now()))
+	return err
+}
+
+// SetUsageBudgetExtension sets the extra budget an agent has on one rule; a
+// non-positive amount removes it.
+func SetUsageBudgetExtension(agentID, ruleKey string, extra float64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	if extra <= 0 {
+		_, err = d.Exec(`DELETE FROM usage_budget_extensions WHERE agent_id = ? AND rule_key = ?`, agentID, ruleKey)
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO usage_budget_extensions (agent_id, rule_key, extra, updated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(agent_id, rule_key) DO UPDATE SET extra = excluded.extra, updated_at = excluded.updated_at`,
+		agentID, ruleKey, extra, dbTime(time.Now()))
+	return err
 }

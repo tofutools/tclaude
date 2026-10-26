@@ -12,7 +12,8 @@ import (
 //   - usage_profile_assignments: which profiles apply at which layer —
 //     global (empty scope_id), group (scope_id = group id), or agent (stable
 //     agent id). The nearest non-empty layer wins; every profile on that layer
-//     applies.
+//     applies. A spawn_profile row (scope_id = spawn profile id) is not a
+//     layer: a spawn through that spawn profile copies it onto the agent.
 //   - usage_limits: one rule over an aggregate (global or one group), with a
 //     single shared counter.
 //   - usage_agent_overrides / usage_budget_extensions: per-agent operator
@@ -35,7 +36,7 @@ func migrateV277toV278(d *sql.DB) error {
 			updated_at INTEGER NOT NULL
 		) STRICT`,
 		`CREATE TABLE IF NOT EXISTS usage_profile_assignments (
-			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group', 'agent')),
+			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group', 'agent', 'spawn_profile')),
 			scope_id   TEXT NOT NULL DEFAULT '',
 			profile_id INTEGER NOT NULL REFERENCES usage_profiles(id) ON DELETE CASCADE,
 			source     TEXT NOT NULL DEFAULT '',
@@ -92,6 +93,11 @@ func migrateV277toV278(d *sql.DB) error {
 			AFTER DELETE ON agent_groups BEGIN
 				DELETE FROM usage_profile_assignments
 				WHERE scope = 'group' AND scope_id = CAST(OLD.id AS TEXT);
+			END`},
+		{"spawn_profiles", `CREATE TRIGGER IF NOT EXISTS usage_profile_assignments_spawn_profile_gone
+			AFTER DELETE ON spawn_profiles BEGIN
+				DELETE FROM usage_profile_assignments
+				WHERE scope = 'spawn_profile' AND scope_id = CAST(OLD.id AS TEXT);
 			END`},
 		{"agents", `CREATE TRIGGER IF NOT EXISTS usage_profile_assignments_agent_gone
 			AFTER DELETE ON agents BEGIN
