@@ -184,6 +184,21 @@ human can also pick a spawned agent's profiles explicitly
 
 ### Managing rules
 
+In the dashboard, **Usage limits & budgets** (the Usage tab's Limits section,
+Config → Costs, the command palette, or the limit banner) has four tabs:
+
+- **Limits**: global and group limits with their live readings, an enable
+  toggle, and presets (monthly or daily spend cap, quota window guard).
+- **Usage profiles**: create, clone and edit profiles and their rules.
+- **Assignments**: the global default, each group, each spawn profile and
+  individual agents.
+- **Agents**: each agent's budgets, with snooze, exempt and per-rule extra
+  budget.
+
+The Usage tab's overview also lists every enabled limit's reading.
+
+The same operations are available on the command line:
+
 ```bash
 tclaude usage rules                       # limits, profiles, assignments, readings
 tclaude usage limit add --name monthly --period month --budget 500 \

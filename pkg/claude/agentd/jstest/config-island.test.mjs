@@ -122,13 +122,12 @@ test('Config load populates representative fields, conditions, notices, and roun
   assert.match(mounted.container.querySelector('#cfg-notice').textContent, /future_root/);
   const assembled = adapter.assembleConfig();
   assert.equal(assembled.ratelimit.future_limit, 7);
+  // The legacy spend limits have no field any more (the daemon converts
+  // them into usage limits); a value still on disk round-trips untouched.
   assert.equal(assembled.cost.daily_limit_usd, 12.5);
   assert.equal(assembled.cost.monthly_limit_usd, 300);
-  const dailyLimit = mounted.container.querySelector('#cfg-cost-daily-limit');
-  dailyLimit.value = '';
-  assert.equal(adapter.assembleConfig().cost.daily_limit_usd, undefined);
-  dailyLimit.value = '-1';
-  assert.throws(() => adapter.assembleConfig(), /Spend limits must be finite non-negative/);
+  assert.equal(mounted.container.querySelector('#cfg-cost-daily-limit'), null);
+  assert.ok(mounted.container.querySelector('#cfg-open-usage-rules'));
   assert.equal(assembled.slop.volume, 0.4);
   assert.deepEqual(assembled.agent.sudo, { max_duration: '2h' });
   assert.equal(assembled.dashboard.default_terminal, 'native');

@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usagerules"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // usage_rules_api.go — the HTTP surface for usage limits and usage profiles.
@@ -80,7 +81,21 @@ type usageRulesOverview struct {
 	Assignments []usageAssignmentView    `json:"assignments"`
 	Overrides   []*db.UsageAgentOverride `json:"overrides"`
 	Statuses    []usageStatusView        `json:"statuses"`
-	EvaluatedAt string                   `json:"evaluated_at,omitempty"`
+	// LimitStatuses is the latest reading of every enabled limit.
+	LimitStatuses []usageStatusView `json:"limit_statuses"`
+	EvaluatedAt   string            `json:"evaluated_at,omitempty"`
+	// Groups, SpawnProfiles and Agents name the assignment targets, so an
+	// editor can offer them without reading the rest of the dashboard.
+	Groups        []string            `json:"groups"`
+	SpawnProfiles []string            `json:"spawn_profiles"`
+	Agents        []usageAgentRefView `json:"agents"`
+	// Windows names the provider quota windows a window_pct limit can watch.
+	Windows []string `json:"windows"`
+}
+
+type usageAgentRefView struct {
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
 }
 
 func usageStatusViews(statuses []usageRuleStatus) []usageStatusView {
@@ -116,7 +131,8 @@ func handleUsageRulesOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func collectUsageRulesOverview() (usageRulesOverview, error) {
-	out := usageRulesOverview{Profiles: []*db.UsageProfile{}, Limits: []usageLimitView{}, Assignments: []usageAssignmentView{}, Overrides: []*db.UsageAgentOverride{}}
+	out := usageRulesOverview{Profiles: []*db.UsageProfile{}, Limits: []usageLimitView{}, Assignments: []usageAssignmentView{},
+		Overrides: []*db.UsageAgentOverride{}, Groups: []string{}, SpawnProfiles: []string{}, Agents: []usageAgentRefView{}, Windows: []string{}}
 	profiles, err := db.ListUsageProfiles()
 	if err != nil {
 		return out, err
@@ -133,7 +149,9 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 	groupNames := map[string]string{}
 	for _, g := range groups {
 		groupNames[db.UsageGroupScopeID(g.ID)] = g.Name
+		out.Groups = append(out.Groups, g.Name)
 	}
+	sort.Strings(out.Groups)
 	limits, err := db.ListUsageLimits()
 	if err != nil {
 		return out, err
@@ -149,6 +167,13 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 	if sps, err := db.ListSpawnProfiles(); err == nil {
 		for _, sp := range sps {
 			spawnProfiles[strconv.FormatInt(sp.ID, 10)] = sp.Name
+			out.SpawnProfiles = append(out.SpawnProfiles, sp.Name)
+		}
+	}
+	sort.Strings(out.SpawnProfiles)
+	if agents, err := db.ListActiveAgents(); err == nil {
+		for _, a := range agents {
+			out.Agents = append(out.Agents, usageAgentRefView{ID: a.AgentID, Title: agent.CachedTitle(a.CurrentConvID)})
 		}
 	}
 	for _, a := range assignments {
@@ -175,6 +200,10 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 	sort.Slice(out.Overrides, func(i, j int) bool { return out.Overrides[i].AgentID < out.Overrides[j].AgentID })
 	statuses, at := latestUsageRuleStatus()
 	out.Statuses = usageStatusViews(statuses)
+	out.LimitStatuses = usageStatusViews(latestUsageLimitStatus())
+	if specs, err := db.SubscriptionUsageWindowSpecs(); err == nil {
+		out.Windows = specs
+	}
 	if !at.IsZero() {
 		out.EvaluatedAt = at.UTC().Format(time.RFC3339Nano)
 	}
@@ -571,7 +600,7 @@ func resolveUsageAssignmentTarget(scope, target string) (string, int, error) {
 		}
 		return db.UsageGroupScopeID(g.ID), 0, nil
 	case db.UsageScopeAgent:
-		id, _, err := resolveAgentSelectorForResilience(target)
+		id, _, err := resolveUsageAgentSelector(target)
 		if err != nil {
 			return "", http.StatusNotFound, err
 		}
@@ -604,7 +633,7 @@ func handleUsageAgentAdjust(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermUsageRulesManage); !ok {
 		return
 	}
-	agentID, _, err := resolveAgentSelectorForResilience(r.PathValue("selector"))
+	agentID, _, err := resolveUsageAgentSelector(r.PathValue("selector"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent_not_found", err.Error())
 		return
@@ -778,4 +807,16 @@ func applySpawnUsageProfiles(agentID, convID string, explicit []int64, spawnProf
 	if err := db.SetUsageProfileAssignments(db.UsageScopeAgent, agentID, ids, source); err != nil {
 		slog.Warn("usage rules: assign spawned agent's usage profiles", "agent", agentID, "error", err)
 	}
+}
+
+// resolveUsageAgentSelector maps a selector to a stable agent id. A retired
+// agent's id resolves too, so its leftover assignments and overrides can be
+// cleared.
+func resolveUsageAgentSelector(sel string) (string, string, error) {
+	if proto.ValidAgentRef(sel) {
+		if a, err := db.GetAgent(sel); err == nil && a != nil && !a.Active() {
+			return a.AgentID, a.CurrentConvID, nil
+		}
+	}
+	return resolveAgentSelectorForResilience(sel)
 }

@@ -1,5 +1,6 @@
 import { h } from 'preact';
 import htm from 'htm';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 
 const html = htm.bind(h);
 
@@ -21,7 +22,7 @@ function limitLabel(limit) {
   return `${scope} limit "${limit.name}"`;
 }
 
-// UsageLimitBanner shows every global or group usage limit that has crossed
+// SpendLimitBanner shows every global or group usage limit that has crossed
 // a step of its ladder, from the snapshot's usage.usage_limits.
 export function SpendLimitBanner({ state }) {
   const limits = state.snapshot.value?.usage?.usage_limits || [];
@@ -34,5 +35,6 @@ export function SpendLimitBanner({ state }) {
   const estimates = crossed.some(limit => limit.metric !== 'window_pct');
   return html`<div class=${`spend-limit-banner${over ? ' over-limit' : ''}`} role="status">
     ${text}.${estimates ? ' Cost-ledger estimates may differ from charges.' : ''}
+    <button type="button" class="tool spend-limit-manage" onClick=${() => openUsageRulesManager()}>Manage limits…</button>
   </div>`;
 }

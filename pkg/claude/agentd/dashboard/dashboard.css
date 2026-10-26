@@ -21651,6 +21651,77 @@ body.wizard .spend-limit-banner {
   border-color: rgba(122, 93, 176, 0.5); border-left-color: #d9b45a; color: #f3e6c0;
 }
 body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: #ffb3ad; }
+.spend-limit-banner { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.spend-limit-banner .spend-limit-manage { margin-left: auto; }
+
+/* ─── Usage limits & budgets (usage-rules.js) ─────────────────────── */
+.cron-create-modal.usage-rules-modal { width: min(880px, calc(100vw - 32px)); }
+.usage-rules-tabs { margin: 0 0 4px; }
+.usage-rules-tab { display: flex; flex-direction: column; gap: 8px; }
+.usage-rules-tab h4 { margin: 10px 0 2px; font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; }
+.usage-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.usage-rule-cards { display: flex; flex-direction: column; gap: 8px; }
+.usage-rule-card { border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; background: #0d1117; display: flex; flex-direction: column; gap: 5px; }
+.usage-rule-card.disabled { opacity: .6; }
+.usage-rule-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.usage-rule-card-head .spacer, .usage-rules-modal .spacer { flex: 1; }
+.usage-rule-name { font-weight: 600; color: #e6edf3; }
+.usage-rule-scope { font-size: 12px; color: #8b949e; }
+.usage-rule-tag { font-size: 11px; padding: 1px 6px; border-radius: 9px; background: #21262d; color: #d2a8ff; }
+.usage-rule-summary, .usage-rule-descr { font-size: 12px; color: #9da7b3; }
+.usage-rule-enabled { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.usage-rule-reading { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.usage-rule-bar { display: inline-block; width: 160px; height: 7px; border-radius: 4px; background: #21262d; overflow: hidden; flex: none; }
+.usage-rule-bar-fill { display: block; height: 100%; background: #3fb950; }
+.warn .usage-rule-bar-fill { background: #d29922; }
+.over .usage-rule-bar-fill { background: #f85149; }
+.dry .usage-rule-bar-fill { background: #8b949e; }
+.usage-rule-figure { color: #c9d1d9; font-variant-numeric: tabular-nums; }
+.usage-rule-reached { color: #f0883e; font-weight: 600; }
+.usage-rule-paused { color: #8b949e; font-style: italic; }
+.usage-editor h4 { text-transform: none; letter-spacing: 0; font-size: 14px; color: #e6edf3; }
+.usage-rule-editor { display: flex; flex-direction: column; gap: 8px; border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; background: #0d1117; }
+.usage-rule-fields { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 12px; }
+.usage-rule-fields label { display: flex; align-items: center; gap: 5px; }
+.usage-rule-fields input[type=number] { width: 7em; }
+.usage-rule-fields .usage-wide { flex: 1; min-width: 260px; }
+.usage-rule-fields .usage-wide input { flex: 1; }
+.usage-steps { display: flex; flex-direction: column; gap: 5px; }
+.usage-step-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.usage-step-at input { width: 5em; }
+.usage-step-targets { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.usage-step-targets label { display: flex; align-items: center; gap: 3px; }
+.usage-step-repeat { width: 11em; }
+.usage-step-add { align-self: flex-start; }
+.usage-rule-block { display: flex; flex-direction: column; gap: 4px; }
+.usage-rule-remove { align-self: flex-end; }
+.usage-assign-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; padding: 3px 0; border-bottom: 1px solid #1c2128; }
+.usage-assign-target { min-width: 170px; color: #e6edf3; }
+.usage-assign-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.usage-agent-rule { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.usage-agent-rule-name { min-width: 130px; color: #c9d1d9; }
+.usage-extend { display: flex; align-items: center; gap: 4px; }
+.usage-extend input { width: 8em; }
+.usage-rules-evaluated { font-size: 11px; }
+.usage-rules-modal input:not([type=checkbox]), .usage-rules-modal select {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 4px 8px; font-size: 12px; color: #c9d1d9; font-family: inherit; min-width: 0;
+}
+.usage-rules-modal input:not([type=checkbox]):focus, .usage-rules-modal select:focus { outline: none; border-color: #58a6ff; }
+.usage-rules-modal input:disabled, .usage-rules-modal select:disabled { opacity: .6; }
+
+/* Usage tab: the limits strip under the overview. */
+.usage-limits-manage { border: 0; background: none; padding: 0; color: #58a6ff; font: inherit; font-size: 12px; letter-spacing: 0; text-transform: none; cursor: pointer; }
+.usage-limits-manage:hover { text-decoration: underline; }
+.usage-hub-limit-list { display: flex; flex-direction: column; gap: 6px; }
+.usage-hub-limit { display: grid; grid-template-columns: minmax(0, 1fr) 200px minmax(140px, auto); gap: 12px; align-items: center; padding: 7px 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; font-size: 13px; }
+.usage-hub-limit .usage-rule-bar { width: 100%; }
+.usage-hub-limit-figure { font-variant-numeric: tabular-nums; color: #c9d1d9; text-align: right; }
+.usage-hub-limits-empty { display: flex; align-items: center; gap: 10px; }
+@media (max-width: 640px) {
+  .usage-hub-limit { grid-template-columns: 1fr; }
+  .usage-hub-limit-figure { text-align: left; }
+}
 
 /* ─── Wizard saved-prompt library ───────────────────────────────────
    The manager opens over the spawn dialog or the operator composer; give it
