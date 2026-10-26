@@ -46,6 +46,73 @@ var (
 	usageRulesLiveSessions = session.LiveTmuxSessions
 )
 
+// usageRuleStatus is one rule's current reading, kept from the latest
+// evaluation for the dashboard and the API. Reached is the action of the
+// highest step the value has crossed ("" when none); Next is the first step
+// not yet crossed.
+type usageRuleStatus struct {
+	RuleKey   string            `json:"rule_key"`
+	Scope     string            `json:"scope"` // global | group | agent
+	LimitID   int64             `json:"limit_id,omitempty"`
+	GroupID   int64             `json:"group_id,omitempty"`
+	Group     string            `json:"group,omitempty"`
+	AgentID   string            `json:"agent_id,omitempty"`
+	ProfileID int64             `json:"profile_id,omitempty"`
+	Profile   string            `json:"profile,omitempty"`
+	Name      string            `json:"name"`
+	Metric    usagerules.Metric `json:"metric"`
+	Period    usagerules.Period `json:"period"`
+	Window    string            `json:"window,omitempty"`
+	Value     float64           `json:"value"`
+	Budget    float64           `json:"budget"`
+	Pct       float64           `json:"pct"`
+	DryRun    bool              `json:"dry_run,omitempty"`
+	Reached   usagerules.Action `json:"reached,omitempty"`
+	ReachedAt float64           `json:"reached_at,omitempty"`
+	Next      *usagerules.Step  `json:"next,omitempty"`
+}
+
+var (
+	usageRuleStatusMu   sync.RWMutex
+	usageRuleStatusLast []usageRuleStatus
+	usageRuleStatusAt   time.Time
+)
+
+// latestUsageRuleStatus returns the statuses from the latest evaluation and
+// when it ran (zero before the first).
+func latestUsageRuleStatus() ([]usageRuleStatus, time.Time) {
+	usageRuleStatusMu.RLock()
+	defer usageRuleStatusMu.RUnlock()
+	return usageRuleStatusLast, usageRuleStatusAt
+}
+
+// latestUsageLimitStatus is the global and group part of the latest
+// evaluation, for the dashboard banner.
+func latestUsageLimitStatus() []usageRuleStatus {
+	all, _ := latestUsageRuleStatus()
+	var out []usageRuleStatus
+	for _, s := range all {
+		if s.Scope != string(usagerules.ScopeAgent) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func usageStatusFor(r usagerules.Rule, value float64) (reached usagerules.Action, reachedAt float64, next *usagerules.Step) {
+	pct := usagerules.Pct(value, r.Budget)
+	for i := range r.Steps {
+		s := r.Steps[i]
+		if pct >= s.At {
+			reached, reachedAt = s.Action, s.At
+			continue
+		}
+		next = &s
+		break
+	}
+	return reached, reachedAt, next
+}
+
 // usageSpendSlice is one agent-attributed slice of spend on one local day.
 type usageSpendSlice struct {
 	agentID string
@@ -107,6 +174,7 @@ type usageRulesState struct {
 	spend       *usageSpend          // the counted cost ledger
 	windows     []accountUsageWindow // nil until needed
 	windowsRead bool
+	statuses    []usageRuleStatus
 }
 
 // pollUsageRules evaluates every enabled limit and every agent's effective
@@ -120,12 +188,18 @@ func pollUsageRules(now time.Time) {
 		return
 	}
 	if st == nil {
+		usageRuleStatusMu.Lock()
+		usageRuleStatusLast, usageRuleStatusAt = nil, now
+		usageRuleStatusMu.Unlock()
 		return
 	}
 	for _, l := range st.limits {
 		st.evaluateLimit(l)
 	}
 	st.evaluateAgents()
+	usageRuleStatusMu.Lock()
+	usageRuleStatusLast, usageRuleStatusAt = st.statuses, now
+	usageRuleStatusMu.Unlock()
 	if _, err := db.PruneUsageRuleFirings(now.Add(-usageRuleFiringRetention)); err != nil {
 		slog.Debug("usage rules: prune firings", "error", err)
 	}
@@ -277,6 +351,7 @@ func (st *usageRulesState) evaluateAgents() {
 					rule:    r,
 					owner:   "usage profile " + p.Name,
 					agents:  []string{agentID},
+					status:  usageRuleStatus{AgentID: agentID, ProfileID: p.ID, Profile: p.Name},
 				}, value, usagerules.PeriodKey(r.Period, st.now, time.Time{}))
 			}
 		}
@@ -285,10 +360,10 @@ func (st *usageRulesState) evaluateAgents() {
 
 func (st *usageRulesState) evaluateLimit(l *db.UsageLimit) {
 	r := l.Rule
-	target := usageRuleTarget{ruleKey: "limit:" + strconv.FormatInt(l.ID, 10), rule: r}
+	target := usageRuleTarget{ruleKey: usageLimitRuleKey(l.ID), rule: r, status: usageRuleStatus{LimitID: l.ID, GroupID: l.GroupID}}
 	switch l.Scope {
 	case db.UsageScopeGlobal:
-		target.subject, target.scope, target.owner = "global", usagerules.ScopeGlobal, "global limit"
+		target.subject, target.scope, target.owner = usageLimitSubject(l), usagerules.ScopeGlobal, "global limit"
 		for id := range st.agents {
 			target.agents = append(target.agents, id)
 		}
@@ -297,8 +372,8 @@ func (st *usageRulesState) evaluateLimit(l *db.UsageLimit) {
 		if !ok {
 			return
 		}
-		target.subject, target.scope, target.owner = "group:"+strconv.FormatInt(l.GroupID, 10), usagerules.ScopeGroup, "group "+name+" limit"
-		target.group = name
+		target.subject, target.scope, target.owner = usageLimitSubject(l), usagerules.ScopeGroup, "group "+name+" limit"
+		target.group, target.status.Group = name, name
 		for _, id := range st.members[l.GroupID] {
 			if st.agents[id] != nil {
 				target.agents = append(target.agents, id)
@@ -387,6 +462,16 @@ type usageRuleTarget struct {
 	owner   string   // human-readable origin, e.g. "usage profile default"
 	group   string   // group name for a group limit
 	agents  []string // agent ids agent-directed steps reach
+	status  usageRuleStatus
+}
+
+func usageLimitRuleKey(id int64) string { return "limit:" + strconv.FormatInt(id, 10) }
+
+func usageLimitSubject(l *db.UsageLimit) string {
+	if l.Scope == db.UsageScopeGroup {
+		return "group:" + strconv.FormatInt(l.GroupID, 10)
+	}
+	return "global"
 }
 
 func formatUsageBudget(v float64) string {
@@ -404,6 +489,12 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 		periodKey += "|dry"
 	}
 	pct := usagerules.Pct(value, budget)
+	status := t.status
+	status.RuleKey, status.Scope, status.Name = t.ruleKey, string(t.scope), r.Name
+	status.Metric, status.Period, status.Window = r.Metric, r.Period, r.Window
+	status.Value, status.Budget, status.Pct, status.DryRun = value, budget, pct, r.DryRun
+	status.Reached, status.ReachedAt, status.Next = usageStatusFor(r, value)
+	st.statuses = append(st.statuses, status)
 	var fired map[string]time.Time
 	baseFired := func(key string) (time.Time, bool) {
 		if fired == nil {

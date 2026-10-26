@@ -6824,6 +6824,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 	defer db.NotifyStatusChanged()
+	// A usage limit's block_spawn step refuses every fresh spawn it covers,
+	// whichever surface started it (dashboard, CLI, template, trigger, waves).
+	if failure := checkUsageSpawnBlock(g); failure != nil {
+		return nil, failure
+	}
 	releaseCapacity, capacityFailure := acquireNodeLaunch(&p)
 	if capacityFailure != nil {
 		return nil, capacityFailure
