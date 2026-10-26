@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { UsageProfileChip } from './usage-profile-chip.js';
 import {
   applySort, tableSortState, RETIRED_COLS, RETIRED_ACCESSORS,
   CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS,
@@ -501,6 +502,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
     ${away ? html`<span class="group-away-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
+    ${!group.fleet_node || group.fleet_node.local ? html`<${UsageProfileChip} scope="group" group=${group} className="group-usage-profile" />` : null}
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />
     <${GroupFederationMarker} group=${group} />
     ${snapshot?.group_attachments_mode === 'fixed'

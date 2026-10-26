@@ -22,8 +22,21 @@ type dashUsageLimit struct {
 	Reached string  `json:"reached"`
 }
 
+type dashUsageBudgets struct {
+	Profiles []struct {
+		Name string `json:"name"`
+	} `json:"profiles"`
+	Global []string            `json:"global"`
+	Groups map[string][]string `json:"groups"`
+	Agents map[string]struct {
+		Name string  `json:"name"`
+		Pct  float64 `json:"pct"`
+	} `json:"agents"`
+}
+
 type dashUsage struct {
-	UsageLimits []dashUsageLimit `json:"usage_limits"`
+	UsageLimits []dashUsageLimit  `json:"usage_limits"`
+	Budgets     *dashUsageBudgets `json:"budgets"`
 	Available   bool             `json:"available"`
 	FiveHour    *dashUsageWin    `json:"five_hour"`
 	SevenDay    *dashUsageWin    `json:"seven_day"`

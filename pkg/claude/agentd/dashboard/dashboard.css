@@ -5350,13 +5350,13 @@ details[data-group-key][open] > summary .group-sandbox-profile {
    affordance as the other group-header chips (.group-default-cwd).
    The per-group and global 🛡 sandbox-profile chips share the skin and inline
    picker interaction, so they ride every rule here too. */
-.group-default-model, .user-default-model, .group-sandbox-profile, .global-sandbox-profile {
+.group-default-model, .user-default-model, .group-sandbox-profile, .global-sandbox-profile, .usage-profile-chip {
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
   border: 1px solid transparent; white-space: nowrap;
 }
-.group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover, .global-sandbox-profile:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset, .global-sandbox-profile.unset { color: #484f58; font-style: italic; }
+.group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover, .global-sandbox-profile:hover, .usage-profile-chip:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset, .global-sandbox-profile.unset, .usage-profile-chip.unset { color: #484f58; font-style: italic; }
 .group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover, .global-sandbox-profile.unset:hover { color: #d4d4d4; }
 /* Keep an unset per-group profile visibly dormant. The glyph is independent
    from the chip's text color, but follows the whole clickable chip for its
@@ -5372,6 +5372,9 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 }
 .group-default-model:hover > .group-profile-icon,
 .group-sandbox-profile:hover > .group-profile-icon,
+.usage-profile-chip:hover > .group-profile-icon,
+.global-usage-profile:not(.unset) > .group-profile-icon,
+details[data-group-key][open] > summary .group-usage-profile:not(.unset) > .group-profile-icon,
 details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-profile-icon,
 details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .group-profile-icon {
   opacity: 1;
@@ -21703,6 +21706,14 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .usage-extend { display: flex; align-items: center; gap: 4px; }
 .usage-extend input { width: 8em; }
 .usage-rules-evaluated { font-size: 11px; }
+.usage-agent-own { border-bottom: 0; padding-bottom: 0; }
+.usage-profile-chip:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.agent-budget-badge { border: 0; font: inherit; font-size: 11px; padding: 0 5px; border-radius: 8px; margin-left: 5px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.agent-budget-badge.ok { color: #3fb950; background: #12261a; }
+.agent-budget-badge.warn { color: #d29922; background: #2b2111; }
+.agent-budget-badge.over { color: #f85149; background: #2d1517; }
+.agent-budget-badge:hover { filter: brightness(1.25); }
+.agent-budget-badge:focus-visible { outline: 1px solid #58a6ff; }
 .usage-rules-modal input:not([type=checkbox]), .usage-rules-modal select {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   padding: 4px 8px; font-size: 12px; color: #c9d1d9; font-family: inherit; min-width: 0;

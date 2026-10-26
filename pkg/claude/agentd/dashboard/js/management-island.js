@@ -4,7 +4,9 @@ import htm from 'htm';
 import { profileSummary, profileAliasesLabel } from './profiles.js';
 import { roleSummary } from './roles.js';
 import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
-import { UsageRulesDialog } from './usage-rules.js';
+import { ProfileChips, UsageRulesDialog, useSpawnProfileUsageLink } from './usage-rules.js';
+import { usageRulesApi } from './usage-rules-actions.js';
+import { shellToast } from './shell-state.js';
 import { AUTO_MEMORY_TRI_OPTIONS, PEER_MESSAGING_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
@@ -1338,13 +1340,21 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
 	const setEnvironment = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row) }));
   const [environmentHelpOpen, setEnvironmentHelpOpen] = useState('');
   const [inspectedRole, setInspectedRole] = useState('');
-  const dirty = dirtyDraft(draft, baseline); const local = !!options.local;
+  const draftDirty = dirtyDraft(draft, baseline); const local = !!options.local;
   // options.nodes (profile-save-nodes.js): the nodes a profile from another
   // node's spawn dialog may be saved on, the spawn's node first.
   const saveNodes = local ? [] : options.nodes || [];
   const [saveOn, setSaveOn] = useState(() => saveNodes[0]?.id || '');
   const saveNode = saveNodes.find((node) => node.id === saveOn) || null;
   const hEntry = harnessByName(catalog, draft.harness);
+  // The usage profiles this spawn profile adds to the agents it spawns, kept
+  // in the usage rules store and saved after the profile itself.
+  const editingExisting = !!seed && options.editExisting !== false;
+  const usageLinkable = !local && !descriptor.node && !globalThis.__tclaudeRemoteNode?.id;
+  const usageLink = useSpawnProfileUsageLink(editingExisting ? seed.name : '', usageLinkable);
+  const [usageNames, setUsageNames] = useState(null);
+  const usageCurrent = usageNames ?? usageLink.names;
+  const usageChanged = usageNames !== null && usageNames.join('\n') !== usageLink.names.join('\n');
   const submit = async () => {
     state.error.value = '';
     if (!local && !draft.name.trim()) { state.error.value = 'profile name is required'; return; }
@@ -1360,7 +1370,10 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
       if (hint?.warn) { state.error.value = hint.text; return; }
     }
     const saveOptions = saveNode ? { ...options, node: saveNode.id, nodeName: saveNode.name } : options;
-    await actions.saveProfile({ draft, original: options.editExisting === false ? null : seed, options: saveOptions, payload: profilePayload(draft, seed, catalog, { local }) });
+    const saved = await actions.saveProfile({ draft, original: options.editExisting === false ? null : seed, options: saveOptions, payload: profilePayload(draft, seed, catalog, { local }) });
+    if (saved && usageLinkable && !saveNode && (usageChanged || (!editingExisting && usageCurrent.length))) {
+      try { await usageRulesApi.assign('spawn_profile', draft.name.trim(), usageCurrent); } catch (error) { shellToast(`usage profiles not linked: ${error.message}`, true); }
+    }
   };
   const saving = state.busy.value === 'profile-save';
   const selectedRoles = (draft.role_refs || []).map((name) => roles.find((role) => role.name === name) || { name, missing: true });
@@ -1376,7 +1389,7 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
   const roleTitle = (role) => [role.descr, role.brief,
     (role.permissions || []).length ? `Grants: ${role.permissions.map((grant) => roleGrantSlug(grant)).join(', ')}` : 'Grants: none']
     .filter(Boolean).join('\n\n');
-  return html`<${Overlay} id="profile-editor-modal" labelledby="profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${saving ? null : submit} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="profile-editor-title">${local ? wizWord('Custom launch — this agent only', 'Bespoke summons — this familiar only') : options.cloneSourceName ? wizWord(`Clone profile: ${options.cloneSourceName}`, `Mirror pattern: ${options.cloneSourceName}`) : seed && options.editExisting !== false ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`) : wizWord('New spawn profile', 'New familiar pattern')}</h3>
+  return html`<${Overlay} id="profile-editor-modal" labelledby="profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${saving ? null : submit} dirty=${draftDirty || usageChanged} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="profile-editor-title">${local ? wizWord('Custom launch — this agent only', 'Bespoke summons — this familiar only') : options.cloneSourceName ? wizWord(`Clone profile: ${options.cloneSourceName}`, `Mirror pattern: ${options.cloneSourceName}`) : seed && options.editExisting !== false ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`) : wizWord('New spawn profile', 'New familiar pattern')}</h3>
     ${saveNodes.length > 0 && html`<${Row} label="Save on" title="A profile lives on one node; spawns on that node can use it."><div class="cron-create-target"><select id="profile-editor-save-on" value=${saveOn} onChange=${(event) => setSaveOn(event.currentTarget.value)}>${saveNodes.map((node) => html`<option key=${node.id} value=${node.id}>${node.name}</option>`)}</select>${saveNode?.operatorOnly && html`<div class="spawn-field-hint" id="profile-editor-save-on-hint">${saveNode.name} saves it as operator-only. Only ${saveNode.name}'s operator can change that.</div>`}</div></${Row}>`}
     <${Row} label="Name" hidden=${local}><input id="profile-editor-name" value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="profile name — kebab-or-snake-case label" autofocus autocomplete="off" spellcheck="false" /></${Row}>
     <${Row} label="Aliases" hidden=${local} title="Alternate handles for this same profile. Separate multiple aliases with commas."><input id="profile-editor-aliases" value=${draft.aliases_text} onInput=${(event) => change(setDraft, 'aliases_text', event.currentTarget.value)} placeholder="e.g. codex-reviewer, cold-reviewer" autocomplete="off" spellcheck="false" /></${Row}>
@@ -1402,6 +1415,7 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
       ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>${inspected.missing ? '⚠ This role is no longer in the library.' : html`<div>${inspected.descr || ''}</div><div><b>Brief</b> ${inspected.brief || 'none'}</div><div><b>Grants</b> ${(inspected.permissions || []).length ? html`<span class="role-inspect-grants">${inspected.permissions.map((grant) => html`<code>${roleGrantSlug(grant)}${roleGrantScope(grant) ? ` · ${roleGrantScope(grant)}` : ''}</code>`)}</span>` : 'none'}</div>`}</div>`}
     </div></${Row}>
     ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role label', 'role', 'optional — routing/display label; defaults independently of the role preset'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
+    ${usageLinkable && usageLink.loaded && usageLink.profiles.length ? html`<div class="cron-create-row" id="profile-editor-usage-profiles-row" title="Usage profiles (budgets and alerts) added to every agent spawned from this profile, on top of its group's or the global default."><span class="cron-create-label">Usage profiles</span><div class="cron-create-target"><${ProfileChips} names=${usageCurrent} profiles=${usageLink.profiles} disabled=${saving} label="this spawn profile" onChange=${setUsageNames}/><div class="spawn-field-hint">Added to each agent this profile spawns, on top of its group or global budget.</div></div></div>` : null}
     <div class="cron-create-row" hidden=${local} title="Saved prompts that open the task brief of agents spawned from this profile, in order, ahead of the initial message. They replace the group's default prompts."><span class="cron-create-label">Saved prompts</span><${SavedPromptChips} id="profile-editor-prompt-refs" node=${descriptor.node || ''} value=${draft.prompt_refs} onChange=${(refs) => change(setDraft, 'prompt_refs', refs)} confirmDiscard=${confirmDiscard}/></div>
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     <${Row} label="Profile context" title="Extra startup guidance delivered to every agent that resolves this profile. It is kept separate from the per-spawn task brief and group context."><textarea id="profile-editor-startup-context" value=${draft.startup_context} onInput=${(event) => change(setDraft, 'startup_context', event.currentTarget.value)} rows="5" placeholder="optional — model/profile-specific guidance injected into every spawn" spellcheck="false" /></${Row}>
@@ -2267,7 +2281,7 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'saved-prompts':
       return html`<${SavedPromptsDialog} key=${`${descriptor.initial || ''}:${descriptor.clone ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'usage-rules':
-      return html`<${UsageRulesDialog} key=${`usage-rules:${descriptor.tab || ''}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${UsageRulesDialog} key=${`usage-rules:${descriptor.tab || ''}:${descriptor.agent || ''}:${descriptor.profile || ''}:${descriptor.clone ? 1 : 0}:${descriptor.newProfile ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-editor':
       return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${onState.sandboxProfiles.value || []} state=${onState} actions=${on} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-export':
@@ -2348,7 +2362,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openProfilesManageModal: () => actions.openManager('profiles'), openProfileEditor: actions.openProfileEditor, removeProfile: actions.removeProfile,
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
     openSavedPrompts: ({ initial = '', clone = false, node = '' } = {}) => state.openDialog({ kind: 'saved-prompts', initial, clone, node }),
-    openUsageRules: ({ tab = '' } = {}) => state.openDialog({ kind: 'usage-rules', tab }),
+    openUsageRules: ({ tab = '', agent = '', profile = 0, clone = false, newProfile = false } = {}) => state.openDialog({ kind: 'usage-rules', tab, agent, profile, clone, newProfile }),
     openSandboxProfilesManageModal: () => actions.openManager('sandbox'), openSandboxProfileEditor: actions.openSandboxEditor, removeSandboxProfile: actions.removeSandbox,
     openSandboxProfileClone: actions.openSandboxClone,
     // The right panel library: a kind's own importer opened on a file the

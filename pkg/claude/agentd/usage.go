@@ -59,6 +59,9 @@ type dashboardUsage struct {
 	// UsageLimits is the latest reading of every enabled global and group
 	// usage limit (see usage_rules.go), for the dashboard's limit banner.
 	UsageLimits []usageRuleStatus `json:"usage_limits,omitempty"`
+	// Budgets is the compact usage-profile view behind the inline 💰
+	// controls and agent budget badges; nil when no profile exists.
+	Budgets *usageBudgetsView `json:"budgets,omitempty"`
 	// TodayCostUSD is the API cost recorded so far on the current local
 	// calendar day — the same delta walk as TotalCostUSD, windowed to
 	// today. Always ≤ TotalCostUSD. The top bar shows it as a "(today)"
@@ -236,6 +239,7 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 	out := dashboardUsage{
 		TotalCostUSD:     totalCost,
 		UsageLimits:      latestUsageLimitStatus(),
+		Budgets:          collectUsageBudgetsView(),
 		TodayCostUSD:     todayCost,
 		APICosts:         apiCosts,
 		WhatIfCosts:      whatIfCosts,
