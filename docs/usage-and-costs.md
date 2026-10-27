@@ -266,17 +266,21 @@ A **fleet limit** is a limit over spend summed across nodes. Its target is
 `all` (every trusted peer), `pool:<node pool>` (a [local node
 pool](federation.md#local-node-pools) as a sub-fleet) or `peer:<peer>`, and by
 default it counts this node too. Only members sharing `usage.read` count,
-and each reading says how many did. A member's total counts while it is from
-the current period and under ten minutes old, so an unreachable member keeps
-its last reading for a while rather than dropping to zero. Fleet limits take
-the `day`, `week` and `month` periods and the dollar metrics; each member
-sums its own calendar period.
+and each reading says how many did. A member's total counts while it is
+under ten minutes old, so an unreachable member keeps its last reading for a
+while rather than dropping to zero. Fleet limits take the `day`, `week` and
+`month` periods and the dollar metrics. Each member sums its own calendar
+period, so members in other time zones roll over at their own midnight.
 
 The limit's node runs the ladder once a minute. Operator steps tell its own
 operator. Agent-directed steps reach this node's agents (when it counts
 itself) and, on each member that granted `usage-rules.enforce`, the agents
 the grant covers. The member performs each step itself, records it once and
-tells its own operator what the peer's limit did. A spawn block or a fired
+tells its own operator what the peer's limit did. Members learn the fleet's
+percentage only, never its spend or budget, so no member can work out the
+others' spend. Steps that fire while a member's grant is not yet known (it is
+offline, or the limit's node just started) wait for it and are delivered
+once it answers. A spawn block or a fired
 hard stop is a lease of three minutes that the limit's node renews while the
 total stays past the step: a member keeps refusing spawns, and stops a
 covered agent that runs again, until the lease is released (the limit is

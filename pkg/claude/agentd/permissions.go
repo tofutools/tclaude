@@ -141,6 +141,7 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermUsageRead, Description: "Read cached account subscription quotas and usage forecasts (tclaude usage)."},
 	{Slug: PermCostsRead, Description: "Read account cost history and agent spend (tclaude costs)."},
 	{Slug: PermUsageRulesManage, Description: "Create, edit and delete usage limits and usage profiles, assign profiles, and adjust an agent's budget (extend, snooze, exempt). An agent holding it could lift its own budget, so it is not default-granted and group ownership does not confer it (effectively human-only)."},
+	{Slug: PermUsageRulesEnforce, Description: "Peer grant: the peer's fleet usage limits notify, wrap up, stop and block spawns of this node's agents in the granted groups (an unscoped grant also covers agents in no group). This node performs and records each action; no agent holds it."},
 	{
 		Slug:        PermSelfRename,
 		Description: "Rename own conversation via /rename (tclaude agent rename)",

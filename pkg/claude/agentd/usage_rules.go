@@ -804,10 +804,21 @@ func usageRuleScopePhrase(t usageRuleTarget) string {
 	}
 }
 
+// usageUsedText says how much of t's budget is used. A peer's fleet limit
+// shares only its percentage (no budget), never the fleet's spend.
+func usageUsedText(t usageRuleTarget, value, pct float64) string {
+	r := t.rule
+	if r.Budget <= 0 {
+		return fmt.Sprintf("%s %.0f%% of its budget for %s, rule %q from the %s.",
+			usageRuleScopePhrase(t), pct, usagePeriodLabel(r.Period), r.Name, t.owner)
+	}
+	return fmt.Sprintf("%s %s of the %s budget for %s (%.0f%%), rule %q from the %s.",
+		usageRuleScopePhrase(t), usageAmount(r, value), usageAmount(r, r.Budget), usagePeriodLabel(r.Period), pct, r.Name, t.owner)
+}
+
 func usageRuleAgentNotice(t usageRuleTarget, f usagerules.Firing, value, pct float64) usageRuleNotice {
 	r := t.rule
-	body := fmt.Sprintf("%s %s of the %s budget for %s (%.0f%%), rule %q from the %s.",
-		usageRuleScopePhrase(t), usageAmount(r, value), usageAmount(r, r.Budget), usagePeriodLabel(r.Period), pct, r.Name, t.owner)
+	body := usageUsedText(t, value, pct)
 	if next := nextUsageStep(r, f.Step.At); next != nil {
 		body += fmt.Sprintf(" Next step at %.0f%%: %s.", next.At, usageStepPhrase(next.Action))
 	}
@@ -817,11 +828,10 @@ func usageRuleAgentNotice(t usageRuleTarget, f usagerules.Firing, value, pct flo
 
 func usageRuleWrapUpNotice(t usageRuleTarget, value, pct float64) usageRuleNotice {
 	r := t.rule
-	body := fmt.Sprintf("%s %s of the %s budget for %s (%.0f%%), rule %q from the %s. "+
-		"Please wrap up now: stop starting new work, bring what you are doing to a safe stopping point, "+
-		"write a short handoff summary (what is done, what is left, where things are) and send it to whoever assigned your work, "+
-		"then stay idle until a human or your coordinator tells you to continue.",
-		usageRuleScopePhrase(t), usageAmount(r, value), usageAmount(r, r.Budget), usagePeriodLabel(r.Period), pct, r.Name, t.owner)
+	body := usageUsedText(t, value, pct) + " " +
+		"Please wrap up now: stop starting new work, bring what you are doing to a safe stopping point, " +
+		"write a short handoff summary (what is done, what is left, where things are) and send it to whoever assigned your work, " +
+		"then stay idle until a human or your coordinator tells you to continue."
 	if next := nextUsageStep(r, pct); next != nil && next.Action == usagerules.ActionHardStop {
 		body += fmt.Sprintf(" The process will be stopped at %.0f%%.", next.At)
 	}

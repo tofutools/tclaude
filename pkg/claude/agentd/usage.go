@@ -62,6 +62,11 @@ type dashboardUsage struct {
 	// Budgets is the compact usage-profile view behind the inline 💰
 	// controls and agent budget badges; nil when no profile exists.
 	Budgets *usageBudgetsView `json:"budgets,omitempty"`
+	// FleetLimits is the latest reading of this node's fleet limits, and
+	// FleetControls the peers' fleet limits blocking or stopping anything
+	// here (usage_fleet.go), for the limit banner.
+	FleetLimits   []usageFleetBannerView  `json:"fleet_limits,omitempty"`
+	FleetControls []usageFleetControlView `json:"fleet_controls,omitempty"`
 	// TodayCostUSD is the API cost recorded so far on the current local
 	// calendar day — the same delta walk as TotalCostUSD, windowed to
 	// today. Always ≤ TotalCostUSD. The top bar shows it as a "(today)"
@@ -240,6 +245,8 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 		TotalCostUSD:     totalCost,
 		UsageLimits:      latestUsageLimitStatus(),
 		Budgets:          collectUsageBudgetsView(),
+		FleetLimits:      usageFleetBannerViews(),
+		FleetControls:    usageFleetControlsFrom("", time.Now()),
 		TodayCostUSD:     todayCost,
 		APICosts:         apiCosts,
 		WhatIfCosts:      whatIfCosts,

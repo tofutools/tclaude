@@ -88,7 +88,14 @@ func collectUsageFleetOverview(ctx context.Context, withNodes, fresh bool, now t
 		out.Limits = append(out.Limits, usageFleetLimitView{UsageFleetLimit: l, TargetLabel: label})
 	}
 	statuses, at := latestUsageFleetStatus()
-	out.Statuses = append(out.Statuses, statuses...)
+	for _, s := range statuses {
+		if !withNodes {
+			// Peers shared their spend with this node's operator: an agent
+			// sees the fleet total, not each node's part.
+			s.Members = []usageFleetMember{}
+		}
+		out.Statuses = append(out.Statuses, s)
+	}
 	if !at.IsZero() {
 		out.EvaluatedAt = at.UTC().Format(time.RFC3339)
 	}
@@ -139,6 +146,22 @@ func collectUsageFleetOverview(ctx context.Context, withNodes, fresh bool, now t
 	}
 	sort.Slice(out.Nodes, func(i, j int) bool { return strings.ToLower(out.Nodes[i].Label) < strings.ToLower(out.Nodes[j].Label) })
 	return out, nil
+}
+
+// usageFleetBannerView is a fleet limit's reading without its members.
+type usageFleetBannerView struct {
+	usageRuleStatus
+	TargetLabel string `json:"target_label"`
+	Counted     int    `json:"counted"`
+}
+
+func usageFleetBannerViews() []usageFleetBannerView {
+	statuses, _ := latestUsageFleetStatus()
+	var out []usageFleetBannerView
+	for _, s := range statuses {
+		out = append(out, usageFleetBannerView{usageRuleStatus: s.usageRuleStatus, TargetLabel: s.TargetLabel, Counted: s.Counted})
+	}
+	return out
 }
 
 type usageFleetLimitBody struct {

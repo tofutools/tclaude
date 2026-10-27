@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -485,6 +486,16 @@ func pollUsageFleet(now time.Time) {
 	var statuses []usageFleetStatus
 	want := map[string]bool{} // peer|rule pairs owed an enforcement this tick
 	for _, b := range all {
+		if b.err != nil {
+			// The members are unknown this tick: hold what the limit holds.
+			usageFleetSentMu.Lock()
+			for key := range usageFleetSent {
+				if strings.HasSuffix(key, "|"+usageFleetRuleKey(b.limit.ID)) {
+					want[key] = true
+				}
+			}
+			usageFleetSentMu.Unlock()
+		}
 		status := evaluateUsageFleetLimit(local, b.limit, b.label, b.members, reads, self, selfErr, now, want)
 		if b.err != nil {
 			status.Error = b.err.Error()
@@ -561,11 +572,9 @@ func evaluateUsageFleetLimit(local *usageRulesState, l *db.UsageFleetLimit, labe
 			switch {
 			case !slicesContains(rd.summary.Grants, PermUsageRead) || rd.summary.Totals == nil:
 				m.State = "not_shared"
-			case rd.summary.Periods[r.Period] != periodKey:
-				// The member's period differs (its clock or time zone, or a
-				// reading from before the rollover): count nothing rather
-				// than last period's spend.
-				m.State = "stale"
+			// Each member sums its own calendar period, so a member in
+			// another time zone keeps counting across this node's rollover
+			// rather than dropping out for hours every day.
 			case now.Sub(rd.readAt) > usageFleetStale:
 				m.State = "stale"
 			default:
@@ -621,21 +630,74 @@ func evaluateUsageFleetLimit(local *usageRulesState, l *db.UsageFleetLimit, labe
 		}
 		events = append(events, ev)
 	}
+	// Members learn the fleet's percentage only: its spend and budget would
+	// let one member work out the others' spend.
+	req := usageFleetEnforceRequest{RuleKey: target.ruleKey, RuleName: r.Name, Fleet: label, PeriodKey: periodKey + "|b=" + formatUsageBudget(r.Budget),
+		Metric: r.Metric, Period: r.Period, Pct: math.Round(pct), Block: block, Stop: stop,
+		LeaseSeconds: int(usageFleetLease / time.Second)}
+	var wg sync.WaitGroup
 	for i := range out.Members {
 		m := &out.Members[i]
-		if m.Node == "self" || m.Enforce != "granted" {
+		key := m.Node + "|" + target.ruleKey
+		switch {
+		case m.Node == "self":
+			continue
+		case m.Enforce == "not_granted":
+			dropUsageFleetPending(key)
+			continue
+		case m.Enforce != "granted":
+			// Not read yet (offline, or this node just started): keep the
+			// steps for when it answers.
+			queueUsageFleetEvents(key, events)
+			keepUsageFleetHeld(key, want)
 			continue
 		}
-		req := usageFleetEnforceRequest{RuleKey: target.ruleKey, RuleName: r.Name, Fleet: label, PeriodKey: periodKey + "|b=" + formatUsageBudget(r.Budget),
-			Metric: r.Metric, Period: r.Period, Value: value, Budget: r.Budget, Pct: pct, Block: block, Stop: stop,
-			LeaseSeconds: int(usageFleetLease / time.Second)}
-		reply, sendErr := sendUsageFleetEnforcement(m.Node, req, events, now, want)
-		m.Applied = reply
-		if sendErr != nil {
-			m.SendErr = sendErr.Error()
+		if block || stop {
+			want[key] = true
 		}
+		wg.Add(1)
+		goBackground(func() {
+			defer wg.Done()
+			reply, sendErr := sendUsageFleetEnforcement(m.Node, req, events)
+			m.Applied = reply
+			if sendErr != nil {
+				m.SendErr = sendErr.Error()
+			}
+		})
 	}
+	// Sends run in parallel: one slow member never holds the others' leases
+	// past their renewal.
+	wg.Wait()
 	return out
+}
+
+func queueUsageFleetEvents(key string, events []usageFleetEvent) {
+	if len(events) == 0 {
+		return
+	}
+	usageFleetSentMu.Lock()
+	defer usageFleetSentMu.Unlock()
+	pending := append(usageFleetPending[key], events...)
+	if len(pending) > usageFleetPendingCap {
+		pending = pending[len(pending)-usageFleetPendingCap:]
+	}
+	usageFleetPending[key] = pending
+}
+
+func dropUsageFleetPending(key string) {
+	usageFleetSentMu.Lock()
+	delete(usageFleetPending, key)
+	usageFleetSentMu.Unlock()
+}
+
+// keepUsageFleetHeld keeps a lease this node holds on key while it cannot
+// tell what to do with it, instead of releasing it.
+func keepUsageFleetHeld(key string, want map[string]bool) {
+	usageFleetSentMu.Lock()
+	defer usageFleetSentMu.Unlock()
+	if usageFleetSent[key] {
+		want[key] = true
+	}
 }
 
 func targetStrings(ts []usagerules.Target) []string {
@@ -695,7 +757,7 @@ const usageFleetPendingCap = 32
 
 // sendUsageFleetEnforcement delivers req to peer when it carries events or a
 // lease, along with any events an earlier failed send left pending.
-func sendUsageFleetEnforcement(peer string, req usageFleetEnforceRequest, events []usageFleetEvent, now time.Time, want map[string]bool) (*usageFleetEnforceReply, error) {
+func sendUsageFleetEnforcement(peer string, req usageFleetEnforceRequest, events []usageFleetEvent) (*usageFleetEnforceReply, error) {
 	key := peer + "|" + req.RuleKey
 	usageFleetSentMu.Lock()
 	pending := append(usageFleetPending[key], events...)
@@ -704,9 +766,6 @@ func sendUsageFleetEnforcement(peer string, req usageFleetEnforceRequest, events
 	}
 	held := usageFleetSent[key]
 	usageFleetSentMu.Unlock()
-	if req.Block || req.Stop {
-		want[key] = true
-	}
 	if len(pending) == 0 && !req.Block && !req.Stop && !held {
 		return nil, nil
 	}
@@ -716,6 +775,11 @@ func sendUsageFleetEnforcement(peer string, req usageFleetEnforceRequest, events
 	defer usageFleetSentMu.Unlock()
 	if err != nil {
 		usageFleetPending[key] = pending
+		if req.Block || req.Stop {
+			// It may have applied it before the reply was lost: owe it a
+			// release once the limit lifts.
+			usageFleetSent[key] = true
+		}
 		recordUsageFleetSend(peer, nil, err)
 		return nil, err
 	}

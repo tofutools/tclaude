@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -26,6 +27,12 @@ import (
 // quiet, and the grant is checked again on every use.
 
 const usageFleetMaxLease = 15 * time.Minute
+
+// usageFleetMaxControls bounds the leases one peer holds here: each costs
+// every spawn a grant check.
+const usageFleetMaxControls = 32
+
+var errUsageFleetTooManyControls = fmt.Errorf("a peer may hold at most %d fleet controls here", usageFleetMaxControls)
 
 // usageFleetControl is a peer's spawn block or standing stop in force here.
 type usageFleetControl struct {
@@ -266,6 +273,10 @@ func servePeerUsageFleetEnforce(w http.ResponseWriter, r *http.Request, v *peerV
 		return
 	}
 	reply, err := applyUsageFleetEnforce(peerDisplay(v.peer), peer, unscoped, req, time.Now())
+	if errors.Is(err, errUsageFleetTooManyControls) {
+		writeError(w, http.StatusTooManyRequests, "too_many_controls", err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -291,6 +302,21 @@ func applyUsageFleetEnforce(label, peer string, unscoped bool, req usageFleetEnf
 		return nil, err
 	}
 	reply.Agents = len(agents)
+	if req.LeaseSeconds > 0 && (req.Block || req.Stop) {
+		usageFleetControlsMu.Lock()
+		held := 0
+		_, renewing := usageFleetControls[key]
+		for _, c := range usageFleetControls {
+			if c.peer == peer && now.Before(c.until) {
+				held++
+			}
+		}
+		usageFleetControlsMu.Unlock()
+		if !renewing && held >= usageFleetMaxControls {
+			return nil, errUsageFleetTooManyControls
+		}
+	}
+	stoppedNow := false
 	rule := usagerules.Rule{Name: req.RuleName, Metric: req.Metric, Period: req.Period, Budget: req.Budget}
 	fleet := req.Fleet
 	if fleet == "" {
@@ -328,6 +354,7 @@ func applyUsageFleetEnforce(label, peer string, unscoped bool, req usageFleetEnf
 			reply.Notified += running
 		case usagerules.ActionHardStop:
 			reply.Stopped += running
+			stoppedNow = true
 		}
 	}
 	usageFleetControlsMu.Lock()
@@ -340,9 +367,10 @@ func applyUsageFleetEnforce(label, peer string, unscoped bool, req usageFleetEnf
 	}
 	usageFleetControlsMu.Unlock()
 	reply.Block, reply.Stop = req.Block && req.LeaseSeconds > 0, req.Stop && req.LeaseSeconds > 0
-	if reply.Stop {
+	if reply.Stop && !stoppedNow {
 		// A standing stop: an agent in scope that runs again is stopped
-		// again while the peer's limit stays past its hard stop.
+		// again while the peer's limit stays past its hard stop. (The
+		// delivery that carries the stop itself just stopped them.)
 		for _, conv := range st.runningConvs(agents) {
 			res := usageRulesHardStop(conv)
 			reply.Stopped++
@@ -377,9 +405,9 @@ func usageFleetReceivedMessage(label string, req usageFleetEnforceRequest, actio
 	}
 	return &db.HumanMessage{FromTitle: "Usage limits", CreatedAt: now,
 		Subject: fmt.Sprintf("%s's fleet limit %q %s (%.0f%%)", label, req.RuleName, what, req.Pct),
-		Body: fmt.Sprintf("%s's fleet limit %q over %s stands at $%.2f of $%.2f %s (%.0f%%), and %s: %d of your agents are in the scope of its %s grant. "+
+		Body: fmt.Sprintf("%s's fleet limit %q over %s stands at %.0f%% of its budget for %s, and %s: %d of your agents are in the scope of its %s grant. "+
 			"Revoke the grant (Fleet → grants) to stop it acting here.",
-			label, req.RuleName, fleet, req.Value, req.Budget, usagePeriodLabel(req.Period), req.Pct, what, agents, PermUsageRulesEnforce)}
+			label, req.RuleName, fleet, req.Pct, usagePeriodLabel(req.Period), what, agents, PermUsageRulesEnforce)}
 }
 
 // checkUsageFleetSpawnBlock refuses a spawn into groups (none: an agent in no
