@@ -323,6 +323,62 @@ async function toggleUsageDefault(name, current, isDefault) {
   }
 }
 
+// usageLimitItems are a node's enabled global and group limits, then its
+// fleet limits, as the snapshot reads them (usage_limits, fleet_limits).
+function usageLimitItems(snap) {
+  const usage = snap?.usage || {};
+  return [
+    ...(usage.usage_limits || []),
+    ...(usage.fleet_limits || []).map((l) => ({ ...l, scope: 'fleet', fleet_id: Number(String(l.rule_key || '').replace(/^fleet:/, '')) || 0 })),
+  ];
+}
+
+// usageLimitName keeps a global, a group and a fleet limit of one name apart.
+function usageLimitName(l) {
+  if (l.scope === 'fleet') return `${l.name} · fleet`;
+  return l.scope === 'group' ? `${l.name} · ${l.group}` : l.name;
+}
+
+function usageLimitChips(l) {
+  const where = l.scope === 'fleet' ? `fleet: ${l.target_label}` : l.scope === 'group' ? `group ${l.group}` : 'global';
+  const tone = l.reached && l.reached !== 'notify' ? ' over' : l.reached || l.pct >= 80 ? ' warn' : '';
+  const reading = `${fmtAmount(l.metric, l.value)} / ${fmtAmount(l.metric, l.budget)} ${l.metric === 'window_pct' ? l.window || '' : periodLabel(l.period)}`;
+  return [
+    { text: where, more: false },
+    { text: `${Math.round(l.pct)}%`, more: false, className: `dock-chip usage-limit-pct${tone}`,
+      title: `${reading}${l.reached ? ` · ${l.reached.replace('_', ' ')} step reached` : ''}${l.scope === 'fleet' ? ` · ${l.counted} node(s) counted` : ''}` },
+    ...(l.dry_run ? [{ text: 'dry run', more: false }] : []),
+  ];
+}
+
+// openUsageLimit opens a limit's editor (clone: a copy of it); a fused
+// view's peer copy opens on that node, where fleet limits are not managed.
+function openUsageLimit(l, node = null, clone = false) {
+  if (node) return openUsageRulesManager({ node: node.id, nodeLabel: node.name, tab: 'limits', limit: l.scope === 'fleet' ? 0 : l.limit_id, clone });
+  if (l.scope === 'fleet') return openUsageRulesManager({ tab: 'fleet', fleetLimit: l.fleet_id, clone });
+  return openUsageRulesManager({ tab: 'limits', limit: l.limit_id, clone });
+}
+
+async function removeUsageLimit(l) {
+  const fleet = l.scope === 'fleet';
+  const ok = await confirmModal({
+    title: fleet ? 'Delete fleet limit?' : 'Delete usage limit?',
+    body: fleet
+      ? `Delete the fleet limit "${l.name}"? Any spawn block or stop it holds on other nodes is released.`
+      : `Delete the ${l.scope} limit "${l.name}"? Its alert history goes with it.`,
+    meta: l.name,
+    okLabel: 'Delete limit',
+  });
+  if (!ok) return;
+  try {
+    await (fleet ? usageRulesApi.deleteFleetLimit(l.fleet_id) : usageRulesApi.deleteLimit(l.limit_id));
+    toast(`usage limit deleted: ${l.name}`);
+    await refresh();
+  } catch (error) {
+    toast(error.message || String(error), true);
+  }
+}
+
 async function removeUsageProfile(p) {
   const ok = await confirmModal({
     title: 'Delete usage profile?',
@@ -606,6 +662,25 @@ export const dockSections = Object.freeze([
     searchWords: ['usage profiles', 'budgets', 'tithes'],
     isDefault: (p, snap) => (snap?.usage?.budgets?.global || []).includes(p.name),
     onToggleDefault: (p, isDefault) => toggleUsageDefault(p.name, lastSnapshot?.usage?.budgets?.global || [], isDefault),
+  },
+  {
+    key: 'usage_limits',
+    // The active global, group and fleet limits with their readings; each
+    // carries its alert ladder. Disabled ones live in the manager.
+    afterProcesses: true,
+    icon: () => wizWord('🚦', '🚦'),
+    title: () => wizWord('Usage limits & alerts', 'Coffer wards'),
+    empty: () => wizWord('no active usage limits', 'no coffer wards'),
+    items: (snap) => usageLimitItems(snap),
+    name: (l) => usageLimitName(l),
+    chips: (l) => usageLimitChips(l),
+    drag: false,
+    onManageItem: (l, node) => openUsageLimit(l, node),
+    onCloneItem: (l, node) => openUsageLimit(l, node, true),
+    onDeleteItem: (l) => removeUsageLimit(l),
+    onManageAll: () => openUsageRulesManager({ tab: 'limits' }),
+    onNew: () => openUsageRulesManager({ tab: 'limits', newLimit: true }),
+    searchWords: ['usage limits', 'alerts', 'alert rules', 'budgets', 'spend caps', 'fleet limits', 'coffer wards'],
   },
 ]);
 

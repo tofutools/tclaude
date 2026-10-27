@@ -407,6 +407,19 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
     const profile = id ? (overview.profiles || []).find((p) => p.id === id) : null;
     if (profile) setEditing({ kind: 'profile', item: descriptor?.clone ? { ...profile, id: 0, name: `${profile.name} copy` } : profile });
     else if (descriptor?.newProfile) { setEditing({ kind: 'profile', item: { id: 0, name: '', descr: '', rules: [blankRule('agent')] } }); setDirty(true); }
+    // The dock's limit cards open their limit's editor the same way.
+    const copy = (limit) => (descriptor?.clone ? { ...limit, id: 0, rule: { ...limit.rule, name: `${limit.rule.name} copy` } } : limit);
+    const limitID = Number(descriptor?.limit || 0);
+    const limit = limitID ? (overview.limits || []).find((l) => l.id === limitID) : null;
+    if (limit) setEditing({ kind: 'limit', item: copy(limit) });
+    else if (descriptor?.newLimit) { setEditing({ kind: 'limit', item: { id: 0, scope: 'global', group: '', enabled: true, rule: blankRule('global') } }); setDirty(true); }
+    const fleetID = Number(descriptor?.fleetLimit || 0);
+    if (fleetID && !node) {
+      api.fleet().then((fleet) => {
+        const found = (fleet.limits || []).find((l) => l.id === fleetID);
+        if (live.current && found) setEditing({ kind: 'fleet-limit', item: copy(found), fleet });
+      }).catch((cause) => shellToast(cause.message, true));
+    }
     if (descriptor?.clone) setDirty(true);
   }, [overview]);
   const run = async (work, done = '') => {
