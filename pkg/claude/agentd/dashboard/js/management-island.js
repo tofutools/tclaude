@@ -6,6 +6,7 @@ import { roleSummary } from './roles.js';
 import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
 import { ProfileChips, UsageRulesDialog, useSpawnProfileUsageLink } from './usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 import { shellToast } from './shell-state.js';
 import { AUTO_MEMORY_TRI_OPTIONS, PEER_MESSAGING_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
@@ -2330,7 +2331,7 @@ function routeManagers(state, actions) {
   const unregister = registerOverlayRoute('manage', {
     value: () => shown(),
     restore: (want) => {
-      if (state.dialog.peek() || state.templateDialog.peek()) return;
+      if (state.dialog.peek() || state.templateDialog.peek() || state.usageDialog.peek()) return;
       if (want !== 'templates') state.closeTemplateManager();
       if (!want || want === 'templates') state.closeManager();
       if (want === 'templates') actions.openTemplateManager();
