@@ -1,5 +1,6 @@
 import { SavedPromptChips } from './saved-prompts.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
+import { dashboardState } from './snapshot-store.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -80,6 +81,14 @@ import {
 
 const html = htm.bind(h);
 const NEW_USAGE_PROFILE = '/new-usage-profile';
+
+// liveUsageProfiles reads the usage profiles off the live snapshot rather
+// than the list frozen at open, so one made through "new usage profile…"
+// is pickable without reopening the dialog (and the draft stays as it is).
+function liveUsageProfiles(frozen) {
+  const live = dashboardState.snapshot.value?.usage?.budgets?.profiles;
+  return live ? live.map((p) => p.name) : frozen;
+}
 const PASTE_REPEAT_MS = 1000;
 // One title for the auto-compaction window control, shared by the spawn dialog
 // and kept next to the hint logic it explains. The two consequences an operator
@@ -1692,7 +1701,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       value=${draft.usageProfile || ''}
       options=${[
         { value: '', label: '— inherited (spawn profile + group / global) —' },
-        ...context.usageProfiles.map((name) => ({ value: name, label: name })),
+        ...liveUsageProfiles(context.usageProfiles).map((name) => ({ value: name, label: name })),
         { value: NEW_USAGE_PROFILE, label: '＋ new usage profile…' },
       ]}
       onChange=${(event) => {
