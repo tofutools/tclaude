@@ -430,7 +430,12 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
                     <div class="mux-bg-row" key=${row.key || row.tmux_session}>
                       <span class=${`mux-tab-status mux-tab-status-${statusClass}`}
                         title=${conversation && view.status?.agent ? view.status.description : ''}></span>
-                      <span class="mux-bg-name" title=${view.label}>${view.label}</span>
+                      ${row.key
+                        // The title attaches too, a bigger target than the
+                        // button; tabindex -1 keeps one tab stop per row.
+                        ? html`<button type="button" class="mux-bg-name mux-bg-name-attach" tabindex="-1"
+                            title=${`Attach ${view.label}`} onClick=${() => attach(row)}>${view.label}</button>`
+                        : html`<span class="mux-bg-name" title=${view.label}>${view.label}</span>`}
                       ${idle.text ? html`<span class=${`mux-bg-idle${idle.stale ? ' stale' : ''}`}>${idle.text}</span>` : null}
                       ${row.key
                         ? html`<button type="button" class="mux-btn mux-bg-attach" onClick=${() => attach(row)}

@@ -638,6 +638,11 @@ body.wizard .mux-pane-xterm {
   --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M3.5 5L6.5 7.5L3.5 10' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/><rect x='7.5' y='9.6' width='4.5' height='1.4' rx='0.7'/></svg>");
 }
 .mux-bg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mux-bg-name-attach {
+  padding: 0; border: none; background: none; color: inherit; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.mux-bg-name-attach:hover { color: #58a6ff; text-decoration: underline; }
 .mux-bg-idle { color: #6e7681; font-size: 11px; white-space: nowrap; }
 .mux-bg-idle.stale { color: #d29922; }
 .mux-bg-attach { padding: 2px 10px; font-size: 11px; }
