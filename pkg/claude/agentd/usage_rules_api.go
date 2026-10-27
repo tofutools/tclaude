@@ -27,6 +27,11 @@ import (
 
 const PermUsageRulesManage = "usage-rules.manage"
 
+// PermUsageRulesEnforce is a peer grant only: the peer's fleet usage limits
+// may act on this node's agents in the granted groups (notify, wrap up, hard
+// stop, block spawns). This node performs and records each action itself.
+const PermUsageRulesEnforce = "usage-rules.enforce"
+
 func registerUsageRuleRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/usage/rules", handleUsageRulesOverview)
 	mux.HandleFunc("GET /v1/usage/self", handleUsageSelf)
@@ -38,19 +43,11 @@ func registerUsageRuleRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/usage/limits/{id}", handleUsageLimitDelete)
 	mux.HandleFunc("PUT /v1/usage/assignments", handleUsageAssignmentsSet)
 	mux.HandleFunc("POST /v1/usage/agents/{selector}/adjust", handleUsageAgentAdjust)
-}
-
-func registerDashboardUsageRuleRoutes(mux *http.ServeMux) {
-	wrap := dashboardSandboxProfilesRoute // dashboard auth + synthetic human peer
-	mux.HandleFunc("GET /api/usage/rules", wrap(handleUsageRulesOverview))
-	mux.HandleFunc("POST /api/usage/profiles", wrap(handleUsageProfileCreate))
-	mux.HandleFunc("PUT /api/usage/profiles/{ref}", wrap(handleUsageProfileUpdate))
-	mux.HandleFunc("DELETE /api/usage/profiles/{ref}", wrap(handleUsageProfileDelete))
-	mux.HandleFunc("POST /api/usage/limits", wrap(handleUsageLimitCreate))
-	mux.HandleFunc("PUT /api/usage/limits/{id}", wrap(handleUsageLimitUpdate))
-	mux.HandleFunc("DELETE /api/usage/limits/{id}", wrap(handleUsageLimitDelete))
-	mux.HandleFunc("PUT /api/usage/assignments", wrap(handleUsageAssignmentsSet))
-	mux.HandleFunc("POST /api/usage/agents/{selector}/adjust", wrap(handleUsageAgentAdjust))
+	mux.HandleFunc("GET /v1/usage/node-summary", handleUsageSummary)
+	mux.HandleFunc("GET /v1/usage/fleet", handleUsageFleet)
+	mux.HandleFunc("POST /v1/usage/fleet-limits", handleUsageFleetLimitCreate)
+	mux.HandleFunc("PUT /v1/usage/fleet-limits/{id}", handleUsageFleetLimitUpdate)
+	mux.HandleFunc("DELETE /v1/usage/fleet-limits/{id}", handleUsageFleetLimitDelete)
 }
 
 // reevaluateUsageRules re-runs the evaluator after a change, so new limits,

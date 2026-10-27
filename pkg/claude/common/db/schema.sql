@@ -2033,3 +2033,13 @@ CREATE TABLE usage_rule_firings (
 		) STRICT;
 
 CREATE INDEX idx_usage_rule_firings_fired ON usage_rule_firings(fired_at);
+
+CREATE TABLE usage_fleet_limits (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    target       TEXT NOT NULL,
+    include_self INTEGER NOT NULL DEFAULT 1,
+    rule         TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+) STRICT;

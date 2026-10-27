@@ -268,6 +268,9 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `node.spawn.profiles.create` | save a new spawn profile here from the peer's spawn dialog (**Save as profile…** → **Save on**); a restricted peer's profile is saved operator-only, so it opens nothing its spawn grants keep closed until this node's operator lifts that; editing and deleting profiles take unrestricted trust (unscoped only) |
 | `node.groups.create` | create plain groups from the peer page's **+ new group**: name, parent (a visible group), description, context, attachment, member cap; launch settings, templates and clones take unrestricted trust (unscoped only; see "Managing a peer's node") |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
+| `usage.read` | usage totals (today, week, month), limit readings and budget counts, which the peer's fleet usage limits count (unscoped only; see [Fleet limits](usage-and-costs.md#fleet-limits-spend-across-peers)) |
+| `usage-rules.manage` | this node's usage limits, usage profiles, assignments and per-agent budget adjustments from the peer's dashboard (unscoped only) |
+| `usage-rules.enforce` | the peer's fleet usage limits notify, wrap up, stop and block spawns of member agents; this node performs and records each action; an unscoped grant also covers agents in no group |
 | `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
 

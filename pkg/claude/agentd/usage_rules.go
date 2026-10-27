@@ -515,6 +515,7 @@ type usageRuleTarget struct {
 	rule    usagerules.Rule
 	owner   string   // human-readable origin, e.g. "usage profile default"
 	group   string   // group name for a group limit
+	fleet   string   // the nodes a fleet limit covers, e.g. "pool gpu-rigs"
 	agents  []string // agent ids agent-directed steps reach
 	paused  string   // non-empty: report the reading, fire nothing
 	status  usageRuleStatus
@@ -539,8 +540,10 @@ func formatUsageBudget(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
-// fire records and performs every due step of t at value.
-func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string) {
+// fire records and performs every due step of t at value. It returns the
+// steps that fired now (not the silent repeats), for a fleet limit to carry
+// to its peers.
+func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string) []usagerules.Firing {
 	r := t.rule
 	budget := r.Budget
 	periodKey := period + "|b=" + formatUsageBudget(budget)
@@ -557,7 +560,7 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 	status.Reached, status.ReachedAt, status.Next = usageStatusFor(r, value)
 	st.statuses = append(st.statuses, status)
 	if t.paused != "" {
-		return
+		return nil
 	}
 	var fired map[string]time.Time
 	baseFired := func(key string) (time.Time, bool) {
@@ -572,6 +575,7 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 		return at, ok
 	}
 	firedNow := map[string]bool{}
+	var out []usagerules.Firing
 	for _, f := range usagerules.Due(r, pct, st.now, baseFired) {
 		// A repeat owed in the same evaluation as its first crossing is
 		// recorded silently: the crossing's own message already says it.
@@ -602,11 +606,13 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 		if r.DryRun {
 			continue
 		}
+		out = append(out, f)
 		st.act(t, f, value, pct)
 	}
 	if !r.DryRun {
 		st.enforceStandingStops(t, pct, firedNow, baseFired)
 	}
+	return out
 }
 
 // enforceStandingStops keeps a fired hard stop in force for the rest of its
@@ -653,6 +659,8 @@ func usageRuleSubjectLabel(t usageRuleTarget, st *usageRulesState) string {
 		return "Agent " + t.subject
 	case usagerules.ScopeGroup:
 		return "Group " + t.group
+	case usagerules.ScopeFleet:
+		return "Fleet (" + t.fleet + ")"
 	default:
 		return "All agents"
 	}
@@ -789,6 +797,8 @@ func usageRuleScopePhrase(t usageRuleTarget) string {
 		return "You have used"
 	case usagerules.ScopeGroup:
 		return "Your group " + t.group + " has used"
+	case usagerules.ScopeFleet:
+		return "Your fleet (" + t.fleet + ") has used"
 	default:
 		return "This tclaude instance has used"
 	}

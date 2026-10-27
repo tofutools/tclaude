@@ -80,6 +80,7 @@ const (
 	ScopeAgent  Scope = "agent"  // a usage-profile rule, measured per agent
 	ScopeGlobal Scope = "global" // a global limit
 	ScopeGroup  Scope = "group"  // a group limit
+	ScopeFleet  Scope = "fleet"  // a fleet limit: summed over trusted peers
 )
 
 // Step is one rung of a rule's ladder. At is a percentage of the rule's
