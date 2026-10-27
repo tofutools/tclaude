@@ -228,6 +228,7 @@ func peerViewRules() map[string]peerViewRule {
 	addPeerSpawnWorktreeRules(rules)
 	addPeerHumanInboxRules(rules)
 	addPeerMailboxRules(rules)
+	addPeerUsageRules(rules)
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}
 	rules["feature:presence"] = peerViewRule{feature: "groups.presence", requires: PermGroupsPresenceRead, group: true, serve: servePeerGroups}
 	// A long operation's job, read by the peer that started it.

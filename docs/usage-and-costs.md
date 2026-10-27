@@ -251,6 +251,62 @@ adjustments (`usage self` shows its own). Changing them needs
 That permission is not default-granted and group ownership does not confer it,
 because an agent holding it could lift its own budget.
 
+### Fleet limits: spend across peers
+
+With [federation](federation.md), budgets can span machines. Three peer
+grants, all off by default, decide what a peer gets from this node:
+
+| Peer grant | Gives the peer |
+| --- | --- |
+| `usage.read` | this node's spend totals (today, this week, this month), its limit readings and a count of agents near or over budget, so the peer's fleet limits can count this node |
+| `usage-rules.manage` | this node's usage rules from the peer's dashboard, as if local: limits, usage profiles, assignments, and extend, snooze or exempt |
+| `usage-rules.enforce` | the peer's fleet limits may act on this node's agents in the granted groups (an unscoped grant also covers agents in no group): notify, wrap up, hard stop, block spawns |
+
+A **fleet limit** is a limit over spend summed across nodes. Its target is
+`all` (every trusted peer), `pool:<node pool>` (a [local node
+pool](federation.md#local-node-pools) as a sub-fleet) or `peer:<peer>`, and by
+default it counts this node too. Only members sharing `usage.read` count,
+and each reading says how many did. A member's total counts while it is
+under ten minutes old, so an unreachable member keeps its last reading for a
+while rather than dropping to zero. Fleet limits take the `day`, `week` and
+`month` periods and the dollar metrics. Each member sums its own calendar
+period, so members in other time zones roll over at their own midnight.
+
+The limit's node runs the ladder once a minute. Operator steps tell its own
+operator. Agent-directed steps reach this node's agents (when it counts
+itself) and, on each member that granted `usage-rules.enforce`, the agents
+the grant covers. The member performs each step itself, records it once and
+tells its own operator what the peer's limit did. Members learn the fleet's
+percentage only, never its spend or budget, so no member can work out the
+others' spend. Steps that fire while a member's grant is not yet known (it is
+offline, or the limit's node just started) wait for it and are delivered
+once it answers. A spawn block or a fired
+hard stop is a lease of three minutes that the limit's node renews while the
+total stays past the step: a member keeps refusing spawns, and stops a
+covered agent that runs again, until the lease is released (the limit is
+lifted, disabled or removed, or its budget raised) or lapses because the
+limit's node went quiet. Revoking the grant ends it at once.
+
+```bash
+# On each member: share usage with lead-node and let its fleet limits act on builders
+tclaude federation grant lead-node usage.read
+tclaude federation grant lead-node usage-rules.enforce --scope group=builders
+
+# On lead-node: a fleet-wide monthly cap, and a sub-fleet cap on a node pool
+tclaude usage fleet limit add --target all --name fleet --budget 5000 \
+  --step 80:notify:operator --step 100:block-spawn
+tclaude usage fleet limit add --target pool:gpu-rigs --name rigs --period week \
+  --budget 800 --step 90:notify:agent+operator --step 100:wrap-up --step 120:hard-stop
+tclaude usage fleet                       # limits, readings per node, what each peer shares
+tclaude usage fleet limit set 2 --budget 1000 --name rigs --period week --step 100:wrap-up
+tclaude usage fleet limit rm 1
+```
+
+`tclaude usage fleet` lists every trusted peer with the usage grants it
+holds for this node, its totals and its limits, and the peers' fleet limits
+currently blocking or stopping anything here. Fleet limits and that view
+stay with this node: no peer reads another peer's usage through it.
+
 The former **Spend limits** settings (`cost.daily_limit_usd`,
 `cost.monthly_limit_usd`) are converted on the next usage tick into global
 limits on recorded API spend with operator alerts at 80% and 100%, and are

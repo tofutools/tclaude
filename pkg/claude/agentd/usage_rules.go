@@ -515,6 +515,7 @@ type usageRuleTarget struct {
 	rule    usagerules.Rule
 	owner   string   // human-readable origin, e.g. "usage profile default"
 	group   string   // group name for a group limit
+	fleet   string   // the nodes a fleet limit covers, e.g. "pool gpu-rigs"
 	agents  []string // agent ids agent-directed steps reach
 	paused  string   // non-empty: report the reading, fire nothing
 	status  usageRuleStatus
@@ -539,8 +540,10 @@ func formatUsageBudget(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
-// fire records and performs every due step of t at value.
-func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string) {
+// fire records and performs every due step of t at value. It returns the
+// steps that fired now (not the silent repeats), for a fleet limit to carry
+// to its peers.
+func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string) []usagerules.Firing {
 	r := t.rule
 	budget := r.Budget
 	periodKey := period + "|b=" + formatUsageBudget(budget)
@@ -557,7 +560,7 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 	status.Reached, status.ReachedAt, status.Next = usageStatusFor(r, value)
 	st.statuses = append(st.statuses, status)
 	if t.paused != "" {
-		return
+		return nil
 	}
 	var fired map[string]time.Time
 	baseFired := func(key string) (time.Time, bool) {
@@ -572,6 +575,7 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 		return at, ok
 	}
 	firedNow := map[string]bool{}
+	var out []usagerules.Firing
 	for _, f := range usagerules.Due(r, pct, st.now, baseFired) {
 		// A repeat owed in the same evaluation as its first crossing is
 		// recorded silently: the crossing's own message already says it.
@@ -602,11 +606,13 @@ func (st *usageRulesState) fire(t usageRuleTarget, value float64, period string)
 		if r.DryRun {
 			continue
 		}
+		out = append(out, f)
 		st.act(t, f, value, pct)
 	}
 	if !r.DryRun {
 		st.enforceStandingStops(t, pct, firedNow, baseFired)
 	}
+	return out
 }
 
 // enforceStandingStops keeps a fired hard stop in force for the rest of its
@@ -653,6 +659,8 @@ func usageRuleSubjectLabel(t usageRuleTarget, st *usageRulesState) string {
 		return "Agent " + t.subject
 	case usagerules.ScopeGroup:
 		return "Group " + t.group
+	case usagerules.ScopeFleet:
+		return "Fleet (" + t.fleet + ")"
 	default:
 		return "All agents"
 	}
@@ -789,15 +797,28 @@ func usageRuleScopePhrase(t usageRuleTarget) string {
 		return "You have used"
 	case usagerules.ScopeGroup:
 		return "Your group " + t.group + " has used"
+	case usagerules.ScopeFleet:
+		return "Your fleet (" + t.fleet + ") has used"
 	default:
 		return "This tclaude instance has used"
 	}
 }
 
+// usageUsedText says how much of t's budget is used. A peer's fleet limit
+// shares only its percentage (no budget), never the fleet's spend.
+func usageUsedText(t usageRuleTarget, value, pct float64) string {
+	r := t.rule
+	if r.Budget <= 0 {
+		return fmt.Sprintf("%s %.0f%% of its budget for %s, rule %q from the %s.",
+			usageRuleScopePhrase(t), pct, usagePeriodLabel(r.Period), r.Name, t.owner)
+	}
+	return fmt.Sprintf("%s %s of the %s budget for %s (%.0f%%), rule %q from the %s.",
+		usageRuleScopePhrase(t), usageAmount(r, value), usageAmount(r, r.Budget), usagePeriodLabel(r.Period), pct, r.Name, t.owner)
+}
+
 func usageRuleAgentNotice(t usageRuleTarget, f usagerules.Firing, value, pct float64) usageRuleNotice {
 	r := t.rule
-	body := fmt.Sprintf("%s %s of the %s budget for %s (%.0f%%), rule %q from the %s.",
-		usageRuleScopePhrase(t), usageAmount(r, value), usageAmount(r, r.Budget), usagePeriodLabel(r.Period), pct, r.Name, t.owner)
+	body := usageUsedText(t, value, pct)
 	if next := nextUsageStep(r, f.Step.At); next != nil {
 		body += fmt.Sprintf(" Next step at %.0f%%: %s.", next.At, usageStepPhrase(next.Action))
 	}
@@ -807,11 +828,10 @@ func usageRuleAgentNotice(t usageRuleTarget, f usagerules.Firing, value, pct flo
 
 func usageRuleWrapUpNotice(t usageRuleTarget, value, pct float64) usageRuleNotice {
 	r := t.rule
-	body := fmt.Sprintf("%s %s of the %s budget for %s (%.0f%%), rule %q from the %s. "+
-		"Please wrap up now: stop starting new work, bring what you are doing to a safe stopping point, "+
-		"write a short handoff summary (what is done, what is left, where things are) and send it to whoever assigned your work, "+
-		"then stay idle until a human or your coordinator tells you to continue.",
-		usageRuleScopePhrase(t), usageAmount(r, value), usageAmount(r, r.Budget), usagePeriodLabel(r.Period), pct, r.Name, t.owner)
+	body := usageUsedText(t, value, pct) + " " +
+		"Please wrap up now: stop starting new work, bring what you are doing to a safe stopping point, " +
+		"write a short handoff summary (what is done, what is left, where things are) and send it to whoever assigned your work, " +
+		"then stay idle until a human or your coordinator tells you to continue."
 	if next := nextUsageStep(r, pct); next != nil && next.Action == usagerules.ActionHardStop {
 		body += fmt.Sprintf(" The process will be stopped at %.0f%%.", next.At)
 	}

@@ -31,7 +31,7 @@ func run(cmd *cobra.Command, err error) {
 
 // RuleCmds are the usage-rule subcommands of `tclaude usage`.
 func RuleCmds() []*cobra.Command {
-	return []*cobra.Command{rulesCmd(), selfCmd(), limitCmd(), profileCmd(), assignCmd(), adjustCmd()}
+	return []*cobra.Command{rulesCmd(), selfCmd(), limitCmd(), profileCmd(), assignCmd(), adjustCmd(), fleetCmd()}
 }
 
 type jsonParams struct {

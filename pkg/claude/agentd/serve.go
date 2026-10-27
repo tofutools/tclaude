@@ -781,6 +781,7 @@ func runServe(p *serveParams) error {
 	// statusbar is running to populate it. Shares the daemon-wide stop
 	// channel.
 	startUsagePoller(cronStop)
+	startUsageFleetPoller(cronStop)
 	startHostMetricsPoller(cronStop)
 
 	// Codex subscription-usage poller. Codex has no usage API wired into

@@ -101,8 +101,14 @@ func usageFiringInCurrentPeriod(r usagerules.Rule, periodKey string, now time.Ti
 // (raise the budget, or disable the limit).
 func checkUsageSpawnBlock(g *db.AgentGroup) *spawnFailure {
 	var groupID int64
+	var groups []*db.AgentGroup
 	if g != nil {
-		groupID = g.ID
+		groupID, groups = g.ID, []*db.AgentGroup{g}
+	}
+	// A fleet limit (this node's own, or a peer's with usage-rules.enforce
+	// here) blocks the same way (usage_fleet_receive.go).
+	if fail := checkUsageFleetSpawnBlock(groups); fail != nil {
+		return fail
 	}
 	blocks, err := activeUsageSpawnBlocks(groupID, time.Now())
 	if err != nil {
