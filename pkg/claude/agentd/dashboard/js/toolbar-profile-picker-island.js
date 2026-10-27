@@ -8,7 +8,7 @@ import {
 } from './resolved-defaults.js';
 import { pickToolbarNode, toolbarNode, toolbarNodes, toolbarRefusal, toolbarTarget } from './toolbar-node.js';
 import { featureState } from './peer-view-limits.js';
-import { UsageProfileChip } from './usage-profile-chip.js';
+import { UsageProfileChip, RemoteUsageRulesButton } from './usage-profile-chip.js';
 
 const html = htm.bind(h);
 const NEW_PROFILE = '/new-profile';
@@ -208,10 +208,12 @@ function ToolbarProfileControl({ kind, state, actions }) {
   </select>${error ? html`<span id=${errorID} class="toolbar-profile-error" role="alert" title=${error}>⚠ ${error}</span>` : null}</${Fragment}>`;
 }
 
-// ToolbarUsageProfile is the 💰 global default usage profile. Usage rules are
-// this node's own, so it hides while the toolbar acts on another node.
+// ToolbarUsageProfile is the 💰 global default usage profile. It hides while
+// the toolbar acts on another node; a peer's own page offers that peer's
+// usage manager when the peer lets this node manage its rules.
 function ToolbarUsageProfile() {
-  if (toolbarTarget(toolbarNode.value) || remotePage()) return null;
+  if (toolbarTarget(toolbarNode.value)) return null;
+  if (remotePage()) return html`<${UsageProfileChip} scope="global" className="global-usage-profile"/><${RemoteUsageRulesButton}/>`;
   return html`<${UsageProfileChip} scope="global" className="global-usage-profile"/>`;
 }
 

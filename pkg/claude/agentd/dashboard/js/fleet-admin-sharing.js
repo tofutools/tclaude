@@ -8,6 +8,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { RequestAccessDialog, USAGE_PERM, createPeerAccessActions, parseUSD } from './peer-access.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 
 const html = htm.bind(h);
 const DAY_MS = 86400000;
@@ -104,6 +105,7 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
   const receivedErrors = Object.entries(received?.errors || {});
   const givenRows = given?.shares || [];
   return html`<div class="fa-sharing">
+    <p class="fa-sharing-fleet modal-hint">Budgets across nodes — fleet and node-pool spend caps, and what each node shares with you — live in <button type="button" class="fa-link" id="fa-open-fleet-usage" onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>Fleet usage limits…</button></p>
     <h4 class="fa-h">Shared with you <span class="muted">— peers paying for your agents' model calls</span> <button type="button" class="fa-link" onClick=${reload}>refresh</button></h4>
     ${received?.error ? html`<div class="fa-danger">${received.error}</div>` : !received ? html`<div class="empty">Asking peers…</div>`
       : receivedRows.length === 0 ? html`<div class="empty">${received.offline ? 'Federation is off.' : 'No peer shares usage with you. Ask one from its peer view (ask for usage…).'}</div>` : html`

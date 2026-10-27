@@ -307,6 +307,18 @@ holds for this node, its totals and its limits, and the peers' fleet limits
 currently blocking or stopping anything here. Fleet limits and that view
 stay with this node: no peer reads another peer's usage through it.
 
+In the dashboard, the usage dialog's **Fleet** tab holds the same: fleet
+limits with presets and an editor, each limit's reading per member (counted,
+shares no usage, stale) and whether its steps act on that member's agents, a
+nodes table with each peer's totals, limits and the grants it shares, and the
+peers' fleet limits in force here. The palette opens it as **Fleet usage
+limits…**, and Fleet → Usage sharing links to it. Where a peer granted
+`usage-rules.manage`, its row has **manage its rules…**, which opens the full
+usage dialog against that peer; the same is reachable from the peer's popup in
+the fleet strip and from the **💰 usage rules** button on its peer view. The
+spend banner also shows fleet limits past a step and peers' blocks or stops
+in force here.
+
 The former **Spend limits** settings (`cost.daily_limit_usd`,
 `cost.monthly_limit_usd`) are converted on the next usage tick into global
 limits on recorded API spend with operator alerts at 80% and 100%, and are

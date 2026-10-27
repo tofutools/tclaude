@@ -2,7 +2,9 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
-import { usageRulesApi } from './usage-rules-actions.js';
+import { usageRulesApi, usageRulesApiFor } from './usage-rules-actions.js';
+import { FleetLimitEditor, FleetTab } from './usage-fleet.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 import {
   LIMIT_PRESETS, PROFILE_PRESETS, actionsFor, agentReadings, agentTitle, assignedNames, barTone, blankRule,
   blankStep, draftToRule, fmtAmount, linkedNames, metricsFor, periodsFor, profileUses, ruleSummary, ruleToDraft, snoozeActive,
@@ -16,6 +18,7 @@ export const USAGE_RULE_TABS = Object.freeze([
   { id: 'profiles', label: 'Usage profiles' },
   { id: 'assignments', label: 'Assignments' },
   { id: 'agents', label: 'Agents' },
+  { id: 'fleet', label: 'Fleet' },
 ]);
 
 const DEFAULT_WINDOWS = ['anthropic:five_hour', 'anthropic:seven_day'];
@@ -366,11 +369,21 @@ export function useSpawnProfileUsageLink(spawnProfile, enabled = true, api = usa
 
 // UsageRulesDialog is the "Usage limits & budgets" manager: global/group
 // limits, usage profiles, their assignments and per-agent readings.
-// descriptor.tab picks the opening tab.
-export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = usageRulesApi, confirm = shellConfirm }) {
+// descriptor.tab picks the opening tab. descriptor.node (a peer's instance
+// id, with nodeLabel) manages that peer's rules through the peer proxy, under
+// the usage-rules.manage grant it gave this node; fleet limits are this
+// node's own, so its Fleet tab shows only here.
+export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: apiProp, confirm = shellConfirm }) {
+  // A peer's page manages that peer's rules wherever the manager opens from.
+  const pageNode = globalThis.__tclaudeRemoteNode?.id || '';
+  const node = descriptor?.node || pageNode;
+  const nodeLabel = descriptor?.nodeLabel || (node === pageNode ? globalThis.document?.documentElement?.dataset?.remoteNodeName : '') || node;
+  const api = apiProp || (node ? usageRulesApiFor(node) : usageRulesApi);
+  const tabs = node ? USAGE_RULE_TABS.filter((t) => t.id !== 'fleet') : USAGE_RULE_TABS;
   const [overview, setOverview] = useState(null);
   const [loadError, setLoadError] = useState('');
-  const [tab, setTab] = useState(USAGE_RULE_TABS.some((t) => t.id === descriptor?.tab) ? descriptor.tab : 'limits');
+  const [tab, setTab] = useState(tabs.some((t) => t.id === descriptor?.tab) ? descriptor.tab : 'limits');
+  const [fleetTick, setFleetTick] = useState(0);
   const [editing, setEditing] = useState(null); // {kind: 'limit'|'profile', item}
   const [dirty, setDirty] = useState(false);
   const [focusAgent, setFocusAgent] = useState(descriptor?.agent || '');
@@ -402,6 +415,7 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
     try {
       await work();
       if (done) shellToast(done);
+      setFleetTick((n) => n + 1);
       await reload();
       // The daemon re-evaluates in the background; pick up its new readings.
       setTimeout(() => { if (live.current) void reload(); }, 1500);
@@ -430,6 +444,14 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
     if (!await confirm({ title: 'Delete usage profile?', body: `Delete "${profile.name}"? Every assignment of it is removed too.`, okLabel: 'Delete' })) return;
     finish(await run(() => api.deleteProfile(profile.id), `deleted usage profile ${profile.name}`));
   };
+  const saveFleetLimit = async ({ id, target, include_self: includeSelf, enabled, rule }) => finish(await run(
+    () => (id ? api.updateFleetLimit(id, { target, include_self: includeSelf, enabled, rule }) : api.createFleetLimit({ target, include_self: includeSelf, enabled, rule })),
+    `saved fleet limit ${rule.name}`));
+  const deleteFleetLimit = async (limit) => {
+    if (!await confirm({ title: 'Delete fleet limit?', body: `Delete the fleet limit "${limit.rule.name}"? Any spawn block or stop it holds on other nodes is released.`, okLabel: 'Delete' })) return;
+    finish(await run(() => api.deleteFleetLimit(limit.id), `deleted fleet limit ${limit.rule.name}`));
+  };
+  const toggleFleetLimit = (limit) => void run(() => api.updateFleetLimit(limit.id, { enabled: !limit.enabled }));
   const assign = (scope, target, profiles) => void run(() => api.assign(scope, target, profiles));
   const adjust = (agentID, body) => void run(() => api.adjust(agentID, body));
   const switchTab = async (id) => {
@@ -446,6 +468,9 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
   } else if (editing?.kind === 'limit') {
     body = html`<${LimitEditor} limit=${editing.item} overview=${overview} busy=${busy} onDirty=${markDirty}
       onSave=${saveLimit} onDelete=${deleteLimit} onCancel=${() => void leaveEditor()}/>`;
+  } else if (editing?.kind === 'fleet-limit') {
+    body = html`<${FleetLimitEditor} limit=${editing.item} fleet=${editing.fleet} busy=${busy} RuleEditor=${RuleEditor} onDirty=${markDirty}
+      onSave=${saveFleetLimit} onDelete=${deleteFleetLimit} onCancel=${() => void leaveEditor()}/>`;
   } else if (editing?.kind === 'profile') {
     body = html`<${ProfileEditor} profile=${editing.item} busy=${busy} onDirty=${markDirty}
       onSave=${saveProfile} onDelete=${deleteProfile} onCancel=${() => void leaveEditor()}/>`;
@@ -455,6 +480,10 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
   } else if (tab === 'profiles') {
     body = html`<${ProfilesTab} overview=${overview} busy=${busy}
       onEdit=${(item) => { setEditing({ kind: 'profile', item }); setDirty(!item.id); }}/>`;
+  } else if (tab === 'fleet') {
+    body = html`<${FleetTab} api=${api} busy=${busy} reloadKey=${fleetTick} onToggle=${toggleFleetLimit}
+      onEdit=${(item, fleet) => { setEditing({ kind: 'fleet-limit', item, fleet }); setDirty(!item.id); }}
+      onManageNode=${(n) => openUsageRulesManager({ node: n.node, nodeLabel: n.label })}/>`;
   } else if (tab === 'assignments') {
     body = html`<${AssignmentsTab} overview=${overview} busy=${busy} onAssign=${assign}/>`;
   } else {
@@ -463,8 +492,9 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api = us
   }
   return html`<${Overlay} id="usage-rules-modal" labelledby="usage-rules-title" dialogClass="cron-create-modal usage-rules-modal"
     onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="usage-rules-title">Usage limits & budgets</h3>
-    <div class="fa-subtabs usage-rules-tabs" role="tablist">${USAGE_RULE_TABS.map((t) => html`<button type="button" role="tab" key=${t.id}
+    <h3 id="usage-rules-title">Usage limits & budgets${node ? html` <span class="usage-rules-node">on ${nodeLabel}</span>` : null}</h3>
+    ${node ? html`<p class="modal-hint usage-rules-node-hint">You manage ${nodeLabel}'s usage rules through the <code>usage-rules.manage</code> grant it gave you; changes apply on that node.</p>` : null}
+    <div class="fa-subtabs usage-rules-tabs" role="tablist">${tabs.map((t) => html`<button type="button" role="tab" key=${t.id}
       class=${`fa-subtab${tab === t.id ? ' on' : ''}`} aria-selected=${tab === t.id ? 'true' : 'false'} data-usage-rules-tab=${t.id}
       onClick=${() => void switchTab(t.id)}>${t.label}</button>`)}</div>
     ${body}

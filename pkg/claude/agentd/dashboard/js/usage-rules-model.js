@@ -242,3 +242,38 @@ export function snoozeActive(override, now = Date.now()) {
   const until = override?.snooze_until ? Date.parse(override.snooze_until) : NaN;
   return Number.isFinite(until) && until > now;
 }
+
+// --- fleet limits (usage-fleet.js) ---
+
+// FLEET_PRESETS are the limit presets a fleet limit can take: spend caps
+// (quota windows are one account's).
+export const FLEET_PRESETS = Object.freeze(LIMIT_PRESETS.filter((p) => p.rule.metric !== 'window_pct'));
+
+// fleetTargetOptions lists what a fleet limit can cover: every trusted node,
+// a node pool (a sub-fleet) or one node.
+export function fleetTargetOptions(fleet) {
+  return [
+    { value: 'all', label: 'All trusted nodes' },
+    ...(fleet?.pools || []).map((p) => ({ value: `pool:${p.id}`, label: `Node pool ${p.name} (${p.members.length} node${p.members.length === 1 ? '' : 's'})` })),
+    ...(fleet?.nodes || []).map((n) => ({ value: `peer:${n.node}`, label: `Node ${n.label}` })),
+  ];
+}
+
+export const MEMBER_STATES = Object.freeze({
+  self: 'this node', ok: 'counted', stale: 'stale', not_shared: 'shares no usage', offline: 'offline', error: 'error',
+});
+
+export const ENFORCE_STATES = Object.freeze({
+  granted: 'acts on its agents', not_granted: 'alerts only', unknown: '', self: 'acts on its agents',
+});
+
+// nodeGrants reads which usage grants a peer holds for this node from its summary.
+export function nodeGrants(node) {
+  const grants = node?.summary?.grants || [];
+  return { read: grants.includes('usage.read'), manage: grants.includes('usage-rules.manage'), enforce: grants.includes('usage-rules.enforce') };
+}
+
+// worstLimit is a summary's limit reading closest to (or past) its budget.
+export function worstLimit(summary) {
+  return (summary?.limits || []).reduce((worst, l) => (!worst || (l.pct || 0) > (worst.pct || 0) ? l : worst), null);
+}

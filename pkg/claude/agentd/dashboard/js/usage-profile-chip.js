@@ -6,6 +6,7 @@ import { usageRulesApi } from './usage-rules-actions.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { fmtAmount, periodLabel } from './usage-rules-model.js';
 import { shellToast } from './shell-state.js';
+import { peerViewSummary } from './fleet-model.js';
 
 const html = htm.bind(h);
 const MANAGE = '/manage';
@@ -48,8 +49,10 @@ export function UsageProfileChip({ scope, group = null, target = group?.name || 
   snapshot = dashboardState.snapshot, api = usageRulesApi, onChanged = refreshSnapshot }) {
   const snap = snapshot.value;
   const budgets = budgetsOf(snap);
-  // Usage rules are this node's own; a peer's page has no manager for them.
-  const remote = Boolean(globalThis.__tclaudeRemoteNode?.id);
+  // On a peer's page the chip needs the peer's budgets view, which only its
+  // complete (unrestricted) snapshot carries; RemoteUsageRulesButton opens
+  // the manager there otherwise.
+  const remote = Boolean(globalThis.__tclaudeRemoteNode?.id) && !budgets;
   const profiles = budgets?.profiles || [];
   const names = assignedUsageProfiles(budgets, scope, group);
   const [localEditing, setLocalEditing] = useState(false);
@@ -131,4 +134,22 @@ export function AgentBudgetBadge({ agentID, snapshot = dashboardState.snapshot }
   return html`<button type="button" class=${`activity-badge agent-budget-badge ${tone}`} title=${title} aria-label=${title}
     data-agent-budget=${agentID}
     onClick=${(event) => { event.stopPropagation(); openUsageRulesManager({ tab: 'agents', agent: agentID }); }}>💰${Math.round(budget.pct)}%</button>`;
+}
+
+// peerManagesUsage reports whether the peer on screen lets this node manage
+// its usage rules (usage-rules.manage, or unrestricted trust).
+export function peerManagesUsage(snapshot) {
+  const pv = peerViewSummary(snapshot?.peer_view);
+  return Boolean(pv && (pv.full || pv.level === 'unrestricted' || pv.included.includes('usage.manage')));
+}
+
+// RemoteUsageRulesButton opens a peer's usage manager from its page, when the
+// peer granted this node usage-rules.manage.
+export function RemoteUsageRulesButton({ snapshot = dashboardState.snapshot }) {
+  const remote = globalThis.__tclaudeRemoteNode?.id;
+  if (!remote || !peerManagesUsage(snapshot.value)) return null;
+  const label = globalThis.document?.documentElement?.dataset?.remoteNodeName || remote.slice(0, 13);
+  return html`<button type="button" class="tool remote-usage-rules" data-remote-usage-rules=${remote}
+    title=${`Manage ${label}'s usage limits, usage profiles and budgets (it granted you usage-rules.manage)`}
+    onClick=${() => openUsageRulesManager({ node: remote, nodeLabel: label })}>💰 usage rules</button>`;
 }
