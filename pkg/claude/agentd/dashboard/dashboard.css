@@ -21715,6 +21715,29 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .agent-budget-badge.over { color: #f85149; background: #2d1517; }
 .agent-budget-badge:hover { filter: brightness(1.25); }
 .agent-budget-badge:focus-visible { outline: 1px solid #58a6ff; }
+/* Usage manager: the Fleet tab (usage-fleet.js) and a peer's manager. */
+.usage-rules-node { font-size: 12px; font-weight: normal; color: #8b949e; margin-left: 6px; }
+.usage-fleet-h { margin: 14px 0 6px; font-size: 13px; color: #e6edf3; }
+.usage-fleet-members, .usage-fleet-nodes { width: 100%; border-collapse: collapse; font-size: 12px; }
+.usage-fleet-members td, .usage-fleet-nodes td, .usage-fleet-nodes th { padding: 3px 6px; border-bottom: 1px solid #1c2128; text-align: left; vertical-align: middle; }
+.usage-fleet-nodes th { color: #8b949e; font-weight: normal; }
+.usage-fleet-members td.num, .usage-fleet-nodes .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-fleet-members tr.muted td { color: #6e7681; }
+.usage-fleet-self td { color: #c9d1d9; font-style: italic; }
+.usage-fleet-err { color: #d29922; font-size: 11px; }
+.usage-fleet-limit { display: inline-block; font-size: 11px; padding: 0 5px; border-radius: 8px; margin-right: 4px; color: #3fb950; background: #12261a; }
+.usage-fleet-limit.warn { color: #d29922; background: #2b2111; }
+.usage-fleet-limit.over { color: #f85149; background: #2d1517; }
+.usage-grant-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.usage-grant-chip { font-size: 11px; padding: 0 5px; border-radius: 8px; color: #6e7681; border: 1px solid #2a3340; }
+.usage-grant-chip.on { color: #58a6ff; border-color: #1f3b5c; background: #0c1d30; }
+.usage-fleet-controls { margin: 4px 0; padding-left: 18px; font-size: 12px; }
+.usage-fleet-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; }
+.usage-fleet-tab .usage-rule-card .usage-fleet-members { margin-top: 6px; }
+.usage-fleet-nodes-wrap { overflow-x: auto; }
+@media (max-width: 640px) {
+  .usage-fleet-nodes th:nth-child(2), .usage-fleet-nodes td:nth-child(2), .usage-fleet-nodes th:nth-child(3), .usage-fleet-nodes td:nth-child(3) { display: none; }
+}
 .usage-rules-modal input:not([type=checkbox]), .usage-rules-modal select {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   padding: 4px 8px; font-size: 12px; color: #c9d1d9; font-family: inherit; min-width: 0;

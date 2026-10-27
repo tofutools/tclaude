@@ -2281,7 +2281,7 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'saved-prompts':
       return html`<${SavedPromptsDialog} key=${`${descriptor.initial || ''}:${descriptor.clone ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'usage-rules':
-      return html`<${UsageRulesDialog} key=${`usage-rules:${descriptor.tab || ''}:${descriptor.agent || ''}:${descriptor.profile || ''}:${descriptor.clone ? 1 : 0}:${descriptor.newProfile ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${UsageRulesDialog} key=${`usage-rules:${descriptor.node || ''}:${descriptor.tab || ''}:${descriptor.agent || ''}:${descriptor.profile || ''}:${descriptor.clone ? 1 : 0}:${descriptor.newProfile ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-editor':
       return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${onState.sandboxProfiles.value || []} state=${onState} actions=${on} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-export':
@@ -2362,7 +2362,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openProfilesManageModal: () => actions.openManager('profiles'), openProfileEditor: actions.openProfileEditor, removeProfile: actions.removeProfile,
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
     openSavedPrompts: ({ initial = '', clone = false, node = '' } = {}) => state.openDialog({ kind: 'saved-prompts', initial, clone, node }),
-    openUsageRules: ({ tab = '', agent = '', profile = 0, clone = false, newProfile = false } = {}) => state.openDialog({ kind: 'usage-rules', tab, agent, profile, clone, newProfile }),
+    openUsageRules: ({ tab = '', agent = '', profile = 0, clone = false, newProfile = false, node = '', nodeLabel = '' } = {}) => state.openDialog({ kind: 'usage-rules', tab, agent, profile, clone, newProfile, node, nodeLabel }),
     openSandboxProfilesManageModal: () => actions.openManager('sandbox'), openSandboxProfileEditor: actions.openSandboxEditor, removeSandboxProfile: actions.removeSandbox,
     openSandboxProfileClone: actions.openSandboxClone,
     // The right panel library: a kind's own importer opened on a file the
