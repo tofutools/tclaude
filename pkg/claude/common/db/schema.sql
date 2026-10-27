@@ -249,6 +249,12 @@ CREATE UNIQUE INDEX idx_agent_groups_one_default_spawn
 CREATE TRIGGER agent_groups_federation_identity AFTER INSERT ON agent_groups
  BEGIN INSERT INTO federation_group_identities(group_id,opaque_id) VALUES(NEW.id,'grp_'||lower(hex(randomblob(16)))); END;
 
+CREATE TRIGGER usage_profile_assignments_group_gone
+			AFTER DELETE ON agent_groups BEGIN
+				DELETE FROM usage_profile_assignments
+				WHERE scope = 'group' AND scope_id = CAST(OLD.id AS TEXT);
+			END;
+
 CREATE TABLE "agent_cron_jobs" (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
 			name             TEXT NOT NULL DEFAULT '',
@@ -569,6 +575,12 @@ CREATE TRIGGER spawn_profile_name_not_alias_update
 			SELECT RAISE(ABORT, 'spawn profile handle already exists');
 		END;
 
+CREATE TRIGGER usage_profile_assignments_spawn_profile_gone
+			AFTER DELETE ON spawn_profiles BEGIN
+				DELETE FROM usage_profile_assignments
+				WHERE scope = 'spawn_profile' AND scope_id = CAST(OLD.id AS TEXT);
+			END;
+
 CREATE TABLE "ask_threads" (
 			term_key   TEXT NOT NULL,
 			cwd        TEXT NOT NULL,
@@ -637,6 +649,12 @@ CREATE TABLE "agents" (
 		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', relaunch_profile TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE UNIQUE INDEX idx_agents_process_command ON agents(process_command_id) WHERE process_command_id <> '';
+
+CREATE TRIGGER usage_profile_assignments_agent_gone
+			AFTER DELETE ON agents BEGIN
+				DELETE FROM usage_profile_assignments
+				WHERE scope = 'agent' AND scope_id = OLD.agent_id;
+			END;
 
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
@@ -1950,3 +1968,78 @@ CREATE TABLE agent_claude_subscriptions (
 			peer       TEXT NOT NULL,
 			created_at INTEGER NOT NULL
 		) STRICT;
+
+CREATE TABLE usage_profiles (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+			descr      TEXT NOT NULL DEFAULT '',
+			rules      TEXT NOT NULL DEFAULT '[]',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		) STRICT;
+
+CREATE TABLE usage_profile_assignments (
+			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group', 'agent', 'spawn_profile')),
+			scope_id   TEXT NOT NULL DEFAULT '',
+			profile_id INTEGER NOT NULL REFERENCES usage_profiles(id) ON DELETE CASCADE,
+			source     TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (scope, scope_id, profile_id)
+		) STRICT;
+
+CREATE INDEX idx_usage_profile_assignments_profile
+			ON usage_profile_assignments(profile_id);
+
+CREATE TABLE usage_limits (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group')),
+			group_id   INTEGER REFERENCES agent_groups(id) ON DELETE CASCADE,
+			rule       TEXT NOT NULL,
+			enabled    INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			CHECK ((scope = 'global') = (group_id IS NULL))
+		) STRICT;
+
+CREATE INDEX idx_usage_limits_group ON usage_limits(group_id);
+
+CREATE TABLE usage_agent_overrides (
+			agent_id     TEXT PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+			exempt       INTEGER NOT NULL DEFAULT 0,
+			snooze_until INTEGER NOT NULL DEFAULT 0,
+			updated_at   INTEGER NOT NULL
+		) STRICT;
+
+CREATE TABLE usage_budget_extensions (
+			agent_id   TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			rule_key   TEXT NOT NULL,
+			extra      REAL NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (agent_id, rule_key)
+		) STRICT;
+
+CREATE TABLE usage_rule_firings (
+			rule_key   TEXT NOT NULL,
+			subject    TEXT NOT NULL,
+			period_key TEXT NOT NULL,
+			step_key   TEXT NOT NULL,
+			action     TEXT NOT NULL,
+			rule_name  TEXT NOT NULL DEFAULT '',
+			value      REAL NOT NULL,
+			budget     REAL NOT NULL,
+			dry_run    INTEGER NOT NULL DEFAULT 0,
+			fired_at   INTEGER NOT NULL,
+			PRIMARY KEY (rule_key, subject, period_key, step_key)
+		) STRICT;
+
+CREATE INDEX idx_usage_rule_firings_fired ON usage_rule_firings(fired_at);
+
+CREATE TABLE usage_fleet_limits (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    target       TEXT NOT NULL,
+    include_self INTEGER NOT NULL DEFAULT 1,
+    rule         TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+) STRICT;

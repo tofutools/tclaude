@@ -781,6 +781,7 @@ func runServe(p *serveParams) error {
 	// statusbar is running to populate it. Shares the daemon-wide stop
 	// channel.
 	startUsagePoller(cronStop)
+	startUsageFleetPoller(cronStop)
 	startHostMetricsPoller(cronStop)
 
 	// Codex subscription-usage poller. Codex has no usage API wired into
@@ -1339,6 +1340,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/usage/summary", handleAccountUsage)
 	mux.HandleFunc("GET /v1/host/status", handleHostStatus)
 	mux.HandleFunc("GET /v1/costs", handleAccountCosts)
+	registerUsageRuleRoutes(mux)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	registerFederationRoutes(mux)
 	mux.HandleFunc("/v1/messages", handleMessages)

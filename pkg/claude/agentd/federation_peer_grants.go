@@ -87,6 +87,8 @@ var federationPeerSlugs = map[string]string{
 	PermAgentMove:                     "move",
 	PermRoutesConsume:                 proto.CapRoutes,
 	PermJobsRun:                       proto.CapJobs,
+	// A fleet usage limit's actions on member agents (usage_fleet_receive.go).
+	PermUsageRulesEnforce: "usage_enforce",
 }
 
 // fedInstancePeerSlugs are the unscoped, instance-wide peer grants.
@@ -95,6 +97,8 @@ var fedInstancePeerSlugs = map[string]bool{
 	PermNodeUpdate: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
 	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
 	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeSpawnProfilesCreate: true, PermNodeGroupsCreate: true,
+	// Usage sharing for fleet limits, and managing this node's usage rules.
+	PermUsageRead: true, PermUsageRulesManage: true,
 }
 
 func fedInstancePeerSlug(slug string) bool { return fedInstancePeerSlugs[slug] }

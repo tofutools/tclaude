@@ -61,6 +61,7 @@ import { buildProfileSpawnCommands } from './palette-spawn.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 import { openGroupImport, openSnapshots, openTemplatesManageModal } from './modal-templates.js';
 import { openSandboxProfilesManageModal } from './sandbox-profiles.js';
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
@@ -502,6 +503,21 @@ export function buildCommands(snapshot) {
     keywords: 'sandbox profiles profile manage policy filesystem environment network launch security'
       + ' wards ward protections boundaries realm',
     run: () => openSandboxProfilesManageModal(),
+  });
+  cmds.push({
+    icon: '💰', label: wiz('Manage usage limits & budgets…', 'Manage coffer wards & tithes…'),
+    hint: wiz('spend caps, quota guards, per-agent usage profiles and their alerts',
+      'caps on the coffers, mana guards and per-familiar tithes'),
+    keywords: 'usage limits budgets budget spend cap alert alerts cost costs quota profile profiles wrap up hard stop block spawn',
+    run: () => openUsageRulesManager(),
+  });
+  // Fleet limits are this node's; a peer's page manages the peer.
+  if (!globalThis.__tclaudeRemoteNode?.id) cmds.push({
+    icon: '💰', label: wiz('Fleet usage limits…', 'Fleet coffer wards…'),
+    hint: wiz('spend caps summed across nodes or a node pool, and what each node shares with you',
+      'coffer caps across the realm or a circle of nodes'),
+    keywords: 'fleet usage limits budgets spend cap nodes peers pool sub-fleet federation share enforce',
+    run: () => openUsageRulesManager({ tab: 'fleet' }),
   });
   cmds.push({
     icon: '⇄', label: wiz('Manage cross-harness spawns…', 'Manage cross-realm summons…'),

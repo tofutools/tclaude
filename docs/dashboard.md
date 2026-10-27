@@ -1025,7 +1025,8 @@ hub card goes and links run node to node, with the hub's state in the toolbar)
 and zoom: scroll or pinch to zoom around the pointer, drag the background to
 pan, or use −, the percentage (back to 100%), + and fit. A map larger than the
 window fits itself until you zoom or pan. Phone-width screens keep the stacked
-layout without zoom.
+layout without zoom. At its right end, **💰 fleet** reads this node's fleet usage limits and
+opens them (see [Fleet limits](usage-and-costs.md#fleet-limits-spend-across-peers)).
 
 Cards link to where their settings live: ⚙ opens the peer in Fleet config →
 Peers, and beside **You trust it** `trust…` opens Peers and, while the peer is
@@ -1173,7 +1174,8 @@ Appearance › Header & rows › **Toolbar follows the clicked group**
 (`dashboard.fused_toolbar_fixed_node: true`) to stop the following: the
 toolbar then moves only when you pick a node in the chip. Another node's controls show and set that
 node's defaults and create the group there, as far as it shares them with you
-(the same grants as on its page); new profiles are made on their own node.
+(the same grants as on its page); new profiles are made on their own node. The toolbar also
+carries **💰 fleet**, this node's fleet usage limits, whichever node it follows.
 
 A peer's agent terminal opens in the browser as a remote terminal (watch-only
 or interactive, as the peer's `sessions.*` grants allow; see above).

@@ -89,7 +89,7 @@ and the `groups.members.<verb>` manager slugs, `process.runs.start` (binding
 a new process run to the group), plus unscoped `human.notify` and
 `process.runs.read`. Ownership never confers slugs that mutate shared
 configuration (`process.templates.manage`, `agent.sandbox-impl`,
-`sandbox.harness-config`, `human.clipboard`, and similar). `groups set-owner-scopes` can narrow what
+`sandbox.harness-config`, `human.clipboard`, `usage-rules.manage`, and similar). `groups set-owner-scopes` can narrow what
 owning a particular group confers — it only takes reach away, never adds.
 
 ## Scoped grants

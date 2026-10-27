@@ -83,6 +83,7 @@ func nonInteractiveUnsupportedOption(p *SpawnParams) string {
 		{"--fast-mode", p.FastMode != ""},
 		{"--trust-dir", p.TrustDir},
 		{"--harness-config", p.HarnessConfig != ""},
+		{"--usage-profile", len(p.UsageProfiles) > 0},
 	} {
 		if option.set {
 			return option.name
@@ -253,6 +254,11 @@ type SpawnRequest struct {
 	// blank SandboxProfile, which still inherits the ambient tiers, and is
 	// human-only because dropping inherited denies can widen authority.
 	OmitSandboxProfiles bool `json:"omit_sandbox_profiles,omitempty"`
+	// UsageProfiles names usage profiles (budgets and alerts) for the new
+	// agent, replacing whatever its spawn profile, group or the global default
+	// would apply. Human-only: an agent must not pick a laxer budget for the
+	// workers it spawns.
+	UsageProfiles []string `json:"usage_profiles,omitempty"`
 	// Profile names the CLI's explicit --profile. Launch fields remain separate
 	// on the wire so the daemon can distinguish direct flags (loud on
 	// incompatibility) from ambient profile values (skip + disclose when a
@@ -841,6 +847,7 @@ type SpawnParams struct {
 	Prompts                   []string `long:"prompt" optional:"true" help:"Saved prompt to compose into the task brief, ahead of --initial-message (see the dashboard's Saved prompts). Repeatable; order is kept. Replaces the profile's and group's default prompts"`
 	SandboxProfile            string   `long:"sandbox-profile" optional:"true" help:"Filesystem/environment sandbox profile for this spawn (agent callers may be permission-scoped to named profiles)"`
 	OmitSandboxProfiles       bool     `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
+	UsageProfiles             []string `long:"usage-profile" optional:"true" help:"Human-only: usage profile (budget and alerts, see 'tclaude usage rules') for this agent. Repeatable. Replaces the profiles its spawn profile, group or the global default would apply"`
 	HarnessConfig             string   `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
 	IUnderstandBreakGlassRisk bool     `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 
@@ -1726,6 +1733,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Profile:                strings.TrimSpace(p.Profile),
 		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
 		OmitSandboxProfiles:    p.OmitSandboxProfiles,
+		UsageProfiles:          trimmedNonEmpty(p.UsageProfiles),
 		HarnessConfig:          strings.TrimSpace(p.HarnessConfig),
 		Name:                   name,
 		Role:                   merged.Role,
@@ -2149,4 +2157,15 @@ func formatResolvedField(f ResolvedField) string {
 		rendered += " — " + f.Note
 	}
 	return rendered
+}
+
+// trimmedNonEmpty trims each value and drops the blank ones.
+func trimmedNonEmpty(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

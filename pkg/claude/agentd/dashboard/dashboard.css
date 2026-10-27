@@ -5350,13 +5350,13 @@ details[data-group-key][open] > summary .group-sandbox-profile {
    affordance as the other group-header chips (.group-default-cwd).
    The per-group and global 🛡 sandbox-profile chips share the skin and inline
    picker interaction, so they ride every rule here too. */
-.group-default-model, .user-default-model, .group-sandbox-profile, .global-sandbox-profile {
+.group-default-model, .user-default-model, .group-sandbox-profile, .global-sandbox-profile, .usage-profile-chip {
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
   border: 1px solid transparent; white-space: nowrap;
 }
-.group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover, .global-sandbox-profile:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset, .global-sandbox-profile.unset { color: #484f58; font-style: italic; }
+.group-default-model:hover, .user-default-model:hover, .group-sandbox-profile:hover, .global-sandbox-profile:hover, .usage-profile-chip:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-default-model.unset, .user-default-model.unset, .group-sandbox-profile.unset, .global-sandbox-profile.unset, .usage-profile-chip.unset { color: #484f58; font-style: italic; }
 .group-default-model.unset:hover, .user-default-model.unset:hover, .group-sandbox-profile.unset:hover, .global-sandbox-profile.unset:hover { color: #d4d4d4; }
 /* Keep an unset per-group profile visibly dormant. The glyph is independent
    from the chip's text color, but follows the whole clickable chip for its
@@ -5372,6 +5372,9 @@ details[data-group-key][open] > summary .group-sandbox-profile {
 }
 .group-default-model:hover > .group-profile-icon,
 .group-sandbox-profile:hover > .group-profile-icon,
+.usage-profile-chip:hover > .group-profile-icon,
+.global-usage-profile:not(.unset) > .group-profile-icon,
+details[data-group-key][open] > summary .group-usage-profile:not(.unset) > .group-profile-icon,
 details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-profile-icon,
 details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .group-profile-icon {
   opacity: 1;
@@ -21651,6 +21654,121 @@ body.wizard .spend-limit-banner {
   border-color: rgba(122, 93, 176, 0.5); border-left-color: #d9b45a; color: #f3e6c0;
 }
 body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: #ffb3ad; }
+.spend-limit-banner { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.spend-limit-banner .spend-limit-manage { margin-left: auto; }
+
+/* ─── Usage limits & budgets (usage-rules.js) ─────────────────────── */
+.cron-create-modal.usage-rules-modal { min-width: 0; width: min(880px, calc(100vw - 32px)); }
+.usage-rules-tabs { margin: 0 0 4px; }
+.usage-rules-tab { display: flex; flex-direction: column; gap: 8px; }
+.usage-rules-tab h4 { margin: 10px 0 2px; font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; }
+.usage-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.usage-rule-cards { display: flex; flex-direction: column; gap: 8px; }
+.usage-rule-card { border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; background: #0d1117; display: flex; flex-direction: column; gap: 5px; }
+.usage-rule-card.disabled { opacity: .6; }
+.usage-rule-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.usage-rule-card-head .spacer, .usage-rules-modal .spacer { flex: 1; }
+.usage-rule-name { font-weight: 600; color: #e6edf3; }
+.usage-rule-scope { font-size: 12px; color: #8b949e; }
+.usage-rule-tag { font-size: 11px; padding: 1px 6px; border-radius: 9px; background: #21262d; color: #d2a8ff; }
+.usage-rule-summary, .usage-rule-descr { font-size: 12px; color: #9da7b3; }
+.usage-rule-enabled { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.usage-rule-reading { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.usage-rule-bar { display: inline-block; width: 160px; height: 7px; border-radius: 4px; background: #21262d; overflow: hidden; flex: none; }
+.usage-rule-bar-fill { display: block; height: 100%; background: #3fb950; }
+.warn .usage-rule-bar-fill { background: #d29922; }
+.over .usage-rule-bar-fill { background: #f85149; }
+.dry .usage-rule-bar-fill { background: #8b949e; }
+.usage-rule-figure { color: #c9d1d9; font-variant-numeric: tabular-nums; }
+.usage-rule-reached { color: #f0883e; font-weight: 600; }
+.usage-rule-paused { color: #8b949e; font-style: italic; }
+.usage-editor h4 { text-transform: none; letter-spacing: 0; font-size: 14px; color: #e6edf3; }
+.usage-rule-editor { display: flex; flex-direction: column; gap: 8px; border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; background: #0d1117; }
+.usage-rule-fields { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 12px; }
+.usage-rule-fields label { display: flex; align-items: center; gap: 5px; }
+.usage-rule-fields input[type=number] { width: 7em; }
+.usage-rule-fields .usage-wide { flex: 1; min-width: 260px; }
+.usage-rule-fields .usage-wide input { flex: 1; }
+.usage-steps { display: flex; flex-direction: column; gap: 5px; }
+.usage-step-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.usage-step-at input { width: 5em; }
+.usage-step-targets { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.usage-step-targets label { display: flex; align-items: center; gap: 3px; }
+.usage-step-repeat { width: 11em; }
+.usage-step-add { align-self: flex-start; }
+.usage-rule-block { display: flex; flex-direction: column; gap: 4px; }
+.usage-rule-remove { align-self: flex-end; }
+.usage-assign-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; padding: 3px 0; border-bottom: 1px solid #1c2128; }
+.usage-assign-target { min-width: 170px; color: #e6edf3; }
+.usage-assign-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.usage-agent-rule { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.usage-agent-rule-name { min-width: 130px; color: #c9d1d9; }
+.usage-extend { display: flex; align-items: center; gap: 4px; }
+.usage-extend input { width: 8em; }
+.usage-rules-evaluated { font-size: 11px; }
+.usage-agent-own { border-bottom: 0; padding-bottom: 0; }
+.usage-linked-note { flex-basis: 100%; font-size: 0.85em; }
+.usage-profile-chip:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.agent-budget-badge { border: 0; font: inherit; font-size: 11px; padding: 0 5px; border-radius: 8px; margin-left: 5px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.agent-budget-badge.ok { color: #3fb950; background: #12261a; }
+.agent-budget-badge.warn { color: #d29922; background: #2b2111; }
+.agent-budget-badge.over { color: #f85149; background: #2d1517; }
+.agent-budget-badge:hover { filter: brightness(1.25); }
+.agent-budget-badge:focus-visible { outline: 1px solid #58a6ff; }
+/* The fleet views' global usage control (fused Groups toolbar, map) and the
+   dock's usage-limit readings. */
+.fleet-usage-chip { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fleet-usage-chip.ok { color: #3fb950; }
+.fleet-usage-chip.warn { color: #d29922; border-color: #d2992266; }
+.fleet-usage-chip.over { color: #f85149; border-color: #f8514966; }
+.fleet-usage-chip.unset { color: #8b949e; }
+.fleet-usage-held { color: #f85149; }
+.fleet-map-usage { margin-left: auto; }
+.dock-chip.usage-limit-pct { font-variant-numeric: tabular-nums; color: #3fb950; }
+.dock-chip.usage-limit-pct.warn { color: #d29922; }
+.dock-chip.usage-limit-pct.over { color: #f85149; }
+/* Usage manager: the Fleet tab (usage-fleet.js) and a peer's manager. */
+.usage-rules-node { font-size: 12px; font-weight: normal; color: #8b949e; margin-left: 6px; }
+.usage-fleet-h { margin: 14px 0 6px; font-size: 13px; color: #e6edf3; }
+.usage-fleet-members, .usage-fleet-nodes { width: 100%; border-collapse: collapse; font-size: 12px; }
+.usage-fleet-members td, .usage-fleet-nodes td, .usage-fleet-nodes th { padding: 3px 6px; border-bottom: 1px solid #1c2128; text-align: left; vertical-align: middle; }
+.usage-fleet-nodes th { color: #8b949e; font-weight: normal; }
+.usage-fleet-members td.num, .usage-fleet-nodes .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-fleet-members tr.muted td { color: #6e7681; }
+.usage-fleet-self td { color: #c9d1d9; font-style: italic; }
+.usage-fleet-err { color: #d29922; font-size: 11px; }
+.usage-fleet-limit { display: inline-block; font-size: 11px; padding: 0 5px; border-radius: 8px; margin-right: 4px; color: #3fb950; background: #12261a; }
+.usage-fleet-limit.warn { color: #d29922; background: #2b2111; }
+.usage-fleet-limit.over { color: #f85149; background: #2d1517; }
+.usage-grant-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.usage-grant-chip { font-size: 11px; padding: 0 5px; border-radius: 8px; color: #6e7681; border: 1px solid #2a3340; }
+.usage-grant-chip.on { color: #58a6ff; border-color: #1f3b5c; background: #0c1d30; }
+.usage-fleet-controls { margin: 4px 0; padding-left: 18px; font-size: 12px; }
+.usage-fleet-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; }
+.usage-fleet-tab .usage-rule-card .usage-fleet-members { margin-top: 6px; }
+.usage-fleet-nodes-wrap { overflow-x: auto; }
+@media (max-width: 640px) {
+  .usage-fleet-nodes th:nth-child(2), .usage-fleet-nodes td:nth-child(2), .usage-fleet-nodes th:nth-child(3), .usage-fleet-nodes td:nth-child(3) { display: none; }
+}
+.usage-rules-modal input:not([type=checkbox]), .usage-rules-modal select {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 4px 8px; font-size: 12px; color: #c9d1d9; font-family: inherit; min-width: 0;
+}
+.usage-rules-modal input:not([type=checkbox]):focus, .usage-rules-modal select:focus { outline: none; border-color: #58a6ff; }
+.usage-rules-modal input:disabled, .usage-rules-modal select:disabled { opacity: .6; }
+
+/* Usage tab: the limits strip under the overview. */
+.usage-limits-manage { border: 0; background: none; padding: 0; color: #58a6ff; font: inherit; font-size: 12px; letter-spacing: 0; text-transform: none; cursor: pointer; }
+.usage-limits-manage:hover { text-decoration: underline; }
+.usage-hub-limit-list { display: flex; flex-direction: column; gap: 6px; }
+.usage-hub-limit { display: grid; grid-template-columns: minmax(0, 1fr) 200px minmax(140px, auto); gap: 12px; align-items: center; padding: 7px 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; font-size: 13px; }
+.usage-hub-limit .usage-rule-bar { width: 100%; }
+.usage-hub-limit-figure { font-variant-numeric: tabular-nums; color: #c9d1d9; text-align: right; }
+.usage-hub-limits-empty { display: flex; align-items: center; gap: 10px; }
+@media (max-width: 640px) {
+  .usage-hub-limit { grid-template-columns: 1fr; }
+  .usage-hub-limit-figure { text-align: left; }
+}
 
 /* ─── Wizard saved-prompt library ───────────────────────────────────
    The manager opens over the spawn dialog or the operator composer; give it

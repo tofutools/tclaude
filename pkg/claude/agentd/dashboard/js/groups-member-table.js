@@ -1,6 +1,8 @@
 import { Fragment, h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { AgentBudgetBadge } from './usage-profile-chip.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
 import { visibleMemberCols, memberColHidden } from './member-columns.js';
 import {
@@ -724,7 +726,7 @@ function StateCell({ member }) {
   const state = member.state || {};
   return html`<td class="state-cell"><${ContextMeter} state=${state} /><${StatePill}
     state=${state} online=${member.online} conv=${member.conv_id} waking=${memberWaking(member)} />${member.online
-    ? html`<${ActivityBadges} state=${state} />` : null}</td>`;
+    ? html`<${ActivityBadges} state=${state} />` : null}<${AgentBudgetBadge} agentID=${member.agent_id} /></td>`;
 }
 
 function EyeIcon({ hidden = false }) {
@@ -933,6 +935,12 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
     <${FastModeMenuItem} member=${member} />
     <${MenuButton} member=${member} group=${group} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
+    ${member.agent_id && !snapshot?.peer_view && !(group?.fleet_node && !group.fleet_node.local) && !(member.fleet_node?.id && !isPageNode(member.fleet_node.id)) ? html`<${MenuButton} member=${member} group=${group} act="usage-budget" attrs=${{ onClick: (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      interactions.closeMenu(true);
+      openUsageRulesManager({ tab: 'agents', agent: member.agent_id });
+    } }} regular="💰 usage budget…" wizard="💰 tithe…" title=${wizardCopy(`See ${label}'s usage budgets; set its own usage profiles, extend a budget, snooze or exempt it`, `Weigh ${label}'s tithes; set its own, extend, snooze or exempt it`)} />` : null}
     <${MenuSeparator} />
     ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror familiar" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this familiar into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
     <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
