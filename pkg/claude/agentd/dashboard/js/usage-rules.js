@@ -418,7 +418,7 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
       setFleetTick((n) => n + 1);
       await reload();
       // The daemon re-evaluates in the background; pick up its new readings.
-      setTimeout(() => { if (live.current) void reload(); }, 1500);
+      setTimeout(() => { if (live.current) { setFleetTick((n) => n + 1); void reload(); } }, 1500);
       return true;
     } catch (cause) {
       shellToast(cause.message, true);

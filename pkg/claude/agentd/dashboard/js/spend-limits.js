@@ -42,7 +42,7 @@ export function SpendLimitBanner({ state }) {
     ...controls.map(c => `${c.peer_label}'s fleet limit "${c.rule_name}" (${Math.round(c.pct)}%) ${[c.block ? 'blocks spawns' : '', c.stop ? 'stops agents' : ''].filter(Boolean).join(' and ')} here`),
   ].join(' · ');
   const estimates = crossed.some(limit => limit.metric !== 'window_pct');
-  const fleetOnly = !crossed.some(limit => limit.scope !== 'fleet');
+  const fleetOnly = !globalThis.__tclaudeRemoteNode?.id && !crossed.some(limit => limit.scope !== 'fleet');
   return html`<div class=${`spend-limit-banner${over ? ' over-limit' : ''}`} role="status">
     ${text}.${estimates ? ' Cost-ledger estimates may differ from charges.' : ''}
     <button type="button" class="tool spend-limit-manage" onClick=${() => openUsageRulesManager(fleetOnly ? { tab: 'fleet' } : {})}>Manage limits…</button>

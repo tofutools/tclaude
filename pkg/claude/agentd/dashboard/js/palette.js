@@ -511,7 +511,8 @@ export function buildCommands(snapshot) {
     keywords: 'usage limits budgets budget spend cap alert alerts cost costs quota profile profiles wrap up hard stop block spawn',
     run: () => openUsageRulesManager(),
   });
-  cmds.push({
+  // Fleet limits are this node's; a peer's page manages the peer.
+  if (!globalThis.__tclaudeRemoteNode?.id) cmds.push({
     icon: '💰', label: wiz('Fleet usage limits…', 'Fleet coffer wards…'),
     hint: wiz('spend caps summed across nodes or a node pool, and what each node shares with you',
       'coffer caps across the realm or a circle of nodes'),

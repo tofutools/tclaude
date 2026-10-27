@@ -53,15 +53,21 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const live = useRef(true);
+  // Only the newest read lands: a slow fresh read must not overwrite one
+  // taken after a toggle or save.
+  const seq = useRef(0);
   const load = async (fresh = false) => {
+    const mine = ++seq.current;
+    const current = () => live.current && mine === seq.current;
     setLoading(true);
     try {
       const next = await api.fleet(fresh);
-      if (live.current) { setFleet(next); setError(''); }
-    } catch (cause) { if (live.current) setError(cause.message); }
-    finally { if (live.current) setLoading(false); }
+      if (current()) { setFleet(next); setError(''); }
+    } catch (cause) { if (current()) setError(cause.message); }
+    finally { if (current()) setLoading(false); }
   };
-  useEffect(() => { live.current = true; void load(); return () => { live.current = false; }; }, [reloadKey]);
+  useEffect(() => { void load(); }, [reloadKey]);
+  useEffect(() => () => { live.current = false; }, []);
   if (!fleet) {
     return error
       ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void load()}>Retry</button></div>`
