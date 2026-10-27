@@ -5,6 +5,9 @@ import { dashPrefs } from './prefs.js';
 export function createManagementState() {
   const manager = signal('');
   const dialog = signal(null);
+  // The usage manager has its own slot: it opens over an editor (a spawn
+  // profile's "new usage profile…") without closing it.
+  const usageDialog = signal(null);
   const templateDialog = signal(null);
   const templateManager = signal(false);
   const profileFilter = signal('');
@@ -37,12 +40,14 @@ export function createManagementState() {
   }
 
   return Object.freeze({
-    manager, dialog, templateDialog, templateManager, profileFilter, roleFilter, sandboxFilter, templateFilter, profiles, roles, sandboxProfiles, templates, templateGroups, profilesRequest, rolesRequest, sandboxRequest,
+    manager, dialog, usageDialog, templateDialog, templateManager, profileFilter, roleFilter, sandboxFilter, templateFilter, profiles, roles, sandboxProfiles, templates, templateGroups, profilesRequest, rolesRequest, sandboxRequest,
     busy, error, sandboxDiff, confirmSandboxDiff, cancelSandboxDiff,
     openManager(kind) { error.value = ''; manager.value = kind; },
     closeManager() { manager.value = ''; },
     openDialog(value) { error.value = ''; dialog.value = value; },
     closeDialog() { cancelSandboxDiff(false); dialog.value = null; error.value = ''; },
+    openUsageDialog(value) { usageDialog.value = value; },
+    closeUsageDialog() { usageDialog.value = null; },
     openTemplateDialog(value) { error.value = ''; templateDialog.value = value; },
     closeTemplateDialog() { templateDialog.value = null; error.value = ''; },
     openTemplateManager(options = {}) {

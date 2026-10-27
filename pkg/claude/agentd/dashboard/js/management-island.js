@@ -6,6 +6,7 @@ import { roleSummary } from './roles.js';
 import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
 import { ProfileChips, UsageRulesDialog, useSpawnProfileUsageLink } from './usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 import { shellToast } from './shell-state.js';
 import { AUTO_MEMORY_TRI_OPTIONS, PEER_MESSAGING_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
@@ -1415,7 +1416,7 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
       ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>${inspected.missing ? '⚠ This role is no longer in the library.' : html`<div>${inspected.descr || ''}</div><div><b>Brief</b> ${inspected.brief || 'none'}</div><div><b>Grants</b> ${(inspected.permissions || []).length ? html`<span class="role-inspect-grants">${inspected.permissions.map((grant) => html`<code>${roleGrantSlug(grant)}${roleGrantScope(grant) ? ` · ${roleGrantScope(grant)}` : ''}</code>`)}</span>` : 'none'}</div>`}</div>`}
     </div></${Row}>
     ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role label', 'role', 'optional — routing/display label; defaults independently of the role preset'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
-    ${usageLinkable && !saveNode?.id && usageLink.loaded && usageLink.profiles.length ? html`<div class="cron-create-row" id="profile-editor-usage-profiles-row" title="Usage profiles (budgets and alerts) added to every agent spawned from this profile, on top of its group's or the global default."><span class="cron-create-label">Usage profiles</span><div class="cron-create-target"><${ProfileChips} names=${usageCurrent} profiles=${usageLink.profiles} disabled=${saving} label="this spawn profile" onChange=${setUsageNames}/><div class="spawn-field-hint">Added to each agent this profile spawns, on top of its group or global budget.</div></div></div>` : null}
+    ${usageLinkable && !saveNode?.id && usageLink.loaded ? html`<div class="cron-create-row" id="profile-editor-usage-profiles-row" title="Usage profiles (budgets and alerts) added to every agent spawned from this profile, on top of its group's or the global default."><span class="cron-create-label">Usage profiles</span><div class="cron-create-target"><${ProfileChips} names=${usageCurrent} profiles=${usageLink.profiles} disabled=${saving} label="this spawn profile" onChange=${setUsageNames} onNew=${() => openUsageRulesManager({ tab: 'profiles', newProfile: true })}/><div class="spawn-field-hint">Added to each agent this profile spawns, on top of its group or global budget.</div></div></div>` : null}
     <div class="cron-create-row" hidden=${local} title="Saved prompts that open the task brief of agents spawned from this profile, in order, ahead of the initial message. They replace the group's default prompts."><span class="cron-create-label">Saved prompts</span><${SavedPromptChips} id="profile-editor-prompt-refs" node=${descriptor.node || ''} value=${draft.prompt_refs} onChange=${(refs) => change(setDraft, 'prompt_refs', refs)} confirmDiscard=${confirmDiscard}/></div>
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     <${Row} label="Profile context" title="Extra startup guidance delivered to every agent that resolves this profile. It is kept separate from the per-spawn task brief and group context."><textarea id="profile-editor-startup-context" value=${draft.startup_context} onInput=${(event) => change(setDraft, 'startup_context', event.currentTarget.value)} rows="5" placeholder="optional — model/profile-specific guidance injected into every spawn" spellcheck="false" /></${Row}>
@@ -2280,8 +2281,6 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
       return html`<${ProfileImport} initialRaw=${descriptor.raw || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'saved-prompts':
       return html`<${SavedPromptsDialog} key=${`${descriptor.initial || ''}:${descriptor.clone ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
-    case 'usage-rules':
-      return html`<${UsageRulesDialog} key=${`usage-rules:${descriptor.node || ''}:${descriptor.tab || ''}:${descriptor.agent || ''}:${descriptor.profile || ''}:${descriptor.clone ? 1 : 0}:${descriptor.newProfile ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-editor':
       return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${onState.sandboxProfiles.value || []} state=${onState} actions=${on} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-export':
@@ -2332,7 +2331,7 @@ function routeManagers(state, actions) {
   const unregister = registerOverlayRoute('manage', {
     value: () => shown(),
     restore: (want) => {
-      if (state.dialog.peek() || state.templateDialog.peek()) return;
+      if (state.dialog.peek() || state.templateDialog.peek() || state.usageDialog.peek()) return;
       if (want !== 'templates') state.closeTemplateManager();
       if (!want || want === 'templates') state.closeManager();
       if (want === 'templates') actions.openTemplateManager();
@@ -2349,11 +2348,22 @@ function routeManagers(state, actions) {
   return () => { stop(); unregister(); };
 }
 
+// UsageRulesSlot renders the usage manager over whatever else is open. Its
+// key holds every deep link, so a new link remounts it.
+function UsageRulesSlot({ state, confirmDiscard }) {
+  const descriptor = state.usageDialog.value;
+  if (!descriptor) return null;
+  const key = ['usage-rules', descriptor.node, descriptor.tab, descriptor.agent, descriptor.profile, descriptor.limit, descriptor.fleetLimit,
+    descriptor.clone ? 1 : 0, descriptor.newProfile ? 1 : 0, descriptor.newLimit ? 1 : 0].map((v) => v || '').join(':');
+  return html`<${UsageRulesDialog} key=${key} descriptor=${descriptor} onClose=${state.closeUsageDialog} confirmDiscard=${confirmDiscard}/>`;
+}
+
 function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   return html`<${TemplateManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
     <${TemplateEditorSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>
     <${ManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
     <${DialogSlot} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>
+    <${UsageRulesSlot} state=${state} confirmDiscard=${confirmDiscard}/>
     <${SandboxDiffSlot} state=${state}/>`;
 }
 
@@ -2362,7 +2372,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openProfilesManageModal: () => actions.openManager('profiles'), openProfileEditor: actions.openProfileEditor, removeProfile: actions.removeProfile,
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
     openSavedPrompts: ({ initial = '', clone = false, node = '' } = {}) => state.openDialog({ kind: 'saved-prompts', initial, clone, node }),
-    openUsageRules: ({ tab = '', agent = '', profile = 0, clone = false, newProfile = false, node = '', nodeLabel = '' } = {}) => state.openDialog({ kind: 'usage-rules', tab, agent, profile, clone, newProfile, node, nodeLabel }),
+    openUsageRules: (options = {}) => state.openUsageDialog({ ...options, kind: 'usage-rules' }),
     openSandboxProfilesManageModal: () => actions.openManager('sandbox'), openSandboxProfileEditor: actions.openSandboxEditor, removeSandboxProfile: actions.removeSandbox,
     openSandboxProfileClone: actions.openSandboxClone,
     // The right panel library: a kind's own importer opened on a file the

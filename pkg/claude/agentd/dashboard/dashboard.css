@@ -5691,6 +5691,10 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
    Below the toast (200) and the shared confirm (1000). */
 #profile-editor-modal { z-index: 150; }
 #sandbox-profile-editor-modal { z-index: 150; }
+/* The usage manager opens over the spawn-profile and template editors and the
+   spawn dialog (their "new usage profile…"), so it sits above the editors' 150
+   and below the permission editor and confirms. */
+#usage-rules-modal { z-index: 155; }
 #sandbox-profile-diff-modal { z-index: 1000; }
 #sandbox-profile-editor-filesystem,
 #sandbox-profile-editor-environment {

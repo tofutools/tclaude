@@ -10,6 +10,7 @@ import {
   blankStep, draftToRule, fmtAmount, linkedNames, metricsFor, periodsFor, profileUses, ruleSummary, ruleToDraft, snoozeActive,
 } from './usage-rules-model.js';
 import { shellConfirm, shellToast } from './shell-state.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 
@@ -158,17 +159,26 @@ function LinkedNote({ assignments, agentID }) {
 
 // ProfileChips picks the ordered profile set for one assignment layer and
 // saves it at once.
-export function ProfileChips({ names, profiles, disabled, onChange, label }) {
+// ProfileChips edits a layer's usage profiles. onNew (the spawn-profile and
+// template editors) adds a "new usage profile…" entry, so the pick is there
+// before any profile exists.
+export function ProfileChips({ names, profiles, disabled, onChange, label, onNew = null }) {
   const free = profiles.filter((p) => !names.includes(p.name));
+  const NEW_PROFILE = '/new';
   return html`<span class="usage-assign-chips">
     ${names.map((name) => html`<span key=${name} class="agent-spawn-role-chip">
       <span class="role-chip-inspect">${name}</span>
       <button type="button" class="role-chip-remove" disabled=${disabled} aria-label=${`Remove ${name} from ${label}`}
         onClick=${() => onChange(names.filter((n) => n !== name))}>×</button></span>`)}
-    <select value="" disabled=${disabled || !free.length} aria-label=${`Add usage profile to ${label}`}
-      onChange=${(e) => { const next = e.currentTarget.value; e.currentTarget.value = ''; if (next) onChange([...names, next]); }}>
-      <option value="">${profiles.length ? '＋ add…' : 'no profiles'}</option>
+    <select value="" disabled=${disabled || (!free.length && !onNew)} aria-label=${`Add usage profile to ${label}`}
+      onChange=${(e) => {
+        const next = e.currentTarget.value; e.currentTarget.value = '';
+        if (next === NEW_PROFILE) onNew();
+        else if (next) onChange([...names, next]);
+      }}>
+      <option value="">${profiles.length ? '＋ add…' : 'no usage profiles yet'}</option>
       ${free.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}</option>`)}
+      ${onNew ? html`<option value=${NEW_PROFILE}>＋ new usage profile…</option>` : null}
     </select>
   </span>`;
 }
@@ -188,13 +198,15 @@ function AssignmentsTab({ overview, busy, onAssign }) {
   const agentRows = [...new Set((overview.assignments || []).filter((a) => a.scope === 'agent').map((a) => a.scope_id))];
   const pickable = (overview.agents || []).filter((a) => !agentRows.includes(a.id));
   return html`<div class="usage-rules-tab">
-    <p class="modal-hint">An agent uses the profiles of its nearest non-empty layer: agent › its groups (combined) › global default. A spawn profile's usage profiles are added to each agent it spawns, on top of its group or global ones; an agent's own assignment replaces them.</p>
+    <p class="modal-hint">An agent uses the profiles of its nearest non-empty layer: agent › its groups (combined) › global default. A spawn profile's usage profiles are added to each agent it spawns, on top of its group or global ones; an agent's own assignment replaces them. A group deployed from a template starts with the template's usage profiles as its group layer.</p>
     <h4>Global default</h4>
     ${row('global', '', 'All agents')}
     <h4>Groups</h4>
     ${(overview.groups || []).length ? overview.groups.map((g) => row('group', g, g)) : html`<div class="muted">No groups.</div>`}
     <h4>Spawn profiles</h4>
     ${(overview.spawn_profiles || []).length ? overview.spawn_profiles.map((sp) => row('spawn_profile', sp, sp)) : html`<div class="muted">No spawn profiles.</div>`}
+    <h4>Group templates</h4>
+    ${(overview.templates || []).length ? overview.templates.map((t) => row('template', t, t)) : html`<div class="muted">No group templates.</div>`}
     <h4>Agents</h4>
     ${agentRows.map((id) => row('agent', id, agentTitle(overview, id) || id, agentTitle(overview, id) ? id : ''))}
     <div class="usage-assign-row">
@@ -349,22 +361,30 @@ function ProfileEditor({ profile, busy, onSave, onDelete, onCancel, onDirty }) {
   </div>`;
 }
 
-// useSpawnProfileUsageLink loads the usage profiles linked to a spawn profile
-// (empty name: a new one) for the spawn-profile editor. enabled=false skips it
-// (a custom launch, or another node's profile).
-export function useSpawnProfileUsageLink(spawnProfile, enabled = true, api = usageRulesApi) {
+// useUsageProfileLink loads the usage profiles linked to a spawn profile or
+// a group template (scope 'spawn_profile' or 'template'; empty name: a new
+// one) for its editor. enabled=false skips it (a custom launch, or another
+// node's item).
+export function useUsageProfileLink(scope, name, enabled = true, api = usageRulesApi) {
   const [link, setLink] = useState({ loaded: false, profiles: [], names: [] });
+  // A profile made meanwhile (the editor's "new usage profile…") reloads the
+  // choices once the snapshot lists it.
+  const known = (dashboardState.snapshot.value?.usage?.budgets?.profiles || []).map((p) => p.name).join('\n');
   useEffect(() => {
     if (!enabled) return undefined;
     let live = true;
     api.overview().then((overview) => {
       if (!live) return;
-      const names = spawnProfile ? assignedNames(overview.assignments, 'spawn_profile', spawnProfile) : [];
+      const names = name ? assignedNames(overview.assignments, scope, name) : [];
       setLink({ loaded: true, profiles: overview.profiles || [], names });
     }).catch(() => { if (live) setLink({ loaded: true, profiles: [], names: [] }); });
     return () => { live = false; };
-  }, [spawnProfile, enabled]);
+  }, [scope, name, enabled, known]);
   return link;
+}
+
+export function useSpawnProfileUsageLink(spawnProfile, enabled = true, api = usageRulesApi) {
+  return useUsageProfileLink('spawn_profile', spawnProfile, enabled, api);
 }
 
 // UsageRulesDialog is the "Usage limits & budgets" manager: global/group
@@ -429,6 +449,8 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
     try {
       await work();
       if (done) shellToast(done);
+      // The dashboard's chips, dock and the editors' pickers read the snapshot.
+      if (!node) void import('./refresh.js').then((m) => m.refresh()).catch(() => {});
       setFleetTick((n) => n + 1);
       await reload();
       // The daemon re-evaluates in the background; pick up its new readings.

@@ -197,3 +197,56 @@ func TestUsageRulesAPI_SpawnAssignsUsageProfiles(t *testing.T) {
 	require.Len(t, linked, 1)
 	assert.Equal(t, "spawn profile reviewer", linked[0].Source)
 }
+
+// Scenario: the operator links a usage profile to a group template. The
+// overview names the link, a group deployed from the template starts with
+// the profile as its group layer, and deleting the template drops the link.
+func TestUsageRulesAPI_TemplateLinkBecomesDeployedGroupLayer(t *testing.T) {
+	f := newFlow(t)
+	rec := usageCall(t, f, "", http.MethodPost, "/v1/usage/profiles", map[string]any{"name": "team", "rules": []any{budgetRule}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "squad", "agents": []templateAgentSpec{{Name: "dev", Role: "dev", InitialMessage: "Build it."}},
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	rec = usageCall(t, f, "", http.MethodPut, "/v1/usage/assignments", map[string]any{"scope": "template", "target": "nope", "profiles": []string{"team"}})
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	rec = usageCall(t, f, "", http.MethodPut, "/v1/usage/assignments", map[string]any{"scope": "template", "target": "squad", "profiles": []string{"team"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	overview := func() (out struct {
+		Templates   []string `json:"templates"`
+		Assignments []struct {
+			Scope       string `json:"scope"`
+			ScopeName   string `json:"scope_name"`
+			ProfileName string `json:"profile_name"`
+		} `json:"assignments"`
+	}) {
+		rec := usageCall(t, f, "", http.MethodGet, "/v1/usage/rules", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+	o := overview()
+	assert.Contains(t, o.Templates, "squad")
+	require.Len(t, o.Assignments, 1)
+	assert.Equal(t, "template", o.Assignments[0].Scope)
+	assert.Equal(t, "squad", o.Assignments[0].ScopeName)
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/squad/instantiate", map[string]any{"group_name": "falcon", "task": "Ship it."})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var groupLayer []string
+	for _, a := range overview().Assignments {
+		if a.Scope == "group" && a.ScopeName == "falcon" {
+			groupLayer = append(groupLayer, a.ProfileName)
+		}
+	}
+	assert.Equal(t, []string{"team"}, groupLayer, "the deployed group starts with the template's usage profiles")
+
+	rec = humanReq(t, f, http.MethodDelete, "/v1/templates/squad", nil)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	for _, a := range overview().Assignments {
+		assert.NotEqual(t, "template", a.Scope, "deleting the template drops its link")
+	}
+}

@@ -200,6 +200,11 @@ In the dashboard, usage profiles sit beside the spawn and sandbox profiles:
   profile inline; several open the manager.
 - **Spawn dialog**: a Usage profile field, inherited by default.
 - **Spawn profile editor**: the usage profiles that profile adds to its agents.
+- **Group template editor**: the usage profiles a group deployed from the
+  template starts with, as its group layer.
+
+Each of these offers **＋ new usage profile…**, which opens the manager on
+top, so the pick is there before the first profile exists.
 - **Agent rows**: a 💰 badge once an agent has used half a budget or a step
   has fired, and a "💰 usage budget…" entry in the row menu.
 - **Dock**: a Usage profiles section with ★ for the global default, and a
@@ -213,8 +218,8 @@ the command palette, the limit banner, or any of the above) has four tabs:
 - **Limits**: global and group limits with their live readings, an enable
   toggle, and presets (monthly or daily spend cap, quota window guard).
 - **Usage profiles**: create, clone and edit profiles and their rules.
-- **Assignments**: the global default, each group, each spawn profile and
-  individual agents.
+- **Assignments**: the global default, each group, each spawn profile, each
+  group template and individual agents.
 - **Agents**: each agent's budgets, with snooze, exempt and per-rule extra
   budget.
 
@@ -236,6 +241,7 @@ tclaude usage profile set default --name budget --period lifetime --budget 20 \
 tclaude usage assign --scope global --profile default
 tclaude usage assign --scope group --target backend --profile strict
 tclaude usage assign --scope spawn_profile --target reviewer --profile cheap
+tclaude usage assign --scope template --target feature-team --profile strict
 tclaude usage adjust worker-1 --rule profile:1:budget --extra 10
 tclaude usage adjust worker-1 --snooze 60
 tclaude usage self                        # an agent's own budgets
