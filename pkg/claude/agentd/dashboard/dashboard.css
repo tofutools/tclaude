@@ -5215,6 +5215,7 @@ body.wizard .force-fold-label-wizard { display: inline; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-usage-profile,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-link-chips,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-fixed {
     margin-left: 1px;
@@ -5227,7 +5228,8 @@ body.wizard .force-fold-label-wizard { display: inline; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-usage-profile {
     padding-left: 3px;
     padding-right: 3px;
   }
@@ -5250,6 +5252,7 @@ details[data-group-key][open] > summary .group-default-cwd,
 details[data-group-key][open] > summary .group-max-members,
 details[data-group-key][open] > summary .group-default-model,
 details[data-group-key][open] > summary .group-sandbox-profile,
+details[data-group-key][open] > summary .group-usage-profile,
 details[data-group-key][open] > summary .group-link-chips,
 details[data-group-key][open] > summary .group-attachment-fixed {
   margin-left: 1px;
@@ -5258,7 +5261,8 @@ details[data-group-key][open] > summary .group-descr,
 details[data-group-key][open] > summary .group-default-cwd,
 details[data-group-key][open] > summary .group-max-members,
 details[data-group-key][open] > summary .group-default-model,
-details[data-group-key][open] > summary .group-sandbox-profile {
+details[data-group-key][open] > summary .group-sandbox-profile,
+details[data-group-key][open] > summary .group-usage-profile {
   padding-left: 3px;
   padding-right: 3px;
 }
