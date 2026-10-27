@@ -478,13 +478,13 @@ func setProfile(p *profileSetParams, out io.Writer) error {
 }
 
 type assignParams struct {
-	Scope   string   `long:"scope" help:"global | group | agent | spawn_profile"`
-	Target  string   `long:"target" optional:"true" help:"Group name, agent selector, or spawn profile name (not for global)"`
+	Scope   string   `long:"scope" help:"global | group | agent | spawn_profile | template (a group template: groups deployed from it take these)"`
+	Target  string   `long:"target" optional:"true" help:"Group name, agent selector, spawn profile name or group template name (not for global)"`
 	Profile []string `long:"profile" optional:"true" help:"Usage profile to apply at this layer; repeatable. None clears the layer, so the next layer out applies"`
 }
 
 func assignCmd() *cobra.Command {
-	return boa.CmdT[assignParams]{Use: "assign", Short: "Set which usage profiles apply at a layer (global default, a group, an agent, or a spawn profile)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *assignParams, cmd *cobra.Command, _ []string) {
+	return boa.CmdT[assignParams]{Use: "assign", Short: "Set which usage profiles apply at a layer (global default, a group, an agent, a spawn profile, or a group template)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *assignParams, cmd *cobra.Command, _ []string) {
 		profiles := p.Profile
 		if profiles == nil {
 			profiles = []string{}

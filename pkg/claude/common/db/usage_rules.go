@@ -24,6 +24,9 @@ const (
 	// UsageScopeSpawnProfile links usage profiles to a spawn profile; a spawn
 	// through it copies them onto the new agent as agent-layer assignments.
 	UsageScopeSpawnProfile = "spawn_profile"
+	// UsageScopeTemplate links usage profiles to a group template; a group
+	// deployed from it takes them as its group layer.
+	UsageScopeTemplate = "template"
 )
 
 // ErrUsageProfileNameTaken reports a duplicate usage profile name.
@@ -251,7 +254,7 @@ func SetUsageProfileAssignments(scope, scopeID string, profileIDs []int64, sourc
 	switch scope {
 	case UsageScopeGlobal:
 		scopeID = ""
-	case UsageScopeGroup, UsageScopeAgent, UsageScopeSpawnProfile:
+	case UsageScopeGroup, UsageScopeAgent, UsageScopeSpawnProfile, UsageScopeTemplate:
 		if strings.TrimSpace(scopeID) == "" {
 			return fmt.Errorf("usage profile assignment: %s scope needs an id", scope)
 		}

@@ -3378,6 +3378,9 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 				slog.Warn("instantiate: init process state failed", "group", spec.groupName, "error", err)
 			}
 		}
+		// The template's usage profiles become the new group's layer, before
+		// any member spawns into it. Best-effort like the meta writes above.
+		applyTemplateUsageProfiles(tmpl.ID, gid)
 	}
 
 	// Seeded rhythms (JOH-244): materialize the template's recurring nudges as
