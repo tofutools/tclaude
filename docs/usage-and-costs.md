@@ -202,7 +202,10 @@ In the dashboard, usage profiles sit beside the spawn and sandbox profiles:
 - **Spawn profile editor**: the usage profiles that profile adds to its agents.
 - **Agent rows**: a 💰 badge once an agent has used half a budget or a step
   has fired, and a "💰 usage budget…" entry in the row menu.
-- **Dock**: a Usage profiles section with ★ for the global default.
+- **Dock**: a Usage profiles section with ★ for the global default, and a
+  **Usage limits & alerts** section listing the active global, group and
+  fleet limits with their readings. A card's ⚙ edits, clones or deletes the
+  limit and its alert ladder; ＋ adds a limit.
 
 **Usage limits & budgets** (the Usage tab's Limits section, Config → Costs,
 the command palette, the limit banner, or any of the above) has four tabs:
@@ -318,6 +321,13 @@ usage dialog against that peer; the same is reachable from the peer's popup in
 the fleet strip and from the **💰 usage rules** button on its peer view. The
 spend banner also shows fleet limits past a step and peers' blocks or stops
 in force here.
+
+The fleet views carry a **💰 fleet** control: in the fused Groups toolbar and
+in the map's toolbar. It shows the tightest fleet limit's percentage in green,
+amber or red, a ⛔ count while peers' fleet limits block or stop anything
+here, and every reading on hover; a click opens the Fleet tab. While the
+fused toolbar acts on a peer that granted `usage-rules.manage`, it also offers
+**💰 usage rules on <peer>** in place of this node's usage-profile chip.
 
 The former **Spend limits** settings (`cost.daily_limit_usd`,
 `cost.monthly_limit_usd`) are converted on the next usage tick into global

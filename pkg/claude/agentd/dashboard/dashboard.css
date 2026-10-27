@@ -21715,6 +21715,18 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .agent-budget-badge.over { color: #f85149; background: #2d1517; }
 .agent-budget-badge:hover { filter: brightness(1.25); }
 .agent-budget-badge:focus-visible { outline: 1px solid #58a6ff; }
+/* The fleet views' global usage control (fused Groups toolbar, map) and the
+   dock's usage-limit readings. */
+.fleet-usage-chip { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fleet-usage-chip.ok { color: #3fb950; }
+.fleet-usage-chip.warn { color: #d29922; border-color: #d2992266; }
+.fleet-usage-chip.over { color: #f85149; border-color: #f8514966; }
+.fleet-usage-chip.unset { color: #8b949e; }
+.fleet-usage-held { color: #f85149; }
+.fleet-map-usage { margin-left: auto; }
+.dock-chip.usage-limit-pct { font-variant-numeric: tabular-nums; color: #3fb950; }
+.dock-chip.usage-limit-pct.warn { color: #d29922; }
+.dock-chip.usage-limit-pct.over { color: #f85149; }
 /* Usage manager: the Fleet tab (usage-fleet.js) and a peer's manager. */
 .usage-rules-node { font-size: 12px; font-weight: normal; color: #8b949e; margin-left: 6px; }
 .usage-fleet-h { margin: 14px 0 6px; font-size: 13px; color: #e6edf3; }

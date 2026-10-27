@@ -110,3 +110,62 @@ test('the usage API reaches a peer through the proxy', async (t) => {
   await api.assign('global', '', ['a']);
   assert.deepEqual(seen, [['/api/peer/inst_ann/usage/rules', 'GET'], ['/api/peer/inst_ann/usage/assignments', 'PUT']]);
 });
+
+test('the fleet views\' 💰 control reads the tightest fleet limit and peers\' holds', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { FleetUsageChip } = await harness.importDashboardModule('js/usage-profile-chip.js');
+  const snapshot = harness.signals.signal({ usage: {} });
+  const mounted = await harness.mount(harness.html`<${FleetUsageChip} snapshot=${snapshot}/>`);
+  const chip = () => mounted.container.querySelector('[data-fleet-usage]');
+  assert.equal(chip().textContent, '💰 fleet limits');
+  assert.ok(chip().classList.contains('unset'));
+  assert.match(chip().title, /No fleet limits yet/);
+  await harness.act(() => {
+    snapshot.value = { usage: {
+      fleet_limits: [
+        { rule_key: 'fleet:1', name: 'org', target_label: 'all nodes', metric: 'total_usd', period: 'month', value: 40, budget: 100, pct: 40, counted: 3 },
+        { rule_key: 'fleet:2', name: 'rigs', target_label: 'pool rigs', metric: 'total_usd', period: 'week', value: 85, budget: 100, pct: 85, counted: 2, reached: 'notify' },
+      ],
+    } };
+  });
+  assert.equal(chip().textContent, '💰 fleet 85%');
+  assert.ok(chip().classList.contains('warn'));
+  assert.match(chip().title, /Fleet limit "rigs" \(pool rigs\): \$85\.00 \/ \$100.*2 node\(s\) counted\) · notify step reached/);
+  await harness.act(() => {
+    snapshot.value = { usage: { ...snapshot.value.usage, fleet_controls: [{ peer_label: 'lead', rule_name: 'cap', pct: 120, block: true }] } };
+  });
+  assert.ok(chip().classList.contains('over'));
+  assert.match(chip().textContent, /⛔ 1/);
+  assert.match(chip().title, /lead's fleet limit "cap" \(120%\) blocks spawns here/);
+  await mounted.unmount();
+});
+
+test('the manager opens straight into a limit\'s or fleet limit\'s editor', async (t) => {
+  const limit = { id: 9, scope: 'global', group: '', enabled: true, rule: { name: 'monthly', metric: 'total_usd', period: 'month', budget: 50, steps: [] } };
+  const harness = await createPreactHarness(t);
+  const { UsageRulesDialog } = await harness.importDashboardModule('js/usage-rules.js');
+  const api = {
+    overview: async () => ({ profiles: [], limits: [limit], limit_statuses: [], assignments: [], overrides: [], statuses: [], groups: [], spawn_profiles: [], agents: [], windows: [] }),
+    fleet: async () => fleetFixture(),
+  };
+  const open = async (descriptor, selector) => {
+    const mounted = await harness.mount(harness.html`<${UsageRulesDialog} descriptor=${descriptor} api=${api}
+      onClose=${() => {}} confirmDiscard=${async () => true} confirm=${async () => true}/>`);
+    for (let i = 0; i < 100 && !mounted.container.querySelector(selector); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await harness.act(() => Promise.resolve());
+    }
+    return mounted;
+  };
+  let mounted = await open({ kind: 'usage-rules', tab: 'limits', limit: 9 }, '#usage-limit-editor');
+  assert.match(mounted.container.querySelector('#usage-limit-editor h4').textContent, /Edit limit "monthly"/);
+  await mounted.unmount();
+  mounted = await open({ kind: 'usage-rules', tab: 'limits', limit: 9, clone: true }, '#usage-limit-editor');
+  assert.equal(mounted.container.querySelector('#usage-limit-editor h4').textContent, 'New limit');
+  assert.equal(mounted.container.querySelector('[aria-label="Rule name"]').value, 'monthly copy');
+  await mounted.unmount();
+  mounted = await open({ kind: 'usage-rules', tab: 'fleet', fleetLimit: 4 }, '#usage-fleet-limit-editor');
+  assert.ok(mounted.container.querySelector('#usage-fleet-limit-editor'));
+  assert.equal(mounted.container.querySelector('[aria-label="Rule name"]').value, 'fleet cap');
+  await mounted.unmount();
+});

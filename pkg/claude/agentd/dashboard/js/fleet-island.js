@@ -1,6 +1,6 @@
 import { Fragment, h, render } from 'preact';
 import { openUsageRulesManager } from './modal-usage-rules.js';
-import { peerManagesUsage } from './usage-profile-chip.js';
+import { FleetUsageChip, peerManagesUsage } from './usage-profile-chip.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { NodeUpdateDialog } from './node-update.js';
@@ -953,6 +953,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
         <button type="button" aria-label="Fit to screen" title="Fit to screen" onClick=${() => zoom.fit()}>⤢</button>
       </span>
       <span class="fleet-map-hint">scroll or pinch to zoom · drag the background to pan</span>
+      <${FleetUsageChip} className="fleet-map-usage"/>
     </div>
     <div class="fleet-map-stage" ref=${stageRef}>
     <div class="fleet-map" ref=${mapRef} style=${`transform:translate(${zoom.view.x}px,${zoom.view.y}px) scale(${zoom.view.s})`}>

@@ -153,3 +153,45 @@ export function RemoteUsageRulesButton({ snapshot = dashboardState.snapshot }) {
     title=${`Manage ${label}'s usage limits, usage profiles and budgets (it granted you usage-rules.manage)`}
     onClick=${() => openUsageRulesManager({ node: remote, nodeLabel: label })}>💰 usage rules</button>`;
 }
+
+// fleetUsageView sums up this node's fleet limits for the fleet controls:
+// the tightest reading and the peers' fleet limits holding anything here.
+export function fleetUsageView(snapshot) {
+  const usage = snapshot?.usage || {};
+  const limits = (usage.fleet_limits || []).filter((l) => !l.dry_run);
+  const controls = usage.fleet_controls || [];
+  const worst = limits.reduce((top, l) => (!top || l.pct > top.pct ? l : top), null);
+  const over = controls.length > 0 || limits.some((l) => (l.reached && l.reached !== 'notify') || l.pct >= 100);
+  const tone = over ? 'over' : limits.some((l) => l.reached || l.pct >= 80) ? 'warn' : 'ok';
+  const lines = [
+    ...limits.map((l) => `Fleet limit "${l.name}" (${l.target_label}): ${fmtAmount(l.metric, l.value)} / ${fmtAmount(l.metric, l.budget)} ${periodLabel(l.period)} (${Math.round(l.pct)}%, ${l.counted} node(s) counted)${l.reached ? ` · ${l.reached.replace('_', ' ')} step reached` : ''}`),
+    ...controls.map((c) => `${c.peer_label}'s fleet limit "${c.rule_name}" (${Math.round(c.pct)}%) ${[c.block ? 'blocks spawns' : '', c.stop ? 'stops agents' : ''].filter(Boolean).join(' and ')} here`),
+  ];
+  return { limits, controls, worst, tone, lines };
+}
+
+// FleetUsageChip is the fleet views' global usage control (the fused Groups
+// toolbar and the map): this node's fleet limits at a glance, opening the
+// manager's Fleet tab, where limits and their alert ladders are set. Fleet
+// limits are this node's own, so a peer's page shows none.
+export function FleetUsageChip({ snapshot = dashboardState.snapshot, className = '' }) {
+  if (globalThis.__tclaudeRemoteNode?.id) return null;
+  const { limits, controls, worst, tone, lines } = fleetUsageView(snapshot.value);
+  const label = worst ? `fleet ${Math.round(worst.pct)}%` : 'fleet limits';
+  const title = [
+    ...(lines.length ? lines : ['No fleet limits yet: cap spend summed across nodes or a node pool, with alerts and actions at each step.']),
+    'Click to manage fleet limits and their alerts.',
+  ].join('\n');
+  return html`<button type="button" class=${`tool fleet-usage-chip ${limits.length || controls.length ? tone : 'unset'} ${className}`.trim()}
+    data-fleet-usage title=${title} aria-label=${title}
+    onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>💰 ${label}${controls.length ? html` <span class="fleet-usage-held">⛔ ${controls.length}</span>` : null}</button>`;
+}
+
+// NodeUsageRulesButton opens another node's usage manager from a fused
+// view's toolbar, when that node lets this one manage its rules.
+export function NodeUsageRulesButton({ node }) {
+  if (!node || node.local || !peerManagesUsage({ peer_view: node.peerView })) return null;
+  return html`<button type="button" class="tool remote-usage-rules" data-remote-usage-rules=${node.id}
+    title=${`Manage ${node.name}'s usage limits, usage profiles and budgets (it granted you usage-rules.manage)`}
+    onClick=${() => openUsageRulesManager({ node: node.id, nodeLabel: node.name })}>💰 usage rules on ${node.name}</button>`;
+}
