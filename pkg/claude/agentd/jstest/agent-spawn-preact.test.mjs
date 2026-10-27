@@ -2253,3 +2253,20 @@ test('Preact agent-spawn without shares shows no usage row and sends no gateway'
   assert.equal(bodies[0].permission_overrides?.['models.proxy'], undefined);
   mounted.cleanup();
 });
+
+test('Preact agent-spawn offers a usage profile before any exists', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    const select = host.querySelector('#agent-spawn-usage-profile');
+    assert.ok(select, 'the Usage profile field shows with no usage profiles yet');
+    const values = [...select.querySelectorAll('option')].map((o) => o.value);
+    assert.deepEqual(values, ['', '/new-usage-profile']);
+    assert.equal(select.closest('.cron-create-row').previousElementSibling.id, 'agent-spawn-allow-unenforced-sandbox-row',
+      'it follows the sandbox rows rather than splitting them');
+  } finally {
+    await mounted.cleanup();
+  }
+});

@@ -201,7 +201,7 @@ export function linkedNames(assignments, agentID) {
 export function profileUses(assignments, profileID) {
   return (assignments || []).filter((a) => a.profile_id === profileID).map((a) => {
     if (a.scope === 'global') return 'global default';
-    const kind = { group: 'group', spawn_profile: 'spawn profile', agent: 'agent' }[a.scope] || a.scope;
+    const kind = { group: 'group', spawn_profile: 'spawn profile', template: 'template', agent: 'agent' }[a.scope] || a.scope;
     return `${kind} ${a.scope_name || a.scope_id}`;
   });
 }

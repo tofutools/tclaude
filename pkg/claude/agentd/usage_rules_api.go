@@ -81,10 +81,12 @@ type usageRulesOverview struct {
 	// LimitStatuses is the latest reading of every enabled limit.
 	LimitStatuses []usageStatusView `json:"limit_statuses"`
 	EvaluatedAt   string            `json:"evaluated_at,omitempty"`
-	// Groups, SpawnProfiles and Agents name the assignment targets, so an
-	// editor can offer them without reading the rest of the dashboard.
+	// Groups, SpawnProfiles, Templates and Agents name the assignment
+	// targets, so an editor can offer them without reading the rest of the
+	// dashboard.
 	Groups        []string            `json:"groups"`
 	SpawnProfiles []string            `json:"spawn_profiles"`
+	Templates     []string            `json:"templates"`
 	Agents        []usageAgentRefView `json:"agents"`
 	// Windows names the provider quota windows a window_pct limit can watch.
 	Windows []string `json:"windows"`
@@ -182,6 +184,14 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 		}
 	}
 	sort.Strings(out.SpawnProfiles)
+	templates := map[string]string{}
+	if ts, err := db.ListGroupTemplates(); err == nil {
+		for _, t := range ts {
+			templates[strconv.FormatInt(t.ID, 10)] = t.Name
+			out.Templates = append(out.Templates, t.Name)
+		}
+	}
+	sort.Strings(out.Templates)
 	if agents, err := db.ListActiveAgents(); err == nil {
 		for _, a := range agents {
 			out.Agents = append(out.Agents, usageAgentRefView{ID: a.AgentID, Title: agent.CachedTitle(a.CurrentConvID)})
@@ -194,6 +204,8 @@ func collectUsageRulesOverview() (usageRulesOverview, error) {
 			v.ScopeName = groupNames[a.ScopeID]
 		case db.UsageScopeSpawnProfile:
 			v.ScopeName = spawnProfiles[a.ScopeID]
+		case db.UsageScopeTemplate:
+			v.ScopeName = templates[a.ScopeID]
 		case db.UsageScopeAgent:
 			if ag, err := db.GetAgent(a.ScopeID); err == nil && ag != nil {
 				v.ScopeName = agent.CachedTitle(ag.CurrentConvID)
@@ -617,6 +629,15 @@ func resolveUsageAssignmentTarget(scope, target string) (string, int, error) {
 			return "", http.StatusNotFound, err
 		}
 		return id, 0, nil
+	case db.UsageScopeTemplate:
+		t, err := db.GetGroupTemplate(target)
+		if err != nil {
+			return "", http.StatusInternalServerError, err
+		}
+		if t == nil {
+			return "", http.StatusNotFound, fmt.Errorf("no group template %q", target)
+		}
+		return strconv.FormatInt(t.ID, 10), 0, nil
 	case db.UsageScopeSpawnProfile:
 		sp, err := db.ResolveSpawnProfile(target)
 		if err != nil {
@@ -627,7 +648,7 @@ func resolveUsageAssignmentTarget(scope, target string) (string, int, error) {
 		}
 		return strconv.FormatInt(sp.ID, 10), 0, nil
 	default:
-		return "", http.StatusBadRequest, errors.New(`scope must be "global", "group", "agent" or "spawn_profile"`)
+		return "", http.StatusBadRequest, errors.New(`scope must be "global", "group", "agent", "spawn_profile" or "template"`)
 	}
 }
 
@@ -821,6 +842,29 @@ func applySpawnUsageProfiles(agentID, convID string, explicit []int64, spawnProf
 	}
 	if err := db.SetUsageProfileAssignments(db.UsageScopeAgent, agentID, ids, source); err != nil {
 		slog.Warn("usage rules: assign spawned agent's usage profiles", "agent", agentID, "error", err)
+	}
+}
+
+// applyTemplateUsageProfiles gives a group deployed from a template the
+// usage profiles linked to that template, as the group's layer.
+func applyTemplateUsageProfiles(templateID, groupID int64) {
+	assignments, err := db.ListUsageProfileAssignments()
+	if err != nil {
+		slog.Warn("usage rules: read template links", "error", err)
+		return
+	}
+	scopeID := strconv.FormatInt(templateID, 10)
+	var ids []int64
+	for _, a := range assignments {
+		if a.Scope == db.UsageScopeTemplate && a.ScopeID == scopeID {
+			ids = append(ids, a.ProfileID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if err := db.SetUsageProfileAssignments(db.UsageScopeGroup, db.UsageGroupScopeID(groupID), ids, "template"); err != nil {
+		slog.Warn("usage rules: assign deployed group's usage profiles", "group", groupID, "error", err)
 	}
 }
 

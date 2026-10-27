@@ -436,6 +436,12 @@ CREATE TABLE "group_templates" (
 		, work_pattern TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', rhythms TEXT NOT NULL DEFAULT '', wave_max_wait INTEGER NOT NULL DEFAULT 0, per_agent_worktrees INTEGER NOT NULL DEFAULT 0, owner_scopes_json TEXT NOT NULL DEFAULT ''
 			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144)) STRICT;
 
+CREATE TRIGGER usage_profile_assignments_template_gone
+			AFTER DELETE ON group_templates BEGIN
+				DELETE FROM usage_profile_assignments
+				WHERE scope = 'template' AND scope_id = CAST(OLD.id AS TEXT);
+			END;
+
 CREATE TABLE "human_messages" (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			from_conv   TEXT NOT NULL,
@@ -1978,18 +1984,6 @@ CREATE TABLE usage_profiles (
 			updated_at INTEGER NOT NULL
 		) STRICT;
 
-CREATE TABLE usage_profile_assignments (
-			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group', 'agent', 'spawn_profile')),
-			scope_id   TEXT NOT NULL DEFAULT '',
-			profile_id INTEGER NOT NULL REFERENCES usage_profiles(id) ON DELETE CASCADE,
-			source     TEXT NOT NULL DEFAULT '',
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY (scope, scope_id, profile_id)
-		) STRICT;
-
-CREATE INDEX idx_usage_profile_assignments_profile
-			ON usage_profile_assignments(profile_id);
-
 CREATE TABLE usage_limits (
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
 			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group')),
@@ -2043,3 +2037,15 @@ CREATE TABLE usage_fleet_limits (
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL
 ) STRICT;
+
+CREATE TABLE "usage_profile_assignments" (
+			scope      TEXT NOT NULL CHECK (scope IN ('global', 'group', 'agent', 'spawn_profile', 'template')),
+			scope_id   TEXT NOT NULL DEFAULT '',
+			profile_id INTEGER NOT NULL REFERENCES usage_profiles(id) ON DELETE CASCADE,
+			source     TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (scope, scope_id, profile_id)
+		) STRICT;
+
+CREATE INDEX idx_usage_profile_assignments_profile
+			ON usage_profile_assignments(profile_id);
