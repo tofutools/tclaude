@@ -325,18 +325,17 @@ async function toggleUsageDefault(name, current, isDefault) {
 
 // usageLimitItems are a node's enabled global and group limits, then its
 // fleet limits, as the snapshot reads them (usage_limits, fleet_limits).
+// Limit names need not be unique, and the dock keys its cards by name, so
+// a repeated one takes its id.
 function usageLimitItems(snap) {
   const usage = snap?.usage || {};
-  return [
+  const items = [
     ...(usage.usage_limits || []),
     ...(usage.fleet_limits || []).map((l) => ({ ...l, scope: 'fleet', fleet_id: Number(String(l.rule_key || '').replace(/^fleet:/, '')) || 0 })),
-  ];
-}
-
-// usageLimitName keeps a global, a group and a fleet limit of one name apart.
-function usageLimitName(l) {
-  if (l.scope === 'fleet') return `${l.name} · fleet`;
-  return l.scope === 'group' ? `${l.name} · ${l.group}` : l.name;
+  ].map((l) => ({ ...l, label: l.scope === 'fleet' ? `${l.name} · fleet` : l.scope === 'group' ? `${l.name} · ${l.group}` : l.name }));
+  const seen = new Map();
+  for (const l of items) seen.set(l.label, (seen.get(l.label) || 0) + 1);
+  return items.map((l) => (seen.get(l.label) > 1 ? { ...l, label: `${l.label} #${l.scope === 'fleet' ? l.fleet_id : l.limit_id}` } : l));
 }
 
 function usageLimitChips(l) {
@@ -351,10 +350,14 @@ function usageLimitChips(l) {
   ];
 }
 
+// usageNode aims the usage manager at a fused view's peer copy.
+const usageNode = (node) => (node ? { node: node.id, nodeLabel: node.name } : {});
+
 // openUsageLimit opens a limit's editor (clone: a copy of it); a fused
 // view's peer copy opens on that node, where fleet limits are not managed.
 function openUsageLimit(l, node = null, clone = false) {
-  if (node) return openUsageRulesManager({ node: node.id, nodeLabel: node.name, tab: 'limits', limit: l.scope === 'fleet' ? 0 : l.limit_id, clone });
+  if (node && l.scope === 'fleet') return openUsageRulesManager({ node: node.id, nodeLabel: node.name, tab: 'limits' });
+  if (node) return openUsageRulesManager({ node: node.id, nodeLabel: node.name, tab: 'limits', limit: l.limit_id, clone });
   if (l.scope === 'fleet') return openUsageRulesManager({ tab: 'fleet', fleetLimit: l.fleet_id, clone });
   return openUsageRulesManager({ tab: 'limits', limit: l.limit_id, clone });
 }
@@ -654,8 +657,8 @@ export const dockSections = Object.freeze([
     fullChips: (p) => (p.rules || []).map((rule) => ({ text: `${rule.name}: ${ruleSummary(rule)}`, more: false })),
     // Assigned through the 💰 pickers, not dropped.
     drag: false,
-    onManageItem: (p) => openUsageRulesManager({ tab: 'profiles', profile: p.id }),
-    onCloneItem: (p) => openUsageRulesManager({ tab: 'profiles', profile: p.id, clone: true }),
+    onManageItem: (p, node) => openUsageRulesManager({ ...usageNode(node), tab: 'profiles', profile: p.id }),
+    onCloneItem: (p, node) => openUsageRulesManager({ ...usageNode(node), tab: 'profiles', profile: p.id, clone: true }),
     onDeleteItem: (p) => removeUsageProfile(p),
     onManageAll: () => openUsageRulesManager({ tab: 'profiles' }),
     onNew: () => openUsageRulesManager({ tab: 'profiles', newProfile: true }),
@@ -672,7 +675,7 @@ export const dockSections = Object.freeze([
     title: () => wizWord('Usage limits & alerts', 'Coffer wards'),
     empty: () => wizWord('no active usage limits', 'no coffer wards'),
     items: (snap) => usageLimitItems(snap),
-    name: (l) => usageLimitName(l),
+    name: (l) => l.label,
     chips: (l) => usageLimitChips(l),
     drag: false,
     onManageItem: (l, node) => openUsageLimit(l, node),
