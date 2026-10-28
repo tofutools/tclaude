@@ -1671,7 +1671,7 @@ func DeleteAgentGroup(name string) error {
 	}
 	// After the group row is gone, so a setting pinned to it is released too.
 	for _, agentID := range memberIDs {
-		if err := rebindSandboxResolutionGroup(tx, agentID); err != nil {
+		if err := rebindSandboxResolutionGroup(tx, agentID, 0); err != nil {
 			return err
 		}
 	}
@@ -2047,7 +2047,7 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, m.GroupID); err != nil {
 		return err
 	}
-	return rebindSandboxResolutionGroup(db, agentID)
+	return rebindSandboxResolutionGroup(db, agentID, 0)
 }
 
 // UpdateAgentGroupMember patches non-nil fields on an existing member.
@@ -2114,7 +2114,7 @@ func RemoveAgentGroupMember(groupID int64, convID string) error {
 		if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, groupID); err != nil {
 			return err
 		}
-		return rebindSandboxResolutionGroup(db, agentID)
+		return rebindSandboxResolutionGroup(db, agentID, 0)
 	}
 	return nil
 }

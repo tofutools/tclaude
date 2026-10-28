@@ -47,10 +47,22 @@ func resolveCurrentSandboxChainForConv(
 	if err != nil || previous == nil {
 		return previous, previous, err
 	}
-	if previous.ProfilesOmitted {
-		return previous, previous, nil
+	current, err = resolveSandboxChainFrom(convID, previous)
+	if err != nil {
+		return nil, nil, err
 	}
+	return current, previous, nil
+}
 
+// resolveSandboxChainFrom composes the current registry chain for a snapshot's
+// recorded provenance: its source group (ResolutionGroupID, or the
+// conversation's memberships for a legacy snapshot) and its explicit profile.
+// A clone uses it with provenance rebound to the group it joins.
+func resolveSandboxChainFrom(convID string, previous *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
+	if previous.ProfilesOmitted {
+		return previous, nil
+	}
+	var err error
 	var explicitProfileID int64
 	var explicitProfileName string
 	for _, applied := range previous.Applied {
@@ -64,7 +76,7 @@ func resolveCurrentSandboxChainForConv(
 	if groupID == 0 {
 		groupID, err = resumeSandboxGroupID(convID)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	resolved, err := db.ResolveEffectiveSandboxSnapshotByID(groupID, explicitProfileID)
@@ -74,15 +86,15 @@ func resolveCurrentSandboxChainForConv(
 		resolved, err = db.ResolveEffectiveSandboxSnapshot(groupID, explicitProfileName)
 	}
 	if errors.Is(err, db.ErrSandboxProfileNotFound) {
-		return nil, nil, fmt.Errorf("the explicit sandbox profile %q used at launch no longer exists; recreate it under that name, then resume again", explicitProfileName)
+		return nil, fmt.Errorf("the explicit sandbox profile %q used at launch no longer exists; recreate it under that name, then resume again", explicitProfileName)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// The operator's per-setting group choices (a move that kept a setting on
 	// the group it left) outlive every relaunch.
 	resolved.GroupBinding = previous.GroupBinding.Clone()
-	return &resolved, previous, nil
+	return &resolved, nil
 }
 
 // resolveResumeSandboxPolicy reconstructs an offline agent's policy from the
@@ -156,7 +168,11 @@ func refreshResumeGroupEnvironment(
 	previous *sandboxpolicy.Snapshot,
 ) (sandboxpolicy.Snapshot, error) {
 	groupID, explicit := previous.EnvironmentGroupID()
-	if groupID == 0 && !explicit && !previous.RefreshGroupEnvironment {
+	// No recorded group: recover it from memberships, as the sandbox-profile
+	// tier does (resolveSandboxChainFrom), so the two never come from
+	// different groups. An omitted-profile agent recorded as ungrouped keeps
+	// having no group environment.
+	if groupID == 0 && !explicit && (!previous.RefreshGroupEnvironment || !previous.ProfilesOmitted) {
 		if previous.ProfilesOmitted {
 			// Older omitted-profile snapshots did not retain source-group
 			// provenance. Do not guess from later memberships: the agent may now

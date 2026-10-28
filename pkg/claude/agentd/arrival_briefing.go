@@ -15,6 +15,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
 )
 
@@ -23,8 +24,11 @@ type arrivalContext struct {
 	Operation, Peer, Reason, Note string
 	Source                        agentbundle.Definition
 	PermissionSummary             string
-	LocalClone                    bool
-	Restored                      bool
+	// Sandbox is the launch snapshot, described so the agent knows which
+	// group's sandbox profile and environment it runs with; nil omits it.
+	Sandbox    *sandboxpolicy.Snapshot
+	LocalClone bool
+	Restored   bool
 	// UntrustedHistory marks a conversation received from someone else,
 	// such as a snapshot shared on a Board. The briefing tells the agent
 	// to treat it as context, not instructions.
@@ -252,6 +256,9 @@ func buildArrivalBriefing(a arrivalContext, agentID, cwd, group, h, model string
 		fmt.Fprintf(&b, "Source worktree %s; %s. Files stay on this node; no files, credentials, sidecars or mail were copied into a new directory.\n", arrivalQuote(a.Source.Paths.Worktree), sourceDirty)
 	} else {
 		fmt.Fprintf(&b, "Source-reported worktree %s; %s. Not transferred: worktree contents, uncommitted changes, credentials, sidecars or mail.\n", arrivalQuote(a.Source.Paths.Worktree), sourceDirty)
+	}
+	if a.Sandbox != nil {
+		b.WriteString(sandboxGroupSourcesLine(a.Sandbox) + "\n")
 	}
 	if a.Note != "" {
 		fmt.Fprintf(&b, "Note (source-reported): %s.\n", arrivalQuote(a.Note))

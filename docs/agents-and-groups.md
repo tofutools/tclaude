@@ -231,7 +231,10 @@ restart; the running process is not changed in place. `--keep-sandbox` and
 group it left, still following that group's later edits, until that group is
 deleted. Per-agent permissions, an explicit sandbox profile, and per-agent
 environment overrides are kept either way. The agent receives a message
-describing the move.
+describing the move. A move between groups on another node works the same
+when that node trusts this one unrestricted; otherwise (or on an older node)
+the dashboard falls back to adding and removing the membership, which always
+applies the new group's sandbox profile and environment.
 
 The move is gated like the remove and add it replaces:
 `groups.members.remove` on the source group and `groups.members.add` on the

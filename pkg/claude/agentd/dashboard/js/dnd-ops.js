@@ -161,9 +161,9 @@ export function createDndOps({
     await refresh();
   }
 
-  // runDndMove performs the optimistic local mutation, then the
-  // POST B → DELETE A sequence. Failure of either step rolls back
-  // the local mutation and surfaces a toast.
+  // runDndMove performs the optimistic local mutation, then the one-step
+  // move (or, on a node without it, the POST B → DELETE A sequence).
+  // A failure rolls back the local mutation and surfaces a toast.
   async function runDndMove(payload, listedTarget, ctx = context()) {
     const {conv, label} = payload;
     const sourceGroup = ctx.group(payload.sourceGroup);
@@ -175,10 +175,11 @@ export function createDndOps({
     // Confirm BEFORE the lastSnapshot read + optimistic splice below,
     // so a cancelled move leaves the snapshot — and the render —
     // completely untouched.
-    // On this node the move is one daemon call that can keep the agent's
-    // sandbox profile or environment on the group it leaves. Another node's
-    // move stays the add-then-remove pair its routes allow.
-    const checks = ctx.node ? [] : [
+    // The move is one daemon call that can keep the agent's sandbox profile
+    // or environment on the group it leaves. Another node answers it when it
+    // trusts this one unrestricted and knows the route; otherwise the move
+    // falls back to the add-then-remove pair its peer grants allow.
+    const checks = [
       { key: 'sandbox', checked: true, label: `Apply "${targetGroup}"'s sandbox profile`,
         hint: `Unticked keeps "${sourceGroup}"'s. Takes effect at the next resume or restart.` },
       { key: 'environment', checked: true, label: `Apply "${targetGroup}"'s environment variables`,
@@ -240,20 +241,29 @@ export function createDndOps({
       }
 
       try {
-        if (!ctx.node) {
-          const keep = (key) => !checks.find((check) => check.key === key).checked;
-          const moveRes = await ctx.api(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(sel)}/move`, {
-            method: 'POST', credentials: 'same-origin',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({to: targetGroup, keep_sandbox: keep('sandbox'), keep_environment: keep('environment')}),
-          });
-          if (!moveRes.ok) {
-            toast(`move failed: ${await moveRes.text()}`, true);
-            rollback();
-            return;
-          }
+        const keep = (key) => !checks.find((check) => check.key === key).checked;
+        const moveRes = await ctx.api(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(sel)}/move`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({to: targetGroup, keep_sandbox: keep('sandbox'), keep_environment: keep('environment')}),
+        });
+        if (moveRes.ok) {
           toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
           landed(ctx, payload, targetGroup);
+          return;
+        }
+        // An older node has no move route, and a peer trusting this one only
+        // through grants is refused it: the plain add-then-remove pair moves
+        // the agent there, but always under the new group's defaults.
+        const unsupported = ctx.node && [403, 404, 405].includes(moveRes.status);
+        if (!unsupported) {
+          toast(`move failed: ${await moveRes.text()}`, true);
+          rollback();
+          return;
+        }
+        if (keep('sandbox') || keep('environment')) {
+          toast(`move failed: this node can't keep the sandbox profile or environment of "${sourceGroup}" for a move from here (${moveRes.status}); tick both boxes to move under "${targetGroup}"'s defaults`, true);
+          rollback();
           return;
         }
         const addRes = await ctx.api(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {

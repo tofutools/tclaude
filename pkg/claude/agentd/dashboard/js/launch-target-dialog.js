@@ -113,12 +113,14 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
       ['✓', 'History', 'the full conversation history goes with it'],
       ['↻', 'Identity', `it arrives on ${node} as an agent there`],
       ['✗', 'Permissions', `not carried; ${node}'s group defaults apply`],
+      ['✗', 'Sandbox', `not carried; ${node}'s group sandbox profile and environment apply`],
       ['✗', 'Here', 'retired once its copy runs there'],
     ];
     case 'teleport': return [
       ['✓', 'History', 'the full conversation history goes with it'],
       ['↻', 'Identity', `a visiting identity on ${node}; its home stays ${home} for Recall home`],
       ['✗', 'Permissions', `not carried; ${node}'s group defaults apply`],
+      ['✗', 'Sandbox', `not carried; ${node}'s group sandbox profile and environment apply`],
       ['✓', 'Here', 'a placeholder row stays in its groups'],
     ];
     case 'clone': return local ? [
@@ -128,6 +130,7 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
     ] : [
       ['✓', 'History', 'the full conversation history is copied'],
       ['↻', 'Identity', `an independent agent on ${node}`],
+      ['✗', 'Sandbox', `not carried; ${node}'s group sandbox profile and environment apply`],
       ['✓', 'Here', 'the original keeps running'],
     ];
     case 'morph': {
