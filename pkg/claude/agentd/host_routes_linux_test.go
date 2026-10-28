@@ -5,8 +5,6 @@ package agentd
 import (
 	"context"
 	"encoding/json"
-	"github.com/tofutools/tclaude/pkg/claude/routeadapter"
-	"github.com/tofutools/tclaude/pkg/testutil"
 	"io"
 	"net"
 	"net/http"
@@ -19,6 +17,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/routeadapter"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestHostRouteLeaseCannotAttachThroughHelper(t *testing.T) {
@@ -130,4 +130,10 @@ func TestHostRouteLinuxHelperDiscovery(t *testing.T) {
 	var refusal map[string]any
 	require.NoError(t, json.Unmarshal(denied.Body.Bytes(), &refusal))
 	require.Equal(t, "route_not_member", refusal["code"])
+	var rejected any
+	err = routeadapter.GetUnixJSON(ctx, socket, "/v1/routes?group=host-discovery-group", "invalid", &rejected)
+	require.ErrorContains(t, err, "route_helper_auth")
+	err = routeadapter.GetUnixJSON(ctx, socket, "/v1/routes?group_id="+strconv.FormatInt(otherGroup, 10), credential, &rejected)
+	require.ErrorContains(t, err, "route_not_member")
+
 }
