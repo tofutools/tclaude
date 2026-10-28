@@ -109,7 +109,7 @@ function RouteGraph({ routes, members, selected, onSelect }) {
 function HostEndpointLink({ lease, local }) {
   const url = hostRoutePreviewURL(lease, { local, hostname: window.location?.hostname });
   return url
-    ? html`<a class="route-map-preview" href=${url} target="_blank" rel="noopener noreferrer"><code>${url}</code></a>`
+    ? html`<span><code>${lease.endpoint}</code> · <a class="route-map-preview" href=${url} target="_blank" rel="noopener noreferrer"><code>${url}</code></a></span>`
     : html`<code>${lease.endpoint}</code>`;
 }
 
@@ -144,7 +144,7 @@ function HostRouteControls({ route, local }) {
     <p class="route-map-muted">Exposes this published service to local host processes until closed or withdrawn.</p>
     ${!local && html`<p class="route-map-muted">These endpoints are on the daemon host. Forward the endpoint port with an SSH tunnel to access it from this machine.</p>`}
     ${(route.consumers || []).filter((consumer) => consumer.consumer_kind === 'host').map((consumer) => html`<p key=${consumer.id}><${HostEndpointLink} lease=${consumer} local=${local} /> <button type="button" disabled=${busy} onClick=${() => act(consumer.id)}>Close host endpoint</button></p>`)}
-    ${openedLease && html`<p role="status">Host endpoint: <${HostEndpointLink} lease=${openedLease} local=${local} /></p>`}
+    ${openedLease && !(route.consumers || []).some((consumer) => consumer.id === openedLease.id) && html`<p role="status">Host endpoint: <${HostEndpointLink} lease=${openedLease} local=${local} /></p>`}
     ${message && html`<p role="status">${message}</p>`}
   </div>`;
 }

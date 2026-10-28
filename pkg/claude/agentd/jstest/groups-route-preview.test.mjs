@@ -40,6 +40,7 @@ test('local preview links use a lease-specific cookie hostname', async (t) => {
   const { root } = await setup(t);
   const link = root.querySelector('a.route-map-preview');
   assert.ok(link);
+  assert.match(root.textContent, /127\.0\.0\.1:33789/);
   assert.equal(link.getAttribute('href'), PREVIEW);
   assert.equal(link.textContent, PREVIEW);
   assert.equal(link.getAttribute('target'), '_blank');
@@ -65,7 +66,8 @@ test('success links disappear with their exact lease, even if its port is reused
   });
   assert.equal(root.querySelector('[role="status"] a').getAttribute('href'), PREVIEW);
   await harness.act(() => publish([LEASE]));
-  assert.ok(root.querySelector('[role="status"] a'));
+  assert.equal(root.querySelector('[role="status"]'), null);
+  assert.equal(root.querySelectorAll('a.route-map-preview').length, 1);
   const replacement = { ...LEASE, id: `hlease_${'b'.repeat(32)}` };
   await harness.act(() => publish([replacement]));
   assert.equal(root.querySelector('[role="status"]'), null);
