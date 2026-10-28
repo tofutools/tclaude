@@ -180,7 +180,7 @@ jobs:
   # is TCL-987's cwd spelling (/var/folders vs /private/var/folders), and that
   # is covered by pure unit tests in copilot_convstore_cwd_test.go and
   # copilot_dir_trust_test.go which need no CLI and already run in the macOS
-  # `rest` shard above. The lab workflow still runs the macOS arm.
+  # `rest-all` shard above. The lab workflow still runs the macOS arm.
   #
   # It needs no GitHub credential and must never acquire one:
   # COPILOT_PROVIDER_BASE_URL activates Copilot's BYOK mode, which the CLI
