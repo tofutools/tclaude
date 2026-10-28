@@ -65,19 +65,19 @@ function installActivityShell(harness) {
   harness.document.body.innerHTML = `
     <nav>
       <button data-tab="groups"></button>
-      <button data-tab="activity" class="active"></button>
+      <button data-tab="diagnostics" class="active"></button>
     </nav>
-    <main><section id="tab-activity" class="active">
-      <a class="activity-subtab active" data-subtab="audit" href="/activity/audit">Audit</a>
-      <a class="activity-subtab" data-subtab="logs" href="/activity/logs">Logs</a>
-      <a class="activity-subtab" data-subtab="performance" href="/activity/performance">Performance</a>
+    <main><section id="tab-diagnostics" class="active">
+      <a class="activity-subtab active" data-subtab="audit" href="/diagnostics/audit">Audit</a>
+      <a class="activity-subtab" data-subtab="logs" href="/diagnostics/logs">Logs</a>
+      <a class="activity-subtab" data-subtab="performance" href="/diagnostics/performance">Performance</a>
       <div class="activity-panel active" id="activity-audit"></div>
       <div class="activity-panel" id="activity-logs"></div>
       <div class="activity-panel" id="activity-performance"></div>
     </section></main>`;
 }
 
-test('a retired /logs deep link heals to /activity/logs; subtabs push and Back restores', async (t) => {
+test('a retired /logs deep link heals to /diagnostics/logs; subtabs push and Back restores', async (t) => {
   const harness = await createPreactHarness(t);
   installActivityShell(harness);
   const browsing = installBrowsingContext(t, harness, '/logs?wizard=1');
@@ -91,7 +91,7 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   const panel = (name) => harness.document.getElementById(`activity-${name}`);
 
   initNavHistory();
-  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/activity/logs' }],
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/diagnostics/logs' }],
     'the old path is rewritten in place — no extra Back step');
   assert.equal(activitySubtab.value, 'logs');
   assert.equal(panel('logs').classList.contains('active'), true);
@@ -99,7 +99,7 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   browsing.calls.length = 0;
 
   harness.document.querySelector('[data-subtab="performance"]').click();
-  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/activity/performance' }]);
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/diagnostics/performance' }]);
   assert.equal(panel('performance').classList.contains('active'), true);
   const atPerformance = browsing.history.state;
   harness.document.querySelector('[data-subtab="performance"]').click();
@@ -107,7 +107,7 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   browsing.calls.length = 0;
 
   // Back: the browser has moved to the previous entry and fires popstate.
-  browsing.history.replaceState({ ...atPerformance, navIndex: 0 }, '', '/activity/logs');
+  browsing.history.replaceState({ ...atPerformance, navIndex: 0 }, '', '/diagnostics/logs');
   browsing.calls.length = 0;
   const back = new harness.window.Event('popstate');
   back.state = browsing.history.state;
@@ -124,7 +124,7 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
 test('a peer view keeps a Logs deep link until the peer answers (unrestricted trust serves it)', async (t) => {
   const harness = await createPreactHarness(t);
   installActivityShell(harness);
-  const browsing = installBrowsingContext(t, harness, '/activity/logs');
+  const browsing = installBrowsingContext(t, harness, '/diagnostics/logs');
   const previous = globalThis.__tclaudeRemoteNode;
   globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
   t.after(() => { globalThis.__tclaudeRemoteNode = previous; });
@@ -134,7 +134,7 @@ test('a peer view keeps a Logs deep link until the peer answers (unrestricted tr
   ]);
   initNavHistory();
   assert.equal(activitySubtab.value, 'logs', 'an unrestricted peer serves the daemon log');
-  assert.equal(browsing.at(), '/activity/logs?node=inst_forge7', 'boot keeps the location');
+  assert.equal(browsing.at(), '/diagnostics/logs?node=inst_forge7', 'boot keeps the location');
   assert.equal(browsing.calls.every((call) => call.kind === 'replace'), true);
 });
 

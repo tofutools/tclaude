@@ -321,7 +321,7 @@ The 🚫 broker-refusal badge deserves attention: when it shows, the entire row
 — status, model, cost, context, directory — is frozen at its last accepted
 value. The usual cause is a dead session row on the same pid or a session-id /
 ancestry mismatch. Refusals also produce throttled `broker: refused a
-brokered callback` WARN records in the daemon log (Activity › Logs) with the
+brokered callback` WARN records in the daemon log (Diagnostics › Logs) with the
 caller pid, the row the daemon resolved, the id the caller claimed, and, for
 a failed live-pane proof, which fact was missing (pane probe, launch
 generation, or ancestry). The first refusal of an episode always logs; later
@@ -855,14 +855,14 @@ section under the table, with the spend restoring them would add back to the
 current span; **Restore** counts them again. The recorded cost history is
 never modified. Restricted peer views show these buttons greyed out.
 
-## Activity
+## Diagnostics
 
 Three subtabs, each with its own address: **Audit** (`/activity/audit`, the
 default), **Logs** (`/activity/logs`) and **Performance**
 (`/activity/performance`). Switching subtabs adds a Back/Forward step.
-Bookmarks to the old top-level `/audit`, `/logs` and `/debug` pages still open
-the matching subtab. The command palette has a direct entry for each
-(“Go to Activity › Logs”). On a linked peer's view only Audit is available.
+Bookmarks to the old top-level `/audit`, `/logs` and `/debug` pages, and to
+the tab's former `/activity/...` address, still open the matching subtab. The command palette has a direct entry for each
+(“Go to Diagnostics › Logs”). On a linked peer's view only Audit is available.
 
 ### Audit
 
@@ -984,7 +984,7 @@ unrestricted shares its list, and its cron jobs and standing orders run,
 pause and delete in place through its routes. Editing one opens on that
 node's own view. A peer's exports stay on that node, and a peer that shares
 less is locked, with the reason.
-**Activity › Audit** gets a **node** filter: this node, one ticked peer
+**Diagnostics › Audit** gets a **node** filter: this node, one ticked peer
 (paged through its routes, under `federation.audit.read`), or **all nodes**,
 which merges each node's newest page newest first, with a node pill on each
 row and the nodes that withhold theirs shown locked. **Logs** and

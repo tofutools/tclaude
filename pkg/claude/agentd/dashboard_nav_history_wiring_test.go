@@ -62,7 +62,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		`<a data-tab="jobs" href="/automations"`,
 		`<a data-tab="access" href="/access"`,
 		`<a data-tab="usage" href="/usage"`,
-		`<a data-tab="activity" href="/activity"`,
+		`<a data-tab="diagnostics" href="/diagnostics"`,
 		`<a data-tab="config" href="/config"`,
 		// Vegas is NOT URL-routed, so it stays a <button> (no href to hover).
 		`<button data-tab="vegas">`,
@@ -71,7 +71,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		`data-subtab=${subtab} href=${` + "`/access/${subtab}`" + `} role="tab"`,
 		`<a href=${entryHref(key)}`,
 		`role="tab" aria-selected=${active === key ? 'true' : 'false'}`,
-		`data-subtab="logs" href="/activity/logs" role="tab"`,
+		`data-subtab="logs" href="/diagnostics/logs" role="tab"`,
 		// The shared SPA-link guard: a modified/middle click is left to the
 		// browser (native new tab); a plain left-click / synthetic element.click()
 		// returns false and the handler preventDefaults + switches in place.

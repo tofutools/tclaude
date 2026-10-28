@@ -5,7 +5,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 test('Logs state owns filters, paging, stream state, and stale request rejection', async (t) => {
   const harness = await createPreactHarness(t);
   const { createLogsState } = await harness.importDashboardModule('js/logs-state.js');
-  const activeTab = harness.signals.signal('activity');
+  const activeTab = harness.signals.signal('diagnostics');
   const state = createLogsState({ activeTab, activitySubtab: harness.signals.signal('logs') });
   state.setFilter('query', 'error'); state.setFilter('level', 'warn'); state.setPageSize(50); state.setStream(true);
   assert.equal(state.view.value.page, 1);

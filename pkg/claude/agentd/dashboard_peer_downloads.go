@@ -48,7 +48,7 @@ var peerDownloadRoutes = map[string]bool{
 	"GET /api/agent-bundle/export":     true,
 	"GET /api/templates/{name}/export": true,
 	"GET /api/groups/{name}/export":    true,
-	// A daemon log export: Activity › Logs of a fused view's peer.
+	// A daemon log export: Diagnostics › Logs of a fused view's peer.
 	"/api/logs/export": true,
 }
 

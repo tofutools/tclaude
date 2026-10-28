@@ -266,7 +266,7 @@ func profileShareBody(dir string, c *profileCapture, note string, skipped []stri
 	b.WriteString("- trace.out: execution trace; `go tool trace trace.out`\n")
 	b.WriteString("- goroutines.txt, stats-*.json, meta.json: stack dump, counter snapshots, capture metadata\n")
 	if len(skipped) > 0 {
-		fmt.Fprintf(&b, "Not attached (over the attachment size limit): %s. Download them from the dashboard's Activity › Performance.\n", strings.Join(skipped, ", "))
+		fmt.Fprintf(&b, "Not attached (over the attachment size limit): %s. Download them from the dashboard's Diagnostics › Performance.\n", strings.Join(skipped, ", "))
 	}
 	if raw, err := os.ReadFile(filepath.Join(dir, profileSummaryFile)); err == nil && len(raw) > 0 {
 		summary := string(raw)
