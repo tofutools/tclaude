@@ -11,10 +11,23 @@ FAKE_GO = r'''#!/usr/bin/env python3
 import json, os, re, sys, time
 from pathlib import Path
 args = sys.argv
+root = Path(os.environ["FAKE_GO_STATE"])
+if "-json" not in args:
+    # The serial prebuild: it must precede both test processes.
+    if args[args.index("-run")+1] != "^$" or "-skip" in args:
+        print("prebuild must select no tests", file=sys.stderr)
+        sys.exit(1)
+    if os.getenv("FAKE_GO_BUILD_FAIL"):
+        print("compile error details")
+        sys.exit(1)
+    (root / "built").touch()
+    sys.exit(0)
+if not (root / "built").exists():
+    print("test process started before the prebuild", file=sys.stderr)
+    sys.exit(1)
 flag = "-run" if "-run" in args else "-skip"
 pattern = args[args.index(flag)+1]
 side = "domain" if flag == "-run" else "other"
-root = Path(os.environ["FAKE_GO_STATE"])
 (root / side).touch()
 deadline = time.monotonic()+2
 while not (root / ("other" if side=="domain" else "domain")).exists():
@@ -40,17 +53,20 @@ sys.exit(1 if failed else 0)
 
 
 class RunnerTests(unittest.TestCase):
-    def run_fixture(self, failing=""):
+    def run_fixture(self, failing="", build_fail=""):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
             (root / "go").write_text(FAKE_GO)
             (root / "go").chmod(0o755)
             env = dict(os.environ, PATH=str(root)+os.pathsep+os.environ["PATH"],
                        FAKE_GO_STATE=str(root), FAKE_GO_FAIL=failing,
+                       FAKE_GO_BUILD_FAIL=build_fail,
                        TCLAUDE_AGENTD_TEST_LOG_DIR=str(root / "logs"))
             result = subprocess.run(["bash", "scripts/ci/agentd-tests.sh", "-count=1"],
                                     cwd=ROOT, env=env, text=True, capture_output=True,
                                     timeout=10)
+            if build_fail:
+                return result, None, None
             self.assertTrue((root / "domain.names").is_file(), result.stdout+result.stderr)
             self.assertTrue((root / "other.names").is_file(), result.stdout+result.stderr)
             domain = set((root / "domain.names").read_text().splitlines())
@@ -75,6 +91,12 @@ class RunnerTests(unittest.TestCase):
                 self.assertIn(name, result.stdout)
                 self.assertIn("=== agentd domain:", result.stdout)
                 self.assertIn("=== agentd other:", result.stdout)
+
+    def test_build_failure_stops_before_the_test_processes(self):
+        result, _, _ = self.run_fixture(build_fail="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("compile error details", result.stdout)
+        self.assertNotIn("=== agentd", result.stdout)
 
 
 if __name__ == "__main__":
