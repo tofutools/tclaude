@@ -1657,6 +1657,9 @@ func DeleteAgentGroup(name string) error {
 		}
 		memberIDs = append(memberIDs, agentID)
 	}
+	if err := memberRows.Err(); err != nil {
+		return err
+	}
 	if err := memberRows.Close(); err != nil {
 		return err
 	}
