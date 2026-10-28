@@ -758,8 +758,9 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 	b.pruneTombstonesLocked(r)
 	stream := r.streams[frame.Stream]
 	if stream == nil {
+		_, tombstoned := r.tombstones[frame.Stream]
 		b.mu.Unlock()
-		if _, ok := r.tombstones[frame.Stream]; ok || frame.Kind == KindWindow {
+		if tombstoned || frame.Kind == KindWindow {
 			return nil // see forwardFromConsumer
 		}
 		return fmt.Errorf("%w: unknown publisher stream", ErrProtocol)
