@@ -112,7 +112,20 @@ func cancelHandles(handles map[string]*helperHandle) {
 func syncPublisherRoutes(ctx context.Context, cfg HelperConfig, active map[string]*helperHandle) error {
 	seen := make(map[string]bool)
 	var firstErr error
-	for _, groupID := range cfg.GroupIDs {
+	// Every publisher-capable helper can discover its own host publications.
+	// A later host permission grant must not leave an existing group helper
+	// watching only its original group catalog. Broker authority still gates use.
+	selectors := append([]int64(nil), cfg.GroupIDs...)
+	hasHost := false
+	for _, id := range selectors {
+		if id == 0 {
+			hasHost = true
+		}
+	}
+	if !hasHost {
+		selectors = append(selectors, 0)
+	}
+	for _, groupID := range selectors {
 		var payload struct {
 			Routes []routeRecord `json:"routes"`
 		}

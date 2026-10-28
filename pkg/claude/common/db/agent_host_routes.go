@@ -37,6 +37,11 @@ func CreateHostAgentRoute(agentID, convID, generation, name, transport, target s
 	if current != convID {
 		return nil, errors.New("publisher conversation is no longer current")
 	}
+	// A completed publication must not permanently reserve its name across
+	// publisher relaunches. Keep active-name conflicts explicit.
+	if _, err := tx.Exec(`DELETE FROM agent_host_routes WHERE publisher_agent_id=? AND name=? AND state != ?`, agentID, name, RouteStateReady); err != nil {
+		return nil, err
+	}
 	id := hostRouteIDPrefix + strings.TrimPrefix(newRouteID(), "rte_")
 	now := time.Now()
 	if _, err := tx.Exec(`INSERT INTO agent_host_routes (id,publisher_agent_id,publisher_conv_id,publisher_launch_generation,name,transport,target,state,created_at) VALUES (?,?,?,?,?,?,?,?,?)`, id, agentID, convID, generation, name, transport, target, RouteStateReady, dbTime(now)); err != nil {

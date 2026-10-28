@@ -71,9 +71,12 @@ membership or group-level route opt-in is required for a directly granted host-o
 Grant the permission before launching, or relaunch after adding it. Host publishing uses the same
 pane-authoritative tclaude sandbox launch and publisher helper as group routes. On Linux, the helper
 is provisioned from the agent's effective host-publishing permission; on macOS, the launch also
-reserves its normal bounded Darwin route slots. Unsupported launch shapes fail closed.
+reserves its normal bounded Darwin route slots. Holding the permission does not prevent other launch
+shapes from starting, but publication refuses a launch without a current route contract. Seed-based
+harnesses such as Codex may need their initial launch followed by a resume to install that contract.
 
-Host-only routes appear in the operator's Route map, including when there are no groups; select one
+Host-only routes appear under **Host only** in the operator's Route map, including when there are no
+groups; select one
 and click **Open on host** for an HTTP preview or **Open TCP endpoint** for opaque forwarding.
 Publishing registers the route; it does not itself allocate a host listener. Agent callers can list
 and withdraw their own publications, but cannot read another agent's host-only routes or consume

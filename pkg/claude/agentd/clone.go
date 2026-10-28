@@ -401,6 +401,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// that recorded none (a non-Claude or pre-column source).
 	askTimeout := relaunch.AskUserQuestionTimeout
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
+	if runtime.GOOS == "linux" && srcHarness == harness.DefaultName && hostPublishAllowed(p.SourceConv) && hostRouteHelperEligible(srcHarness, relaunch.SandboxImplementation, effectiveSandbox) {
+		p.RouteHelperGroupIDs = append(p.RouteHelperGroupIDs, 0)
+	}
 	if len(p.RouteHelperGroupIDs) > 0 {
 		if srcHarness != harness.DefaultName || relaunch.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) {
 			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a pane-authoritative clone with tclaude’s sandbox"}

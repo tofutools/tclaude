@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/routeadapter"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -42,7 +43,8 @@ func TestHostOnlyPublicationWithoutGroup(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission("host-only-publisher", PermRoutesPublish, "test"))
 	require.Equal(t, http.StatusForbidden, request("POST", "/v1/routes/publish", "host-only-publisher", body).Code)
 	require.NoError(t, db.GrantAgentPermission("host-only-publisher", PermRoutesPublishHost, "test"))
-	args := clcommon.SpawnArgs{ConvID: "host-only-publisher", Harness: "claude", SandboxImplementation: "tclaude-layer"}
+	require.Equal(t, http.StatusConflict, request("POST", "/v1/routes/publish", "host-only-publisher", body).Code)
+	args := clcommon.SpawnArgs{ConvID: "host-only-publisher", Harness: "claude", SandboxImplementation: "tclaude-layer", EffectiveSandbox: &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}}}
 	require.NoError(t, prepareRouteHelperResumeArgs(&args))
 	require.Equal(t, []int64{0}, args.RouteHelperGroupIDs)
 	require.NotEmpty(t, args.RouteHelperCredential)
@@ -114,4 +116,15 @@ func TestHostOnlyPublicationWithoutGroup(t *testing.T) {
 	require.Eventually(t, func() bool { return len(hostRoutesForRoute(route.ID)) == 0 }, time.Second, 10*time.Millisecond)
 	_, err = client.Get("http://" + lease.Endpoint + "/")
 	require.Error(t, err)
+}
+
+func TestHostPermissionDoesNotBreakUnsupportedResume(t *testing.T) {
+	setupTestDB(t)
+	_, _, err := db.EnsureAgentForConv("host-open-permission", "test")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission("host-open-permission", PermRoutesPublishHost, "test"))
+	args := clcommon.SpawnArgs{ConvID: "host-open-permission", Harness: "claude"}
+	require.NoError(t, prepareRouteHelperResumeArgs(&args))
+	require.Empty(t, args.RouteHelperCredential)
+	require.Empty(t, args.RouteHelperGroupIDs)
 }

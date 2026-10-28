@@ -1,11 +1,15 @@
 package agentd
 
 import (
+	"errors"
 	"net/http"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func hostPublishAllowed(convID string) bool {
@@ -78,4 +82,25 @@ func handleHostOnlyRoute(w http.ResponseWriter, r *http.Request, route *db.Agent
 	}
 	routeAdapterCloseRoute(route.ID)
 	writeJSON(w, 200, routeViewFor(mustRoute(route.ID)))
+}
+
+func hostRouteHelperEligible(harnessName, implementation string, snapshot *sandboxpolicy.Snapshot) bool {
+	if (runtime.GOOS != "linux" && runtime.GOOS != "darwin") || implementation != string(sandboxpolicy.ImplementationTclaudeLayer) || session.TclaudeLayerUsesServerBoundary(harnessName) || snapshot == nil {
+		return false
+	}
+	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
+	return err == nil && posture != sandboxpolicy.NetworkHostOpen
+}
+
+func validateHostPublishLaunch(agentID, convID, generation string) error {
+	if runtime.GOOS == "linux" && routeHelperCapabilityActive(agentID, convID, generation) {
+		return nil
+	}
+	if runtime.GOOS == "darwin" {
+		launch, err := db.GetDarwinRouteLaunch(agentID, convID, generation)
+		if err == nil && launch != nil && launch.State == db.DarwinRouteLaunchActive {
+			return nil
+		}
+	}
+	return errors.New("host publishing requires a current route-capable launch: grant routes.publish-host, then relaunch with tclaude’s pane sandbox and a private network; seed-based harnesses may need an initial launch followed by resume")
 }

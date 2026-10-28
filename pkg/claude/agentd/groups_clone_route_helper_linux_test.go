@@ -56,3 +56,28 @@ func TestGroupsClone_RouteHelperContractCoversNoCopyAndCopy(t *testing.T) {
 		assert.NotEmpty(t, helper.Credential)
 	})
 }
+
+func TestHostOnlyCloneInstallsPublisherDiscovery(t *testing.T) {
+	for _, groupClone := range []bool{false, true} {
+		t.Run(map[bool]string{false: "agent", true: "group"}[groupClone], func(t *testing.T) {
+			f := newFlow(t)
+			const source = "host-only-clone-source"
+			group := makeRouteEligibleCloneSource(t, f, source, "host-only-clone", "spwn-host-only-clone")
+			require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID, nil, "test"))
+			require.NoError(t, db.GrantAgentPermission(source, agentd.PermRoutesPublishHost, "test"))
+			var newConv string
+			if groupClone {
+				result := groupCloneRequest(t, f, group.Name, nil)
+				require.Len(t, result.Members, 1)
+				require.Empty(t, result.Members[0].Error)
+				newConv = result.Members[0].NewConv
+			} else {
+				newConv = f.AsHuman().CloneFresh(source).NewConv
+			}
+			helper, ok := f.World.SpawnRouteHelper(newConv)
+			require.True(t, ok, "host-only clone requires a publisher helper")
+			require.Equal(t, []int64{0}, helper.GroupIDs)
+			require.NotEmpty(t, helper.Credential)
+		})
+	}
+}

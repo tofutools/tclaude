@@ -29,13 +29,17 @@ function friendlyEndpoint(name, boundary) {
   return boundary && boundary !== 'in-group' && boundary !== 'host' ? statusLabel(boundary) + ' boundary' : (name || 'hidden endpoint');
 }
 
+// Group names reject slashes; this local view key cannot collide.
+const HOST_ONLY_GROUP = 'host-only/';
 function routeGroups(snapshot) {
-  return (snapshot?.groups || []).filter((group) => !group.virtual);
+ const groups=(snapshot?.groups || []).filter((group)=>!group.virtual);
+ return (snapshot?.route_map?.routes || []).some((route)=>route.host_only)
+  ? [...groups,{name:HOST_ONLY_GROUP,label:'Host only',members:[]}] : groups;
 }
 
 function routesForGroup(routeMap, groupName) {
   const routes = routeMap?.routes || [];
-  return routes.filter((route) => route.host_only || (groupName && route.group === groupName));
+  return routes.filter((route) => groupName === HOST_ONLY_GROUP ? route.host_only : !route.host_only && groupName && route.group === groupName);
 }
 
 function edgeRows(routes) {
@@ -186,7 +190,7 @@ export function GroupsRouteMap({ state }) {
   const selectedByID = (map.routes || []).find((route) => route.id === selectedRouteID) || null;
   const picked = state.routeGroup.value;
   const groupName = (picked && groups.some((group) => group.name === picked) && picked)
-    || selectedByID?.group || groups[0]?.name || '';
+    || (selectedByID?.host_only ? HOST_ONLY_GROUP : selectedByID?.group) || groups[0]?.name || '';
   const mode = state.routeView.value;
   const setMode = (next) => {
     if (next === mode) return;
@@ -209,7 +213,7 @@ export function GroupsRouteMap({ state }) {
       state.setSubview('members', '');
     }
   }, [enabled, state]);
-  const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && (route.host_only || route.group === groupName)) || null, [map.routes, selectedRouteID, groupName]);
+  const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && (route.host_only ? groupName === HOST_ONLY_GROUP : route.group === groupName)) || null, [map.routes, selectedRouteID, groupName]);
   const routes = routesForGroup(map, groupName);
   const members = groups.find((group) => group.name === groupName)?.members || [];
   const darwinCapacity = map.darwin_capacity?.[groupName] || null;
@@ -254,7 +258,7 @@ export function GroupsRouteMap({ state }) {
       <button type="button" role="tab" aria-selected=${state.subview.value === 'routes'} class=${state.subview.value === 'routes' ? 'active' : ''} onClick=${() => changeSubview('routes')}>Route map</button>
     </div>
     ${isRoutes && html`<div class="route-map-toolbar">
-      <label>Group <select value=${groupName} onChange=${selectGroup}>${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}</select></label>
+      <label>Group <select value=${groupName} onChange=${selectGroup}>${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.label || group.name}</option>`)}</select></label>
       <div class="route-map-mode" role="group" aria-label="Route map view mode"><button type="button" class=${mode === 'graph' ? 'active' : ''} aria-pressed=${mode === 'graph'} onClick=${() => setMode('graph')}>Graph</button><button type="button" class=${mode === 'list' ? 'active' : ''} aria-pressed=${mode === 'list'} onClick=${() => setMode('list')}>Exact list</button></div>
       <span class="route-map-count" aria-live="polite">${routes.length} route${routes.length === 1 ? '' : 's'}</span>
     </div>`}

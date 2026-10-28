@@ -7584,11 +7584,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// before the pane starts (for example Codex's seed-based conv-id), refuse
 	// the route-enabled launch instead of producing an agent whose advertised
 	// routes can never attach.
-	hostRoutesEnabled := preConvID != "" && hostPublishAllowed(preConvID)
+	hostRoutesEnabled := preConvID != "" && layeredLaunch && launchEnroll && hostPublishAllowed(preConvID) && hostRouteHelperEligible(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
 	if hostRoutesEnabled {
-		if !layeredLaunch || !launchEnroll || spawnHarness.Name == harness.OpenCodeName {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_host_route_launch", "Host routes require a pre-enrolled pane-authoritative launch with tclaude’s sandbox"}
-		}
 		routeEnabled = true
 		if runtime.GOOS == "darwin" {
 			spawnArgs.DarwinRouteCapable = true
@@ -10811,7 +10808,7 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 	if (runtime.GOOS != "linux" && runtime.GOOS != "darwin") || a == nil || strings.TrimSpace(a.ConvID) == "" {
 		return nil
 	}
-	hostRoutesEnabled := hostPublishAllowed(a.ConvID)
+	hostRoutesEnabled := hostPublishAllowed(a.ConvID) && hostRouteHelperEligible(a.Harness, a.SandboxImplementation, a.EffectiveSandbox)
 	if runtime.GOOS == "darwin" && hostRoutesEnabled {
 		a.DarwinRouteCapable = true
 	}

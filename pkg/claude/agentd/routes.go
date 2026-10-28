@@ -661,6 +661,14 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 	}
 	var route *db.AgentRoute
 	if body.Host {
+		if !hostPublishAllowed(convID) {
+			writeRouteError(w, 403, "route_permission", "host publication requires a live routes.publish-host grant")
+			return
+		}
+		if err := validateHostPublishLaunch(agentID, convID, launchGeneration); err != nil {
+			writeRouteError(w, 409, "route_launch", err.Error())
+			return
+		}
 		route, err = db.CreateHostAgentRoute(agentID, convID, launchGeneration, name, transport, strings.TrimSpace(body.Target))
 	} else {
 		route, err = db.CreateAgentRoute(g.ID, agentID, convID, launchGeneration, routeGeneration(g, body.GroupGeneration), name, transport, strings.TrimSpace(body.Target))

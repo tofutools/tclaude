@@ -180,16 +180,15 @@ func runTclaudeLayerWinchRelay(
 	if err := validateRouteAuthorityMetadata(binding, proxy.Active()); err != nil {
 		return 125, err
 	}
-	if proxy.Active() && routeAuthorityMetadataPresent(binding) {
+	authorityConfig := proxyConsumerAuthorityConfig(proxyRouteAuthorityConfig{
+		SocketPath: binding.RouteSocketPath, AgentID: binding.RouteAgentID, ConvID: binding.RouteConvID, LaunchGeneration: binding.RouteLaunchGeneration, GroupIDs: binding.RouteGroupIDs,
+	})
+	if proxy.Active() && routeAuthorityMetadataPresent(binding) && authorityConfig != nil {
 		credential, credentialErr := readRouteHelperCredentialFD(3)
 		if credentialErr != nil {
 			return 125, credentialErr
 		}
-		proxy.RouteAuthority = newProxyRouteAuthority(proxyRouteAuthorityConfig{
-			SocketPath: binding.RouteSocketPath, AgentID: binding.RouteAgentID,
-			ConvID: binding.RouteConvID, LaunchGeneration: binding.RouteLaunchGeneration,
-			GroupIDs: append([]int64(nil), binding.RouteGroupIDs...),
-		}, credential)
+		proxy.RouteAuthority = newProxyRouteAuthority(*authorityConfig, credential)
 	}
 	preservedFiles := make([]*os.File, 0, binding.PreserveFDs)
 	for index := 0; index < binding.PreserveFDs; index++ {

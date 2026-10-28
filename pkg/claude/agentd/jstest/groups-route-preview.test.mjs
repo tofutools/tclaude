@@ -30,7 +30,7 @@ async function setup(t, { hostname = '127.0.0.1', remote = false, consumers = [L
     route_map: { routes: [{ id: 'rte_preview', name: 'preview', group: hostOnly ? '' : 'team', host_only: hostOnly, state: 'ready', generation_health: 'current', consumers: leases }] },
   });
   publish(consumers);
-  state.setRouteGroup('team');
+  state.setRouteGroup(hostOnly ? '' : 'team');
   state.setSubview('routes', 'rte_preview');
   const mounted = await harness.mount(harness.html`<${GroupsRouteMap} state=${state} />`);
   return { harness, publish, root: mounted.container };
@@ -120,6 +120,7 @@ test('TCP action requests an opaque endpoint explicitly', async (t) => {
 
 test('host-only routes are accessible without any group', async (t) => {
  const { root } = await setup(t, { hostOnly:true });
+ assert.equal(root.querySelector('select option').textContent, 'Host only');
  assert.equal(root.querySelector('a.route-map-preview').getAttribute('href'), PREVIEW);
  assert.ok(getByRole(root,'button',{name:'Open on host'}));
 });
