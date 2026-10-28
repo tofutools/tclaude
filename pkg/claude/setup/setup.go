@@ -184,6 +184,9 @@ func runSetup(params *Params) error {
 			return nil
 		}
 	}
+	if runtime.GOOS == "linux" {
+		reportLinuxSandboxTools()
+	}
 
 	// Install the selected harness's hooks and auto-detect other harnesses on
 	// PATH. --all-harnesses also prepares hook-capable harnesses whose CLIs are
@@ -959,6 +962,9 @@ func checkStatus(harnessName string) error {
 		fmt.Println("✓ tmux installed")
 	} else {
 		fmt.Println("✗ tmux not found (required)")
+	}
+	if runtime.GOOS == "linux" {
+		reportLinuxSandboxTools()
 	}
 
 	// Check hooks. Naming a harness scopes the check to it; with no harness
