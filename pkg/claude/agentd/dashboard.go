@@ -995,10 +995,10 @@ type snapshotPayload struct {
 	// to annotate group rows with outbound/inbound counts. Empty slice
 	// (not nil) so JS .length / .map() are safe.
 	Links []dashboardLink `json:"links"`
-	// RouteMap is the read-only Groups/Route map projection. It is loaded from
-	// the route authority's durable rows in one bounded batch and deliberately
-	// omits target, endpoint, launch-generation, and capability material. It is
-	// omitted entirely while the opt-in Groups Route map flag is off.
+	// RouteMap projects durable route authority and ephemeral host leases.
+	// Only operator host-loopback endpoints are included; publisher targets,
+	// agent endpoints, launch generations, and capability material are omitted.
+	// It is absent while the opt-in Groups Route map flag is off.
 	RouteMap *dashboardRouteMap `json:"route_map,omitempty"`
 	// Usage is the account-wide subscription usage readout (5h + 7d
 	// rolling windows) rendered in the dashboard's top bar. Always

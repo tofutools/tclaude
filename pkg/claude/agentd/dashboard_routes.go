@@ -27,7 +27,8 @@ func SetRouteMapPlatformForTest(platform string) func() {
 // buildDashboardRouteMap projects the route authority into a safe operator
 // view. It resolves names from the already-built roster, compares the
 // generation-bound route rows with current group/member state, and intentionally
-// drops endpoints, targets, launch generations, and endpoint error details.
+// drops agent endpoints, targets, launch generations, and endpoint errors.
+// Operator host-loopback endpoints are disclosed for managing host leases.
 func buildDashboardRouteMap(
 	groups []*db.AgentGroup,
 	groupViews []dashboardGroup,
