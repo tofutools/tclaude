@@ -2,6 +2,9 @@ import { h, render } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { effectiveGroupsFocus, groupsFocusLocation } from './groups-focus.js';
+import { isLoopbackDashboard } from './helpers.js';
+import { remoteNodeID } from './fleet-model.js';
+import { hostRoutePreviewURL } from './groups-route-preview.js';
 
 const html = htm.bind(h);
 
@@ -103,17 +106,26 @@ function RouteGraph({ routes, members, selected, onSelect }) {
   </div>`;
 }
 
-function HostEndpointLink({ endpoint }) {
-  const url = `http://${endpoint}`;
-  return html`<a href=${url} target="_blank" rel="noopener noreferrer"><code>${url}</code></a>`;
+function HostEndpointLink({ lease, local }) {
+  const url = hostRoutePreviewURL(lease, { local, hostname: window.location?.hostname });
+  return url
+    ? html`<a class="route-map-preview" href=${url} target="_blank" rel="noopener noreferrer"><code>${url}</code></a>`
+    : html`<code>${lease.endpoint}</code>`;
 }
 
-function HostRouteControls({ route }) {
+function HostRouteControls({ route, local }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [openedLease, setOpenedLease] = useState(null);
+  useEffect(() => {
+    if (openedLease && route !== openedLease.snapshot && !(route.consumers || []).some((consumer) => consumer.id === openedLease.id)) {
+      setOpenedLease(null);
+    }
+  }, [route, openedLease]);
   const act = async (leaseID) => {
     setBusy(true);
     setMessage('');
+    setOpenedLease(null);
     try {
       const response = await fetch(leaseID ? `/api/routes/host/${encodeURIComponent(leaseID)}` : `/api/routes/${encodeURIComponent(route.id)}/host`, {
         method: leaseID ? 'DELETE' : 'POST', credentials: 'same-origin',
@@ -122,7 +134,7 @@ function HostRouteControls({ route }) {
       if (!response.ok) throw new Error(await response.text());
       if (!leaseID) {
         const lease = await response.json();
-        setMessage(html`<span>Host endpoint: <${HostEndpointLink} endpoint=${lease.endpoint} /></span>`);
+        setOpenedLease({ id: lease.id, endpoint: lease.endpoint, snapshot: route });
       }
     } catch (error) { setMessage(String(error.message || error)); }
     finally { setBusy(false); }
@@ -130,12 +142,14 @@ function HostRouteControls({ route }) {
   return html`<div>
     <button type="button" disabled=${busy || route.state !== 'ready' || route.generation_health !== 'current'} onClick=${() => act('')}>Open on host</button>
     <p class="route-map-muted">Exposes this published service to local host processes until closed or withdrawn.</p>
-    ${(route.consumers || []).filter((consumer) => consumer.consumer_kind === 'host').map((consumer) => html`<p key=${consumer.id}><${HostEndpointLink} endpoint=${consumer.endpoint} /> <button type="button" disabled=${busy} onClick=${() => act(consumer.id)}>Close host endpoint</button></p>`)}
+    ${!local && html`<p class="route-map-muted">These endpoints are on the daemon host. Forward the endpoint port with an SSH tunnel to access it from this machine.</p>`}
+    ${(route.consumers || []).filter((consumer) => consumer.consumer_kind === 'host').map((consumer) => html`<p key=${consumer.id}><${HostEndpointLink} lease=${consumer} local=${local} /> <button type="button" disabled=${busy} onClick=${() => act(consumer.id)}>Close host endpoint</button></p>`)}
+    ${openedLease && html`<p role="status">Host endpoint: <${HostEndpointLink} lease=${openedLease} local=${local} /></p>`}
     ${message && html`<p role="status">${message}</p>`}
   </div>`;
 }
 
-function RouteDetail({ route, onClose }) {
+function RouteDetail({ route, onClose, local }) {
   if (!route) return html`<aside class="route-map-detail route-map-detail-empty"><strong>Select a route</strong><span>Choose an edge or exact-list row to inspect its safe authority status.</span></aside>`;
   return html`<aside class="route-map-detail" aria-label="Route details">
     <div class="route-map-detail-head"><div><span class="route-map-kicker">Route detail</span><h3>${route.name}</h3></div><button type="button" class="route-map-close" onClick=${onClose} aria-label="Close route detail">×</button></div>
@@ -146,7 +160,7 @@ function RouteDetail({ route, onClose }) {
       <div><dt>Lifecycle</dt><dd><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></dd></div>
       <div><dt>Generation</dt><dd><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span></dd></div>
     </dl>
-    <${HostRouteControls} key=${route.id} route=${route} />
+    <${HostRouteControls} key=${route.id} route=${route} local=${local} />
     <h4>Consumers</h4>
     ${route.consumers?.length ? html`<ul class="route-map-consumers">${route.consumers.map((consumer) => html`<li key=${consumer.id}><span>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)}</span><span class=${routeStatusClass(consumer.endpoint_state)}>${statusLabel(consumer.endpoint_state)}</span><span class=${routeStatusClass(consumer.consumer_health)}>${statusLabel(consumer.consumer_health)}</span><${Boundary} value=${consumer.boundary} /></li>`)}</ul>` : html`<p class="route-map-muted">No consumer lease.</p>`}
     <p class="route-map-security-note">Host endpoints are loopback-only. Publisher targets, helper credentials, and payload data are never shown.</p>
@@ -247,7 +261,7 @@ export function GroupsRouteMap({ state }) {
     ${isRoutes && (!routes.length ? html`<div class="route-map-empty"><strong>No named routes in this group.</strong><span>When the route authority has records, this surface will show explicit publisher → consumer leases.</span></div>` : html`<div class=${`route-map-content route-map-mode-${mode}`}>
       ${mode === 'graph' && html`<${RouteGraph} routes=${routes} members=${members} selected=${selectedRouteID} onSelect=${navigateRoute} />`}
       ${mode === 'list' && html`<div class="route-map-table-wrap"><table class="route-map-table"><caption class="sr-only">Exact named route listing</caption><thead><tr><th>Route</th><th>Publisher</th><th>Consumer</th><th>Transport</th><th>Lifecycle</th><th>Health</th></tr></thead><tbody>${routes.map((route) => html`<tr key=${route.id} class=${selectedRouteID === route.id ? 'is-selected' : ''} onClick=${() => navigateRoute(route.id)}><td><button type="button" class="route-map-link">${route.name}</button><code>${route.stable_reference}</code></td><td>${friendlyEndpoint(route.publisher_name, route.publisher_boundary)}</td><td>${route.consumers?.length ? route.consumers.map((consumer) => html`<span class="route-map-consumer-line" key=${consumer.id}>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)} · ${statusLabel(consumer.endpoint_state)}</span>`) : html`<span class="route-map-muted">none</span>`}</td><td>${route.transport || 'unknown'}</td><td><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></td><td><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span> · ${statusLabel(route.publisher_health)}</td></tr>`)}</tbody></table></div>`}
-      <${RouteDetail} route=${selectedRoute} onClose=${() => navigateRoute('')} />
+      <${RouteDetail} route=${selectedRoute} local=${!remoteNodeID() && !snapshot?.peer_view && isLoopbackDashboard()} onClose=${() => navigateRoute('')} />
     </div>`)}
   </div>`;
 }

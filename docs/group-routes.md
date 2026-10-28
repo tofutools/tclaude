@@ -56,8 +56,13 @@ members to be offline before changing group membership.
 
 In the dashboard, enable **Config → Experimental features → Groups Route map**,
 select a local route under **Groups → Route map**, and click **Open on host**.
-The detail panel shows a `127.0.0.1:<port>` endpoint. Connect host tools to that
-endpoint; use HTTP in a browser when the published service speaks HTTP.
+The detail panel shows the host endpoint. For HTTP services, use its preview
+link: a unique hostname in the [reserved `.localhost` namespace](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)
+keeps dashboard cookies out of the preview request. Raw `127.0.0.1:<port>` endpoints remain
+available for curl and other host tools. If the service checks HTTP Host
+headers, allow the displayed preview hostname. When viewing a remote daemon,
+the panel shows the daemon-local address and SSH tunnel guidance instead of
+linking to the browser machine’s loopback.
 **Close host endpoint** releases the listener and its active connections.
 
 This is an operator-originated lease: the authenticated dashboard owns it,
