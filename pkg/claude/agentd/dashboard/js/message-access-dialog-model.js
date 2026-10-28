@@ -1,3 +1,5 @@
+import { openMemberPRs, prReviewState } from './pr-review-model.js';
+
 const SUDO_BLOCKLIST = new Set(['permissions.grant', 'permissions.revoke']);
 
 export function snapshotAgents(snapshot) {
@@ -44,6 +46,33 @@ export function senderOnline(snapshot, agentID, convID) {
 export function groupMembers(snapshot, groupName) {
   return ((snapshot?.groups || []).find((group) => group.name === groupName)?.members || [])
     .map((member) => ({ ...member, key: member.agent_id || member.conv_id }));
+}
+
+// RECIPIENT_PICKS are the group message dialog's quick selectors. Each names
+// the members it matches; the dialog replaces, extends (OR) or narrows (AND)
+// the ticked set with it. The PR picks look only at PRs still in flight.
+export const RECIPIENT_PICKS = Object.freeze([
+  { key: 'online', label: 'online', title: 'Members with a live session', test: (member) => !!member.online },
+  { key: 'offline', label: 'offline', title: 'Members without a live session — a message waits in their inbox', test: (member) => !member.online },
+  { key: 'pr', label: 'with PR', title: 'Members with an open or draft PR', test: (member) => openMemberPRs(member).length > 0 },
+  { key: 'no-pr', label: 'no PR', title: 'Members without an open or draft PR', test: (member) => openMemberPRs(member).length === 0 },
+  { key: 'ci-failing', label: 'CI failing', title: 'Members with an open PR whose checks are failing',
+    test: (member) => openMemberPRs(member).some((pr) => pr.checks?.state === 'failing') },
+  { key: 'changes', label: 'changes requested', title: 'Members with an open PR a reviewer asked to change',
+    test: (member) => openMemberPRs(member).some((pr) => prReviewState(pr.reviews) === 'changes') },
+  { key: 'approved', label: 'approved', title: 'Members with an approved open PR',
+    test: (member) => openMemberPRs(member).some((pr) => prReviewState(pr.reviews) === 'approved') },
+]);
+
+// combinePick applies one quick selector to the current recipients: 'add'
+// unions, 'narrow' intersects, anything else replaces.
+export function combinePick(members, current, pick, how = 'only') {
+  const has = new Set(current.map((member) => member.key));
+  return members.filter((member) => {
+    if (how === 'add') return has.has(member.key) || pick.test(member);
+    if (how === 'narrow') return has.has(member.key) && pick.test(member);
+    return pick.test(member);
+  });
 }
 
 export function groupsForPicker(snapshot, scopeGroup = '') {

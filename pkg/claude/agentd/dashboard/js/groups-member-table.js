@@ -22,9 +22,7 @@ import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
-import { PRChecksBadge } from './pr-checks-hover.js';
-import { PRReviewBadge } from './pr-review-badge.js';
-import { PRLinkHover } from './pr-link-hover.js';
+import { PRChain } from './pr-chain.js';
 import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 import { fleetState } from './fleet-state.js';
 import { nodeRef, presenceView } from './agent-presence.js';
@@ -1192,36 +1190,33 @@ function CwdCell({ member, group }) {
   return html`<${StackedLocation} start=${path(startup, 'start')} current=${path(current, 'worktree')} differ=${!!current && !!startup && current !== startup} />`;
 }
 
-// PR states that have their own badge colour. Anything else — including a
-// cache entry written before a state was recorded — falls back to unknown.
-const PR_STATE_CLASSES = ['open', 'draft', 'merged', 'closed'];
-const prStateClass = (state) => (PR_STATE_CLASSES.includes(state) ? `pr-state-${state}` : 'pr-state-unknown');
-
 function BranchCell({ member }) {
-  const branch = (name, url, prNumber, prURL, prState, checks, reviews, prTitle) => {
+  const branch = (name, url, pr) => {
     if (!name) return html`<span class="muted">—</span>`;
     const branchNode = url
       ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch on GitHub — ${name}`}>⎇ ${name}</a>`
       : html`<span class="branch" title=${`git branch: ${name}`}>⎇ ${name}</span>`;
-    const stateClass = prStateClass(prState);
-    const stateLabel = prState ? prState[0].toUpperCase() + prState.slice(1) : 'Pull request';
     // .pr-chain keeps the link and its badges one inline run: inside an
     // init/now .loc-row (a flex row with a gap) they would otherwise each
     // become a flex item and sit wider apart than on a single-branch row.
-    return html`${branchNode}${prNumber && prURL ? html` <span class="pr-chain"><${PRLinkHover} url=${prURL} prNumber=${prNumber} title=${prTitle} prState=${prState} className=${stateClass} label=${`#${prNumber}`} describe=${`${stateLabel} pull request #${prNumber}`} /><${PRChecksBadge} url=${prURL} prNumber=${prNumber} summary=${checks} prState=${prState} /><${PRReviewBadge} url=${prURL} prNumber=${prNumber} reviews=${reviews} prState=${prState} /></span>` : null}`;
+    return html`${branchNode}${pr.number && pr.url ? html` <${PRChain} pr=${pr} />` : null}`;
   };
-  const start = branch(member.startup_branch || '', member.startup_branch_url || '', member.startup_pr_number || 0, member.startup_pr_url || '', member.startup_pr_state || '', member.startup_checks, member.startup_reviews, member.startup_pr_title || '');
-  const current = branch(member.branch || '', member.branch_url || '', member.branch_pr_number || 0, member.branch_pr_url || '', member.branch_pr_state || '', member.branch_checks, member.branch_reviews, member.branch_pr_title || '');
+  const start = branch(member.startup_branch || '', member.startup_branch_url || '', {
+    number: member.startup_pr_number || 0, url: member.startup_pr_url || '', state: member.startup_pr_state || '',
+    checks: member.startup_checks, reviews: member.startup_reviews, title: member.startup_pr_title || '',
+  });
+  const current = branch(member.branch || '', member.branch_url || '', {
+    number: member.branch_pr_number || 0, url: member.branch_pr_url || '', state: member.branch_pr_state || '',
+    checks: member.branch_checks, reviews: member.branch_reviews, title: member.branch_pr_title || '',
+  });
   const seen = new Set([member.startup_pr_url, member.branch_pr_url].filter(Boolean));
   const presented = (member.presented_prs || []).filter((pr) => {
     const url = String(pr.url || '').trim();
     if (!url || seen.has(url) || !/^https?:\/\//i.test(url)) return false;
     seen.add(url); return true;
   });
-  return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} wrap />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
-    const stateClass = prStateClass(pr.state);
-    return html`<span key=${pr.url} class="presented-pr pr-chain"><${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${pr.state || ''} className=${`${stateClass}${pr.number ? '' : ' pr-label'}`} label=${pr.number ? `#${pr.number}` : pr.summary || 'PR'} describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} prState=${pr.state} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state} /></span>`;
-  })}</span>` : null}`;
+  return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} wrap />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} className="presented-pr"
+    describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} />`)}</span>` : null}`;
 }
 
 function TaskCell({ member }) {

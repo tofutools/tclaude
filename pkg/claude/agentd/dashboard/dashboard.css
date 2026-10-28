@@ -9635,6 +9635,18 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 }
 .cleanup-badge.owner { color: #d29922; border-color: #4d3c12; }
 .cleanup-badge.online { color: #58a6ff; border-color: #1f3a5a; }
+/* Group message recipients: a fixed-width presence badge leads each row so
+   names line up, an offline member reads dimmer, and the member's open PRs
+   (number, CI pill, review icon) sit flush right. */
+#message-create-members .cleanup-badge { min-width: 6ch; text-align: center; }
+#message-create-members .recipient-offline .title { color: #8b949e; font-weight: normal; }
+#message-create-members .recipient-prs { margin-left: auto; display: flex; gap: 10px; flex: 0 0 auto; }
+#message-create-members .recipient-prs .pr-link { margin-left: 0; }
+.recipient-picks { flex-wrap: wrap; row-gap: 6px; }
+.recipient-picks button:disabled { opacity: 0.45; cursor: default; }
+.recipient-picks button.active { border-color: #1f6feb; color: #58a6ff; }
+.recipient-pick-count { color: #7d8590; margin-left: 2px; }
+.recipient-picks-hint { margin-top: 4px; }
 .cleanup-badge.removed, .cleanup-badge.deleted, .cleanup-badge.retired,
 .cleanup-badge.reinstated {
   color: #3fb950; border-color: #1d3a23;
