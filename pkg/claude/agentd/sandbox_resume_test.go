@@ -278,3 +278,31 @@ func TestMergeResumeAccessNoticesDropsStaleDegradationAuthority(t *testing.T) {
 	empty := mergeResumeAccessNotices([]sandboxpolicy.AccessNotice{}, nil)
 	assert.NotNil(t, empty, "ordinary resume keeps the historical empty-slice snapshot shape")
 }
+
+// An ungrouped snapshot (ResolutionGroupID 0) whose agent has since joined a
+// group takes that group's environment on resume, the same group its
+// sandbox-profile tier now resolves from.
+func TestRefreshResumeGroupEnvironmentFollowsMembershipForUngroupedSnapshot(t *testing.T) {
+	setupTestDB(t)
+	const convID = "ungrouped-resume-env-conv"
+	_, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	groupID, err := db.CreateAgentGroup("joined-later", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: convID}))
+	_, err = db.SetAgentGroupEnvironment("joined-later", []sandboxpolicy.EnvironmentEntry{{Name: "GROUP", Value: "joined"}})
+	require.NoError(t, err)
+
+	previous := sandboxpolicy.EmptySnapshot()
+	previous.RefreshGroupEnvironment = true
+	previous.LaunchEnvironmentOverrides = []sandboxpolicy.EnvironmentEntry{{Name: "OWN", Value: "kept"}}
+	got, err := refreshResumeGroupEnvironment(convID, sandboxpolicy.EmptySnapshot(), &previous)
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "GROUP", Value: "joined"}, {Name: "OWN", Value: "kept"}}, got.LaunchEnvironment)
+
+	previous.ProfilesOmitted = true
+	got, err = refreshResumeGroupEnvironment(convID, sandboxpolicy.EmptySnapshot(), &previous)
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "OWN", Value: "kept"}}, got.LaunchEnvironment,
+		"an omitted-profile agent recorded as ungrouped keeps no group environment")
+}

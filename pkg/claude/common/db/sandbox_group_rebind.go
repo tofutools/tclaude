@@ -102,7 +102,7 @@ func moveAgentGroupMemberTx(tx *sql.Tx, agentID string, fromGroupID, toGroupID i
 	if err := applyMoveOptions(tx, agentID, fromGroupID, opts); err != nil {
 		return MoveResult{}, err
 	}
-	if err := rebindSandboxResolutionGroupPreferring(tx, agentID, toGroupID); err != nil {
+	if err := rebindSandboxResolutionGroup(tx, agentID, toGroupID); err != nil {
 		return MoveResult{}, err
 	}
 	snapshot, ok, err := loadAgentSandboxForRebind(tx, agentID)
@@ -176,14 +176,11 @@ func applyMoveOptions(q dbExecQuerier, agentID string, fromGroupID int64, opts M
 // recovers their group from memberships and refuses to guess among several
 // (resumeSandboxGroupID). Called after every membership change, inside the
 // caller's transaction when it has one.
-func rebindSandboxResolutionGroup(q dbExecQuerier, agentID string) error {
-	return rebindSandboxResolutionGroupPreferring(q, agentID, 0)
-}
-
-// rebindSandboxResolutionGroupPreferring is rebindSandboxResolutionGroup with
-// the group a setting moves to named explicitly: a move targets that group
-// even when the agent was already a member of it and joined another later.
-func rebindSandboxResolutionGroupPreferring(q dbExecQuerier, agentID string, preferred int64) error {
+//
+// preferred names the group a setting moves to when it must move: a move
+// targets that group even when the agent was already a member of it and joined
+// another later. Zero means the most recently joined group.
+func rebindSandboxResolutionGroup(q dbExecQuerier, agentID string, preferred int64) error {
 	snapshot, ok, err := loadAgentSandboxForRebind(q, agentID)
 	if err != nil || !ok || !tracksGroupProvenance(snapshot) {
 		return err

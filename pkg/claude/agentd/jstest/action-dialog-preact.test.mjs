@@ -456,9 +456,9 @@ test('action mutations preserve endpoint payloads, notifications, and refresh bo
 
   state.openClone({ conv: 'source', label: 'worker' });
   const cloneOwner = state.dialog.value;
-  await actions.cloneAgent({ conv: 'source', label: 'worker', followUp: 'one\ntwo', copyConversation: false, cwd: '/wt', full: true, group: 'ops' }, cloneOwner);
+  await actions.cloneAgent({ conv: 'source', label: 'worker', followUp: 'one\ntwo', copyConversation: false, cwd: '/wt', full: true, group: 'ops', keepEnvironment: true }, cloneOwner);
   assert.equal(requests[0][0], '/api/agents/source/clone');
-  assert.deepEqual(JSON.parse(requests[0][1].body), { follow_up: 'one two', no_copy_conv: true, copy_ownership: false, cwd: '/wt', group: 'ops' });
+  assert.deepEqual(JSON.parse(requests[0][1].body), { follow_up: 'one two', no_copy_conv: true, copy_ownership: false, cwd: '/wt', group: 'ops', keep_sandbox: false, keep_environment: true });
   assert.deepEqual(notices[0], ['cloned worker → 12345678 (warning: late status)', true]);
   assert.equal(state.dialog.value, null);
 
