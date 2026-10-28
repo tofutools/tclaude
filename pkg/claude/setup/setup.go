@@ -144,6 +144,12 @@ func runSetup(params *Params) error {
 	// tmux and re-runs `tclaude setup`, which then applies the baseline
 	// plus any extras idempotently.
 	fmt.Println("=== Prerequisites ===")
+	// Report the advisory sandbox tools before the tmux check, whose
+	// missing-tmux branches return early: a first-run user then gets every
+	// install hint in one pass.
+	if runtime.GOOS == "linux" {
+		reportLinuxSandboxTools()
+	}
 	if isTmuxInstalled() {
 		fmt.Println("✓ tmux installed")
 	} else {
@@ -183,9 +189,6 @@ func runSetup(params *Params) error {
 			fmt.Println("\nPlease install tmux and run setup again.")
 			return nil
 		}
-	}
-	if runtime.GOOS == "linux" {
-		reportLinuxSandboxTools()
 	}
 
 	// Install the selected harness's hooks and auto-detect other harnesses on
