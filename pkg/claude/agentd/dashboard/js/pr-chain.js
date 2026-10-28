@@ -20,5 +20,5 @@ export function PRChain({ pr, className = '', describe = '' }) {
   const label = pr.number ? `#${pr.number}` : pr.summary || 'PR';
   const description = describe || (pr.number ? `${stateLabel} pull request #${pr.number}`
     : pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`);
-  return html`<span class=${`pr-chain${className ? ` ${className}` : ''}`}><${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${pr.state || ''} className=${`${stateClass}${pr.number ? '' : ' pr-label'}`} label=${label} describe=${description} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} prState=${pr.state || ''} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state || ''} /></span>`;
+  return html`<span class=${`pr-chain${className ? ` ${className}` : ''}`}><${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${pr.state || ''} className=${`${stateClass}${pr.number ? '' : ' pr-label'}`} label=${label} describe=${description} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} prState=${pr.state} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state || ''} /></span>`;
 }

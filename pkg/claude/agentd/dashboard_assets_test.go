@@ -1034,7 +1034,7 @@ func TestDashboardAssets_ShowFinalPRChecksWired(t *testing.T) {
 		"'show-final-pr-checks', !!data.show_final_pr_checks",
 		"(prState === 'merged' || prState === 'closed') && stateName !== 'failing'",
 		`body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }`,
-		"summary=${checks} prState=${prState}",
+		// pr-chain.js — the shared PR run passes the PR state to the CI pill.
 		"summary=${pr.checks} prState=${pr.state}",
 		"#cfg-dashboard-show-final-pr-checks",
 		"dashboard.show_final_pr_checks = true",
