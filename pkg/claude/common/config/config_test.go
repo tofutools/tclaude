@@ -1145,6 +1145,16 @@ func TestFusedToolbarFixedNode(t *testing.T) {
 	assert.NotContains(t, string(clean), "fused_toolbar_fixed_node")
 }
 
+func TestUsageCollapseSubviews(t *testing.T) {
+	assert.False(t, (*Config)(nil).UsageCollapseSubviews(), "nil → all views")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{}}).UsageCollapseSubviews(), "absent key → all views")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{UsageCollapseSubviews: true}}).UsageCollapseSubviews(), "explicit true → collapse")
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "usage_collapse_subviews")
+}
+
 func TestShowGroupDescription(t *testing.T) {
 	// Default is false (chip hidden) for every "unset" shape.
 	assert.False(t, (*Config)(nil).ShowGroupDescription(), "nil → hidden")

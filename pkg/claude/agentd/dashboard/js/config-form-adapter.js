@@ -601,6 +601,9 @@ function populateConfigForm(cfg) {
   // The fused Groups toolbar follows the group acted on by default
   // (checked); only an explicit dashboard.fused_toolbar_fixed_node true unchecks it.
   $('#cfg-dashboard-fused-toolbar-follow').checked = !(cfg.dashboard && cfg.dashboard.fused_toolbar_fixed_node);
+  // The Usage tab offers all its views by default (unchecked); only an
+  // explicit dashboard.usage_collapse_subviews true checks it.
+  $('#cfg-dashboard-usage-collapse-subviews').checked = !!(cfg.dashboard && cfg.dashboard.usage_collapse_subviews);
 
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
@@ -957,6 +960,8 @@ function assembleConfig() {
   // fused_toolbar_fixed_node: following (false) is the default; an unchecked
   // follow toggle stores only true.
   if (!$('#cfg-dashboard-fused-toolbar-follow').checked) dashboard.fused_toolbar_fixed_node = true; else delete dashboard.fused_toolbar_fixed_node;
+  // usage_collapse_subviews: false is the default; store only true.
+  if ($('#cfg-dashboard-usage-collapse-subviews').checked) dashboard.usage_collapse_subviews = true; else delete dashboard.usage_collapse_subviews;
   // show_debug_tab is retired: the poll-performance view (Activity ›
   // Performance) is always shown, so a save drops the stale opt-in.
   delete dashboard.show_debug_tab;

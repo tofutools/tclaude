@@ -10504,8 +10504,9 @@ body.hide-costs #groups-cost-toggle { display: none; }
 
 /* Usage tab: Overview / Quota / Costs. usage-hub-island.js sets data-subview
    on the section (one host at a time; absent = hub failed to load, show both
-   halves) and mirrors each half's server gate onto body.hide-usage-quota /
-   body.hide-usage-costs. The tab itself hides only when both halves are off:
+   halves) and mirrors each half's gate onto body.hide-usage-quota /
+   body.hide-usage-costs — both stay shown unless config
+   dashboard.usage_collapse_subviews asks for the old collapse. The tab itself hides only when both halves are off:
    accounts with neither quota readings nor costs never see an empty
    destination. */
 body.hide-usage-tab nav [data-tab="usage"],

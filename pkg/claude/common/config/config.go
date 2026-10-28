@@ -621,6 +621,11 @@ type DashboardConfig struct {
 	// it follows the node of the group last acted on there. Default false.
 	// See (*Config).FusedToolbarFixedNode.
 	FusedToolbarFixedNode bool `json:"fused_toolbar_fixed_node,omitempty"`
+	// UsageCollapseSubviews restores the Usage tab's old auto-collapse: with
+	// only one of Quota/Costs having data, the tab shows that view alone and
+	// hides the Overview/Quota/Costs switcher. By default all three views are
+	// always offered. Default false. See (*Config).UsageCollapseSubviews.
+	UsageCollapseSubviews bool `json:"usage_collapse_subviews,omitempty"`
 }
 
 // Browser-terminal attach resize modes — config dashboard.terminal_attach.mode.
@@ -1738,6 +1743,14 @@ func (c *Config) StayOnTerminalsAfterLastClose() bool {
 // the group last acted on. Nil-safe on the receiver.
 func (c *Config) FusedToolbarFixedNode() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.FusedToolbarFixedNode
+}
+
+// UsageCollapseSubviews reports whether the Usage tab collapses to its only
+// populated view (Quota or Costs) and drops the view switcher — config
+// dashboard.usage_collapse_subviews. Default false: Overview, Quota and Costs
+// are always offered. Nil-safe on the receiver.
+func (c *Config) UsageCollapseSubviews() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.UsageCollapseSubviews
 }
 
 // HScrollFollow reports whether the dashboard's full-bleed chrome bars

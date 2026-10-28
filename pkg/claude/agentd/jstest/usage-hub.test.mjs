@@ -125,8 +125,30 @@ test('Usage hub Overview summarises both halves and subtab clicks announce one n
   await mounted.unmount();
 });
 
-test('Usage hub with one half shows it directly and gates the other on a body class', async (t) => {
+test('Usage hub with one half still offers all three views by default', async (t) => {
   const ctx = await setup(t, { usage_tab_visible: false, cost_tab_visible: true });
+  const { harness, state, quotaState, costsState, section } = ctx;
+  const mounted = await harness.mount(harness.html`<${ctx.hubIsland.UsageHubApp} state=${state}
+    quotaState=${quotaState} costsState=${costsState} />`);
+  const tabs = [...mounted.container.querySelectorAll('.usage-subnav [data-usage-subtab]')].map((a) => a.dataset.usageSubtab);
+  assert.ok(mounted.container.querySelector('.usage-subnav'), 'the subnav shows with only costs');
+  assert.deepEqual(tabs, ['overview', 'quota', 'costs']);
+  assert.equal(state.subview.value, 'overview');
+  assert.equal(section.getAttribute('data-subview'), 'overview');
+  const body = harness.document.body.classList;
+  assert.equal(body.contains('hide-usage-quota'), false, 'the empty Quota view stays reachable');
+  assert.equal(body.contains('hide-usage-costs'), false);
+  assert.equal(body.contains('hide-usage-tab'), false);
+  assert.equal(state.select('quota'), true);
+  assert.equal(state.subview.value, 'quota');
+
+  await harness.act(() => { ctx.snapshot.value = { usage_tab_visible: false, cost_tab_visible: false }; });
+  assert.equal(body.contains('hide-usage-tab'), true, 'the tab still hides when both halves are off');
+  await mounted.unmount();
+});
+
+test('Usage hub with one half and usage_collapse_subviews shows it directly and gates the other on a body class', async (t) => {
+  const ctx = await setup(t, { usage_tab_visible: false, cost_tab_visible: true, usage_collapse_subviews: true });
   const { harness, state, quotaState, costsState, section } = ctx;
   const mounted = await harness.mount(harness.html`<${ctx.hubIsland.UsageHubApp} state=${state}
     quotaState=${quotaState} costsState=${costsState} />`);
@@ -139,7 +161,7 @@ test('Usage hub with one half shows it directly and gates the other on a body cl
   assert.equal(body.contains('hide-usage-costs'), false);
   assert.equal(body.contains('hide-usage-tab'), false);
 
-  await harness.act(() => { ctx.snapshot.value = { usage_tab_visible: false, cost_tab_visible: false }; });
+  await harness.act(() => { ctx.snapshot.value = { usage_tab_visible: false, cost_tab_visible: false, usage_collapse_subviews: true }; });
   assert.equal(body.contains('hide-usage-tab'), true, 'the tab hides only when both halves are off');
   await mounted.unmount();
 });

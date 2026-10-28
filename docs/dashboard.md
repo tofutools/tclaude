@@ -739,9 +739,13 @@ One tab, three views: **Overview** (`/usage`), **Quota** (`/usage/quota`)
 and **Costs** (`/usage/costs`). Each view is its own history entry, so
 deep links, reload and browser Back/Forward land on the same view; the old
 `/costs` path (and `?tab=costs`) still works and settles on `/usage/costs`.
-Quota and Costs keep their own visibility rules: with only one of them
-available the tab shows it directly without the view switcher, and the tab
-hides only when neither has anything to show.
+Quota and Costs keep their own visibility rules, but once either has
+something to show the tab always offers all three views; an empty one shows
+its own empty state (e.g. Quota with only pay-per-token agents). The tab hides
+only when neither has anything to show. To get the older compact behavior —
+with only one of them available, show it directly without the view switcher —
+enable **Collapse empty Usage views** in Config
+(`dashboard.usage_collapse_subviews: true`).
 
 Agents and operators can also query quotas and costs through the daemon with
 [`tclaude usage` and `tclaude costs`](usage-and-costs.md), including JSON output.
