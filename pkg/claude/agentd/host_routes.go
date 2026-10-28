@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,7 @@ type hostRouteLease struct {
 	consumer     routebroker.ConsumerAuth
 	adapter      *routeadapter.Adapter
 	cancel       context.CancelFunc
+	audited      bool
 }
 
 var hostRouteLeases = struct {
@@ -103,20 +106,23 @@ func openHostRoute(route *db.AgentRoute, port int) (*hostRouteLease, error) {
 	// Publish the immutable authority before accepting connections. Keep the
 	// lock until Endpoint is initialized so snapshots cannot race this write.
 	hostRouteLeases.items[id] = lease
-	endpoint, err := adapter.OpenHost(ctx, routeadapter.Consumer{LeaseID: id, RouteID: route.ID,
-		AgentID: lease.consumer.AgentID, ConvID: id, LaunchGeneration: id, GroupGeneration: route.GroupGeneration}, port)
-	lease.Endpoint = endpoint
-	hostRouteLeases.Unlock()
+	listener, err := listenHostRoute(port, runtime.GOOS)
 	if err == nil {
-		err = db.RecordHostRouteAudit("host-open", route.GroupID, route.ID, id, endpoint)
+		lease.Endpoint, err = adapter.OpenHost(ctx, routeadapter.Consumer{LeaseID: id, RouteID: route.ID,
+			AgentID: lease.consumer.AgentID, ConvID: id, LaunchGeneration: id, GroupGeneration: route.GroupGeneration}, listener)
 	}
+	if err == nil {
+		err = db.RecordHostRouteAudit("host-open", route.GroupID, route.ID, id, lease.Endpoint)
+		lease.audited = err == nil
+	}
+	hostRouteLeases.Unlock()
 	if err != nil {
-		closeHostRoute(id)
+		closeHostRoute(id, "open failed")
 		return nil, err
 	}
 	// Recheck after allocating the endpoint: withdrawal may race the bind.
 	if err := authorizeHostRouteConsumer(lease.consumer); err != nil {
-		closeHostRoute(id)
+		closeHostRoute(id, err.Error())
 		return nil, err
 	}
 	go func() {
@@ -127,8 +133,8 @@ func openHostRoute(route *db.AgentRoute, port int) (*hostRouteLease, error) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if authorizeHostRouteConsumer(lease.consumer) != nil {
-					closeHostRoute(id)
+				if err := authorizeHostRouteConsumer(lease.consumer); err != nil {
+					closeHostRoute(id, err.Error())
 					return
 				}
 			}
@@ -151,7 +157,7 @@ func authorizeHostRouteConsumer(auth routebroker.ConsumerAuth) error {
 	return (databaseRouteAuthority{}).AuthorizePublisher(context.Background(), lease.publisher)
 }
 
-func closeHostRoute(id string) {
+func closeHostRoute(id, reason string) {
 	hostRouteLeases.Lock()
 	lease := hostRouteLeases.items[id]
 	delete(hostRouteLeases.items, id)
@@ -161,8 +167,10 @@ func closeHostRoute(id string) {
 	}
 	lease.cancel()
 	lease.adapter.Close()
-	if err := db.RecordHostRouteAudit("host-close", lease.groupID, lease.RouteID, id, lease.Endpoint); err != nil {
-		slog.Warn("host route close audit failed", "lease", id, "error", err)
+	if lease.audited {
+		if err := db.RecordHostRouteAudit("host-close", lease.groupID, lease.RouteID, id, reason+": "+lease.Endpoint); err != nil {
+			slog.Warn("host route close audit failed", "lease", id, "error", err)
+		}
 	}
 }
 
@@ -174,7 +182,7 @@ func closeAllHostRoutes() {
 	}
 	hostRouteLeases.Unlock()
 	for _, id := range ids {
-		closeHostRoute(id)
+		closeHostRoute(id, "daemon shutdown")
 	}
 }
 
@@ -194,6 +202,46 @@ func handleHostRouteClose(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "close a host route") {
 		return
 	}
-	closeHostRoute(r.PathValue("lease"))
+	closeHostRoute(r.PathValue("lease"), "operator requested close")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// On Darwin, idle sandbox slots remain allowed in Seatbelt even though their
+// reservation sockets have been released. Never bind a host endpoint there.
+func listenHostRoute(port int, platform string) (net.Listener, error) {
+	bind := func() (net.Listener, error) {
+		return net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	}
+	if platform != "darwin" {
+		return bind()
+	}
+	var listener net.Listener
+	var rejected []net.Listener
+	defer func() {
+		for _, l := range rejected {
+			_ = l.Close()
+		}
+	}()
+	err := db.WithDarwinRouteSlotClaims(func(claimed map[int]bool) error {
+		for range 16 {
+			candidate, err := bind()
+			if err != nil {
+				return err
+			}
+			if !claimed[candidate.Addr().(*net.TCPAddr).Port] {
+				listener = candidate
+				return nil
+			}
+			rejected = append(rejected, candidate)
+			if port != 0 {
+				return errors.New("host port is reserved by a sandbox route launch")
+			}
+		}
+		return errors.New("could not allocate a host port outside sandbox route slots")
+	})
+	if err != nil && listener != nil {
+		_ = listener.Close()
+		listener = nil
+	}
+	return listener, err
 }

@@ -118,6 +118,10 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 			writeRouteError(w, http.StatusBadRequest, "route_channel", "consumer lease id is required")
 			return
 		}
+		if strings.HasPrefix(leaseID, hostRouteLeasePrefix) {
+			writeRouteError(w, http.StatusForbidden, "route_authority", "host leases are not available to helpers")
+			return
+		}
 		// Proxy leases carry a remote instance's connections; a helper can
 		// never consume through one.
 		if isProxy, proxyErr := db.IsFederationProxyLease(leaseID); proxyErr != nil || isProxy {

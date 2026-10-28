@@ -18,7 +18,7 @@ import (
 )
 
 func TestHostRoutesFlow(t *testing.T) {
-	for _, revoke := range []string{"withdraw", "generation", "publisher-exit", "operator-close"} {
+	for _, revoke := range []string{"withdraw", "generation", "publisher-exit", "operator-close", "shutdown"} {
 		t.Run(revoke, func(t *testing.T) {
 			setupTestDB(t)
 			t.Cleanup(closeAllHostRoutes)
@@ -27,6 +27,7 @@ func TestHostRoutesFlow(t *testing.T) {
 			groupID, err := db.CreateAgentGroup("host-routes", "")
 			require.NoError(t, err)
 			require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: "host-publisher"}))
+			require.NoError(t, db.ReplaceAgentGroupPermissions(groupID, []string{PermRoutesPublish}, "test"))
 			group, err := db.GetAgentGroupByID(groupID)
 			require.NoError(t, err)
 			target, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -90,6 +91,16 @@ func TestHostRoutesFlow(t *testing.T) {
 			require.Equal(t, "host", lease.ConsumerKind)
 			require.Contains(t, lease.Endpoint, "127.0.0.1:")
 			require.Len(t, routeViewFor(route).HostLeases, 1)
+			// A failed bind leaves neither a lease nor unmatched close audit.
+			_, err = openHostRoute(route, connPort(t, lease.Endpoint))
+			require.Error(t, err)
+			require.Len(t, hostRoutesForRoute(route.ID), 1)
+			hostRouteLeases.Lock()
+			forged := hostRouteLeases.items[lease.ID].consumer
+			hostRouteLeases.Unlock()
+			forged.AgentID = publisher
+			require.Error(t, (databaseRouteAuthority{}).AuthorizeConsumer(context.Background(), forged))
+
 			snapshot := buildDashboardRouteMap([]*db.AgentGroup{group}, nil, map[int64][]*db.AgentRoute{groupID: {route}}, nil, nil)
 			require.Equal(t, "host", snapshot.Routes[0].Consumers[0].ConsumerKind)
 			conn, err := net.DialTimeout("tcp4", lease.Endpoint, time.Second)
@@ -104,11 +115,15 @@ func TestHostRoutesFlow(t *testing.T) {
 			require.Equal(t, "opaque", string(payload))
 			switch revoke {
 			case "withdraw":
-				require.NoError(t, db.WithdrawAgentRoute(route.ID, publisher, "host-publisher", "withdraw"))
+				withdraw := httptest.NewRecorder()
+				buildMux().ServeHTTP(withdraw, AsAgentPeer(httptest.NewRequest(http.MethodPost, "/v1/routes/"+route.ID+"/withdraw", bytes.NewBufferString("{}")), "host-publisher"))
+				require.Equal(t, http.StatusOK, withdraw.Code, withdraw.Body.String())
 			case "generation":
-				require.NoError(t, db.ReplaceAgentGroupPermissions(groupID, []string{PermRoutesPublish}, "changed"))
+				require.NoError(t, db.ReplaceAgentGroupPermissions(groupID, []string{PermRoutesPublish, PermRoutesConsume}, "changed"))
 			case "publisher-exit":
 				require.NoError(t, db.MarkAgentRoutePublisherLost(route.ID, "publisher exited"))
+			case "shutdown":
+				closeAllHostRoutes()
 			case "operator-close":
 				require.Equal(t, http.StatusNoContent, request(http.MethodDelete, "/api/routes/host/"+lease.ID).Code)
 			}
@@ -128,7 +143,38 @@ func TestHostRoutesFlow(t *testing.T) {
 			require.NoError(t, err)
 			var count int
 			require.NoError(t, database.QueryRow(`SELECT COUNT(*) FROM agent_route_audit WHERE lease_id = ? AND action IN ('host-open', 'host-close')`, lease.ID).Scan(&count))
-			require.Equal(t, 2, count)
+			require.Eventually(t, func() bool {
+				err := database.QueryRow(`SELECT COUNT(*) FROM agent_route_audit WHERE route_id = ? AND action IN ('host-open', 'host-close')`, route.ID).Scan(&count)
+				return err == nil && count == 2
+			}, time.Second, time.Millisecond)
 		})
 	}
+}
+
+func TestHostRoutePortAllocationAvoidsDarwinSandboxClaims(t *testing.T) {
+	setupTestDB(t)
+	publisher, _, err := db.EnsureAgentForConv("slot-publisher", "publisher")
+	require.NoError(t, err)
+	free, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := free.Addr().(*net.TCPAddr).Port
+	require.NoError(t, free.Close())
+	require.NoError(t, db.RegisterDarwinRouteLaunch(publisher, "slot-publisher", "generation", []int{port}))
+	listener, err := listenHostRoute(port, "darwin")
+	require.ErrorContains(t, err, "reserved by a sandbox")
+	require.Nil(t, listener)
+	listener, err = listenHostRoute(0, "darwin")
+	require.NoError(t, err)
+	defer listener.Close()
+	require.NotEqual(t, port, listener.Addr().(*net.TCPAddr).Port)
+	busy, err := listenHostRoute(listener.Addr().(*net.TCPAddr).Port, "darwin")
+	require.Error(t, err)
+	require.Nil(t, busy)
+}
+
+func connPort(t *testing.T, endpoint string) int {
+	t.Helper()
+	addr, err := net.ResolveTCPAddr("tcp4", endpoint)
+	require.NoError(t, err)
+	return addr.Port
 }

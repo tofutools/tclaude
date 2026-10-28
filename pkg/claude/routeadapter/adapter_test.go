@@ -595,3 +595,50 @@ func TestAdapterCloseLeaseDoesNotCloseSiblingSameAgentRoute(t *testing.T) {
 		t.Fatal("sibling lease unexpectedly reused the closed endpoint")
 	}
 }
+
+func TestHostListenerBoundsConcurrentStreams(t *testing.T) {
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	target, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer target.Close()
+	adapter, err := New(broker, []int{target.Addr().(*net.TCPAddr).Port})
+	require.NoError(t, err)
+	defer adapter.Close()
+	go func() {
+		for {
+			conn, err := target.Accept()
+			if err != nil {
+				return
+			}
+			go func() { defer conn.Close(); _, _ = io.Copy(conn, conn) }()
+		}
+	}()
+	_, err = adapter.Publish(ctx, Publisher{RouteID: "host-route", AgentID: "publisher", ConvID: "publisher", LaunchGeneration: "generation", GroupGeneration: 1, Target: "tcp://" + target.Addr().String()})
+	require.NoError(t, err)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	endpoint, err := adapter.OpenHost(ctx, Consumer{LeaseID: "host-lease", RouteID: "host-route", AgentID: "host", ConvID: "host", LaunchGeneration: "generation", GroupGeneration: 1}, listener)
+	require.NoError(t, err)
+	for range 8 {
+		conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+		require.NoError(t, conn.SetDeadline(time.Now().Add(3*time.Second)))
+		_, err = conn.Write([]byte("a"))
+		require.NoError(t, err)
+		_, err = io.ReadFull(conn, make([]byte, 1))
+		require.NoError(t, err)
+	}
+	excess, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer excess.Close()
+	require.NoError(t, excess.SetReadDeadline(time.Now().Add(time.Second)))
+	_, err = excess.Read(make([]byte, 1))
+	require.Error(t, err)
+	var timeout net.Error
+	require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "excess stream must close, not hang")
+}

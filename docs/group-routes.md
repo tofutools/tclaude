@@ -56,7 +56,9 @@ from the agent socket, and an agent cannot create these leases. The publisher
 must still explicitly publish the selected port with `routes publish`; host
 consumption needs no additional publish flag. Every local host process can
 reach the allocated endpoint, so only open services you intend to share locally.
-No unlisted publisher ports become reachable through this lease.
+No unlisted publisher ports become reachable through this lease. Each host
+lease admits at most eight simultaneous TCP connections; excess connections
+are closed. Host connections still count toward the route broker’s shared limit.
 
 Host listeners bind IPv4 loopback only and choose an ephemeral port. The
 cookie-authenticated `POST /api/routes/<route-id>/host` API takes `{}` or
@@ -75,7 +77,8 @@ for idle listeners, normally within 100 ms.
 Linux uses the existing publisher namespace helper, preserving closed or
 filtered networking. macOS uses the existing publisher adapter and its bounded
 launch slots; the host endpoint needs no consumer launch slot. The macOS
-host-wide localhost limitation above still applies. Federated route mirrors
+host-wide localhost limitation in the platform table still applies. Host binds
+exclude ports claimed by sandbox route launches, including idle slots. Federated route mirrors
 are not eligible for host consumption.
 
 ## What a route is not

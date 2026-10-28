@@ -147,8 +147,10 @@ wizard), or force one with `?slop=1` / `?wizard=1`.
 ## Groups — the home view
 
 The default view is a compact roster: groups, and under each group its member
-agents, one row per agent. An optional read-only route-map island
-(feature-flagged) draws the group topology.
+agents, one row per agent. An optional route-map island
+(feature-flagged) draws the group topology. Its route details offer **Open on host**
+and **Close host endpoint** for operator-owned loopback consumers; see
+[Group routes](group-routes.md#open-a-published-route-on-the-host).
 
 ![Activity badges on a busy fleet: sub-agents, background shells, and monitors counted next to each state pill](assets/dashboard-activity-badges.png)
 

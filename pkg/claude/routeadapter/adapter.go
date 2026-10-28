@@ -393,15 +393,16 @@ func (a *Adapter) open(ctx context.Context, consumer Consumer, pool []int) (stri
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
 }
 
-// OpenHost binds a host-loopback endpoint outside the sandbox slot pools.
-// Callers must supply operator authority and revoke it when that authority ends.
-func (a *Adapter) OpenHost(ctx context.Context, consumer Consumer, port int) (string, error) {
-	if port < 0 || port > 65535 {
-		return "", errors.New("host port must be between 0 and 65535")
+// OpenHost serves a pre-bound host-loopback listener outside sandbox slot
+// pools. The caller owns authority checks and avoidance of sandbox port claims.
+func (a *Adapter) OpenHost(ctx context.Context, consumer Consumer, listener net.Listener) (string, error) {
+	if listener == nil {
+		return "", errors.New("host listener is required")
 	}
-	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-	if err != nil {
-		return "", err
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || !addr.IP.Equal(net.IPv4(127, 0, 0, 1)) {
+		_ = listener.Close()
+		return "", errors.New("host listener must bind 127.0.0.1")
 	}
 	channelCtx, cancel := context.WithCancel(ctx)
 	a.mu.Lock()
@@ -413,7 +414,7 @@ func (a *Adapter) OpenHost(ctx context.Context, consumer Consumer, port int) (st
 	}
 	a.leases[consumer.LeaseID] = &consumerState{routeID: consumer.RouteID, agentID: consumer.AgentID, listener: listener, cancel: cancel}
 	a.mu.Unlock()
-	go a.acceptConsumers(channelCtx, listener, consumer)
+	go a.acceptConsumersLimited(channelCtx, listener, consumer, 8)
 	return listener.Addr().String(), nil
 }
 
@@ -511,6 +512,14 @@ func (a *Adapter) LeaseIDs() []string {
 }
 
 func (a *Adapter) acceptConsumers(ctx context.Context, listener net.Listener, consumer Consumer) {
+	a.acceptConsumersLimited(ctx, listener, consumer, 0)
+}
+
+func (a *Adapter) acceptConsumersLimited(ctx context.Context, listener net.Listener, consumer Consumer, limit int) {
+	var slots chan struct{}
+	if limit > 0 {
+		slots = make(chan struct{}, limit)
+	}
 	defer func() {
 		a.mu.Lock()
 		delete(a.leases, consumer.LeaseID)
@@ -522,7 +531,20 @@ func (a *Adapter) acceptConsumers(ctx context.Context, listener net.Listener, co
 		if err != nil {
 			return
 		}
-		go a.consumerStream(ctx, conn, consumer)
+		if slots != nil {
+			select {
+			case slots <- struct{}{}:
+			default:
+				_ = conn.Close()
+				continue
+			}
+		}
+		go func() {
+			if slots != nil {
+				defer func() { <-slots }()
+			}
+			a.consumerStream(ctx, conn, consumer)
+		}()
 	}
 }
 
