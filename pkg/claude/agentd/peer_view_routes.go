@@ -18,6 +18,9 @@ var peerViewLocalRoutes = []string{
 	"GET /api/node/update/jobs/{id}",
 	"POST /api/node/update",
 	"GET /api/node/update",
+	"GET /api/node/update-scripts/jobs/{id}",
+	"POST /api/node/update-scripts",
+	"GET /api/node/update-scripts",
 	// Daemon profiling captures this node's own process.
 	"GET /api/profiles",
 	"POST /api/profiles",

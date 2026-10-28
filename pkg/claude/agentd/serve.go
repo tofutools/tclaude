@@ -908,6 +908,7 @@ func runServe(p *serveParams) error {
 	// explicit local update/install requests still work.
 	defer stopHarnessOperations()
 	defer stopNodeRuns()
+	defer stopNodeUpdateScripts()
 	if home, err := canonicalOperatorHome(); err == nil {
 		if err := harnessops.EnableUserPath(home); err != nil {
 			return err

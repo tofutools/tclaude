@@ -315,6 +315,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardFederationRoutes(mux)
 	registerDashboardPAFRoutes(mux)
 	registerNodeUpdateRoutes(mux)
+	registerNodeUpdateScriptRoutes(mux)
 	registerNodeRunRoutes(mux)
 	registerHarnessAvailabilityRoutes(mux)
 	registerHarnessOperationsRoutes(mux)

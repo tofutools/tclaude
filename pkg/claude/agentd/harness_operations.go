@@ -70,7 +70,7 @@ func localHarnessOperations() (*harnessops.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	svc, err := harnessops.New(privateDir, home, harnessops.Hooks{Busy: harnessBusy, Probe: refreshHarnessAvailability, Finished: func(j harnessops.Job) {
+	svc, err := harnessops.New(privateDir, home, harnessops.Hooks{Busy: harnessBusy, Probe: refreshHarnessAvailability, UpdateOverride: harnessUpdateOverride, Finished: func(j harnessops.Job) {
 		status := 200
 		if j.State == "failed" {
 			status = 500
@@ -192,7 +192,13 @@ func serveHarnessOperations(w http.ResponseWriter, r *http.Request, actor string
 		writeJSON(w, 200, job)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"recipes": harnessops.Recipes(), "credential_copy_warning": "Target agents will act as you with this provider; copy is never enabled by default", "modes": []string{"now", "when_idle"}})
+	recipes := harnessops.Recipes()
+	for i := range recipes {
+		if custom := harnessUpdateOverride(recipes[i].Harness); custom != "" {
+			recipes[i].UpdateCommand, recipes[i].UpdateSource = custom, "custom"
+		}
+	}
+	writeJSON(w, 200, map[string]any{"recipes": recipes, "credential_copy_warning": "Target agents will act as you with this provider; copy is never enabled by default", "modes": []string{"now", "when_idle"}})
 }
 
 // prepareHarnessCredentialPush runs only after local human/cookie auth and a
