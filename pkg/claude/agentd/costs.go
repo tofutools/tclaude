@@ -194,8 +194,9 @@ type costAgentRow struct {
 	// AgentID is the spending actor's stable key — a display companion to
 	// ConvID so a row can name WHO it belongs to. The per-conv keying and
 	// the cumulative-cost delta walk are unchanged: cost stays a per-conv
-	// series (a generation's cost resets per /clear), and this is only an
-	// added attribution field, never a rekey. "" when the conv is not a
+	// series, and this is only an added attribution field, never a rekey.
+	// (Claude Code's counter does NOT reset per /clear or rename; the walk
+	// carries it across the conv switch, see db.AnnotateCostCarry.) "" when the conv is not a
 	// known agent (e.g. a plain conversation's spend).
 	AgentID            string  `json:"agent_id,omitempty"`
 	ConvID             string  `json:"conv_id"`
