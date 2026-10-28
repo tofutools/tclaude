@@ -755,7 +755,9 @@ func runGroupsMove(p *groupsMoveParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	var resp struct {
-		ConvID string `json:"conv_id"`
+		ConvID      string `json:"conv_id"`
+		Sandbox     string `json:"sandbox"`
+		Environment string `json:"environment"`
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Group) + "/members/" + url.PathEscape(p.Conv) + "/move"
 	if err := DaemonRequest(http.MethodPost, path, map[string]any{
@@ -771,6 +773,10 @@ func runGroupsMove(p *groupsMoveParams, stdout, stderr io.Writer) int {
 		shortID = shortID[:8]
 	}
 	fmt.Fprintf(stdout, "Moved %s from group %q to %q\n", shortID, p.Group, p.To)
+	if resp.Sandbox != "" {
+		fmt.Fprintf(stdout, "  sandbox profile: %s\n  environment: %s\n  (applies at the agent's next resume or restart)\n",
+			resp.Sandbox, resp.Environment)
+	}
 	return rcOK
 }
 

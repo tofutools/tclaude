@@ -114,6 +114,11 @@ func TestResolveResumeSandboxPolicyFollowsGroupMove(t *testing.T) {
 // TestResolveResumeSandboxPolicyHonoursMoveKeepSandbox: a move that kept the
 // sandbox on the group left resumes under that group's profile, with the new
 // group's environment, and keeps the choice for later relaunches.
+func moveErr(convID string, from, to int64, opts db.MoveOptions) error {
+	_, err := db.MoveAgentGroupMember(convID, from, to, opts)
+	return err
+}
+
 func TestResolveResumeSandboxPolicyHonoursMoveKeepSandbox(t *testing.T) {
 	setupTestDB(t)
 	const convID = "moved-keep-sandbox-conv"
@@ -137,7 +142,7 @@ func TestResolveResumeSandboxPolicyHonoursMoveKeepSandbox(t *testing.T) {
 	launched.RefreshGroupEnvironment = true
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &launched))
 
-	require.NoError(t, db.MoveAgentGroupMember(convID, groupIDs["plain"], groupIDs["elevated"],
+	require.NoError(t, moveErr(convID, groupIDs["plain"], groupIDs["elevated"],
 		db.MoveOptions{KeepSandbox: true}))
 
 	resolved, err := resolveResumeSandboxPolicy(convID, false, "", "", "", "")

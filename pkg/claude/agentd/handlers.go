@@ -5015,7 +5015,7 @@ func handleGroupMembersMove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	err = db.MoveAgentGroupMember(res.ConvID, g.ID, target.ID, db.MoveOptions{
+	moved, err := db.MoveAgentGroupMember(res.ConvID, g.ID, target.ID, db.MoveOptions{
 		KeepSandbox: body.KeepSandbox, KeepEnvironment: body.KeepEnvironment,
 	})
 	if errors.Is(err, db.ErrNotGroupMember) {
@@ -5026,19 +5026,43 @@ func handleGroupMembersMove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	notifyGroupMove(res.ConvID, g, target, body.KeepSandbox, body.KeepEnvironment)
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "from": g.Name, "to": target.Name})
+	sandboxSource, environmentSource := groupMoveSources(moved, g, target)
+	notifyGroupMove(res.ConvID, g, target, sandboxSource, environmentSource)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"conv_id": res.ConvID, "from": g.Name, "to": target.Name,
+		"sandbox": sandboxSource, "environment": environmentSource,
+	})
+}
+
+// groupMoveSources describes where a moved agent's sandbox profile and group
+// environment now come from, as the move actually left them (a keep that did
+// not apply, such as a setting that never came from the source group, is not
+// reported as kept).
+func groupMoveSources(moved db.MoveResult, from, to *db.AgentGroup) (sandbox, environment string) {
+	if !moved.Tracked {
+		const follows = "follows your group memberships at your next launch"
+		return follows, follows
+	}
+	describe := func(groupID int64) string {
+		switch groupID {
+		case 0:
+			return "none (no group)"
+		case to.ID:
+			return fmt.Sprintf("now comes from %q", to.Name)
+		case from.ID:
+			return fmt.Sprintf("stays on %q", from.Name)
+		}
+		if g, err := db.GetAgentGroupByID(groupID); err == nil && g != nil {
+			return fmt.Sprintf("comes from %q", g.Name)
+		}
+		return fmt.Sprintf("comes from group #%d", groupID)
+	}
+	return describe(moved.SandboxGroupID), describe(moved.EnvironmentGroupID)
 }
 
 // notifyGroupMove tells a moved agent what changed, so the new group's
 // permissions and, after its next relaunch, its sandbox are not a surprise.
-func notifyGroupMove(convID string, from, to *db.AgentGroup, keepSandbox, keepEnvironment bool) {
-	source := func(keep bool) string {
-		if keep {
-			return fmt.Sprintf("stays on %q", from.Name)
-		}
-		return fmt.Sprintf("now comes from %q", to.Name)
-	}
+func notifyGroupMove(convID string, from, to *db.AgentGroup, sandboxSource, environmentSource string) {
 	body := fmt.Sprintf("You were moved from group %q to group %q.\n\n"+
 		"- Group permissions: %q's apply now; %q's no longer do.\n"+
 		"- Sandbox profile: %s.\n"+
@@ -5046,7 +5070,7 @@ func notifyGroupMove(convID string, from, to *db.AgentGroup, keepSandbox, keepEn
 		"Sandbox and environment changes take effect when you are next resumed or restarted; this process keeps its "+
 		"current sandbox until then. Your own per-agent permissions and overrides are unchanged. "+
 		"Run `tclaude agent whoami` to see your groups.",
-		from.Name, to.Name, to.Name, from.Name, source(keepSandbox), source(keepEnvironment))
+		from.Name, to.Name, to.Name, from.Name, sandboxSource, environmentSource)
 	if _, err := queueAgentMessage(&db.AgentMessage{
 		GroupID: to.ID, ToConv: convID, Subject: "Moved to group " + to.Name, Body: body,
 	}); err != nil {

@@ -407,7 +407,9 @@ test('a confirmation renders its checkboxes and hands the choices back on the ca
   const boxes = [...mounted.container.querySelectorAll('.confirm-check input')];
   assert.equal(boxes.length, 2);
   assert.match(mounted.container.querySelector('.confirm-checks').textContent, /next restart/);
+  boxes[0].focus();
   await harness.act(() => { boxes[0].checked = false; boxes[0].dispatchEvent(new harness.window.Event('change', { bubbles: true })); });
+  assertSameNode(harness.document.activeElement, boxes[0], 'toggling keeps focus on the checkbox, not the action');
   await harness.act(() => mounted.container.querySelector('#confirm-ok').click());
   assert.equal(await answered, true);
   assert.deepEqual(checks.map((check) => check.checked), [false, true]);

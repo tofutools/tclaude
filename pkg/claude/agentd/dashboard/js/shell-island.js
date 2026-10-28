@@ -682,7 +682,7 @@ function Confirm({ feedback }) {
   useLayoutEffect(() => {
     if (!model || busy) return;
     okRef.current?.focus();
-  }, [model, busy]);
+  }, [model?.seq, busy]);
   useEffect(() => {
     if (!model || busy) return undefined;
     const onKey = (event) => {

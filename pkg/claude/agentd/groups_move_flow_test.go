@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -18,10 +19,16 @@ import (
 // without the member-management grants is refused and nothing moves.
 func TestGroupMove_MovesMemberAndNotifiesAgent(t *testing.T) {
 	f := newFlow(t)
-	f.HaveGroup("plain")
+	plain := f.HaveGroup("plain")
 	f.HaveGroup("elevated")
 	const conv = "move-flow-conv"
 	f.HaveMemberWithRole("plain", conv, "builder")
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	launched := sandboxpolicy.EmptySnapshot()
+	launched.ResolutionGroupID = plain.ID
+	launched.RefreshGroupEnvironment = true
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &launched))
 
 	const outsider = "move-flow-outsider"
 	f.HaveEnrolledAgent(outsider)

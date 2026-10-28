@@ -29,65 +29,88 @@ type MoveOptions struct {
 // until the group is deleted. The running process is unaffected; a sandbox
 // only changes on relaunch. An agent already in the target group keeps that
 // membership as it is.
-func MoveAgentGroupMember(convID string, fromGroupID, toGroupID int64, opts MoveOptions) error {
+func MoveAgentGroupMember(convID string, fromGroupID, toGroupID int64, opts MoveOptions) (MoveResult, error) {
 	if fromGroupID == toGroupID {
-		return fmt.Errorf("move: source and target group are the same")
+		return MoveResult{}, fmt.Errorf("move: source and target group are the same")
 	}
 	d, err := Open()
 	if err != nil {
-		return err
+		return MoveResult{}, err
 	}
 	agentID, err := AgentIDForConv(convID)
 	if err != nil {
-		return err
+		return MoveResult{}, err
 	}
 	if agentID == "" {
-		return ErrNotGroupMember
+		return MoveResult{}, ErrNotGroupMember
 	}
 	tx, err := d.Begin()
 	if err != nil {
-		return err
+		return MoveResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	result, err := moveAgentGroupMemberTx(tx, agentID, fromGroupID, toGroupID, opts)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	return result, tx.Commit()
+}
+
+// MoveResult reports where an agent's group-sourced settings come from after
+// a move. Tracked is false for an agent with no recorded sandbox, or a legacy
+// one without source-group provenance: its settings follow its memberships
+// when it next launches.
+type MoveResult struct {
+	Tracked            bool
+	SandboxGroupID     int64
+	EnvironmentGroupID int64
+}
+
+func moveAgentGroupMemberTx(tx *sql.Tx, agentID string, fromGroupID, toGroupID int64, opts MoveOptions) (MoveResult, error) {
 	var role, descr string
 	if err := tx.QueryRow(`SELECT role, descr FROM agent_group_members WHERE group_id = ? AND agent_id = ?`,
 		fromGroupID, agentID).Scan(&role, &descr); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotGroupMember
+			return MoveResult{}, ErrNotGroupMember
 		}
-		return err
+		return MoveResult{}, err
 	}
 	res, err := tx.Exec(`INSERT INTO agent_group_members (group_id, agent_id, role, descr, joined_at)
 		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
 		ON CONFLICT(group_id, agent_id) DO NOTHING`,
 		toGroupID, agentID, role, descr, dbTime(time.Now()), agentID)
 	if err != nil {
-		return err
+		return MoveResult{}, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		var member bool
 		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM agent_group_members WHERE group_id = ? AND agent_id = ?)`,
 			toGroupID, agentID).Scan(&member); err != nil {
-			return err
+			return MoveResult{}, err
 		}
 		if !member {
-			return fmt.Errorf("move: agent %s is retired", agentID)
+			return MoveResult{}, fmt.Errorf("move: agent %s is retired", agentID)
 		}
 	}
 	if _, err := tx.Exec(`DELETE FROM agent_group_members WHERE group_id = ? AND agent_id = ?`, fromGroupID, agentID); err != nil {
-		return err
+		return MoveResult{}, err
 	}
 	if _, err := tx.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id IN (?, ?)`,
 		fromGroupID, toGroupID); err != nil {
-		return err
+		return MoveResult{}, err
 	}
 	if err := applyMoveOptions(tx, agentID, fromGroupID, opts); err != nil {
-		return err
+		return MoveResult{}, err
 	}
-	if err := rebindSandboxResolutionGroup(tx, agentID); err != nil {
-		return err
+	if err := rebindSandboxResolutionGroupPreferring(tx, agentID, toGroupID); err != nil {
+		return MoveResult{}, err
 	}
-	return tx.Commit()
+	snapshot, ok, err := loadAgentSandboxForRebind(tx, agentID)
+	if err != nil || !ok || !tracksGroupProvenance(snapshot) {
+		return MoveResult{}, err
+	}
+	envGroup, _ := snapshot.EnvironmentGroupID()
+	return MoveResult{Tracked: true, SandboxGroupID: snapshot.ResolutionGroupID, EnvironmentGroupID: envGroup}, nil
 }
 
 // applyMoveOptions pins the settings the operator kept on the source group,
@@ -105,6 +128,14 @@ func applyMoveOptions(q dbExecQuerier, agentID string, fromGroupID int64, opts M
 		binding = &sandboxpolicy.GroupBinding{}
 	}
 	envGroup, envExplicit := snapshot.EnvironmentGroupID()
+	// A setting the operator did not keep this time moves, even if an
+	// earlier move had kept it on another group.
+	if !opts.KeepSandbox {
+		binding.ProfileGroupPinned = false
+	}
+	if !opts.KeepEnvironment {
+		binding.EnvironmentGroupPinned = false
+	}
 	if opts.KeepSandbox && snapshot.ResolutionGroupID == fromGroupID {
 		binding.ProfileGroupPinned = true
 		if !opts.KeepEnvironment && !envExplicit {
@@ -146,13 +177,20 @@ func applyMoveOptions(q dbExecQuerier, agentID string, fromGroupID int64, opts M
 // (resumeSandboxGroupID). Called after every membership change, inside the
 // caller's transaction when it has one.
 func rebindSandboxResolutionGroup(q dbExecQuerier, agentID string) error {
+	return rebindSandboxResolutionGroupPreferring(q, agentID, 0)
+}
+
+// rebindSandboxResolutionGroupPreferring is rebindSandboxResolutionGroup with
+// the group a setting moves to named explicitly: a move targets that group
+// even when the agent was already a member of it and joined another later.
+func rebindSandboxResolutionGroupPreferring(q dbExecQuerier, agentID string, preferred int64) error {
 	snapshot, ok, err := loadAgentSandboxForRebind(q, agentID)
 	if err != nil || !ok || !tracksGroupProvenance(snapshot) {
 		return err
 	}
 	var latest int64
 	err = q.QueryRow(`SELECT group_id FROM agent_group_members WHERE agent_id = ?
-		ORDER BY joined_at DESC, group_id DESC LIMIT 1`, agentID).Scan(&latest)
+		ORDER BY group_id = ? DESC, joined_at DESC, group_id DESC LIMIT 1`, agentID, preferred).Scan(&latest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
