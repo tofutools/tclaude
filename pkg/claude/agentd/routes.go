@@ -418,13 +418,12 @@ func handleRoutesList(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusBadRequest, "route_group", err.Error())
 		return
 	}
-	if classify(peerFromContext(r.Context())) == classAgent {
+	if classify(peerFromContext(r.Context())) != classHuman {
+		// Namespace helpers authenticate with a launch credential rather
+		// than harness ancestry. Membership still gates every read.
 		if _, _, ok := requireRouteMembership(w, r, g); !ok {
 			return
 		}
-	} else if classify(peerFromContext(r.Context())) != classHuman {
-		_, _, _ = routeCallerAgent(w, r)
-		return
 	}
 	routes, err := db.ListAgentRoutes(g.ID)
 	if err != nil {
@@ -660,7 +659,7 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		if classify(peerFromContext(r.Context())) == classAgent {
+		if classify(peerFromContext(r.Context())) != classHuman {
 			_, agentID, ok := requireRouteMembership(w, r, g)
 			if !ok {
 				return
@@ -669,9 +668,6 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 				writeRouteError(w, http.StatusNotFound, "route_not_found", "no such route")
 				return
 			}
-		} else if classify(peerFromContext(r.Context())) != classHuman {
-			_, _, _ = routeCallerAgent(w, r)
-			return
 		}
 		writeJSON(w, http.StatusOK, routeViewFor(route))
 	case http.MethodDelete:
