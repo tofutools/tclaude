@@ -210,7 +210,10 @@ test('Profile cards show complete details in a non-reflowing tooltip', async (t)
   assert.ok(tooltip.classList.contains('open'), 'normal hover details resume on the next entry');
 
   await harness.act(() => harness.fireEvent(card, 'mouseleave'));
-  assert.equal(tooltip.classList.contains('open'), false, 'leaving the card closes the tooltip');
+  assert.ok(tooltip.classList.contains('open'), 'the details outlive a brief slip off the card');
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/hover-popover.js');
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, HOVER_CLOSE_MS + 20)));
+  assert.equal(tooltip.classList.contains('open'), false, 'leaving the card closes the tooltip after the grace');
   await harness.act(() => harness.fireEvent(card, 'focusin'));
   assert.ok(tooltip.classList.contains('open'), 'keyboard focus opens the same details region');
   await harness.act(() => harness.fireEvent(card, 'focusout', {

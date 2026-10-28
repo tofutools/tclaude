@@ -122,7 +122,10 @@ header .meta { color: #7d8590; font-size: 12px; }
    menu/dialog near the bottom is never hidden behind it. --footer-h is the
    bar's height; the page reserves that much bottom space (below) so no
    content ever hides behind the fixed bar. */
-:root { --footer-h: 29px; }
+/* --popover-close-grace is how long a hover popover outlives the pointer
+   leaving it. It mirrors HOVER_CLOSE_MS in js/hover-popover.js, which the
+   JS-driven popovers use; keep the two in step. */
+:root { --footer-h: 29px; --popover-close-grace: 200ms; }
 footer {
   position: fixed;
   left: 0; right: 0; bottom: 0;
@@ -1653,8 +1656,9 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
   opacity: 0; visibility: hidden; pointer-events: none;
   transform: translateY(-3px);
-  transition: opacity .12s ease .32s, transform .12s ease .32s,
-    visibility 0s linear .44s;
+  /* Opening waits for hover intent (.32s); closing keeps the shared grace. */
+  transition: opacity .12s ease var(--popover-close-grace), transform .12s ease var(--popover-close-grace),
+    visibility 0s linear calc(var(--popover-close-grace) + .12s);
 }
 .human-notification-attention:hover .human-notification-preview,
 .human-notification-attention:focus-visible .human-notification-preview {
@@ -21114,7 +21118,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
   background: #161b22; border: 1px solid #30363d; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   /* Closing waits a moment after the pointer leaves, so a brief slip off the
      menu does not snap it shut. */
-  visibility: hidden; opacity: 0; transition: opacity 0.12s ease 0.35s, visibility 0s linear 0.47s;
+  visibility: hidden; opacity: 0;
+  transition: opacity 0.12s ease var(--popover-close-grace), visibility 0s linear calc(var(--popover-close-grace) + 0.12s);
 }
 /* A transparent bridge over the gap, so the pointer can travel from the icon
    into the menu without it closing. */
@@ -21138,7 +21143,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .groups-run-count { margin-left: auto; padding-left: 12px; color: #8b949e; font-size: 11px; }
 /* Reduced motion: no fade either way, but keep the close grace period. */
 @media (prefers-reduced-motion: reduce) {
-  .groups-run-menu { transition: visibility 0s linear 0.35s; }
+  .groups-run-menu { transition: visibility 0s linear var(--popover-close-grace); }
   .groups-focus-runs:hover .groups-run-menu,
   .groups-focus-runs:has(:focus-visible) .groups-run-menu { transition: none; }
 }

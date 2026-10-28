@@ -230,7 +230,7 @@ test('footer open PR counter is neutral while only clean CI is running', async (
   await mounted.unmount();
 });
 
-test('footer open PRs gives the pointer one second to reach the popover', async (t) => {
+test('footer open PRs gives the pointer the shared hover grace to reach the popover', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -253,15 +253,17 @@ test('footer open PRs gives the pointer one second to reach the popover', async 
     'leaving does not close the popover immediately');
 
   // Returning before the grace period expires cancels that close. A second
-  // leave starts a fresh, complete grace period: 800ms after that second
+  // leave starts a fresh, complete grace period: 80% of it after that second
   // leave, the original timer would already have fired if it survived.
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/hover-popover.js');
+  const wait = (ms) => harness.act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+  await wait(HOVER_CLOSE_MS * 0.4);
   await harness.act(() => harness.fireEvent(root, 'mouseenter'));
   await harness.act(() => harness.fireEvent(root, 'mouseleave'));
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 800)));
+  await wait(HOVER_CLOSE_MS * 0.8);
   assert.ok(mounted.container.querySelector('#open-prs-popover'),
     're-entry cancels the old timer and the final leave gets a full grace period');
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  await wait(HOVER_CLOSE_MS * 0.4);
   assertAbsent(mounted.container.querySelector('#open-prs-popover'));
 
   const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
