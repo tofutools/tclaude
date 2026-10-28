@@ -104,7 +104,7 @@ test('preview URL validation refuses malformed leases and the dashboard cookie h
   }
 });
 
- test('TCP action requests an opaque endpoint explicitly', async (t) => {
+test('TCP action requests an opaque endpoint explicitly', async (t) => {
   const { harness, root } = await setup(t, { consumers: [] });
   t.mock.method(globalThis, 'fetch', async (_url, options) => {
     assert.deepEqual(JSON.parse(options.body), { mode: 'tcp' });
@@ -115,4 +115,5 @@ test('preview URL validation refuses malformed leases and the dashboard cookie h
     for (let i = 0; i < 6; i++) await Promise.resolve();
   });
   assert.match(root.querySelector('[role="status"]').textContent, /127\.0\.0\.1:33789/);
+  assert.equal(root.querySelector('a.route-map-preview'), null);
 });

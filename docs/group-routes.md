@@ -67,8 +67,7 @@ keep their original mode; close and reopen a lease to switch modes.
 
 The HTTP preview leaves Origin headers, response headers, redirects, and content unchanged. Applications
 with separate origin checks or absolute URLs may still need their usual reverse-proxy configuration.
-When viewing a remote daemon,
-the panel shows the daemon-local address and SSH tunnel guidance instead of
+When viewing a remote daemon, the panel shows the daemon-local address and SSH tunnel guidance instead of
 linking to the browser machine’s loopback.
 **Close host endpoint** releases the listener and its active connections.
 
@@ -82,8 +81,8 @@ No unlisted publisher ports become reachable through this lease. Each host
 lease admits at most eight simultaneous TCP connections; excess connections
 are closed. Host connections still count toward the route broker’s shared limit.
 
-Host listeners bind IPv4 loopback only and choose an ephemeral port. HTTP previews use a second,
-internal loopback listener for the authorized TCP adapter; both listeners close with the lease. The
+Host listeners bind IPv4 loopback only and choose an ephemeral port. HTTP previews connect to the
+authorized TCP adapter in memory, without exposing an additional listener. The
 cookie-authenticated `POST /api/routes/<route-id>/host` API takes `{}` or
 `{"port": 43100}` to request a specific loopback port; a busy port is refused. The API defaults to
 opaque TCP; pass `{"mode": "http"}` for an HTTP preview, optionally with `port`. Returned leases and

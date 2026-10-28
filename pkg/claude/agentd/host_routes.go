@@ -145,25 +145,22 @@ func openHostRouteMode(route *db.AgentRoute, port int, mode string) (*hostRouteL
 	// Publish the immutable authority before accepting connections. Keep the
 	// lock until Endpoint is initialized so snapshots cannot race this write.
 	hostRouteLeases.items[id] = lease
-	adapterPort := port
-	if mode == "http" {
-		adapterPort = 0
-	}
-	listener, err := listenHostRoute(adapterPort, runtime.GOOS)
+	listener, err := listenHostRoute(port, runtime.GOOS)
 	if err == nil {
-		lease.Endpoint, err = adapter.OpenHost(ctx, routeadapter.Consumer{LeaseID: id, RouteID: route.ID,
-			AgentID: lease.consumer.AgentID, ConvID: id, LaunchGeneration: id, GroupGeneration: route.GroupGeneration}, listener)
-	}
-	if err == nil && mode == "http" {
-		var preview net.Listener
-		preview, err = listenHostRoute(port, runtime.GOOS)
-		if err == nil {
-			err = serveHostRouteHTTP(ctx, preview, lease.Endpoint, route.Target)
+		consumer := routeadapter.Consumer{LeaseID: id, RouteID: route.ID, AgentID: lease.consumer.AgentID, ConvID: id, LaunchGeneration: id, GroupGeneration: route.GroupGeneration}
+		if mode == "http" {
+			var dial func(context.Context, string, string) (net.Conn, error)
+			dial, err = adapter.OpenHostDialer(ctx, consumer)
 			if err == nil {
-				lease.Endpoint = preview.Addr().String()
-			} else {
-				_ = preview.Close()
+				err = serveHostRouteHTTP(ctx, listener, dial, route.Target)
 			}
+			if err == nil {
+				lease.Endpoint = listener.Addr().String()
+			} else {
+				_ = listener.Close()
+			}
+		} else {
+			lease.Endpoint, err = adapter.OpenHost(ctx, consumer, listener)
 		}
 	}
 	if err == nil {

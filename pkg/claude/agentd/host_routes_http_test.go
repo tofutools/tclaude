@@ -37,6 +37,13 @@ func TestHostRouteHTTPPreview(t *testing.T) {
 			http.Error(w, "invalid host", http.StatusMisdirectedRequest)
 			return
 		}
+		if r.URL.Path == "/events" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: ready\n\n")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
 		if r.Header.Get("Upgrade") == "websocket" {
 			c, rw, err := w.(http.Hijacker).Hijack()
 			if err != nil {
@@ -103,6 +110,9 @@ func TestHostRouteHTTPPreview(t *testing.T) {
 	var lease hostRouteLease
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &lease))
 	require.Equal(t, "http", lease.Mode)
+	_, err = openHostRouteMode(route, connPort(t, lease.Endpoint), "http")
+	require.Error(t, err)
+	require.Len(t, hostRoutesForRoute(route.ID), 1)
 	require.Equal(t, "http", buildDashboardRouteMap([]*db.AgentGroup{group}, nil, map[int64][]*db.AgentRoute{groupID: {route}}, nil, nil).Routes[0].Consumers[0].Mode)
 	req, err := http.NewRequest("POST", "http://"+lease.Endpoint+"/assets/app.js?q=a%2Fb", bytes.NewBufferString("payload"))
 	require.NoError(t, err)
@@ -116,6 +126,13 @@ func TestHostRouteHTTPPreview(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, targetHost+" /assets/app.js?q=a%2Fb payload", string(data))
 	require.Empty(t, resp.Header.Get("X-Seen-Forwarded-Host"))
+	stream, err := client.Get("http://" + lease.Endpoint + "/events")
+	require.NoError(t, err)
+	defer stream.Body.Close()
+	event := make([]byte, len("data: ready\n\n"))
+	_, err = io.ReadFull(stream.Body, event)
+	require.NoError(t, err)
+	require.Equal(t, "data: ready\n\n", string(event))
 	conn, err := net.DialTimeout("tcp4", lease.Endpoint, time.Second)
 	require.NoError(t, err)
 	defer conn.Close()
@@ -132,11 +149,37 @@ func TestHostRouteHTTPPreview(t *testing.T) {
 	_, err = io.ReadFull(reader, data)
 	require.NoError(t, err)
 	require.Equal(t, "live-reload", string(data))
+	// One SSE stream plus seven upgrades exhaust all eight broker slots.
+	var extraUpgrades []net.Conn
+	for range 6 {
+		extra, err := net.DialTimeout("tcp4", lease.Endpoint, time.Second)
+		require.NoError(t, err)
+		defer extra.Close()
+		require.NoError(t, extra.SetDeadline(time.Now().Add(3*time.Second)))
+		_, err = fmt.Fprintf(extra, "GET /live HTTP/1.1\r\nHost: preview.localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+		require.NoError(t, err)
+		response, err := http.ReadResponse(bufio.NewReader(extra), nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusSwitchingProtocols, response.StatusCode)
+		extraUpgrades = append(extraUpgrades, extra)
+	}
+	overflow, err := client.Get("http://" + lease.Endpoint + "/overflow")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, overflow.StatusCode)
+	_ = overflow.Body.Close()
 	require.NoError(t, db.MarkAgentRoutePublisherLost(route.ID, "test revoke"))
 	_, err = reader.ReadByte()
 	require.Error(t, err)
 	var timeout net.Error
 	require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "revocation must close upgraded streams")
+	for _, extra := range extraUpgrades {
+		_, err = extra.Read(make([]byte, 1))
+		require.Error(t, err)
+		require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "revocation must close every upgraded stream")
+	}
+	_, err = stream.Body.Read(make([]byte, 1))
+	require.Error(t, err)
+	require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "revocation must close streaming responses")
 	require.Eventually(t, func() bool {
 		c, err := net.DialTimeout("tcp4", lease.Endpoint, 50*time.Millisecond)
 		if err == nil {

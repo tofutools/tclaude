@@ -463,7 +463,9 @@ func (a *Adapter) CloseLease(leaseID string) {
 	a.mu.Unlock()
 	if state != nil {
 		state.cancel()
-		_ = state.listener.Close()
+		if state.listener != nil {
+			_ = state.listener.Close()
+		}
 	}
 	a.release(leaseID)
 }
