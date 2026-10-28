@@ -61,6 +61,7 @@ test('background terminals keep the tab, show a neutral counter and attach from 
   const names = [...pop.querySelectorAll('.mux-bg-name')].map((node) => node.textContent);
   assert.deepEqual(names, ['renamed-worker', 'shell · renamed-worker', 'stray'], 'live roster titles, grouped by kind');
   assert.equal(pop.querySelectorAll('.mux-bg-attach').length, 2, 'an unrecognised session cannot be attached');
+  assert.equal(pop.querySelectorAll('button.mux-bg-name').length, 2, 'attachable titles are clickable; the stray is not');
 
   await s.harness.act(async () => {
     pop.querySelector('.mux-bg-attach').click();
@@ -68,6 +69,13 @@ test('background terminals keep the tab, show a neutral counter and attach from 
   });
   assert.ok(s.state.panes.value.some((pane) => pane.key === 'window:agt_bg'), 'attach opens the agent as a normal tab');
   assert.equal(s.host.querySelector('.mux-bg-count').textContent, '2', 'the attached row leaves the count at once');
+
+  await s.harness.act(async () => {
+    s.host.querySelector('.mux-bg-pop button.mux-bg-name').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.ok(s.state.panes.value.some((pane) => pane.key === 'term:agt_bg:current:'), 'clicking a title attaches it too');
+  assert.equal(s.host.querySelector('.mux-bg-count').textContent, '1');
 
   await s.harness.act(() => s.harness.fireEvent(document, 'keydown', { key: 'Escape' }));
   assert.equal(s.host.querySelector('.mux-bg-pop'), null, 'Escape closes the popover');

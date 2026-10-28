@@ -1205,6 +1205,11 @@ type snapshotPayload struct {
 	// (true) or follows the group last acted on (false, the default).
 	// refresh.js hands it to toolbar-node.js each poll.
 	FusedToolbarFixedNode bool `json:"fused_toolbar_fixed_node"`
+	// UsageCollapseSubviews mirrors config dashboard.usage_collapse_subviews
+	// — whether the Usage tab collapses to its only populated view (true) or
+	// always offers Overview, Quota and Costs (false, the default).
+	// usage-hub-state.js reads it.
+	UsageCollapseSubviews bool `json:"usage_collapse_subviews"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -3447,6 +3452,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowFinalPRChecks:             cfg.ShowFinalPRChecks(),
 		StayOnTerminalsAfterLastClose: cfg.StayOnTerminalsAfterLastClose(),
 		FusedToolbarFixedNode:         cfg.FusedToolbarFixedNode(),
+		UsageCollapseSubviews:         cfg.UsageCollapseSubviews(),
 		ProcessesEnabled:              cfg.ProcessesEnabled(),
 		TriggersEnabled:               triggersEnabled,
 		GroupsRouteMapEnabled:         groupsRouteMapEnabled,

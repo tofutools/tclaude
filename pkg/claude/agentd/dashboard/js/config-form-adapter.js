@@ -473,9 +473,6 @@ function populateConfigForm(cfg) {
 
   // Cost display multiplier — blank when unset (no adjustment); a stored
   // value shows as-is so the human sees exactly what's on disk.
-  for (const period of ['daily', 'monthly']) {
-    $(`#cfg-cost-${period}-limit`).value = cfg.cost?.[`${period}_limit_usd`] || '';
-  }
   const cf = cfg.cost && cfg.cost.estimate_factor;
   $('#cfg-cost-factor').value = (cf != null && cf !== '') ? cf : '';
   for (const { key } of COST_FACTOR_HARNESSES) {
@@ -604,6 +601,9 @@ function populateConfigForm(cfg) {
   // The fused Groups toolbar follows the group acted on by default
   // (checked); only an explicit dashboard.fused_toolbar_fixed_node true unchecks it.
   $('#cfg-dashboard-fused-toolbar-follow').checked = !(cfg.dashboard && cfg.dashboard.fused_toolbar_fixed_node);
+  // The Usage tab offers all its views by default (unchecked); only an
+  // explicit dashboard.usage_collapse_subviews true checks it.
+  $('#cfg-dashboard-usage-collapse-subviews').checked = !!(cfg.dashboard && cfg.dashboard.usage_collapse_subviews);
 
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
@@ -782,13 +782,6 @@ function assembleConfig() {
   // marshal as a spurious "cost": {} diff. A 0/negative is written so the
   // server's Validate surfaces the out-of-range error.
   const cost = (cfg.cost && typeof cfg.cost === 'object') ? cfg.cost : {};
-  for (const period of ['daily', 'monthly']) {
-    const raw = $(`#cfg-cost-${period}-limit`).value.trim();
-    const value = Number(raw);
-    if (!Number.isFinite(value) || value < 0) throw new Error('Spend limits must be finite non-negative USD amounts');
-    if (value) cost[`${period}_limit_usd`] = value;
-    else delete cost[`${period}_limit_usd`];
-  }
   const cfRaw = $('#cfg-cost-factor').value.trim();
   const cf = cfgFloat('cfg-cost-factor', 1);
   if (cfRaw !== '' && cf !== 1) cost.estimate_factor = cf; else delete cost.estimate_factor;
@@ -967,6 +960,8 @@ function assembleConfig() {
   // fused_toolbar_fixed_node: following (false) is the default; an unchecked
   // follow toggle stores only true.
   if (!$('#cfg-dashboard-fused-toolbar-follow').checked) dashboard.fused_toolbar_fixed_node = true; else delete dashboard.fused_toolbar_fixed_node;
+  // usage_collapse_subviews: false is the default; store only true.
+  if ($('#cfg-dashboard-usage-collapse-subviews').checked) dashboard.usage_collapse_subviews = true; else delete dashboard.usage_collapse_subviews;
   // show_debug_tab is retired: the poll-performance view (Activity ›
   // Performance) is always shown, so a save drops the stale opt-in.
   delete dashboard.show_debug_tab;

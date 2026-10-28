@@ -1,0 +1,197 @@
+import { h } from 'preact';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import htm from 'htm';
+import { dashboardState } from './snapshot-store.js';
+import { usageRulesApi } from './usage-rules-actions.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
+import { fmtAmount, periodLabel } from './usage-rules-model.js';
+import { shellToast } from './shell-state.js';
+import { peerViewSummary } from './fleet-model.js';
+
+const html = htm.bind(h);
+const MANAGE = '/manage';
+const NEW = '/new';
+const SEVERAL = '/several';
+
+async function refreshSnapshot() {
+  const { refresh } = await import('./refresh.js');
+  return refresh();
+}
+
+// budgetsOf reads the snapshot's compact usage-profile view (usage_budgets_snapshot.go).
+export function budgetsOf(snapshot) {
+  return snapshot?.usage?.budgets || null;
+}
+
+// assignedUsageProfiles names the profiles at the global layer, or a group's.
+export function assignedUsageProfiles(budgets, scope, group = null) {
+  if (!budgets) return [];
+  if (scope === 'global') return budgets.global || [];
+  return budgets.groups?.[String(group?.id)] || [];
+}
+
+// groupLimitLine describes a group's limit readings for the chip's tooltip.
+function groupLimitLine(snapshot, group) {
+  const limits = (snapshot?.usage?.usage_limits || []).filter((l) => l.scope === 'group' && l.group_id === group?.id);
+  return limits.map((l) => `Group limit "${l.name}": ${fmtAmount(l.metric, l.value)} / ${fmtAmount(l.metric, l.budget)} ${periodLabel(l.period)} (${Math.round(l.pct)}%)`).join('\n');
+}
+
+// UsageProfileChip is the 💰 picker beside the 🧠 spawn-profile and 🛡
+// sandbox-profile chips: the global default usage profile in the toolbar
+// (scope "global") or a group's usage profiles on its row (scope "group").
+// One profile is picked inline; several, or anything else, open the manager.
+//
+// target is the group's own name (a merged view suffixes it "@node"). editor,
+// on a group row, joins the row's inline-editor state ({active, begin(el),
+// end(restoreFocus)}), so the header stops dragging and other editors close
+// while the picker is open.
+export function UsageProfileChip({ scope, group = null, target = group?.name || '', className = '', editor = null,
+  snapshot = dashboardState.snapshot, api = usageRulesApi, onChanged = refreshSnapshot }) {
+  const snap = snapshot.value;
+  const budgets = budgetsOf(snap);
+  // On a peer's page the chip needs the peer's budgets view, which only its
+  // complete (unrestricted) snapshot carries; RemoteUsageRulesButton opens
+  // the manager there otherwise.
+  const remote = Boolean(globalThis.__tclaudeRemoteNode?.id) && !budgets;
+  const profiles = budgets?.profiles || [];
+  const names = assignedUsageProfiles(budgets, scope, group);
+  const [localEditing, setLocalEditing] = useState(false);
+  const editing = editor ? editor.active : localEditing;
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const selectRef = useRef(null);
+  const triggerRef = useRef(null);
+  const restoreFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (editing) selectRef.current?.focus();
+    else if (restoreFocus.current) { restoreFocus.current = false; triggerRef.current?.focus(); }
+  }, [editing]);
+  const begin = (el) => (editor ? editor.begin(el) : setLocalEditing(true));
+  const end = (restore) => {
+    if (restore) restoreFocus.current = true;
+    if (editor) editor.end(restore); else setLocalEditing(false);
+  };
+  const where = scope === 'global' ? 'Global default usage profile' : `Usage profiles for ${group?.name}`;
+  const role = scope === 'global'
+    ? 'budgets every agent whose group has none of its own'
+    : "budgets each member of this group, replacing the global default; a spawn profile's usage profiles add to it";
+  const close = () => end(true);
+  if (remote) return null;
+  if (editing) {
+    const current = names.length > 1 ? SEVERAL : names[0] || '';
+    return html`<select ref=${selectRef} class="group-default-profile-select usage-profile-select" value=${current} disabled=${busy}
+      aria-label=${where}
+      onKeyDown=${(event) => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}
+      onBlur=${() => { if (!busyRef.current) end(false); }}
+      onChange=${async (event) => {
+        const value = event.currentTarget.value;
+        if (value === current) { close(); return; }
+        if (value === MANAGE || value === NEW || value === SEVERAL) {
+          end(false);
+          openUsageRulesManager({ tab: value === NEW ? 'profiles' : 'assignments' });
+          return;
+        }
+        busyRef.current = true;
+        setBusy(true);
+        try {
+          await api.assign(scope, scope === 'group' ? target : '', value ? [value] : []);
+          shellToast(value ? `${where}: ${value}` : `${where} cleared`);
+          await onChanged();
+          close();
+        } catch (cause) {
+          shellToast(cause.message, true);
+        } finally { busyRef.current = false; setBusy(false); }
+      }}>
+      <option value=${NEW}>＋ new usage profile…</option>
+      <option value="">${scope === 'global' ? '(none)' : '(none — no group layer)'}</option>
+      ${names.length > 1 ? html`<option value=${SEVERAL}>${names.join(' + ')} (edit in manager…)</option>` : null}
+      ${profiles.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}</option>`)}
+      <option value=${MANAGE}>Several profiles, limits… (open manager)</option>
+    </select>`;
+  }
+  const limits = scope === 'group' ? groupLimitLine(snap, group) : '';
+  const title = [names.length ? `${where}: ${names.join(', ')} — ${role}. Click to change.` : `No ${where.toLowerCase()} — click to set one. It ${role}.`, limits]
+    .filter(Boolean).join('\n');
+  return html`<span ref=${triggerRef} class=${`${className} usage-profile-chip${names.length ? '' : ' unset'}`} tabindex="0" role="button"
+    data-usage-scope=${scope} data-group=${group?.name} title=${title} aria-label=${title}
+    onClick=${(event) => { event.preventDefault(); event.stopPropagation(); begin(event.currentTarget); }}
+    onKeyDown=${(event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault(); event.stopPropagation(); begin(event.currentTarget);
+    }}
+  ><span class="group-profile-icon">💰</span><span class="qo-text">${names.length ? ` ${names.join(', ')}` : ''}</span></span>`;
+}
+
+// AgentBudgetBadge shows an agent's tightest budget on its row once it is
+// at least half used or a step has fired; it opens the manager's Agents tab.
+export function AgentBudgetBadge({ agentID, snapshot = dashboardState.snapshot }) {
+  const budget = budgetsOf(snapshot.value)?.agents?.[agentID];
+  if (!budget || budget.dry_run || (budget.pct < 50 && !budget.reached)) return null;
+  const tone = budget.reached && budget.reached !== 'notify' ? 'over' : budget.reached || budget.pct >= 80 ? 'warn' : 'ok';
+  const reached = budget.reached ? ` · ${budget.reached.replace('_', ' ')} step reached` : '';
+  const paused = budget.paused ? ` · ${budget.paused}` : '';
+  const title = `Usage budget "${budget.name}"${budget.profile ? ` (${budget.profile})` : ''}: ${fmtAmount(budget.metric, budget.value)} / ${fmtAmount(budget.metric, budget.budget)} (${Math.round(budget.pct)}%)${reached}${paused}${budget.rules > 1 ? ` · tightest of ${budget.rules} rules` : ''}. Click to manage.`;
+  return html`<button type="button" class=${`activity-badge agent-budget-badge ${tone}`} title=${title} aria-label=${title}
+    data-agent-budget=${agentID}
+    onClick=${(event) => { event.stopPropagation(); openUsageRulesManager({ tab: 'agents', agent: agentID }); }}>💰${Math.round(budget.pct)}%</button>`;
+}
+
+// peerManagesUsage reports whether the peer on screen lets this node manage
+// its usage rules (usage-rules.manage, or unrestricted trust).
+export function peerManagesUsage(snapshot) {
+  const pv = peerViewSummary(snapshot?.peer_view);
+  return Boolean(pv && (pv.full || pv.level === 'unrestricted' || pv.included.includes('usage.manage')));
+}
+
+// RemoteUsageRulesButton opens a peer's usage manager from its page, when the
+// peer granted this node usage-rules.manage.
+export function RemoteUsageRulesButton({ snapshot = dashboardState.snapshot }) {
+  const remote = globalThis.__tclaudeRemoteNode?.id;
+  if (!remote || !peerManagesUsage(snapshot.value)) return null;
+  const label = globalThis.document?.documentElement?.dataset?.remoteNodeName || remote.slice(0, 13);
+  return html`<button type="button" class="tool remote-usage-rules" data-remote-usage-rules=${remote}
+    title=${`Manage ${label}'s usage limits, usage profiles and budgets (it granted you usage-rules.manage)`}
+    onClick=${() => openUsageRulesManager({ node: remote, nodeLabel: label })}>💰 usage rules</button>`;
+}
+
+// fleetUsageView sums up this node's fleet limits for the fleet controls:
+// the tightest reading and the peers' fleet limits holding anything here.
+export function fleetUsageView(snapshot) {
+  const usage = snapshot?.usage || {};
+  const limits = (usage.fleet_limits || []).filter((l) => !l.dry_run);
+  const controls = usage.fleet_controls || [];
+  const worst = limits.reduce((top, l) => (!top || l.pct > top.pct ? l : top), null);
+  const over = controls.length > 0 || limits.some((l) => (l.reached && l.reached !== 'notify') || l.pct >= 100);
+  const tone = over ? 'over' : limits.some((l) => l.reached || l.pct >= 80) ? 'warn' : 'ok';
+  const lines = [
+    ...limits.map((l) => `Fleet limit "${l.name}" (${l.target_label}): ${fmtAmount(l.metric, l.value)} / ${fmtAmount(l.metric, l.budget)} ${periodLabel(l.period)} (${Math.round(l.pct)}%, ${l.counted} node(s) counted)${l.reached ? ` · ${l.reached.replace('_', ' ')} step reached` : ''}`),
+    ...controls.map((c) => `${c.peer_label}'s fleet limit "${c.rule_name}" (${Math.round(c.pct)}%) ${[c.block ? 'blocks spawns' : '', c.stop ? 'stops agents' : ''].filter(Boolean).join(' and ')} here`),
+  ];
+  return { limits, controls, worst, tone, lines };
+}
+
+// FleetUsageChip is the fleet views' global usage control (the fused Groups
+// toolbar and the map): this node's fleet limits at a glance, opening the
+// manager's Fleet tab, where limits and their alert ladders are set. Fleet
+// limits are this node's own, so a peer's page shows none.
+export function FleetUsageChip({ snapshot = dashboardState.snapshot, className = '' }) {
+  if (globalThis.__tclaudeRemoteNode?.id) return null;
+  const { limits, controls, worst, tone, lines } = fleetUsageView(snapshot.value);
+  const label = worst ? `fleet ${Math.round(worst.pct)}%` : 'fleet limits';
+  const title = [
+    ...(lines.length ? lines : ['No fleet limits yet: cap spend summed across nodes or a node pool, with alerts and actions at each step.']),
+    'Click to manage fleet limits and their alerts.',
+  ].join('\n');
+  return html`<button type="button" class=${`tool fleet-usage-chip ${limits.length || controls.length ? tone : 'unset'} ${className}`.trim()}
+    data-fleet-usage title=${title} aria-label=${title}
+    onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>💰 ${label}${controls.length ? html` <span class="fleet-usage-held">⛔ ${controls.length}</span>` : null}</button>`;
+}
+
+// NodeUsageRulesButton opens another node's usage manager from a fused
+// view's toolbar, when that node lets this one manage its rules.
+export function NodeUsageRulesButton({ node }) {
+  if (!node || node.local || !peerManagesUsage({ peer_view: node.peerView })) return null;
+  return html`<button type="button" class="tool remote-usage-rules" data-remote-usage-rules=${node.id}
+    title=${`Manage ${node.name}'s usage limits, usage profiles and budgets (it granted you usage-rules.manage)`}
+    onClick=${() => openUsageRulesManager({ node: node.id, nodeLabel: node.name })}>💰 usage rules on ${node.name}</button>`;
+}

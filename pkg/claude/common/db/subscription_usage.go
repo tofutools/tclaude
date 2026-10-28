@@ -132,6 +132,32 @@ func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryR
 	return out, nil
 }
 
+// SubscriptionUsageWindowSpecs lists every retained quota window as
+// "<provider>:<window>", sorted.
+func SubscriptionUsageWindowSpecs() ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT DISTINCT s.provider || ':' || w.window_name
+		FROM subscription_usage_samples s
+		JOIN subscription_usage_windows w ON w.sample_id = s.id
+		ORDER BY 1`)
+	if err != nil {
+		return nil, fmt.Errorf("read subscription usage windows: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var spec string
+		if err := rows.Scan(&spec); err != nil {
+			return nil, fmt.Errorf("read subscription usage windows: scan: %w", err)
+		}
+		out = append(out, spec)
+	}
+	return out, rows.Err()
+}
+
 // SetSubscriptionUsagePointExcluded changes whether one exact retained
 // observation participates in quota calculations. The observed timestamp is
 // deliberately part of the predicate: a newer in-bucket replacement must not

@@ -707,6 +707,8 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     // sandboxImplClearedNoticeFor. Never sent to the daemon.
     sandboxImplCleared: null,
     sandboxProfile: '',
+    // '' inherits the spawn profile's, group's or global usage profiles.
+    usageProfile: '',
   };
 }
 
@@ -1186,7 +1188,7 @@ export function spawnProfileSeed(draft, context) {
 
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
-  'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
+  'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'usageProfile', 'approval',
   'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext', 'usageFrom', 'usageOwn', 'claudeSubscription',
@@ -1272,6 +1274,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   } else if (draft.sandboxProfile) {
     body.sandbox_profile = draft.sandboxProfile;
   }
+  // A usage profile picked here replaces the inherited ones (human-only;
+  // a remote spawn cannot carry it).
+  if (draft.usageProfile && !context.remoteSpawn) body.usage_profiles = [draft.usageProfile];
   if (view.approval.visible && draft.approval) body.approval = draft.approval;
   if (view.tools.visible && draft.tools) body.tools = draft.tools;
   const reviewer = view.showApprovalReviewer ? readReviewer(draft.approvalReviewer) : null;

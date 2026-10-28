@@ -15,18 +15,31 @@ import (
 
 // dashUsage mirrors agentd.dashboardUsage — the account-wide
 // subscription usage readout the dashboard renders in its top bar.
-type dashSpendLimit struct {
-	Period    string  `json:"period"`
-	SpendUSD  float64 `json:"spend_usd"`
-	LimitUSD  float64 `json:"limit_usd"`
-	Threshold int     `json:"threshold"`
+type dashUsageLimit struct {
+	Name    string  `json:"name"`
+	Scope   string  `json:"scope"`
+	Pct     float64 `json:"pct"`
+	Reached string  `json:"reached"`
+}
+
+type dashUsageBudgets struct {
+	Profiles []struct {
+		Name string `json:"name"`
+	} `json:"profiles"`
+	Global []string            `json:"global"`
+	Groups map[string][]string `json:"groups"`
+	Agents map[string]struct {
+		Name string  `json:"name"`
+		Pct  float64 `json:"pct"`
+	} `json:"agents"`
 }
 
 type dashUsage struct {
-	SpendLimits []dashSpendLimit `json:"spend_limits"`
-	Available   bool             `json:"available"`
-	FiveHour    *dashUsageWin    `json:"five_hour"`
-	SevenDay    *dashUsageWin    `json:"seven_day"`
+	UsageLimits []dashUsageLimit  `json:"usage_limits"`
+	Budgets     *dashUsageBudgets `json:"budgets"`
+	Available   bool              `json:"available"`
+	FiveHour    *dashUsageWin     `json:"five_hour"`
+	SevenDay    *dashUsageWin     `json:"seven_day"`
 	// TotalCostUSD is the month-to-date API cost summed from the
 	// session_cost_daily table — independent of Available, so an
 	// API-billing account shows a dollar figure where "usage: n/a"

@@ -209,3 +209,12 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
   prompt.matchRegex = '(?=deploy)';
   assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, prompt).code, 'match-regex-re2');
 });
+
+test('cron edit prefill renders intervals as exact Go durations', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/jobs-dialog-model.js');
+  const cases = [[30, '30s'], [90, '1m30s'], [900, '15m'], [5400, '1h30m'], [86400, '24h'], [90061, '25h1m1s'], [0, '']];
+  for (const [seconds, want] of cases) {
+    assert.equal(model.cronJobToPrefill({ interval_seconds: seconds }).interval, want, `${seconds}s`);
+  }
+});

@@ -1,4 +1,6 @@
 import { SavedPromptChips } from './saved-prompts.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
+import { dashboardState } from './snapshot-store.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -78,6 +80,15 @@ import {
 } from './resolved-defaults.js';
 
 const html = htm.bind(h);
+const NEW_USAGE_PROFILE = '/new-usage-profile';
+
+// liveUsageProfiles reads the usage profiles off the live snapshot rather
+// than the list frozen at open, so one made through "new usage profile…"
+// is pickable without reopening the dialog (and the draft stays as it is).
+function liveUsageProfiles(frozen) {
+  const live = dashboardState.snapshot.value?.usage?.budgets?.profiles;
+  return live ? live.map((p) => p.name) : frozen;
+}
 const PASTE_REPEAT_MS = 1000;
 // One title for the auto-compaction window control, shared by the spawn dialog
 // and kept next to the hint logic it explains. The two consequences an operator
@@ -296,6 +307,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     roles: current.roles,
     sandboxImpl: current.sandboxImpl,
     userDefaultModel: current.userDefaultModel,
+    usageProfiles: current.usageProfiles || [],
     defaultTerminal: current.defaultTerminal,
     normalizeNames: current.normalizeNames,
     remoteSpawn: !!(current.remote || current.target),
@@ -1684,6 +1696,26 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           class="spawn-field-description">${UNENFORCED_SANDBOX_TITLE}</span>
       </div>
     </div>
+    ${!context.remoteSpawn ? html`<${HelpField} id="agent-spawn-usage-profile" label="Usage profile"
+      title="The budget and alerts this agent runs under. Inherited: the spawn profile's usage profiles on top of the group's (else the global default). A profile picked here replaces them."
+      value=${draft.usageProfile || ''}
+      options=${[
+        { value: '', label: '— inherited (spawn profile + group / global) —' },
+        ...liveUsageProfiles(context.usageProfiles).map((name) => ({ value: name, label: name })),
+        { value: NEW_USAGE_PROFILE, label: '＋ new usage profile…' },
+      ]}
+      onChange=${(event) => {
+        // The new profile is made in the usage manager; the pick stays.
+        if (event.currentTarget.value === NEW_USAGE_PROFILE) {
+          event.currentTarget.value = draft.usageProfile || '';
+          openUsageRulesManager({ tab: 'profiles', newProfile: true });
+          return;
+        }
+        update('usageProfile', event.currentTarget.value);
+      }}
+      help="Usage profiles budget each agent (see Usage limits & budgets). Leave inherited unless this agent needs its own budget."
+      open=${helpOpen === 'agent-spawn-usage-profile'} setOpen=${setHelpOpen}
+      busy=${busy} />` : null}
     <${HelpField} id="agent-spawn-approval" label=${draft.harness === 'codex' ? 'Approval policy' : 'Permission mode'}
       title="Controls when the new agent requests approval; it does not change the sandbox."
       value=${draft.approval}

@@ -2282,3 +2282,37 @@ func ForgetClaudeSubscriptionsForTest() {
 	claudeSubscriptions.armed = map[string]bool{}
 	claudeSubscriptions.Unlock()
 }
+
+// PollUsageRulesForTest runs one usage-rule evaluation, as the usage poller
+// tick does (legacy spend-limit conversion first).
+func PollUsageRulesForTest(now time.Time) {
+	migrateLegacySpendLimits(now)
+	pollUsageRules(now)
+}
+
+// PollUsageFleetForTest runs one fleet usage-limit evaluation, as the fleet
+// poller tick does, with fresh local totals.
+func PollUsageFleetForTest(now time.Time) {
+	resetUsageTotalsCache()
+	pollUsageFleet(now)
+}
+
+// SetUsageFleetExchangeForTest replaces the peer-view exchange fleet limits
+// use to read members and send them enforcement; it also clears the fleet
+// state. It returns a restore func.
+func SetUsageFleetExchangeForTest(fn func(peer, method, uri string, body []byte) (int, []byte, error)) func() {
+	prev := usageFleetExchange
+	usageFleetExchange = func(_ context.Context, p *db.FederationPeer, method, uri string, body []byte) (int, []byte, error) {
+		return fn(p.InstanceID, method, uri, body)
+	}
+	resetUsageFleetForTest()
+	return func() { usageFleetExchange = prev; resetUsageFleetForTest() }
+}
+
+// SetUsageRulesLiveSessionsForTest replaces the live tmux session listing
+// usage rules act on. It returns a restore func.
+func SetUsageRulesLiveSessionsForTest(fn func() (map[string]struct{}, error)) func() {
+	prev := usageRulesLiveSessions
+	usageRulesLiveSessions = fn
+	return func() { usageRulesLiveSessions = prev }
+}

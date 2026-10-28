@@ -1,4 +1,6 @@
 import { Fragment, h, render } from 'preact';
+import { openUsageRulesManager } from './modal-usage-rules.js';
+import { FleetUsageChip, peerManagesUsage } from './usage-profile-chip.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { NodeUpdateDialog } from './node-update.js';
@@ -951,6 +953,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
         <button type="button" aria-label="Fit to screen" title="Fit to screen" onClick=${() => zoom.fit()}>⤢</button>
       </span>
       <span class="fleet-map-hint">scroll or pinch to zoom · drag the background to pan</span>
+      <${FleetUsageChip} className="fleet-map-usage"/>
     </div>
     <div class="fleet-map-stage" ref=${stageRef}>
     <div class="fleet-map" ref=${mapRef} style=${`transform:translate(${zoom.view.x}px,${zoom.view.y}px) scale(${zoom.view.s})`}>
@@ -1060,6 +1063,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
       ${pv && pv.included.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Shared</span> ${pv.included.join(', ')}</div>`}
       ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Hidden from you</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${requestable(o) ? html` <button type="button" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…</button>` : ''}`)}</div>`}
       ${!pv && html`<div class="rnp-row muted">What the peer shares shows once it answers.</div>`}
+      ${peerManagesUsage(snapshot.value) && html`<div class="rnp-row"><span class="rnp-k">Usage rules</span> <button type="button" class="rnp-ask" id="rnp-usage-rules" title=${`${name} lets you manage its usage limits and budgets (usage-rules.manage)`} onClick=${() => { setOpen(false); openUsageRulesManager({ node: remote, nodeLabel: name }); }}>manage its usage rules…</button></div>`}
       <div class="rnp-row"><span class="rnp-k">Usage</span> <button type="button" class="rnp-ask" id="rnp-ask-usage" title=${`Ask ${name}'s operator to pay for your agents' model calls through its model gateway`} onClick=${() => { setAsking(USAGE_PERM); setOpen(false); }}>ask for usage…</button></div>
       <div class="rnp-foot"><button type="button" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}</button></div>
     </div>`}

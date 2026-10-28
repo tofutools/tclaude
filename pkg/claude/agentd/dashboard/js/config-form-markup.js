@@ -5,6 +5,7 @@ import htm from 'htm';
 import { browserNotifyPermission, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -336,6 +337,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more=${html`When Groups shows several nodes together, the toolbar's 🧠 default spawn profile, 🛡 sandbox profile and <strong>+ new group</strong> act on one node at a time, named by the coloured node chip in front of them. <strong>On</strong> (default): clicking a group's header or one of its controls, right-clicking it or dropping onto it switches the toolbar to that group's node, and the chip flashes. <strong>Off</strong>: the toolbar stays on the node you pick in the chip. Stored as <code>dashboard.fused_toolbar_fixed_node</code> (on is the default and omitted; off writes <code>true</code>).`}>
           <${Toggle} id="cfg-dashboard-fused-toolbar-follow" />
         </${Setting}>
+        <${Setting} title="Collapse empty Usage views" forId="cfg-dashboard-usage-collapse-subviews" k="dashboard.usage_collapse_subviews"
+          summary="when only quota or only costs has data, show that view alone without the Overview / Quota / Costs switcher"
+          more=${html`The <strong>Usage</strong> tab has three views: <strong>Overview</strong>, <strong>Quota</strong> (subscription quota forecasts) and <strong>Costs</strong> (pay-per-token spend and WHAT-IF estimates). <strong>Off</strong> (default): all three are always offered once either side has data, and an empty side shows its own empty state — e.g. with only pay-per-token agents, Quota just says there are no samples yet. <strong>On</strong>: with only one side populated, the tab shows that view directly and hides the switcher. The tab itself is hidden when neither side has anything either way. Stored as <code>dashboard.usage_collapse_subviews</code> (off is the default and omitted; on writes <code>true</code>).`}>
+          <${Toggle} id="cfg-dashboard-usage-collapse-subviews" />
+        </${Setting}>
         <${Setting} title="Open PRs indicator" k="dashboard.always_show_open_prs"
           summary="The footer's Open PRs popover: whether it shows at zero, and how far back the Closed filter reaches."
           more=${html`The bottom-right <strong>Open PRs</strong> indicator opens a popover listing the pull requests <em>you</em> have open across every repository, with CI state and the agent working each one. <strong>Checked</strong> (default) keeps it in the footer permanently, so it stays a fixed entry point (and reaches the recently-closed list) even when nothing is open; unchecked hides it whenever you have no open PRs. It is always hidden until the daemon has resolved a GitHub identity — with no <code>gh</code> login there is nothing to count. The <strong>days</strong> field adds a separate <em>Closed Nd</em> filter in the popover listing your recently merged and closed PRs; it never mixes into the open list or the count. Default 3 days, max 30; <strong>0</strong> hides the filter, while the shared dashboard PR poll still checks a one-day terminal window to keep Groups badges current. Stored as <code>dashboard.always_show_open_prs</code> (default true, so only <code>false</code> is written) and <code>dashboard.recent_pr_window_days</code> (the default is omitted).`}>
@@ -638,12 +644,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </${Panel}>
 
     <${Panel} id="costs" active=${active}>
-      <${Group} title="Spend limits">
-        ${['daily', 'monthly'].map(period => html`<${Setting} key=${period} title=${period === 'daily' ? 'Daily limit (USD)' : 'Monthly limit (USD)'} forId=${`cfg-cost-${period}-limit`} k=${`cost.${period}_limit_usd`}
-          summary="Estimated API ledger spend; blank or 0 disables. Warn at 80%, alert at 100%."
-          more=${html`Global across harnesses on this instance, using local calendar days/months. Amounts are unscaled cost-ledger estimates; subscription WHAT-IF amounts are excluded and subscription plans may not map to real charges. One notification per period and threshold, even after restarting the daemon or editing a limit. Spawns remain available.`}>
-          <${ConfigInput} type="number" id=${`cfg-cost-${period}-limit`} min="0" step="0.01" placeholder="Disabled" />
-        </${Setting}>`)}
+      <${Group} title="Usage limits">
+        <${Setting} title="Limits & budgets"
+          summary="Spend caps, quota guards and per-agent usage profiles live in their own manager."
+          more=${html`Global and group limits (for example "$500 a month, alert at 50%, wrap everyone up at 100%"), usage profiles that budget each agent, and per-agent extensions. The former daily/monthly spend limits were converted into global limits there.`}>
+          <button type="button" class="tool" id="cfg-open-usage-rules" onClick=${() => openUsageRulesManager()}>Open usage limits & budgets…</button>
+        </${Setting}>
       </${Group}>
       <${Group} title="Cost display">
         <${Setting} title="Cost display multipliers" wide k="cost.estimate_factor"

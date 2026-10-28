@@ -1,6 +1,17 @@
-import { formatJobInterval } from './jobs-format.js';
-
 function text(value) { return String(value ?? ''); }
+
+// intervalToGoDuration renders whole seconds as an exact Go duration
+// (90 → "1m30s", 86400 → "24h"). The table's formatJobInterval is lossy and
+// emits "1d", which the PATCH endpoint rejects, so it must not seed the form.
+export function intervalToGoDuration(seconds) {
+  let rest = Math.floor(Number(seconds) || 0);
+  if (rest <= 0) return '';
+  const hours = Math.floor(rest / 3600);
+  rest %= 3600;
+  const minutes = Math.floor(rest / 60);
+  const secs = rest % 60;
+  return `${hours ? `${hours}h` : ''}${minutes ? `${minutes}m` : ''}${secs ? `${secs}s` : ''}`;
+}
 
 export function cronJobToPrefill(job = {}, { duplicate = false } = {}) {
   const groupTarget = job.target_kind === 'group';
@@ -10,7 +21,7 @@ export function cronJobToPrefill(job = {}, { duplicate = false } = {}) {
     targetMode: groupTarget ? 'group' : 'solo',
     target: groupTarget ? '' : (job.target_agent || job.target_conv || ''),
     groupName: groupTarget ? text(job.group_name) : '',
-    interval: formatJobInterval(job.interval_seconds) || '',
+    interval: intervalToGoDuration(job.interval_seconds),
     cronExpr: text(job.cron_expr),
     subject: text(job.subject),
     body: text(job.body),

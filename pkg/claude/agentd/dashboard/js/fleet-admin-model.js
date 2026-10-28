@@ -171,6 +171,9 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'node.messages.mark-read', kind: 'node', what: 'mark your human notifications read or unread from its dashboard (opening one there marks it read, as it does here); no reply, delete or approval authority' },
   { slug: 'node.harnesses.read', kind: 'node', what: 'harness availability and versions' },
   { slug: 'costs.read', kind: 'node', what: 'the complete node-wide cost collection' },
+  { slug: 'usage.read', kind: 'node', what: 'your usage totals (today, this week, this month), limit readings and budget counts, so its fleet usage limits can count this node' },
+  { slug: 'usage-rules.manage', kind: 'node', sensitive: true, what: 'see and change your usage limits, usage profiles and their assignments, and extend, snooze or exempt your agents\' budgets, from its dashboard', warning: 'It can lift or lower any budget here.' },
+  { slug: 'usage-rules.enforce', kind: 'group', sensitive: true, what: 'let its fleet usage limits act on member agents: notify them, ask them to wrap up, stop them and block new spawns (this node performs and records each action)', warning: 'Its fleet limit can stop your agents and block spawns. An unscoped grant also covers agents in no group.' },
   { slug: 'federation.audit.read', kind: 'node', what: 'the complete node-wide dashboard audit log' },
   { slug: 'config.offer', kind: 'node', what: 'offer config bundles for your review' },
   { slug: 'approvals.answer', kind: 'node', sensitive: true, what: 'answer access requests once while selected as your away cover' },
@@ -188,7 +191,7 @@ export function slugInfo(slug) {
 
 // GRANT_CATEGORIES group PEER_SLUGS for the add-grants picker, in display
 // order.
-export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Routes', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Models']);
+export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Routes', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Usage', 'Models']);
 
 const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
 const GROUP_ADMIN = new Set(['groups.settings', 'groups.settings.environment', 'groups.members.manage', 'node.groups.create']);
@@ -200,6 +203,7 @@ export function slugCategory(slug) {
   // Routes carry TCP traffic to a published service, not messages.
   if (slug.startsWith('routes.')) return 'Routes';
   if (slug.startsWith('models.')) return 'Models';
+  if (slug === 'usage.read' || slug.startsWith('usage-rules.')) return 'Usage';
   if (LIFECYCLE.has(slug)) return 'Agent lifecycle';
   if (GROUP_ADMIN.has(slug)) return 'Group admin';
   if (slug.endsWith('.read')) return 'Read & status';

@@ -741,9 +741,13 @@ One tab, three views: **Overview** (`/usage`), **Quota** (`/usage/quota`)
 and **Costs** (`/usage/costs`). Each view is its own history entry, so
 deep links, reload and browser Back/Forward land on the same view; the old
 `/costs` path (and `?tab=costs`) still works and settles on `/usage/costs`.
-Quota and Costs keep their own visibility rules: with only one of them
-available the tab shows it directly without the view switcher, and the tab
-hides only when neither has anything to show.
+Quota and Costs keep their own visibility rules, but once either has
+something to show the tab always offers all three views; an empty one shows
+its own empty state (e.g. Quota with only pay-per-token agents). The tab hides
+only when neither has anything to show. To get the older compact behavior —
+with only one of them available, show it directly without the view switcher —
+enable **Collapse empty Usage views** in Config
+(`dashboard.usage_collapse_subviews: true`).
 
 Agents and operators can also query quotas and costs through the daemon with
 [`tclaude usage` and `tclaude costs`](usage-and-costs.md), including JSON output.
@@ -1027,7 +1031,8 @@ hub card goes and links run node to node, with the hub's state in the toolbar)
 and zoom: scroll or pinch to zoom around the pointer, drag the background to
 pan, or use −, the percentage (back to 100%), + and fit. A map larger than the
 window fits itself until you zoom or pan. Phone-width screens keep the stacked
-layout without zoom.
+layout without zoom. At its right end, **💰 fleet** reads this node's fleet usage limits and
+opens them (see [Fleet limits](usage-and-costs.md#fleet-limits-spend-across-peers)).
 
 Cards link to where their settings live: ⚙ opens the peer in Fleet config →
 Peers, and beside **You trust it** `trust…` opens Peers and, while the peer is
@@ -1175,7 +1180,8 @@ Appearance › Header & rows › **Toolbar follows the clicked group**
 (`dashboard.fused_toolbar_fixed_node: true`) to stop the following: the
 toolbar then moves only when you pick a node in the chip. Another node's controls show and set that
 node's defaults and create the group there, as far as it shares them with you
-(the same grants as on its page); new profiles are made on their own node.
+(the same grants as on its page); new profiles are made on their own node. The toolbar also
+carries **💰 fleet**, this node's fleet usage limits, whichever node it follows.
 
 A peer's agent terminal opens in the browser as a remote terminal (watch-only
 or interactive, as the peer's `sessions.*` grants allow; see above).

@@ -58,6 +58,9 @@ import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, delet
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
 import { openPresetCloneDialog } from './action-dialog-controller.js';
 import { managementController } from './management-controller.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
+import { usageRulesApi } from './usage-rules-actions.js';
+import { fmtAmount, periodLabel, ruleSummary } from './usage-rules-model.js';
 import { loadSandboxProfiles, sandboxProfileForWire, sandboxProfileSummary } from './sandbox-profiles-data.js';
 import { downloadBlob } from './paf-model.js';
 import { announceNodeChanged, selfNodeID } from './node-api.js';
@@ -305,6 +308,97 @@ function libraryOps(key) {
   };
 }
 
+// Usage profiles live in the usage rules store; the global default is their
+// global-layer assignment, which the ★ sets to that one profile.
+// toggleUsageDefault adds a profile to the global default layer or takes it
+// out, leaving any other global profiles in place.
+async function toggleUsageDefault(name, current, isDefault) {
+  const next = isDefault ? current.filter((n) => n !== name) : [...current, name];
+  try {
+    await usageRulesApi.assign('global', '', next);
+    toast(isDefault ? `${name} removed from the global default usage profiles` : `${name} added to the global default usage profiles`);
+    await refresh();
+  } catch (error) {
+    toast(error.message || String(error), true);
+  }
+}
+
+// usageLimitItems are a node's enabled global and group limits, then its
+// fleet limits, as the snapshot reads them (usage_limits, fleet_limits).
+// Limit names need not be unique, and the dock keys its cards by name, so
+// a repeated one takes its id.
+function usageLimitItems(snap) {
+  const usage = snap?.usage || {};
+  const items = [
+    ...(usage.usage_limits || []),
+    ...(usage.fleet_limits || []).map((l) => ({ ...l, scope: 'fleet', fleet_id: Number(String(l.rule_key || '').replace(/^fleet:/, '')) || 0 })),
+  ].map((l) => ({ ...l, label: l.scope === 'fleet' ? `${l.name} · fleet` : l.scope === 'group' ? `${l.name} · ${l.group}` : l.name }));
+  const seen = new Map();
+  for (const l of items) seen.set(l.label, (seen.get(l.label) || 0) + 1);
+  return items.map((l) => (seen.get(l.label) > 1 ? { ...l, label: `${l.label} #${l.scope === 'fleet' ? l.fleet_id : l.limit_id}` } : l));
+}
+
+function usageLimitChips(l) {
+  const where = l.scope === 'fleet' ? `fleet: ${l.target_label}` : l.scope === 'group' ? `group ${l.group}` : 'global';
+  const tone = l.reached && l.reached !== 'notify' ? ' over' : l.reached || l.pct >= 80 ? ' warn' : '';
+  const reading = `${fmtAmount(l.metric, l.value)} / ${fmtAmount(l.metric, l.budget)} ${l.metric === 'window_pct' ? l.window || '' : periodLabel(l.period)}`;
+  return [
+    { text: where, more: false },
+    { text: `${Math.round(l.pct)}%`, more: false, className: `dock-chip usage-limit-pct${tone}`,
+      title: `${reading}${l.reached ? ` · ${l.reached.replace('_', ' ')} step reached` : ''}${l.scope === 'fleet' ? ` · ${l.counted} node(s) counted` : ''}` },
+    ...(l.dry_run ? [{ text: 'dry run', more: false }] : []),
+  ];
+}
+
+// usageNode aims the usage manager at a fused view's peer copy.
+const usageNode = (node) => (node ? { node: node.id, nodeLabel: node.name } : {});
+
+// openUsageLimit opens a limit's editor (clone: a copy of it); a fused
+// view's peer copy opens on that node, where fleet limits are not managed.
+function openUsageLimit(l, node = null, clone = false) {
+  if (node && l.scope === 'fleet') return openUsageRulesManager({ node: node.id, nodeLabel: node.name, tab: 'limits' });
+  if (node) return openUsageRulesManager({ node: node.id, nodeLabel: node.name, tab: 'limits', limit: l.limit_id, clone });
+  if (l.scope === 'fleet') return openUsageRulesManager({ tab: 'fleet', fleetLimit: l.fleet_id, clone });
+  return openUsageRulesManager({ tab: 'limits', limit: l.limit_id, clone });
+}
+
+async function removeUsageLimit(l) {
+  const fleet = l.scope === 'fleet';
+  const ok = await confirmModal({
+    title: fleet ? 'Delete fleet limit?' : 'Delete usage limit?',
+    body: fleet
+      ? `Delete the fleet limit "${l.name}"? Any spawn block or stop it holds on other nodes is released.`
+      : `Delete the ${l.scope} limit "${l.name}"? Its alert history goes with it.`,
+    meta: l.name,
+    okLabel: 'Delete limit',
+  });
+  if (!ok) return;
+  try {
+    await (fleet ? usageRulesApi.deleteFleetLimit(l.fleet_id) : usageRulesApi.deleteLimit(l.limit_id));
+    toast(`usage limit deleted: ${l.name}`);
+    await refresh();
+  } catch (error) {
+    toast(error.message || String(error), true);
+  }
+}
+
+async function removeUsageProfile(p) {
+  const ok = await confirmModal({
+    title: 'Delete usage profile?',
+    body: `Delete the usage profile "${p.name}"? Every assignment of it goes too, so the agents using it fall back to their next layer.`,
+    meta: p.name,
+    okLabel: 'Delete profile',
+  });
+  if (!ok) return;
+  try {
+    await usageRulesApi.deleteProfile(p.id);
+    toast(`usage profile deleted: ${p.name}`);
+    await refresh();
+  } catch (error) {
+    toast(error.message || String(error), true);
+  }
+}
+
 async function removeSavedPrompt(name) {
   const ok = await confirmModal({
     title: 'Delete saved prompt?',
@@ -546,6 +640,50 @@ export const dockSections = Object.freeze([
     itemPath: (name) => `/api/sandbox-profiles/${encodeURIComponent(name)}`,
     listPath: '/api/sandbox-profiles',
     ...libraryOps('sandbox_profiles'),
+  },
+  {
+    key: 'usage_profiles',
+    // Budgets for each agent; global and group limits live in the manager.
+    afterProcesses: true,
+    icon: () => wizWord('💰', '💰'),
+    title: () => wizWord('Usage profiles', 'Tithes'),
+    empty: () => wizWord('no usage profiles yet', 'no tithes yet'),
+    items: (snap) => snap?.usage?.budgets?.profiles || [],
+    name: (p) => p.name,
+    chips: (p) => (p.rules || []).slice(0, 3).map((rule) => ({
+      text: rule.metric === 'window_pct' ? `${rule.window}` : `${fmtAmount(rule.metric, rule.budget)} ${periodLabel(rule.period)}`,
+      more: false, title: `${rule.name}: ${ruleSummary(rule)}`,
+    })),
+    fullChips: (p) => (p.rules || []).map((rule) => ({ text: `${rule.name}: ${ruleSummary(rule)}`, more: false })),
+    // Assigned through the 💰 pickers, not dropped.
+    drag: false,
+    onManageItem: (p, node) => openUsageRulesManager({ ...usageNode(node), tab: 'profiles', profile: p.id }),
+    onCloneItem: (p, node) => openUsageRulesManager({ ...usageNode(node), tab: 'profiles', profile: p.id, clone: true }),
+    onDeleteItem: (p) => removeUsageProfile(p),
+    onManageAll: () => openUsageRulesManager({ tab: 'profiles' }),
+    onNew: () => openUsageRulesManager({ tab: 'profiles', newProfile: true }),
+    searchWords: ['usage profiles', 'budgets', 'tithes'],
+    isDefault: (p, snap) => (snap?.usage?.budgets?.global || []).includes(p.name),
+    onToggleDefault: (p, isDefault) => toggleUsageDefault(p.name, lastSnapshot?.usage?.budgets?.global || [], isDefault),
+  },
+  {
+    key: 'usage_limits',
+    // The active global, group and fleet limits with their readings; each
+    // carries its alert ladder. Disabled ones live in the manager.
+    afterProcesses: true,
+    icon: () => wizWord('🚦', '🚦'),
+    title: () => wizWord('Usage limits & alerts', 'Coffer wards'),
+    empty: () => wizWord('no active usage limits', 'no coffer wards'),
+    items: (snap) => usageLimitItems(snap),
+    name: (l) => l.label,
+    chips: (l) => usageLimitChips(l),
+    drag: false,
+    onManageItem: (l, node) => openUsageLimit(l, node),
+    onCloneItem: (l, node) => openUsageLimit(l, node, true),
+    onDeleteItem: (l) => removeUsageLimit(l),
+    onManageAll: () => openUsageRulesManager({ tab: 'limits' }),
+    onNew: () => openUsageRulesManager({ tab: 'limits', newLimit: true }),
+    searchWords: ['usage limits', 'alerts', 'alert rules', 'budgets', 'spend caps', 'fleet limits', 'coffer wards'],
   },
 ]);
 

@@ -5,6 +5,10 @@ import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoi
 import { pickDirectory } from './helpers.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { wizWord } from './slop.js';
+import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
+import { usageRulesApi } from './usage-rules-actions.js';
+import { openUsageRulesManager } from './modal-usage-rules.js';
+import { shellToast } from './shell-state.js';
 import { grantScopeLabel, grantSlug, grantToOverride } from './permission-grant-list.js';
 import {
   agentHasLegacyLaunch,
@@ -2486,8 +2490,16 @@ export function TemplateEditor({
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const baseline = useMemo(() => templateDraft(descriptor.seed), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline));
-  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   const editing = descriptor.seed && !descriptor.options?.asNew;
+  // The usage profiles a group deployed from this template starts with, kept
+  // in the usage rules store and saved after the template itself. This
+  // node's templates only.
+  const usageLinkable = !descriptor.node && !globalThis.__tclaudeRemoteNode?.id;
+  const usageLink = useUsageProfileLink('template', editing ? descriptor.seed.name : '', usageLinkable);
+  const [usageNames, setUsageNames] = useState(null);
+  const usageCurrent = usageNames ?? usageLink.names;
+  const usageChanged = usageNames !== null && usageNames.join('\n') !== usageLink.names.join('\n');
+  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline) || usageChanged;
   const saving = current.busy === 'template-save';
   const setAgents = (value) =>
     setDraft((old) => ({
@@ -2508,11 +2520,18 @@ export function TemplateEditor({
       state.error.value = 'template name is required';
       return;
     }
-    await actions.saveTemplate({
+    const saved = await actions.saveTemplate({
       draft,
       originalName: editing ? descriptor.seed.name : '',
       payload: templatePayload(draft),
     });
+    if (saved && usageLinkable && (usageChanged || (!editing && usageCurrent.length))) {
+      try {
+        await usageRulesApi.assign('template', draft.name.trim(), usageCurrent);
+      } catch (error) {
+        shellToast(`usage profiles not linked: ${error.message}`, true);
+      }
+    }
   };
   const handoff = async () => {
     if (saving || (dirty && !(await confirmDiscard()))) return;
@@ -2602,6 +2621,29 @@ export function TemplateEditor({
             plain="Give each agent its own worktree by default"
             wizard="Give each familiar its own enchanted grove by default" /></span
       ></label>
+      ${usageLinkable && usageLink.loaded
+        ? html`<div
+            class="cron-create-row"
+            id="template-editor-usage-profiles-row"
+            title="Usage profiles (budgets and alerts) a group deployed from this template starts with, as its group layer."
+          >
+            <span class="cron-create-label">Usage profiles</span>
+            <div class="cron-create-target">
+              <${ProfileChips}
+                names=${usageCurrent}
+                profiles=${usageLink.profiles}
+                disabled=${saving}
+                label="this template"
+                onChange=${setUsageNames}
+                onNew=${() => openUsageRulesManager({ tab: 'profiles', newProfile: true })}
+              />
+              <div class="spawn-field-hint">
+                The deployed group's usage profiles. A member's spawn profile can
+                add to them, and an agent's own assignment replaces them.
+              </div>
+            </div>
+          </div>`
+        : null}
       <div class="template-agents-head">
         <span><${Words} plain="Agents" wizard="Familiars" /></span
         ><button
