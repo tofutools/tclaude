@@ -13,8 +13,9 @@ import { featureState } from './feature-state-registry.js';
 export const USAGE_SUBVIEWS = Object.freeze(['overview', 'quota', 'costs']);
 
 // effectiveSubview resolves the requested view against what is visible. The
-// Overview only makes sense with both halves; with one, that half IS the tab
-// (the subtab bar collapses). Before the first snapshot nothing is known yet,
+// Overview only makes sense with both halves; with one (only reachable under
+// dashboard.usage_collapse_subviews), that half IS the tab and the subtab bar
+// collapses. Before the first snapshot nothing is known yet,
 // so a deep link keeps the view it asked for instead of flickering away.
 export function effectiveSubview(requested, halves) {
   if (!halves.loaded) return requested;
