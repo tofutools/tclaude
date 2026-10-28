@@ -1638,6 +1638,31 @@ func DeleteAgentGroup(name string) error {
 			return err
 		}
 	}
+	// Members lose the group by cascade; rebind any sandbox record naming it.
+	memberRows, err := tx.Query(`SELECT agent_id FROM agent_group_members WHERE group_id = ?`, gID)
+	if err != nil {
+		return err
+	}
+	var memberIDs []string
+	for memberRows.Next() {
+		var agentID string
+		if err := memberRows.Scan(&agentID); err != nil {
+			_ = memberRows.Close()
+			return err
+		}
+		memberIDs = append(memberIDs, agentID)
+	}
+	if err := memberRows.Close(); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_group_members WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
+	for _, agentID := range memberIDs {
+		if err := rebindSandboxResolutionGroup(tx, agentID); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
 		return err
 	}
@@ -2013,7 +2038,7 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, m.GroupID); err != nil {
 		return err
 	}
-	return nil
+	return rebindSandboxResolutionGroup(db, agentID)
 }
 
 // UpdateAgentGroupMember patches non-nil fields on an existing member.
@@ -2077,9 +2102,12 @@ func RemoveAgentGroupMember(groupID int64, convID string) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		_, err = db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, groupID)
+		if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, groupID); err != nil {
+			return err
+		}
+		return rebindSandboxResolutionGroup(db, agentID)
 	}
-	return err
+	return nil
 }
 
 // AgentDeletionCounts records what `DeleteAgentByConvID` removed,

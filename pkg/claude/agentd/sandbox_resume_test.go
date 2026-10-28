@@ -63,6 +63,54 @@ func TestResolveResumeSandboxPolicyDoesNotInferLegacyGroupFromStaleProfileID(t *
 	assert.Contains(t, err.Error(), "cannot determine the sandbox source group")
 }
 
+// TestResolveResumeSandboxPolicyFollowsGroupMove pins that an agent moved
+// between groups resumes under the new group's sandbox profile and
+// environment, not those of the launch group it left.
+func TestResolveResumeSandboxPolicyFollowsGroupMove(t *testing.T) {
+	setupTestDB(t)
+	const convID = "moved-agent-resume-conv"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+
+	groupIDs := map[string]int64{}
+	for _, name := range []string{"plain", "elevated"} {
+		groupID, createErr := db.CreateAgentGroup(name, "")
+		require.NoError(t, createErr)
+		groupIDs[name] = groupID
+		_, createErr = db.CreateSandboxProfile(&db.SandboxProfile{Name: name + "-policy"})
+		require.NoError(t, createErr)
+		_, assignErr := db.SetAgentGroupSandboxProfile(name, name+"-policy")
+		require.NoError(t, assignErr)
+		_, envErr := db.SetAgentGroupEnvironment(name, []sandboxpolicy.EnvironmentEntry{{Name: "GROUP", Value: name}})
+		require.NoError(t, envErr)
+	}
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupIDs["plain"], ConvID: convID}))
+	launched, err := db.ResolveEffectiveSandboxSnapshotByID(groupIDs["plain"], 0)
+	require.NoError(t, err)
+	launched.RefreshGroupEnvironment = true
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &launched))
+
+	groupTier := func(snapshot *sandboxpolicy.Snapshot) []string {
+		var names []string
+		for _, applied := range snapshot.Applied {
+			if applied.Scope == sandboxpolicy.ScopeGroup {
+				names = append(names, applied.Name)
+			}
+		}
+		return names
+	}
+
+	// The dashboard's move: add to the target, then remove from the source.
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupIDs["elevated"], ConvID: convID}))
+	require.NoError(t, db.RemoveAgentGroupMember(groupIDs["plain"], convID))
+
+	resolved, err := resolveResumeSandboxPolicy(convID, false, "", "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"elevated-policy"}, groupTier(resolved.Snapshot))
+	assert.Equal(t, groupIDs["elevated"], resolved.Snapshot.ResolutionGroupID)
+	assert.Contains(t, resolved.Snapshot.LaunchEnvironment, sandboxpolicy.EnvironmentEntry{Name: "GROUP", Value: "elevated"})
+}
+
 func TestResolveResumeSandboxPolicyPreservesExplicitProfileOmission(t *testing.T) {
 	setupTestDB(t)
 	const convID = "omitted-profile-resume-conv"
