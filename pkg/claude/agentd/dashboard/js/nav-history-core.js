@@ -43,7 +43,7 @@ export const DEFAULT_TAB = 'groups';
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
-  'access', 'messages', 'usage', 'activity', 'config', 'vegas',
+  'access', 'messages', 'usage', 'diagnostics', 'config', 'vegas',
   'map',
   'fleet-admin',
 ]);
@@ -60,7 +60,8 @@ export const KNOWN_TABS = new Set([
 //     about the nesting.
 //   - Usage: the quota forecasts and the costs views; the bare tab is the
 //     Overview that summarises both.
-//   - Activity: audit / logs / performance (formerly three top-level tabs).
+//   - Diagnostics: audit / logs / performance (formerly three top-level
+//     tabs, then the Activity tab).
 //   - Config: the settings rail's sections. Keep in step with CONFIG_PANELS
 //     in config-form-markup.js.
 //   - Fleet config (fleet-admin): its sections; the bare tab is the landing
@@ -74,7 +75,7 @@ export const KNOWN_SUBTABS = {
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),
   usage: new Set(['quota', 'costs']),
-  activity: new Set(['audit', 'logs', 'performance']),
+  diagnostics: new Set(['audit', 'logs', 'performance']),
   config: new Set([
     'appearance', 'terminals', 'notifications', 'agents', 'context', 'costs',
     'assistants', 'daemon', 'logs', 'experimental', 'advanced',
@@ -86,15 +87,22 @@ export const KNOWN_SUBTABS = {
 };
 
 // LEGACY_TAB_LOCATIONS maps retired top-level tabs to the location that now
-// shows them. Audit, Logs and Debug merged into Activity; their old paths (and
-// the /?tab=<name> alias) stay reload-safe and heal to the canonical
-// /activity/<subtab> in place, like /jobs → /automations. Costs likewise
+// shows them. Audit, Logs and Debug merged into Diagnostics; their old paths
+// (and the /?tab=<name> alias) stay reload-safe and heal to the canonical
+// /diagnostics/<subtab> in place, like /jobs → /automations. Costs likewise
 // became the Usage tab's costs subtab.
 export const LEGACY_TAB_LOCATIONS = Object.freeze({
   costs: Object.freeze({ tab: 'usage', subtab: 'costs' }),
-  audit: Object.freeze({ tab: 'activity', subtab: 'audit' }),
-  logs: Object.freeze({ tab: 'activity', subtab: 'logs' }),
-  debug: Object.freeze({ tab: 'activity', subtab: 'performance' }),
+  audit: Object.freeze({ tab: 'diagnostics', subtab: 'audit' }),
+  logs: Object.freeze({ tab: 'diagnostics', subtab: 'logs' }),
+  debug: Object.freeze({ tab: 'diagnostics', subtab: 'performance' }),
+});
+
+// RENAMED_TABS maps a tab's former name to its current one. Unlike a retired
+// tab, a renamed one keeps its subtabs, so /activity/logs heals to
+// /diagnostics/logs rather than to the bare tab.
+export const RENAMED_TABS = Object.freeze({
+  activity: 'diagnostics',
 });
 
 // SELECTABLE_SUBTABS enumerates the tab/subtab pairs whose view can address a
@@ -188,6 +196,7 @@ export function normalizeLocation(loc) {
   // A retired tab (a history stack persisted before the Activity merge) heals
   // to its new home rather than collapsing to the default.
   if (loc && Object.hasOwn(LEGACY_TAB_LOCATIONS, loc.tab)) loc = LEGACY_TAB_LOCATIONS[loc.tab];
+  if (loc && Object.hasOwn(RENAMED_TABS, loc.tab)) loc = { ...loc, tab: RENAMED_TABS[loc.tab] };
   const tab = loc && KNOWN_TABS.has(loc.tab) ? loc.tab : DEFAULT_TAB;
   const out = { tab };
   const subs = KNOWN_SUBTABS[tab];
@@ -441,6 +450,7 @@ export function fromPath(pathname, search) {
   // /fleet was the merged all-nodes view; it is now Groups with every node
   // fused (fleet-state.js reads the path for that), healed in place.
   if (tab === 'fleet') return defaultLocation();
+  if (Object.hasOwn(RENAMED_TABS, tab)) tab = RENAMED_TABS[tab];
   if (Object.hasOwn(LEGACY_TAB_LOCATIONS, tab)) return normalizeLocation({ tab });
   // On a tab-level-selection tab there is no subtab, so segment two IS the
   // entity (/terminals/<agent-id>) — mirroring how toPath emits it. Reading it

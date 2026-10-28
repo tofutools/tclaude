@@ -1,7 +1,7 @@
 import test from 'node:test'; import assert from 'node:assert/strict'; import { createPreactHarness } from './preact-harness.mjs';
 test('Audit state owns filters, sorting, paging, refresh gate, and stale requests', async (t) => {
   const harness = await createPreactHarness(t); const { createAuditState } = await harness.importDashboardModule('js/audit-state.js');
-  let now = 1000; const activeTab = harness.signals.signal('activity'); const state = createAuditState({ activeTab, activitySubtab: harness.signals.signal('audit'), now: () => now });
+  let now = 1000; const activeTab = harness.signals.signal('diagnostics'); const state = createAuditState({ activeTab, activitySubtab: harness.signals.signal('audit'), now: () => now });
   state.setFilter('query', 'deny'); state.setFilter('source', 'popup'); state.cycleSort('actor');
   assert.equal(state.view.value.sort, 'actor'); assert.equal(state.view.value.dir, 'asc'); assert.equal(state.view.value.page, 1);
   const old = state.beginRequest(); now = 2000; const fresh = state.beginRequest();

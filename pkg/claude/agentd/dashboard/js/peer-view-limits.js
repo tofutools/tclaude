@@ -23,13 +23,13 @@ import { shellToast } from './shell-state.js';
 // Jobs (cron, standing orders, triggers) and Access (this node's pending
 // approvals) have no peer grant of their own: unrestricted trust reaches them
 // as the local operator does (local_dashboard).
-const TAB_FEATURES = Object.freeze({ groups: 'groups', usage: 'costs', costs: 'costs', activity: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
+const TAB_FEATURES = Object.freeze({ groups: 'groups', usage: 'costs', costs: 'costs', diagnostics: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
 
 // SUBTAB_FEATURES narrows a tab's feature per subtab. Activity is offered on a
 // peer view for its audit log; the daemon log and poll timings have no peer
 // grant, so only unrestricted trust reaches them.
 const SUBTAB_FEATURES = Object.freeze({
-  activity: Object.freeze({ audit: 'audit', logs: 'local_dashboard', performance: 'local_dashboard' }),
+  diagnostics: Object.freeze({ audit: 'audit', logs: 'local_dashboard', performance: 'local_dashboard' }),
 });
 
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
@@ -539,7 +539,7 @@ export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeR
 
 // tabLabel names a tab in hints; the visible label varies by theme skin.
 function tabLabel(tab) {
-  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'activity' ? 'its audit log' : tab === 'messages' ? 'its mail' : `the ${tab} tab`;
+  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'diagnostics' ? 'its audit log' : tab === 'messages' ? 'its mail' : `the ${tab} tab`;
 }
 
 function subtabLabel(subtab) {
@@ -756,8 +756,8 @@ export function blockedControl(target, peerView, event = null) {
   }
   const sub = target?.closest?.('.activity-subtab');
   if (sub) {
-    const state = subtabState('activity', sub.dataset.subtab, peerView);
-    return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab), needs: [subtabNeeds('activity', sub.dataset.subtab, peerView)] };
+    const state = subtabState('diagnostics', sub.dataset.subtab, peerView);
+    return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab), needs: [subtabNeeds('diagnostics', sub.dataset.subtab, peerView)] };
   }
   const managed = managedControl(target, peerView);
   if (managed) return managed.own || managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what, needs: managed.needs };
@@ -869,10 +869,10 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
       else setReason(tab, limitHint(state, tabLabel(tab.dataset.tab), nodeName(), [tabNeeds(tab.dataset.tab, peerView)]), false);
     }
     for (const sub of doc.querySelectorAll('.activity-subtab')) {
-      const state = subtabState('activity', sub.dataset.subtab, peerView);
+      const state = subtabState('diagnostics', sub.dataset.subtab, peerView);
       sub.classList.toggle('pv-off', state !== 'shared');
       if (state === 'shared') clearReason(sub);
-      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName(), [subtabNeeds('activity', sub.dataset.subtab, peerView)]), false);
+      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName(), [subtabNeeds('diagnostics', sub.dataset.subtab, peerView)]), false);
     }
     // Controls hovered or focused before keep up with what the peer shares.
     sweep(reasonOf);

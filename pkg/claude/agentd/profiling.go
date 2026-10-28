@@ -173,7 +173,7 @@ type profileParams struct {
 	Seconds      int    `long:"seconds" default:"30" help:"CPU profile duration. Run it while the CPU usage you want to explain is happening."`
 	TraceSeconds int    `long:"trace-seconds" default:"5" help:"Execution trace duration, captured at the start of the CPU window (0 disables). Traces grow fast; a few seconds is usually enough to see wakeup patterns."`
 	Label        string `long:"label" optional:"true" help:"Short note stored with the capture (shown in the dashboard list)."`
-	Out          string `long:"out" short:"o" optional:"true" help:"Output directory. Default: a new capture in ~/.tclaude/data/profiles/, listed under Activity › Performance in the dashboard."`
+	Out          string `long:"out" short:"o" optional:"true" help:"Output directory. Default: a new capture in ~/.tclaude/data/profiles/, listed under Diagnostics › Performance in the dashboard."`
 	Addr         string `long:"addr" optional:"true" help:"Profile a daemon started with --pprof-addr (host:port) instead of the default --pprof Unix socket."`
 }
 

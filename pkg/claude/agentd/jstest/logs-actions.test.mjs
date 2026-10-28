@@ -7,7 +7,7 @@ test('Logs actions preserve the API and reject overlapping stale responses', asy
   const [{ createLogsState }, { createLogsActions }] = await Promise.all([
     harness.importDashboardModule('js/logs-state.js'), harness.importDashboardModule('js/logs-actions.js'),
   ]);
-  const state = createLogsState({ activeTab: harness.signals.signal('activity'), activitySubtab: harness.signals.signal('logs') });
+  const state = createLogsState({ activeTab: harness.signals.signal('diagnostics'), activitySubtab: harness.signals.signal('logs') });
   state.setFilter('query', 'panic'); state.setFilter('includeRotated', true);
   const pending = [];
   const fetchImpl = (url, options) => new Promise((resolve) => pending.push({ url, options, resolve }));
@@ -27,7 +27,7 @@ test('Logs actions expose HTTP failures', async (t) => {
   const [{ createLogsState }, { createLogsActions }] = await Promise.all([
     harness.importDashboardModule('js/logs-state.js'), harness.importDashboardModule('js/logs-actions.js'),
   ]);
-  const state = createLogsState({ activeTab: harness.signals.signal('activity'), activitySubtab: harness.signals.signal('logs') });
+  const state = createLogsState({ activeTab: harness.signals.signal('diagnostics'), activitySubtab: harness.signals.signal('logs') });
   const actions = createLogsActions({ state, fetchImpl: async () => ({ ok: false, status: 503, text: async () => 'offline' }) });
   assert.equal(await actions.load(), false);
   assert.match(state.view.value.request.error, /offline/);

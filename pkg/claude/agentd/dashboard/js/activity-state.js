@@ -1,14 +1,15 @@
-// activity-state.js — the Activity tab's selected view.
+// activity-state.js — the Diagnostics tab's selected view (historically the
+// Activity tab; internal identifiers keep that name).
 //
-// Audit, Logs and Performance share one nav tab (/activity/<subtab>). Each
-// view's island does work only while dashboardState.activeTab is 'activity'
+// Audit, Logs and Performance share one nav tab (/diagnostics/<subtab>). Each
+// view's island does work only while dashboardState.activeTab is 'diagnostics'
 // AND activitySubtab names it. Dependency-free (bar Signals) so the island
 // state modules and the history router can import it cheaply; the DOM binding
 // lives in activity-tab.js.
 
 import { signal } from '@preact/signals';
 
-export const ACTIVITY_TAB = 'activity';
+export const ACTIVITY_TAB = 'diagnostics';
 export const ACTIVITY_SUBTABS = Object.freeze(['audit', 'logs', 'performance']);
 export const DEFAULT_ACTIVITY_SUBTAB = 'audit';
 

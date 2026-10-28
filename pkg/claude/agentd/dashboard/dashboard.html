@@ -307,7 +307,7 @@
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🛡</span> <span class="tab-title">Wards</span></span></a>
   <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕊</span> <span class="tab-title">Missives</span></span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
   <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Treasury</span></span></a>
-  <a data-tab="activity" href="/activity" title="Activity — the audit trail of daemon-proxied commands, tclaude's own daemon/CLI log, and dashboard poll performance"><span class="tab-label-regular">Activity</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
+  <a data-tab="diagnostics" href="/diagnostics" title="Diagnostics — the audit trail of daemon-proxied commands, tclaude's own daemon/CLI log, and dashboard poll performance"><span class="tab-label-regular">Diagnostics</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
   <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📜</span> <span class="tab-title">Almanac</span></span></a>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
@@ -514,14 +514,14 @@
   <section id="tab-map">
     <div id="fleetview-map-root"></div>
   </section>
-  <!-- Activity — Audit, Logs and Performance share one nav tab. The static
+  <!-- Diagnostics — Audit, Logs and Performance share one nav tab. The static
        sub-navigation is wired by activity-tab.js; each panel keeps its own
        bounded Preact island, which activates only while its subtab shows. -->
-  <section id="tab-activity">
-    <div class="access-subnav activity-subnav" role="tablist" aria-label="Activity views">
-      <a class="access-subtab activity-subtab active" data-subtab="audit" href="/activity/audit" role="tab" aria-selected="true" aria-controls="activity-audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">Deeds</span></a>
-      <a class="access-subtab activity-subtab" data-subtab="logs" href="/activity/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
-      <a class="access-subtab activity-subtab" data-subtab="performance" href="/activity/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — daemon CPU/heap profiling captures, plus dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
+  <section id="tab-diagnostics">
+    <div class="access-subnav activity-subnav" role="tablist" aria-label="Diagnostics views">
+      <a class="access-subtab activity-subtab active" data-subtab="audit" href="/diagnostics/audit" role="tab" aria-selected="true" aria-controls="activity-audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">Deeds</span></a>
+      <a class="access-subtab activity-subtab" data-subtab="logs" href="/diagnostics/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
+      <a class="access-subtab activity-subtab" data-subtab="performance" href="/diagnostics/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — daemon CPU/heap profiling captures, plus dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
     </div>
     <div class="activity-panel active" id="activity-audit" role="tabpanel" aria-label="Audit">
       <div id="audit-root"></div>

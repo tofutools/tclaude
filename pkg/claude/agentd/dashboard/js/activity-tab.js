@@ -1,4 +1,4 @@
-// activity-tab.js — the Activity tab's sub-navigation.
+// activity-tab.js — the Diagnostics tab's sub-navigation.
 //
 // The subnav anchors and the three panels (audit / logs / performance) are
 // static markup in dashboard.html; each panel hosts its own bounded Preact
@@ -11,11 +11,11 @@ import { isModifiedClick } from './helpers.js';
 import { peerViewSubtabUsable } from './peer-view-limits.js';
 
 // bindActivityTab wires the static subnav: a plain click selects the view and
-// tells the router (tclaude:navigated → /activity/<subtab>); a modified or
+// tells the router (tclaude:navigated → /diagnostics/<subtab>); a modified or
 // middle click is left to the browser so the href opens in a new tab. Space
 // activates like on the Access subnav (Enter already clicks an anchor).
 export function bindActivityTab({ doc = document, subtab = activitySubtab } = {}) {
-  const root = doc.getElementById('tab-activity');
+  const root = doc.getElementById('tab-diagnostics');
   if (!root) return () => {};
   const select = (name) => {
     // A peer view shares only its audit log; peer-view-limits greys the other

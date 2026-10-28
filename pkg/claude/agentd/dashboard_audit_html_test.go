@@ -20,7 +20,7 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 
 	// The Activity subtab + the panel activity-tab.js toggles (the shared
 	// Activity wiring is pinned by TestDashboardHTML_ActivityTabWired).
-	must(`data-subtab="audit" href="/activity/audit"`, "the Audit subtab")
+	must(`data-subtab="audit" href="/diagnostics/audit"`, "the Audit subtab")
 	must(`id="activity-audit"`, "the Audit panel")
 	must(`id="audit-root"`, "the stable Preact feature host")
 	must(`id="audit-list"`, "the Preact-owned table mount")
