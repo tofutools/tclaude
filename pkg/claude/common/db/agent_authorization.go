@@ -141,6 +141,9 @@ func retireAgentAuthorizationWithDeparture(convID, by, reason string, requireCur
 	if _, err := tx.Exec(`DELETE FROM agent_group_members WHERE agent_id = ?`, agentID); err != nil {
 		return out, fmt.Errorf("unjoin groups: %w", err)
 	}
+	if err := rebindSandboxResolutionGroup(tx, agentID, 0); err != nil {
+		return out, fmt.Errorf("unjoin groups: rebind sandbox group: %w", err)
+	}
 	res, err := tx.Exec(`UPDATE agent_cron_jobs
 		SET enabled = 0, disabled_reason = ?
 		WHERE owner_agent = ? AND (enabled <> 0 OR disabled_reason <> ?)`,

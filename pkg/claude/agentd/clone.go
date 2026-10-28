@@ -58,6 +58,12 @@ type cloneSpawnParams struct {
 	ManagedGroups []*db.AgentGroup
 	Arrival       bool
 	ArrivalGroup  string
+	// SandboxGroupID is a group the clone joins whose sandbox profile and
+	// environment it takes from its first launch, unless KeepSandbox /
+	// KeepEnvironment keep the source's (cloneSandboxForGroup). Zero keeps
+	// both.
+	SandboxGroupID               int64
+	KeepSandbox, KeepEnvironment bool
 	// SourceConv is the conversation being cloned; Cwd is where the clone runs.
 	SourceConv string
 	Cwd        string
@@ -293,11 +299,16 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 				sourceConv, effectiveSandbox, effectiveSandbox)
 		}
 	}
+	freshChain := refreshGeneratedProfile
+	if err == nil {
+		effectiveSandbox, freshChain, err = cloneSandboxForGroup(sourceConv, effectiveSandbox,
+			p.SandboxGroupID, p.KeepSandbox, p.KeepEnvironment, freshChain)
+	}
 	if err != nil {
 		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
 	}
 	if effectiveSandbox != nil {
-		if !refreshGeneratedProfile {
+		if !freshChain {
 			validated, err := ensureAgentDirectoriesForRelaunch(*effectiveSandbox)
 			if err != nil {
 				return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
@@ -449,7 +460,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	cloneHarness, _ := harness.Resolve(srcHarness)
 	launchEnroll := cloneSupportsArgvEnrollment(cloneHarness) && !spawnUsesLegacyInjection() && (p.FollowUp != "" || p.Arrival)
 	res := cloneSpawnResult{LaunchEnrolled: launchEnroll}
-	arrival := arrivalContext{Operation: "local clone", LocalClone: true, Reason: "inherited source cwd"}
+	arrival := arrivalContext{Operation: "local clone", LocalClone: true, Reason: "inherited source cwd", Sandbox: effectiveSandbox}
 	if p.Arrival {
 		arrival.Source.Harness = srcHarness
 		arrival.Source.Paths.Cwd = relaunch.Cwd
@@ -467,8 +478,16 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		if p.ArrivalGroup == "" {
 			if groups, err := db.ListGroupsForConv(sourceConv); err == nil {
 				var names []string
+				joined := false
 				for _, g := range groups {
 					names = append(names, g.Name)
+					joined = joined || g.ID == p.SandboxGroupID
+				}
+				// The clone also joins the group it was cloned into.
+				if !joined && p.SandboxGroupID != 0 {
+					if g, err := db.GetAgentGroupByID(p.SandboxGroupID); err == nil && g != nil {
+						names = append(names, g.Name)
+					}
 				}
 				p.ArrivalGroup = strings.Join(names, ", ")
 			}
@@ -1412,6 +1431,10 @@ type cloneBody struct {
 	// the same request — the dashboard's drag-to-group clone. Gated like
 	// adding a member to that group.
 	Group string `json:"group"`
+	// KeepSandbox / KeepEnvironment, with Group, keep the source's sandbox
+	// profile / group environment instead of taking Group's.
+	KeepSandbox     bool `json:"keep_sandbox"`
+	KeepEnvironment bool `json:"keep_environment"`
 	// CopyOwnership copies the source's group ownerships onto the clone.
 	// Off unless set: ownership is administrative authority over a group,
 	// and a clone should not multiply it by default.
@@ -1755,9 +1778,16 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	if extraGroup != nil {
 		managedGroups = append(managedGroups, extraGroup)
 	}
+	var sandboxGroupID int64
+	if extraGroup != nil {
+		sandboxGroupID = extraGroup.ID
+	}
 	spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
 		ManagedGroups:       managedGroups,
 		Arrival:             true,
+		SandboxGroupID:      sandboxGroupID,
+		KeepSandbox:         body.KeepSandbox,
+		KeepEnvironment:     body.KeepEnvironment,
 		SourceConv:          target,
 		Cwd:                 cwd,
 		NoCopyConv:          noCopyConv,
@@ -2006,6 +2036,7 @@ func inheritEffectiveSandboxSnapshotForGroup(sourceConv, targetConv string, reso
 	if resolutionGroupID != 0 {
 		rebound := *snapshot
 		rebound.ResolutionGroupID = resolutionGroupID
+		rebound.GroupBinding = nil // the source's move choices do not carry to a new membership
 		snapshot = &rebound
 	}
 	agentID, _, err := db.EnsureAgentForConv(targetConv, "clone")

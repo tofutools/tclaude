@@ -46,6 +46,7 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
   // With an action the returned promise resolves to the action's value; without
   // one it resolves true/false exactly as before, so every existing caller is
   // unaffected.
+  let confirmSeq = 0;
   function confirm(options = {}) {
     if (confirmationResolve) resolveConfirmation(false);
     return new Promise((resolve, reject) => {
@@ -53,6 +54,9 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
       confirmationReject = reject;
       confirmationAction = typeof options.action === 'function' ? options.action : null;
       confirmation.value = {
+        // seq identifies this dialog: toggling a checkbox replaces the model
+        // object, and must not re-run the open-time focus.
+        seq: ++confirmSeq,
         title: String(options.title || ''),
         body: String(options.body || ''),
         meta: String(options.meta || ''),
@@ -61,6 +65,10 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
         busyLabel: String(options.busyLabel || 'Working…'),
         informational: !!options.informational,
         preformatted: !!options.preformatted,
+        // checks are optional checkboxes ({label, checked, hint?}). The modal
+        // toggles each item's `checked` in place, so the caller reads its own
+        // objects once the confirm resolves.
+        checks: Array.isArray(options.checks) ? options.checks : [],
         busy: false,
       };
     });

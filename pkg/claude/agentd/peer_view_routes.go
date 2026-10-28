@@ -11,6 +11,10 @@ import (
 // guard test requires an explicit decision here, or in peerViewOwnNodeRoutes,
 // whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
+	// A one-step move between this node's groups, for an unrestricted peer.
+	// A restricted peer's fused view falls back to the member add and remove
+	// it is granted, which always applies the new group's defaults.
+	"POST /api/groups/{name}/members/{conv}/move",
 	"GET /api/node/update/jobs/{id}",
 	"POST /api/node/update",
 	"GET /api/node/update",
