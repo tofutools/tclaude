@@ -14,12 +14,16 @@ async function setup(t, { level = 'unrestricted', agents } = {}) {
   const page = { groups: [{ name: 'build', members: [{ conv_id: 'c_p', agent_id: 'agt_p' }] }, { name: 'ops', members: [] }] };
   const calls = []; const toasts = []; const clones = []; const retires = []; const announced = []; let renders = 0;
   t.after(nodeApi.onNodeChanged((node) => announced.push(node)));
-  const fetchImpl = async (url, init = {}) => { calls.push(`${init.method || 'GET'} ${url}`); return ok({}); };
+  const bodies = [];
+  const fetchImpl = async (url, init = {}) => { calls.push(`${init.method || 'GET'} ${url}`); bodies.push(init.body ? JSON.parse(init.body) : null); return ok({}); };
+  const confirms = [];
+  let answerConfirm = () => true;
   const dnd = ops.createDndOps({
-    confirm: async () => true, toast: (m, err) => toasts.push([m, !!err]), refresh: async () => {}, render: () => { renders += 1; },
+    confirm: async (options) => { confirms.push(options); return answerConfirm(options); }, toast: (m, err) => toasts.push([m, !!err]), refresh: async () => {}, render: () => { renders += 1; },
     getSnapshot: () => page, openClone: (...args) => clones.push(args), openRetire: async (...args) => { retires.push(args); return null; }, fetchImpl,
   });
-  return { harness, ops, dnd, calls, toasts, clones, retires, announced, page, forge, renders: () => renders };
+  return { harness, ops, dnd, calls, bodies, confirms, toasts, clones, retires, announced, page, forge, renders: () => renders,
+    onConfirm: (fn) => { answerConfirm = fn; } };
 }
 
 test("a drop on another node's group moves the agent there through that node", async (t) => {
@@ -32,12 +36,27 @@ test("a drop on another node's group moves the agent there through that node", a
   assert.deepEqual(announced, [FORGE], 'the fused view rereads forge');
 });
 
-test("a drop on the page's own groups moves as before, optimistically", async (t) => {
-  const { dnd, calls, page, renders } = await setup(t);
+test("a drop on the page's own groups moves in one call, optimistically", async (t) => {
+  const { dnd, calls, bodies, confirms, page, renders } = await setup(t);
   await dnd.move({ conv: 'c_p', agent: 'agt_p', sourceGroup: 'build', label: 'p' }, 'ops');
-  assert.deepEqual(calls, ['POST /api/groups/ops/members', 'DELETE /api/groups/build/members/agt_p']);
+  assert.deepEqual(calls, ['POST /api/groups/build/members/agt_p/move']);
+  assert.deepEqual(bodies, [{ to: 'ops', keep_sandbox: false, keep_environment: false }], 'new group defaults by default');
+  assert.deepEqual(confirms[0].checks.map((check) => check.key), ['sandbox', 'environment']);
   assert.deepEqual(page.groups[1].members.map((m) => m.conv_id), ['c_p']);
   assert.equal(renders(), 1);
+});
+
+test('unticking a move checkbox keeps that setting on the group left', async (t) => {
+  const { dnd, bodies, onConfirm } = await setup(t);
+  onConfirm((options) => { options.checks.find((check) => check.key === 'sandbox').checked = false; return true; });
+  await dnd.move({ conv: 'c_p', agent: 'agt_p', sourceGroup: 'build', label: 'p' }, 'ops');
+  assert.deepEqual(bodies, [{ to: 'ops', keep_sandbox: true, keep_environment: false }]);
+});
+
+test("a move on another node offers no checkboxes", async (t) => {
+  const { dnd, confirms } = await setup(t);
+  await dnd.move({ conv: 'c_a', agent: 'agt_a', sourceGroup: 'build@forge', label: 'a' }, 'ops@forge', dnd.context({ node: FORGE, name: 'forge' }));
+  assert.deepEqual(confirms[0].checks, []);
 });
 
 test('a Ctrl/Cmd drop opens the clone dialog on the agent\'s node, joining the group dropped on', async (t) => {

@@ -141,7 +141,7 @@ tclaude agent groups members myteam
 
 `create` can bootstrap members inline
 (`--member name=..,role=..,descr=..,cwd=..`). Beyond the roster verbs
-(`add`, `remove`, `update-member`, `rename`, `rm`), groups carry a family
+(`add`, `remove`, `move`, `update-member`, `rename`, `rm`), groups carry a family
 of settings verbs — `set-context`, `set-default-dir`,
 `set-default-profile`, `set-environment`, `set-descr`, `set-max-members`,
 `set-notifications`, `set-owner-scopes`, `set-remote-control` — plus
@@ -215,6 +215,27 @@ stop/resume, clone, or reincarnation; their already-running process is not
 modified in place. The group's web terminal also inherits these values when its
 persistent tmux session is first created; an existing terminal keeps its
 original environment.
+
+### Moving an agent between groups
+
+```bash
+tclaude agent groups move old-team <selector> new-team [--keep-sandbox] [--keep-environment]
+```
+
+Dragging a member onto another group's box in the dashboard does the same,
+with a checkbox for each setting. The agent keeps its role and description.
+The new group's permissions apply immediately. By default the agent also takes
+the new group's sandbox profile and environment, from its next resume or
+restart; the running process is not changed in place. `--keep-sandbox` and
+`--keep-environment` (or unticking the checkboxes) leave either setting on the
+group it left, still following that group's later edits, until that group is
+deleted. Per-agent permissions, an explicit sandbox profile, and per-agent
+environment overrides are kept either way. The agent receives a message
+describing the move.
+
+The move is gated like the remove and add it replaces:
+`groups.members.remove` on the source group and `groups.members.add` on the
+target.
 
 ### Default directory and auto-join
 

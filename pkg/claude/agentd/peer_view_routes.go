@@ -11,6 +11,9 @@ import (
 // guard test requires an explicit decision here, or in peerViewOwnNodeRoutes,
 // whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
+	// A move between this node's groups. A peer's fused view still moves
+	// with the member add and remove it is granted.
+	"POST /api/groups/{name}/members/{conv}/move",
 	"GET /api/node/update/jobs/{id}",
 	"POST /api/node/update",
 	"GET /api/node/update",

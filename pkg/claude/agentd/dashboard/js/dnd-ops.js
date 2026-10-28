@@ -175,13 +175,24 @@ export function createDndOps({
     // Confirm BEFORE the lastSnapshot read + optimistic splice below,
     // so a cancelled move leaves the snapshot — and the render —
     // completely untouched.
+    // On this node the move is one daemon call that can keep the agent's
+    // sandbox profile or environment on the group it leaves. Another node's
+    // move stays the add-then-remove pair its routes allow.
+    const checks = ctx.node ? [] : [
+      { key: 'sandbox', checked: true, label: `Apply "${targetGroup}"'s sandbox profile`,
+        hint: `Unticked keeps "${sourceGroup}"'s. Takes effect at the next resume or restart.` },
+      { key: 'environment', checked: true, label: `Apply "${targetGroup}"'s environment variables`,
+        hint: `Unticked keeps "${sourceGroup}"'s. Takes effect at the next resume or restart.` },
+    ];
     const confirmed = await confirm({
       title: 'Move agent to another group?',
       body: `Move "${label}" out of group "${sourceGroup}" and into group `
         + `"${targetGroup}". Its membership of "${sourceGroup}" is removed and a `
-        + `membership of "${targetGroup}" is added.`,
+        + `membership of "${targetGroup}" is added, with the same role. Group permissions `
+        + `change immediately; per-agent overrides are kept.`,
       meta: label,
       okLabel: 'Move',
+      checks,
     });
     if (!confirmed) { await ctx.done(); return; }
     // Every post-confirm exit — a guard-clause return, the partial-
@@ -229,6 +240,22 @@ export function createDndOps({
       }
 
       try {
+        if (!ctx.node) {
+          const keep = (key) => !checks.find((check) => check.key === key).checked;
+          const moveRes = await ctx.api(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(sel)}/move`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({to: targetGroup, keep_sandbox: keep('sandbox'), keep_environment: keep('environment')}),
+          });
+          if (!moveRes.ok) {
+            toast(`move failed: ${await moveRes.text()}`, true);
+            rollback();
+            return;
+          }
+          toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
+          landed(ctx, payload, targetGroup);
+          return;
+        }
         const addRes = await ctx.api(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
           method: 'POST', credentials: 'same-origin',
           headers: {'Content-Type': 'application/json'},
