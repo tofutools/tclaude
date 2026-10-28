@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -80,4 +81,19 @@ func TestHostOnlyCloneInstallsPublisherDiscovery(t *testing.T) {
 			require.NotEmpty(t, helper.Credential)
 		})
 	}
+}
+
+func TestHostOnlySpawnDoesNotEnableGroupConsumption(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("host-only-spawn")
+	require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID, []string{agentd.PermRoutesPublishHost}, "test"))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "host-only-private", NetworkAccess: sandboxpolicy.NetworkAccessNone})
+	require.NoError(t, err)
+	spawn := f.AsHuman().SpawnWith(group.Name, map[string]any{
+		"name": "host-only-worker", "harness": "claude", "sandbox_implementation": "tclaude-layer", "sandbox_profile": "host-only-private",
+	})
+	require.Equal(t, http.StatusOK, spawn.Code, spawn.Raw)
+	helper, ok := f.World.SpawnRouteHelper(spawn.ConvID)
+	require.True(t, ok, "host-only spawn should install its publisher helper")
+	require.Equal(t, []int64{0}, helper.GroupIDs, "plain group membership must not install group consumer authority")
 }

@@ -47,6 +47,14 @@ func TestHostPublicationLifecycleWithoutGroup(t *testing.T) {
 	replacement, err = GetAgentRoute(replacement.ID)
 	require.NoError(t, err)
 	require.Equal(t, RouteStateWithdrawn, replacement.State)
+	stale, err := CreateHostAgentRoute(agentID, "host-only-db", "stale-launch", "stale-ui", "tcp", "tcp://127.0.0.1:8080")
+	require.NoError(t, err)
+	current, err := CreateHostAgentRoute(agentID, "host-only-db", "current-launch", "stale-ui", "tcp", "tcp://127.0.0.1:8081")
+	require.NoError(t, err)
+	require.NotEqual(t, stale.ID, current.ID)
+	_, err = CreateHostAgentRoute(agentID, "host-only-db", "current-launch", "stale-ui", "tcp", "tcp://127.0.0.1:8082")
+	require.Error(t, err)
+
 	var violations int
 	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations))
 	require.Zero(t, violations)

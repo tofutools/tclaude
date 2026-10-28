@@ -615,6 +615,10 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		if !hostPublishAllowed(convID) {
+			writeRouteError(w, 403, "route_permission", "host publication requires a live routes.publish-host grant; one-shot approvals cannot create persistent publications")
+			return
+		}
 		if _, ok = requirePermission(w, r, PermRoutesPublishHost); !ok {
 			return
 		}

@@ -32,9 +32,9 @@ function friendlyEndpoint(name, boundary) {
 // Group names reject slashes; this local view key cannot collide.
 const HOST_ONLY_GROUP = 'host-only/';
 function routeGroups(snapshot) {
- const groups=(snapshot?.groups || []).filter((group)=>!group.virtual);
- return (snapshot?.route_map?.routes || []).some((route)=>route.host_only)
-  ? [...groups,{name:HOST_ONLY_GROUP,label:'Host only',members:[]}] : groups;
+  const groups = (snapshot?.groups || []).filter((group) => !group.virtual);
+  return (snapshot?.route_map?.routes || []).some((route) => route.host_only)
+    ? [...groups, { name: HOST_ONLY_GROUP, label: 'Host only', members: [] }] : groups;
 }
 
 function routesForGroup(routeMap, groupName) {

@@ -68,12 +68,14 @@ provided by `routes.publish`. Grant it to the agent (or through a profile, defau
 using the normal permission controls. It does not grant group publication or consumption. No group
 membership or group-level route opt-in is required for a directly granted host-only publisher.
 
-Grant the permission before launching, or relaunch after adding it. Host publishing uses the same
-pane-authoritative tclaude sandbox launch and publisher helper as group routes. On Linux, the helper
+Grant the permission before launching; if the current launch has no route helper, relaunch after adding it.
+Host publishing uses the same pane-authoritative tclaude sandbox launch and publisher helper as group routes. On Linux, the helper
 is provisioned from the agent's effective host-publishing permission; on macOS, the launch also
 reserves its normal bounded Darwin route slots. Holding the permission does not prevent other launch
 shapes from starting, but publication refuses a launch without a current route contract. Seed-based
 harnesses such as Codex may need their initial launch followed by a resume to install that contract.
+On macOS, clones may also need a resume before their first host publication. A live grant is required
+for the publication lifetime; one-shot approvals do not create persistent host publications.
 
 Host-only routes appear under **Host only** in the operator's Route map, including when there are no
 groups; select one
@@ -95,7 +97,8 @@ keeps dashboard cookies out of the preview request. Raw `127.0.0.1:<port>` endpo
 available for curl and other host tools. **Open on host** creates an HTTP preview: agentd rewrites the
 HTTP Host header to the published target (for example, `127.0.0.1:8080`), so browser access works
 with applications that validate that address. The preview accepts only its displayed hostname,
-`localhost`, or `127.0.0.1`, at the preview port; arbitrary Host headers are refused. WebSocket upgrades and streaming responses are supported.
+`localhost`, or `127.0.0.1`, at the preview port; arbitrary Host headers are refused. WebSocket upgrades
+and streaming responses are supported.
 **Open TCP endpoint** creates an opaque TCP lease for other protocols, including HTTPS. Existing leases
 keep their original mode; close and reopen a lease to switch modes.
 

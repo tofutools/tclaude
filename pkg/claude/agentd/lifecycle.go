@@ -7586,6 +7586,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// before the pane starts (for example Codex's seed-based conv-id), refuse
 	// the route-enabled launch instead of producing an agent whose advertised
 	// routes can never attach.
+	groupRoutesEnabled := routeEnabled
 	hostRoutesEnabled := preConvID != "" && layeredLaunch && launchEnroll && hostPublishAllowed(preConvID) && hostRouteHelperEligible(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
 	if hostRoutesEnabled {
 		routeEnabled = true
@@ -7618,7 +7619,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		spawnArgs.RouteHelperConvID = preConvID
 		spawnArgs.RouteHelperLaunchGeneration = routeGeneration
 		spawnArgs.RouteHelperCredential = routeCredential
-		if g != nil {
+		if g != nil && groupRoutesEnabled {
 			spawnArgs.RouteHelperGroupIDs = []int64{g.ID}
 		}
 		if hostRoutesEnabled {
@@ -10808,6 +10809,11 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 // helper and is refused when its group has opted into routes.
 func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 	if (runtime.GOOS != "linux" && runtime.GOOS != "darwin") || a == nil || strings.TrimSpace(a.ConvID) == "" {
+		return nil
+	}
+	// A clone may already have staged the exact destination-group contract.
+	// Recomputing before its post-spawn memberships land would discard that plan.
+	if a.RouteHelperCredential != "" {
 		return nil
 	}
 	hostRoutesEnabled := hostPublishAllowed(a.ConvID) && hostRouteHelperEligible(a.Harness, a.SandboxImplementation, a.EffectiveSandbox)

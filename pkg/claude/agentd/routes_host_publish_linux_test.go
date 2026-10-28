@@ -48,6 +48,13 @@ func TestHostOnlyPublicationWithoutGroup(t *testing.T) {
 	require.NoError(t, prepareRouteHelperResumeArgs(&args))
 	require.Equal(t, []int64{0}, args.RouteHelperGroupIDs)
 	require.NotEmpty(t, args.RouteHelperCredential)
+	stagedCredential := args.RouteHelperCredential
+	args.RouteHelperGroupIDs = []int64{42, 0}
+	require.NoError(t, prepareRouteHelperResumeArgs(&args))
+	require.Equal(t, stagedCredential, args.RouteHelperCredential)
+	require.Equal(t, []int64{42, 0}, args.RouteHelperGroupIDs)
+	args.RouteHelperGroupIDs = []int64{0}
+
 	body = strings.Replace(body, `"name":"web"`, `"name":"web","launch_generation":"`+args.RouteHelperLaunchGeneration+`"`, 1)
 	defer revokeRouteHelperCredentials(args.ConvID, "")
 	require.Equal(t, http.StatusBadRequest, request("POST", "/v1/routes/publish", args.ConvID, `{"host":true,"group":"team"}`).Code)

@@ -37,9 +37,17 @@ func CreateHostAgentRoute(agentID, convID, generation, name, transport, target s
 	if current != convID {
 		return nil, errors.New("publisher conversation is no longer current")
 	}
-	// A completed publication must not permanently reserve its name across
-	// publisher relaunches. Keep active-name conflicts explicit.
-	if _, err := tx.Exec(`DELETE FROM agent_host_routes WHERE publisher_agent_id=? AND name=? AND state != ?`, agentID, name, RouteStateReady); err != nil {
+	// A completed or stale-launch publication must not reserve its name
+	// forever when an exit notification was missed. Active same-launch names
+	// still conflict. The caller validates the new launch contract before entry.
+	if _, err := tx.Exec(`INSERT INTO agent_route_audit(at,action,result,group_id,route_id,actor_agent_id,actor_conv_id,detail)
+ SELECT ?, 'publisher-lost','ok',NULL,id,publisher_agent_id,publisher_conv_id,'replaced by current launch'
+ FROM agent_host_routes WHERE publisher_agent_id=? AND name=? AND state='ready'
+ AND (publisher_launch_generation!=? OR publisher_conv_id!=?)`, dbTime(time.Now()), agentID, name, generation, convID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_host_routes WHERE publisher_agent_id=? AND name=?
+ AND (state != ? OR publisher_launch_generation!=? OR publisher_conv_id!=?)`, agentID, name, RouteStateReady, generation, convID); err != nil {
 		return nil, err
 	}
 	id := hostRouteIDPrefix + strings.TrimPrefix(newRouteID(), "rte_")
