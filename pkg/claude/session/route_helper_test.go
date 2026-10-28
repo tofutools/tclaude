@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -136,6 +137,37 @@ func TestRouteHelperRenderCarriesOnlyPreservedFDIntoSandbox(t *testing.T) {
 			t.Fatalf("route helper render missing %q: %s", want, rendered)
 		}
 	}
+	if strings.Count(rendered, "--preserve-fds") != 1 {
+		t.Fatalf("descriptor preservation belongs only to the tclaude relay, not bubblewrap: %s", rendered)
+	}
+	t.Run("installed bubblewrap accepts the rendered options", func(t *testing.T) {
+		bwrapBinary, err := exec.LookPath("bwrap")
+		if err != nil {
+			t.Skip("bubblewrap is not installed")
+		}
+		command, err := WrapTclaudeLayerSpec(bwrapBinary, spec, "exec harness")
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := strings.Index(command, clcommon.ShellQuoteArg(bwrapBinary)+" ")
+		if start < 0 {
+			t.Fatal("rendered command has no bubblewrap invocation")
+		}
+		options := command[start:]
+		end := strings.Index(options, sandboxExecShellPrefix())
+		if end < 0 {
+			t.Fatal("rendered command has no sandbox shell separator")
+		}
+		// Parse all options before --help. The help action exits before
+		// namespace creation, so this also runs inside a restricted sandbox.
+		output, err := exec.Command("/bin/sh", "-c", options[:end]+" --help").CombinedOutput()
+		if err != nil {
+			t.Fatalf("bubblewrap rejected rendered launch options: %v\n%s", err, output)
+		}
+		if !strings.Contains(string(output), "usage:") {
+			t.Fatalf("expected bubblewrap help, got %s", output)
+		}
+	})
 	if strings.Contains(rendered, "--credential-fifo") || strings.Contains(rendered, "--credential-path") {
 		t.Fatalf("route helper render retained pathname credential contract: %s", rendered)
 	}

@@ -49,6 +49,8 @@ agent grant authorizes route operations but does not enable the group's launch
 contract. Relaunch the publisher after enabling the group policy so its sandbox
 gets a namespace-local route helper. Start the service again in that new launch
 before publishing its port. Host-only consumption needs no `routes.consume` grant.
+A group grant applies to all members. Route-enabled groups also require all
+members to be offline before changing group membership.
 
 ## Open a published route on the host
 
