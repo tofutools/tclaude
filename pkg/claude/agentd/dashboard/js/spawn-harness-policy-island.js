@@ -141,17 +141,17 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
     title: descriptor.group
       ? `Cross-realm summons · party ${descriptor.group}`
       : 'Global cross-realm summons',
-    intro: 'Governs familiar-initiated summons after patterns and defaults reveal the destination realm. Archmage-cast and same-realm summons are unaffected.',
+    intro: 'Governs hero-initiated summons after loadouts and defaults reveal the destination realm. Archmage-cast and same-realm summons are unaffected.',
     scope: groupScope
       ? 'Inherit follows the global ward for that passage.'
       : 'Unmarked passages are permitted by default.',
     loading: 'Consulting the realm wards…',
-    axes: 'Summoner realm ↓ / familiar realm →',
+    axes: 'Summoner realm ↓ / hero realm →',
     same: 'always permitted',
     inherit: 'inherit global ward',
     allow: 'permit',
     deny: 'forbid',
-    reason: 'Reason revealed to the summoning familiar',
+    reason: 'Reason revealed to the summoning hero',
     effective: 'Global ward',
     cancel: 'Dismiss',
     save: 'Inscribe wards',
@@ -195,7 +195,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
     const missing = rules.find((rule) => rule.decision === 'deny' && !rule.reason);
     if (missing) {
       setError(wizard
-        ? `Inscribe a reason for ${missing.source} → ${missing.target}; the summoning familiar receives it when forbidden.`
+        ? `Inscribe a reason for ${missing.source} → ${missing.target}; the summoning hero receives it when forbidden.`
         : `Add a reason for ${missing.source} → ${missing.target}; agents receive this text when denied.`);
       return;
     }

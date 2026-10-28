@@ -211,32 +211,32 @@ export function buildCommands(snapshot) {
 
   // 1) Global window ops — "hide all windows" (and its inverse), plus
   //    the modal for picking an arbitrary subset. In 🧙 mode a terminal
-  //    window is a familiar's "scrying portal", so hide → Veil, focus →
+  //    window is a hero's "scrying portal", so hide → Veil, focus →
   //    Reveal (arcane presented label; the plain keywords stay searchable).
   cmds.push({
-    peerView: 'own', icon: wiz('⏏', '🌫'), label: wiz('Hide all windows', 'Veil all familiars'),
+    peerView: 'own', icon: wiz('⏏', '🌫'), label: wiz('Hide all windows', 'Veil all heroes'),
     hint: wiz('detach every agent terminal window (agents keep running)',
-      "draw the veil over every familiar's scrying portal (they keep channeling)"),
+      "draw the veil over every hero's scrying portal (they keep channeling)"),
     keywords: 'hide unfocus all windows declutter detach panic minimize'
-      + ' veil conceal cloak shroud portal scrying vision familiars',
+      + ' veil conceal cloak shroud portal scrying vision heroes',
     run: () => bulkWindowOp({ direction: 'unfocus', scope: 'all' },
       'hide all windows', { webTerminal: preferWebTerminal, targets: allWebWindowTargets }),
   });
   cmds.push({
-    peerView: 'own', icon: wiz('◎', '👁'), label: wiz('Focus all windows', 'Reveal all familiars'),
+    peerView: 'own', icon: wiz('◎', '👁'), label: wiz('Focus all windows', 'Reveal all heroes'),
     hint: wiz('raise / open a terminal window for every running agent',
-      'conjure a scrying portal for every channeling familiar'),
+      'conjure a scrying portal for every channeling hero'),
     keywords: 'show all windows raise focus bring up'
-      + ' reveal behold conjure portal scrying vision familiars',
+      + ' reveal behold conjure portal scrying vision heroes',
     run: () => bulkWindowOp({ direction: 'focus', scope: 'all' },
       'focus all windows', { webTerminal: preferWebTerminal, targets: allWebWindowTargets }),
   });
   cmds.push({
-    peerView: 'own', icon: wiz('▦', '👁'), label: wiz('Pick windows to focus / hide…', 'Choose familiars to reveal / veil…'),
+    peerView: 'own', icon: wiz('▦', '👁'), label: wiz('Pick windows to focus / hide…', 'Choose heroes to reveal / veil…'),
     hint: wiz('open the window modal to choose a subset',
       'open the scrying circle to choose which portals to reveal or veil'),
     keywords: 'windows subset choose select modal some'
-      + ' reveal veil portals scrying familiars',
+      + ' reveal veil portals scrying heroes',
     run: () => openWindowModal('all', null),
   });
 
@@ -264,33 +264,33 @@ export function buildCommands(snapshot) {
   if (onlineAll) {
     const plural = onlineAll === 1 ? '' : 's';
     cmds.push({
-      peerView: 'operator', what: 'announcing to every live agent', icon: wiz('📣', '📯'), label: wiz('Announce to all live agents…', 'Proclaim to all channeling familiars…'),
+      peerView: 'operator', what: 'announcing to every live agent', icon: wiz('📣', '📯'), label: wiz('Announce to all live agents…', 'Proclaim to all channeling heroes…'),
       hint: wiz(`send one human-authored message to ${onlineAll} currently live agent${plural}`,
-        `sound one human proclamation to ${onlineAll} channeling familiar${plural}`),
+        `sound one human proclamation to ${onlineAll} channeling hero${plural}`),
       keywords: 'announce broadcast message notify all live online agents global everyone'
-        + ' proclaim herald trumpet channeling familiars',
+        + ' proclaim herald trumpet channeling heroes',
       run: () => openOperatorMessageDialog({
         allLive: true,
         label: `all live agents (currently ${onlineAll})`,
       }),
     });
     cmds.push({
-      icon: wiz('⏻', '🌙'), label: wiz('Shut down all agents', 'Slumber all familiars'),
+      icon: wiz('⏻', '🌙'), label: wiz('Shut down all agents', 'Slumber all heroes'),
       hint: wiz(`stop ${onlineAll} running agent${plural} (resumable; no data deleted)`,
-        `lull ${onlineAll} channeling familiar${plural} into slumber (rousable; nothing is lost)`),
+        `lull ${onlineAll} channeling hero${plural} into slumber (rousable; nothing is lost)`),
       keywords: 'shutdown shut down stop kill power off halt all agents global everything batch'
-        + ' slumber sleep rest lull dormant quell still familiars',
+        + ' slumber sleep rest lull dormant quell still heroes',
       run: () => shutdownScope('all', null),
     });
   }
   if (offlineAll) {
     const plural = offlineAll === 1 ? '' : 's';
     cmds.push({
-      icon: wiz('⏼', '✨'), label: wiz('Power on all agents', 'Awaken all familiars'),
+      icon: wiz('⏼', '✨'), label: wiz('Power on all agents', 'Awaken all heroes'),
       hint: wiz(`resume ${offlineAll} offline agent${plural} onto their conversations`,
-        `rouse ${offlineAll} slumbering familiar${plural} back onto their scrolls`),
+        `rouse ${offlineAll} slumbering hero${plural} back onto their scrolls`),
       keywords: 'power on start resume wake boot up all agents global everything batch'
-        + ' awaken rouse stir revive kindle familiars',
+        + ' awaken rouse stir revive kindle heroes',
       run: () => powerOnScope('all', null),
     });
   }
@@ -362,24 +362,24 @@ export function buildCommands(snapshot) {
   cmds.push({
     icon: wiz('⤒', '📜'), label: wiz('Import an agent or group…', 'Unseal a party archive…'),
     hint: wiz('preview and import an agent .paf, or recreate an exported group with its agents, permissions, messages, and conversations',
-      'unseal an exported party archive with its familiars, wards, missives, and scrolls'),
+      'unseal an exported party archive with its heroes, wards, missives, and scrolls'),
     keywords: 'import group agent paf archive zip restore recreate upload'
-      + ' unseal party archive familiar wards missives scrolls',
+      + ' unseal party archive hero wards missives scrolls',
     run: () => openGroupImport(),
   });
   cmds.push({
-    peerView: 'operator', what: 'its snapshot library', icon: '📸', label: wiz('Snapshots…', 'Captured familiars…'),
+    peerView: 'operator', what: 'its snapshot library', icon: '📸', label: wiz('Snapshots…', 'Captured heroes…'),
     hint: wiz("this node's agent snapshot library: take, spawn from, share or publish snapshots",
-      'the library of captured familiars: capture, summon from, share or publish them'),
+      'the library of captured heroes: capture, summon from, share or publish them'),
     keywords: 'snapshot snapshots library paf fork spawn share board publish resilience capture',
     run: () => openSnapshots(),
   });
   cmds.push({
-    icon: '🧹', label: wiz('Clean up agents and conversations…', 'Tidy familiars and scrolls…'),
+    icon: '🧹', label: wiz('Clean up agents and conversations…', 'Tidy heroes and scrolls…'),
     hint: wiz('open the all-categories cleanup tool to unjoin, retire, delete, or reinstate',
       'open the tower-wide tidying tool to release, banish, dispel, or restore'),
     keywords: 'clean up agents and conversations cleanup all categories unjoin retire delete reinstate'
-      + ' tidy familiars and scrolls release banish dispel restore',
+      + ' tidy heroes and scrolls release banish dispel restore',
     run: () => openCleanupModal({ mode: 'agents' }),
   });
 
@@ -398,11 +398,11 @@ export function buildCommands(snapshot) {
   if (retiredCount) {
     const plural = retiredCount === 1 ? '' : 's';
     cmds.push({
-      icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished familiars…'),
+      icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished heroes…'),
       hint: wiz(`preview + permanently delete any of ${retiredCount} retired agent${plural} (cannot be undone)`,
-        `preview + forever dispel any of ${retiredCount} banished familiar${plural} (cannot be undone)`),
+        `preview + forever dispel any of ${retiredCount} banished hero${plural} (cannot be undone)`),
       keywords: 'delete purge retired cleanup remove wipe agents'
-        + ' dispel banished obliterate destroy erase vanquish incinerate familiars',
+        + ' dispel banished obliterate destroy erase vanquish incinerate heroes',
       run: () => openDeleteRetiredPreview(),
     });
   }
@@ -417,16 +417,16 @@ export function buildCommands(snapshot) {
   //     /api/cleanup/agents {mode:"retire"}. ♻ marks it a (reinstatable)
   //     retire, distinct from the 🗑 delete-retired above it. Gated on ≥1
   //     ungrouped agent so the palette never offers a no-op. In 🧙 mode
-  //     these loose agents are "unbound familiars" and retire → banish.
+  //     these loose agents are "unbound heroes" and retire → banish.
   const ungroupedCount = new Set((snap.ungrouped || []).map(a => a.conv_id).filter(Boolean)).size;
   if (ungroupedCount) {
     const plural = ungroupedCount === 1 ? '' : 's';
     cmds.push({
-      icon: wiz('♻', '🪄'), label: wiz('Retire ungrouped agents…', 'Banish unbound familiars…'),
+      icon: wiz('♻', '🪄'), label: wiz('Retire ungrouped agents…', 'Banish unbound heroes…'),
       hint: wiz(`preview + demote ${ungroupedCount} agent${plural} that are in no group to plain conversations`,
-        `preview + banish ${ungroupedCount} unbound familiar${plural} back to plain scrolls`),
+        `preview + banish ${ungroupedCount} unbound hero${plural} back to plain scrolls`),
       keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents'
-        + ' banish exile dismiss unbound loose unattached familiars',
+        + ' banish exile dismiss unbound loose unattached heroes',
       run: () => openRetireUngroupedPreview(),
     });
   }
@@ -440,13 +440,13 @@ export function buildCommands(snapshot) {
   const lastGroup = lastInteractedGroup();
   const lastGroupLive = groups.some(g => g.name === lastGroup);
   cmds.push({
-    peerView: 'spawn', icon: wiz('＋', '🔮'), label: wiz('Spawn agent…', 'Summon a familiar…'),
+    peerView: 'spawn', icon: wiz('＋', '🔮'), label: wiz('Spawn agent…', 'Summon a hero…'),
     hint: lastGroupLive
       ? wiz(`open the spawn dialog (defaults to ${lastGroup} — last used)`,
         `open the summoning circle (defaults to ${lastGroup} — last used)`)
       : wiz('open the spawn dialog', 'open the summoning circle'),
     keywords: 'new agent create spawn launch start'
-      + ' summon conjure invoke call forth familiar'
+      + ' summon conjure invoke call forth hero'
       + (lastGroupLive ? ' ' + lastGroup : ''),
     run: () => openAgentSpawnModal(lastGroupLive ? { defaultGroup: lastGroup } : {}),
   });
@@ -460,16 +460,16 @@ export function buildCommands(snapshot) {
   //     listed to view / edit / delete / add. Reuses the very overlay the
   //     Groups cog's "⧉ profiles…" entry opens (openProfilesManageModal); the
   //     palette just adds a keyboard entry point, owning no state of its own.
-  //     In 🧙 mode the whole profiles vocabulary re-letters to "patterns"
-  //     (a saved spawn recipe is a "familiar pattern"), so it presents as
-  //     "Manage familiar patterns…"; the plain words stay searchable in the
+  //     In 🧙 mode the whole profiles vocabulary re-letters to "loadouts"
+  //     (a saved spawn recipe is a "loadout"), so it presents as
+  //     "Manage loadouts…"; the plain words stay searchable in the
   //     keywords.
   cmds.push({
-    icon: wiz('⧉', '📜'), label: wiz('Manage spawn profiles…', 'Manage familiar patterns…'),
+    icon: wiz('⧉', '📜'), label: wiz('Manage spawn profiles…', 'Manage loadouts…'),
     hint: wiz('open the spawn-profiles manager — view, edit, or add reusable spawn recipes',
-      'open the familiar-pattern grimoire — inscribe, revise, or weave summoning recipes'),
+      'open the loadout grimoire — inscribe, revise, or weave summoning recipes'),
     keywords: 'spawn profiles profile edit manage recipe recipes bundle preset presets defaults'
-      + ' familiar patterns pattern weave inscribe grimoire loom blueprint',
+      + ' loadouts loadout gear weave inscribe grimoire loom blueprint',
     run: () => openProfilesManageModal(),
   });
   // 2c) Manage group templates — reusable team blueprints, called summoning
@@ -490,7 +490,7 @@ export function buildCommands(snapshot) {
   cmds.push({
     icon: wiz('⧉', '🎭'), label: wiz('Manage role library…', 'Manage class library…'),
     hint: wiz('open the role library — view, edit, or add reusable agent-role defaults',
-      'open the class library — inscribe, revise, or add familiar classes'),
+      'open the class library — inscribe, revise, or add hero classes'),
     keywords: 'roles role library edit manage brief defaults permission permissions class library classes'
       + ' reviewer tester lead dev designer po party',
     run: () => openRolesManageModal(),
@@ -507,7 +507,7 @@ export function buildCommands(snapshot) {
   cmds.push({
     icon: '💰', label: wiz('Manage usage limits & budgets…', 'Manage coffer wards & tithes…'),
     hint: wiz('spend caps, quota guards, per-agent usage profiles and their alerts',
-      'caps on the coffers, mana guards and per-familiar tithes'),
+      'caps on the coffers, mana guards and per-hero tithes'),
     keywords: 'usage limits budgets budget spend cap alert alerts cost costs quota profile profiles wrap up hard stop block spawn',
     run: () => openUsageRulesManager(),
   });
@@ -522,9 +522,9 @@ export function buildCommands(snapshot) {
   cmds.push({
     icon: '⇄', label: wiz('Manage cross-harness spawns…', 'Manage cross-realm summons…'),
     hint: wiz('edit the global source-to-target harness spawn policy',
-      'inscribe which source realms may summon familiars into other realms'),
+      'inscribe which source realms may summon heroes into other realms'),
     keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation'
-      + ' cross-realm summons realm realms summon wards familiar',
+      + ' cross-realm summons realm realms summon wards hero',
     run: () => openSpawnHarnessPolicy(),
   });
   cmds.push({
@@ -541,19 +541,19 @@ export function buildCommands(snapshot) {
   // the per-group cog's "message" / "missive" item.
   for (const g of groups) {
     cmds.push({
-      peerView: 'spawn', icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`),
+      peerView: 'spawn', icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a hero into ${g.name}…`),
       hint: wiz('open the spawn dialog pinned to this group',
         'open the summoning circle bound to this party'),
       keywords: 'new agent create spawn launch start group ' + g.name
-        + ' summon conjure invoke familiar party',
+        + ' summon conjure invoke hero party',
       run: () => { recordGroupInteraction(g.name); openAgentSpawnModal({ groupName: g.name }); },
     });
     cmds.push({
       peerView: 'messaging', icon: wiz('✉', '✒'), label: wiz(`Message group: ${g.name}…`, `Send missive to party: ${g.name}…`),
       hint: wiz('compose a one-shot message to the whole group or a chosen subset',
-        'inscribe a missive for every familiar in this party or a chosen circle'),
+        'inscribe a missive for every hero in this party or a chosen circle'),
       keywords: 'message send compose notify group broadcast multicast all members agents ' + g.name
-        + ' missive inscribe party familiars circle',
+        + ' missive inscribe party heroes circle',
       run: () => {
         recordGroupInteraction(g.name);
         openMessageCreateModal({ targetMode: 'group', groupName: g.name });
@@ -616,7 +616,7 @@ export function buildCommands(snapshot) {
   cmds.push({
     peerView: 'view', icon: wiz('◨', '📖'), label: wiz('Show right panel', 'Unfurl the grimoire'),
     hint: wiz('reveal the right-side dock of profiles, templates & roles',
-      'unfurl the grimoire of patterns, circles & classes'),
+      'unfurl the grimoire of loadouts, circles & classes'),
     keywords: 'show open reveal expand right panel dock sidebar drawer palette rail'
       + ' profiles templates roles'
       + ' unfurl reveal grimoire tome scroll',
@@ -625,7 +625,7 @@ export function buildCommands(snapshot) {
   cmds.push({
     peerView: 'view', icon: wiz('▭', '📕'), label: wiz('Hide right panel', 'Furl the grimoire'),
     hint: wiz('collapse the right-side dock of profiles, templates & roles',
-      'roll up the grimoire of patterns, circles & classes'),
+      'roll up the grimoire of loadouts, circles & classes'),
     keywords: 'hide close collapse fold right panel dock sidebar drawer palette rail'
       + ' profiles templates roles'
       + ' furl conceal grimoire tome scroll',
@@ -673,9 +673,9 @@ export function buildCommands(snapshot) {
   // The Groups Both | Agents | Processes focus switch (features.processes only).
   if (processesTab && !document.body.classList.contains('hide-processes') && featureState('groups')?.setFocus) {
     for (const [focus, plain, arcane, words] of [
-      ['both', 'Both', 'Whole party', 'both fused combined agents processes familiars rites'],
+      ['both', 'Both', 'Whole party', 'both fused combined agents processes heroes rites'],
       ['processes', 'Processes', 'Rites', 'processes process runs graphs rites'],
-      ['agents', 'Agents', 'Familiars', 'agents members tables familiars'],
+      ['agents', 'Agents', 'Heroes', 'agents members tables heroes'],
     ]) {
       cmds.push({
         peerView: 'view', icon: wiz('◈', '🔮'), label: wiz(`Groups › ${plain} focus`, `Party lens: ${arcane}`),
@@ -835,9 +835,9 @@ export function buildCommands(snapshot) {
         groupGrant: { act: 'shutdown-group', group: g.name },
         icon: wiz('⏻', '🌙'), label: wiz(`Shut down group: ${g.name}`, `Slumber party: ${g.name}`),
         hint: wiz(`stop ${onlineG} running agent${plural} (resumable; no data deleted)`,
-          `lull ${onlineG} channeling familiar${plural} into slumber (rousable; nothing is lost)`),
+          `lull ${onlineG} channeling hero${plural} into slumber (rousable; nothing is lost)`),
         keywords: 'shutdown shut down stop kill power off halt group batch ' + g.name
-          + ' slumber sleep rest lull dormant party familiars',
+          + ' slumber sleep rest lull dormant party heroes',
         run: () => { recordGroupInteraction(g.name); shutdownScope('group', g.name); },
       });
     }
@@ -848,9 +848,9 @@ export function buildCommands(snapshot) {
         groupGrant: { act: 'power-on-group', group: g.name },
         icon: wiz('⏼', '✨'), label: wiz(`Power on group: ${g.name}`, `Awaken party: ${g.name}`),
         hint: wiz(`resume ${offlineG} offline agent${plural} onto their conversations`,
-          `rouse ${offlineG} slumbering familiar${plural} back onto their scrolls`),
+          `rouse ${offlineG} slumbering hero${plural} back onto their scrolls`),
         keywords: 'power on start resume wake boot up group batch ' + g.name
-          + ' awaken rouse stir revive kindle party familiars',
+          + ' awaken rouse stir revive kindle party heroes',
         run: () => { recordGroupInteraction(g.name); powerOnScope('group', g.name); },
       });
     }
@@ -871,10 +871,10 @@ export function buildCommands(snapshot) {
       const name = pageNodeName(page);
       cmds.push({
         id: `agent-focus:${sel}`,
-        node: page.id, icon: wiz('◎', '👁'), label: wiz(`Open terminal: ${label}`, `Reveal familiar: ${label}`),
-        hint: wiz(`open this agent's terminal on ${name} here`, `conjure this familiar's scrying portal from ${name}`),
+        node: page.id, icon: wiz('◎', '👁'), label: wiz(`Open terminal: ${label}`, `Reveal hero: ${label}`),
+        hint: wiz(`open this agent's terminal on ${name} here`, `conjure this hero's scrying portal from ${name}`),
         keywords: 'focus show jump open terminal window agent ' + label + ' ' + (a.conv_id || '')
-          + ' reveal behold conjure portal scrying familiar',
+          + ' reveal behold conjure portal scrying hero',
         run: () => void openRemote('openRemoteTerminal', { instance: page.id, agent: a.agent_id, peerLabel: name, label }),
       });
       continue;
@@ -882,19 +882,19 @@ export function buildCommands(snapshot) {
     cmds.push({
       id: `agent-focus:${sel}`,
       peerView: 'own',
-      icon: wiz('◎', '👁'), label: wiz(`Focus window: ${label}`, `Reveal familiar: ${label}`),
-      hint: wiz("raise / open this agent's terminal", "conjure this familiar's scrying portal"),
+      icon: wiz('◎', '👁'), label: wiz(`Focus window: ${label}`, `Reveal hero: ${label}`),
+      hint: wiz("raise / open this agent's terminal", "conjure this hero's scrying portal"),
       keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || '')
-        + ' reveal behold conjure portal scrying familiar',
+        + ' reveal behold conjure portal scrying hero',
       run: () => jumpAgent(sel, label, snap.default_terminal === 'web', a.state?.harness || '', toast),
     });
     cmds.push({
       id: `agent-hide:${sel}`,
       peerView: 'own',
-      icon: wiz('⏏', '🌫'), label: wiz(`Hide window: ${label}`, `Veil familiar: ${label}`),
-      hint: wiz("detach this agent's terminal", "draw the veil over this familiar's scrying portal"),
+      icon: wiz('⏏', '🌫'), label: wiz(`Hide window: ${label}`, `Veil hero: ${label}`),
+      hint: wiz("detach this agent's terminal", "draw the veil over this hero's scrying portal"),
       keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || '')
-        + ' veil conceal cloak portal scrying familiar',
+        + ' veil conceal cloak portal scrying hero',
       run: () => hideAgent(sel, label),
     });
   }
@@ -913,22 +913,22 @@ export function buildCommands(snapshot) {
       cmds.push({
         id: `agent-stop:${sel}`,
         grant: { act: 'dot-toggle', agent: a.agent_id || '', dataset: { online: '1' } },
-        icon: wiz('⏻', '🌙'), label: wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`),
+        icon: wiz('⏻', '🌙'), label: wiz(`Stop agent: ${label}`, `Slumber hero: ${label}`),
         hint: wiz('soft-exit, then force-kill if it does not exit (resumable)',
           'lull into slumber: a gentle /exit, then a firmer hand if it lingers (rousable)'),
         keywords: 'stop shutdown shut down kill power off halt agent ' + label + ' ' + (a.conv_id || '')
-          + ' slumber sleep rest lull dormant familiar',
+          + ' slumber sleep rest lull dormant hero',
         run: () => openShutdownAgentDialog(sel, label),
       });
     } else {
       cmds.push({
         id: `agent-resume:${sel}`,
         grant: { act: 'dot-toggle', agent: a.agent_id || '', dataset: { online: '0' } },
-        icon: wiz('⏼', '✨'), label: wiz(`Resume agent: ${label}`, `Awaken familiar: ${label}`),
+        icon: wiz('⏼', '✨'), label: wiz(`Resume agent: ${label}`, `Awaken hero: ${label}`),
         hint: wiz('restart in a fresh tmux session, resumed onto its conversation',
           'rouse into a fresh tmux session, resumed onto its scroll'),
         keywords: 'resume start power on wake boot up agent ' + label + ' ' + (a.conv_id || '')
-          + ' awaken rouse stir revive kindle familiar',
+          + ' awaken rouse stir revive kindle hero',
         run: () => resumeAgentReq(sel, label),
       });
     }
@@ -950,12 +950,12 @@ export function buildCommands(snapshot) {
       const plural = allCount === 1 ? '' : 's';
       cmds.push({
         icon: wiz('♻', '🪄'),
-        label: wiz(`Retire ${status} agents across all groups`, `Banish ${status} familiars across all parties`),
+        label: wiz(`Retire ${status} agents across all groups`, `Banish ${status} heroes across all parties`),
         hint: wiz(`preview + demote ${allCount} ${status} agent${plural} across every group, including Ungrouped`,
-          `preview + banish ${allCount} ${status} familiar${plural} across every party, including the Unbound`),
+          `preview + banish ${allCount} ${status} hero${plural} across every party, including the Unbound`),
         keywords: 'retire demote cleanup remove tidy bulk ' + status
           + ' agents all groups global everywhere fleet ungrouped'
-          + ' banish exile dismiss familiars all parties tower unbound',
+          + ' banish exile dismiss heroes all parties tower unbound',
         run: () => openRetireAllPreview(status),
       });
     }
@@ -970,12 +970,12 @@ export function buildCommands(snapshot) {
       const plural = ungroupedN === 1 ? '' : 's';
       cmds.push({
         icon: wiz('♻', '🪄'),
-        label: wiz(`Retire ${status} agents in Ungrouped`, `Banish ${status} familiars in Unbound`),
+        label: wiz(`Retire ${status} agents in Ungrouped`, `Banish ${status} heroes in Unbound`),
         hint: wiz(`preview + demote ${ungroupedN} ${status} ungrouped agent${plural} to plain conversations`,
-          `preview + banish ${ungroupedN} ${status} unbound familiar${plural} back to plain scrolls`),
+          `preview + banish ${ungroupedN} ${status} unbound hero${plural} back to plain scrolls`),
         keywords: 'retire demote cleanup remove tidy bulk ' + status
           + ' agents ungrouped no group groupless loose'
-          + ' banish exile dismiss familiars unbound unattached',
+          + ' banish exile dismiss heroes unbound unattached',
         run: () => openRetireUngroupedPreview(status),
       });
     }
@@ -991,11 +991,11 @@ export function buildCommands(snapshot) {
       if (!n) continue;
       const plural = n === 1 ? '' : 's';
       cmds.push({
-        icon: wiz('♻', '🪄'), label: wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} familiars in ${g.name}`),
+        icon: wiz('♻', '🪄'), label: wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} heroes in ${g.name}`),
         hint: wiz(`preview + demote ${n} ${status} agent${plural} to plain conversations`,
-          `preview + banish ${n} ${status} familiar${plural} back to plain scrolls`),
+          `preview + banish ${n} ${status} hero${plural} back to plain scrolls`),
         keywords: 'retire demote cleanup remove tidy bulk ' + status + ' agents group ' + g.name
-          + ' banish exile dismiss familiars party',
+          + ' banish exile dismiss heroes party',
         run: () => { recordGroupInteraction(g.name); openRetirePreview(g.name, status); },
       });
     }
@@ -1046,10 +1046,10 @@ export function buildCommands(snapshot) {
     cmds.push({
       id: `agent-retire:${a.conv_id}`,
       grant: { act: 'retire-agent', agent: a.agent_id || '' },
-      icon: wiz('♻', '🪄'), label: wiz(`Retire agent: ${label}`, `Banish familiar: ${label}`),
+      icon: wiz('♻', '🪄'), label: wiz(`Retire agent: ${label}`, `Banish hero: ${label}`),
       hint: wiz(`demote to a plain conversation (${status})`, `banish back to a plain scroll (${status})`),
       keywords: 'retire demote cleanup remove agent ' + label + ' ' + (a.conv_id || '') + ' ' + status
-        + ' banish exile dismiss familiar',
+        + ' banish exile dismiss hero',
       // Retire stays conv-keyed (not agent_id): the server's dangling-agent
       // recovery only triggers for a UUID-shaped selector that fails to
       // resolve, so a stable agent_id would silently demote a dangling

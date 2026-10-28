@@ -139,18 +139,18 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     return next;
   });
   const label = agentScoped
-    ? (wizard ? `Begin a rite for one familiar of ${group.name}` : `Start a process for one agent in ${group.name}`)
+    ? (wizard ? `Begin a rite for one hero of ${group.name}` : `Start a process for one agent in ${group.name}`)
     : (wizard ? `Begin a rite for ${group.name}` : `Start a process in ${group.name}`);
   const agents = agentScoped ? members.filter((member) => member.agent_id) : [];
   return html`<form class="gp-start-form" aria-label=${label} data-start-scope=${agentScoped ? 'agent' : 'group'} onSubmit=${start}
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     ${agentScoped
-    ? html`<span class="pk-chip pk-scope pk-scope-agent">◉ ${wizard ? 'familiar-bound' : 'agent scope'}</span>
+    ? html`<span class="pk-chip pk-scope pk-scope-agent">◉ ${wizard ? 'hero-bound' : 'agent scope'}</span>
       ${agents.length
         ? html`<select aria-label="Agent" data-start-agent value=${agent} disabled=${busy} onChange=${(event) => setAgent(event.currentTarget.value)}>
           ${agents.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
         </select>`
-        : html`<span class="gp-start-note">${wizard ? 'No familiar here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
+        : html`<span class="gp-start-note">${wizard ? 'No hero here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
     : html`<span class="pk-chip pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>`}
     ${templates === null
     ? html`<span class="gp-start-note">Loading templates…</span>`
@@ -372,7 +372,7 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
   // Inline is Both's half-row beside the agent controls; otherwise the row.
   return html`<${inline ? 'span' : 'div'} class=${inline ? 'gp-run-controls gf-run-controls' : 'group-header-actions gp-run-controls'}>
     <button type="button" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
-      title=${wizard ? `Begin a rite for one familiar of ${group.name}` : `Agent process: run a saved process, or build a new one, for one agent in ${group.name}`}
+      title=${wizard ? `Begin a rite for one hero of ${group.name}` : `Agent process: run a saved process, or build a new one, for one agent in ${group.name}`}
       aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span></button>
     <button type="button" class="spawn-btn subgroup-btn" ...${shared} data-process-start=${group.name} onClick=${() => onStart('group')}
       title=${wizard ? `Begin a rite bound to ${group.name}` : `Group process: run a saved process, or build a new one, for the whole group`}
@@ -491,7 +491,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       initialTemplateId=${starting?.templateId || ''} onClose=${() => setStarting(false)} />`}
     ${quickStart}
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
-    <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Familiar rites' : 'Member runs'} onOpen=${open} />
+    <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Hero rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
     ${!runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
@@ -501,7 +501,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.
-    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} count=${fused.count}
+    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
         count=${runs.length + planned.length + memberRuns.length}
@@ -607,7 +607,7 @@ function UnsharedRuns({ group, wizard, fused }) {
     : (wizard ? `The rites of ${node} are not shared across realms.` : `Process runs on ${node} are not shared across nodes.`);
   const note = html`<div class="gp-empty gp-unshared" data-process-unshared=${group.name}>${text}</div>`;
   if (!fused) return html`<div class="gp-group" data-process-group=${group.name}>${note}</div>`;
-  return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} count=${fused.count}
+  return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
       actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
     ${note}
     ${fused.after}`;
@@ -632,16 +632,16 @@ export function UngroupedProcessBody({ group }) {
     return html`<${FusedSection} group=${group.key || group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
       attrs=${{ 'data-fused-processes': group.key || group.name }}>
       <div class="gp-group" data-process-group=${group.key || group.name}>
-        <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
+        <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
           onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
       </div>
     <//>`;
   }
   return html`<div class="gp-group" data-process-group=${group.key || group.name}>
-    <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
+    <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
       onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
     ${!entries.length && html`<div class="gp-empty">${runFilterHas(filter, 'running')
-      ? (wizard ? 'No unbound familiar walks a rite.' : 'No ungrouped agent runs a process.')
+      ? (wizard ? 'No unbound hero walks a rite.' : 'No ungrouped agent runs a process.')
       : `No ${label} ${wizard ? 'rites' : 'processes'} outside groups.`}</div>`}
   </div>`;
 }

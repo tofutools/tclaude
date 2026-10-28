@@ -217,11 +217,11 @@ test('window picker preserves bucket overlap, synthetic buckets, and filter-inde
   assert.equal(host.querySelectorAll('#window-modal').length, 1);
   assert.equal(harness.document.activeElement.id, 'window-submit');
   assert.equal(host.querySelector('#window-title .window-title-regular').textContent, 'Agent windows');
-  assert.equal(host.querySelector('#window-title .window-title-wizard').textContent, "Familiars' windows");
+  assert.equal(host.querySelector('#window-title .window-title-wizard').textContent, "Heroes' windows");
   assert.equal(host.querySelector('#window-hint .theme-copy-regular').textContent,
     'Open or raise a terminal window for each selected running agent in the dashboard.');
   assert.equal(host.querySelector('#window-hint .theme-copy-wizard').textContent,
-    'Conjure a scrying portal for each chosen channeling familiar in the tower.');
+    'Conjure a scrying portal for each chosen channeling hero in the tower.');
   assert.equal(host.querySelector('#window-count').textContent, '3 of 3 selected');
   assert.equal(host.querySelector('[data-group-chip="alpha"]').textContent, 'alpha (2/2)');
   assert.equal(host.querySelector('[data-group-chip="beta"]').textContent, 'beta (1/1)');

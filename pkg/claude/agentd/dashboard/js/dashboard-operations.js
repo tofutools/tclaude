@@ -418,7 +418,7 @@ export function openWindowModal(scope, groupName) {
     const wizardWhere = scope === 'group' ? `party "${groupName}"` : 'the tower';
     toast(wizWord(
       `agent windows: no running agents in ${where}`,
-      `scrying portals: no channeling familiars in ${wizardWhere}`,
+      `scrying portals: no channeling heroes in ${wizardWhere}`,
     ));
     return null;
   }

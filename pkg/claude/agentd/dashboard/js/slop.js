@@ -210,7 +210,7 @@ export function isWizardActive() {
 // wizWord picks the wizard-mode wording when wizard mode is live, else the
 // regular wording. The shared home for the profile-vocabulary swaps that are
 // JS-rendered (the profile editor title / empty-state in modal-profiles.js, the
-// "+ new pattern…" picker option in row-actions.js) — the static-copy spots use
+// "+ new loadout…" picker option in row-actions.js) — the static-copy spots use
 // the pure-CSS .profiles-word span pair instead. Re-checks live, like
 // isWizardActive, so a mid-session toggle needs no re-binding.
 export function wizWord(regular, wizard) { return isWizardActive() ? wizard : regular; }

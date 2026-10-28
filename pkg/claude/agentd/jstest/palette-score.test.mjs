@@ -21,31 +21,31 @@ import {
 // 🧙 wizard synonyms palette.js appends unconditionally (veil/reveal/summon/
 // slumber/awaken/banish…), so the scorer sees exactly what ships.
 const COMMANDS = [
-  { label: 'Hide all windows', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision familiars' },
-  { label: 'Focus all windows', keywords: 'show all windows raise focus bring up reveal behold conjure portal scrying vision familiars' },
-  { label: 'Pick windows to focus / hide…', keywords: 'windows subset choose select modal some reveal veil portals scrying familiars' },
-  { label: 'Shut down all agents', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
-  { label: 'Power on all agents', keywords: 'power on start resume wake boot up all agents global everything batch awaken rouse stir revive kindle familiars' },
+  { label: 'Hide all windows', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision heroes' },
+  { label: 'Focus all windows', keywords: 'show all windows raise focus bring up reveal behold conjure portal scrying vision heroes' },
+  { label: 'Pick windows to focus / hide…', keywords: 'windows subset choose select modal some reveal veil portals scrying heroes' },
+  { label: 'Shut down all agents', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still heroes' },
+  { label: 'Power on all agents', keywords: 'power on start resume wake boot up all agents global everything batch awaken rouse stir revive kindle heroes' },
   { label: 'Create new group…', keywords: 'new group create make add team squad party form fellowship warband adventuring muster gather assemble guild' },
-  { label: 'Import a group archive…', keywords: 'import group archive zip restore recreate upload unseal party archive familiar wards missives scrolls' },
-  { label: 'Clean up agents and conversations…', keywords: 'clean up agents and conversations cleanup all categories unjoin retire delete reinstate tidy familiars and scrolls release banish dispel restore' },
-  { label: 'Delete retired agents…', keywords: 'delete purge retired cleanup remove wipe agents dispel banished obliterate destroy erase vanquish incinerate familiars' },
-  { label: 'Retire ungrouped agents…', keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents banish exile dismiss unbound loose unattached familiars' },
-  { label: 'Spawn agent…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
-  { label: 'Manage spawn profiles…', keywords: 'spawn profiles profile edit manage recipe recipes bundle preset presets defaults familiar patterns pattern weave inscribe grimoire loom blueprint' },
+  { label: 'Import a group archive…', keywords: 'import group archive zip restore recreate upload unseal party archive hero wards missives scrolls' },
+  { label: 'Clean up agents and conversations…', keywords: 'clean up agents and conversations cleanup all categories unjoin retire delete reinstate tidy heroes and scrolls release banish dispel restore' },
+  { label: 'Delete retired agents…', keywords: 'delete purge retired cleanup remove wipe agents dispel banished obliterate destroy erase vanquish incinerate heroes' },
+  { label: 'Retire ungrouped agents…', keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents banish exile dismiss unbound loose unattached heroes' },
+  { label: 'Spawn agent…', keywords: 'new agent create spawn launch start summon conjure invoke call forth hero' },
+  { label: 'Manage spawn profiles…', keywords: 'spawn profiles profile edit manage recipe recipes bundle preset presets defaults loadouts loadout gear weave inscribe grimoire loom blueprint' },
   { label: 'Manage group templates…', keywords: 'group templates template manage team blueprint blueprints roster deploy import library summoning circles circle party chalk trace cast unseal rite' },
   { label: 'Manage role library…', keywords: 'roles role library edit manage brief defaults permission permissions class library classes reviewer tester lead dev designer po party' },
   { label: 'Manage sandbox profiles…', keywords: 'sandbox profiles profile manage policy filesystem environment network launch security wards ward protections boundaries realm' },
-  { label: 'Manage cross-harness spawns…', keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation cross-realm summons realm realms summon wards familiar' },
+  { label: 'Manage cross-harness spawns…', keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation cross-realm summons realm realms summon wards hero' },
   { label: 'Manage inter-group links…', keywords: 'inter-group links inter group link manage communication directed edge message groups arcane channels channel parties missive whisper weave' },
-  { label: 'Message group: alpha…', keywords: 'message send compose notify group broadcast multicast all members agents alpha missive inscribe party familiars circle' },
+  { label: 'Message group: alpha…', keywords: 'message send compose notify group broadcast multicast all members agents alpha missive inscribe party heroes circle' },
   { label: 'Switch to slop theme', keywords: 'toggle switch theme slop regular vegas casino mode appearance descend leave depart halls machine' },
   { label: 'Go to Groups', keywords: 'tab navigate go open groups scry peer gaze behold chamber vision' },
   { label: 'Hide group: alpha', keywords: 'hide unfocus group windows alpha veil conceal cloak portal scrying party' },
   { label: 'Focus group: alpha', keywords: 'focus show group windows alpha reveal behold conjure portal scrying party' },
-  { label: 'Focus window: worker-7', keywords: 'focus show jump bring up window agent worker-7 reveal behold conjure portal scrying familiar' },
-  { label: 'Hide window: worker-7', keywords: 'hide detach window agent worker-7 veil conceal cloak portal scrying familiar' },
-  { label: 'Retire agent: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss familiar' },
+  { label: 'Focus window: worker-7', keywords: 'focus show jump bring up window agent worker-7 reveal behold conjure portal scrying hero' },
+  { label: 'Hide window: worker-7', keywords: 'hide detach window agent worker-7 veil conceal cloak portal scrying hero' },
+  { label: 'Retire agent: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss hero' },
 ];
 
 // The wizard-mode twin: the SAME commands as they PRESENT under body.wizard —
@@ -54,22 +54,22 @@ const COMMANDS = [
 // still land them via the SYNONYMS bridge. This fixture exercises that reverse
 // direction (plain query → arcane label), the one that matters in wizard mode.
 const WIZ_COMMANDS = [
-  { label: 'Veil all familiars', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision familiars' },
-  { label: 'Slumber all familiars', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
+  { label: 'Veil all heroes', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision heroes' },
+  { label: 'Slumber all heroes', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still heroes' },
   { label: 'Form a party…', keywords: 'new group create make add team squad party form fellowship warband adventuring muster gather assemble guild' },
-  { label: 'Unseal a party archive…', keywords: 'import group archive zip restore recreate upload unseal party archive familiar wards missives scrolls' },
-  { label: 'Tidy familiars and scrolls…', keywords: 'clean up agents and conversations cleanup all categories unjoin retire delete reinstate tidy familiars and scrolls release banish dispel restore' },
-  { label: 'Dispel banished familiars…', keywords: 'delete purge retired cleanup remove wipe agents dispel banished obliterate destroy erase vanquish incinerate familiars' },
-  { label: 'Banish unbound familiars…', keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents banish exile dismiss unbound loose unattached familiars' },
-  { label: 'Summon a familiar…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
-  { label: 'Manage familiar patterns…', keywords: 'spawn profiles profile edit manage recipe recipes bundle preset presets defaults familiar patterns pattern weave inscribe grimoire loom blueprint' },
+  { label: 'Unseal a party archive…', keywords: 'import group archive zip restore recreate upload unseal party archive hero wards missives scrolls' },
+  { label: 'Tidy heroes and scrolls…', keywords: 'clean up agents and conversations cleanup all categories unjoin retire delete reinstate tidy heroes and scrolls release banish dispel restore' },
+  { label: 'Dispel banished heroes…', keywords: 'delete purge retired cleanup remove wipe agents dispel banished obliterate destroy erase vanquish incinerate heroes' },
+  { label: 'Banish unbound heroes…', keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents banish exile dismiss unbound loose unattached heroes' },
+  { label: 'Summon a hero…', keywords: 'new agent create spawn launch start summon conjure invoke call forth hero' },
+  { label: 'Manage loadouts…', keywords: 'spawn profiles profile edit manage recipe recipes bundle preset presets defaults loadouts loadout gear weave inscribe grimoire loom blueprint' },
   { label: 'Manage summoning circles…', keywords: 'group templates template manage team blueprint blueprints roster deploy import library summoning circles circle party chalk trace cast unseal rite' },
   { label: 'Manage class library…', keywords: 'roles role library edit manage brief defaults permission permissions class library classes reviewer tester lead dev designer po party' },
   { label: 'Manage wards…', keywords: 'sandbox profiles profile manage policy filesystem environment network launch security wards ward protections boundaries realm' },
-  { label: 'Manage cross-realm summons…', keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation cross-realm summons realm realms summon wards familiar' },
+  { label: 'Manage cross-realm summons…', keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation cross-realm summons realm realms summon wards hero' },
   { label: 'Manage arcane channels between parties…', keywords: 'inter-group links inter group link manage communication directed edge message groups arcane channels channel parties missive whisper weave' },
-  { label: 'Send missive to party: alpha…', keywords: 'message send compose notify group broadcast multicast all members agents alpha missive inscribe party familiars circle' },
-  { label: 'Banish familiar: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss familiar' },
+  { label: 'Send missive to party: alpha…', keywords: 'message send compose notify group broadcast multicast all members agents alpha missive inscribe party heroes circle' },
+  { label: 'Banish hero: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss hero' },
 ];
 
 const labels = (q) => rankCommands(COMMANDS, q).map((c) => c.label);
@@ -138,9 +138,9 @@ test('expandQuery maps synonyms bidirectionally', () => {
   assert.ok(expandQuery('veil').includes('hide'));
   assert.ok(expandQuery('reveal').includes('focus'));
   assert.ok(expandQuery('hide').includes('veil'));
-  // Profile ↔ familiar-pattern noun bridge.
-  assert.ok(expandQuery('patterns').includes('profiles'));
-  assert.ok(expandQuery('profiles').includes('patterns'));
+  // Profile ↔ loadout noun bridge.
+  assert.ok(expandQuery('loadouts').includes('profiles'));
+  assert.ok(expandQuery('profiles').includes('loadouts'));
   assert.ok(expandQuery('circles').includes('templates'));
   assert.ok(expandQuery('templates').includes('circles'));
   assert.ok(expandQuery('classes').includes('roles'));
@@ -183,8 +183,8 @@ test('SYNONYMS pairs are bidirectional', () => {
   assert.deepEqual(SYNONYMS.awaken, ['resume']);
   assert.deepEqual(SYNONYMS.retire, ['banish']);
   assert.deepEqual(SYNONYMS.banish, ['retire']);
-  assert.deepEqual(SYNONYMS.profiles, ['patterns']);
-  assert.deepEqual(SYNONYMS.patterns, ['profiles']);
+  assert.deepEqual(SYNONYMS.profiles, ['loadouts']);
+  assert.deepEqual(SYNONYMS.loadouts, ['profiles']);
   assert.deepEqual(SYNONYMS.templates, ['circles']);
   assert.deepEqual(SYNONYMS.circles, ['templates']);
   assert.deepEqual(SYNONYMS.roles, ['classes']);
@@ -236,11 +236,11 @@ test('wizard verb finds the plain command: "veil all" → Hide all windows', () 
 test('plain verb still finds the arcane label in wizard mode', () => {
   // The load-bearing direction: under body.wizard the LABELS are arcane, so
   // old muscle memory (spawn / shutdown / retire / hide) must still land them.
-  assert.equal(wizTop('spawn'), 'Summon a familiar…');
-  assert.equal(wizTop('shutdown'), 'Slumber all familiars');
+  assert.equal(wizTop('spawn'), 'Summon a hero…');
+  assert.equal(wizTop('shutdown'), 'Slumber all heroes');
   assert.ok(rankCommands(WIZ_COMMANDS, 'retire')
-    .some((command) => command.label === 'Banish familiar: worker-7'));
-  assert.equal(wizTop('hide'), 'Veil all familiars');
+    .some((command) => command.label === 'Banish hero: worker-7'));
+  assert.equal(wizTop('hide'), 'Veil all heroes');
 });
 
 test('per-group message is reachable by plain and wizard vocabulary', () => {
@@ -265,15 +265,15 @@ test('create-group is reachable by both vocabularies in both themes', () => {
 
 test('global menu managers are reachable by regular and wizard nouns in either theme', () => {
   const pairs = [
-    ['spawn profiles', 'familiar patterns', 'Manage spawn profiles…', 'Manage familiar patterns…'],
+    ['spawn profiles', 'loadouts', 'Manage spawn profiles…', 'Manage loadouts…'],
     ['group templates', 'summoning circles', 'Manage group templates…', 'Manage summoning circles…'],
     ['role library', 'class library', 'Manage role library…', 'Manage class library…'],
     ['sandbox profiles', 'wards', 'Manage sandbox profiles…', 'Manage wards…'],
     ['cross-harness spawns', 'cross-realm summons', 'Manage cross-harness spawns…', 'Manage cross-realm summons…'],
     ['inter-group links', 'arcane channels', 'Manage inter-group links…', 'Manage arcane channels between parties…'],
     ['group archive', 'party archive', 'Import a group archive…', 'Unseal a party archive…'],
-    ['clean up agents and conversations', 'tidy familiars and scrolls', 'Clean up agents and conversations…', 'Tidy familiars and scrolls…'],
-    ['delete retired', 'dispel banished', 'Delete retired agents…', 'Dispel banished familiars…'],
+    ['clean up agents and conversations', 'tidy heroes and scrolls', 'Clean up agents and conversations…', 'Tidy heroes and scrolls…'],
+    ['delete retired', 'dispel banished', 'Delete retired agents…', 'Dispel banished heroes…'],
   ];
   for (const [regular, wizard, regularLabel, wizardLabel] of pairs) {
     assert.equal(top(regular), regularLabel, `${regular} should lead to its regular manager`);
@@ -286,8 +286,8 @@ test('global menu managers are reachable by regular and wizard nouns in either t
 test('broad cleanup vocabulary prefers the all-categories tool over narrower cleanup actions', () => {
   assert.equal(top('cleanup'), 'Clean up agents and conversations…');
   assert.equal(top('tidy'), 'Clean up agents and conversations…');
-  assert.equal(wizTop('cleanup'), 'Tidy familiars and scrolls…');
-  assert.equal(wizTop('tidy'), 'Tidy familiars and scrolls…');
+  assert.equal(wizTop('cleanup'), 'Tidy heroes and scrolls…');
+  assert.equal(wizTop('tidy'), 'Tidy heroes and scrolls…');
 });
 
 test('scoreMatch ladder: exact > prefix > word-start > substring', () => {

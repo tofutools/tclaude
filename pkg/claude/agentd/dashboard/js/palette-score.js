@@ -16,7 +16,7 @@
 //
 // The second block bridges the 🧙 wizard theme's arcane command labels to
 // their plain verbs and back. Under body.wizard the palette PRESENTS "Summon
-// a familiar…" / "Slumber all familiars" / "Veil …" / "Banish …", but the plain
+// a hero…" / "Slumber all heroes" / "Veil …" / "Banish …", but the plain
 // words ("spawn", "shutdown", "hide", "retire") must still find them — and the
 // arcane words must find the plain labels when the theme is off. Because this
 // map feeds both directions of expandQuery, one entry per word bridges both
@@ -43,13 +43,13 @@ export const SYNONYMS = {
   banish: ['retire'],
   message: ['missive'],
   missive: ['message'],
-  // A saved spawn "profile" is re-lettered a "familiar pattern" in wizard mode,
+  // A saved spawn "profile" is re-lettered a "loadout" in wizard mode,
   // so bridge the two nouns both ways (lifts the profiles-manager command to a
   // label hit whichever vocabulary the human types in either theme).
-  profiles: ['patterns'],
-  patterns: ['profiles'],
-  profile: ['pattern'],
-  pattern: ['profile'],
+  profiles: ['loadouts'],
+  loadouts: ['profiles'],
+  profile: ['loadout'],
+  loadout: ['profile'],
   templates: ['circles'],
   circles: ['templates'],
   template: ['circle'],

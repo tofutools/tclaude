@@ -100,7 +100,7 @@ test('group settings emits complete wizard copy and browses for its default dire
     '✦ bind rune');
   assert.match(host.querySelector('#group-settings-modal').textContent, /Sanctum/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Opening lore/);
-  assert.match(host.querySelector('#group-settings-modal').textContent, /Familiar pattern/);
+  assert.match(host.querySelector('#group-settings-modal').textContent, /Loadout/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Scrying policy/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Memory ward/);
   assert.equal(host.querySelector('#group-settings-default-cwd-browse .theme-copy-wizard').textContent, 'Scry…');
@@ -480,7 +480,7 @@ test('action mutations preserve endpoint payloads, notifications, and refresh bo
 test('preset clone dialog submits controlled names and surfaces create errors', async (t) => {
   const source = { name: 'writer', aliases: ['scribe'], model: 'opus' };
   const mounted = await mountDialogs(t, 'preset-clone', {
-    presetKind: 'profile', kindWizard: 'pattern', source, create: async () => {},
+    presetKind: 'profile', kindWizard: 'loadout', source, create: async () => {},
   });
   const { harness, host, calls } = mounted;
   await harness.act(() => Promise.resolve());
@@ -509,7 +509,7 @@ test('preset clone dialog submits controlled names and surfaces create errors', 
 test('preset clone submit is single-flight within one turn and releases after errors', async (t) => {
   const requests = [];
   const mounted = await mountDialogs(t, 'preset-clone', {
-    presetKind: 'profile', kindWizard: 'pattern',
+    presetKind: 'profile', kindWizard: 'loadout',
     source: { name: 'writer' }, create: async () => {},
   }, {
     clonePreset: () => {
@@ -570,7 +570,7 @@ test('every action-dialog family refuses same-turn cross-family collisions and p
     ['reincarnate', (state) => state.openReincarnate({ conv: 'reincarnate', label: 'reincarnate' })],
     ['nest', (state) => state.openNest({ group: 'nested' })],
     ['task-link', (state) => state.openTaskLink({ conv: 'task', agentLabel: 'task' })],
-    ['preset', (state) => state.openPresetClone({ kind: 'profile', kindWizard: 'pattern', source: { name: 'source' }, create })],
+    ['preset', (state) => state.openPresetClone({ kind: 'profile', kindWizard: 'loadout', source: { name: 'source' }, create })],
     ['export', (state) => state.openExport({ conv: 'export', label: 'export' })],
     ['terminal-directory', (state) => state.openTerminalDirectory({ label: 'terminal' })],
   ];
@@ -709,7 +709,7 @@ test('export dialog owns submit/error/retry UI and cancels its watcher on close'
   callbacks.onFailed({});
   await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#export-agent-status-note').textContent, /agent did not deliver/);
-  assert.match(host.querySelector('#export-agent-status-note').textContent, /familiar did not deliver/);
+  assert.match(host.querySelector('#export-agent-status-note').textContent, /hero did not deliver/);
   host.querySelector('#export-agent-retry').click();
   await harness.act(() => Promise.resolve());
   assert.ok(host.querySelector('#export-agent-form'));

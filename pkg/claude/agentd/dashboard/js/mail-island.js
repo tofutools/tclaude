@@ -219,7 +219,7 @@ function MessageList({ current, controller, model }) {
   };
   if (model.access) {
     if (model.allAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
-      ? 'No petitions await. When a familiar begs a boon beyond its station, it appears here for your judgement.'
+      ? 'No petitions await. When a hero begs a boon beyond its station, it appears here for your judgement.'
       : 'No pending access requests. When an agent asks for access it can’t self-grant, it appears here for your decision.'}</div></div>`;
     if (model.pendingAccess.length + model.handledAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
       ? 'No petitions match your seeking.' : 'No access requests match the filter.'}</div></div>`;
@@ -683,7 +683,7 @@ export function MailApp({ controller }) {
   };
   return html`<div class="mail-client" onKeyDown=${(event) => !hasShownOverlay() && movePaneFocus(event, mailPanes(controller))}>
     <${PeerMailHost} toast=${shellToast} />
-    <${MailFilters} boxId="filter-mailboxes" boxPlaceholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
+    <${MailFilters} boxId="filter-mailboxes" boxPlaceholder=${wizard ? 'Seek a hero…' : 'Filter mailboxes (name / id)'}
       boxValue=${current.boxQuery} onBoxInput=${controller.setBoxQuery} onBoxKeyDown=${enterMailboxList}
       id="filter-messages" placeholder=${wizard ? 'Search the scrolls…' : 'Filter messages (sender / recipient / subject / body)'}
       value=${current.messageQuery} onInput=${controller.setMessageQuery} onKeyDown=${enterMessageList}

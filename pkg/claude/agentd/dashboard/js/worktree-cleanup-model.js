@@ -1,7 +1,7 @@
 export const WORKTREE_CATEGORIES = Object.freeze([
   Object.freeze({ key: 'orphan', label: 'orphans', wizardLabel: 'orphans' }),
   Object.freeze({ key: 'retired', label: 'retired', wizardLabel: 'banished' }),
-  Object.freeze({ key: 'agent', label: 'agent-bound', wizardLabel: 'familiar-bound' }),
+  Object.freeze({ key: 'agent', label: 'agent-bound', wizardLabel: 'hero-bound' }),
   Object.freeze({ key: 'live', label: 'live', wizardLabel: 'channeling' }),
 ]);
 

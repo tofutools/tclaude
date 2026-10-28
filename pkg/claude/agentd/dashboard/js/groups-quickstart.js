@@ -164,7 +164,7 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
   const shown = (templates || []).slice(0, 3);
   return html`<section class="gq-start" aria-label=${wizard ? 'Begin a first rite' : 'Get started with processes'} data-quickstart=${group.name}>
     <div class="gq-start-head">
-      <h3>${wizard ? `Set ${group.name}'s familiars walking a rite` : `Get ${group.name}'s agents working through a process`}</h3>
+      <h3>${wizard ? `Set ${group.name}'s heroes walking a rite` : `Get ${group.name}'s agents working through a process`}</h3>
       ${onDismiss && html`<button type="button" class="gq-link" data-quickstart-dismiss title="Fold this panel to one line in every empty group" onClick=${onDismiss}>✕ not now</button>`}
     </div>
     <p class="gq-sub">A process is a set of steps. Each step is done by an agent of this group, by you, or by a command. Steps run in order, and your answers can branch them.</p>

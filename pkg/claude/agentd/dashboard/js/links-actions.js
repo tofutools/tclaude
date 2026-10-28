@@ -110,7 +110,7 @@ export function createLinksActions({
         title: words('Remove this link?', 'Sever this arcane channel?'),
         body: words(
           'Members of FROM lose the ability to message members of TO via this edge. Other groups / links are unaffected. This can\'t be undone — recreate to restore.',
-          'Familiars of FROM lose the ability to whisper to familiars of TO via this channel. Other parties / channels are unaffected. This can\'t be undone — weave it anew to restore.',
+          'Heroes of FROM lose the ability to whisper to heroes of TO via this channel. Other parties / channels are unaffected. This can\'t be undone — weave it anew to restore.',
         ),
         meta: `#${id} · ${from} → ${to}`,
         okLabel: words('Remove link', 'Sever channel'),

@@ -222,8 +222,8 @@ export function GroupsFocusSwitch({ state, groups, wizard = false, source = proc
           : 'Both: each group’s member table, then its processes — hover to choose which runs to show')}
       <${RunKindMenu} state=${state} wizard=${wizard} counts=${counts} />
     </span>
-    ${button('agents', html`<${PeopleIcon} />`, 'Agents', 'Familiars', agentCount(groups),
-      wizard ? 'Familiars: the party rosters' : 'Agents: member tables, with process state as small indicators')}
+    ${button('agents', html`<${PeopleIcon} />`, 'Agents', 'Heroes', agentCount(groups),
+      wizard ? 'Heroes: the party rosters' : 'Agents: member tables, with process state as small indicators')}
     <span class="groups-focus-runs">
       ${button('processes', html`<${FlowIcon} />`, 'Processes', 'Rites', runs,
         wizard ? 'Rites: each party’s rites as graphs — hover to choose which to show' : 'Processes: run graphs per group — hover to choose which runs to show')}
@@ -237,7 +237,7 @@ export function GroupsProcessesPlaceholder({ wizard = false }) {
     <div class="groups-processes-placeholder-glyph" aria-hidden="true">◈</div>
     <strong>${wizard ? 'The rites of each party will gather here.' : 'Process runs per group will appear here.'}</strong>
     <span>${wizard
-      ? 'Each party’s rites will be drawn as graphs, with its familiars shown on the steps they perform. Switch to Familiars to tend the party itself.'
+      ? 'Each party’s rites will be drawn as graphs, with its heroes shown on the steps they perform. Switch to Heroes to tend the party itself.'
       : 'Each group’s runs will show as graph cards, with agents shown as avatars on the nodes they perform. Switch to Agents for the member tables.'}</span>
   </div>`;
 }

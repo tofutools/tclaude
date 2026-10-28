@@ -81,7 +81,7 @@ function libraryChanged() {
 
 // The kinds' singular names, for dialog titles and toasts.
 const KIND_NAMES = Object.freeze({
-  profiles: () => wizWord('spawn profile', 'familiar pattern'),
+  profiles: () => wizWord('spawn profile', 'loadout'),
   templates: () => wizWord('group template', 'summoning circle'),
   roles: () => wizWord('role', 'class'),
   saved_prompts: () => wizWord('saved prompt', 'incantation'),
@@ -492,10 +492,10 @@ export const dockSections = Object.freeze([
     // live in headings only; repeating them on every row adds no information.
     icon: () => wizWord('👤', '🐾'),
     // Full section name (JOH-390 item 5): the operator wants the profiles
-    // heading spelled out — "Agent profiles" / "Familiar patterns" — rather
-    // than the bare "Profiles" / "Patterns". Roles keeps its short heading.
-    title: () => wizWord('Agent profiles', 'Familiar patterns'),
-    empty: () => wizWord('no profiles yet', 'no patterns yet'),
+    // heading spelled out — "Agent profiles" / "Loadouts" — rather
+    // than the bare "Profiles" / "Loadouts". Roles keeps its short heading.
+    title: () => wizWord('Agent profiles', 'Loadouts'),
+    empty: () => wizWord('no profiles yet', 'no loadouts yet'),
     items: (snap) => (snap && snap.profiles) || [],
     name: (p) => p.name,
     chips: (p) => [
@@ -511,7 +511,7 @@ export const dockSections = Object.freeze([
     onManageItem: (p, node) => (node ? catalogOn(node).openProfileEditor(p) : openProfileEditor(p)),
     // Clone → the generic name dialog; the copy is the source profile re-POSTed
     // under the new name through the Preact-owned action-dialog host.
-    onCloneItem: (p, node) => openPresetCloneDialog({ kind: 'profile', kindWizard: 'pattern', source: p,
+    onCloneItem: (p, node) => openPresetCloneDialog({ kind: 'profile', kindWizard: 'loadout', source: p,
       create: node ? createOn(node, profilesVia(node.fetch).createProfile) : createProfile }),
     // Delete → the manager's confirm + delete + toast (removeProfile), then a
     // dashboard refresh so the dock card leaves at once (removeProfile only
@@ -522,7 +522,7 @@ export const dockSections = Object.freeze([
     }),
     onManageAll: () => openProfilesManageModal(),
     onNew: () => openProfileEditor(),
-    searchWords: ['agent profiles', 'familiar patterns', 'spawn profiles'],
+    searchWords: ['agent profiles', 'loadouts', 'spawn profiles'],
     isDefault: (p, snap) => !!snap?.spawn_profile_default && snap.spawn_profile_default === p.name,
     onToggleDefault: (p, isDefault) => setDefault('profile', isDefault ? '' : p.name),
     itemPath: (name) => `/api/spawn-profiles/${encodeURIComponent(name)}`,

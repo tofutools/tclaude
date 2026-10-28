@@ -203,7 +203,8 @@ The human may speak wizard; the system never does. Translate before acting:
 |---|---|
 | summoning circle | template |
 | hero party / party (deployed) | group / task force |
-| familiar | agent |
+| hero | agent |
+| loadout | spawn profile |
 | rite of command | work pattern |
 | quest plan (chapters) | process (phases) |
 | drumbeats | rhythms |

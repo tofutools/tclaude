@@ -34,12 +34,12 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 
 	// 1. The palette offers the command, gated on a live count so it is
 	//    never a no-op, with both the plain label and the 🧙 wizard synonym
-	//    ("Banish unbound familiars…"). The plain "retire"/wizard "banish"
+	//    ("Banish unbound heroes…"). The plain "retire"/wizard "banish"
 	//    words already bridge via the scorer's SYNONYMS map.
 	for _, required := range []string{
 		"const ungroupedCount = new Set((snap.ungrouped || []).map(a => a.conv_id).filter(Boolean)).size;",
 		"if (ungroupedCount) {",
-		"wiz('Retire ungrouped agents…', 'Banish unbound familiars…')",
+		"wiz('Retire ungrouped agents…', 'Banish unbound heroes…')",
 		"run: () => openRetireUngroupedPreview(),",
 	} {
 		if !strings.Contains(palette, required) {
@@ -49,7 +49,7 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 	for _, required := range []string{
 		`kind === 'retire-ungrouped-preview'`,
 		`agents: Object.freeze(selectedCandidates.map((candidate) => candidate.agent_id || candidate.conv_id))`,
-		`: 'Retire ungrouped agents';`, `: 'Banish unbound familiars';`,
+		`: 'Retire ungrouped agents';`, `: 'Banish unbound heroes';`,
 	} {
 		if !strings.Contains(island, required) {
 			t.Errorf("transaction island is missing ungrouped-retire contract %q", required)

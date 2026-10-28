@@ -153,15 +153,15 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     }}>
     <h3 id="operator-message-title"><${Words}
       plain=${allLive ? 'Announce to all live agents' : 'Send message to agent'}
-      wizard=${allLive ? '📯 Proclaim to all channeling familiars' : '✒ Send a missive to the familiar'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/></h3>
+      wizard=${allLive ? '📯 Proclaim to all channeling heroes' : '✒ Send a missive to the hero'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/></h3>
     <p class="modal-hint" id="operator-message-desc"><${Words}
       plain=${allLive
         ? 'Sent once to every agent that is live when you submit. Offline agents are not queued.'
         : 'Queued through the agent mailbox, so incoming agent output cannot interfere with what you type.'}
       wizard=${allLive
-        ? 'Sounded once to every familiar channeling when you proclaim; slumbering familiars will not be stirred.'
-        : "Sealed into the familiar's mailbox, beyond the meddling of terminal omens."}/></p>
-    <div class="cron-create-row"><span class="cron-create-label"><${Words} plain="To" wizard="Familiar"/></span>
+        ? 'Sounded once to every hero channeling when you proclaim; slumbering heroes will not be stirred.'
+        : "Sealed into the hero's mailbox, beyond the meddling of terminal omens."}/></p>
+    <div class="cron-create-row"><span class="cron-create-label"><${Words} plain="To" wizard="Hero"/></span>
       <div class="cron-create-target"><strong id="operator-message-to" title=${allLive ? 'Roster recalculated when sent' : descriptor.agent}>${descriptor.label}</strong></div></div>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Subject" wizard="Seal"/></span>
       <input id="operator-message-subject" type="text" maxlength="256" placeholder="optional" autocomplete="off"
@@ -214,7 +214,7 @@ export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent, gro
   return html`<div class="cron-create-target" id=${`${prefix}-target-picker`}>
     <div class="cron-target-modes">
       <label><input type="radio" name=${modeName} value="solo" checked=${value.mode === 'solo'}
-        onChange=${() => setMode('solo')} /> <${Words} plain="Solo agent" wizard="Solo familiar"/></label>
+        onChange=${() => setMode('solo')} /> <${Words} plain="Solo agent" wizard="Solo hero"/></label>
       <label class=${groupLocked ? 'locked-field' : ''}><input type="radio" name=${modeName} value="group" checked=${value.mode === 'group'}
         disabled=${!!groupLocked} onChange=${() => setMode('group')} /> <${Words} plain="Group (multicast)" wizard="Party (multicast)"/></label><${LockReason} why=${groupLocked}/>
     </div>
@@ -222,14 +222,14 @@ export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent, gro
       <input id=${`${prefix}-target`} type="text" value=${value.target}
         placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false"
         onInput=${(event) => onChange({ ...value, target: event.currentTarget.value })} />
-      <button type="button" id=${`${prefix}-target-pick`} title="Pick from the agent / familiar list" onClick=${choose}>🔍</button>
+      <button type="button" id=${`${prefix}-target-pick`} title="Pick from the agent / hero list" onClick=${choose}>🔍</button>
     </div>`}
     ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id=${`${prefix}-target-scoped`}>
       <select id=${`${prefix}-scoped-member`} value=${value.target}
         onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
         ${memberOptions.length
-          ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a familiar)')}</option>${memberOptions.map((member) => html`<option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
-          : html`<option value="">${wizWord('(no members in this group)', '(no familiars in this party)')}</option>`}
+          ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a hero)')}</option>${memberOptions.map((member) => html`<option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
+          : html`<option value="">${wizWord('(no members in this group)', '(no heroes in this party)')}</option>`}
       </select>
     </div>`}
     ${value.mode === 'group' && html`<div class="cron-target-input-row" id=${`${prefix}-target-group`}>
@@ -267,7 +267,7 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
   return html`<${Overlay} id="cron-pick-target-modal" dialogClass="add-member-modal"
     labelledby="cron-pick-target-title" onClose=${() => state.finishPicker('')}
     dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard}>
-    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick familiar"/></span></h3>
+    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span></h3>
     <input ref=${searchRef} id="cron-pick-target-search" class="add-member-search" type="text"
       value=${query} placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false"
       role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
@@ -369,7 +369,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     let to = '', explicit = null;
     if (scopedGroup) {
       if (!groupExists) { setError(`Group “${scopedGroup}” no longer exists — choose a new launcher context.`); return; }
-      if (!selectedMembers.length) { setError(wizWord('Pick at least one recipient — tick the members this message should reach.', 'Pick at least one recipient — tick the familiars this missive should reach.')); return; }
+      if (!selectedMembers.length) { setError(wizWord('Pick at least one recipient — tick the members this message should reach.', 'Pick at least one recipient — tick the heroes this missive should reach.')); return; }
       to = `group:${scopedGroup}`;
       if (preset !== 'all') explicit = selectedMembers.map((member) => member.agent_id || member.conv_id);
     } else if (target.mode === 'group') {
@@ -380,7 +380,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       to = `group:${target.groupName}`;
     } else {
       to = target.target.trim();
-      if (!to) { setError(wizWord('Target is required — type a title / conv-id or use 🔍 to pick.', 'Recipient is required — name a familiar or use 🔍 to pick.')); return; }
+      if (!to) { setError(wizWord('Target is required — type a title / conv-id or use 🔍 to pick.', 'Recipient is required — name a hero or use 🔍 to pick.')); return; }
     }
     if (restricted) {
       if (!scopedGroup && target.mode === 'group') { setError(lock.group); return; }
@@ -409,7 +409,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     // send still needs a sender agent to attribute and reply to.
     const isGroup = to.startsWith('group:');
     if (!from.trim() && !isGroup) {
-      setError(wizWord('From is required for a solo message — leave it blank only to multicast to a group as you, the operator.', 'A sending familiar is required for a solo missive — leave it blank only to multicast to a party as yourself.'));
+      setError(wizWord('From is required for a solo message — leave it blank only to multicast to a group as you, the operator.', 'A sending hero is required for a solo missive — leave it blank only to multicast to a party as yourself.'));
       return;
     }
     busyRef.current = true;
@@ -432,11 +432,11 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/></h3>
     <p id="message-create-desc" class="modal-hint"><${Words}
       plain=${scopedGroup ? `Delivers one immediate message to the members of “${scopedGroup}” ticked below. Leave From blank to send it as you, the operator.` : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Leave From blank on a group send to multicast as you, the operator.'}
-      wizard=${scopedGroup ? `Delivers one immediate missive to the familiars of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
+      wizard=${scopedGroup ? `Delivers one immediate missive to the heroes of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a hero, or multicasts it to every hero in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
     <label class="cron-create-row"><span class="cron-create-label" title="Leave blank to multicast as the human operator; a solo message needs a sender agent">From</span><div class="cron-create-target"><div class=${`cron-target-input-row${lock.from ? ' locked-field' : ''}`}>
       <input id="message-create-from" type="text" value=${lock.from ? '' : from} placeholder=${lock.from ? 'you (the operator)' : 'blank = you (the operator) · or a sender: agt_ id / title / conv-id'}
         disabled=${!!lock.from} autocomplete="off" spellcheck="false" onInput=${(event) => setFrom(event.currentTarget.value)} />
-      <button type="button" id="message-create-from-pick" title="Pick from the agent / familiar list" disabled=${!!lock.from} onClick=${chooseFrom}>🔍</button>
+      <button type="button" id="message-create-from-pick" title="Pick from the agent / hero list" disabled=${!!lock.from} onClick=${chooseFrom}>🔍</button>
     </div><${LockReason} id="message-create-from-lock" why=${lock.from}/></div></label>
     ${!scopedGroup ? html`<label class="cron-create-row" id="message-create-target-row"><span class="cron-create-label"><${Words} plain="Target" wizard="Recipient"/></span>
       <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent} groupLocked=${lock.group || ''}/>
@@ -536,7 +536,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       event.preventDefault();
       addFiles(dropped);
     }}>
-    <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the familiar</span></h3>
+    <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the hero</span></h3>
     <p id="human-reply-desc" class="modal-hint">${remote
       ? `Sent through ${context.nodeName || 'its node'}, which queues your answer in this agent's inbox for delivery when its pane is ready. The agent sees it comes from this node's operator.`
       : "Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator."}</p>
@@ -591,7 +591,7 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
     registerClose=${registerClose}>
     <h3 id="sudo-grant-title">Grant sudo</h3><p class="sudo-grant-hint"><${Words}
-      plain="Proactively elevate an agent for a bounded window." wizard="Bestow a bounded sudo boon on a familiar."/> Same blocklist + duration cap as the agent-initiated path; granted_by records <code>${'<human-dashboard>:proactive'}</code> on the audit row.</p>
+      plain="Proactively elevate an agent for a bounded window." wizard="Bestow a bounded sudo boon on a hero."/> Same blocklist + duration cap as the agent-initiated path; granted_by records <code>${'<human-dashboard>:proactive'}</code> on the audit row.</p>
     <label class="sudo-grant-row"><span class="sudo-grant-label">Agent ID</span><input id="sudo-grant-agent-id" type="text" value=${agentID}
       placeholder="agt_…" autocomplete="off" spellcheck="false" onInput=${(event) => setAgentID(event.currentTarget.value)} /></label>
     <label class="sudo-grant-row"><span class="sudo-grant-label">Slugs</span><div class="sudo-grant-slugs-wrap"><div class="sudo-grant-slugs-toolbar">
@@ -915,10 +915,10 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     : descriptor.mode === 'agent' ? `Agent: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Role${descriptor.label ? `: ${descriptor.label}` : ''} · granted when the role is assigned`
     : `New agent${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · fully composed from defaults, group, roles, ownership, and overrides`;
-  const wizardSubtitle = groupMode ? `Party: ${descriptor.group} · every familiar receives these boons immediately`
-    : descriptor.mode === 'agent' ? `Familiar: ${descriptor.label || shortConv} · ${shortConv}`
+  const wizardSubtitle = groupMode ? `Party: ${descriptor.group} · every hero receives these boons immediately`
+    : descriptor.mode === 'agent' ? `Hero: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Class${descriptor.label ? `: ${descriptor.label}` : ''} · bestowed when the class is assigned`
-    : `New familiar${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
+    : `New hero${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
   return html`<${Overlay} id="perm-edit-modal" dialogClass="perm-edit-modal" labelledby="perm-edit-title"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
     registerClose=${registerClose}>
@@ -926,11 +926,11 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
       <span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span></h3>
     <div class="perm-edit-banner" id="perm-edit-banner">${groupMode
       ? html`<${Words} plain=${html`<strong>GROUP GRANTS</strong> — selected permissions apply immediately to every current member. An agent-level <strong>Deny</strong> still wins.`}
-          wizard=${html`<strong>PARTY BOONS</strong> — bestow capabilities on every familiar in this party. A personal binding against one still wins.`}/>`
+          wizard=${html`<strong>PARTY BOONS</strong> — bestow capabilities on every hero in this party. A personal binding against one still wins.`}/>`
       : roleMode ? html`<${Words} plain=${html`<strong>ROLE GRANTS</strong> — granted permissions are applied whenever this role is assigned. Narrow a grant with its scope controls, or leave it unscoped to apply everywhere.`}
-          wizard=${html`<strong>CLASS BOONS</strong> — these powers accompany every familiar assigned this class. Bind a boon with its scope controls, or leave it unbound to apply everywhere.`}/>`
+          wizard=${html`<strong>CLASS BOONS</strong> — these powers accompany every hero assigned this class. Bind a boon with its scope controls, or leave it unbound to apply everywhere.`}/>`
       : html`<${Words} plain=${html`<strong>PERMANENT</strong> — these per-agent overrides persist until changed. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks inherited sources, and <strong>Default</strong> inherits them.`}
-          wizard=${html`<strong>THE GRIMOIRE</strong> — these bindings follow this familiar until changed. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals inherited boons away, and <strong>Default</strong> inherits them.`}/>`}</div>
+          wizard=${html`<strong>THE GRIMOIRE</strong> — these bindings follow this hero until changed. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals inherited boons away, and <strong>Default</strong> inherits them.`}/>`}</div>
     <p class="perm-edit-subtitle" id="perm-edit-subtitle"><${Words} plain=${subtitle} wizard=${wizardSubtitle}/></p>
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
     <div class="perm-edit-toolbar"><input id="perm-edit-filter" type="text" value=${filter} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
@@ -1032,7 +1032,7 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
       <span class="perm-edit-title-wizard">🧹 Trim the Tome</span></h3>
     <div class="perm-edit-banner" id="context-features-banner"><${Words}
       plain=${html`<strong>FOCUS</strong> — every capability the harness advertises is context the agent reads past before it reaches your brief. <strong>Trim</strong> what this agent will not use; <strong>Keep</strong> overrides a profile that trimmed it; <strong>Default</strong> leaves the harness alone.`}
-      wizard=${html`<strong>FOCUS</strong> — every spell in the tome is a page the familiar must turn before it finds your task. <strong>Tear out</strong> what it will not cast; <strong>Keep</strong> restores a page a profile removed; <strong>Default</strong> leaves the tome untouched.`}/></div>
+      wizard=${html`<strong>FOCUS</strong> — every spell in the tome is a page the hero must turn before it finds your task. <strong>Tear out</strong> what it will not cast; <strong>Keep</strong> restores a page a profile removed; <strong>Default</strong> leaves the tome untouched.`}/></div>
     <p class="perm-edit-subtitle" id="context-features-subtitle">${
       descriptor.label ? `New agent “${descriptor.label}”` : 'New agent'} · applied at launch${
       trimmed || kept ? ` · ${[trimmed ? `${trimmed} trimmed` : '', kept ? `${kept} kept` : ''].filter(Boolean).join(' · ')}` : ''}</p>

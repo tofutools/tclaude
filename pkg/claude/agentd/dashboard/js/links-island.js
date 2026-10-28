@@ -185,7 +185,7 @@ function LinksManager({ state, actions, confirmDiscard }) {
       <h3 id="links-manage-title"><${Words} plain="Inter-group links" wizard="Arcane channels between parties" /></h3>
       <p class="manage-intro"><${Words}
         plain="Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach."
-        wizard="Missive channels between parties: familiars of FROM may whisper to familiars of TO. Direction matters — weave a reverse channel for two-way reach."
+        wizard="Missive channels between parties: heroes of FROM may whisper to heroes of TO. Direction matters — weave a reverse channel for two-way reach."
       /></p>
       <div class="filter-bar" id="links-filter-root"><${LinksControls} state=${state} actions=${actions} /></div>
       <div id="links-list"><${LinksList} state=${state} actions=${actions} /></div>

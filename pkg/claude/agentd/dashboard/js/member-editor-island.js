@@ -148,7 +148,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
     registerClose=${registerClose}
     guardBackdropDrag=${true}
   >
-    <h3 id="edit-member-title"><span class="edit-member-title-regular">Edit agent</span><span class="edit-member-title-wizard">Enchant this familiar</span></h3>
+    <h3 id="edit-member-title"><span class="edit-member-title-regular">Edit agent</span><span class="edit-member-title-wizard">Enchant this hero</span></h3>
     <div class="modal-meta" id="edit-member-meta">${descriptor.label} → ${descriptor.group}</div>
     <div class="field">
       <label for="edit-member-title-input">Title</label>
@@ -158,9 +158,9 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
         placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only"
         onInput=${(event) => update('title', event.currentTarget.value)} />
       <div id="edit-member-title-hint" class=${`spawn-field-hint${titleHint.warn ? ' warn' : ''}`}>${titleHint.text}</div>
-      <label class="edit-member-auto-row" title="Ask this agent / familiar to pick a descriptive title itself via the agent-rename skill / CLI.">
+      <label class="edit-member-auto-row" title="Ask this agent / hero to pick a descriptive title itself via the agent-rename skill / CLI.">
         <input id="edit-member-auto" type="checkbox" checked=${auto} disabled=${busy}
-          onChange=${(event) => setAuto(event.currentTarget.checked)} /> <span class="theme-copy-regular">Auto — let the agent choose its own title</span><span class="theme-copy-wizard">Auto — let the familiar choose its own title</span>
+          onChange=${(event) => setAuto(event.currentTarget.checked)} /> <span class="theme-copy-regular">Auto — let the agent choose its own title</span><span class="theme-copy-wizard">Auto — let the hero choose its own title</span>
       </label>
     </div>
     <div class="field">
@@ -168,7 +168,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
       <input id="edit-member-role" type="text" value=${draft.role} disabled=${busy}
         autofocus=${autofocus('role')} data-select-on-focus autocomplete="off" spellcheck=${false}
         onInput=${(event) => update('role', event.currentTarget.value)} />
-      <label class=${`edit-member-owner-row${here ? '' : ' locked-field'}`} title=${here ? 'Group / party owners gain the implicit power to manage the other agents / familiars in it without a per-slug grant.' : undefined}>
+      <label class=${`edit-member-owner-row${here ? '' : ' locked-field'}`} title=${here ? 'Group / party owners gain the implicit power to manage the other agents / heroes in it without a per-slug grant.' : undefined}>
         <input id="edit-member-owner" type="checkbox" checked=${draft.owner} disabled=${busy || !here}
           aria-disabled=${here ? undefined : 'true'}
           onChange=${(event) => update('owner', event.currentTarget.checked)} /> <span class="theme-copy-regular">Group owner</span><span class="theme-copy-wizard">Party owner</span>
@@ -182,13 +182,13 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
       <input id="edit-member-tags" type="text" value=${draft.tags} disabled=${busy}
         autofocus=${autofocus('descr')} data-select-on-focus autocomplete="off" spellcheck=${false}
         placeholder="comma-separated, e.g. tf:squad, priority"
-        title="Short labels rendered as chips in the Description column. They follow this agent / familiar across groups / parties."
+        title="Short labels rendered as chips in the Description column. They follow this agent / hero across groups / parties."
         onInput=${(event) => update('tags', event.currentTarget.value)} />
     </div>
     <div class="cron-create-error" id="edit-member-error" role="alert">${error}</div>
     <div class="modal-buttons">
       <button id="edit-member-perms" type="button" disabled=${busy || !here}
-        title="Open this agent / familiar's permanent permission grimoire (grant / deny / inherit per slug)"
+        title="Open this agent / hero's permanent permission grimoire (grant / deny / inherit per slug)"
         onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button><${LockReason} id="edit-member-perms-lock" why=${adminLock}/>
       <span class="spacer"></span>
       <button id="edit-member-cancel" type="button" disabled=${busy}

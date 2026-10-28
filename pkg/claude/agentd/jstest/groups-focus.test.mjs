@@ -153,7 +153,7 @@ test('the wizard skin renames the lenses', async (t) => {
   const { harness, root } = await setup(t);
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: true } })));
   const radios = root.querySelector('[role="group"][aria-label="Party lens"]');
-  assert.ok(getByRole(radios, 'button', { name: /^Familiars/ }));
+  assert.ok(getByRole(radios, 'button', { name: /^Heroes/ }));
   assert.ok(getByRole(radios, 'button', { name: /Whole party/ }));
   assert.ok(getByRole(radios, 'button', { name: /Rites/ }));
 });

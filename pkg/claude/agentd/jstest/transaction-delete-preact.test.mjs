@@ -124,7 +124,7 @@ test('delete worktree probe renders absent, removable, main, and shared states e
         kind: 'linked', path: '/repo/shared', branch: 'shared', shared: true, removable: false,
       },
       visible: true, checked: false, disabled: true,
-      copy: 'Git worktree kept /repo/shared · shared — shared with another agentshared with another familiar',
+      copy: 'Git worktree kept /repo/shared · shared — shared with another agentshared with another hero',
     },
   ]) {
     await t.test(row.name, async (t) => {
@@ -143,7 +143,7 @@ test('delete worktree probe renders absent, removable, main, and shared states e
           assert.equal(worktreeRow.querySelector('.theme-copy-regular').textContent,
             'shared with another agent');
           assert.equal(worktreeRow.querySelector('.theme-copy-wizard').textContent,
-            'shared with another familiar');
+            'shared with another hero');
         }
       }
       mounted.state.close();

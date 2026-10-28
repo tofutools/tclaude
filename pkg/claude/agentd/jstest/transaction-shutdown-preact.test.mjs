@@ -52,7 +52,7 @@ test('shutdown renderer preserves distinct actions, initial focus, and exact foc
   const mounted = await openShutdown(t, async () => {});
   const { harness, host, opener } = mounted;
   assert.equal(host.querySelector('#shutdown-title .theme-copy-regular').textContent, 'Shut down agent?');
-  assert.equal(host.querySelector('#shutdown-title .theme-copy-wizard').textContent, 'Slumber this familiar?');
+  assert.equal(host.querySelector('#shutdown-title .theme-copy-wizard').textContent, 'Slumber this hero?');
   assert.equal(host.querySelector('#shutdown-meta').textContent, 'Stable target');
   assert.match(host.querySelector('#shutdown-modal').textContent,
     /Soft exit injects \/exit into tmux pane/);
