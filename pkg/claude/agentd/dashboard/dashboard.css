@@ -5981,6 +5981,10 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   color: #c9d1d9; margin: 8px 0;
 }
 .modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.modal .confirm-checks { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 4px; }
+.modal .confirm-check { display: flex; gap: 8px; align-items: flex-start; color: #c9d1d9; cursor: pointer; }
+.modal .confirm-check input { margin-top: 3px; }
+.modal .confirm-check-hint { display: block; font-size: 12px; color: #8b949e; }
 /* A .spacer in a button row pushes everything after it to the right —
    e.g. the edit-member modal's Permissions… button sits hard-left
    while Cancel / Save stay right. */
@@ -20846,6 +20850,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cell.update { border-color: #9e6a03; }
 .fa-cell.broken { border-color: #f8514966; color: #ffa198; }
 .fa-up { color: #e3b341; font-weight: 600; }
+.fa-script-out { max-height: 240px; overflow: auto; white-space: pre-wrap; font-size: 11px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 6px; margin: 4px 0; }
 /* Node self-update (js/node-update.js): the map card's version row. */
 .fleet-update { color: #d29922; }
 .fleet-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }

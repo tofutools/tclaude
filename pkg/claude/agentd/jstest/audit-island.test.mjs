@@ -4,7 +4,7 @@ const entry = (id, detail = 'copy me') => ({ id, at: '2026-07-12T00:00:00Z', act
 const payload = (entries) => ({ entries, total: entries.length, total_unfiltered: entries.length, page: 1, page_size: 100, sort: 'time', dir: 'desc', pruning_on: true, retention_days: 30 });
 test('Audit island filters/sorts and preserves keyed row focus across refreshes', async (t) => {
   const harness = await createPreactHarness(t); const [{ createAuditState }, { AuditApp }] = await Promise.all([harness.importDashboardModule('js/audit-state.js'), harness.importDashboardModule('js/audit-island.js')]);
-  const state = createAuditState({ activeTab: harness.signals.signal('activity'), activitySubtab: harness.signals.signal('audit') }); let token = state.beginRequest(); state.commitRequest(token, payload([entry(1)])); const calls = []; const actions = { load: async () => calls.push('load') };
+  const state = createAuditState({ activeTab: harness.signals.signal('diagnostics'), activitySubtab: harness.signals.signal('audit') }); let token = state.beginRequest(); state.commitRequest(token, payload([entry(1)])); const calls = []; const actions = { load: async () => calls.push('load') };
   const mounted = await harness.mount(harness.html`<${AuditApp} state=${state} actions=${actions} />`); const row = mounted.container.querySelector('tr[data-key="audit-1"]'); row.tabIndex = 0; row.focus();
   await harness.act(() => { token = state.beginRequest(); state.commitRequest(token, payload([entry(2), entry(1)])); }); assertSameNode(mounted.container.querySelector('tr[data-key="audit-1"]'), row); assertSameNode(harness.document.activeElement, row);
   const search = getByRole(mounted.container, 'textbox', { name: 'Search audit events' }); await harness.input(search, 'deny'); assert.equal(state.view.value.query, 'deny');
@@ -14,8 +14,8 @@ test('Audit island filters/sorts and preserves keyed row focus across refreshes'
 });
 test('Audit snapshot listener exists only while active and obeys the 30s gate', async (t) => {
   const harness = await createPreactHarness(t); const [{ createAuditState }, { AuditApp }] = await Promise.all([harness.importDashboardModule('js/audit-state.js'), harness.importDashboardModule('js/audit-island.js')]);
-  let now = 0; const activeTab = harness.signals.signal('activity'); const state = createAuditState({ activeTab, activitySubtab: harness.signals.signal('audit'), now: () => now }); const calls = []; const mounted = await harness.mount(harness.html`<${AuditApp} state=${state} actions=${{ load: () => { calls.push(now); state.beginRequest(); } }} />`);
-  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:tab-reselected', { detail: { tab: 'activity' } }))); assert.equal(calls.length, 2, 'reselecting active Audit forces a refresh');
+  let now = 0; const activeTab = harness.signals.signal('diagnostics'); const state = createAuditState({ activeTab, activitySubtab: harness.signals.signal('audit'), now: () => now }); const calls = []; const mounted = await harness.mount(harness.html`<${AuditApp} state=${state} actions=${{ load: () => { calls.push(now); state.beginRequest(); } }} />`);
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:tab-reselected', { detail: { tab: 'diagnostics' } }))); assert.equal(calls.length, 2, 'reselecting active Audit forces a refresh');
   now = 10000; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 2);
   now = 31001; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 3);
   await harness.act(() => { activeTab.value = 'groups'; }); now = 70000; await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'))); assert.equal(calls.length, 3);

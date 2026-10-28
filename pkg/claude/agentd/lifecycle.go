@@ -7443,7 +7443,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if p.AgentID == "" {
 			p.AgentID = db.NewAgentID()
 		}
-		p.InitialMessage = buildArrivalBriefing(*p.Arrival, p.AgentID, p.Cwd, groupName, spawnHarness.Name, p.Model) + "\n\n" + p.InitialMessage
+		arrival := *p.Arrival
+		arrival.Sandbox = p.EffectiveSandbox
+		p.InitialMessage = buildArrivalBriefing(arrival, p.AgentID, p.Cwd, groupName, spawnHarness.Name, p.Model) + "\n\n" + p.InitialMessage
 		p.Arrival = nil // an async continuation must not add a second briefing
 	}
 	var preConvID string

@@ -704,11 +704,11 @@ export function buildCommands(snapshot) {
       });
     }
   }
-  // Activity folds Audit, Logs and Performance into one tab; each view keeps
+  // Diagnostics folds Audit, Logs and Performance into one tab; each view keeps
   // a direct command so "logs" or "debug" still finds it. Only Audit is
-  // offered on a peer view (peerView 'tab' gates it on the Activity tab);
+  // offered on a peer view (peerView 'tab' gates it on the Diagnostics tab);
   // the others fall to the default local-only gate there.
-  const activityBtn = $$('nav [data-tab="activity"]')[0];
+  const activityBtn = $$('nav [data-tab="diagnostics"]')[0];
   if (activityBtn && activityBtn.offsetParent !== null) {
     for (const [subtab, plain, arcane, keywords] of [
       ['audit', 'Audit', 'Deeds', 'audit trail log who commands denied chronicle deeds'],
@@ -716,16 +716,16 @@ export function buildCommands(snapshot) {
       ['performance', 'Performance', 'Alchemy', 'performance perf debug latency poll timing slow diagnostics alchemy'],
     ]) {
       cmds.push({
-        ...(subtab === 'audit' ? { peerView: 'tab', tab: 'activity' } : {}),
-        icon: wiz('⤢', '🪞'), label: wiz(`Go to Activity › ${plain}`, `Scry the Chronicle › ${arcane}`),
+        ...(subtab === 'audit' ? { peerView: 'tab', tab: 'diagnostics' } : {}),
+        icon: wiz('⤢', '🪞'), label: wiz(`Go to Diagnostics › ${plain}`, `Scry the Chronicle › ${arcane}`),
         hint: wiz('switch tab', 'peer into this chamber of the Tower'),
-        keywords: 'tab navigate go open activity ' + keywords,
+        keywords: 'tab navigate go open diagnostics activity ' + keywords,
         // From another tab, preselect the view so the one nav click records
-        // a single /activity/<subtab> entry; on Activity, the subtab click
+        // a single /diagnostics/<subtab> entry; on Diagnostics, the subtab click
         // records it.
         run: () => {
           if (activityBtn.classList.contains('active')) {
-            document.querySelector(`#tab-activity .activity-subtab[data-subtab="${subtab}"]`)?.click();
+            document.querySelector(`#tab-diagnostics .activity-subtab[data-subtab="${subtab}"]`)?.click();
           } else {
             setActivitySubtab(subtab);
             activityBtn.click();

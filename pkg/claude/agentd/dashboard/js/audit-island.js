@@ -118,7 +118,7 @@ export function AuditApp({ state, actions }) {
     return () => document.removeEventListener('tclaude:snapshot', snapshot);
   }, [current.active]);
   useEffect(() => {
-    const reselected = (event) => { if (event.detail?.tab === 'activity' && state.view.value.active) actions.load(); };
+    const reselected = (event) => { if (event.detail?.tab === 'diagnostics' && state.view.value.active) actions.load(); };
     document.addEventListener('tclaude:tab-reselected', reselected);
     return () => document.removeEventListener('tclaude:tab-reselected', reselected);
   }, []);

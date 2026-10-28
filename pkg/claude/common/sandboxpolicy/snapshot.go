@@ -470,9 +470,14 @@ type Snapshot struct {
 	// the group tier. It is recorded even when that group had no profile, so a
 	// later resume can pick up a new assignment without guessing among an
 	// actor's other memberships. Zero is the legacy/ungrouped sentinel.
-	ResolutionGroupID int64            `json:"resolution_group_id,omitempty"`
-	Effective         EffectiveProfile `json:"effective"`
-	Applied           []AppliedProfile `json:"applied"`
+	ResolutionGroupID int64 `json:"resolution_group_id,omitempty"`
+	// GroupBinding records an operator's choice, made when the agent moved
+	// between groups, to keep a setting on the group it left. Nil follows the
+	// default: the sandbox tier and the group environment both come from
+	// ResolutionGroupID, which tracks the agent's membership.
+	GroupBinding *GroupBinding    `json:"group_binding,omitempty"`
+	Effective    EffectiveProfile `json:"effective"`
+	Applied      []AppliedProfile `json:"applied"`
 	// LaunchEnvironment is merged into the child process after the sandbox
 	// profile environment. It is not sandbox authority, so RequireContained
 	// intentionally does not inspect it.
@@ -488,6 +493,52 @@ type Snapshot struct {
 	// freezes the one filesystem observation shared by disclosure and the
 	// target adapter; every fresh launch replaces it.
 	UnixSocketMaterialization *UnixSocketMaterialization `json:"unix_socket_materialization,omitempty"`
+}
+
+// GroupBinding is the per-setting group provenance of a Snapshot. Each setting
+// names its source group; a pinned source is kept after the agent leaves that
+// group (until the group is deleted), an unpinned one follows membership.
+type GroupBinding struct {
+	// ProfileGroupPinned keeps ResolutionGroupID (the sandbox-profile tier's
+	// group) after the agent has left it.
+	ProfileGroupPinned bool `json:"profile_group_pinned,omitempty"`
+	// EnvironmentGroupSet makes EnvironmentGroupID, not ResolutionGroupID, the
+	// source of the group environment. Zero with the flag set means no group
+	// environment.
+	EnvironmentGroupSet    bool  `json:"environment_group_set,omitempty"`
+	EnvironmentGroupID     int64 `json:"environment_group_id,omitempty"`
+	EnvironmentGroupPinned bool  `json:"environment_group_pinned,omitempty"`
+}
+
+// Clone returns an independent copy; nil stays nil.
+func (b *GroupBinding) Clone() *GroupBinding {
+	if b == nil {
+		return nil
+	}
+	out := *b
+	return &out
+}
+
+// IsZero reports whether the binding carries no choice.
+func (b *GroupBinding) IsZero() bool {
+	return b == nil || *b == GroupBinding{}
+}
+
+// EnvironmentGroupID returns the group whose environment the agent's launches
+// compose, and whether it was set explicitly rather than following
+// ResolutionGroupID.
+func (s Snapshot) EnvironmentGroupID() (int64, bool) {
+	if s.GroupBinding != nil && s.GroupBinding.EnvironmentGroupSet {
+		return s.GroupBinding.EnvironmentGroupID, true
+	}
+	return s.ResolutionGroupID, false
+}
+
+// CopyGroupProvenance carries the group provenance (ResolutionGroupID and
+// GroupBinding) from another snapshot of the same agent.
+func (s *Snapshot) CopyGroupProvenance(from Snapshot) {
+	s.ResolutionGroupID = from.ResolutionGroupID
+	s.GroupBinding = from.GroupBinding.Clone()
 }
 
 // NewSnapshot freezes a resolver result and its stable registry provenance.
@@ -548,7 +599,7 @@ func OmittedProfilesSnapshotKeepingLaunchEnvironment(previous *Snapshot) Snapsho
 	out.LaunchEnvironmentOverrides = append(
 		[]EnvironmentEntry(nil), previous.LaunchEnvironmentOverrides...)
 	out.RefreshGroupEnvironment = previous.RefreshGroupEnvironment
-	out.ResolutionGroupID = previous.ResolutionGroupID
+	out.CopyGroupProvenance(*previous)
 	return out
 }
 
@@ -583,7 +634,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.Provenance.ResourceCPU = nil
 	effective.Provenance.ResourcePIDs = nil
 	out := NewSnapshot(effective, in.Applied)
-	out.ResolutionGroupID = in.ResolutionGroupID
+	out.CopyGroupProvenance(in)
 	out.ProfilesOmitted = in.ProfilesOmitted
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
 	out.RefreshGroupEnvironment = in.RefreshGroupEnvironment
@@ -753,7 +804,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("effective sandbox agent directories changed since resolution")
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
-	out.ResolutionGroupID = in.ResolutionGroupID
+	out.CopyGroupProvenance(in)
 	out.ProfilesOmitted = in.ProfilesOmitted
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
 	out.RefreshGroupEnvironment = in.RefreshGroupEnvironment

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -114,6 +115,12 @@ type Config struct {
 	// tclaude-hub. Absent / disabled → no hub connection. See
 	// FederationConfig and docs/federation.md.
 	Federation *FederationConfig `json:"federation,omitempty"`
+
+	// Updates holds this node's own update scripts and harness update
+	// overrides — see UpdatesConfig and docs/federation.md. Only the local
+	// operator sets them: they are shell commands agentd runs, so they never
+	// travel in config bundles or peer requests.
+	Updates *UpdatesConfig `json:"updates,omitempty"`
 
 	// Snapshots configures the local agent snapshot library.
 	Snapshots *SnapshotsConfig `json:"snapshots,omitempty"`
@@ -953,6 +960,64 @@ type NodeScriptsConfig struct {
 	Memory              string   `json:"memory,omitempty"`
 	CPU                 *float64 `json:"cpu,omitempty"`
 	PIDs                *uint64  `json:"pids,omitempty"`
+}
+
+// UpdatesConfig is how this node keeps itself up to date beyond tclaude's own
+// binaries: Scripts are operator-written status/update commands shown in the
+// fleet's Harnesses page, and Harnesses replaces a harness's default update
+// command (its built-in updater) with the operator's own.
+type UpdatesConfig struct {
+	Scripts   []UpdateScriptConfig           `json:"scripts,omitempty"`
+	Harnesses map[string]HarnessUpdateConfig `json:"harnesses,omitempty"`
+}
+
+// UpdateScriptConfig is one named update target. Status and Update are run
+// with /bin/sh -c as the agentd user from the home directory; at least one is
+// required. Status prints JSON ({"summary","update_available","items":[...]})
+// or plain text, where exit 0 means up to date and exit 100 means updates are
+// pending.
+type UpdateScriptConfig struct {
+	Name                 string `json:"name"`
+	Label                string `json:"label,omitempty"`
+	Status               string `json:"status,omitempty"`
+	Update               string `json:"update,omitempty"`
+	StatusTimeoutSeconds int    `json:"status_timeout_seconds,omitempty"`
+	UpdateTimeoutSeconds int    `json:"update_timeout_seconds,omitempty"`
+}
+
+// HarnessUpdateConfig overrides one harness's update command.
+type HarnessUpdateConfig struct {
+	Update string `json:"update,omitempty"`
+}
+
+var updateScriptName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
+
+// Validate reports problems with the update scripts and overrides.
+func (u *UpdatesConfig) Validate() []string {
+	if u == nil {
+		return nil
+	}
+	var errs []string
+	seen := map[string]bool{}
+	for _, s := range u.Scripts {
+		switch {
+		case !updateScriptName.MatchString(s.Name):
+			errs = append(errs, "updates.scripts: name must be 1-40 lowercase letters, digits, - or _, starting with a letter or digit")
+		case seen[s.Name]:
+			errs = append(errs, "updates.scripts: duplicate name "+s.Name)
+		case strings.TrimSpace(s.Status) == "" && strings.TrimSpace(s.Update) == "":
+			errs = append(errs, "updates.scripts."+s.Name+": set status, update or both")
+		case s.StatusTimeoutSeconds < 0 || s.StatusTimeoutSeconds > 3600 || s.UpdateTimeoutSeconds < 0 || s.UpdateTimeoutSeconds > 86400:
+			errs = append(errs, "updates.scripts."+s.Name+": status_timeout_seconds must be 0..3600 and update_timeout_seconds 0..86400")
+		}
+		seen[s.Name] = true
+	}
+	for name, h := range u.Harnesses {
+		if strings.TrimSpace(h.Update) == "" {
+			errs = append(errs, "updates.harnesses."+name+".update must not be empty")
+		}
+	}
+	return errs
 }
 
 // SnapshotsConfig configures the local agent snapshot library.
@@ -3777,6 +3842,7 @@ func Validate(c *Config) []string {
 	if c.StatusSnapshot != nil && (c.StatusSnapshot.FreshnessMS < 0 || c.StatusSnapshot.FreshnessMS > 60000) {
 		errs = append(errs, "status_snapshot.freshness_ms must be 0 (default) or 1..60000")
 	}
+	errs = append(errs, c.Updates.Validate()...)
 	if f := c.Federation; f != nil {
 		if f.Teleport != nil {
 			if err := f.Teleport.Backup.Validate(); err != nil {

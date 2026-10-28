@@ -161,9 +161,9 @@ export function createDndOps({
     await refresh();
   }
 
-  // runDndMove performs the optimistic local mutation, then the
-  // POST B → DELETE A sequence. Failure of either step rolls back
-  // the local mutation and surfaces a toast.
+  // runDndMove performs the optimistic local mutation, then the one-step
+  // move (or, on a node without it, the POST B → DELETE A sequence).
+  // A failure rolls back the local mutation and surfaces a toast.
   async function runDndMove(payload, listedTarget, ctx = context()) {
     const {conv, label} = payload;
     const sourceGroup = ctx.group(payload.sourceGroup);
@@ -175,13 +175,27 @@ export function createDndOps({
     // Confirm BEFORE the lastSnapshot read + optimistic splice below,
     // so a cancelled move leaves the snapshot — and the render —
     // completely untouched.
+    // The move is one daemon call. Each box switches one setting to the new
+    // group; unticked keeps it on the group the agent leaves. Another node
+    // answers it when it trusts this one unrestricted and knows the route;
+    // otherwise the move falls back to the add-then-remove pair its peer
+    // grants allow, which switches everything.
+    const checks = [
+      { key: 'permissions', checked: true, label: `Switch to ${targetGroup}'s permissions`,
+        hint: `Unticked also keeps ${sourceGroup}'s group permissions after it leaves. Applies immediately.` },
+      { key: 'sandbox', checked: true, label: `Switch to ${targetGroup}'s sandbox profile`,
+        hint: `Unticked keeps ${sourceGroup}'s. Applies at the next resume or restart.` },
+      { key: 'environment', checked: true, label: `Switch to ${targetGroup}'s environment variables`,
+        hint: `Unticked keeps ${sourceGroup}'s. Applies at the next resume or restart.` },
+    ];
     const confirmed = await confirm({
       title: 'Move agent to another group?',
       body: `Move "${label}" out of group "${sourceGroup}" and into group `
-        + `"${targetGroup}". Its membership of "${sourceGroup}" is removed and a `
-        + `membership of "${targetGroup}" is added.`,
+        + `"${targetGroup}", with the same role. Its own per-agent permissions and `
+        + `overrides are kept either way.`,
       meta: label,
       okLabel: 'Move',
+      checks,
     });
     if (!confirmed) { await ctx.done(); return; }
     // Every post-confirm exit — a guard-clause return, the partial-
@@ -229,6 +243,39 @@ export function createDndOps({
       }
 
       try {
+        const keep = (key) => !checks.find((check) => check.key === key).checked;
+        const moveRes = await ctx.api(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(sel)}/move`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({to: targetGroup, keep_permissions: keep('permissions'), keep_sandbox: keep('sandbox'), keep_environment: keep('environment')}),
+        });
+        if (moveRes.ok) {
+          // A node without kept permissions ignores the field and moves with
+          // the new group's: say so rather than report the keep as done.
+          const moved = keep('permissions') ? await moveRes.json().catch(() => ({})) : {};
+          if (keep('permissions') && !moved.kept_permissions) {
+            toast(`moved ${label}: ${sourceGroup} → ${targetGroup}, but that node did not keep ${sourceGroup}'s permissions (it needs an update)`, true);
+            landed(ctx, payload, targetGroup);
+            return;
+          }
+          toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
+          landed(ctx, payload, targetGroup);
+          return;
+        }
+        // An older node has no move route, and a peer trusting this one only
+        // through grants is refused it: the plain add-then-remove pair moves
+        // the agent there, but always under the new group's defaults.
+        const unsupported = ctx.node && [403, 404, 405].includes(moveRes.status);
+        if (!unsupported) {
+          toast(`move failed: ${await moveRes.text()}`, true);
+          rollback();
+          return;
+        }
+        if (checks.some((check) => !check.checked)) {
+          toast(`move failed: this node can't keep ${sourceGroup}'s settings for a move from here (${moveRes.status}); tick every box to move under ${targetGroup}'s`, true);
+          rollback();
+          return;
+        }
         const addRes = await ctx.api(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
           method: 'POST', credentials: 'same-origin',
           headers: {'Content-Type': 'application/json'},

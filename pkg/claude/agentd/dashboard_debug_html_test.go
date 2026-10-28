@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestDashboardHTML_DebugTabWired guards the bounded Debug (Activity ›
+// TestDashboardHTML_DebugTabWired guards the bounded Debug (Diagnostics ›
 // Performance) Preact island's
 // production wiring. Behaviour is covered by jstest/debug-preact.test.mjs.
 func TestDashboardHTML_DebugTabWired(t *testing.T) {
@@ -16,9 +16,9 @@ func TestDashboardHTML_DebugTabWired(t *testing.T) {
 		}
 	}
 
-	// The Activity › Performance subtab + the panel activity-tab.js toggles
+	// The Diagnostics › Performance subtab + the panel activity-tab.js toggles
 	// (the shared Activity wiring is pinned by TestDashboardHTML_ActivityTabWired).
-	must(`data-subtab="performance" href="/activity/performance"`, "the Performance subtab")
+	must(`data-subtab="performance" href="/diagnostics/performance"`, "the Performance subtab")
 	must(`id="activity-performance"`, "the Performance panel")
 	must(`id="debug-root"`, "the one bounded Preact host")
 

@@ -186,7 +186,7 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 	}
 	addAgentDirectoryWriteGrants(&effective, agentDirsMountParentEnabled(), bindings)
 	materialized := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
-	materialized.ResolutionGroupID = snapshot.ResolutionGroupID
+	materialized.CopyGroupProvenance(snapshot)
 	materialized.ProfilesOmitted = snapshot.ProfilesOmitted
 	materialized.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	materialized.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
@@ -328,7 +328,7 @@ func reconcileAgentDirectoriesForResume(
 	// ones, so mount-parent grants each distinct parent (deduped by the helper).
 	addAgentDirectoryWriteGrants(&effective, agentDirsMountParentEnabled(), bindings)
 	resumed := sandboxpolicy.NewSnapshot(effective, current.Applied)
-	resumed.ResolutionGroupID = current.ResolutionGroupID
+	resumed.CopyGroupProvenance(current)
 	resumed.ProfilesOmitted = current.ProfilesOmitted
 	resumed.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), current.LaunchEnvironment...)
 	resumed.RefreshGroupEnvironment = current.RefreshGroupEnvironment

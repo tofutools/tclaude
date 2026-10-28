@@ -40,7 +40,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'activity', 'config', 'doctor', 'map', 'fleet-admin',
+  'messages', 'usage', 'diagnostics', 'config', 'doctor', 'map', 'fleet-admin',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -173,7 +173,7 @@ function activeLocationFromDOM() {
   } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
-  } else if (tab === 'activity') {
+  } else if (tab === 'diagnostics') {
     loc.subtab = activitySubtab.value;
   } else if (tab === 'config') {
     return normalizeLocation(configLocation());
@@ -254,17 +254,17 @@ function requestGroupsLocation(loc) {
 // under the `applying` guard so the resulting clicks don't re-enter the
 // observer. Going through the real nav button's .click() (rather than poking
 // classes) reuses every lazy-loader hung on that button — the same reasoning as
-// cycleTab() in refresh.js — so a restored /costs or /activity/logs actually loads its
+// cycleTab() in refresh.js — so a restored /costs or /diagnostics/logs actually loads its
 // data. A non-routable or unknown tab is left as-is.
 function activate(loc, { traversal = false } = {}) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   // A peer view routes a tab the peer does not offer (a pasted /costs?node=,
   // Back across a revoked grant) to Groups, and says so in the URL.
   if (!peerViewTabUsable(loc.tab)) { loc = defaultGroupsLocation(); correct(loc); }
-  // Activity is usable on a peer view for its audit log only; a Logs or
+  // Diagnostics is usable on a peer view for its audit log only; a Logs or
   // Performance location there lands on Audit instead.
-  if (loc.tab === 'activity' && loc.subtab && !peerViewSubtabUsable(loc.tab, loc.subtab)) {
-    loc = { tab: 'activity', subtab: DEFAULT_ACTIVITY_SUBTAB };
+  if (loc.tab === 'diagnostics' && loc.subtab && !peerViewSubtabUsable(loc.tab, loc.subtab)) {
+    loc = { tab: 'diagnostics', subtab: DEFAULT_ACTIVITY_SUBTAB };
     correct(loc);
   }
   applying = true;
@@ -289,8 +289,8 @@ function activate(loc, { traversal = false } = {}) {
       // than a click, and the island answers only to CORRECT the URL when the
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
-    } else if (loc.tab === 'activity') {
-      // A bare /activity (hand-typed, or Back onto one) shows the default
+    } else if (loc.tab === 'diagnostics') {
+      // A bare /diagnostics (hand-typed, or Back onto one) shows the default
       // view, so a later subtab never strands an entry on another one.
       setActivitySubtab(loc.subtab || DEFAULT_ACTIVITY_SUBTAB);
     } else if (loc.tab === 'config') {

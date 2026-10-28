@@ -429,7 +429,12 @@ cannot be written, the clone is stopped and the command fails, so a clone never
 runs with only part of its source's identity. Group ownerships are not copied
 unless you pass `--copy-ownership` (memberships, roles and grants always are). `--group <name>` also adds the clone to one more group in the same
 request; an agent caller needs `groups.members.add` for that group, just as
-for adding a member directly. `--cwd <dir>` starts the clone in another
+for adding a member directly. That clone launches under the group's sandbox
+profile and environment from its first launch; `--keep-sandbox` and
+`--keep-environment` keep the source's instead (the dashboard's clone dialog
+offers the same as checkboxes). Its handoff message says which group each
+comes from. A groups clone launches every member under the new group's.
+`--cwd <dir>` starts the clone in another
 directory, typically a git worktree; an agent caller must prove it can write
 there. A clone records no spawn lineage, so `@self-spawned` and `@descendants`
 grants never reach it through the agent that cloned it.
@@ -522,7 +527,7 @@ config key is absent. An explicit config `true` or `false` overrides it; saving
 the dashboard checkbox writes an explicit value. The checkbox displays the
 saved config value, not an inherited environment setting.
 
-Filter the dashboard's Activity › Logs view for `startup timing`, or inspect those JSON
+Filter the dashboard's Diagnostics › Logs view for `startup timing`, or inspect those JSON
 records in `~/.tclaude/data/output.log`. These are info-level records, so no
 log-level change is needed with the default configuration. Each record has a
 component, process ID, per-process trace number, milestone, total `elapsed_ms`,

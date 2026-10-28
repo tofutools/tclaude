@@ -1266,6 +1266,7 @@ func absorbBareSuccessorActorTx(tx dbExecQuerier, keepAgentID, newConv string) (
 		{`SELECT COUNT(*) FROM agent_group_members WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_group_owners WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_permissions WHERE agent_id = ?`, []any{newOwner}},
+		{`SELECT COUNT(*) FROM agent_retained_group_permissions WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_sudo_grants WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_notify_prefs WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_cron_jobs WHERE owner_agent = ? OR target_agent = ?`, []any{newOwner, newOwner}},

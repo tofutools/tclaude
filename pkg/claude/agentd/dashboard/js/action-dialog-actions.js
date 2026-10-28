@@ -132,14 +132,17 @@ export function createActionDialogActions({
     // node names another node's agent (blank is the page's). full says the
     // node takes the whole clone (this node, or one trusting it
     // unrestricted); a peer's grant route takes the follow-up and the
-    // history choice only. group is a group the clone joins as well.
-    async cloneAgent({ conv, node = '', label, followUp, copyConversation, copyOwnership = false, cwd, full = false, group = '' }, owner) {
+    // history choice only. group is a group the clone joins as well;
+    // keepSandbox / keepEnvironment keep the source's sandbox or environment
+    // source group instead of that group's.
+    async cloneAgent({ conv, node = '', label, followUp, copyConversation, copyOwnership = false, cwd, full = false, group = '', keepSandbox = false, keepEnvironment = false }, owner) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CLONE_TIMEOUT_MS);
       try {
         const body = { follow_up: normaliseFollowUp(followUp), no_copy_conv: !copyConversation };
         if (full) Object.assign(body, { copy_ownership: !!copyOwnership, cwd: cwd || '' });
         if (group) body.group = group;
+        if (group && full) Object.assign(body, { keep_sandbox: !!keepSandbox, keep_environment: !!keepEnvironment });
         const payload = await requestJSON(nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/clone`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),

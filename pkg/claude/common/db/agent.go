@@ -125,7 +125,20 @@ type AgentGroupPermission struct {
 	ScopeJSON string
 	GrantedAt time.Time
 	GrantedBy string
+	// Retained marks a grant the agent holds through a group it was moved out
+	// of with its permissions kept (agent_retained_group_permissions), not
+	// through membership.
+	Retained bool
 }
+
+// permissionGroupSources is the (group_id, agent_id, retained) relation the
+// group permission tier reads: an agent's memberships, plus the groups whose
+// permissions it kept when an operator moved it out of them. A kept group
+// grants exactly what membership would, still bound to that group.
+const permissionGroupSources = `SELECT group_id, agent_id, 0 AS retained FROM agent_group_members
+	UNION ALL
+	SELECT r.group_id, r.agent_id, 1 AS retained FROM agent_retained_group_permissions r
+	WHERE NOT EXISTS (SELECT 1 FROM agent_group_members m WHERE m.group_id = r.group_id AND m.agent_id = r.agent_id)`
 
 // ListAgentGroupPermissions returns the sorted additive grants attached to a
 // group. Group grants are live membership policy, not birth-time agent rows.
@@ -280,7 +293,7 @@ func HasAgentGroupPermission(convID, slug string) (bool, error) {
 		SELECT COUNT(*)
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ? AND gp.slug = ?`, agentID, slug).Scan(&n)
 	return n > 0, err
@@ -305,7 +318,7 @@ func ListAgentGroupPermissionSlugsForConv(convID string) ([]string, error) {
 		SELECT DISTINCT gp.slug
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ?
 		ORDER BY gp.slug`, agentID)
@@ -337,10 +350,10 @@ func ListAgentGroupPermissionRowsForConv(convID string) ([]AgentGroupPermission,
 		return nil, err
 	}
 	rows, err := d.Query(`
-		SELECT gp.group_id, g.name, gp.slug, gp.scope_json, gp.granted_at, gp.granted_by
+		SELECT gp.group_id, g.name, gp.slug, gp.scope_json, gp.granted_at, gp.granted_by, gm.retained
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ?
 		ORDER BY gp.slug, gp.group_id`, agentID)
@@ -352,7 +365,7 @@ func ListAgentGroupPermissionRowsForConv(convID string) ([]AgentGroupPermission,
 	for rows.Next() {
 		var grant AgentGroupPermission
 		var grantedAt dbTimestamp
-		if err := rows.Scan(&grant.GroupID, &grant.GroupName, &grant.Slug, &grant.ScopeJSON, &grantedAt, &grant.GrantedBy); err != nil {
+		if err := rows.Scan(&grant.GroupID, &grant.GroupName, &grant.Slug, &grant.ScopeJSON, &grantedAt, &grant.GrantedBy, &grant.Retained); err != nil {
 			return nil, err
 		}
 		grant.GrantedAt = grantedAt.Time()
@@ -385,7 +398,7 @@ func HasAgentGroupPermissionForAgent(agentID string, groupID int64, slug string)
 		SELECT COUNT(*)
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ? AND gp.group_id = ? AND gp.slug = ?`,
 		agentID, groupID, slug).Scan(&n)
@@ -1638,8 +1651,42 @@ func DeleteAgentGroup(name string) error {
 			return err
 		}
 	}
+	// Rebind every sandbox record naming the group: its members', and those of
+	// agents that moved away but kept a setting on it.
+	memberRows, err := tx.Query(`SELECT agent_id FROM agent_group_members WHERE group_id = ?
+		UNION
+		SELECT agent_id FROM agents WHERE json_valid(effective_sandbox_config) AND (
+			json_extract(effective_sandbox_config, '$.resolution_group_id') = ?1 OR
+			json_extract(effective_sandbox_config, '$.group_binding.environment_group_id') = ?1)`, gID)
+	if err != nil {
+		return err
+	}
+	var memberIDs []string
+	for memberRows.Next() {
+		var agentID string
+		if err := memberRows.Scan(&agentID); err != nil {
+			_ = memberRows.Close()
+			return err
+		}
+		memberIDs = append(memberIDs, agentID)
+	}
+	if err := memberRows.Err(); err != nil {
+		return err
+	}
+	if err := memberRows.Close(); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_group_members WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
 		return err
+	}
+	// After the group row is gone, so a setting pinned to it is released too.
+	for _, agentID := range memberIDs {
+		if err := syncGroupSourcedSettings(tx, agentID, 0); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -2013,7 +2060,7 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, m.GroupID); err != nil {
 		return err
 	}
-	return nil
+	return syncGroupSourcedSettings(db, agentID, 0)
 }
 
 // UpdateAgentGroupMember patches non-nil fields on an existing member.
@@ -2077,9 +2124,12 @@ func RemoveAgentGroupMember(groupID int64, convID string) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		_, err = db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, groupID)
+		if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, groupID); err != nil {
+			return err
+		}
+		return syncGroupSourcedSettings(db, agentID, 0)
 	}
-	return err
+	return nil
 }
 
 // AgentDeletionCounts records what `DeleteAgentByConvID` removed,
@@ -2304,6 +2354,7 @@ func deleteAgentByConvID(convID string, unlaunched bool) (AgentDeletionCounts, e
 				{`DELETE FROM agent_group_members WHERE agent_id = ?`, &c.GroupMembers},
 				{`DELETE FROM agent_group_owners WHERE agent_id = ?`, &c.GroupOwners},
 				{`DELETE FROM agent_permissions WHERE agent_id = ?`, &c.Permissions},
+				{`DELETE FROM agent_retained_group_permissions WHERE agent_id = ?`, nil},
 				{`DELETE FROM agent_notify_prefs WHERE agent_id = ?`, &c.NotifyPrefs},
 				// Cron jobs are agent-keyed (JOH-26 PR3a): a job belongs to its
 				// owner/target actor, so it is torn down with the actor (and only
@@ -2418,6 +2469,9 @@ func RemoveAllAgentGroupMembershipsForConv(convID string) (int64, error) {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
+	if _, err := tx.Exec(`DELETE FROM agent_retained_group_permissions WHERE agent_id = ?`, agentID); err != nil {
+		return 0, err
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}

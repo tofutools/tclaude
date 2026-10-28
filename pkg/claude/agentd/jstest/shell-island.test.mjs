@@ -393,6 +393,29 @@ test('a confirmation starts focus on its action (so a plain Enter confirms) and 
   await mounted.unmount();
 });
 
+test('a confirmation renders its checkboxes and hands the choices back on the caller\'s objects', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createShellState }, { Confirm }] = await Promise.all([
+    harness.importDashboardModule('js/shell-state.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const feedback = createShellState();
+  const mounted = await harness.mount(harness.html`<${Confirm} feedback=${feedback} />`);
+  const checks = [{ label: 'Apply sandbox', checked: true }, { label: 'Apply environment', checked: true, hint: 'next restart' }];
+  let answered;
+  await harness.act(() => { answered = feedback.confirm({ title: 'Move?', checks }); });
+  const boxes = [...mounted.container.querySelectorAll('.confirm-check input')];
+  assert.equal(boxes.length, 2);
+  assert.match(mounted.container.querySelector('.confirm-checks').textContent, /next restart/);
+  boxes[0].focus();
+  await harness.act(() => { boxes[0].checked = false; boxes[0].dispatchEvent(new harness.window.Event('change', { bubbles: true })); });
+  assertSameNode(harness.document.activeElement, boxes[0], 'toggling keeps focus on the checkbox, not the action');
+  await harness.act(() => mounted.container.querySelector('#confirm-ok').click());
+  assert.equal(await answered, true);
+  assert.deepEqual(checks.map((check) => check.checked), [false, true]);
+  await mounted.unmount();
+});
+
 test('global activity keeps keyed native bot identity across polls and wizard changes', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { GlobalActivity }] = await Promise.all([

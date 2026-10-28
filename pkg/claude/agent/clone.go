@@ -34,6 +34,8 @@ type cloneParams struct {
 	Cwd           string `long:"cwd" short:"C" optional:"true" help:"Spawn the clone in this directory (e.g. a git worktree) instead of the original's cwd. An agent caller must be able to write there."`
 	Group         string `long:"group" optional:"true" help:"Also add the clone to this group, on top of the groups it inherits. Requires the groups.members.add permission for that group."`
 	CopyOwnership bool   `long:"copy-ownership" help:"Also make the clone an owner of every group the original owns (default: off — the clone gets the original's memberships, roles and permissions, but no group ownership)."`
+	KeepSandbox   bool   `long:"keep-sandbox" help:"With --group: keep the original's sandbox profile source group instead of launching under that group's profile."`
+	KeepEnv       bool   `long:"keep-environment" help:"With --group: keep the original's group environment source instead of applying that group's environment variables."`
 }
 
 func cloneCmd() *cobra.Command {
@@ -127,6 +129,11 @@ func runClone(p *cloneParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if group := strings.TrimSpace(p.Group); group != "" {
 		body["group"] = group
+		body["keep_sandbox"] = p.KeepSandbox
+		body["keep_environment"] = p.KeepEnv
+	} else if p.KeepSandbox || p.KeepEnv {
+		fmt.Fprintln(stderr, "Error: --keep-sandbox and --keep-environment only apply with --group.")
+		return rcInvalidArg
 	}
 	if p.CopyOwnership {
 		body["copy_ownership"] = true

@@ -153,6 +153,8 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   const [followUp, setFollowUp] = useState('');
   const [copyConversation, setCopyConversation] = useState(true);
   const [copyOwnership, setCopyOwnership] = useState(false);
+  const [applySandbox, setApplySandbox] = useState(true);
+  const [applyEnvironment, setApplyEnvironment] = useState(true);
   const [worktree, setWorktree] = useState('');
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
@@ -166,7 +168,10 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   const here = !descriptor.node && !globalThis.__tclaudeRemoteNode?.id;
   const locked = trustLock(descriptor.node, 'group ownership and worktrees');
   const full = !locked;
-  const dirty = !!followUp || !copyConversation || copyOwnership || !!worktree || !!branch;
+  // A clone joining a group launches under that group's sandbox defaults
+  // unless the operator keeps the source's; this node's settings only.
+  const groupDefaults = !!descriptor.group && full;
+  const dirty = !!followUp || !copyConversation || copyOwnership || !!worktree || !!branch || !applySandbox || !applyEnvironment;
 
   const submit = async () => {
     if (busy) return;
@@ -191,6 +196,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
         cwd,
         full,
         group: descriptor.group || '',
+        ...(groupDefaults ? { keepSandbox: !applySandbox, keepEnvironment: !applyEnvironment } : {}),
       }, descriptor);
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
@@ -241,6 +247,23 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
           onChange=${(event) => setCopyOwnership(event.currentTarget.checked)}
         /> Copy group ownership<${LockReason} id="clone-agent-copy-ownership-lock" why=${locked}/>
       </label>
+      ${groupDefaults ? html`
+        <label class="cron-create-enabled" title="When checked, the clone launches under the group's sandbox profile. Unchecked, it keeps the source's sandbox source group. The clone's own explicit overrides apply either way.">
+          <input
+            id="clone-agent-apply-sandbox"
+            type="checkbox"
+            checked=${applySandbox}
+            onChange=${(event) => setApplySandbox(event.currentTarget.checked)}
+          /> Switch to ${descriptor.group}'s sandbox profile
+        </label>
+        <label class="cron-create-enabled" title="When checked, the clone launches with the group's environment variables. Unchecked, it keeps the source's environment source group.">
+          <input
+            id="clone-agent-apply-env"
+            type="checkbox"
+            checked=${applyEnvironment}
+            onChange=${(event) => setApplyEnvironment(event.currentTarget.checked)}
+          /> Switch to ${descriptor.group}'s environment variables
+        </label>` : ''}
       ${full ? html`<${WorktreeFields}
         repo=${descriptor.cwd}
         node=${descriptor.node || ''}

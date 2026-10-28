@@ -341,7 +341,7 @@ func (w *World) RecordSpawnSandboxPolicy(convID string, snapshot *sandboxpolicy.
 		return
 	}
 	copy := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied)
-	copy.ResolutionGroupID = snapshot.ResolutionGroupID
+	copy.CopyGroupProvenance(*snapshot)
 	copy.ProfilesOmitted = snapshot.ProfilesOmitted
 	copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	copy.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
@@ -358,7 +358,7 @@ func (w *World) SpawnSandboxPolicy(convID string) (*sandboxpolicy.Snapshot, bool
 		return nil, ok
 	}
 	copy := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied)
-	copy.ResolutionGroupID = snapshot.ResolutionGroupID
+	copy.CopyGroupProvenance(*snapshot)
 	copy.ProfilesOmitted = snapshot.ProfilesOmitted
 	copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	copy.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
