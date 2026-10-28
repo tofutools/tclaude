@@ -1,4 +1,4 @@
-"""The runner must cover both sides concurrently and retain readable failures."""
+"""The runner must cover every side concurrently and retain readable failures."""
 import json
 import os
 import subprocess
@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FAKE_GO = r'''#!/usr/bin/env python3
 import json, os, re, sys, time
 from pathlib import Path
+SIDES = 3
 args = sys.argv
 root = Path(os.environ["FAKE_GO_STATE"])
 if "-json" not in args:
@@ -25,19 +26,21 @@ if "-json" not in args:
 if not (root / "built").exists():
     print("test process started before the prebuild", file=sys.stderr)
     sys.exit(1)
-flag = "-run" if "-run" in args else "-skip"
-pattern = args[args.index(flag)+1]
-side = "domain" if flag == "-run" else "other"
-(root / side).touch()
+run = args[args.index("-run")+1] if "-run" in args else None
+skip = args[args.index("-skip")+1] if "-skip" in args else None
+side = str(os.getpid())
+(root / (side+".started")).touch()
 deadline = time.monotonic()+2
-while not (root / ("other" if side=="domain" else "domain")).exists():
+while len(list(root.glob("*.started"))) < SIDES:
     if time.monotonic() > deadline:
         print("test processes did not run concurrently", file=sys.stderr)
         sys.exit(1)
     time.sleep(.005)
 names = ["TestDashboardNewFeature", "TestFederationMail", "TestLifecycle",
-         "TestFutureFeature", "TestSpawnNewHarness", "TestPiDrive", "TestRealGitFetch", "ExampleCLI", "FuzzParser"]
-selected = [name for name in names if bool(re.match(pattern, name)) == (flag=="-run")]
+         "TestFutureFeature", "TestSpawnNewHarness", "TestPiDrive", "TestRealGitFetch",
+         "TestCopilotDrive", "TestOpenCodeHook", "ExampleCLI", "FuzzParser"]
+selected = [name for name in names
+            if (run is None or re.match(run, name)) and not (skip and re.match(skip, name))]
 (root / (side+".names")).write_text("\n".join(selected))
 failed = False
 for name in selected:
@@ -66,34 +69,38 @@ class RunnerTests(unittest.TestCase):
                                     cwd=ROOT, env=env, text=True, capture_output=True,
                                     timeout=10)
             if build_fail:
-                return result, None, None
-            self.assertTrue((root / "domain.names").is_file(), result.stdout+result.stderr)
-            self.assertTrue((root / "other.names").is_file(), result.stdout+result.stderr)
-            domain = set((root / "domain.names").read_text().splitlines())
-            other = set((root / "other.names").read_text().splitlines())
-            return result, domain, other
+                return result, None
+            sides = [set(f.read_text().splitlines()) for f in root.glob("*.names")]
+            self.assertEqual(len(sides), 3, result.stdout+result.stderr)
+            return result, sides
 
     def test_concurrent_exact_complement_includes_future_tests_and_examples(self):
-        result, domain, other = self.run_fixture()
+        result, sides = self.run_fixture()
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
-        self.assertFalse(domain & other)
-        self.assertEqual(domain | other, {"TestDashboardNewFeature", "TestFederationMail",
-                         "TestLifecycle", "TestFutureFeature", "TestSpawnNewHarness", "TestPiDrive", "TestRealGitFetch", "ExampleCLI", "FuzzParser"})
-        self.assertTrue({"TestPiDrive", "TestRealGitFetch"} <= domain)
+        everything = set()
+        for side in sides:
+            self.assertFalse(everything & side, "sides overlap")
+            everything |= side
+        self.assertEqual(everything, {"TestDashboardNewFeature", "TestFederationMail",
+                         "TestLifecycle", "TestFutureFeature", "TestSpawnNewHarness", "TestPiDrive",
+                         "TestRealGitFetch", "TestCopilotDrive", "TestOpenCodeHook", "ExampleCLI", "FuzzParser"})
+        self.assertIn({"TestFederationMail", "TestPiDrive", "TestOpenCodeHook"}, sides)
+        self.assertIn({"TestDashboardNewFeature", "TestSpawnNewHarness", "TestRealGitFetch",
+                       "TestCopilotDrive"}, sides)
 
     def test_failure_names_and_assertions_are_reported_by_side(self):
         for name in ("TestFederationMail", "TestLifecycle"):
             with self.subTest(name=name):
-                result, _, _ = self.run_fixture(name)
+                result, _ = self.run_fixture(name)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("assertion details", result.stdout)
                 self.assertIn("Failing tests", result.stdout)
                 self.assertIn(name, result.stdout)
-                self.assertIn("=== agentd domain:", result.stdout)
-                self.assertIn("=== agentd other:", result.stdout)
+                for side in ("federation", "dashboard", "other"):
+                    self.assertIn(f"=== agentd {side}:", result.stdout)
 
     def test_build_failure_stops_before_the_test_processes(self):
-        result, _, _ = self.run_fixture(build_fail="1")
+        result, _ = self.run_fixture(build_fail="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("compile error details", result.stdout)
         self.assertNotIn("=== agentd", result.stdout)
