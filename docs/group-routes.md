@@ -66,7 +66,8 @@ with applications that validate that address. The preview accepts only its displ
 **Open TCP endpoint** creates an opaque TCP lease for other protocols, including HTTPS. Existing leases
 keep their original mode; close and reopen a lease to switch modes.
 
-The HTTP preview leaves Origin headers, response headers, redirects, and content unchanged. Applications
+The HTTP preview strips the dashboard session cookie in both directions, while preserving application
+cookies. Origin headers, other response headers, redirects, and content remain unchanged. Applications
 with separate origin checks or absolute URLs may still need their usual reverse-proxy configuration.
 When viewing a remote daemon, the panel shows the daemon-local address and SSH tunnel guidance instead of
 linking to the browser machine’s loopback.

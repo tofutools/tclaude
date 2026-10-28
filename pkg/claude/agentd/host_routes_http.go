@@ -26,6 +26,15 @@ func serveHostRouteHTTP(ctx context.Context, listener net.Listener, dial func(co
 	}
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
+			// Cookies are not scoped by port. Even manually opened loopback
+			// URLs must never forward the operator's dashboard credential.
+			cookies := r.Out.Cookies()
+			r.Out.Header.Del("Cookie")
+			for _, cookie := range cookies {
+				if !hostPreviewDashboardCookie(cookie.Name) {
+					r.Out.AddCookie(cookie)
+				}
+			}
 			r.Out.URL.Scheme = "http"
 			r.Out.URL.Host = host
 			r.Out.Host = host
@@ -33,7 +42,18 @@ func serveHostRouteHTTP(ctx context.Context, listener net.Listener, dial func(co
 			// original query: preview authorization never depends on its values.
 			r.Out.URL.RawQuery = r.In.URL.RawQuery
 		},
-		Transport:     transport,
+		Transport: transport,
+		ModifyResponse: func(r *http.Response) error {
+			cookies := r.Header.Values("Set-Cookie")
+			r.Header.Del("Set-Cookie")
+			for _, cookie := range cookies {
+				name, _, _ := strings.Cut(cookie, "=")
+				if !hostPreviewDashboardCookie(strings.TrimSpace(name)) {
+					r.Header.Add("Set-Cookie", cookie)
+				}
+			}
+			return nil
+		},
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			status := http.StatusBadGateway
@@ -68,4 +88,9 @@ func serveHostRouteHTTP(ctx context.Context, listener net.Listener, dial func(co
 	})
 	go func() { _ = server.Serve(netutil.LimitListener(listener, 32)) }()
 	return nil
+}
+
+// All installations on this browser host share cookie visibility across ports.
+func hostPreviewDashboardCookie(name string) bool {
+	return name == legacyDashboardCookieName || strings.HasPrefix(name, dashboardCookieNamePrefix)
 }
