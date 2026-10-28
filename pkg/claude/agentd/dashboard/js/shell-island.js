@@ -31,9 +31,9 @@ import { UsageNodePill, peerUsageState, usagePeak, useUsageNode } from './usage-
 import { fleetState } from './fleet-state.js';
 import { tickedNodes } from './fleet-scope.js';
 import { fusedDock } from './dock-nodes.js';
+import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
-const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
 const OPEN_PRS_INCLUDE_DRAFTS_PREF = 'tclaude.dash.open-prs.include-drafts-attention';
 const OPEN_PRS_IGNORED_PREF = 'tclaude.dash.open-prs.ignored';
 // Title hover cards are on unless the operator turns them off: a card can
@@ -428,7 +428,6 @@ function OpenPRs({ state }) {
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
-  const hoverCloseTimer = useRef(null);
   // In the fused Groups view the peers' agents are on screen too; their PRs
   // count as attached (the page's daemon only knows its own agents).
   const dock = fusedDock.value;
@@ -490,24 +489,16 @@ function OpenPRs({ state }) {
   // wander off while the operator picks a duration.
   const open = visible && (hovered || pinned || !!confirmIgnore);
 
-  const cancelHoverClose = () => {
-    if (hoverCloseTimer.current === null) return;
-    clearTimeout(hoverCloseTimer.current);
-    hoverCloseTimer.current = null;
-  };
+  const hoverClose = useLeaveGrace(() => setHovered(false));
+  const cancelHoverClose = hoverClose.cancel;
   const enter = () => {
     cancelHoverClose();
     setHovered(true);
   };
-  const leave = () => {
-    cancelHoverClose();
-    hoverCloseTimer.current = setTimeout(() => {
-      hoverCloseTimer.current = null;
-      setHovered(false);
-    }, OPEN_PRS_HOVER_CLOSE_DELAY_MS);
-  };
-
-  useEffect(() => () => cancelHoverClose(), []);
+  const leave = hoverClose.schedule;
+  // Pinned, or holding an ignore confirmation, it stays put when another
+  // popover opens; hover-opened, it gives way.
+  useExclusivePopover(rootRef, open, () => { cancelHoverClose(); setHovered(false); }, pinned || !!confirmIgnore);
   useEffect(() => {
     if (!focusBack) return;
     const target = returnFocus.current;

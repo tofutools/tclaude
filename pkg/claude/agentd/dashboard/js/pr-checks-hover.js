@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { HOVER_CLOSE_MS, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -355,9 +356,7 @@ export function touchOnly() {
     && window.matchMedia('(hover: none)').matches;
 }
 
-// HOVER_CLOSE_MS is how long a popover outlives the pointer leaving it, so a
-// cursor that slips off the badge or the panel for a moment does not drop it.
-export const HOVER_CLOSE_MS = 200;
+export { HOVER_CLOSE_MS };
 
 // keyboardFocus reports whether focus arrived from the keyboard. A click on a
 // link focuses it too, and that focus survives the trip to the link's target:
@@ -381,6 +380,7 @@ function keyboardFocus(target) {
 // pointer device the click just follows the link. Leaving the page — the
 // window losing focus or the tab going hidden — closes it outright, because
 // no mouseleave arrives while the pointer is away on the link's target.
+// Opening one closes any other open popover (hover-popover.js).
 export function useHoverPopover(rootRef) {
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -390,19 +390,14 @@ export function useHoverPopover(rootRef) {
   // lingering covers the grace after the pointer leaves. It is apart from
   // hovered so the link card's hover-intent fetch counts real dwell only.
   const [lingering, setLingering] = useState(false);
-  const leaveTimer = useRef(0);
   const open = hovered || lingering || focused || tapped;
+  const leave = useLeaveGrace(() => setLingering(false));
 
-  const cancelLeave = () => {
-    if (leaveTimer.current) globalThis.clearTimeout(leaveTimer.current);
-    leaveTimer.current = 0;
-  };
   const close = () => {
-    cancelLeave();
+    leave.cancel();
     setHovered(false); setLingering(false); setFocused(false); setTapped(false);
   };
-
-  useEffect(() => cancelLeave, []);
+  useExclusivePopover(rootRef, open, close);
 
   useEffect(() => {
     if (!tapped) return undefined;
@@ -425,15 +420,11 @@ export function useHoverPopover(rootRef) {
   }, [open]);
 
   const rootProps = {
-    onMouseEnter: () => { cancelLeave(); setLingering(false); setHovered(true); },
+    onMouseEnter: () => { leave.cancel(); setLingering(false); setHovered(true); },
     onMouseLeave: () => {
-      cancelLeave();
       setHovered(false);
       setLingering(true);
-      leaveTimer.current = globalThis.setTimeout(() => {
-        leaveTimer.current = 0;
-        setLingering(false);
-      }, HOVER_CLOSE_MS);
+      leave.schedule();
     },
     onFocusIn: (event) => { if (keyboardFocus(event.target)) setFocused(true); },
     onFocusOut: (event) => { if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false); },

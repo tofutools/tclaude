@@ -25,6 +25,7 @@ import { terminalTabStatus } from './terminal-tab-status.js';
 import { tickedNodes } from './fleet-scope.js';
 import { remoteSessionAgents } from './remote-session-status.js';
 import { LockReason } from './lock-reason.js';
+import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -367,17 +368,12 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
-  const closeTimer = useRef(0);
   const count = rows.length;
 
-  const close = () => { setOpen(false); setPinned(false); };
-  const cancelClose = () => { clearTimeout(closeTimer.current); closeTimer.current = 0; };
-  const scheduleClose = () => {
-    if (pinned) return;
-    cancelClose();
-    closeTimer.current = setTimeout(() => setOpen(false), 220);
-  };
-  useEffect(() => () => cancelClose(), []);
+  const leave = useLeaveGrace(() => setOpen(false));
+  const close = () => { leave.cancel(); setOpen(false); setPinned(false); };
+  const scheduleClose = () => { if (!pinned) leave.schedule(); };
+  useExclusivePopover(rootRef, open, close, pinned);
   useEffect(() => {
     if (!open) return undefined;
     const onDown = (event) => { if (!rootRef.current?.contains(event.target)) close(); };
@@ -406,7 +402,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
 
   return html`
     <div ref=${rootRef} class=${`mux-bg${open ? ' open' : ''}`}
-      onMouseEnter=${() => { cancelClose(); setOpen(true); }} onMouseLeave=${scheduleClose}>
+      onMouseEnter=${() => { leave.cancel(); setOpen(true); }} onMouseLeave=${scheduleClose}>
       <button type="button" class="mux-bg-trigger" aria-expanded=${open ? 'true' : 'false'} aria-haspopup="dialog"
         aria-label=${`${count} tclaude ${noun} running in the background without a terminal`}
         title=${`${count} tclaude ${noun} still running in tmux with no terminal attached`}

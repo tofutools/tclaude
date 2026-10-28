@@ -157,3 +157,35 @@ test('a PR popover follows hover and keyboard focus only, never a click', async 
     await mounted.unmount();
   }
 });
+
+test('opening a PR popover closes the one still in its leave grace', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRReviewBadge } = await harness.importDashboardModule('js/pr-review-badge.js');
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  const reviews = { approved: 1, reviewers_known: true, reviewers: [{ login: 'alice', state: 'approved' }] };
+  const other = PR.replace(/3046$/, '3047');
+  const mounted = await harness.mount(harness.html`
+    <div>
+      <${PRReviewBadge} url=${PR} prNumber=${3046} reviews=${reviews} prState="open" />
+      <${PRReviewBadge} url=${other} prNumber=${3047} reviews=${reviews} prState="open" />
+    </div>
+  `);
+  const panels = () => [...mounted.container.querySelectorAll('.rv-panel')]
+    .map((panel) => panel.querySelector('.ci-panel-heading a').getAttribute('href'));
+  try {
+    const [first, second] = mounted.container.querySelectorAll('.rv-hover');
+    await harness.act(() => { harness.fireEvent(first, 'mouseenter'); });
+    await harness.act(() => { harness.fireEvent(first, 'mouseleave'); });
+    assert.deepEqual(panels(), [PR], 'the first panel lingers through its grace');
+
+    await harness.act(() => { harness.fireEvent(second, 'mouseenter'); });
+    assert.deepEqual(panels(), [other], 'opening the second panel dismisses the first at once');
+
+    await harness.act(() => { harness.fireEvent(second, 'mouseleave'); });
+    assert.deepEqual(panels(), [other], 'with nothing new opening, the grace still applies');
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, HOVER_CLOSE_MS + 20)));
+    assert.deepEqual(panels(), []);
+  } finally {
+    await mounted.unmount();
+  }
+});

@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -79,11 +80,14 @@ export function ActivityHover({
   const headingID = `${panelID}-heading`;
   const open = hovered || focused || pinned;
 
+  const leave = useLeaveGrace(() => setHovered(false));
   const close = () => {
+    leave.cancel();
     setPinned(false);
     setHovered(false);
     setFocused(false);
   };
+  useExclusivePopover(rootRef, open, () => { leave.cancel(); setHovered(false); setFocused(false); }, pinned);
 
   useEffect(() => {
     if (!pinned) return undefined;
@@ -112,8 +116,8 @@ export function ActivityHover({
     <span
       ref=${rootRef}
       class=${`activity-hover${className ? ` ${className}` : ''}${open ? ' is-open' : ''}`}
-      onMouseEnter=${() => setHovered(true)}
-      onMouseLeave=${() => setHovered(false)}
+      onMouseEnter=${() => { leave.cancel(); setHovered(true); }}
+      onMouseLeave=${leave.schedule}
       onFocusIn=${() => setFocused(true)}
       onFocusOut=${onBlur}
     >

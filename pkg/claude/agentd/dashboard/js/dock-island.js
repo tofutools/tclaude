@@ -14,6 +14,7 @@ import {
 } from './dock-nodes.js';
 import { LockReason } from './lock-reason.js';
 import { NodeSelect } from './node-select.js';
+import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -202,14 +203,17 @@ function DockCard({
     };
   }, [clipHost, detailsOpen, positionDetails]);
 
+  const closeDetails = () => setDetailsOpen(false);
+  const leaveGrace = useLeaveGrace(() => {
+    if (!cardRef.current?.contains(document.activeElement)) setDetailsOpen(false);
+  });
+  useExclusivePopover(cardRef, detailsOpen, closeDetails);
+
   const showDetails = () => {
+    leaveGrace.cancel();
     if (dragging) return;
     positionDetails();
     setDetailsOpen(true);
-  };
-
-  const hideHoveredDetails = () => {
-    if (!cardRef.current?.contains(document.activeElement)) setDetailsOpen(false);
   };
 
   const enterCard = () => {
@@ -219,7 +223,7 @@ function DockCard({
 
   const leaveCard = () => {
     hoveringRef.current = false;
-    hideHoveredDetails();
+    leaveGrace.schedule();
   };
 
   // Every kind's menu, in one order; a kind without a hook leaves its row out.
@@ -293,6 +297,7 @@ function DockCard({
         if (!event.currentTarget.contains(event.relatedTarget)) setDetailsOpen(false);
       } : null}
       onDragStart=${canDrag ? () => {
+        leaveGrace.cancel();
         setDragging(true);
         setDetailsOpen(false);
       } : null}
