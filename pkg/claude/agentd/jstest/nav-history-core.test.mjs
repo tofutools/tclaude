@@ -283,6 +283,10 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.deepEqual(fromPath('/logs/extra'), { tab: 'diagnostics', subtab: 'logs' });
   assert.deepEqual(fromPath('/debug'), { tab: 'diagnostics', subtab: 'performance' });
   assert.equal(toPath(fromPath('/debug')), '/diagnostics/performance');
+  // Doctor was briefly a top-level tab before joining Diagnostics.
+  assert.deepEqual(fromPath('/doctor'), { tab: 'diagnostics', subtab: 'doctor' });
+  assert.equal(toPath(fromPath('/doctor')), '/diagnostics/doctor');
+  assert.deepEqual(fromPath('/diagnostics/doctor'), { tab: 'diagnostics', subtab: 'doctor' });
   assert.deepEqual(normalizeLocation({ tab: 'audit' }), { tab: 'diagnostics', subtab: 'audit' });
   // Diagnostics was called Activity; its old paths keep their subtab.
   assert.deepEqual(fromPath('/activity'), { tab: 'diagnostics' });
