@@ -114,7 +114,7 @@ In order across the top:
 | Access | Permissions, slug registry, sudo (three subtabs) |
 | Messages | All agent mail, human notifications, access requests |
 | Usage | Overview, subscription quota forecasts, and real/what-if costs |
-| Activity | Audit trail, daemon log, and poll performance (three subtabs) |
+| Diagnostics | Audit trail, daemon log, and poll performance (three subtabs) |
 | Config | Visual editor for `~/.tclaude/config.json` |
 
 With trusted federation peers, node chips and **⌘ Fleet** join the tab bar,
@@ -857,9 +857,9 @@ never modified. Restricted peer views show these buttons greyed out.
 
 ## Diagnostics
 
-Three subtabs, each with its own address: **Audit** (`/activity/audit`, the
-default), **Logs** (`/activity/logs`) and **Performance**
-(`/activity/performance`). Switching subtabs adds a Back/Forward step.
+Three subtabs, each with its own address: **Audit** (`/diagnostics/audit`, the
+default), **Logs** (`/diagnostics/logs`) and **Performance**
+(`/diagnostics/performance`). Switching subtabs adds a Back/Forward step.
 Bookmarks to the old top-level `/audit`, `/logs` and `/debug` pages, and to
 the tab's former `/activity/...` address, still open the matching subtab. The command palette has a direct entry for each
 (“Go to Diagnostics › Logs”). On a linked peer's view only Audit is available.
