@@ -6,12 +6,16 @@ import { featureState } from './feature-state-registry.js';
 // subscription Quota forecasts (usage-history-*), and Costs (costs-*). The two
 // halves keep their own server-side gates — usage_tab_visible (retained quota
 // history) and cost_tab_visible (real spend, or costs enabled for subscription
-// accounts) — so the hub only decides which of them is on screen.
+// accounts) — so the hub only decides which of them is on screen. By default
+// the tab, once either half has something, offers all three views: an empty
+// half shows its own empty state. Config dashboard.usage_collapse_subviews
+// restores the collapse to the only populated half.
 export const USAGE_SUBVIEWS = Object.freeze(['overview', 'quota', 'costs']);
 
 // effectiveSubview resolves the requested view against what is visible. The
-// Overview only makes sense with both halves; with one, that half IS the tab
-// (the subtab bar collapses). Before the first snapshot nothing is known yet,
+// Overview only makes sense with both halves; with one (only reachable under
+// dashboard.usage_collapse_subviews), that half IS the tab and the subtab bar
+// collapses. Before the first snapshot nothing is known yet,
 // so a deep link keeps the view it asked for instead of flickering away.
 export function effectiveSubview(requested, halves) {
   if (!halves.loaded) return requested;
@@ -39,7 +43,10 @@ export function createUsageHubState({
   const requested = signal('overview');
   const halves = computed(() => {
     const snap = snapshot.value;
-    return { loaded: snap !== null, quota: !!snap?.usage_tab_visible, costs: !!snap?.cost_tab_visible };
+    const quota = !!snap?.usage_tab_visible;
+    const costs = !!snap?.cost_tab_visible;
+    if (!snap?.usage_collapse_subviews && (quota || costs)) return { loaded: snap !== null, quota: true, costs: true };
+    return { loaded: snap !== null, quota, costs };
   });
   const subview = computed(() => effectiveSubview(requested.value, halves.value));
   const location = computed(() => usageLocation(subview.value));

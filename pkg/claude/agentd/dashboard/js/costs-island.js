@@ -623,7 +623,7 @@ export function CostsApp({ state, actions }) {
       <div class="cost-chart-heading cost-daily-heading"><strong>Daily spend</strong><span>${current.stackByProvider || current.stackByModel
         ? `stacked by ${[current.stackByProvider && 'provider', current.stackByModel && 'model'].filter(Boolean).join(' + ')}`
         : 'total'}</span></div>
-      <${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} />
+      <${CostsChart} chart=${current.chart} enabled=${current.active} />
       <${CostsTable} state=${state} current=${current} ignore=${ignore} />
       <${ServedCosts} current=${current} />
       <${IgnoredCosts} current=${current} ignore=${ignore} />
