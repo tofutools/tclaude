@@ -30,9 +30,21 @@ func freePort(t *testing.T) int {
 	return port
 }
 
+// freePortPair holds both reservations until selection is complete so the
+// kernel cannot return the same ephemeral port for two slots in one fixture.
+func freePortPair(t *testing.T) (int, int) {
+	t.Helper()
+	first, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer first.Close()
+	second, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer second.Close()
+	return first.Addr().(*net.TCPAddr).Port, second.Addr().(*net.TCPAddr).Port
+}
+
 func TestAdapterForwardsOpaqueTCPThroughBroker(t *testing.T) {
-	targetPort := freePort(t)
-	consumerPort := freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(targetPort))
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +126,7 @@ func (refusePublisher) AuthorizePublisher(context.Context, routebroker.Publisher
 }
 
 func TestAdapterPublishWaitsForBrokerRouteRegistration(t *testing.T) {
-	targetPort, consumerPort := freePort(t), freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
 	require.NoError(t, err)
 	defer target.Close()
@@ -300,7 +312,7 @@ func TestAdapterReportsRefusedConsumerAttach(t *testing.T) {
 // no observer degraded to proxying a refused stream, the seam would only be
 // hiding the original bug rather than fixing it.
 func TestAdapterRefusedConsumerStreamIsClosedWithoutAnObserver(t *testing.T) {
-	targetPort, consumerPort := freePort(t), freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
 	require.NoError(t, err)
 	defer target.Close()
@@ -355,7 +367,7 @@ func TestAdapterRefusedConsumerStreamIsClosedWithoutAnObserver(t *testing.T) {
 // Capacity is the other refusal the adapter used to discard, and it must reach
 // the same seam so the daemon can tell it apart from an authority verdict.
 func TestAdapterReportsConsumerCapacityRefusal(t *testing.T) {
-	targetPort, consumerPort := freePort(t), freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
 	require.NoError(t, err)
 	defer target.Close()
@@ -453,8 +465,7 @@ func TestAdapterRefusesAnOccupiedConsumerSlot(t *testing.T) {
 }
 
 func TestAdapterPublisherEOFPreservesReverseDirection(t *testing.T) {
-	targetPort := freePort(t)
-	consumerPort := freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
 	if err != nil {
 		t.Fatal(err)
@@ -538,7 +549,7 @@ func TestAdapterPublisherEOFPreservesReverseDirection(t *testing.T) {
 }
 
 func TestAdapterIdleLeaseCleanupReusesOnlyClosedSlot(t *testing.T) {
-	firstPort, secondPort := freePort(t), freePort(t)
+	firstPort, secondPort := freePortPair(t)
 	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
 	if err != nil {
 		t.Fatal(err)
@@ -573,18 +584,7 @@ func TestAdapterIdleLeaseCleanupReusesOnlyClosedSlot(t *testing.T) {
 }
 
 func TestAdapterCloseLeaseDoesNotCloseSiblingSameAgentRoute(t *testing.T) {
-	// Keep both reservations live until both ports have been selected. Two
-	// independent freePort calls can return the same ephemeral port in CI.
-	firstSlot, err := net.Listen("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer firstSlot.Close()
-	secondSlot, err := net.Listen("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer secondSlot.Close()
-	firstPort := firstSlot.Addr().(*net.TCPAddr).Port
-	secondPort := secondSlot.Addr().(*net.TCPAddr).Port
-	require.NoError(t, firstSlot.Close())
-	require.NoError(t, secondSlot.Close())
+	firstPort, secondPort := freePortPair(t)
 	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
 	require.NoError(t, err)
 	defer broker.Close()
