@@ -83,3 +83,34 @@ export function relativeAge(iso, now = Date.now()) {
   if (hours < 48) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
+
+// memberPRs lists every PR a group member carries — its startup branch's, its
+// current branch's and the ones it presented — once each, in that order. The
+// branch fields are flattened into the presented-PR shape so callers render
+// and filter all three sources alike.
+export function memberPRs(member) {
+  const out = [];
+  const seen = new Set();
+  const add = (pr) => {
+    const url = String(pr.url || '').trim();
+    if (!url || seen.has(url) || !/^https?:\/\//i.test(url)) return;
+    seen.add(url);
+    out.push({ ...pr, url });
+  };
+  if (member?.startup_pr_number) {
+    add({ url: member.startup_pr_url, number: member.startup_pr_number, state: member.startup_pr_state || '',
+      title: member.startup_pr_title || '', checks: member.startup_checks, reviews: member.startup_reviews });
+  }
+  if (member?.branch_pr_number) {
+    add({ url: member.branch_pr_url, number: member.branch_pr_number, state: member.branch_pr_state || '',
+      title: member.branch_pr_title || '', checks: member.branch_checks, reviews: member.branch_reviews });
+  }
+  for (const pr of member?.presented_prs || []) add(pr);
+  return out;
+}
+
+// openMemberPRs keeps the PRs still in flight: a merged or closed PR is
+// history, so it neither counts as "has a PR" nor feeds the CI/review picks.
+export function openMemberPRs(member) {
+  return memberPRs(member).filter((pr) => pr.state !== 'merged' && pr.state !== 'closed');
+}

@@ -201,20 +201,64 @@ test('scoped message follows live-all membership and sends exact group role payl
   await harness.input(body, 'hello live roster');
   await harness.input(host.querySelector('#message-create-subject'), 'status');
   await harness.input(host.querySelector('#message-create-role'), ' reviewer ');
+  await harness.act(() => { host.querySelector('#message-create-members-all').click(); });
 
-  const next = snapshot({ members: [member('a'), member('b'), member('c')] });
+  const next = snapshot({ members: [member('a'), member('b'), { ...member('c'), online: false }] });
   await rerender(next);
   assertSameNode(host.querySelector('#message-create-body'), body, 'snapshot reconciliation keeps the keyed draft node');
   assert.equal(body.value, 'hello live roster');
   assert.equal(host.querySelector('#message-create-members-count').textContent, '3 of 3 selected');
   assert.equal(host.querySelectorAll('#message-create-members input[type="checkbox"]:checked').length, 3,
-    'untouched all follows a newcomer');
+    'all follows a newcomer, offline or not');
 
   await harness.act(async () => { host.querySelector('#message-create-submit').click(); await Promise.resolve(); });
   assert.deepEqual(sent, [{
     from: 'agt_sender', to: 'group:team', subject: 'status', body: 'hello live roster', role: 'reviewer',
-  }], 'untouched all omits members so the daemon reads the live roster');
+  }], 'all omits members so the daemon reads the live roster');
   assert.equal(state.dialog.value, null);
+  await mounted.unmount();
+});
+
+test('scoped message ticks online members by default, follows presence, and quick-picks combine', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  state.openMessage({ from: 'agt_sender', targetMode: 'group', groupName: 'team' });
+  const sent = [];
+  const actions = {
+    sendMessage: async (payload) => { sent.push(payload); },
+    replyHuman: async () => {}, grantSudo: async () => {}, savePermissions: async () => {},
+  };
+  const withPR = (m, checks) => ({ ...m, branch_pr_number: 7, branch_pr_url: `https://github.com/o/r/pull/7${m.title}`, branch_pr_state: 'open', branch_checks: checks });
+  const offline = (m) => ({ ...m, online: false });
+  const roster = (bOnline) => snapshot({ members: [
+    withPR(member('a'), { total: 2, passed: 1, failed: 1, state: 'failing' }),
+    bOnline ? member('b') : offline(member('b')),
+    withPR(offline(member('c')), { total: 1, passed: 1, state: 'passing' }),
+  ] });
+  const { host, mounted, rerender } = await mountDialogs(harness, state, actions, roster(false));
+  const ticked = () => [...host.querySelectorAll('#message-create-members input:checked')].map((input) => input.getAttribute('data-conv'));
+  const badges = () => [...host.querySelectorAll('#message-create-members .cleanup-badge')].map((badge) => badge.textContent);
+  assert.deepEqual(ticked(), ['conv-a'], 'offline members start unticked');
+  assert.deepEqual(badges(), ['online', 'offline', 'offline']);
+  assert.ok(host.querySelector('#message-create-members .ci-badge.ci-failing'), 'a member\'s open PR shows its CI pill');
+
+  await rerender(roster(true));
+  assert.deepEqual(ticked(), ['conv-a', 'conv-b'], 'the default follows live presence');
+
+  await harness.act(() => harness.fireEvent(host.querySelector('#message-create-pick-offline'), 'click', { shiftKey: true }));
+  assert.deepEqual(ticked(), ['conv-a', 'conv-b', 'conv-c'], 'shift-click adds');
+  await harness.act(() => harness.fireEvent(host.querySelector('#message-create-pick-pr'), 'click', { ctrlKey: true }));
+  assert.deepEqual(ticked(), ['conv-a', 'conv-c'], 'ctrl-click narrows');
+  await harness.act(() => harness.fireEvent(host.querySelector('#message-create-pick-ci-failing'), 'click'));
+  assert.deepEqual(ticked(), ['conv-a'], 'a plain click replaces');
+  await harness.act(() => { host.querySelector('#message-create-pick-online').click(); });
+  assert.deepEqual(ticked(), ['conv-a', 'conv-b']);
+
+  await harness.input(host.querySelector('#message-create-body'), 'online only');
+  await harness.act(async () => { host.querySelector('#message-create-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(sent, [{ from: 'agt_sender', to: 'group:team', subject: '', body: 'online only', members: ['agt_a', 'agt_b'] }],
+    'the online default names its recipients so an offline member is never reached');
   await mounted.unmount();
 });
 

@@ -14,7 +14,10 @@ import {
   agentCandidates, groupMembers, groupsForPicker, permissionRows,
   permissionScopeSeed, permissionSeed, scopeChips, scopeDimOptions, scopeDimRows,
   scopeSupported, senderOnline, sudoByAgent, sudoSlugRows, unreadableScopeSlugs,
+  RECIPIENT_PICKS, combinePick,
 } from './message-access-dialog-model.js';
+import { openMemberPRs } from './pr-review-model.js';
+import { PRChain } from './pr-chain.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
 
@@ -308,10 +311,11 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [role, setRole] = useState(initial.role || '');
-  const [customized, setCustomized] = useState(false);
-  const [selected, setSelected] = useState(() => new Set(
-    groupMembers(snapshot, scopedGroup).flatMap(memberSelectionKeys),
-  ));
+  // preset 'online' (the default) or 'all' follows live membership and
+  // presence; null means the operator hand-picked `selected`, which is then
+  // retained across live updates.
+  const [preset, setPreset] = useState('online');
+  const [selected, setSelected] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const bodyRef = useRef(null);
@@ -330,21 +334,33 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     group: `Multicast to a whole group needs ${nodeName || 'this peer'}'s unrestricted trust. Its group's ✉ button messages the members it shares.`,
   } : {};
   const groupExists = !scopedGroup || (snapshot?.groups || []).some((group) => group.name === scopedGroup);
-  const selectedMembers = customized ? members.filter((member) => memberIsSelected(selected, member)) : members;
+  const selectedMembers = preset === 'all' ? members
+    : preset === 'online' ? members.filter((member) => member.online)
+      : members.filter((member) => memberIsSelected(selected, member));
+  const selectedKeys = new Set(selectedMembers.map((member) => member.key));
+  const pickCounts = new Map(RECIPIENT_PICKS.map((pick) => [pick.key, members.filter(pick.test).length]));
   const initialMode = initial.targetMode === 'group' ? 'group' : 'solo';
-  const dirty = from !== (initial.from || '') || !!subject || !!body || role !== (initial.role || '') || customized || (!scopedGroup && (
+  const dirty = from !== (initial.from || '') || !!subject || !!body || role !== (initial.role || '') || preset !== 'online' || (!scopedGroup && (
     target.mode !== initialMode || target.target !== (initial.target || '') || target.groupName !== (initial.groupName || '')
   ));
   const chooseFrom = async () => {
     const picked = await state.pickAgent({ title: 'Pick sender', identity: 'agent' });
     if (picked) setFrom(picked);
   };
+  const choose = (picked) => { setSelected(new Set(picked.flatMap(memberSelectionKeys))); setPreset(null); };
   const toggleMember = (member, checked) => {
-    const next = new Set(customized ? selected : members.flatMap(memberSelectionKeys));
+    const next = new Set(selectedMembers.flatMap(memberSelectionKeys));
     for (const key of memberSelectionKeys(member)) {
       if (checked) next.add(key); else next.delete(key);
     }
-    setSelected(next); setCustomized(true);
+    setSelected(next); setPreset(null);
+  };
+  // Shift-click extends the ticked set (OR), Ctrl/⌘-click narrows it (AND),
+  // a plain click replaces it. A plain "online" keeps following presence.
+  const applyPick = (pick, event) => {
+    const how = event.shiftKey ? 'add' : (event.ctrlKey || event.metaKey) ? 'narrow' : 'only';
+    if (how === 'only' && pick.key === 'online') { setPreset('online'); return; }
+    choose(combinePick(members, selectedMembers, pick, how));
   };
   const submit = async () => {
     if (busyRef.current) return;
@@ -355,7 +371,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       if (!groupExists) { setError(`Group “${scopedGroup}” no longer exists — choose a new launcher context.`); return; }
       if (!selectedMembers.length) { setError(wizWord('Pick at least one recipient — tick the members this message should reach.', 'Pick at least one recipient — tick the familiars this missive should reach.')); return; }
       to = `group:${scopedGroup}`;
-      if (customized) explicit = selectedMembers.map((member) => member.agent_id || member.conv_id);
+      if (preset !== 'all') explicit = selectedMembers.map((member) => member.agent_id || member.conv_id);
     } else if (target.mode === 'group') {
       if (!target.groupName) { setError(wizWord('Pick a group from the dropdown (or create one first via the Groups tab).', 'Pick a party from the dropdown (or form one first via the Parties tab).')); return; }
       if (!(snapshot?.groups || []).some((group) => group.name === target.groupName)) {
@@ -380,7 +396,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         const { failed } = await actions.sendDirectMessages(recipients, { subject: subject.trim(), body }, descriptor.node || '');
         if (!failed.length && !skipped) { state.close(); return; }
         // Keep the draft, ticked for exactly the members it did not reach.
-        if (scopedGroup) { setSelected(new Set(failed.map((item) => item.to))); setCustomized(true); }
+        if (scopedGroup) { setSelected(new Set(failed.map((item) => item.to))); setPreset(null); }
         setError([
           ...failed.map((item) => `${members.find((member) => member.agent_id === item.to)?.title || item.to}: ${item.error}`),
           ...(skipped ? [`${skipped} member${skipped === 1 ? '' : 's'} without an agent ID skipped`] : []),
@@ -426,17 +442,24 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent} groupLocked=${lock.group || ''}/>
     </label>` : html`<div class="cron-create-row" id="message-create-group-row"><span class="cron-create-label">Recipients</span><div class="cron-create-target">
       <p class="cleanup-hint" id="message-create-group-hint">${groupExists
-        ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${customized ? 'custom selection is retained across live updates.' : 'all selected follows live membership.'}`
+        ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${preset === 'online' ? 'online members selected, following live presence; tick an offline member to queue it in their inbox.'
+          : preset === 'all' ? 'all selected follows live membership.' : 'custom selection is retained across live updates.'}`
         : `Group “${scopedGroup}” is missing; sending is blocked.`}</p>
-      <div class="cleanup-toolbar"><button type="button" id="message-create-members-all" onClick=${() => { setCustomized(false); setSelected(new Set(members.map((member) => member.key))); }}>select all</button>
-        <button type="button" id="message-create-members-none" onClick=${() => { setCustomized(true); setSelected(new Set()); }}>select none</button>
+      <div class="cleanup-toolbar recipient-picks" id="message-create-picks"><button type="button" id="message-create-members-all" onClick=${() => setPreset('all')}>all</button>
+        <button type="button" id="message-create-members-none" onClick=${() => choose([])}>none</button>
+        ${RECIPIENT_PICKS.map((pick) => html`<button type="button" key=${pick.key} id=${`message-create-pick-${pick.key}`}
+          class=${`recipient-pick${preset === pick.key ? ' active' : ''}`} disabled=${!pickCounts.get(pick.key)}
+          title=${`${pick.title}. Click: only these · Shift-click: add · Ctrl/⌘-click: narrow`}
+          onClick=${(event) => applyPick(pick, event)}>${pick.label} <span class="recipient-pick-count">${pickCounts.get(pick.key)}</span></button>`)}
         <span class="spacer"></span><span class="cleanup-count" id="message-create-members-count">${selectedMembers.length} of ${members.length} selected</span></div>
-      <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class="cleanup-row" key=${member.key}><label>
-        <input type="checkbox" data-conv=${member.conv_id} checked=${!customized || memberIsSelected(selected, member)}
+      <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class=${`cleanup-row${member.online ? '' : ' recipient-offline'}`} key=${member.key}><label>
+        <input type="checkbox" data-conv=${member.conv_id} checked=${selectedKeys.has(member.key)}
           onChange=${(event) => toggleMember(member, event.currentTarget.checked)} />
+        <span class=${`cleanup-badge ${member.online ? 'online' : 'offline'}`}>${member.online ? 'online' : 'offline'}</span>
         <span class="title">${member.title || '(untitled)'}</span><span class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</span>
-        ${member.online ? html`<span class="cleanup-badge online">online</span>` : null}
+        ${openMemberPRs(member).length ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}
       </label></div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
+      <p class="cleanup-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · Ctrl/⌘-click = narrow</p>
     </div></div>`}
     ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"
       title="Optional group role filter; blank or all reaches every selected member"><${Words} plain="Role filter" wizard="Class filter"/></span>
