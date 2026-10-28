@@ -266,7 +266,7 @@ export function buildCommands(snapshot) {
     cmds.push({
       peerView: 'operator', what: 'announcing to every live agent', icon: wiz('📣', '📯'), label: wiz('Announce to all live agents…', 'Proclaim to all channeling heroes…'),
       hint: wiz(`send one human-authored message to ${onlineAll} currently live agent${plural}`,
-        `sound one human proclamation to ${onlineAll} channeling hero${plural}`),
+        `sound one human proclamation to ${onlineAll} channeling hero${plural && 'es'}`),
       keywords: 'announce broadcast message notify all live online agents global everyone'
         + ' proclaim herald trumpet channeling heroes',
       run: () => openOperatorMessageDialog({
@@ -277,7 +277,7 @@ export function buildCommands(snapshot) {
     cmds.push({
       icon: wiz('⏻', '🌙'), label: wiz('Shut down all agents', 'Slumber all heroes'),
       hint: wiz(`stop ${onlineAll} running agent${plural} (resumable; no data deleted)`,
-        `lull ${onlineAll} channeling hero${plural} into slumber (rousable; nothing is lost)`),
+        `lull ${onlineAll} channeling hero${plural && 'es'} into slumber (rousable; nothing is lost)`),
       keywords: 'shutdown shut down stop kill power off halt all agents global everything batch'
         + ' slumber sleep rest lull dormant quell still heroes',
       run: () => shutdownScope('all', null),
@@ -288,7 +288,7 @@ export function buildCommands(snapshot) {
     cmds.push({
       icon: wiz('⏼', '✨'), label: wiz('Power on all agents', 'Awaken all heroes'),
       hint: wiz(`resume ${offlineAll} offline agent${plural} onto their conversations`,
-        `rouse ${offlineAll} slumbering hero${plural} back onto their scrolls`),
+        `rouse ${offlineAll} slumbering hero${plural && 'es'} back onto their scrolls`),
       keywords: 'power on start resume wake boot up all agents global everything batch'
         + ' awaken rouse stir revive kindle heroes',
       run: () => powerOnScope('all', null),
@@ -400,7 +400,7 @@ export function buildCommands(snapshot) {
     cmds.push({
       icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished heroes…'),
       hint: wiz(`preview + permanently delete any of ${retiredCount} retired agent${plural} (cannot be undone)`,
-        `preview + forever dispel any of ${retiredCount} banished hero${plural} (cannot be undone)`),
+        `preview + forever dispel any of ${retiredCount} banished hero${plural && 'es'} (cannot be undone)`),
       keywords: 'delete purge retired cleanup remove wipe agents'
         + ' dispel banished obliterate destroy erase vanquish incinerate heroes',
       run: () => openDeleteRetiredPreview(),
@@ -424,7 +424,7 @@ export function buildCommands(snapshot) {
     cmds.push({
       icon: wiz('♻', '🪄'), label: wiz('Retire ungrouped agents…', 'Banish unbound heroes…'),
       hint: wiz(`preview + demote ${ungroupedCount} agent${plural} that are in no group to plain conversations`,
-        `preview + banish ${ungroupedCount} unbound hero${plural} back to plain scrolls`),
+        `preview + banish ${ungroupedCount} unbound hero${plural && 'es'} back to plain scrolls`),
       keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents'
         + ' banish exile dismiss unbound loose unattached heroes',
       run: () => openRetireUngroupedPreview(),
@@ -835,7 +835,7 @@ export function buildCommands(snapshot) {
         groupGrant: { act: 'shutdown-group', group: g.name },
         icon: wiz('⏻', '🌙'), label: wiz(`Shut down group: ${g.name}`, `Slumber party: ${g.name}`),
         hint: wiz(`stop ${onlineG} running agent${plural} (resumable; no data deleted)`,
-          `lull ${onlineG} channeling hero${plural} into slumber (rousable; nothing is lost)`),
+          `lull ${onlineG} channeling hero${plural && 'es'} into slumber (rousable; nothing is lost)`),
         keywords: 'shutdown shut down stop kill power off halt group batch ' + g.name
           + ' slumber sleep rest lull dormant party heroes',
         run: () => { recordGroupInteraction(g.name); shutdownScope('group', g.name); },
@@ -848,7 +848,7 @@ export function buildCommands(snapshot) {
         groupGrant: { act: 'power-on-group', group: g.name },
         icon: wiz('⏼', '✨'), label: wiz(`Power on group: ${g.name}`, `Awaken party: ${g.name}`),
         hint: wiz(`resume ${offlineG} offline agent${plural} onto their conversations`,
-          `rouse ${offlineG} slumbering hero${plural} back onto their scrolls`),
+          `rouse ${offlineG} slumbering hero${plural && 'es'} back onto their scrolls`),
         keywords: 'power on start resume wake boot up group batch ' + g.name
           + ' awaken rouse stir revive kindle party heroes',
         run: () => { recordGroupInteraction(g.name); powerOnScope('group', g.name); },
@@ -952,7 +952,7 @@ export function buildCommands(snapshot) {
         icon: wiz('♻', '🪄'),
         label: wiz(`Retire ${status} agents across all groups`, `Banish ${status} heroes across all parties`),
         hint: wiz(`preview + demote ${allCount} ${status} agent${plural} across every group, including Ungrouped`,
-          `preview + banish ${allCount} ${status} hero${plural} across every party, including the Unbound`),
+          `preview + banish ${allCount} ${status} hero${plural && 'es'} across every party, including the Unbound`),
         keywords: 'retire demote cleanup remove tidy bulk ' + status
           + ' agents all groups global everywhere fleet ungrouped'
           + ' banish exile dismiss heroes all parties tower unbound',
@@ -972,7 +972,7 @@ export function buildCommands(snapshot) {
         icon: wiz('♻', '🪄'),
         label: wiz(`Retire ${status} agents in Ungrouped`, `Banish ${status} heroes in Unbound`),
         hint: wiz(`preview + demote ${ungroupedN} ${status} ungrouped agent${plural} to plain conversations`,
-          `preview + banish ${ungroupedN} ${status} unbound hero${plural} back to plain scrolls`),
+          `preview + banish ${ungroupedN} ${status} unbound hero${plural && 'es'} back to plain scrolls`),
         keywords: 'retire demote cleanup remove tidy bulk ' + status
           + ' agents ungrouped no group groupless loose'
           + ' banish exile dismiss heroes unbound unattached',
@@ -993,7 +993,7 @@ export function buildCommands(snapshot) {
       cmds.push({
         icon: wiz('♻', '🪄'), label: wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} heroes in ${g.name}`),
         hint: wiz(`preview + demote ${n} ${status} agent${plural} to plain conversations`,
-          `preview + banish ${n} ${status} hero${plural} back to plain scrolls`),
+          `preview + banish ${n} ${status} hero${plural && 'es'} back to plain scrolls`),
         keywords: 'retire demote cleanup remove tidy bulk ' + status + ' agents group ' + g.name
           + ' banish exile dismiss heroes party',
         run: () => { recordGroupInteraction(g.name); openRetirePreview(g.name, status); },

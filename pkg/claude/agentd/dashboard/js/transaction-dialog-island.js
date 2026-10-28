@@ -241,7 +241,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
     errorID="window-error"
     primaryLabel=${html`<${Words}
       plain=${`${retrying ? 'Retry ' : ''}${plainVerb} ${count} agent${count === 1 ? '' : 's'}`}
-      wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} hero${count === 1 ? '' : 's'}`}
+      wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} hero${count === 1 ? '' : 'es'}`}
     />`}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain=${`${plainVerb}ing…`}

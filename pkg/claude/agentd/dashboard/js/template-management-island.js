@@ -59,7 +59,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
         >${agents.length}
         <${Words}
           plain=${`agent${agents.length === 1 ? '' : 's'}`}
-          wizard=${`hero${agents.length === 1 ? '' : 's'}`}
+          wizard=${`hero${agents.length === 1 ? '' : 'es'}`}
       /></span>
       ${template.work_pattern?.length > 0 &&
       html`<span

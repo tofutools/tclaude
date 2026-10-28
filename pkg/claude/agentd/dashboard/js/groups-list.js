@@ -735,14 +735,14 @@ function VirtualUngrouped({ group, snapshot, actions }) {
     <${VirtualBadge} regularTitle="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group." wizardTitle="An ethereal party, not a true one — it cannot be renamed, dispelled, whispered to, or scheduled. It gathers heroes bound to no party." />
     <span class="muted">— <${ThemeText}
       regular=${`${view.members.length} agent${view.members.length === 1 ? '' : 's'} not in any group${view.hiddenOffline ? ` · ${view.hiddenOffline} offline hidden` : ''}`}
-      wizard=${`${view.members.length} unbound hero${view.members.length === 1 ? '' : 's'}${view.hiddenOffline ? ` · ${view.hiddenOffline} slumbering hidden` : ''}`}
+      wizard=${`${view.members.length} unbound hero${view.members.length === 1 ? '' : 'es'}${view.hiddenOffline ? ` · ${view.hiddenOffline} slumbering hidden` : ''}`}
     /></span>`;
   const agentsBody = !view.members.length
     ? html`<div class="muted"><${ThemeText} regular="(no ungrouped agents)" wizard="(no unbound heroes)" /></div>`
     : !view.visible.length
       ? html`<div class="muted"><${ThemeText}
         regular=${`(${view.hiddenOffline} offline agent${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
-        wizard=${`(${view.hiddenOffline} slumbering hero${view.hiddenOffline === 1 ? '' : 's'} hidden — enable "show slumbering" to reveal ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
+        wizard=${`(${view.hiddenOffline} slumbering hero${view.hiddenOffline === 1 ? '' : 'es'} hidden — enable "show slumbering" to reveal ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
       /></div>`
       : html`<${MemberTable} members=${view.visible} tableKey="virtual:ungrouped" ungrouped=${true} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
   const body = !processes ? agentsBody
@@ -816,7 +816,7 @@ const VIRTUAL_NAMES = {
     wizardName: 'Banished', regularEmpty: '(no retired agents)', wizardEmpty: '(no banished heroes)',
     regularTitle: 'A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.',
     wizardTitle: 'An ethereal party of banished heroes returned to plain scrolls. Drag a hero here to banish it; drag one onto a party, or restore it, to bring it back.',
-    regularCount: (n) => `${n} retired agent${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} banished hero${n === 1 ? '' : 's'}`,
+    regularCount: (n) => `${n} retired agent${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} banished hero${n === 1 ? '' : 'es'}`,
   },
   replaced: {
     wizardName: 'Past incarnations', regularEmpty: '(no replaced generations)', wizardEmpty: '(no past incarnations)',
@@ -828,7 +828,7 @@ const VIRTUAL_NAMES = {
     wizardName: 'Summoning', regularEmpty: '(no pending spawns)', wizardEmpty: '(no heroes awaiting summoning)',
     regularTitle: "A virtual group, not a real one — dashboard spawns waiting to clear a startup gate (untrusted dir / config prompt / OpenAI auth). Click a row's focus button to open its pane and clear the gate; it then becomes a normal agent.",
     wizardTitle: "An ethereal antechamber for heroes caught at the summoning gate. Open a hero's portal to clear the ward; it then joins the living roster.",
-    regularCount: (n) => `${n} pending spawn${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} hero${n === 1 ? '' : 's'} caught at the summoning gate`,
+    regularCount: (n) => `${n} pending spawn${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} hero${n === 1 ? '' : 'es'} caught at the summoning gate`,
   },
 };
 

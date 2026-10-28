@@ -26,7 +26,7 @@ export function templateReadbackBadgeModels(template) {
   const count = (template.agents || []).length;
   const chips = [{
     key: 'agents', className: 'tc-count',
-    text: `${count} ${wizWord('agent', 'hero')}${count === 1 ? '' : 's'}`,
+    text: `${count} ${count === 1 ? wizWord('agent', 'hero') : wizWord('agents', 'heroes')}`,
   }];
   const waves = templateWaveCount(template);
   if (waves > 1) chips.push({ key: 'waves', className: 'tc-count', title: wizWord('staged-spawn waves', 'marching ranks'), text: `🌊 ${waves} ${wizWord('waves', 'ranks')}` });

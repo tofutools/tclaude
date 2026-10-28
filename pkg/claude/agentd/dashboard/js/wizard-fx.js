@@ -282,7 +282,7 @@ function tickerLines() {
   const onlineCount = (snap.agents || []).filter(a => a.online).length;
   if (!currentTickerQuotes.length) rollTickerQuotes();
   return [
-    `🧙 ${onlineCount} hero${onlineCount === 1 ? '' : 's'} channeling the arcane`,
+    `🧙 ${onlineCount} hero${onlineCount === 1 ? '' : 'es'} channeling the arcane`,
     ...currentTickerQuotes,
   ];
 }
