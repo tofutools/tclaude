@@ -171,3 +171,38 @@ func TestRunRoutesCloseByFriendlyReferenceFindsOwnLease(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
 	assert.Equal(t, "closed", got.State)
 }
+
+func TestRunRoutesPublishHostOnly(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"id":"rte_host_api","name":"api","host_only":true}`))
+	var out, stderr bytes.Buffer
+	require.Equal(t, rcOK, runRoutesPublish(&routesPublishParams{Name: "api", Host: true, Target: "tcp://127.0.0.1:8080", JSON: true}, &out, &stderr), stderr.String())
+	require.Len(t, calls, 1)
+	body := calls[0].body.(map[string]any)
+	require.Equal(t, true, body["host"])
+	require.NotContains(t, body, "group")
+	require.Contains(t, out.String(), `"host_only": true`)
+	for _, p := range []*routesPublishParams{
+		{Name: "api", Host: true, Group: "team", Target: "tcp://127.0.0.1:8080"},
+		{Name: "api", Target: "tcp://127.0.0.1:8080"},
+	} {
+		_, _, _, rc := validateRoutePublishCLI(p, &stderr)
+		require.Equal(t, rcInvalidArg, rc)
+	}
+}
+
+func TestRunRoutesListAndCloseHostWithoutGroup(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		if path == "/v1/routes?host=true" {
+			return 200, "", `{"routes":[{"id":"rte_host_api","name":"api","host_only":true}]}`
+		}
+		return 200, "", `{"id":"rte_host_api","name":"api","host_only":true}`
+	})
+	var out, stderr bytes.Buffer
+	require.Equal(t, rcOK, runRoutesLs(&routesLsParams{Host: true}, &out, &stderr), stderr.String())
+	require.Equal(t, rcOK, runRoutesClose(&routesCloseParams{Reference: "rte_host_api"}, &out, &stderr), stderr.String())
+	require.Equal(t, "/v1/routes?host=true", calls[0].path)
+	require.Equal(t, http.MethodDelete, calls[2].method)
+	require.Contains(t, out.String(), "host only")
+}

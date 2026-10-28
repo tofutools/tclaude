@@ -22,6 +22,7 @@ const routeAPIVersion = "v1"
 var errRouteStaleLaunchGeneration = errors.New("launch generation is stale")
 
 type routePublishRequest struct {
+	Host             bool   `json:"host"`
 	Group            string `json:"group"`
 	GroupID          int64  `json:"group_id,omitempty"`
 	GroupGeneration  *int64 `json:"group_generation,omitempty"`
@@ -40,6 +41,7 @@ type routeOpenRequest struct {
 }
 
 type routeView struct {
+	HostOnly                  bool             `json:"host_only,omitempty"`
 	HostLeases                []hostRouteLease `json:"host_leases,omitempty"`
 	APIVersion                string           `json:"api_version"`
 	ID                        string           `json:"id"`
@@ -81,7 +83,7 @@ type routeLeaseView struct {
 }
 
 func routeViewFor(r *db.AgentRoute) routeView {
-	v := routeView{APIVersion: routeAPIVersion, ID: r.ID, GroupID: r.GroupID, Group: r.GroupName, PublisherAgentID: r.PublisherAgentID, PublisherConvID: r.PublisherConvID, PublisherLaunchGeneration: r.PublisherLaunchGeneration, GroupGeneration: r.GroupGeneration, Name: r.Name, Reference: routeReferenceFor(r), StableReference: stableRouteReferenceFor(r), Transport: r.Transport, Target: r.Target, State: r.State, CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), WithdrawReason: r.WithdrawReason}
+	v := routeView{HostOnly: r.HostOnly, APIVersion: routeAPIVersion, ID: r.ID, GroupID: r.GroupID, Group: r.GroupName, PublisherAgentID: r.PublisherAgentID, PublisherConvID: r.PublisherConvID, PublisherLaunchGeneration: r.PublisherLaunchGeneration, GroupGeneration: r.GroupGeneration, Name: r.Name, Reference: routeReferenceFor(r), StableReference: stableRouteReferenceFor(r), Transport: r.Transport, Target: r.Target, State: r.State, CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), WithdrawReason: r.WithdrawReason}
 	v.HostLeases = hostRoutesForRoute(r.ID)
 	if !r.WithdrawnAt.IsZero() {
 		v.WithdrawnAt = r.WithdrawnAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
@@ -119,6 +121,9 @@ func routeReferenceFor(r *db.AgentRoute) string {
 func stableRouteReferenceFor(r *db.AgentRoute) string {
 	if r == nil {
 		return ""
+	}
+	if r.HostOnly {
+		return "host/" + routeReferenceFor(r)
 	}
 	return strconv.FormatInt(r.GroupID, 10) + "/" + strings.TrimSpace(r.PublisherAgentID) + "/" + strings.TrimSpace(r.Name)
 }
@@ -379,6 +384,14 @@ func handleRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleRoutesList(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("host") == "true" {
+		if r.URL.Query().Get("group") != "" || r.URL.Query().Get("group_id") != "" {
+			writeRouteError(w, 400, "route_group", "host and group are mutually exclusive")
+			return
+		}
+		handleHostOnlyRoutesList(w, r)
+		return
+	}
 	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
 	groupID := parseRouteGroupID(r.URL.Query().Get("group_id"))
 	// A caller may omit --group only when the selection is unambiguous. This
@@ -589,14 +602,32 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusBadRequest, "route_invalid_argument", err.Error())
 		return
 	}
-	g, err := routeGroup(body.Group, body.GroupID)
-	if err != nil {
-		writeRouteError(w, http.StatusBadRequest, "route_group", err.Error())
-		return
-	}
-	convID, agentID, ok := requireRouteCapability(w, r, g, PermRoutesPublish)
-	if !ok {
-		return
+	var g *db.AgentGroup
+	var convID, agentID string
+	var ok bool
+	var err error
+	if body.Host {
+		if body.Group != "" || body.GroupID != 0 || body.GroupGeneration != nil {
+			writeRouteError(w, 400, "route_group", "host and group are mutually exclusive")
+			return
+		}
+		convID, agentID, ok = routeCallerAgent(w, r)
+		if !ok {
+			return
+		}
+		if _, ok = requirePermission(w, r, PermRoutesPublishHost); !ok {
+			return
+		}
+	} else {
+		g, err = routeGroup(body.Group, body.GroupID)
+		if err != nil {
+			writeRouteError(w, 400, "route_group", err.Error())
+			return
+		}
+		convID, agentID, ok = requireRouteCapability(w, r, g, PermRoutesPublish)
+		if !ok {
+			return
+		}
 	}
 	launchGeneration, err := routeLaunchGeneration(convID, body.LaunchGeneration)
 	if err != nil {
@@ -628,7 +659,12 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusBadRequest, "route_target_not_local", err.Error())
 		return
 	}
-	route, err := db.CreateAgentRoute(g.ID, agentID, convID, launchGeneration, routeGeneration(g, body.GroupGeneration), name, transport, strings.TrimSpace(body.Target))
+	var route *db.AgentRoute
+	if body.Host {
+		route, err = db.CreateHostAgentRoute(agentID, convID, launchGeneration, name, transport, strings.TrimSpace(body.Target))
+	} else {
+		route, err = db.CreateAgentRoute(g.ID, agentID, convID, launchGeneration, routeGeneration(g, body.GroupGeneration), name, transport, strings.TrimSpace(body.Target))
+	}
 	if err != nil {
 		writeRouteError(w, http.StatusConflict, "route_conflict", err.Error())
 		return
@@ -652,6 +688,10 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	route = refreshRoutePublisher(route)
+	if route.HostOnly {
+		handleHostOnlyRoute(w, r, route)
+		return
+	}
 	g, err := db.GetAgentGroupByID(route.GroupID)
 	if err != nil || g == nil {
 		writeRouteError(w, http.StatusNotFound, "route_group", "route target group no longer exists")

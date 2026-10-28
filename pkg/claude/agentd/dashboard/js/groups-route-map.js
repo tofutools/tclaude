@@ -35,7 +35,7 @@ function routeGroups(snapshot) {
 
 function routesForGroup(routeMap, groupName) {
   const routes = routeMap?.routes || [];
-  return groupName ? routes.filter((route) => route.group === groupName) : [];
+  return routes.filter((route) => route.host_only || (groupName && route.group === groupName));
 }
 
 function edgeRows(routes) {
@@ -209,7 +209,7 @@ export function GroupsRouteMap({ state }) {
       state.setSubview('members', '');
     }
   }, [enabled, state]);
-  const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && route.group === groupName) || null, [map.routes, selectedRouteID, groupName]);
+  const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && (route.host_only || route.group === groupName)) || null, [map.routes, selectedRouteID, groupName]);
   const routes = routesForGroup(map, groupName);
   const members = groups.find((group) => group.name === groupName)?.members || [];
   const darwinCapacity = map.darwin_capacity?.[groupName] || null;
@@ -261,7 +261,7 @@ export function GroupsRouteMap({ state }) {
     ${isRoutes && map.platform === 'darwin' && html`<div class="route-map-disclosure" role="note">Darwin bounded capacity: ${darwinCapacityText} · ${map.darwin_boundary || 'Partial boundary disclosed'}</div>`}
     ${isRoutes && (!routes.length ? html`<div class="route-map-empty"><strong>No named routes in this group.</strong><span>When the route authority has records, this surface will show explicit publisher → consumer leases.</span></div>` : html`<div class=${`route-map-content route-map-mode-${mode}`}>
       ${mode === 'graph' && html`<${RouteGraph} routes=${routes} members=${members} selected=${selectedRouteID} onSelect=${navigateRoute} />`}
-      ${mode === 'list' && html`<div class="route-map-table-wrap"><table class="route-map-table"><caption class="sr-only">Exact named route listing</caption><thead><tr><th>Route</th><th>Publisher</th><th>Consumer</th><th>Transport</th><th>Lifecycle</th><th>Health</th></tr></thead><tbody>${routes.map((route) => html`<tr key=${route.id} class=${selectedRouteID === route.id ? 'is-selected' : ''} onClick=${() => navigateRoute(route.id)}><td><button type="button" class="route-map-link">${route.name}</button><code>${route.stable_reference}</code></td><td>${friendlyEndpoint(route.publisher_name, route.publisher_boundary)}</td><td>${route.consumers?.length ? route.consumers.map((consumer) => html`<span class="route-map-consumer-line" key=${consumer.id}>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)} · ${statusLabel(consumer.endpoint_state)}</span>`) : html`<span class="route-map-muted">none</span>`}</td><td>${route.transport || 'unknown'}</td><td><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></td><td><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span> · ${statusLabel(route.publisher_health)}</td></tr>`)}</tbody></table></div>`}
+      ${mode === 'list' && html`<div class="route-map-table-wrap"><table class="route-map-table"><caption class="sr-only">Exact named route listing</caption><thead><tr><th>Route</th><th>Publisher</th><th>Consumer</th><th>Transport</th><th>Lifecycle</th><th>Health</th></tr></thead><tbody>${routes.map((route) => html`<tr key=${route.id} class=${selectedRouteID === route.id ? 'is-selected' : ''} onClick=${() => navigateRoute(route.id)}><td><button type="button" class="route-map-link">${route.name}</button>${route.host_only && html`<span class="route-map-muted">Host only</span>`}<code>${route.stable_reference}</code></td><td>${friendlyEndpoint(route.publisher_name, route.publisher_boundary)}</td><td>${route.consumers?.length ? route.consumers.map((consumer) => html`<span class="route-map-consumer-line" key=${consumer.id}>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)} · ${statusLabel(consumer.endpoint_state)}</span>`) : html`<span class="route-map-muted">none</span>`}</td><td>${route.transport || 'unknown'}</td><td><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></td><td><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span> · ${statusLabel(route.publisher_health)}</td></tr>`)}</tbody></table></div>`}
       <${RouteDetail} route=${selectedRoute} local=${!remoteNodeID() && !snapshot?.peer_view && isLoopbackDashboard()} onClose=${() => navigateRoute('')} />
     </div>`)}
   </div>`;

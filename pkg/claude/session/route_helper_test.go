@@ -175,3 +175,19 @@ func TestRouteHelperRenderCarriesOnlyPreservedFDIntoSandbox(t *testing.T) {
 		t.Fatalf("route helper handoff endpoint was mounted into the sandbox: %s", rendered)
 	}
 }
+
+func TestRouteHelperHostDiscoverySelector(t *testing.T) {
+	helper := testRouteHelper()
+	helper.GroupIDs = []int64{0}
+	effective := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
+	if err := validateTclaudeLayerRouteHelper(effective, helper); err != nil {
+		t.Fatal(err)
+	}
+	wrapped, err := wrapTclaudeLayerRouteHelper("/usr/local/bin/tclaude", *helper, "harness --run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(wrapped, "--group-id 0") {
+		t.Fatalf("missing host discovery selector: %s", wrapped)
+	}
+}

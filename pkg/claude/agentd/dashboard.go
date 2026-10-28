@@ -1828,6 +1828,7 @@ type dashboardDarwinCapacity struct {
 }
 
 type dashboardRoute struct {
+	HostOnly          bool                     `json:"host_only,omitempty"`
 	ID                string                   `json:"id"`
 	GroupID           int64                    `json:"group_id"`
 	Group             string                   `json:"group"`
@@ -3692,6 +3693,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// projection adds no per-route/per-member database work to the poll.
 	if groupsRouteMapEnabled {
 		routeMap := buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinLaunchesByGroup)
+		appendDashboardHostPublications(&routeMap)
 		out.RouteMap = &routeMap
 	}
 	for convID, slugs := range allGrants {

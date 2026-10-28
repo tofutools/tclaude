@@ -27,7 +27,7 @@ Slugs fall into recognizable families: `self.*` (an agent acting on itself),
 administration, including `groups.members.*`, `groups.settings.*`,
 `groups.link.*`, and `groups.triggers.*`), `permissions.*`, `human.*`
 (channels to the operator), `message.direct`, `templates.*`, `process.*`,
-`profiles.manage`, `roles.manage`, `routes.publish`/`routes.consume`,
+`profiles.manage`, `roles.manage`, `routes.publish`/`routes.consume`/`routes.publish-host`,
 `sandbox-profiles.*`, `triggers.*`, and `proxy.*`. Don't memorize the list;
 query the registry.
 

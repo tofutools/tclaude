@@ -2054,3 +2054,20 @@ CREATE INDEX idx_session_cost_daily_walk
 				ON session_cost_daily(
 					COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
 				);
+
+CREATE TABLE agent_host_routes (
+ id TEXT PRIMARY KEY,
+ publisher_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+ publisher_conv_id TEXT NOT NULL,
+ publisher_launch_generation TEXT NOT NULL,
+ name TEXT NOT NULL,
+ transport TEXT NOT NULL,
+ target TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('ready','withdrawn','publisher-lost')),
+ created_at INTEGER NOT NULL,
+ withdrawn_at INTEGER,
+ withdraw_reason TEXT NOT NULL DEFAULT '',
+ UNIQUE(publisher_agent_id, name)
+) STRICT;
+
+CREATE INDEX idx_agent_host_routes_publisher ON agent_host_routes(publisher_conv_id, state);

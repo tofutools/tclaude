@@ -110,7 +110,7 @@ func openHostRouteMode(route *db.AgentRoute, port int, mode string) (*hostRouteL
 			if err != nil {
 				return nil, err
 			}
-			if !enabled {
+			if !enabled && !route.HostOnly {
 				return nil, fmt.Errorf("publisher data channel is not attached: enable routes.publish in group %q's group permissions, then relaunch the publisher and republish the route", route.GroupName)
 			}
 			if !routeHelperCapabilityActive(route.PublisherAgentID, route.PublisherConvID, route.PublisherLaunchGeneration) {

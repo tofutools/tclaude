@@ -52,6 +52,36 @@ before publishing its port. Host-only consumption needs no `routes.consume` gran
 A group grant applies to all members. Route-enabled groups also require all
 members to be offline before changing group membership.
 
+## Publish only to the host
+
+An agent can publish for operator access without joining or sharing with a group:
+
+```bash
+tclaude agent routes publish web --host -t tcp://127.0.0.1:8080
+tclaude agent routes ls --host
+tclaude agent routes close <route-id>
+```
+
+`--host` and `--group` are mutually exclusive; one is required for publication.
+Host-only publication requires **`routes.publish-host`**, a separate, unscoped permission that is not
+provided by `routes.publish`. Grant it to the agent (or through a profile, default, or group permission)
+using the normal permission controls. It does not grant group publication or consumption. No group
+membership or group-level route opt-in is required for a directly granted host-only publisher.
+
+Grant the permission before launching, or relaunch after adding it. Host publishing uses the same
+pane-authoritative tclaude sandbox launch and publisher helper as group routes. On Linux, the helper
+is provisioned from the agent's effective host-publishing permission; on macOS, the launch also
+reserves its normal bounded Darwin route slots. Unsupported launch shapes fail closed.
+
+Host-only routes appear in the operator's Route map, including when there are no groups; select one
+and click **Open on host** for an HTTP preview or **Open TCP endpoint** for opaque forwarding.
+Publishing registers the route; it does not itself allocate a host listener. Agent callers can list
+and withdraw their own publications, but cannot read another agent's host-only routes or consume
+these routes. They are absent from group route listings and federation route catalogs.
+
+Withdrawing the route, losing the publisher launch, or revoking `routes.publish-host` closes its
+host endpoints and active connections. Host listeners remain ephemeral across daemon restarts.
+
 ## Open a published route on the host
 
 In the dashboard, enable **Config → Experimental features → Groups Route map**,

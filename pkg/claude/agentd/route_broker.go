@@ -86,6 +86,12 @@ func (databaseRouteAuthority) AuthorizePublisher(ctx context.Context, auth route
 	if !routePublisherLive(route) {
 		return errors.New("publisher is no longer live")
 	}
+	if route.HostOnly {
+		if !hostPublishAllowed(route.PublisherConvID) {
+			return errors.New("host publishing permission was revoked")
+		}
+		return contextError(ctx)
+	}
 	group, err := db.GetAgentGroupByID(route.GroupID)
 	if err != nil || group == nil || group.RouteGeneration != route.GroupGeneration {
 		return errors.New("route group generation is stale")
@@ -119,6 +125,9 @@ func (databaseRouteAuthority) AuthorizeConsumer(ctx context.Context, auth routeb
 	route, err := db.GetAgentRoute(auth.RouteID)
 	if err != nil {
 		return fmt.Errorf("load consumer route: %w", err)
+	}
+	if route != nil && route.HostOnly {
+		return errors.New("host-only routes cannot be consumed by agents")
 	}
 	if route == nil || route.State != db.RouteStateReady || !routePublisherLive(route) {
 		return errors.New("publisher authority is no longer ready")

@@ -90,7 +90,13 @@ func (a *proxyRouteAuthority) Identity(ctx context.Context) (sandboxproxy.RouteI
 	if a == nil || len(a.config.GroupIDs) == 0 {
 		return sandboxproxy.RouteIdentity{}, errors.New("proxy route authority requires an explicit launch group")
 	}
-	groupID := a.config.GroupIDs[0]
+	var groupID int64
+	for _, id := range a.config.GroupIDs {
+		if id > 0 {
+			groupID = id
+			break
+		}
+	}
 	if groupID <= 0 {
 		return sandboxproxy.RouteIdentity{}, errors.New("proxy route authority group is invalid")
 	}

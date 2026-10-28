@@ -5,7 +5,7 @@ import { createPreactHarness, getByRole } from './preact-harness.mjs';
 const LEASE = { id: `hlease_${'a'.repeat(32)}`, endpoint: '127.0.0.1:33789', consumer_kind: 'host', mode: 'http' };
 const PREVIEW = `http://route-${'a'.repeat(32)}.localhost:33789/`;
 
-async function setup(t, { hostname = '127.0.0.1', remote = false, consumers = [LEASE] } = {}) {
+async function setup(t, { hostname = '127.0.0.1', remote = false, consumers = [LEASE], hostOnly = false } = {}) {
   const harness = await createPreactHarness(t);
   harness.window.location = new URL(`http://${hostname}:8321/`);
   const priorRemote = globalThis.__tclaudeRemoteNode;
@@ -26,8 +26,8 @@ async function setup(t, { hostname = '127.0.0.1', remote = false, consumers = [L
   });
   state.initialize();
   const publish = (leases) => state.publish({
-    groups: [{ name: 'team', members: [] }], groups_route_map_enabled: true,
-    route_map: { routes: [{ id: 'rte_preview', name: 'preview', group: 'team', state: 'ready', generation_health: 'current', consumers: leases }] },
+    groups: hostOnly ? [] : [{ name: 'team', members: [] }], groups_route_map_enabled: true,
+    route_map: { routes: [{ id: 'rte_preview', name: 'preview', group: hostOnly ? '' : 'team', host_only: hostOnly, state: 'ready', generation_health: 'current', consumers: leases }] },
   });
   publish(consumers);
   state.setRouteGroup('team');
@@ -116,4 +116,10 @@ test('TCP action requests an opaque endpoint explicitly', async (t) => {
   });
   assert.match(root.querySelector('[role="status"]').textContent, /127\.0\.0\.1:33789/);
   assert.equal(root.querySelector('a.route-map-preview'), null);
+});
+
+test('host-only routes are accessible without any group', async (t) => {
+ const { root } = await setup(t, { hostOnly:true });
+ assert.equal(root.querySelector('a.route-map-preview').getAttribute('href'), PREVIEW);
+ assert.ok(getByRole(root,'button',{name:'Open on host'}));
 });
