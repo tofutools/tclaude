@@ -42,6 +42,14 @@ grants the consuming peer `routes.consume` on the publishing group; the
 consumer’s operator grants its agent `routes.consume` scoped to that peer/group:
 `tclaude agent routes open <publisher>/<name>@<peer> -g <group>`.
 
+On Linux, the group must also opt into the route contract through its **group
+permissions**: in the dashboard, open the group's **⚙ → group permissions** and
+add `routes.publish` (or `routes.consume` for a consuming group). An individual
+agent grant authorizes route operations but does not enable the group's launch
+contract. Relaunch the publisher after enabling the group policy so its sandbox
+gets a namespace-local route helper. Start the service again in that new launch
+before publishing its port. Host-only consumption needs no `routes.consume` grant.
+
 ## Open a published route on the host
 
 In the dashboard, enable **Config → Experimental features → Groups Route map**,
@@ -169,6 +177,11 @@ auditable capability for an ambient one.
 - `route_not_found` / `route_not_member`: use the exact current route
   reference and verify both publisher and consumer are members of the same
   current group roster.
+- Host open reports "publisher data channel is not attached": a ready route
+  record exists, but no publisher helper is carrying its traffic. On Linux,
+  verify the group-level route opt-in above, relaunch the publisher, start its
+  service, and republish. If its launch already has a current helper, wait for
+  that helper to attach and retry opening the host endpoint.
 - A lease stays `pending`: confirm the route-capable launch is active and
   its helper can reach the `agentd` Unix relay. A pending lease is not
   permission to connect directly to the publisher's target.

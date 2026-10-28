@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -85,6 +86,21 @@ func openHostRoute(route *db.AgentRoute, port int) (*hostRouteLease, error) {
 		ConvID: route.PublisherConvID, LaunchGeneration: route.PublisherLaunchGeneration, GroupGeneration: route.GroupGeneration}
 	if err := (databaseRouteAuthority{}).AuthorizePublisher(context.Background(), publisher); err != nil {
 		return nil, err
+	}
+	if !GroupRouteBroker().PublisherAttached(route.ID) {
+		if runtime.GOOS == "linux" {
+			enabled, err := db.IsAgentGroupRouteEnabled(route.GroupID, PermRoutesPublish, PermRoutesConsume)
+			if err != nil {
+				return nil, err
+			}
+			if !enabled {
+				return nil, fmt.Errorf("publisher data channel is not attached: enable routes.publish in group %q's group permissions, then relaunch the publisher and republish the route", route.GroupName)
+			}
+			if !routeHelperCapabilityActive(route.PublisherAgentID, route.PublisherConvID, route.PublisherLaunchGeneration) {
+				return nil, errors.New("publisher data channel is not attached: relaunch the publisher to install a current Linux route helper, then republish the route")
+			}
+		}
+		return nil, errors.New("publisher data channel is not attached: wait for the publisher helper to connect and retry")
 	}
 	adapter, err := routeadapter.New(GroupRouteBroker(), nil)
 	if err != nil {

@@ -92,6 +92,11 @@ func TestHostRouteLinuxHelperDiscovery(t *testing.T) {
 	}
 	require.NoError(t, routeadapter.GetUnixJSON(ctx, socket, "/v1/routes?group=host-discovery-group", credential, &listed))
 	require.Len(t, listed.Routes, 1)
+	// A registry row without a helper channel must not create a dead listener.
+	_, err = openHostRoute(route, 0)
+	require.ErrorContains(t, err, "publisher data channel is not attached")
+	require.ErrorContains(t, err, "group permissions")
+	require.Empty(t, hostRoutesForRoute(route.ID))
 	helperCtx, stopHelper := context.WithCancel(ctx)
 	helperDone := make(chan error, 1)
 	go func() {
@@ -101,19 +106,19 @@ func TestHostRouteLinuxHelperDiscovery(t *testing.T) {
 		})
 	}()
 	defer func() { stopHelper(); <-helperDone }()
+	require.Eventually(t, func() bool { return GroupRouteBroker().PublisherAttached(route.ID) },
+		5*time.Second, 20*time.Millisecond, "publisher helper must attach before opening on the host")
 	lease, err := openHostRoute(route, 0)
 	require.NoError(t, err)
 	client := &http.Client{Timeout: time.Second}
 	defer client.CloseIdleConnections()
-	require.Eventually(t, func() bool {
-		response, err := client.Get("http://" + lease.Endpoint)
-		if err != nil {
-			return false
-		}
-		defer response.Body.Close()
-		body, err := io.ReadAll(response.Body)
-		return err == nil && response.StatusCode == http.StatusOK && string(body) == "hello through the Linux publisher helper"
-	}, 5*time.Second, 20*time.Millisecond)
+	response, err := client.Get("http://" + lease.Endpoint)
+	require.NoError(t, err)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, response.Body.Close())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Equal(t, "hello through the Linux publisher helper", string(body))
 	// Invalid capabilities and non-members must still be refused.
 	req := httptest.NewRequest(http.MethodGet, "/v1/routes?group=host-discovery-group", nil)
 	req.Header.Set(routeHelperCredentialHeader, "invalid")

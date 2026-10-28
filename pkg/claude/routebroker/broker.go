@@ -450,6 +450,15 @@ func (b *Broker) Close() error {
 	return nil
 }
 
+// PublisherAttached reports whether a route currently has a live data channel.
+// A durable ready route alone is not evidence that its namespace helper attached.
+func (b *Broker) PublisherAttached(routeID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	route := b.routes[routeID]
+	return !b.closed && route != nil && route.publisher != nil && route.publisher.ctx.Err() == nil
+}
+
 // Metrics returns bounded in-memory counters for diagnostics. It does not
 // expose route payloads or connection contents.
 func (b *Broker) Metrics() Metrics {
