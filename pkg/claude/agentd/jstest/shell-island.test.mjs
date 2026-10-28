@@ -230,7 +230,7 @@ test('footer open PR counter is neutral while only clean CI is running', async (
   await mounted.unmount();
 });
 
-test('footer open PRs gives the pointer one second to reach the popover', async (t) => {
+test('footer open PRs gives the pointer the shared hover grace to reach the popover', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
