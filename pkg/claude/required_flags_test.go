@@ -76,7 +76,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude agent roles create":                     "file",
 		"claude agent roles edit":                       "file",
 		"claude agent routes open":                      "group",
-		"claude agent routes publish":                   "group target",
+		"claude agent routes publish":                   "target",
 		"claude agent sandbox-profiles create":          "file",
 		"claude agent sandbox-profiles draft":           "token file",
 		"claude agent sandbox-profiles edit":            "file",

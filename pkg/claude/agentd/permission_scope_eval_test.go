@@ -428,7 +428,6 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermAgentStanddown:                    "requireCrossAgentPermission — same as agent.retire",
 	PermProcessRunsManage:                 "requirePermission — run create supplies ActionContext{ProcessTemplate}",
 	PermProcessRunsStart:                  "requireGroupPermission — group-scoped run create supplies ActionContext{Group, ProcessTemplate}",
-	PermRoutesPublishHost:                 "requirePermission — unscoped host publication",
 	PermRoutesPublish:                     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
 	PermRoutesConsume:                     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
 	PermGroupsTriggersRead:                "requireGroupPermission / triggerRuleReadable — fills ActionContext{Group}",
