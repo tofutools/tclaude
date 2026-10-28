@@ -6,10 +6,9 @@ import (
 )
 
 // TestDashboardHTML_ActivityTabWired pins the Diagnostics tab (formerly
-// Activity): Audit, Logs and
-// Performance (the former Debug tab) share one nav entry with a subnav, every
-// view is always shown, and the retired /audit, /logs and /debug locations
-// heal onto their subtab. Behaviour is covered by jstest/activity-tab.test.mjs
+// Activity): Audit, Logs, Performance (the former Debug tab) and Doctor share
+// one nav entry with a subnav, every view is always shown, and the retired
+// /audit, /logs, /debug and /doctor locations heal onto their subtab. Behaviour is covered by jstest/activity-tab.test.mjs
 // and jstest/nav-history-core.test.mjs.
 func TestDashboardHTML_ActivityTabWired(t *testing.T) {
 	must := func(needle, why string) {
@@ -26,6 +25,7 @@ func TestDashboardHTML_ActivityTabWired(t *testing.T) {
 		{"audit", "Audit", "Deeds"},
 		{"logs", "Logs", "Runes"},
 		{"performance", "Performance", "Alchemy"},
+		{"doctor", "Doctor", "Apothecary"},
 	} {
 		must(`data-subtab="`+sub.name+`" href="/diagnostics/`+sub.name+`"`, sub.name+" subtab carries its deep path")
 		must(`<span class="tab-label-regular">`+sub.regular+`</span><span class="tab-label-wizard">`+sub.wizard+`</span>`,
@@ -33,12 +33,14 @@ func TestDashboardHTML_ActivityTabWired(t *testing.T) {
 		must(`id="activity-`+sub.name+`" role="tabpanel"`, sub.name+" panel")
 	}
 	must("bindActivityTab()", "dashboard bootstrap binds the Activity subnav")
-	must("diagnostics: new Set(['audit', 'logs', 'performance'])", "the router knows the Diagnostics subtabs")
+	must("diagnostics: new Set(['audit', 'logs', 'performance', 'doctor'])", "the router knows the Diagnostics subtabs")
+	must("doctor: Object.freeze({ tab: 'diagnostics', subtab: 'doctor' })", "the retired /doctor heals to the Doctor subtab")
+	must(`<span id="doctor-badge-root"></span></a>`, "the Doctor badge also shows on the Diagnostics nav tab")
 	must("activity: 'diagnostics',", "the former /activity paths heal to /diagnostics")
 	must("debug: Object.freeze({ tab: 'diagnostics', subtab: 'performance' })", "the retired /debug heals to Performance")
 	must("diagnostics: 'audit'", "a peer view offers Diagnostics for its audit log")
 
-	for _, retired := range []string{`data-tab="audit"`, `data-tab="logs"`, `data-tab="debug"`, `id="tab-audit"`, `id="tab-logs"`, `id="tab-debug"`} {
+	for _, retired := range []string{`data-tab="audit"`, `data-tab="logs"`, `data-tab="debug"`, `data-tab="doctor"`, `id="tab-doctor"`, `id="tab-audit"`, `id="tab-logs"`, `id="tab-debug"`} {
 		if strings.Contains(dashboardAssets, retired) {
 			t.Errorf("dashboard assets still carry the retired top-level tab %q", retired)
 		}

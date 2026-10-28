@@ -1,6 +1,6 @@
 // Package doctor diagnoses what this host and this install still need for
 // tclaude to work properly: missing tools, incomplete setup, and decisions only
-// the operator can make. The dashboard's Doctor tab renders the result.
+// the operator can make. The dashboard's Diagnostics › Doctor view renders the result.
 //
 // Every check is read-only. A fix is described (a command to copy, or a
 // dashboard action the operator triggers), never applied here.
@@ -33,7 +33,7 @@ const (
 	SeverityDecision Severity = "decision"
 )
 
-// Category groups checks in the Doctor tab's sidebar.
+// Category groups checks in the Diagnostics › Doctor view's sidebar.
 type Category string
 
 const (

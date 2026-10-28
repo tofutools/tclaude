@@ -387,7 +387,7 @@ func runSetup(params *Params) error {
 	}
 
 	// 4a'. New installs confine agents in tclaude's own sandbox. Existing
-	// installs are left undecided and asked on the dashboard's Doctor tab.
+	// installs are left undecided and asked on the dashboard's Diagnostics › Doctor view.
 	fmt.Println("\n=== Default Agent Sandbox ===")
 	installDefaultSandboxImplementation()
 
@@ -545,7 +545,7 @@ func installDefaultMusicVolume() error {
 // for agents spawned on a fresh install (see db.SeedFreshInstallSandboxDefault
 // for what "fresh" means). It never changes a decision already recorded, and it
 // never decides for an install that has history: that operator is asked on the
-// dashboard's Doctor tab instead, so an upgrade does not quietly change how the
+// dashboard's Diagnostics › Doctor view instead, so an upgrade does not quietly change how the
 // next agent is confined.
 //
 // A host missing the sandbox tooling still gets the default — refusing the
@@ -563,7 +563,7 @@ func installDefaultSandboxImplementation() {
 		fmt.Println("✓ New agents default to tclaude's own sandbox")
 	case !decided:
 		fmt.Println("  Agents still use each harness's own sandbox. tclaude's sandbox is the default for new installs;")
-		fmt.Println("  choose on the dashboard's Doctor tab, or run `tclaude agent sandbox-impl default set tclaude-layer`.")
+		fmt.Println("  choose on the dashboard's Diagnostics › Doctor view, or run `tclaude agent sandbox-impl default set tclaude-layer`.")
 		return
 	case value == db.SandboxDefaultHarness:
 		fmt.Println("✓ New agents use each harness's own sandbox (your choice) — leaving it unchanged")
@@ -573,7 +573,7 @@ func installDefaultSandboxImplementation() {
 	}
 	if err := session.TclaudeLayerHostToolingPresence(); err != nil {
 		fmt.Printf("  ⚠ tclaude's sandbox cannot run on this host yet: %v\n", err)
-		fmt.Println("    Agent spawns will be refused until it is fixed; the dashboard's Doctor tab shows how.")
+		fmt.Println("    Agent spawns will be refused until it is fixed; the dashboard's Diagnostics › Doctor view shows how.")
 	}
 }
 

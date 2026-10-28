@@ -114,9 +114,8 @@ In order across the top:
 | Access | Permissions, slug registry, sudo (three subtabs) |
 | Messages | All agent mail, human notifications, access requests |
 | Usage | Overview, subscription quota forecasts, and real/what-if costs |
-| Diagnostics | Audit trail, daemon log, and poll performance (three subtabs) |
+| Diagnostics | Audit trail, daemon log, poll performance, and Doctor (four subtabs) |
 | Config | Visual editor for `~/.tclaude/config.json` |
-| Doctor | Missing tools, incomplete setup, and decisions tclaude needs from you |
 
 With trusted federation peers, node chips and **⌘ Fleet** join the tab bar,
 and ⌘ Fleet opens the Map / ⚙ Fleet config views; see
@@ -858,10 +857,11 @@ never modified. Restricted peer views show these buttons greyed out.
 
 ## Diagnostics
 
-Three subtabs, each with its own address: **Audit** (`/diagnostics/audit`, the
-default), **Logs** (`/diagnostics/logs`) and **Performance**
-(`/diagnostics/performance`). Switching subtabs adds a Back/Forward step.
-Bookmarks to the old top-level `/audit`, `/logs` and `/debug` pages, and to
+Four subtabs, each with its own address: **Audit** (`/diagnostics/audit`, the
+default), **Logs** (`/diagnostics/logs`), **Performance**
+(`/diagnostics/performance`) and **Doctor** (`/diagnostics/doctor`). Switching
+subtabs adds a Back/Forward step.
+Bookmarks to the old top-level `/audit`, `/logs`, `/debug` and `/doctor` pages, and to
 the tab's former `/activity/...` address, still open the matching subtab. The command palette has a direct entry for each
 (“Go to Diagnostics › Logs”). On a linked peer's view only Audit is available.
 
@@ -900,6 +900,28 @@ Below it are in-memory poll-latency self-diagnostics per endpoint:
 p50/p90/p99/max, a sparkline, and a per-phase breakdown. They reset on daemon
 restart or with the reset button.
 
+### Doctor
+
+What this host and this install still need for tclaude to work properly. A
+sidebar groups the checks — **Decisions**, **Sandbox**, **Tools**,
+**Harnesses**, **Hooks & setup** — under a default **Needs attention** lens and
+an **All checks** list. Each check is one of:
+
+- 🔵 **decision** — a question only you can answer, such as the default sandbox
+  for new agents (see [The install default](sandboxing.md#the-install-default)).
+  Answer it in place; either answer clears it.
+- 🔴 **blocking** — something that stops tclaude or agent spawns, such as
+  missing `tmux`, no harness installed, or tclaude's sandbox being the default on
+  a host where it cannot run.
+- 🟡 **warning** — degraded behavior, such as missing harness hooks.
+- ⚪ **info** / ✅ **ok** — optional extras and passing checks.
+
+A fix is shown as a command to copy (`sudo apt install bubblewrap`,
+`tclaude setup`, …) or a button; the view never changes the host itself. A badge on the
+**Diagnostics** nav tab and on the **Doctor** subtab counts decisions (blue) and
+blocking problems (red), so they show wherever you are. Results are cached for
+a minute; **Re-check** and opening the view refresh them.
+
 ## Config
 
 A visual editor for `~/.tclaude/config.json`. Save shows a line diff before
@@ -922,27 +944,6 @@ and directory-matched group policy, a library profile for exactly that profile
 and its includes, or **Off** to skip profiles. Existing ask threads take the
 current choice on every turn. See [Ask sandbox policy](ask.md#sandbox-policy)
 for directory ambiguity, supported harnesses, refusals, and cleanup behavior.
-
-## Doctor
-
-What this host and this install still need for tclaude to work properly. A
-sidebar groups the checks — **Decisions**, **Sandbox**, **Tools**,
-**Harnesses**, **Hooks & setup** — under a default **Needs attention** lens and
-an **All checks** list. Each check is one of:
-
-- 🔵 **decision** — a question only you can answer, such as the default sandbox
-  for new agents (see [The install default](sandboxing.md#the-install-default)).
-  Answer it in place; either answer clears it.
-- 🔴 **blocking** — something that stops tclaude or agent spawns, such as
-  missing `tmux`, no harness installed, or tclaude's sandbox being the default on
-  a host where it cannot run.
-- 🟡 **warning** — degraded behavior, such as missing harness hooks.
-- ⚪ **info** / ✅ **ok** — optional extras and passing checks.
-
-A fix is shown as a command to copy (`sudo apt install bubblewrap`,
-`tclaude setup`, …) or a button; the tab never changes the host itself. The nav
-badge counts decisions (blue) and blocking problems (red). Results are cached
-for a minute; **Re-check** and entering the tab refresh them.
 
 ## Fleet UI: linked nodes
 

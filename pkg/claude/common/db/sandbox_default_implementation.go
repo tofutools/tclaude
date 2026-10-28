@@ -19,7 +19,7 @@ import (
 //
 //   - absent: UNDECIDED. Behaves exactly like SandboxDefaultHarness so an
 //     existing install is never silently re-sandboxed by an upgrade, and the
-//     dashboard's Doctor tab asks the operator to choose.
+//     dashboard's Diagnostics › Doctor view asks the operator to choose.
 //   - SandboxDefaultTclaudeLayer: tclaude's own sandbox. `tclaude setup` writes
 //     this on a fresh install.
 //   - SandboxDefaultHarness: an explicit "keep each harness's own sandbox" —
@@ -86,7 +86,7 @@ const FreshInstallPrefKey = "tclaude.install.created_fresh"
 // SeedFreshInstallSandboxDefault writes SandboxDefaultTclaudeLayer when the
 // operator has not decided AND this database was created fresh by a binary
 // that knows about the install default. An existing install stays undecided, so
-// an upgrade never changes how its next agent is confined; the Doctor tab asks
+// an upgrade never changes how its next agent is confined; the Diagnostics › Doctor view asks
 // instead. Reports whether it wrote.
 func SeedFreshInstallSandboxDefault() (bool, error) {
 	if _, decided, err := GetSandboxDefaultImplementation(); err != nil || decided {

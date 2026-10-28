@@ -94,7 +94,7 @@ implementation. It has three states:
   behavior before the install default existed.
 - **undecided** — behaves like `harness`. An install that already had history
   when it upgraded stays here, so an upgrade never changes how the next agent
-  is confined; the dashboard's **Doctor** tab asks the operator to choose.
+  is confined; the dashboard's **Diagnostics › Doctor** view asks the operator to choose.
 
 ```bash
 tclaude agent sandbox-impl default show
@@ -109,7 +109,7 @@ implementation recorded when they were spawned, and a human's own
 On a host that cannot run tclaude's sandbox (no `bwrap`, or unprivileged user
 namespaces disabled) a spawn that gets `tclaude-layer` from the install default
 is still refused rather than silently unconfined; the refusal names both ways
-out, and the Doctor tab shows the install command.
+out, and Diagnostics › Doctor shows the install command.
 
 For OpenCode, Copilot and pi, which own no OS sandbox of their own, the old
 "unset" posture (for OpenCode, its command filter) has no per-spawn spelling

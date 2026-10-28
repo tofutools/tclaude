@@ -768,11 +768,12 @@ export async function mountConfigFeature(dependencies = {}) {
   });
 }
 
-// The Doctor tab and its nav badge form one ownership unit.
+// The Diagnostics › Doctor view and its two badges (on the Diagnostics nav tab
+// and on the Doctor subtab) form one ownership unit.
 export async function mountDoctorFeature(dependencies = {}) {
   const host = document.querySelector('#doctor-root');
   if (!host) return null;
-  const badgeHost = document.querySelector('#doctor-badge-root');
+  const badgeHosts = [...document.querySelectorAll('#doctor-badge-root, #doctor-subtab-badge-root')];
   return mountFeatureIsland({
     name: 'doctor', label: 'Doctor', hosts: [host], failureClass: 'doctor-error',
     load: async () => {
@@ -782,7 +783,7 @@ export async function mountDoctorFeature(dependencies = {}) {
       return {
         state: doctorState,
         mount: (registerCleanup) => mountDoctorIsland({
-          host, badgeHost, state: doctorState, notify: dependencies.notify, registerCleanup,
+          host, badgeHosts, state: doctorState, notify: dependencies.notify, registerCleanup,
         }),
       };
     },

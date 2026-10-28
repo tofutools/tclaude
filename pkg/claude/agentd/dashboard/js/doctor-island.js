@@ -155,15 +155,15 @@ function DoctorBadge({ state }) {
   </span>`;
 }
 
-export function mountDoctorIsland({ host, badgeHost, state, notify, registerCleanup }) {
+export function mountDoctorIsland({ host, badgeHosts = [], state, notify, registerCleanup }) {
   const actions = createDoctorActions({ state, notify });
   render(html`<${DoctorApp} state=${state} actions=${actions} notify=${notify} />`, host);
-  if (badgeHost) render(html`<${DoctorBadge} state=${state} />`, badgeHost);
+  for (const badgeHost of badgeHosts) render(html`<${DoctorBadge} state=${state} />`, badgeHost);
   actions.load();
   const timer = setInterval(() => { if (!state.active.value) actions.load(); }, POLL_MS);
   registerCleanup(() => {
     clearInterval(timer);
     render(null, host);
-    if (badgeHost) render(null, badgeHost);
+    for (const badgeHost of badgeHosts) render(null, badgeHost);
   });
 }

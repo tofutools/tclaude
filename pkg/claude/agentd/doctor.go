@@ -8,7 +8,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/doctor"
 )
 
-// The Doctor tab polls for its nav badge, and one of its checks is the live
+// The Diagnostics › Doctor view polls for its nav badge, and one of its checks is the live
 // tclaude-layer probe, which forks bwrap on Linux. Results are therefore
 // cached for doctorCacheTTL; the tab's Re-check button and any write that
 // changes an answer (the default-sandbox decision) drop the cache.
