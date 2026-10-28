@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"time"
 )
 
 // ErrHostStreamLimit indicates that every stream of a host HTTP lease is busy.
@@ -30,16 +31,36 @@ func (a *Adapter) OpenHostDialer(ctx context.Context, consumer Consumer) (func(c
 		if err := channelCtx.Err(); err != nil {
 			return nil, err
 		}
+		timer := time.NewTimer(250 * time.Millisecond)
+		defer timer.Stop()
 		select {
 		case slots <- struct{}{}:
-		default:
+		case <-timer.C:
 			return nil, ErrHostStreamLimit
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-channelCtx.Done():
+			return nil, channelCtx.Err()
 		}
 		client, server := net.Pipe()
+		streamCtx, streamCancel := context.WithCancel(channelCtx)
 		go func() {
 			defer func() { <-slots }()
-			a.consumerStream(channelCtx, server, consumer)
+			defer streamCancel()
+			a.consumerStream(streamCtx, server, consumer)
 		}()
-		return client, nil
+		return &hostDialConn{Conn: client, cancel: streamCancel}, nil
 	}, nil
+}
+
+// A transport Close is a full close, unlike a raw TCP CloseWrite. Cancel the
+// broker stream too, even when the target keeps its response half open.
+type hostDialConn struct {
+	net.Conn
+	cancel context.CancelFunc
+}
+
+func (c *hostDialConn) Close() error {
+	c.cancel()
+	return c.Conn.Close()
 }

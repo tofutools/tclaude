@@ -152,7 +152,7 @@ func openHostRouteMode(route *db.AgentRoute, port int, mode string) (*hostRouteL
 			var dial func(context.Context, string, string) (net.Conn, error)
 			dial, err = adapter.OpenHostDialer(ctx, consumer)
 			if err == nil {
-				err = serveHostRouteHTTP(ctx, listener, dial, route.Target)
+				err = serveHostRouteHTTP(ctx, listener, dial, route.Target, id)
 			}
 			if err == nil {
 				lease.Endpoint = listener.Addr().String()

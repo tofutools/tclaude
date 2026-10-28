@@ -61,7 +61,8 @@ link: a unique hostname in the [reserved `.localhost` namespace](https://www.rfc
 keeps dashboard cookies out of the preview request. Raw `127.0.0.1:<port>` endpoints remain
 available for curl and other host tools. **Open on host** creates an HTTP preview: agentd rewrites the
 HTTP Host header to the published target (for example, `127.0.0.1:8080`), so browser access works
-with applications that validate that address. WebSocket upgrades and streaming responses are supported.
+with applications that validate that address. The preview accepts only its displayed hostname,
+`localhost`, or `127.0.0.1`, at the preview port; arbitrary Host headers are refused. WebSocket upgrades and streaming responses are supported.
 **Open TCP endpoint** creates an opaque TCP lease for other protocols, including HTTPS. Existing leases
 keep their original mode; close and reopen a lease to switch modes.
 
@@ -78,8 +79,11 @@ must still explicitly publish the selected port with `routes publish`; host
 consumption needs no additional publish flag. Every local host process can
 reach the allocated endpoint, so only open services you intend to share locally.
 No unlisted publisher ports become reachable through this lease. Each host
-lease admits at most eight simultaneous TCP connections; excess connections
-are closed. Host connections still count toward the route broker’s shared limit.
+lease admits at most eight simultaneous broker streams. Raw TCP endpoints close excess
+connections. HTTP previews briefly wait for a stream slot, then return 503 with `Retry-After: 1` if
+all slots remain busy (including WebSockets and event streams). HTTP listeners accept at most 32
+client connections; idle connections expire after 30 seconds. Host connections still count toward
+the route broker’s shared limit.
 
 Host listeners bind IPv4 loopback only and choose an ephemeral port. HTTP previews connect to the
 authorized TCP adapter in memory, without exposing an additional listener. The
