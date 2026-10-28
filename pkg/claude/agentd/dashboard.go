@@ -1846,6 +1846,7 @@ type dashboardRoute struct {
 }
 
 type dashboardRouteConsumer struct {
+	Mode             string `json:"mode,omitempty"`
 	ConsumerKind     string `json:"consumer_kind,omitempty"`
 	Endpoint         string `json:"endpoint,omitempty"`
 	ID               string `json:"id"`

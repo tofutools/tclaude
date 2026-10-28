@@ -59,8 +59,15 @@ select a local route under **Groups → Route map**, and click **Open on host**.
 The detail panel shows the host endpoint. For HTTP services, use its preview
 link: a unique hostname in the [reserved `.localhost` namespace](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)
 keeps dashboard cookies out of the preview request. Raw `127.0.0.1:<port>` endpoints remain
-available for curl and other host tools. If the service checks HTTP Host
-headers, allow the displayed preview hostname. When viewing a remote daemon,
+available for curl and other host tools. **Open on host** creates an HTTP preview: agentd rewrites the
+HTTP Host header to the published target (for example, `127.0.0.1:8080`), so browser access works
+with applications that validate that address. WebSocket upgrades and streaming responses are supported.
+**Open TCP endpoint** creates an opaque TCP lease for other protocols, including HTTPS. Existing leases
+keep their original mode; close and reopen a lease to switch modes.
+
+The HTTP preview leaves Origin headers, response headers, redirects, and content unchanged. Applications
+with separate origin checks or absolute URLs may still need their usual reverse-proxy configuration.
+When viewing a remote daemon,
 the panel shows the daemon-local address and SSH tunnel guidance instead of
 linking to the browser machine’s loopback.
 **Close host endpoint** releases the listener and its active connections.
@@ -75,9 +82,12 @@ No unlisted publisher ports become reachable through this lease. Each host
 lease admits at most eight simultaneous TCP connections; excess connections
 are closed. Host connections still count toward the route broker’s shared limit.
 
-Host listeners bind IPv4 loopback only and choose an ephemeral port. The
+Host listeners bind IPv4 loopback only and choose an ephemeral port. HTTP previews use a second,
+internal loopback listener for the authorized TCP adapter; both listeners close with the lease. The
 cookie-authenticated `POST /api/routes/<route-id>/host` API takes `{}` or
-`{"port": 43100}` to request a specific loopback port; a busy port is refused.
+`{"port": 43100}` to request a specific loopback port; a busy port is refused. The API defaults to
+opaque TCP; pass `{"mode": "http"}` for an HTTP preview, optionally with `port`. Returned leases and
+dashboard snapshots include their `mode`.
 `DELETE /api/routes/host/<lease-id>` closes it. These endpoints are available
 only on the dashboard listener, with its existing session and origin checks.
 

@@ -27,6 +27,7 @@ type hostRouteLease struct {
 	RouteID      string    `json:"route_id"`
 	ConsumerKind string    `json:"consumer_kind"`
 	Endpoint     string    `json:"endpoint"`
+	Mode         string    `json:"mode"`
 	OpenedAt     time.Time `json:"opened_at"`
 	groupID      int64
 	publisher    routebroker.PublisherAuth
@@ -58,10 +59,15 @@ func handleHostRouteOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Port int `json:"port"`
+		Port int    `json:"port"`
+		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Port < 0 || body.Port > 65535 {
 		writeRouteError(w, http.StatusBadRequest, "route_port", "JSON body with optional port (0–65535) required")
+		return
+	}
+	if body.Mode != "" && body.Mode != "tcp" && body.Mode != "http" {
+		writeRouteError(w, http.StatusBadRequest, "route_mode", "mode must be tcp or http")
 		return
 	}
 	route, err := db.GetAgentRoute(r.PathValue("route"))
@@ -69,7 +75,7 @@ func handleHostRouteOpen(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusNotFound, "route_not_found", "no such route")
 		return
 	}
-	lease, err := openHostRoute(route, body.Port)
+	lease, err := openHostRouteMode(route, body.Port, body.Mode)
 	if err != nil {
 		writeRouteError(w, http.StatusConflict, "route_host", err.Error())
 		return
@@ -78,6 +84,16 @@ func handleHostRouteOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 func openHostRoute(route *db.AgentRoute, port int) (*hostRouteLease, error) {
+	return openHostRouteMode(route, port, "tcp")
+}
+
+func openHostRouteMode(route *db.AgentRoute, port int, mode string) (*hostRouteLease, error) {
+	if mode == "" {
+		mode = "tcp"
+	}
+	if mode != "tcp" && mode != "http" {
+		return nil, errors.New("mode must be tcp or http")
+	}
 	// Remote routes have separate peer authority; this surface exposes local
 	// publishers only, and must never borrow a federation proxy's identity.
 	if mirror, err := db.GetFederationRouteMirror(route.ID); err != nil || mirror != nil {
@@ -110,7 +126,7 @@ func openHostRoute(route *db.AgentRoute, port int) (*hostRouteLease, error) {
 	adapter.SetFlowWindow(routeFlowWindow)
 	ctx, cancel := context.WithCancel(context.Background())
 	id := hostRouteLeasePrefix + strings.ReplaceAll(uuid.NewString(), "-", "")
-	lease := &hostRouteLease{ID: id, RouteID: route.ID, ConsumerKind: "host", OpenedAt: time.Now(),
+	lease := &hostRouteLease{ID: id, RouteID: route.ID, ConsumerKind: "host", Mode: mode, OpenedAt: time.Now(),
 		groupID: route.GroupID, publisher: publisher, adapter: adapter, cancel: cancel,
 		consumer: routebroker.ConsumerAuth{LeaseID: id, RouteID: route.ID, AgentID: "operator-host", ConvID: id, LaunchGeneration: id, GroupGeneration: route.GroupGeneration}}
 	hostRouteLeases.Lock()
@@ -129,10 +145,26 @@ func openHostRoute(route *db.AgentRoute, port int) (*hostRouteLease, error) {
 	// Publish the immutable authority before accepting connections. Keep the
 	// lock until Endpoint is initialized so snapshots cannot race this write.
 	hostRouteLeases.items[id] = lease
-	listener, err := listenHostRoute(port, runtime.GOOS)
+	adapterPort := port
+	if mode == "http" {
+		adapterPort = 0
+	}
+	listener, err := listenHostRoute(adapterPort, runtime.GOOS)
 	if err == nil {
 		lease.Endpoint, err = adapter.OpenHost(ctx, routeadapter.Consumer{LeaseID: id, RouteID: route.ID,
 			AgentID: lease.consumer.AgentID, ConvID: id, LaunchGeneration: id, GroupGeneration: route.GroupGeneration}, listener)
+	}
+	if err == nil && mode == "http" {
+		var preview net.Listener
+		preview, err = listenHostRoute(port, runtime.GOOS)
+		if err == nil {
+			err = serveHostRouteHTTP(ctx, preview, lease.Endpoint, route.Target)
+			if err == nil {
+				lease.Endpoint = preview.Addr().String()
+			} else {
+				_ = preview.Close()
+			}
+		}
 	}
 	if err == nil {
 		err = db.RecordHostRouteAudit("host-open", route.GroupID, route.ID, id, lease.Endpoint)

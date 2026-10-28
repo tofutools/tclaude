@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
-const LEASE = { id: `hlease_${'a'.repeat(32)}`, endpoint: '127.0.0.1:33789', consumer_kind: 'host' };
+const LEASE = { id: `hlease_${'a'.repeat(32)}`, endpoint: '127.0.0.1:33789', consumer_kind: 'host', mode: 'http' };
 const PREVIEW = `http://route-${'a'.repeat(32)}.localhost:33789/`;
 
 async function setup(t, { hostname = '127.0.0.1', remote = false, consumers = [LEASE] } = {}) {
@@ -59,7 +59,10 @@ for (const settings of [{ hostname: 'daemon.example' }, { remote: true }]) {
 
 test('success links disappear with their exact lease, even if its port is reused', async (t) => {
   const { harness, root, publish } = await setup(t, { consumers: [] });
-  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => LEASE }));
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    assert.deepEqual(JSON.parse(options.body), { mode: 'http' });
+    return { ok: true, json: async () => LEASE };
+  });
   await harness.act(async () => {
     harness.fireEvent(getByRole(root, 'button', { name: 'Open on host' }), 'click');
     for (let i = 0; i < 6; i++) await Promise.resolve();
@@ -99,4 +102,17 @@ test('preview URL validation refuses malformed leases and the dashboard cookie h
   for (const lease of [{ ...LEASE, endpoint: 'example.com:80' }, { ...LEASE, endpoint: '127.0.0.1:65536' }, { ...LEASE, id: 'hlease_evil.example/' }]) {
     assert.equal(hostRoutePreviewURL(lease, local), '');
   }
+});
+
+ test('TCP action requests an opaque endpoint explicitly', async (t) => {
+  const { harness, root } = await setup(t, { consumers: [] });
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    assert.deepEqual(JSON.parse(options.body), { mode: 'tcp' });
+    return { ok: true, json: async () => ({ ...LEASE, mode: 'tcp' }) };
+  });
+  await harness.act(async () => {
+    harness.fireEvent(getByRole(root, 'button', { name: 'Open TCP endpoint' }), 'click');
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  });
+  assert.match(root.querySelector('[role="status"]').textContent, /127\.0\.0\.1:33789/);
 });

@@ -164,7 +164,7 @@ func buildDashboardRouteMap(
 			for _, host := range hostRoutesForRoute(route.ID) {
 				view.Consumers = append(view.Consumers, dashboardRouteConsumer{
 					ID: host.ID, ConsumerAgentID: "operator-host", ConsumerKind: "host", ConsumerName: "Host (operator)",
-					State: "open", EndpointState: "ready", GenerationHealth: generationHealth, ConsumerHealth: "current", Boundary: "host", Endpoint: host.Endpoint,
+					State: "open", EndpointState: "ready", GenerationHealth: generationHealth, ConsumerHealth: "current", Boundary: "host", Endpoint: host.Endpoint, Mode: host.Mode,
 				})
 			}
 			result.Routes = append(result.Routes, view)

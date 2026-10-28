@@ -122,26 +122,27 @@ function HostRouteControls({ route, local }) {
       setOpenedLease(null);
     }
   }, [route, openedLease]);
-  const act = async (leaseID) => {
+  const act = async (leaseID, mode = 'http') => {
     setBusy(true);
     setMessage('');
     setOpenedLease(null);
     try {
       const response = await fetch(leaseID ? `/api/routes/host/${encodeURIComponent(leaseID)}` : `/api/routes/${encodeURIComponent(route.id)}/host`, {
         method: leaseID ? 'DELETE' : 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' }, ...(leaseID ? {} : { body: '{}' }),
+        headers: { 'Content-Type': 'application/json' }, ...(leaseID ? {} : { body: JSON.stringify({ mode }) }),
       });
       if (!response.ok) throw new Error(await response.text());
       if (!leaseID) {
         const lease = await response.json();
-        setOpenedLease({ id: lease.id, endpoint: lease.endpoint, snapshot: route });
+        setOpenedLease({ id: lease.id, endpoint: lease.endpoint, mode: lease.mode, snapshot: route });
       }
     } catch (error) { setMessage(String(error.message || error)); }
     finally { setBusy(false); }
   };
   return html`<div>
     <button type="button" disabled=${busy || route.state !== 'ready' || route.generation_health !== 'current'} onClick=${() => act('')}>Open on host</button>
-    <p class="route-map-muted">Exposes this published service to local host processes until closed or withdrawn.</p>
+    <button type="button" disabled=${busy || route.state !== 'ready' || route.generation_health !== 'current'} onClick=${() => act('', 'tcp')}>Open TCP endpoint</button>
+    <p class="route-map-muted">Open on host creates an HTTP preview with the Host header set to the published target. Use Open TCP endpoint for other protocols. Both close when withdrawn.</p>
     ${!local && html`<p class="route-map-muted">These endpoints are on the daemon host. Forward the endpoint port with an SSH tunnel to access it from this machine.</p>`}
     ${(route.consumers || []).filter((consumer) => consumer.consumer_kind === 'host').map((consumer) => html`<p key=${consumer.id}><${HostEndpointLink} lease=${consumer} local=${local} /> <button type="button" disabled=${busy} onClick=${() => act(consumer.id)}>Close host endpoint</button></p>`)}
     ${openedLease && !(route.consumers || []).some((consumer) => consumer.id === openedLease.id) && html`<p role="status">Host endpoint: <${HostEndpointLink} lease=${openedLease} local=${local} /></p>`}
