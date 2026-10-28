@@ -484,21 +484,6 @@ CREATE TABLE "agent_workspace" (
 			updated_at     INTEGER
 		, agent_id TEXT NOT NULL DEFAULT '') STRICT;
 
-CREATE TABLE "session_cost_daily" (
-			session_id TEXT NOT NULL,
-			day        TEXT NOT NULL,
-			conv_id    TEXT NOT NULL DEFAULT '',
-			cost_usd   REAL NOT NULL DEFAULT 0, updated_at INTEGER, virtual_cost_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude',
-			PRIMARY KEY (session_id, day)
-		) STRICT;
-
-CREATE INDEX idx_session_cost_daily_day ON session_cost_daily(day);
-
-CREATE INDEX idx_session_cost_daily_walk
-			ON session_cost_daily(
-				COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
-			);
-
 CREATE TABLE "dashboard_prefs" (
 			key        TEXT PRIMARY KEY,
 			value      TEXT NOT NULL,
@@ -2049,3 +2034,23 @@ CREATE TABLE "usage_profile_assignments" (
 
 CREATE INDEX idx_usage_profile_assignments_profile
 			ON usage_profile_assignments(profile_id);
+
+CREATE TABLE "session_cost_daily" (
+				session_id       TEXT NOT NULL,
+				day              TEXT NOT NULL,
+				conv_id          TEXT NOT NULL DEFAULT '',
+				cost_usd         REAL NOT NULL DEFAULT 0,
+				updated_at       INTEGER,
+				virtual_cost_usd REAL NOT NULL DEFAULT 0,
+				model            TEXT NOT NULL DEFAULT '',
+				agent_id         TEXT NOT NULL DEFAULT '',
+				harness          TEXT NOT NULL DEFAULT 'claude',
+				PRIMARY KEY (session_id, conv_id, day)
+			) STRICT;
+
+CREATE INDEX idx_session_cost_daily_day ON session_cost_daily(day);
+
+CREATE INDEX idx_session_cost_daily_walk
+				ON session_cost_daily(
+					COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
+				);
