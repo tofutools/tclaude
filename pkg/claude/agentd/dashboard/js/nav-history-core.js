@@ -43,7 +43,7 @@ export const DEFAULT_TAB = 'groups';
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
-  'access', 'messages', 'usage', 'diagnostics', 'config', 'doctor', 'vegas',
+  'access', 'messages', 'usage', 'diagnostics', 'config', 'vegas',
   'map',
   'fleet-admin',
 ]);
@@ -75,7 +75,7 @@ export const KNOWN_SUBTABS = {
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),
   usage: new Set(['quota', 'costs']),
-  diagnostics: new Set(['audit', 'logs', 'performance']),
+  diagnostics: new Set(['audit', 'logs', 'performance', 'doctor']),
   config: new Set([
     'appearance', 'terminals', 'notifications', 'agents', 'context', 'costs',
     'assistants', 'daemon', 'logs', 'experimental', 'advanced',
@@ -87,7 +87,7 @@ export const KNOWN_SUBTABS = {
 };
 
 // LEGACY_TAB_LOCATIONS maps retired top-level tabs to the location that now
-// shows them. Audit, Logs and Debug merged into Diagnostics; their old paths
+// shows them. Audit, Logs, Debug and Doctor merged into Diagnostics; their old paths
 // (and the /?tab=<name> alias) stay reload-safe and heal to the canonical
 // /diagnostics/<subtab> in place, like /jobs → /automations. Costs likewise
 // became the Usage tab's costs subtab.
@@ -96,6 +96,7 @@ export const LEGACY_TAB_LOCATIONS = Object.freeze({
   audit: Object.freeze({ tab: 'diagnostics', subtab: 'audit' }),
   logs: Object.freeze({ tab: 'diagnostics', subtab: 'logs' }),
   debug: Object.freeze({ tab: 'diagnostics', subtab: 'performance' }),
+  doctor: Object.freeze({ tab: 'diagnostics', subtab: 'doctor' }),
 });
 
 // RENAMED_TABS maps a tab's former name to its current one. Unlike a retired

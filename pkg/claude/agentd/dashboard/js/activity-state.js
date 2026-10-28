@@ -10,7 +10,7 @@
 import { signal } from '@preact/signals';
 
 export const ACTIVITY_TAB = 'diagnostics';
-export const ACTIVITY_SUBTABS = Object.freeze(['audit', 'logs', 'performance']);
+export const ACTIVITY_SUBTABS = Object.freeze(['audit', 'logs', 'performance', 'doctor']);
 export const DEFAULT_ACTIVITY_SUBTAB = 'audit';
 
 // activitySubtab is the shown Activity view. It survives tab switches, so

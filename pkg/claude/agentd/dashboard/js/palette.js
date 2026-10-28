@@ -704,8 +704,8 @@ export function buildCommands(snapshot) {
       });
     }
   }
-  // Diagnostics folds Audit, Logs and Performance into one tab; each view keeps
-  // a direct command so "logs" or "debug" still finds it. Only Audit is
+  // Diagnostics folds Audit, Logs, Performance and Doctor into one tab; each
+  // view keeps a direct command so "logs", "debug" or "doctor" still finds it. Only Audit is
   // offered on a peer view (peerView 'tab' gates it on the Diagnostics tab);
   // the others fall to the default local-only gate there.
   const activityBtn = $$('nav [data-tab="diagnostics"]')[0];
@@ -714,6 +714,7 @@ export function buildCommands(snapshot) {
       ['audit', 'Audit', 'Deeds', 'audit trail log who commands denied chronicle deeds'],
       ['logs', 'Logs', 'Runes', 'logs daemon log output tail errors warnings runes'],
       ['performance', 'Performance', 'Alchemy', 'performance perf debug latency poll timing slow diagnostics alchemy'],
+      ['doctor', 'Doctor', 'Apothecary', 'doctor health setup missing tools install sandbox decision apothecary'],
     ]) {
       cmds.push({
         ...(subtab === 'audit' ? { peerView: 'tab', tab: 'diagnostics' } : {}),

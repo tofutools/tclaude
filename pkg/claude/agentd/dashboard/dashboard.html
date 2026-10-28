@@ -307,9 +307,8 @@
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🛡</span> <span class="tab-title">Wards</span></span></a>
   <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕊</span> <span class="tab-title">Missives</span></span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
   <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Treasury</span></span></a>
-  <a data-tab="diagnostics" href="/diagnostics" title="Diagnostics — the audit trail of daemon-proxied commands, tclaude's own daemon/CLI log, and dashboard poll performance"><span class="tab-label-regular">Diagnostics</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
+  <a data-tab="diagnostics" href="/diagnostics" title="Diagnostics — the audit trail of daemon-proxied commands, tclaude's own daemon/CLI log, and dashboard poll performance"><span class="tab-label-regular">Diagnostics</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span><span id="doctor-badge-root"></span></a>
   <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📜</span> <span class="tab-title">Almanac</span></span></a>
-  <a data-tab="doctor" href="/doctor" title="Doctor — missing tools, incomplete setup, and decisions tclaude needs from you"><span class="tab-label-regular">Doctor</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚕</span> <span class="tab-title">Apothecary</span></span><span id="doctor-badge-root"></span></a>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
        dashboard.css); vegas.js owns the player inside it. The label swaps to
@@ -495,10 +494,6 @@
       </details>
     </div>
   </section>
-  <section id="tab-doctor">
-    <!-- Preact (js/doctor-island.js) owns the Doctor tab and its nav badge. -->
-    <div id="doctor-root"></div>
-  </section>
   <!-- Usage tab — three views under one nav tab (usage-hub-island.js owns
        the subnav, the Overview, and data-subview on this section, which CSS
        uses to show one host at a time):
@@ -527,6 +522,7 @@
       <a class="access-subtab activity-subtab active" data-subtab="audit" href="/diagnostics/audit" role="tab" aria-selected="true" aria-controls="activity-audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">Deeds</span></a>
       <a class="access-subtab activity-subtab" data-subtab="logs" href="/diagnostics/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
       <a class="access-subtab activity-subtab" data-subtab="performance" href="/diagnostics/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — daemon CPU/heap profiling captures, plus dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
+      <a class="access-subtab activity-subtab" data-subtab="doctor" href="/diagnostics/doctor" role="tab" aria-selected="false" aria-controls="activity-doctor" title="Doctor — missing tools, incomplete setup, and decisions tclaude needs from you"><span class="tab-label-regular">Doctor</span><span class="tab-label-wizard">Apothecary</span><span id="doctor-subtab-badge-root"></span></a>
     </div>
     <div class="activity-panel active" id="activity-audit" role="tabpanel" aria-label="Audit">
       <div id="audit-root"></div>
@@ -543,6 +539,11 @@
     <div class="activity-panel" id="activity-performance" role="tabpanel" aria-label="Performance">
       <div id="profiles-root"></div>
       <div id="debug-root"></div>
+    </div>
+    <!-- Preact (js/doctor-island.js) owns the Doctor view; its badge is
+         mirrored onto the Diagnostics nav tab and this view's subtab. -->
+    <div class="activity-panel" id="activity-doctor" role="tabpanel" aria-label="Doctor">
+      <div id="doctor-root"></div>
     </div>
   </section>
   <!-- Messages tab — a mail client for introspecting every mailbox the

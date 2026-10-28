@@ -26,7 +26,7 @@ func sandboxImplDefaultCmd() *cobra.Command {
 			"`tclaude-layer` confines new agents in tclaude's own sandbox (the default on new " +
 			"installs); `harness` leaves each harness's own sandbox in charge. `clear` returns the " +
 			"install to undecided, which behaves like `harness` and is raised as a decision on the " +
-			"dashboard's Doctor tab. `set` and `clear` require the `sandbox-profiles.manage` permission.",
+			"dashboard's Diagnostics › Doctor view. `set` and `clear` require the `sandbox-profiles.manage` permission.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds:     []*cobra.Command{sandboxImplDefaultShowCmd(), sandboxImplDefaultSetCmd(), sandboxImplDefaultClearCmd()},
 	}.ToCobra()
@@ -100,7 +100,7 @@ func runSandboxImplDefault(method, value string, asJSON bool, stdout, stderr io.
 	}
 	switch {
 	case !resp.Decided:
-		fmt.Fprintln(stdout, "undecided — new agents use each harness's own sandbox (choose on the dashboard's Doctor tab)")
+		fmt.Fprintln(stdout, "undecided — new agents use each harness's own sandbox (choose on the dashboard's Diagnostics › Doctor view)")
 	case resp.Value == "tclaude-layer":
 		fmt.Fprintln(stdout, "tclaude-layer — new agents use tclaude's own sandbox")
 	default:

@@ -29,7 +29,7 @@ const TAB_FEATURES = Object.freeze({ groups: 'groups', usage: 'costs', costs: 'c
 // peer view for its audit log; the daemon log and poll timings have no peer
 // grant, so only unrestricted trust reaches them.
 const SUBTAB_FEATURES = Object.freeze({
-  diagnostics: Object.freeze({ audit: 'audit', logs: 'local_dashboard', performance: 'local_dashboard' }),
+  diagnostics: Object.freeze({ audit: 'audit', logs: 'local_dashboard', performance: 'local_dashboard', doctor: 'local_dashboard' }),
 });
 
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
@@ -543,7 +543,7 @@ function tabLabel(tab) {
 }
 
 function subtabLabel(subtab) {
-  return subtab === 'logs' ? 'The daemon log' : subtab === 'performance' ? 'Poll performance' : `The ${subtab} view`;
+  return subtab === 'logs' ? 'The daemon log' : subtab === 'performance' ? 'Poll performance' : subtab === 'doctor' ? 'The Doctor view' : `The ${subtab} view`;
 }
 
 // limitHint words why a peer view refuses something. needs names what the

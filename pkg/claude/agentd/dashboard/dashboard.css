@@ -21945,8 +21945,8 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
 .fa-danger .fa-share-bar > i { background: #f85149; }
 .fa-share-add { width: 5em; }
 
-/* Doctor tab (js/doctor-island.js): a category sidebar beside the checks. */
-#tab-doctor { max-width: 1180px; }
+/* Diagnostics › Doctor (js/doctor-island.js): a category sidebar beside the checks. */
+#activity-doctor { max-width: 1180px; }
 .doctor-island { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 0; min-height: 420px; border: 1px solid #2a3340; border-radius: 6px; background: #161b22; }
 .doctor-side { display: flex; flex-direction: column; padding: 8px 0; border-right: 1px solid #2a3340; background: #11161d; border-radius: 6px 0 0 6px; }
 .doctor-side button { display: flex; justify-content: space-between; gap: 8px; padding: 7px 14px; border: 0; border-left: 2px solid transparent; border-radius: 0; background: transparent; color: #8b949e; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }

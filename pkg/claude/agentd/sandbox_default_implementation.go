@@ -79,7 +79,7 @@ func withInstallDefaultRemedy(fail *spawnFailure, source string) *spawnFailure {
 	}
 	out := *fail
 	out.Msg += fmt.Sprintf(
-		" (tclaude's sandbox is this install's default; install the missing tooling — the dashboard's Doctor tab lists it — "+
+		" (tclaude's sandbox is this install's default; install the missing tooling — the dashboard's Diagnostics › Doctor view lists it — "+
 			"or run `tclaude agent sandbox-impl default set %s` to keep each harness's own sandbox)",
 		db.SandboxDefaultHarness)
 	return &out

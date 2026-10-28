@@ -1,13 +1,15 @@
-// doctor-state.js — the Doctor tab's checks and selected category.
+// doctor-state.js — the Diagnostics › Doctor view's checks and selected category.
 //
 // The checks come from GET /api/doctor (pkg/claude/doctor). They are fetched on
-// load, on a slow poll for the nav badge, and whenever the tab is entered, so
+// load, on a slow poll for the nav badges, and whenever the view is entered, so
 // an operator who just installed a tool sees it clear without a reload.
 
 import { computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
+import { activitySubtab, activityViewActive } from './activity-state.js';
 
-export const DOCTOR_TAB = 'doctor';
+// Doctor is a Diagnostics subtab (/diagnostics/doctor).
+export const DOCTOR_SUBTAB = 'doctor';
 
 // Sidebar order. 'attention' is the default lens: everything not OK/info.
 export const DOCTOR_CATEGORIES = Object.freeze([
@@ -29,13 +31,13 @@ export function sortChecks(checks) {
   return [...checks].sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
 }
 
-export function createDoctorState({ activeTab = dashboardState.activeTab } = {}) {
+export function createDoctorState({ activeTab = dashboardState.activeTab, subtab = activitySubtab } = {}) {
   const checks = signal([]);
   const phase = signal('idle');
   const error = signal(null);
   const category = signal('attention');
   const busy = signal(false);
-  const active = computed(() => activeTab.value === DOCTOR_TAB);
+  const active = computed(() => activityViewActive(activeTab, subtab, DOCTOR_SUBTAB));
   const counts = computed(() => {
     const out = { decision: 0, blocking: 0, warning: 0, attention: 0, all: checks.value.length, byCategory: {} };
     for (const check of checks.value) {
