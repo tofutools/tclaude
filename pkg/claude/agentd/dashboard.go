@@ -398,7 +398,7 @@ func handleDashboardStatic() http.Handler {
 // /costs bookmarks still load the SPA, whose router heals them to /usage/costs.
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
-	"messages": true, "usage": true, "costs": true, "diagnostics": true, "config": true,
+	"messages": true, "usage": true, "costs": true, "diagnostics": true, "config": true, "doctor": true,
 	"map": true, "fleet": true, "fleet-admin": true,
 	// Retired tabs the client heals to their Diagnostics subtab (/audit →
 	// /diagnostics/audit, /logs → /diagnostics/logs, /debug →

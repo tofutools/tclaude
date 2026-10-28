@@ -81,7 +81,41 @@ dashboard spawn dialog — which presents the implementation choice first and
 shows a "\<Harness\> sandbox mode" row only after you pick the harness's
 built-in sandbox. Precedence, highest first: explicit flag or dialog selection,
 then `--profile`, then the group's default spawn profile, then the global
-default profile, then the harness default.
+default profile, then the install default (below), then the harness default.
+
+### The install default
+
+The install default is what an agent spawn gets when nothing above chooses an
+implementation. It has three states:
+
+- **`tclaude-layer`** — new agents use tclaude's own sandbox. `tclaude setup`
+  records this on a **new install** (a database this tclaude version created).
+- **`harness`** — each harness's own sandbox stays in charge, exactly the
+  behavior before the install default existed.
+- **undecided** — behaves like `harness`. An install that already had history
+  when it upgraded stays here, so an upgrade never changes how the next agent
+  is confined; the dashboard's **Doctor** tab asks the operator to choose.
+
+```bash
+tclaude agent sandbox-impl default show
+tclaude agent sandbox-impl default set tclaude-layer   # or: harness
+tclaude agent sandbox-impl default clear              # back to undecided
+```
+
+`set` and `clear` need `sandbox-profiles.manage`. The install default applies to
+new agent spawns only: existing agents relaunch, reincarnate and clone under the
+implementation recorded when they were spawned, and a human's own
+`tclaude`/`tclaude session new` terminal launch keeps the harness's posture.
+On a host that cannot run tclaude's sandbox (no `bwrap`, or unprivileged user
+namespaces disabled) a spawn that gets `tclaude-layer` from the install default
+is still refused rather than silently unconfined; the refusal names both ways
+out, and the Doctor tab shows the install command.
+
+For OpenCode, Copilot and pi, which own no OS sandbox of their own, the old
+"unset" posture (for OpenCode, its command filter) has no per-spawn spelling
+once the install default is `tclaude-layer`: `harness-builtin` is refused for
+them and `off` drops the filter too. Set the install default to `harness` to
+get it back.
 
 ### Reassigning an existing agent
 

@@ -132,13 +132,14 @@ func DeleteDashboardProfileRef(nameKey, idKey string) error {
 }
 
 // ListDashboardPrefs returns every stored preference as a key→value
-// map — the whole set the dashboard loads in one shot on page open.
+// map — the whole set the dashboard loads in one shot on page open. The
+// fresh-install marker is install bookkeeping, not a preference, and stays out.
 func ListDashboardPrefs() (map[string]string, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT key, value FROM dashboard_prefs`)
+	rows, err := db.Query(`SELECT key, value FROM dashboard_prefs WHERE key != ?`, FreshInstallPrefKey)
 	if err != nil {
 		return nil, err
 	}

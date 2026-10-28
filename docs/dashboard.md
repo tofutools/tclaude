@@ -116,6 +116,7 @@ In order across the top:
 | Usage | Overview, subscription quota forecasts, and real/what-if costs |
 | Diagnostics | Audit trail, daemon log, and poll performance (three subtabs) |
 | Config | Visual editor for `~/.tclaude/config.json` |
+| Doctor | Missing tools, incomplete setup, and decisions tclaude needs from you |
 
 With trusted federation peers, node chips and **⌘ Fleet** join the tab bar,
 and ⌘ Fleet opens the Map / ⚙ Fleet config views; see
@@ -138,7 +139,7 @@ wizard themes (or via `slop.vegas_in_regular_mode`).
 
 The **wizard** theme renames everything (Parties, Scrying, Labours, Rites,
 Contraptions, Wards, Missives, Reserves, Coffers, Chronicle (Deeds, Runes, Alchemy),
-Almanac, The Tavern) and the **slop** theme goes full casino; both are
+Almanac, Apothecary, The Tavern) and the **slop** theme goes full casino; both are
 re-skins of the same dashboard, not different feature sets. The header icon
 toggles regular ↔ wizard; the slop theme is unfinished and left out of that
 cycle, but Ctrl/⌘+Alt+Shift+S still toggles it (the same chord with W toggles
@@ -921,6 +922,27 @@ and directory-matched group policy, a library profile for exactly that profile
 and its includes, or **Off** to skip profiles. Existing ask threads take the
 current choice on every turn. See [Ask sandbox policy](ask.md#sandbox-policy)
 for directory ambiguity, supported harnesses, refusals, and cleanup behavior.
+
+## Doctor
+
+What this host and this install still need for tclaude to work properly. A
+sidebar groups the checks — **Decisions**, **Sandbox**, **Tools**,
+**Harnesses**, **Hooks & setup** — under a default **Needs attention** lens and
+an **All checks** list. Each check is one of:
+
+- 🔵 **decision** — a question only you can answer, such as the default sandbox
+  for new agents (see [The install default](sandboxing.md#the-install-default)).
+  Answer it in place; either answer clears it.
+- 🔴 **blocking** — something that stops tclaude or agent spawns, such as
+  missing `tmux`, no harness installed, or tclaude's sandbox being the default on
+  a host where it cannot run.
+- 🟡 **warning** — degraded behavior, such as missing harness hooks.
+- ⚪ **info** / ✅ **ok** — optional extras and passing checks.
+
+A fix is shown as a command to copy (`sudo apt install bubblewrap`,
+`tclaude setup`, …) or a button; the tab never changes the host itself. The nav
+badge counts decisions (blue) and blocking problems (red). Results are cached
+for a minute; **Re-check** and entering the tab refresh them.
 
 ## Fleet UI: linked nodes
 

@@ -43,7 +43,7 @@ export const DEFAULT_TAB = 'groups';
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
-  'access', 'messages', 'usage', 'diagnostics', 'config', 'vegas',
+  'access', 'messages', 'usage', 'diagnostics', 'config', 'doctor', 'vegas',
   'map',
   'fleet-admin',
 ]);

@@ -4052,10 +4052,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// downgrade to harness-builtin. See sandbox_implementation.go.
 	var sandboxImplNote string
 	var sandboxImplSource string
-	body.SandboxImplementation, sandboxImplSource, sandboxImplNote, fieldFail = resolveStringLaunchField(
-		sandboxImplementationField, body.SandboxImplementation, h.Name, profileTiers,
-		func(p *db.SpawnProfile) string { return p.SandboxImplementation },
-		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
+	body.SandboxImplementation, sandboxImplSource, sandboxImplNote, fieldFail = resolveSandboxImplementationLaunchField(
+		h, body.SandboxImplementation, profileTiers)
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -4063,7 +4061,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Host gate, on the RESOLVED value and whichever tier supplied it. Never
 	// falls through; refuses naming the missing capability. Probed live, so an
 	// operator who just installed bwrap is not refused by a stale answer.
-	if fail := sandboxImplementationHostFailure(h.Name, body.SandboxImplementation); fail != nil {
+	if fail := withInstallDefaultRemedy(
+		sandboxImplementationHostFailure(h.Name, body.SandboxImplementation), sandboxImplSource); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -4071,7 +4070,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// own OS sandbox tclaude cannot switch off has to have its configuration
 	// verified at every launch, or the recorded single-boundary claim outlives
 	// the configuration it was made about.
-	if fail := sandboxImplementationPostureFailure(h.Name, body.SandboxImplementation); fail != nil {
+	if fail := withInstallDefaultRemedy(
+		sandboxImplementationPostureFailure(h.Name, body.SandboxImplementation), sandboxImplSource); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -6685,10 +6685,8 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		p.ProfileContext, fieldNote = resolveProfileStartupContext(h.Name, tiers)
 		noteLaunch()
 	}
-	p.SandboxImplementation, fieldSource, fieldNote, fail = resolveStringLaunchField(
-		sandboxImplementationField, p.SandboxImplementation, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.SandboxImplementation },
-		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
+	p.SandboxImplementation, fieldSource, fieldNote, fail = resolveSandboxImplementationLaunchField(
+		h, p.SandboxImplementation, tiers)
 	if fail != nil {
 		return fail
 	}
@@ -6700,10 +6698,12 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// default profile carrying tclaude-layer would otherwise reach a spawner on
 	// a host that cannot run it without ever meeting a refusal. Same predicate,
 	// second call site: an unbypassable gate, not a second opinion.
-	if fail := sandboxImplementationHostFailure(h.Name, p.SandboxImplementation); fail != nil {
+	if fail := withInstallDefaultRemedy(
+		sandboxImplementationHostFailure(h.Name, p.SandboxImplementation), p.SandboxImplementationSource); fail != nil {
 		return fail
 	}
-	if fail := sandboxImplementationPostureFailure(h.Name, p.SandboxImplementation); fail != nil {
+	if fail := withInstallDefaultRemedy(
+		sandboxImplementationPostureFailure(h.Name, p.SandboxImplementation), p.SandboxImplementationSource); fail != nil {
 		return fail
 	}
 	p.AutoReview, p.AutoReviewSet, _, fieldNote, fail = resolveBoolLaunchField("auto_review", p.AutoReview,

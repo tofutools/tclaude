@@ -309,6 +309,7 @@
   <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Treasury</span></span></a>
   <a data-tab="diagnostics" href="/diagnostics" title="Diagnostics — the audit trail of daemon-proxied commands, tclaude's own daemon/CLI log, and dashboard poll performance"><span class="tab-label-regular">Diagnostics</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
   <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📜</span> <span class="tab-title">Almanac</span></span></a>
+  <a data-tab="doctor" href="/doctor" title="Doctor — missing tools, incomplete setup, and decisions tclaude needs from you"><span class="tab-label-regular">Doctor</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚕</span> <span class="tab-title">Apothecary</span></span><span id="doctor-badge-root"></span></a>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
        dashboard.css); vegas.js owns the player inside it. The label swaps to
@@ -493,6 +494,10 @@
         </div>
       </details>
     </div>
+  </section>
+  <section id="tab-doctor">
+    <!-- Preact (js/doctor-island.js) owns the Doctor tab and its nav badge. -->
+    <div id="doctor-root"></div>
   </section>
   <!-- Usage tab — three views under one nav tab (usage-hub-island.js owns
        the subnav, the Overview, and data-subview on this section, which CSS
