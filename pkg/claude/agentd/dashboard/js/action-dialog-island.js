@@ -254,7 +254,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
             type="checkbox"
             checked=${applySandbox}
             onChange=${(event) => setApplySandbox(event.currentTarget.checked)}
-          /> Apply group ${descriptor.group}'s sandbox profile
+          /> Switch to ${descriptor.group}'s sandbox profile
         </label>
         <label class="cron-create-enabled" title="When checked, the clone launches with the group's environment variables. Unchecked, it keeps the source's environment source group.">
           <input
@@ -262,7 +262,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
             type="checkbox"
             checked=${applyEnvironment}
             onChange=${(event) => setApplyEnvironment(event.currentTarget.checked)}
-          /> Apply group ${descriptor.group}'s environment variables
+          /> Switch to ${descriptor.group}'s environment variables
         </label>` : ''}
       ${full ? html`<${WorktreeFields}
         repo=${descriptor.cwd}

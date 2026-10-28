@@ -69,6 +69,9 @@ type whoamiResp struct {
 	// PendingMorph is a requested morph of the caller waiting for its turn to
 	// end (tclaude agent morph).
 	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
+	// KeptPermissionGroups names the groups whose group permissions the
+	// caller kept when the operator moved it out of them.
+	KeptPermissionGroups []string `json:"kept_permission_groups,omitempty"`
 }
 
 func handleWhoami(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +131,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if agentID != "" {
 		pendingMorph, _ = db.PendingMorphForAgent(agentID)
 	}
-	writeJSON(w, http.StatusOK, whoamiResp{FederationPresence: presence, Predecessor: teleportPredecessor(agentID), AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, ActiveGroups: activeGroups, Phases: phases, PendingMorph: pendingMorph})
+	writeJSON(w, http.StatusOK, whoamiResp{FederationPresence: presence, Predecessor: teleportPredecessor(agentID), AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, ActiveGroups: activeGroups, Phases: phases, PendingMorph: pendingMorph, KeptPermissionGroups: keptPermissionGroupNames(agentID)})
 }
 
 // --- /v1/lookup ---
@@ -3867,6 +3870,9 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/groups/{name}/members/{conv}/move", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupMembersMove(w, r, g, r.PathValue("conv"))
 	}))
+	mux.HandleFunc("DELETE /v1/groups/{name}/kept-permissions/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupKeptPermissionsDrop(w, r, g, r.PathValue("conv"))
+	}))
 
 	// handleGroupLinks dispatches its own methods, so the two link
 	// patterns are registered without a method in the pattern.
@@ -4982,9 +4988,16 @@ func handleGroupMembersMove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		To              string `json:"to"`
 		KeepSandbox     bool   `json:"keep_sandbox,omitempty"`
 		KeepEnvironment bool   `json:"keep_environment,omitempty"`
+		KeepPermissions bool   `json:"keep_permissions,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	// Kept permissions outlive the membership that showed them, so only the
+	// operator can choose them; an agent manager moves with the defaults.
+	if body.KeepPermissions && classify(peerFromContext(r.Context())) != classHuman {
+		writeError(w, http.StatusForbidden, "permission_denied", "keep_permissions is operator-only")
 		return
 	}
 	if body.To == "" {
@@ -5017,6 +5030,7 @@ func handleGroupMembersMove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	}
 	moved, err := db.MoveAgentGroupMember(res.ConvID, g.ID, target.ID, db.MoveOptions{
 		KeepSandbox: body.KeepSandbox, KeepEnvironment: body.KeepEnvironment,
+		KeepPermissions: body.KeepPermissions, By: "operator",
 	})
 	if errors.Is(err, db.ErrNotGroupMember) {
 		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("conv %s is not a member of %q", res.ConvID, g.Name))
@@ -5027,10 +5041,11 @@ func handleGroupMembersMove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		return
 	}
 	sandboxSource, environmentSource := groupMoveSources(moved, g, target)
-	notifyGroupMove(res.ConvID, g, target, sandboxSource, environmentSource)
-	writeJSON(w, http.StatusOK, map[string]string{
+	notifyGroupMove(res.ConvID, g, target, sandboxSource, environmentSource, body.KeepPermissions)
+	writeJSON(w, http.StatusOK, map[string]any{
 		"conv_id": res.ConvID, "from": g.Name, "to": target.Name,
 		"sandbox": sandboxSource, "environment": environmentSource,
+		"kept_permissions": body.KeepPermissions,
 	})
 }
 
@@ -5060,17 +5075,72 @@ func groupMoveSources(moved db.MoveResult, from, to *db.AgentGroup) (sandbox, en
 	return describe(moved.SandboxGroupID), describe(moved.EnvironmentGroupID)
 }
 
+// keptPermissionGroupNames names the groups whose permissions agentID kept
+// after being moved out of them (db.MoveOptions.KeepPermissions).
+func keptPermissionGroupNames(agentID string) []string {
+	if agentID == "" {
+		return nil
+	}
+	ids, err := db.ListRetainedPermissionGroups(agentID)
+	if err != nil {
+		slog.Warn("whoami: kept permission groups unreadable", "agent", agentID, "error", err)
+		return nil
+	}
+	var names []string
+	for _, id := range ids {
+		if g, err := db.GetAgentGroupByID(id); err == nil && g != nil {
+			names = append(names, g.Name)
+		}
+	}
+	return names
+}
+
+// handleGroupKeptPermissionsDrop ends the permissions an agent kept from g
+// when it was moved out of it. Dropping only narrows access, so it is gated
+// like removing a member of g.
+func handleGroupKeptPermissionsDrop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersRemove, g); !ok {
+		return
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	agentID, err := db.AgentIDForConv(res.ConvID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	dropped := false
+	if agentID != "" {
+		if dropped, err = db.DropRetainedGroupPermissions(agentID, g.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+	}
+	if !dropped {
+		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("conv %s kept no permissions from %q", res.ConvID, g.Name))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "group": g.Name})
+}
+
 // notifyGroupMove tells a moved agent what changed, so the new group's
 // permissions and, after its next relaunch, its sandbox are not a surprise.
-func notifyGroupMove(convID string, from, to *db.AgentGroup, sandboxSource, environmentSource string) {
+func notifyGroupMove(convID string, from, to *db.AgentGroup, sandboxSource, environmentSource string, keptPermissions bool) {
+	permissions := fmt.Sprintf("%q's apply now; %q's no longer do", to.Name, from.Name)
+	if keptPermissions {
+		permissions = fmt.Sprintf("%q's apply now, and the operator kept %q's for you too", to.Name, from.Name)
+	}
 	body := fmt.Sprintf("You were moved from group %q to group %q.\n\n"+
-		"- Group permissions: %q's apply now; %q's no longer do.\n"+
+		"- Group permissions: %s.\n"+
 		"- Sandbox profile: %s.\n"+
 		"- Group environment variables: %s.\n\n"+
-		"Sandbox and environment changes take effect when you are next resumed or restarted; this process keeps its "+
+		"Permission changes apply immediately. Sandbox and environment changes take effect when you are next resumed or restarted; this process keeps its "+
 		"current sandbox until then. Your own per-agent permissions and overrides are unchanged. "+
 		"Run `tclaude agent whoami` to see your groups.",
-		from.Name, to.Name, to.Name, from.Name, sandboxSource, environmentSource)
+		from.Name, to.Name, permissions, sandboxSource, environmentSource)
 	if _, err := queueAgentMessage(&db.AgentMessage{
 		GroupID: to.ID, ToConv: convID, Subject: "Moved to group " + to.Name, Body: body,
 	}); err != nil {

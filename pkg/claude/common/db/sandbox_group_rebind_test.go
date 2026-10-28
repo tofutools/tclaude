@@ -249,3 +249,61 @@ func moveErr(convID string, from, to int64, opts MoveOptions) error {
 	_, err := MoveAgentGroupMember(convID, from, to, opts)
 	return err
 }
+
+// A move that keeps permissions leaves the agent holding the source group's
+// grants, bound to that group, until it is dropped, the agent rejoins and
+// leaves the group again, or the group is deleted.
+func TestMoveAgentGroupMemberKeepsPermissions(t *testing.T) {
+	setupTestDB(t)
+	const convID = "keep-perms-conv"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	alpha, err := CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	beta, err := CreateAgentGroup("beta", "")
+	require.NoError(t, err)
+	require.NoError(t, ReplaceAgentGroupPermissions(alpha, []string{"alpha.slug"}, "test"))
+	require.NoError(t, ReplaceAgentGroupPermissions(beta, []string{"beta.slug"}, "test"))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: convID}))
+	has := func(slug string, groupID int64) bool {
+		t.Helper()
+		ok, err := HasAgentGroupPermissionForGroup(convID, groupID, slug)
+		require.NoError(t, err)
+		return ok
+	}
+
+	_, err = MoveAgentGroupMember(convID, alpha, beta, MoveOptions{KeepPermissions: true, By: "operator"})
+	require.NoError(t, err)
+	assert.True(t, has("beta.slug", beta), "the new group's permissions apply")
+	assert.True(t, has("alpha.slug", alpha), "the kept group's permissions still apply, bound to it")
+	assert.False(t, has("alpha.slug", beta), "a kept grant is not widened to another group")
+	rows, err := ListAgentGroupPermissionRowsForConv(convID)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, []bool{true, false}, []bool{rows[0].Retained, rows[1].Retained}, "alpha.slug is kept, beta.slug is membership")
+	kept, err := ListRetainedPermissionGroups(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{alpha}, kept)
+
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: convID}))
+	require.NoError(t, RemoveAgentGroupMember(alpha, convID))
+	assert.False(t, has("alpha.slug", alpha), "rejoining replaces the kept record, so leaving again drops it")
+
+	_, err = MoveAgentGroupMember(convID, beta, alpha, MoveOptions{KeepPermissions: true})
+	require.NoError(t, err)
+	assert.True(t, has("beta.slug", beta))
+	dropped, err := DropRetainedGroupPermissions(agentID, beta)
+	require.NoError(t, err)
+	assert.True(t, dropped)
+	assert.False(t, has("beta.slug", beta), "dropping ends the kept permissions")
+
+	_, err = MoveAgentGroupMember(convID, alpha, beta, MoveOptions{KeepPermissions: true})
+	require.NoError(t, err)
+	require.NoError(t, DeleteAgentGroup("alpha"))
+	kept, err = ListRetainedPermissionGroups(agentID)
+	require.NoError(t, err)
+	assert.Empty(t, kept, "deleting the group drops the kept record")
+
+	_, err = MoveAgentGroupMember(convID, beta, alpha, MoveOptions{})
+	assert.Error(t, err, "alpha is gone")
+}

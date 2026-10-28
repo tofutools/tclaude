@@ -125,7 +125,20 @@ type AgentGroupPermission struct {
 	ScopeJSON string
 	GrantedAt time.Time
 	GrantedBy string
+	// Retained marks a grant the agent holds through a group it was moved out
+	// of with its permissions kept (agent_retained_group_permissions), not
+	// through membership.
+	Retained bool
 }
+
+// permissionGroupSources is the (group_id, agent_id, retained) relation the
+// group permission tier reads: an agent's memberships, plus the groups whose
+// permissions it kept when an operator moved it out of them. A kept group
+// grants exactly what membership would, still bound to that group.
+const permissionGroupSources = `SELECT group_id, agent_id, 0 AS retained FROM agent_group_members
+	UNION ALL
+	SELECT r.group_id, r.agent_id, 1 AS retained FROM agent_retained_group_permissions r
+	WHERE NOT EXISTS (SELECT 1 FROM agent_group_members m WHERE m.group_id = r.group_id AND m.agent_id = r.agent_id)`
 
 // ListAgentGroupPermissions returns the sorted additive grants attached to a
 // group. Group grants are live membership policy, not birth-time agent rows.
@@ -280,7 +293,7 @@ func HasAgentGroupPermission(convID, slug string) (bool, error) {
 		SELECT COUNT(*)
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ? AND gp.slug = ?`, agentID, slug).Scan(&n)
 	return n > 0, err
@@ -305,7 +318,7 @@ func ListAgentGroupPermissionSlugsForConv(convID string) ([]string, error) {
 		SELECT DISTINCT gp.slug
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ?
 		ORDER BY gp.slug`, agentID)
@@ -337,10 +350,10 @@ func ListAgentGroupPermissionRowsForConv(convID string) ([]AgentGroupPermission,
 		return nil, err
 	}
 	rows, err := d.Query(`
-		SELECT gp.group_id, g.name, gp.slug, gp.scope_json, gp.granted_at, gp.granted_by
+		SELECT gp.group_id, g.name, gp.slug, gp.scope_json, gp.granted_at, gp.granted_by, gm.retained
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ?
 		ORDER BY gp.slug, gp.group_id`, agentID)
@@ -352,7 +365,7 @@ func ListAgentGroupPermissionRowsForConv(convID string) ([]AgentGroupPermission,
 	for rows.Next() {
 		var grant AgentGroupPermission
 		var grantedAt dbTimestamp
-		if err := rows.Scan(&grant.GroupID, &grant.GroupName, &grant.Slug, &grant.ScopeJSON, &grantedAt, &grant.GrantedBy); err != nil {
+		if err := rows.Scan(&grant.GroupID, &grant.GroupName, &grant.Slug, &grant.ScopeJSON, &grantedAt, &grant.GrantedBy, &grant.Retained); err != nil {
 			return nil, err
 		}
 		grant.GrantedAt = grantedAt.Time()
@@ -385,7 +398,7 @@ func HasAgentGroupPermissionForAgent(agentID string, groupID int64, slug string)
 		SELECT COUNT(*)
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
-		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN (`+permissionGroupSources+`) gm ON gm.group_id = gp.group_id
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ? AND gp.group_id = ? AND gp.slug = ?`,
 		agentID, groupID, slug).Scan(&n)
@@ -1671,7 +1684,7 @@ func DeleteAgentGroup(name string) error {
 	}
 	// After the group row is gone, so a setting pinned to it is released too.
 	for _, agentID := range memberIDs {
-		if err := rebindSandboxResolutionGroup(tx, agentID, 0); err != nil {
+		if err := syncGroupSourcedSettings(tx, agentID, 0); err != nil {
 			return err
 		}
 	}
@@ -2047,7 +2060,7 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, m.GroupID); err != nil {
 		return err
 	}
-	return rebindSandboxResolutionGroup(db, agentID, 0)
+	return syncGroupSourcedSettings(db, agentID, 0)
 }
 
 // UpdateAgentGroupMember patches non-nil fields on an existing member.
@@ -2114,7 +2127,7 @@ func RemoveAgentGroupMember(groupID int64, convID string) error {
 		if _, err := db.Exec(`UPDATE agent_groups SET route_generation = route_generation + 1 WHERE id = ?`, groupID); err != nil {
 			return err
 		}
-		return rebindSandboxResolutionGroup(db, agentID, 0)
+		return syncGroupSourcedSettings(db, agentID, 0)
 	}
 	return nil
 }
