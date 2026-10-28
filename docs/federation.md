@@ -3384,6 +3384,75 @@ rollback confirm that the binaries are replaced and the daemon restarts. It
 follows the job through the status read, so the restart does not lose it. A
 peer that has not granted you `node.update` says so.
 
+### Custom update scripts
+
+Every machine is kept up to date its own way — OS packages, dotfiles, a
+language toolchain, a harness installed through a package manager. A node's
+operator describes those in `~/.tclaude/config.json`, and the fleet shows and
+runs them:
+
+```json
+{
+  "updates": {
+    "scripts": [
+      {
+        "name": "apt",
+        "label": "System packages",
+        "status": "~/bin/apt-status.sh",
+        "update": "sudo -n apt-get upgrade -y",
+        "update_timeout_seconds": 1800
+      },
+      { "name": "dotfiles", "status": "git -C ~/dotfiles fetch -q && git -C ~/dotfiles status -sb | head -1", "update": "git -C ~/dotfiles pull --ff-only" }
+    ],
+    "harnesses": {
+      "codex": { "update": "brew upgrade codex" }
+    }
+  }
+}
+```
+
+Each script has a `name` (lowercase letters, digits, `-`, `_`), an optional
+`label`, and a `status` command, an `update` command or both. Commands run with
+`/bin/sh -c` as the agentd user from its home directory, with
+`TCLAUDE_UPDATE_SCRIPT` and `TCLAUDE_UPDATE_ACTION` (`status` or `update`) set.
+Status checks time out after `status_timeout_seconds` (default 60) and updates
+after `update_timeout_seconds` (default 1800).
+
+A status command reports what is pending in one of two forms:
+
+- **JSON** on stdout: `{"summary": "3 pending", "update_available": true,
+  "details": "…", "items": [{"name": "openssl", "current": "3.0.1", "latest":
+  "3.0.2", "update_available": true, "detail": "security"}]}`. Every field is
+  optional; without `update_available`, the items' own flags decide.
+- **Plain text**: the first line is the summary and the rest the details. Exit
+  0 means up to date and exit 100 means updates are pending (as with `dnf
+  check-update`).
+
+Any other exit code is a failed check. Output is bounded (64 KiB per stream,
+200 items, 200 characters per field). Status scripts run when first read, on
+Check, after their update finishes, and hourly while federation runs. One
+update runs at a time per node; a finished update keeps its exit code and the
+last 16 KiB of its output, in memory for the daemon's lifetime.
+
+`updates.harnesses.<name>.update` replaces that harness's default update
+command (its built-in updater) for Fleet → Harnesses and `tclaude harness
+update`; the job reports the recipe as `custom`.
+
+The commands come only from this node's config: requests select a script by
+name and never carry a command, and `updates` never travels in config bundles.
+The scripts sit under the `node.update` grant: a peer allowed to update this
+node may read their status and output and run them. Update runs are audited
+as `federation.node.update`.
+
+In the dashboard, Fleet → Harnesses lists each node's scripts under **Custom
+updates** with the summary, a ↑ when updates are pending, the reported items,
+and Check / Update… buttons. The API is `GET /api/node/update-scripts`
+(scripts with their last status, and recent jobs), `POST
+/api/node/update-scripts` with `{"action": "check", "name"?: "…"}` or
+`{"action": "update", "name": "…"}` (HTTP 202; a second concurrent update is
+HTTP 409 `update_busy`), and `GET /api/node/update-scripts/jobs/{id}`. Peers
+reach them through `/api/peer/{instance_id}/node/update-scripts`.
+
 ### Installing and updating harnesses
 
 `tclaude harness install <name> [--node <peer>]` runs a fixed official npm
@@ -3393,11 +3462,15 @@ in subsequent probes and launches. The supported names are `claude`, `codex`,
 `opencode`, `copilot`, `gemini`, and `pi`, using their vendors' latest stable npm
 packages. The recipes link to the official vendor instructions.
 
-`tclaude harness update <name|--all> [--node <peer>|--all-nodes]` updates
-recognized npm installations in their existing prefix, or uses the native
-Claude/OpenCode updater for user-owned installations. Other installation methods,
-missing npm, root execution, and unwritable prefixes require a manual command;
-the daemon never elevates privileges. `--all-nodes` includes this node and trusted
+`tclaude harness update <name|--all> [--node <peer>|--all-nodes]` runs the
+harness's own updater, which knows how it was installed (native installer, npm,
+Homebrew, …): `claude update`, `codex update`, `opencode upgrade`, `copilot
+update` and `pi update --self`. Gemini CLI has no updater of its own; it is
+updated through npm in its existing prefix, and other Gemini installation
+methods, missing npm and unwritable prefixes require a manual command. Root
+execution always requires a manual command; the daemon never elevates
+privileges. A node's operator can replace any harness's update command with
+their own in `updates.harnesses` (below). `--all-nodes` includes this node and trusted
 linked nodes, and reports failures per node. Cached npm metadata adds optional
 `latest_version` and nullable `update_available` fields to harness availability.
 
