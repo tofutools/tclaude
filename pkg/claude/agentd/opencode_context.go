@@ -404,6 +404,8 @@ func fetchOpenCodeModelCatalog(ctx context.Context, runtime db.OpenCodeRuntime) 
 			}
 			if model.Cost != nil {
 				prices[key] = openCodeEffectiveModelPrice(provider.ID, modelID, *model.Cost)
+			} else if price, ok := openCodeAPIRatePrice(provider.ID, modelID); ok {
+				prices[key] = price
 			}
 		}
 	}
@@ -411,35 +413,77 @@ func fetchOpenCodeModelCatalog(ctx context.Context, runtime db.OpenCodeRuntime) 
 }
 
 // openCodeEffectiveModelPrice keeps OpenCode's native catalog authoritative
-// except for the OpenAI subscription adapter's deliberate all-zero billing
-// rates. Zero there means "covered by subscription", not "this model is free":
-// use the same public API rate table that powers Codex WHAT-IF estimates.
+// except for deliberate all-zero billing rates on the OpenAI and Anthropic
+// providers. Zero there means "covered by subscription" (OpenAI's adapter, a
+// Claude Pro/Max sign-in), not "this model is free": use the same public API
+// rate tables that power the other harnesses' WHAT-IF estimates.
 func openCodeEffectiveModelPrice(providerID, modelID string, native openCodeModelPrice) openCodeModelPrice {
-	if strings.TrimSpace(providerID) != "openai" || !openCodeModelPriceIsZero(native) {
+	if !openCodeModelPriceIsZero(native) {
 		return native
 	}
-	pricing, ok := harness.LookupOpenAIModelPricing(modelID)
-	if !ok {
-		return native
+	if price, ok := openCodeAPIRatePrice(providerID, modelID); ok {
+		return price
 	}
-	price := openCodeModelPrice{
-		Input:  pricing.Short.InputPerMTok,
-		Output: pricing.Short.OutputPerMTok,
-		Cache: openCodeCachePrice{
-			Read: pricing.Short.CachedInputPerMTok, Write: pricing.Short.CacheWritePerMTok,
-		},
-	}
-	if pricing.Long != nil {
-		price.Tiers = []openCodePriceTier{{
-			Input: pricing.Long.InputPerMTok, Output: pricing.Long.OutputPerMTok,
+	return native
+}
+
+// openCodeAPIRatePrice projects tclaude's built-in API rate table for an
+// OpenAI or Anthropic model into OpenCode's price shape. It also prices a
+// cataloged model that carries no cost at all, as a model newer than
+// OpenCode's catalog may until the catalog catches up.
+func openCodeAPIRatePrice(providerID, modelID string) (openCodeModelPrice, bool) {
+	switch strings.TrimSpace(providerID) {
+	case "openai":
+		pricing, ok := harness.LookupOpenAIModelPricing(modelID)
+		if !ok {
+			return openCodeModelPrice{}, false
+		}
+		price := openCodeModelPrice{
+			Input:  pricing.Short.InputPerMTok,
+			Output: pricing.Short.OutputPerMTok,
 			Cache: openCodeCachePrice{
-				Read: pricing.Long.CachedInputPerMTok, Write: pricing.Long.CacheWritePerMTok,
+				Read: pricing.Short.CachedInputPerMTok, Write: pricing.Short.CacheWritePerMTok,
 			},
-		}}
-		price.Tiers[0].Tier.Type = "context"
-		price.Tiers[0].Tier.Size = harness.OpenAIShortContextInputMax
+		}
+		if pricing.Long != nil {
+			price.Tiers = []openCodePriceTier{openCodeContextTier(harness.OpenAIShortContextInputMax,
+				pricing.Long.InputPerMTok, pricing.Long.OutputPerMTok,
+				pricing.Long.CachedInputPerMTok, pricing.Long.CacheWritePerMTok)}
+		}
+		return price, true
+	case "anthropic":
+		pricing, ok := harness.LookupAnthropicModelPricing(modelID)
+		if !ok {
+			return openCodeModelPrice{}, false
+		}
+		// OpenCode records one cache-write rate; Anthropic's default cache
+		// lifetime is the 5-minute one.
+		price := openCodeModelPrice{
+			Input:  pricing.Short.InputPerMTok,
+			Output: pricing.Short.OutputPerMTok,
+			Cache: openCodeCachePrice{
+				Read: pricing.Short.CacheReadPerMTok, Write: pricing.Short.CacheWrite5mPerMTok,
+			},
+		}
+		if pricing.Long != nil {
+			price.Tiers = []openCodePriceTier{openCodeContextTier(pricing.LongAbove,
+				pricing.Long.InputPerMTok, pricing.Long.OutputPerMTok,
+				pricing.Long.CacheReadPerMTok, pricing.Long.CacheWrite5mPerMTok)}
+		}
+		return price, true
 	}
-	return price
+	return openCodeModelPrice{}, false
+}
+
+// openCodeContextTier is a price tier applying above size context tokens.
+func openCodeContextTier(size int64, input, output, cacheRead, cacheWrite float64) openCodePriceTier {
+	tier := openCodePriceTier{
+		Input: input, Output: output,
+		Cache: openCodeCachePrice{Read: cacheRead, Write: cacheWrite},
+	}
+	tier.Tier.Type = "context"
+	tier.Tier.Size = float64(size)
+	return tier
 }
 
 func openCodeModelPriceIsZero(price openCodeModelPrice) bool {
