@@ -168,6 +168,25 @@ func TestAnnotateCostCarry_Boundaries(t *testing.T) {
 	assert.InDelta(t, 50+60+5+8+9+3, total, 1e-9)
 }
 
+// TestCostDeltas_ConvSwitchAfterReusedSessionID: a resume reuses the session
+// id (it equals the conv id) with a fresh counter, so only the process that
+// was running at the switch may carry. Here P1 peaks at 10 on day 1; P2 reuses
+// the id, reaches 3 on conv-x, then switches to conv-y and reaches 15. Conv-y
+// carries P2's 3, not P1's 10.
+func TestCostDeltas_ConvSwitchAfterReusedSessionID(t *testing.T) {
+	rows := []CostDailyRow{
+		{SessionID: "conv-x", Day: "2026-10-27", ConvID: "conv-x", CostUSD: 10,
+			UpdatedAtNS: costStampNS(t, "2026-10-27T18:00:00Z")},
+		{SessionID: "conv-x", Day: "2026-10-28", ConvID: "conv-x", CostUSD: 3,
+			UpdatedAtNS: costStampNS(t, "2026-10-28T09:00:00Z")},
+		{SessionID: "conv-x", Day: "2026-10-28", ConvID: "conv-y", CostUSD: 15,
+			UpdatedAtNS: costStampNS(t, "2026-10-28T12:00:00Z")},
+	}
+	AnnotateCostCarry(rows)
+	got := deltasByDayConv(CostDeltas(rows, false))
+	assert.InDelta(t, 12, got["2026-10-28/conv-y"], 1e-9, "carries only the running process's 3")
+}
+
 // TestCostDeltas_ConvSwitchVirtual covers the subscription what-if column,
 // which Claude Code fills from the same process-wide counter.
 func TestCostDeltas_ConvSwitchVirtual(t *testing.T) {

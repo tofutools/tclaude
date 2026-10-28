@@ -2810,11 +2810,12 @@ type CostDailyRow struct {
 // /clear or rename switches the session to a new conv_id while the counter
 // keeps climbing. Baselined per conversation alone, the new conversation's
 // first row would count everything the process spent before the switch a
-// second time. So for a Claude row, the carry is the highest cumulative the
-// SAME session recorded earlier (by day, then last-spend time) under a
-// different conversation, capped at the row's own value — a later fresh
-// process reusing the session id with a lower counter carries nothing it
-// did not reach.
+// second time. So for a Claude row, the carry is the cumulative of the SAME
+// session's immediately preceding row (by day, then last-spend time) when
+// that row belongs to a different conversation and does not exceed this
+// row's value. Only the immediate predecessor counts: a resume reuses the
+// session id (it equals the conv id) with a fresh counter, so an older peak
+// may belong to a process that has since exited.
 //
 // Other harnesses are left alone: their writers record per-conversation
 // counters (authoritative history replays, per-thread telemetry) that start
@@ -2846,19 +2847,22 @@ func AnnotateCostCarry(rows []CostDailyRow) {
 			}
 			return CompareCostInstants(ra.UpdatedAtNS, rb.UpdatedAtNS) < 0
 		})
-		for k, i := range idx {
+		// Track the predecessor per column: a row carrying nothing in a
+		// column (the other billing mode) holds no counter state for it.
+		var lastReal, lastVirtual *CostDailyRow
+		for _, i := range idx {
 			r := &rows[i]
-			for _, j := range idx[:k] {
-				prev := rows[j]
-				if prev.ConvID == r.ConvID {
-					continue
+			if r.CostUSD > 0 {
+				if lastReal != nil && lastReal.ConvID != r.ConvID && lastReal.CostUSD <= r.CostUSD {
+					r.CarriedCostUSD = lastReal.CostUSD
 				}
-				if prev.CostUSD <= r.CostUSD && prev.CostUSD > r.CarriedCostUSD {
-					r.CarriedCostUSD = prev.CostUSD
+				lastReal = r
+			}
+			if r.VirtualCostUSD > 0 {
+				if lastVirtual != nil && lastVirtual.ConvID != r.ConvID && lastVirtual.VirtualCostUSD <= r.VirtualCostUSD {
+					r.CarriedVirtualUSD = lastVirtual.VirtualCostUSD
 				}
-				if prev.VirtualCostUSD <= r.VirtualCostUSD && prev.VirtualCostUSD > r.CarriedVirtualUSD {
-					r.CarriedVirtualUSD = prev.VirtualCostUSD
-				}
+				lastVirtual = r
 			}
 		}
 	}
