@@ -16,7 +16,7 @@ import (
 // While the agent is still a member of the recorded group, nothing changes
 // (joining a second group does not move the launch group). Otherwise the
 // record is rebound to the group the agent joined most recently, or cleared
-// when it has none, so a deleted group's id (ids are reused) is never kept. A
+// when it has none, so a deleted group's id is never kept. A
 // cleared record on a provenance-tracking snapshot is filled in again by the
 // next group the agent joins.
 //
