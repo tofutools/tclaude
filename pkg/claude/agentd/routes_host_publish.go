@@ -61,7 +61,14 @@ func handleHostOnlyRoute(w http.ResponseWriter, r *http.Request, route *db.Agent
 		writeJSON(w, 200, routeViewFor(route))
 		return
 	}
-	if !(r.Method == http.MethodDelete || r.Method == http.MethodPost && strings.Trim(r.PathValue("action"), "/") == "withdraw") {
+	canWithdraw := false
+	switch r.Method {
+	case http.MethodDelete:
+		canWithdraw = true
+	case http.MethodPost:
+		canWithdraw = strings.Trim(r.PathValue("action"), "/") == "withdraw"
+	}
+	if !canWithdraw {
 		writeRouteError(w, 403, "route_host_only", "host-only routes cannot be consumed by agents")
 		return
 	}
