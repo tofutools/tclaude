@@ -103,6 +103,11 @@ function RouteGraph({ routes, members, selected, onSelect }) {
   </div>`;
 }
 
+function HostEndpointLink({ endpoint }) {
+  const url = `http://${endpoint}`;
+  return html`<a href=${url} target="_blank" rel="noopener noreferrer"><code>${url}</code></a>`;
+}
+
 function HostRouteControls({ route }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -117,7 +122,7 @@ function HostRouteControls({ route }) {
       if (!response.ok) throw new Error(await response.text());
       if (!leaseID) {
         const lease = await response.json();
-        setMessage(`Host endpoint: ${lease.endpoint}`);
+        setMessage(html`<span>Host endpoint: <${HostEndpointLink} endpoint=${lease.endpoint} /></span>`);
       }
     } catch (error) { setMessage(String(error.message || error)); }
     finally { setBusy(false); }
@@ -125,7 +130,7 @@ function HostRouteControls({ route }) {
   return html`<div>
     <button type="button" disabled=${busy || route.state !== 'ready' || route.generation_health !== 'current'} onClick=${() => act('')}>Open on host</button>
     <p class="route-map-muted">Exposes this published service to local host processes until closed or withdrawn.</p>
-    ${(route.consumers || []).filter((consumer) => consumer.consumer_kind === 'host').map((consumer) => html`<p key=${consumer.id}><code>${consumer.endpoint}</code> <button type="button" disabled=${busy} onClick=${() => act(consumer.id)}>Close host endpoint</button></p>`)}
+    ${(route.consumers || []).filter((consumer) => consumer.consumer_kind === 'host').map((consumer) => html`<p key=${consumer.id}><${HostEndpointLink} endpoint=${consumer.endpoint} /> <button type="button" disabled=${busy} onClick=${() => act(consumer.id)}>Close host endpoint</button></p>`)}
     ${message && html`<p role="status">${message}</p>`}
   </div>`;
 }
