@@ -573,7 +573,18 @@ func TestAdapterIdleLeaseCleanupReusesOnlyClosedSlot(t *testing.T) {
 }
 
 func TestAdapterCloseLeaseDoesNotCloseSiblingSameAgentRoute(t *testing.T) {
-	firstPort, secondPort := freePort(t), freePort(t)
+	// Keep both reservations live until both ports have been selected. Two
+	// independent freePort calls can return the same ephemeral port in CI.
+	firstSlot, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer firstSlot.Close()
+	secondSlot, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer secondSlot.Close()
+	firstPort := firstSlot.Addr().(*net.TCPAddr).Port
+	secondPort := secondSlot.Addr().(*net.TCPAddr).Port
+	require.NoError(t, firstSlot.Close())
+	require.NoError(t, secondSlot.Close())
 	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
 	require.NoError(t, err)
 	defer broker.Close()

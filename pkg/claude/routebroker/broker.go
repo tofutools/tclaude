@@ -334,14 +334,12 @@ func (b *Broker) AttachPublisherReady(ctx context.Context, auth PublisherAuth, c
 		return err
 	}
 	s := b.newSession(ctx, rolePublisher, auth, ConsumerAuth{}, conn)
-	// Claim the wait-group slot before publishing the session under b.mu so
-	// Close cannot return between registration and Add.
-	b.wg.Add(1)
+	// Serialize admission and wait-group registration with Close. No Add
+	// may race Wait after Close has observed an empty broker.
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		s.close()
-		b.wg.Done()
 		ready(ErrClosed)
 		return ErrClosed
 	}
@@ -349,11 +347,11 @@ func (b *Broker) AttachPublisherReady(ctx context.Context, auth PublisherAuth, c
 	if r.publisher != nil {
 		b.mu.Unlock()
 		s.close()
-		b.wg.Done()
 		b.rejectedConnectionsMetric.Add(1)
 		ready(ErrPublisherAttached)
 		return ErrPublisherAttached
 	}
+	b.wg.Add(1)
 	r.publisher = s
 	s.route = r
 	b.publishersMetric.Add(1)
@@ -393,22 +391,20 @@ func (b *Broker) attachConsumer(ctx context.Context, auth ConsumerAuth, conn net
 		return fmt.Errorf("%w: consumer: %v", ErrUnauthorized, err)
 	}
 	s := b.newSession(ctx, roleConsumer, PublisherAuth{}, auth, conn)
-	b.wg.Add(1)
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		s.close()
-		b.wg.Done()
 		return ErrClosed
 	}
 	r := b.getRouteLocked(auth.RouteID)
 	if len(r.consumers) >= b.maxConsumersPerRoute {
 		b.mu.Unlock()
 		s.close()
-		b.wg.Done()
 		b.rejectedConnectionsMetric.Add(1)
 		return ErrConsumerLimit
 	}
+	b.wg.Add(1)
 	r.consumers[s] = struct{}{}
 	s.route = r
 	consumerCount := len(r.consumers)
