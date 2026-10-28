@@ -553,6 +553,16 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	brokerConn, adapterConn := net.Pipe()
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Cancelling a lease must interrupt blocked reads in both directions.
+	// The broker authority watcher exits on context cancellation; it cannot
+	// be relied on to close this session after its lease has been revoked.
+	closeStream := func() {
+		_ = raw.Close()
+		_ = brokerConn.Close()
+		_ = adapterConn.Close()
+	}
+	stopClose := context.AfterFunc(streamCtx, closeStream)
+	defer func() { stopClose(); closeStream() }()
 	window := a.window()
 	admitted := make(chan struct{})
 	refused := make(chan error, 1)

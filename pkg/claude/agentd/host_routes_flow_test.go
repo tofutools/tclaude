@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -138,6 +139,9 @@ func TestHostRoutesFlow(t *testing.T) {
 			require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
 			_, err = conn.Read(make([]byte, 1))
 			require.Error(t, err)
+			var timeout net.Error
+			require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "revocation must close the active stream, not leave it blocked")
+
 			require.Empty(t, hostRoutesForRoute(route.ID))
 			database, err := db.Open()
 			require.NoError(t, err)

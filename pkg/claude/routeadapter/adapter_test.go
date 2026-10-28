@@ -653,3 +653,53 @@ func TestHostListenerBoundsConcurrentStreams(t *testing.T) {
 	var timeout net.Error
 	require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "excess stream must close, not hang")
 }
+
+func TestHostLeaseCancellationClosesActiveStream(t *testing.T) {
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	target, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer target.Close()
+	targetClosed := make(chan struct{})
+	go func() {
+		conn, err := target.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		defer close(targetClosed)
+		_, _ = io.Copy(conn, conn)
+	}()
+	adapter, err := New(broker, []int{target.Addr().(*net.TCPAddr).Port})
+	require.NoError(t, err)
+	defer adapter.Close()
+	_, err = adapter.Publish(context.Background(), Publisher{RouteID: "cancel-route", AgentID: "publisher", Target: "tcp://" + target.Addr().String()})
+	require.NoError(t, err)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	endpoint, err := adapter.OpenHost(ctx, Consumer{LeaseID: "cancel-lease", RouteID: "cancel-route", AgentID: "host"}, listener)
+	require.NoError(t, err)
+	conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(3*time.Second)))
+	_, err = conn.Write([]byte("echo"))
+	require.NoError(t, err)
+	_, err = io.ReadFull(conn, make([]byte, 4))
+	require.NoError(t, err)
+	// Keep publisher authority valid: only lease cancellation ends the stream.
+	adapter.CloseLease("cancel-lease")
+	_, err = conn.Read(make([]byte, 1))
+	require.Error(t, err)
+	var timeout net.Error
+	require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "client must observe closure")
+	select {
+	case <-targetClosed:
+	case <-time.After(time.Second):
+		t.Fatal("publisher target still has an active stream")
+	}
+	require.Eventually(t, func() bool { return broker.Metrics().ConsumerChannels == 0 }, time.Second, time.Millisecond)
+}
