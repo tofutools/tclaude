@@ -13,6 +13,8 @@ func registerDashboardSandboxProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sandbox-profile-read-exclusions", dashboardSandboxProfilesRoute(handleSandboxCommonRuleCatalog))
 	mux.HandleFunc("POST /api/sandbox-profile-enforcement", dashboardSandboxProfilesRoute(handleSandboxProfileDraftEnforcement))
 	mux.HandleFunc("/api/sandbox-profile-default", dashboardSandboxProfilesRoute(handleGlobalSandboxProfile))
+	mux.HandleFunc("/api/sandbox-impl-default", dashboardSandboxProfilesRoute(handleSandboxDefaultImplementation))
+	mux.HandleFunc("GET /api/doctor", handleDashboardDoctor)
 	mux.HandleFunc("GET /api/sandbox-profiles/export", dashboardSandboxProfilesRoute(handleSandboxProfilesExport))
 	mux.HandleFunc("POST /api/sandbox-profiles/import/inspect", dashboardSandboxProfilesRoute(handleSandboxProfilesImportInspect))
 	mux.HandleFunc("POST /api/sandbox-profiles/import", dashboardSandboxProfilesRoute(handleSandboxProfilesImport))

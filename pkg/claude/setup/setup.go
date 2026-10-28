@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -379,6 +380,11 @@ func runSetup(params *Params) error {
 		return err
 	}
 
+	// 4a'. New installs confine agents in tclaude's own sandbox. Existing
+	// installs are left undecided and asked on the dashboard's Doctor tab.
+	fmt.Println("\n=== Default Agent Sandbox ===")
+	installDefaultSandboxImplementation()
+
 	// 4b. Neutralize the OS-sandbox phantom ".git" in the worktree container.
 	// A sandbox that denies writes to ".git" inside a writable root creates a
 	// bogus ".git" directory in the sibling-worktree container (e.g. ~/git),
@@ -527,6 +533,42 @@ func installDefaultMusicVolume() error {
 	}
 	fmt.Printf("✓ Set slop.music_volume=%d%% (Vegas/slop + wizard-mode soundtrack starts at half volume)\n", v)
 	return nil
+}
+
+// installDefaultSandboxImplementation makes tclaude's own sandbox the default
+// for agents spawned on a fresh install (see db.SeedFreshInstallSandboxDefault
+// for what "fresh" means). It never changes a decision already recorded, and it
+// never decides for an install that has history: that operator is asked on the
+// dashboard's Doctor tab instead, so an upgrade does not quietly change how the
+// next agent is confined.
+//
+// A host missing the sandbox tooling still gets the default — refusing the
+// launch with an actionable error beats silently running unconfined — but the
+// operator is told now rather than at their first spawn.
+func installDefaultSandboxImplementation() {
+	seeded, err := db.SeedFreshInstallSandboxDefault()
+	if err != nil {
+		fmt.Printf("  ⚠ Skipping: could not read the tclaude database (%v)\n", err)
+		return
+	}
+	value, decided, _ := db.GetSandboxDefaultImplementation()
+	switch {
+	case seeded:
+		fmt.Println("✓ New agents default to tclaude's own sandbox")
+	case !decided:
+		fmt.Println("  Agents still use each harness's own sandbox. tclaude's sandbox is the default for new installs;")
+		fmt.Println("  choose on the dashboard's Doctor tab, or run `tclaude agent sandbox-impl default set tclaude-layer`.")
+		return
+	case value == db.SandboxDefaultHarness:
+		fmt.Println("✓ New agents use each harness's own sandbox (your choice) — leaving it unchanged")
+		return
+	default:
+		fmt.Println("✓ New agents default to tclaude's own sandbox — leaving it unchanged")
+	}
+	if err := session.TclaudeLayerHostToolingPresence(); err != nil {
+		fmt.Printf("  ⚠ tclaude's sandbox cannot run on this host yet: %v\n", err)
+		fmt.Println("    Agent spawns will be refused until it is fixed; the dashboard's Doctor tab shows how.")
+	}
 }
 
 // hookInstallTargets returns the selected harness first, followed by other

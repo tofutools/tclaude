@@ -37,7 +37,7 @@ func sandboxImplCmd() *cobra.Command {
 			"assign, then wake it. Both subcommands require the `agent.sandbox-impl` permission, " +
 			"which group ownership does NOT confer.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds:     []*cobra.Command{sandboxImplShowCmd(), sandboxImplSetCmd()},
+		SubCmds:     []*cobra.Command{sandboxImplShowCmd(), sandboxImplSetCmd(), sandboxImplDefaultCmd()},
 	}.ToCobra()
 }
 

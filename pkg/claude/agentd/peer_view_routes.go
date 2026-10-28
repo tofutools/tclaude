@@ -251,6 +251,8 @@ var peerViewLocalRoutes = []string{
 	"/api/roles",
 	"/api/roles/{name}",
 	"/api/sandbox-profile-default",
+	"/api/sandbox-impl-default",
+	"GET /api/doctor",
 	"/api/sandbox-profile-drafts/{token}",
 	"/api/sandbox-profile-read-exclusions",
 	"/api/sandbox-profiles",

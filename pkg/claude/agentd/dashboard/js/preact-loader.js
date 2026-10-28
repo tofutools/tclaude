@@ -768,6 +768,27 @@ export async function mountConfigFeature(dependencies = {}) {
   });
 }
 
+// The Doctor tab and its nav badge form one ownership unit.
+export async function mountDoctorFeature(dependencies = {}) {
+  const host = document.querySelector('#doctor-root');
+  if (!host) return null;
+  const badgeHost = document.querySelector('#doctor-badge-root');
+  return mountFeatureIsland({
+    name: 'doctor', label: 'Doctor', hosts: [host], failureClass: 'doctor-error',
+    load: async () => {
+      const islandModule = import('./doctor-island.js');
+      const stateModule = import('./doctor-state.js');
+      const [{ mountDoctorIsland }, { doctorState }] = await Promise.all([islandModule, stateModule]);
+      return {
+        state: doctorState,
+        mount: (registerCleanup) => mountDoctorIsland({
+          host, badgeHost, state: doctorState, notify: dependencies.notify, registerCleanup,
+        }),
+      };
+    },
+  });
+}
+
 const processesDescriptor = createIslandDescriptor({
   name: 'processes', label: 'Processes', hosts: { host: '#processes-root' }, failureClass: 'processes-error',
   load: async ({ hosts: { host }, dependencies }) => {

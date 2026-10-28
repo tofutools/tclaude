@@ -192,6 +192,7 @@ type ResolvedField struct {
 const (
 	ProvExplicit       = "explicit"
 	ProvHarnessDefault = "harness default"
+	ProvInstallDefault = "install default"
 	ProvLaunchDefault  = "default profile (applied at launch)"
 )
 

@@ -1293,10 +1293,8 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// The sandbox IMPLEMENTATION rides the same tier stack. Only the harness gate
 	// runs here; the host-capability gate belongs to the launch, which the deploy
 	// reaches by handing this value to the spawn boundary as an explicit request.
-	sandboxImplementation, sandboxImplementationSource, note, fail := resolveStringLaunchField(
-		sandboxImplementationField, "", h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.SandboxImplementation },
-		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
+	sandboxImplementation, sandboxImplementationSource, note, fail := resolveSandboxImplementationLaunchField(
+		h, "", tiers)
 	if fail != nil {
 		return failed(fail)
 	}
