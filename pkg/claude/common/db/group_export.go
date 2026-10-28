@@ -853,6 +853,7 @@ func (c *importCtx) scrubRetiredActorAuthority() error {
 			{`DELETE FROM agent_group_owners WHERE agent_id = ?`, []any{agentID}},
 			{`DELETE FROM agent_group_members WHERE agent_id = ?`, []any{agentID}},
 			{`DELETE FROM agent_permissions WHERE agent_id = ?`, []any{agentID}},
+			{`DELETE FROM agent_retained_group_permissions WHERE agent_id = ?`, []any{agentID}},
 			{`UPDATE agent_sudo_grants SET revoked_at = ? WHERE agent_id = ? AND revoked_at IS NULL`, []any{now, agentID}},
 			{`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = ? WHERE owner_agent = ? AND enabled = 1`, []any{CronDisabledReasonAgentRetired, agentID}},
 			// Same scrub for standing orders: an import must not be able to

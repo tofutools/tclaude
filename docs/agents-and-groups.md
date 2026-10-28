@@ -219,22 +219,37 @@ original environment.
 ### Moving an agent between groups
 
 ```bash
-tclaude agent groups move old-team <selector> new-team [--keep-sandbox] [--keep-environment]
+tclaude agent groups move old-team <selector> new-team \
+  [--keep-permissions] [--keep-sandbox] [--keep-environment]
 ```
 
-Dragging a member onto another group's box in the dashboard does the same,
-with a checkbox for each setting. The agent keeps its role and description.
-The new group's permissions apply immediately. By default the agent also takes
-the new group's sandbox profile and environment, from its next resume or
-restart; the running process is not changed in place. `--keep-sandbox` and
-`--keep-environment` (or unticking the checkboxes) leave either setting on the
-group it left, still following that group's later edits, until that group is
-deleted. Per-agent permissions, an explicit sandbox profile, and per-agent
-environment overrides are kept either way. The agent receives a message
-describing the move. A move between groups on another node works the same
-when that node trusts this one unrestricted; otherwise (or on an older node)
-the dashboard falls back to adding and removing the membership, which always
-applies the new group's sandbox profile and environment.
+Dragging a member onto another group's box in the dashboard does the same.
+The confirm dialog has one checkbox per group-sourced setting, all ticked by
+default, each reading "Switch to new-team's …"; unticking one keeps that
+setting on the group the agent leaves. The agent keeps its role and
+description, and its per-agent permissions, explicit sandbox profile and
+per-agent environment overrides are kept either way.
+
+- **Permissions** apply immediately: new-team's group permissions apply now,
+  and old-team's stop. `--keep-permissions` (unticking the box) keeps
+  old-team's group permissions too, still bound to old-team (a grant that
+  only acts on old-team's members keeps acting only there) and following its
+  later edits. It is operator-only. The agent sees kept groups in
+  `tclaude agent whoami`, and `tclaude agent groups members old-team` lists
+  who still holds old-team's permissions this way.
+  `tclaude agent groups drop-kept-permissions old-team <selector>` ends them,
+  as do deleting the group, retiring the agent, or the agent rejoining and
+  leaving it again.
+- **Sandbox profile and environment** apply from the agent's next resume or
+  restart; the running process is not changed in place. `--keep-sandbox`
+  and `--keep-environment` leave either on the group it left, still
+  following that group's later edits, until that group is deleted.
+
+The agent receives a message describing the move. A move between groups on
+another node works the same when that node trusts this one unrestricted;
+otherwise (or on an older node) the dashboard falls back to adding and
+removing the membership, which switches everything to the new group, and
+refuses a move with an unticked box.
 
 The move is gated like the remove and add it replaces:
 `groups.members.remove` on the source group and `groups.members.add` on the

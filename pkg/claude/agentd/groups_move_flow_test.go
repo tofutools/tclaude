@@ -58,3 +58,73 @@ func TestGroupMove_MovesMemberAndNotifiesAgent(t *testing.T) {
 		"/v1/groups/plain/members/"+conv+"/move", map[string]any{"to": "elevated"})))
 	assert.Equal(t, http.StatusNotFound, again.Code, "no longer a member of the source group")
 }
+
+// Scenario: the operator moves an agent out of a group whose permissions it
+// still needs, keeping them (the move dialog's unticked "Switch to beta's
+// permissions" box). The agent holds both groups' permissions at once, sees the
+// kept group in whoami and in its notice, and loses them when the operator
+// drops them. An agent manager cannot choose to keep permissions.
+func TestGroupMove_KeepPermissionsIsOperatorOnlyAndDroppable(t *testing.T) {
+	f := newFlow(t)
+	alpha := f.HaveGroup("alpha")
+	beta := f.HaveGroup("beta")
+	require.NoError(t, db.ReplaceAgentGroupPermissions(alpha.ID, []string{agentd.PermGroupsMembersAdd}, "test"))
+	const conv = "keep-perms-flow-conv"
+	f.HaveMember("alpha", conv)
+
+	const manager = "keep-perms-flow-manager"
+	f.HaveEnrolledAgent(manager)
+	require.NoError(t, db.GrantAgentPermission(manager, agentd.PermGroupsMembersRemove, "test"))
+	require.NoError(t, db.GrantAgentPermission(manager, agentd.PermGroupsMembersAdd, "test"))
+	denied := agentReq(t, f, manager, http.MethodPost, "/v1/groups/alpha/members/"+conv+"/move",
+		map[string]any{"to": "beta", "keep_permissions": true})
+	assert.Equal(t, http.StatusForbidden, denied.Code, "body=%s", denied.Body.String())
+	require.Len(t, f.ListGroupMembers("alpha"), 1, "a refused move changes nothing")
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/alpha/members/"+conv+"/move", map[string]any{"to": "beta", "keep_permissions": true})))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	f.AssertNotGroupMember("alpha", conv)
+
+	held, err := db.HasAgentGroupPermissionForGroup(conv, alpha.ID, agentd.PermGroupsMembersAdd)
+	require.NoError(t, err)
+	assert.True(t, held, "alpha's grant still applies, bound to alpha")
+	held, err = db.HasAgentGroupPermissionForGroup(conv, beta.ID, agentd.PermGroupsMembersAdd)
+	require.NoError(t, err)
+	assert.False(t, held, "and is not widened to beta")
+
+	whoami := func() []string {
+		t.Helper()
+		who := agentReq(t, f, conv, http.MethodGet, "/v1/whoami", nil)
+		require.Equal(t, http.StatusOK, who.Code)
+		var body struct {
+			Kept []string `json:"kept_permission_groups"`
+		}
+		testharness.DecodeJSON(t, who, &body)
+		return body.Kept
+	}
+	assert.Equal(t, []string{"alpha"}, whoami())
+	list := agentReq(t, f, conv, http.MethodGet, "/v1/groups/alpha/kept-permissions", nil)
+	require.Equal(t, http.StatusOK, list.Code, "body=%s", list.Body.String())
+	var listed []struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, list, &listed)
+	require.Len(t, listed, 1, "alpha lists who still receives its grants")
+	assert.Equal(t, conv, listed[0].ConvID)
+	inbox, err := db.ListAgentMessagesForConv(conv, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, inbox)
+	assert.Contains(t, inbox[0].Body, `the operator kept "alpha"'s for you too`)
+
+	drop := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodDelete,
+		"/v1/groups/alpha/kept-permissions/"+conv, nil)))
+	require.Equal(t, http.StatusOK, drop.Code, "body=%s", drop.Body.String())
+	assert.Empty(t, whoami())
+	held, err = db.HasAgentGroupPermissionForGroup(conv, alpha.ID, agentd.PermGroupsMembersAdd)
+	require.NoError(t, err)
+	assert.False(t, held, "dropping ends alpha's permissions")
+	again := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodDelete,
+		"/v1/groups/alpha/kept-permissions/"+conv, nil)))
+	assert.Equal(t, http.StatusNotFound, again.Code)
+}

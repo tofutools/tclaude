@@ -2054,3 +2054,14 @@ CREATE INDEX idx_session_cost_daily_walk
 				ON session_cost_daily(
 					COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
 				);
+
+CREATE TABLE agent_retained_group_permissions (
+			agent_id    TEXT NOT NULL,
+			group_id    INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			retained_at INTEGER NOT NULL,
+			retained_by TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (agent_id, group_id)
+		) STRICT;
+
+CREATE INDEX idx_agent_retained_group_permissions_group
+			ON agent_retained_group_permissions(group_id);

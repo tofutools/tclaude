@@ -783,6 +783,7 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 		Title        string                 `json:"title"`
 		Phases       []string               `json:"phases"`
 		PendingMorph *db.AgentPendingMorph  `json:"pending_morph,omitempty"`
+		KeptGroups   []string               `json:"kept_permission_groups,omitempty"`
 	}
 	if err := DaemonGet("/v1/whoami", &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -813,6 +814,9 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	}
 	if resp.PendingMorph != nil {
 		fmt.Fprintf(stdout, "  %s\n", pendingMorphLine(resp.PendingMorph))
+	}
+	if len(resp.KeptGroups) > 0 {
+		fmt.Fprintf(stdout, "  Kept group permissions (no longer a member): %s\n", strings.Join(resp.KeptGroups, ", "))
 	}
 	return rcOK
 }
