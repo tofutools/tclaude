@@ -36,6 +36,17 @@ run_side() {
     "${runner[@]}" -json "$@" ./pkg/claude/agentd
   fi
 }
+# Build (and vet) the test binary once before fanning out. Two concurrent
+# `go test` processes do not share in-flight work: each compiles and links
+# the whole agentd test binary itself, which doubles the build phase on the
+# small macOS runner. Afterwards both sides hit the warm build cache.
+prebuild=(-run '^$')
+if [ "${TCLAUDE_AGENTD_TEST_COVER:-}" = 1 ]; then prebuild+=(-cover); fi
+if ! "${runner[@]}" "${prebuild[@]}" "$@" ./pkg/claude/agentd > "$logs/build.log" 2>&1; then
+  cat "$logs/build.log"
+  echo "agentd-tests: building the test binary failed" >&2
+  exit 1
+fi
 run_side domain "$@" -run "$domain" > "$logs/domain.json" 2>&1 &
 domain_pid=$!
 run_side other "$@" -skip "$domain" > "$logs/other.json" 2>&1 &
