@@ -40,15 +40,16 @@ type routeOpenRequest struct {
 }
 
 type routeView struct {
-	APIVersion                string `json:"api_version"`
-	ID                        string `json:"id"`
-	GroupID                   int64  `json:"group_id"`
-	Group                     string `json:"group"`
-	PublisherAgentID          string `json:"publisher_agent_id"`
-	PublisherConvID           string `json:"publisher_conv_id,omitempty"`
-	PublisherLaunchGeneration string `json:"publisher_launch_generation"`
-	GroupGeneration           int64  `json:"group_generation"`
-	Name                      string `json:"name"`
+	HostLeases                []hostRouteLease `json:"host_leases,omitempty"`
+	APIVersion                string           `json:"api_version"`
+	ID                        string           `json:"id"`
+	GroupID                   int64            `json:"group_id"`
+	Group                     string           `json:"group"`
+	PublisherAgentID          string           `json:"publisher_agent_id"`
+	PublisherConvID           string           `json:"publisher_conv_id,omitempty"`
+	PublisherLaunchGeneration string           `json:"publisher_launch_generation"`
+	GroupGeneration           int64            `json:"group_generation"`
+	Name                      string           `json:"name"`
 	// Reference is intentionally friendly enough to paste into an agent
 	// message. StableReference carries the numeric group identity so a group
 	// rename cannot change the route selector.
@@ -81,6 +82,7 @@ type routeLeaseView struct {
 
 func routeViewFor(r *db.AgentRoute) routeView {
 	v := routeView{APIVersion: routeAPIVersion, ID: r.ID, GroupID: r.GroupID, Group: r.GroupName, PublisherAgentID: r.PublisherAgentID, PublisherConvID: r.PublisherConvID, PublisherLaunchGeneration: r.PublisherLaunchGeneration, GroupGeneration: r.GroupGeneration, Name: r.Name, Reference: routeReferenceFor(r), StableReference: stableRouteReferenceFor(r), Transport: r.Transport, Target: r.Target, State: r.State, CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), WithdrawReason: r.WithdrawReason}
+	v.HostLeases = hostRoutesForRoute(r.ID)
 	if !r.WithdrawnAt.IsZero() {
 		v.WithdrawnAt = r.WithdrawnAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	}

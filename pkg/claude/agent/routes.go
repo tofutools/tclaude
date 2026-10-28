@@ -32,6 +32,11 @@ var (
 )
 
 type routeCLI struct {
+	HostLeases []struct {
+		ID           string `json:"id"`
+		Endpoint     string `json:"endpoint"`
+		ConsumerKind string `json:"consumer_kind"`
+	} `json:"host_leases,omitempty"`
 	APIVersion                string `json:"api_version"`
 	ID                        string `json:"id"`
 	GroupID                   int64  `json:"group_id"`
@@ -436,6 +441,9 @@ func printRouteRows(stdout io.Writer, group string, routes []routeCLI) {
 			ref = route.ID
 		}
 		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", ref, route.State, route.Transport, route.Group)
+		for _, lease := range route.HostLeases {
+			fmt.Fprintf(stdout, "  %s\thost\t%s\n", lease.ID, lease.Endpoint)
+		}
 	}
 }
 

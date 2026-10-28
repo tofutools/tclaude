@@ -323,6 +323,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardPeerDownloadRoutes(mux)
 	registerDashboardPeerUploadRoutes(mux)
 	registerDashboardEditRoutes(mux)
+	registerDashboardHostRoutes(mux)
 }
 
 func dashboardProcessRoute(next http.HandlerFunc) http.HandlerFunc {
@@ -1840,6 +1841,8 @@ type dashboardRoute struct {
 }
 
 type dashboardRouteConsumer struct {
+	ConsumerKind     string `json:"consumer_kind,omitempty"`
+	Endpoint         string `json:"endpoint,omitempty"`
 	ID               string `json:"id"`
 	ConsumerAgentID  string `json:"consumer_agent_id"`
 	ConsumerName     string `json:"consumer_name"`

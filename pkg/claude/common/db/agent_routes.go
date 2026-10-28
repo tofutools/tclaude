@@ -660,3 +660,16 @@ func scanAgentRoute(s rowScanner) (*AgentRoute, error) {
 	route.WithdrawnAt = withdrawnAt.Time()
 	return &route, nil
 }
+
+// RecordHostRouteAudit records ephemeral operator leases without inventing an
+// agent identity or persisting authority that could survive a daemon restart.
+func RecordHostRouteAudit(action string, groupID int64, routeID, leaseID, detail string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO agent_route_audit
+		(at, action, result, group_id, route_id, lease_id, actor_agent_id, actor_conv_id, detail)
+		VALUES (?, ?, 'ok', ?, ?, ?, '', '', ?)`, dbTime(time.Now()), action, groupID, routeID, leaseID, detail)
+	return err
+}

@@ -1,5 +1,5 @@
 import { h, render } from 'preact';
-import { useEffect, useMemo } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { effectiveGroupsFocus, groupsFocusLocation } from './groups-focus.js';
 
@@ -18,12 +18,12 @@ function routeStatusClass(value) {
 }
 
 function Boundary({ value }) {
-  if (!value || value === 'in-group') return null;
+  if (!value || value === 'in-group' || value === 'host') return null;
   return html`<span class="route-boundary" title="The route authority no longer exposes this endpoint as a current member of the selected group">${statusLabel(value)} boundary</span>`;
 }
 
 function friendlyEndpoint(name, boundary) {
-  return boundary && boundary !== 'in-group' ? statusLabel(boundary) + ' boundary' : (name || 'hidden endpoint');
+  return boundary && boundary !== 'in-group' && boundary !== 'host' ? statusLabel(boundary) + ' boundary' : (name || 'hidden endpoint');
 }
 
 function routeGroups(snapshot) {
@@ -103,6 +103,33 @@ function RouteGraph({ routes, members, selected, onSelect }) {
   </div>`;
 }
 
+function HostRouteControls({ route }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const act = async (leaseID) => {
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await fetch(leaseID ? `/api/routes/host/${encodeURIComponent(leaseID)}` : `/api/routes/${encodeURIComponent(route.id)}/host`, {
+        method: leaseID ? 'DELETE' : 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, ...(leaseID ? {} : { body: '{}' }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      if (!leaseID) {
+        const lease = await response.json();
+        setMessage(`Host endpoint: ${lease.endpoint}`);
+      }
+    } catch (error) { setMessage(String(error.message || error)); }
+    finally { setBusy(false); }
+  };
+  return html`<div>
+    <button type="button" disabled=${busy || route.state !== 'ready' || route.generation_health !== 'current'} onClick=${() => act('')}>Open on host</button>
+    <p class="route-map-muted">Exposes this published service to local host processes until closed or withdrawn.</p>
+    ${(route.consumers || []).filter((consumer) => consumer.consumer_kind === 'host').map((consumer) => html`<p key=${consumer.id}><code>${consumer.endpoint}</code> <button type="button" disabled=${busy} onClick=${() => act(consumer.id)}>Close host endpoint</button></p>`)}
+    ${message && html`<p role="status">${message}</p>`}
+  </div>`;
+}
+
 function RouteDetail({ route, onClose }) {
   if (!route) return html`<aside class="route-map-detail route-map-detail-empty"><strong>Select a route</strong><span>Choose an edge or exact-list row to inspect its safe authority status.</span></aside>`;
   return html`<aside class="route-map-detail" aria-label="Route details">
@@ -114,9 +141,10 @@ function RouteDetail({ route, onClose }) {
       <div><dt>Lifecycle</dt><dd><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></dd></div>
       <div><dt>Generation</dt><dd><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span></dd></div>
     </dl>
+    <${HostRouteControls} key=${route.id} route=${route} />
     <h4>Consumers</h4>
     ${route.consumers?.length ? html`<ul class="route-map-consumers">${route.consumers.map((consumer) => html`<li key=${consumer.id}><span>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)}</span><span class=${routeStatusClass(consumer.endpoint_state)}>${statusLabel(consumer.endpoint_state)}</span><span class=${routeStatusClass(consumer.consumer_health)}>${statusLabel(consumer.consumer_health)}</span><${Boundary} value=${consumer.boundary} /></li>`)}</ul>` : html`<p class="route-map-muted">No consumer lease.</p>`}
-    <p class="route-map-security-note">Read-only authority view. Endpoint addresses, targets, capabilities, credentials, and payload data are never shown.</p>
+    <p class="route-map-security-note">Host endpoints are loopback-only. Publisher targets, helper credentials, and payload data are never shown.</p>
   </aside>`;
 }
 

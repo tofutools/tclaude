@@ -393,6 +393,30 @@ func (a *Adapter) open(ctx context.Context, consumer Consumer, pool []int) (stri
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
 }
 
+// OpenHost binds a host-loopback endpoint outside the sandbox slot pools.
+// Callers must supply operator authority and revoke it when that authority ends.
+func (a *Adapter) OpenHost(ctx context.Context, consumer Consumer, port int) (string, error) {
+	if port < 0 || port > 65535 {
+		return "", errors.New("host port must be between 0 and 65535")
+	}
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return "", err
+	}
+	channelCtx, cancel := context.WithCancel(ctx)
+	a.mu.Lock()
+	if a.closed || a.leases[consumer.LeaseID] != nil {
+		a.mu.Unlock()
+		cancel()
+		_ = listener.Close()
+		return "", errors.New("host route adapter closed or lease already exists")
+	}
+	a.leases[consumer.LeaseID] = &consumerState{routeID: consumer.RouteID, agentID: consumer.AgentID, listener: listener, cancel: cancel}
+	a.mu.Unlock()
+	go a.acceptConsumers(channelCtx, listener, consumer)
+	return listener.Addr().String(), nil
+}
+
 func (a *Adapter) CloseRoute(routeID string) {
 	a.mu.Lock()
 	state := a.routes[routeID]
@@ -571,7 +595,9 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	opened := make(chan *helperPublisherStream, 1)
 	results := make(chan directionResult, 2)
 	go func() { results <- directionResult{rawToBroker: true, err: copyRawToBroker(raw, w, opened)} }()
-	go func() { results <- directionResult{err: copyBrokerToRaw(streamCtx, adapterConn, raw, w, window, opened)} }()
+	go func() {
+		results <- directionResult{err: copyBrokerToRaw(streamCtx, adapterConn, raw, w, window, opened)}
+	}()
 	first := <-results
 	// A local client CloseWrite is only a read-side EOF. Keep the broker
 	// channel and accepted listener alive for the publisher's reverse data.

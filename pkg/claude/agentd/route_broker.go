@@ -94,6 +94,12 @@ func (databaseRouteAuthority) AuthorizePublisher(ctx context.Context, auth route
 }
 
 func (databaseRouteAuthority) AuthorizeConsumer(ctx context.Context, auth routebroker.ConsumerAuth) error {
+	if strings.HasPrefix(auth.LeaseID, hostRouteLeasePrefix) {
+		if err := contextError(ctx); err != nil {
+			return err
+		}
+		return authorizeHostRouteConsumer(auth)
+	}
 	if err := contextError(ctx); err != nil {
 		return err
 	}

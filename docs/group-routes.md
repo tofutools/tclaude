@@ -42,6 +42,42 @@ grants the consuming peer `routes.consume` on the publishing group; the
 consumer’s operator grants its agent `routes.consume` scoped to that peer/group:
 `tclaude agent routes open <publisher>/<name>@<peer> -g <group>`.
 
+## Open a published route on the host
+
+In the dashboard, enable **Config → Experimental features → Groups Route map**,
+select a local route under **Groups → Route map**, and click **Open on host**.
+The detail panel shows a `127.0.0.1:<port>` endpoint. Connect host tools to that
+endpoint; use HTTP in a browser when the published service speaks HTTP.
+**Close host endpoint** releases the listener and its active connections.
+
+This is an operator-originated lease: the authenticated dashboard owns it,
+without a broker agent or a `routes.consume` grant. The host-open API is absent
+from the agent socket, and an agent cannot create these leases. The publisher
+must still explicitly publish the selected port with `routes publish`; host
+consumption needs no additional publish flag. Every local host process can
+reach the allocated endpoint, so only open services you intend to share locally.
+No unlisted publisher ports become reachable through this lease.
+
+Host listeners bind IPv4 loopback only and choose an ephemeral port. The
+cookie-authenticated `POST /api/routes/<route-id>/host` API takes `{}` or
+`{"port": 43100}` to request a specific loopback port; a busy port is refused.
+`DELETE /api/routes/host/<lease-id>` closes it. These endpoints are available
+only on the dashboard listener, with its existing session and origin checks.
+
+Host leases appear as **Host (operator)** consumers in the Route map and as
+`host` entries in `tclaude agent routes ls` (also `host_leases` in JSON).
+The route audit records `host-open` and `host-close`. Leases are ephemeral:
+withdrawal, publisher loss, a group generation change, or daemon shutdown
+closes them, including idle listeners and existing connections. Reopen after
+a daemon restart. Revocation is checked for every broker stream and polled
+for idle listeners, normally within 100 ms.
+
+Linux uses the existing publisher namespace helper, preserving closed or
+filtered networking. macOS uses the existing publisher adapter and its bounded
+launch slots; the host endpoint needs no consumer launch slot. The macOS
+host-wide localhost limitation above still applies. Federated route mirrors
+are not eligible for host consumption.
+
 ## What a route is not
 
 Targets are loopback-only. There is no UDP, no ambient mesh networking, no
@@ -103,11 +139,12 @@ When the route capability is active, launch and session details disclose the
 platform contract and current route state; a macOS launch shows `Partial`,
 and a missing or stale contract is never presented as active.
 
-The [dashboard](dashboard.md) offers an opt-in **Route map** — a read-only
+The [dashboard](dashboard.md) offers an opt-in **Route map** — a
 projection of current routes, leases, health, and stale/wrong-group
 boundaries. Enable it under Config → Experimental features → Groups Route
 map (`features.groups_route_map`); enabling the map grants no route
-authority, and it never displays helper credentials or raw socket material.
+authority. Host-open controls require a separate authenticated operator action;
+the map never displays helper credentials or raw socket material.
 
 ## Relationship to the sandbox network boundary
 

@@ -411,6 +411,7 @@ func runServe(p *serveParams) error {
 	// attaches its exact-slot listeners through this supervised instance;
 	// close both on every daemon exit so no route channel survives shutdown.
 	defer func() {
+		closeAllHostRoutes()
 		routeAdapterCloseAll()
 		if err := GroupRouteBroker().Close(); err != nil {
 			slog.Warn("group-route broker: shutdown incomplete", "error", err)
@@ -1019,6 +1020,7 @@ func runServe(p *serveParams) error {
 	if err := processRuns.shutdown(ctx); err != nil {
 		slog.Warn("process runtime: shutdown did not drain", "error", err)
 	}
+	closeAllHostRoutes()
 	routeAdapterCloseAll()
 	if err := GroupRouteBroker().Close(); err != nil {
 		slog.Warn("group-route broker: shutdown incomplete", "error", err)
