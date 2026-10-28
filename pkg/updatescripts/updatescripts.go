@@ -236,13 +236,17 @@ func (s *Service) Check(name string) error {
 // check runs one status script in the background unless it already runs.
 func (s *Service) check(sc Script) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.checkLocked(sc)
+}
+
+// checkLocked is check with s.mu held.
+func (s *Service) checkLocked(sc Script) {
 	if s.closed || s.checking[sc.Name] {
-		s.mu.Unlock()
 		return
 	}
 	s.checking[sc.Name] = true
 	s.wg.Add(1)
-	s.mu.Unlock()
 	go func() {
 		defer s.wg.Done()
 		st := s.runStatus(sc)
@@ -408,12 +412,14 @@ func (s *Service) runUpdate(sc Script, j Job) {
 		}
 	}
 	s.active = false
+	// The re-check starts before the lock drops, so a reader never sees the
+	// update finished with its stale status and nothing left running.
+	if sc.Status != "" {
+		s.checkLocked(sc)
+	}
 	s.mu.Unlock()
 	if s.hooks.Finished != nil {
 		s.hooks.Finished(j)
-	}
-	if sc.Status != "" {
-		s.check(sc)
 	}
 }
 
@@ -440,6 +446,11 @@ func ShellRunner(dir string) Runner {
 		stdout, stderr := &capped{limit: outputLimit}, &capped{limit: outputLimit}
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 		err := cmd.Run()
+		if errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil {
+			// The script exited 0 but left a background child holding its
+			// output open; that is still a clean exit.
+			err = nil
+		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && ctx.Err() == nil && exit.ExitCode() >= 0 {
 			return stdout.Bytes(), stderr.Bytes(), exit.ExitCode(), nil

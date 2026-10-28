@@ -3436,12 +3436,17 @@ last 16 KiB of its output, in memory for the daemon's lifetime.
 
 `updates.harnesses.<name>.update` replaces that harness's default update
 command (its built-in updater) for Fleet → Harnesses and `tclaude harness
-update`; the job reports the recipe as `custom`.
+update`; the job reports the recipe as `custom`. An invalid `updates` block
+is ignored, so harnesses fall back to their default update commands.
 
 The commands come only from this node's config: requests select a script by
 name and never carry a command, and `updates` never travels in config bundles.
 The scripts sit under the `node.update` grant: a peer allowed to update this
-node may read their status and output and run them. Update runs are audited
+node may read their status, the command text, their output (the status details
+and the last update output) and run them; a peer holding
+`node.harnesses.install` likewise sees a harness override's command. Keep
+secrets out of the commands and their output — read tokens from files or the
+environment instead. Update runs are audited
 as `federation.node.update`.
 
 In the dashboard, Fleet → Harnesses lists each node's scripts under **Custom
@@ -3468,8 +3473,8 @@ Homebrew, …): `claude update`, `codex update`, `opencode upgrade`, `copilot
 update` and `pi update --self`. Gemini CLI has no updater of its own; it is
 updated through npm in its existing prefix, and other Gemini installation
 methods, missing npm and unwritable prefixes require a manual command. Root
-execution always requires a manual command; the daemon never elevates
-privileges. A node's operator can replace any harness's update command with
+execution of these default recipes requires a manual command; the daemon
+never elevates privileges. A node's operator can replace any harness's update command with
 their own in `updates.harnesses` (below). `--all-nodes` includes this node and trusted
 linked nodes, and reports failures per node. Cached npm metadata adds optional
 `latest_version` and nullable `update_available` fields to harness availability.

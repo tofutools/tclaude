@@ -46,7 +46,7 @@ func configuredUpdateScripts() ([]updatescripts.Script, error) {
 // harness, or "" for the default recipe.
 func harnessUpdateOverride(name string) string {
 	cfg, err := config.Load()
-	if err != nil || cfg.Updates == nil {
+	if err != nil || cfg.Updates == nil || len(cfg.Updates.Validate()) > 0 {
 		return ""
 	}
 	return cfg.Updates.Harnesses[name].Update
