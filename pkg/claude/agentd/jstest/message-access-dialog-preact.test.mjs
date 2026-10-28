@@ -242,6 +242,8 @@ test('scoped message ticks online members by default, follows presence, and quic
   assert.deepEqual(ticked(), ['conv-a'], 'offline members start unticked');
   assert.deepEqual(badges(), ['online', 'offline', 'offline']);
   assert.ok(host.querySelector('#message-create-members .ci-badge.ci-failing'), 'a member\'s open PR shows its CI pill');
+  assert.equal(host.querySelector('#message-create-members label .pr-chain'), null,
+    'PR badges sit outside the row label so their hover panels never toggle the recipient');
 
   await rerender(roster(true));
   assert.deepEqual(ticked(), ['conv-a', 'conv-b'], 'the default follows live presence');

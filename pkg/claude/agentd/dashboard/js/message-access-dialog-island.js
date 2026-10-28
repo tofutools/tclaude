@@ -457,8 +457,9 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
           onChange=${(event) => toggleMember(member, event.currentTarget.checked)} />
         <span class=${`cleanup-badge ${member.online ? 'online' : 'offline'}`}>${member.online ? 'online' : 'offline'}</span>
         <span class="title">${member.title || '(untitled)'}</span><span class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</span>
-        ${openMemberPRs(member).length ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}
-      </label></div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
+      </label>${openMemberPRs(member).length
+        // Outside the <label>: a click inside a PR hover panel must not toggle the recipient.
+        ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}</div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
       <p class="cleanup-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · Ctrl/⌘-click = narrow</p>
     </div></div>`}
     ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"
