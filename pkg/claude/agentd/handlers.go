@@ -3803,6 +3803,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 //	POST   /v1/groups/{name}/members         → add member
 //	PATCH  /v1/groups/{name}/members/{conv}  → update role/descr
 //	DELETE /v1/groups/{name}/members/{conv}  → remove member
+//	POST   /v1/groups/{name}/members/{conv}/move → move member to another group
 //	       /v1/groups/{name}/links[/{id}]    → link CRUD (own method dispatch)
 //	GET/POST /v1/groups/{name}/attachment    → persistent group reference
 //	PATCH  /v1/groups/{name}                 → update settings
@@ -3862,6 +3863,9 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("DELETE /v1/groups/{name}/members/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupMembersRemove(w, r, g, r.PathValue("conv"))
+	}))
+	mux.HandleFunc("POST /v1/groups/{name}/members/{conv}/move", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupMembersMove(w, r, g, r.PathValue("conv"))
 	}))
 
 	// handleGroupLinks dispatches its own methods, so the two link
@@ -4958,4 +4962,94 @@ func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.Agen
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGroupMembersMove moves a member from g to another group in one step,
+// carrying its role and description. Body: {to, keep_sandbox?,
+// keep_environment?}. By default the agent's group-sourced sandbox profile
+// and environment follow it to the target group from its next relaunch; the
+// keep_* flags leave either on the source group instead (see
+// db.MoveAgentGroupMember). Gated like the remove-then-add it replaces:
+// groups.members.remove on the source and groups.members.add on the target.
+func handleGroupMembersMove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersRemove, g); !ok {
+		return
+	}
+	if !requireGroupActive(w, g) || !routeMembershipMutationAllowed(w, g) {
+		return
+	}
+	var body struct {
+		To              string `json:"to"`
+		KeepSandbox     bool   `json:"keep_sandbox,omitempty"`
+		KeepEnvironment bool   `json:"keep_environment,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if body.To == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "to is required")
+		return
+	}
+	target, err := db.GetAgentGroupByName(body.To)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if target == nil {
+		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no such group %q", body.To))
+		return
+	}
+	if target.ID == g.ID {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "source and target group are the same")
+		return
+	}
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersAdd, target); !ok {
+		return
+	}
+	if !requireGroupActive(w, target) || !routeMembershipMutationAllowed(w, target) {
+		return
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	err = db.MoveAgentGroupMember(res.ConvID, g.ID, target.ID, db.MoveOptions{
+		KeepSandbox: body.KeepSandbox, KeepEnvironment: body.KeepEnvironment,
+	})
+	if errors.Is(err, db.ErrNotGroupMember) {
+		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("conv %s is not a member of %q", res.ConvID, g.Name))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	notifyGroupMove(res.ConvID, g, target, body.KeepSandbox, body.KeepEnvironment)
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "from": g.Name, "to": target.Name})
+}
+
+// notifyGroupMove tells a moved agent what changed, so the new group's
+// permissions and, after its next relaunch, its sandbox are not a surprise.
+func notifyGroupMove(convID string, from, to *db.AgentGroup, keepSandbox, keepEnvironment bool) {
+	source := func(keep bool) string {
+		if keep {
+			return fmt.Sprintf("stays on %q", from.Name)
+		}
+		return fmt.Sprintf("now comes from %q", to.Name)
+	}
+	body := fmt.Sprintf("You were moved from group %q to group %q.\n\n"+
+		"- Group permissions: %q's apply now; %q's no longer do.\n"+
+		"- Sandbox profile: %s.\n"+
+		"- Group environment variables: %s.\n\n"+
+		"Sandbox and environment changes take effect when you are next resumed or restarted; this process keeps its "+
+		"current sandbox until then. Your own per-agent permissions and overrides are unchanged. "+
+		"Run `tclaude agent whoami` to see your groups.",
+		from.Name, to.Name, to.Name, from.Name, source(keepSandbox), source(keepEnvironment))
+	if _, err := queueAgentMessage(&db.AgentMessage{
+		GroupID: to.ID, ToConv: convID, Subject: "Moved to group " + to.Name, Body: body,
+	}); err != nil {
+		slog.Warn("group move: notify agent failed", "conv", short8(convID), "error", err)
+	}
 }

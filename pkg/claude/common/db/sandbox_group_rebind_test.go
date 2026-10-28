@@ -93,3 +93,117 @@ func TestSandboxResolutionGroupRebindSkipsAgentsWithoutSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, snapshot)
 }
+
+// moveFixture is an agent launched in group "launch" (recorded as its sandbox
+// and environment source, with per-agent overrides), plus a "target" group.
+func moveFixture(t *testing.T) (convID string, groups map[string]int64) {
+	t.Helper()
+	setupTestDB(t)
+	convID = "move-conv"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	groups = map[string]int64{}
+	for _, name := range []string{"launch", "target"} {
+		groups[name], err = CreateAgentGroup(name, "")
+		require.NoError(t, err)
+	}
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
+		GroupID: groups["launch"], ConvID: convID, Role: "builder", Descr: "builds", JoinedAt: time.Now().Add(-time.Hour),
+	}))
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.ResolutionGroupID = groups["launch"]
+	snapshot.RefreshGroupEnvironment = true
+	snapshot.Applied = []sandboxpolicy.AppliedProfile{{Scope: sandboxpolicy.ScopeExplicit, ID: 7, Name: "mine"}}
+	snapshot.LaunchEnvironmentOverrides = []sandboxpolicy.EnvironmentEntry{{Name: "OWN", Value: "kept"}}
+	require.NoError(t, SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	return convID, groups
+}
+
+func TestMoveAgentGroupMember(t *testing.T) {
+	recorded := func(t *testing.T, convID string) *sandboxpolicy.Snapshot {
+		t.Helper()
+		snapshot, err := AgentEffectiveSandboxConfigForConv(convID)
+		require.NoError(t, err)
+		require.NotNil(t, snapshot)
+		return snapshot
+	}
+
+	t.Run("default takes the new group's sandbox and environment, keeping overrides and role", func(t *testing.T) {
+		convID, groups := moveFixture(t)
+		require.NoError(t, MoveAgentGroupMember(convID, groups["launch"], groups["target"], MoveOptions{}))
+		got := recorded(t, convID)
+		assert.Equal(t, groups["target"], got.ResolutionGroupID)
+		envGroup, _ := got.EnvironmentGroupID()
+		assert.Equal(t, groups["target"], envGroup)
+		assert.Nil(t, got.GroupBinding)
+		assert.Equal(t, []sandboxpolicy.AppliedProfile{{Scope: sandboxpolicy.ScopeExplicit, ID: 7, Name: "mine"}}, got.Applied,
+			"the explicit per-agent profile survives")
+		assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "OWN", Value: "kept"}}, got.LaunchEnvironmentOverrides,
+			"per-agent environment overrides survive")
+		members, err := ListAgentGroupMembers(groups["target"])
+		require.NoError(t, err)
+		require.Len(t, members, 1)
+		assert.Equal(t, "builder", members[0].Role)
+		assert.Equal(t, "builds", members[0].Descr)
+		launchMembers, err := ListAgentGroupMembers(groups["launch"])
+		require.NoError(t, err)
+		assert.Empty(t, launchMembers)
+	})
+
+	t.Run("keep both stays on the source group until it is deleted", func(t *testing.T) {
+		convID, groups := moveFixture(t)
+		require.NoError(t, MoveAgentGroupMember(convID, groups["launch"], groups["target"],
+			MoveOptions{KeepSandbox: true, KeepEnvironment: true}))
+		got := recorded(t, convID)
+		assert.Equal(t, groups["launch"], got.ResolutionGroupID)
+		envGroup, explicit := got.EnvironmentGroupID()
+		assert.True(t, explicit)
+		assert.Equal(t, groups["launch"], envGroup)
+
+		// Another membership change does not undo the operator's choice.
+		other, err := CreateAgentGroup("other", "")
+		require.NoError(t, err)
+		require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: other, ConvID: convID}))
+		assert.Equal(t, groups["launch"], recorded(t, convID).ResolutionGroupID)
+
+		require.NoError(t, DeleteAgentGroup("launch"))
+		got = recorded(t, convID)
+		assert.Equal(t, other, got.ResolutionGroupID, "a deleted source group releases the pin")
+		assert.Nil(t, got.GroupBinding)
+	})
+
+	t.Run("keep sandbox, move environment", func(t *testing.T) {
+		convID, groups := moveFixture(t)
+		require.NoError(t, MoveAgentGroupMember(convID, groups["launch"], groups["target"], MoveOptions{KeepSandbox: true}))
+		got := recorded(t, convID)
+		assert.Equal(t, groups["launch"], got.ResolutionGroupID)
+		envGroup, explicit := got.EnvironmentGroupID()
+		assert.True(t, explicit)
+		assert.Equal(t, groups["target"], envGroup)
+	})
+
+	t.Run("keep environment, move sandbox", func(t *testing.T) {
+		convID, groups := moveFixture(t)
+		require.NoError(t, MoveAgentGroupMember(convID, groups["launch"], groups["target"], MoveOptions{KeepEnvironment: true}))
+		got := recorded(t, convID)
+		assert.Equal(t, groups["target"], got.ResolutionGroupID)
+		envGroup, _ := got.EnvironmentGroupID()
+		assert.Equal(t, groups["launch"], envGroup)
+	})
+
+	t.Run("moving back clears the pins", func(t *testing.T) {
+		convID, groups := moveFixture(t)
+		require.NoError(t, MoveAgentGroupMember(convID, groups["launch"], groups["target"],
+			MoveOptions{KeepSandbox: true, KeepEnvironment: true}))
+		require.NoError(t, MoveAgentGroupMember(convID, groups["target"], groups["launch"], MoveOptions{}))
+		got := recorded(t, convID)
+		assert.Equal(t, groups["launch"], got.ResolutionGroupID)
+		assert.Nil(t, got.GroupBinding)
+	})
+
+	t.Run("not a member of the source group", func(t *testing.T) {
+		convID, groups := moveFixture(t)
+		err := MoveAgentGroupMember(convID, groups["target"], groups["launch"], MoveOptions{})
+		assert.ErrorIs(t, err, ErrNotGroupMember)
+	})
+}

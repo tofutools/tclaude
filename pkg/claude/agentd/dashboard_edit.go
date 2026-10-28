@@ -727,6 +727,7 @@ func looksLikeConvID(s string) bool {
 //	POST   /api/groups/{name}/members           → add member (body: {conv, role?, descr?})
 //	DELETE /api/groups/{name}/members/{conv}    → remove from group
 //	PATCH  /api/groups/{name}/members/{conv}    → update role/descr
+//	POST   /api/groups/{name}/members/{conv}/move → move to another group (body: {to, keep_sandbox?, keep_environment?})
 //	POST   /api/groups/{name}/owners            → grant owner (body: {conv})
 //	DELETE /api/groups/{name}/owners/{conv}     → revoke owner
 //	POST   /api/groups/{name}/links             → add link (body: {to, mode?, bidir?})
@@ -788,6 +789,9 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("PATCH /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardUpdateMember(w, r, g, r.PathValue("conv"))
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/members/{conv}/move", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupMembersMove(w, asDashboardHumanPeer(r), g, r.PathValue("conv"))
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/owners", groupRoute(dashboardAddOwner))
 	mux.HandleFunc("DELETE /api/groups/{name}/owners/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {

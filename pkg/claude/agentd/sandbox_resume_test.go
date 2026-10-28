@@ -111,6 +111,49 @@ func TestResolveResumeSandboxPolicyFollowsGroupMove(t *testing.T) {
 	assert.Contains(t, resolved.Snapshot.LaunchEnvironment, sandboxpolicy.EnvironmentEntry{Name: "GROUP", Value: "elevated"})
 }
 
+// TestResolveResumeSandboxPolicyHonoursMoveKeepSandbox: a move that kept the
+// sandbox on the group left resumes under that group's profile, with the new
+// group's environment, and keeps the choice for later relaunches.
+func TestResolveResumeSandboxPolicyHonoursMoveKeepSandbox(t *testing.T) {
+	setupTestDB(t)
+	const convID = "moved-keep-sandbox-conv"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	groupIDs := map[string]int64{}
+	for _, name := range []string{"plain", "elevated"} {
+		groupID, createErr := db.CreateAgentGroup(name, "")
+		require.NoError(t, createErr)
+		groupIDs[name] = groupID
+		_, createErr = db.CreateSandboxProfile(&db.SandboxProfile{Name: name + "-policy"})
+		require.NoError(t, createErr)
+		_, assignErr := db.SetAgentGroupSandboxProfile(name, name+"-policy")
+		require.NoError(t, assignErr)
+		_, envErr := db.SetAgentGroupEnvironment(name, []sandboxpolicy.EnvironmentEntry{{Name: "GROUP", Value: name}})
+		require.NoError(t, envErr)
+	}
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupIDs["plain"], ConvID: convID}))
+	launched, err := db.ResolveEffectiveSandboxSnapshotByID(groupIDs["plain"], 0)
+	require.NoError(t, err)
+	launched.RefreshGroupEnvironment = true
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &launched))
+
+	require.NoError(t, db.MoveAgentGroupMember(convID, groupIDs["plain"], groupIDs["elevated"],
+		db.MoveOptions{KeepSandbox: true}))
+
+	resolved, err := resolveResumeSandboxPolicy(convID, false, "", "", "", "")
+	require.NoError(t, err)
+	var tier []string
+	for _, applied := range resolved.Snapshot.Applied {
+		if applied.Scope == sandboxpolicy.ScopeGroup {
+			tier = append(tier, applied.Name)
+		}
+	}
+	assert.Equal(t, []string{"plain-policy"}, tier, "the kept sandbox stays on the group left")
+	assert.Contains(t, resolved.Snapshot.LaunchEnvironment, sandboxpolicy.EnvironmentEntry{Name: "GROUP", Value: "elevated"})
+	require.NotNil(t, resolved.Snapshot.GroupBinding, "the choice is carried into the relaunched snapshot")
+	assert.True(t, resolved.Snapshot.GroupBinding.ProfileGroupPinned)
+}
+
 func TestResolveResumeSandboxPolicyPreservesExplicitProfileOmission(t *testing.T) {
 	setupTestDB(t)
 	const convID = "omitted-profile-resume-conv"

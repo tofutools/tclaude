@@ -714,6 +714,16 @@ function Confirm({ feedback }) {
         <h3 id="confirm-title">${model?.title || ''}</h3>
         <p id="confirm-body" class=${model?.preformatted ? 'confirm-body-preformatted' : ''}>${model?.body || ''}</p>
         <div class="modal-meta" id="confirm-meta" style=${`display:${model?.meta ? 'block' : 'none'}`}>${model?.meta || ''}</div>
+        ${model?.checks?.length ? html`<div class="confirm-checks">
+          ${model.checks.map((check, i) => html`<label key=${i} class="confirm-check">
+            <input type="checkbox" checked=${!!check.checked} disabled=${busy}
+              onChange=${(event) => {
+                check.checked = event.currentTarget.checked;
+                feedback.confirmation.value = { ...model };
+              }} />
+            <span>${check.label}${check.hint ? html`<span class="confirm-check-hint">${check.hint}</span>` : null}</span>
+          </label>`)}
+        </div>` : null}
         <div class="modal-buttons">
           ${model?.informational ? null : html`<button id="confirm-cancel" disabled=${busy} onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
           <button ref=${okRef} id="confirm-ok" class=${model?.informational ? '' : 'confirm-danger'}

@@ -2003,6 +2003,7 @@ func inheritEffectiveSandboxSnapshotForGroup(sourceConv, targetConv string, reso
 	if resolutionGroupID != 0 {
 		rebound := *snapshot
 		rebound.ResolutionGroupID = resolutionGroupID
+		rebound.GroupBinding = nil // the source's move choices do not carry to a new membership
 		snapshot = &rebound
 	}
 	agentID, _, err := db.EnsureAgentForConv(targetConv, "clone")

@@ -61,6 +61,10 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
         busyLabel: String(options.busyLabel || 'Working…'),
         informational: !!options.informational,
         preformatted: !!options.preformatted,
+        // checks are optional checkboxes ({label, checked, hint?}). The modal
+        // toggles each item's `checked` in place, so the caller reads its own
+        // objects once the confirm resolves.
+        checks: Array.isArray(options.checks) ? options.checks : [],
         busy: false,
       };
     });

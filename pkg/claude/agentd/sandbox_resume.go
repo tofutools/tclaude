@@ -79,6 +79,9 @@ func resolveCurrentSandboxChainForConv(
 	if err != nil {
 		return nil, nil, err
 	}
+	// The operator's per-setting group choices (a move that kept a setting on
+	// the group it left) outlive every relaunch.
+	resolved.GroupBinding = previous.GroupBinding.Clone()
 	return &resolved, previous, nil
 }
 
@@ -152,8 +155,8 @@ func refreshResumeGroupEnvironment(
 	current sandboxpolicy.Snapshot,
 	previous *sandboxpolicy.Snapshot,
 ) (sandboxpolicy.Snapshot, error) {
-	groupID := previous.ResolutionGroupID
-	if groupID == 0 && !previous.RefreshGroupEnvironment {
+	groupID, explicit := previous.EnvironmentGroupID()
+	if groupID == 0 && !explicit && !previous.RefreshGroupEnvironment {
 		if previous.ProfilesOmitted {
 			// Older omitted-profile snapshots did not retain source-group
 			// provenance. Do not guess from later memberships: the agent may now

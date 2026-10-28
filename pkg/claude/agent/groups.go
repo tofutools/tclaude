@@ -46,6 +46,7 @@ func groupsCmd() *cobra.Command {
 			groupsMembersCmd(),
 			groupsAddCmd(),
 			groupsRemoveCmd(),
+			groupsMoveCmd(),
 			groupsUpdateMemberCmd(),
 			groupsStopCmd(),
 			groupsResumeCmd(),
@@ -704,6 +705,72 @@ func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Removed %s from group %q\n", p.Conv, p.Group)
+	return rcOK
+}
+
+// --- groups move ---
+
+type groupsMoveParams struct {
+	Group           string `pos:"true" help:"Group the conversation is in now"`
+	Conv            string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	To              string `pos:"true" help:"Group to move it to"`
+	KeepSandbox     bool   `long:"keep-sandbox" optional:"true" help:"Keep the current group's sandbox profile instead of taking the new group's"`
+	KeepEnvironment bool   `long:"keep-environment" optional:"true" help:"Keep the current group's environment variables instead of taking the new group's"`
+	AskHuman        string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsMoveCmd() *cobra.Command {
+	return boa.CmdT[groupsMoveParams]{
+		Use:   "move",
+		Short: "Move a conversation to another group",
+		Long: "Move a conversation from one group to another, keeping its role and description.\n\n" +
+			"By default the agent takes the new group's sandbox profile and environment from its next " +
+			"resume or restart; the running process is unchanged. --keep-sandbox and --keep-environment " +
+			"leave either on the current group (following that group's later changes) instead. " +
+			"Per-agent overrides are kept either way.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsMoveParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Conv).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.To).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsMoveParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsMove(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsMove(p *groupsMoveParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Group) + "/members/" + url.PathEscape(p.Conv) + "/move"
+	if err := DaemonRequest(http.MethodPost, path, map[string]any{
+		"to":               p.To,
+		"keep_sandbox":     p.KeepSandbox,
+		"keep_environment": p.KeepEnvironment,
+	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	shortID := resp.ConvID
+	if len(shortID) >= 8 {
+		shortID = shortID[:8]
+	}
+	fmt.Fprintf(stdout, "Moved %s from group %q to %q\n", shortID, p.Group, p.To)
 	return rcOK
 }
 
