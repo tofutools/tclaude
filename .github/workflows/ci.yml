@@ -112,6 +112,21 @@ jobs:
           # _unix/_darwin build-tagged code and real fs behavior.
           - os: macos-latest
             shard: jstest
+          # macOS runners are concurrency-capped, so PR CI often waits longer
+          # for a free macOS slot than the jobs take to run. The small process
+          # and sandbox shards each paid ~1 min of setup for well under 2 min
+          # of tests; on macOS they run inside one rest-all job instead, the
+          # same packages with two fewer macOS slots per PR. release.yml keeps
+          # the full split.
+          - os: macos-latest
+            shard: process
+          - os: macos-latest
+            shard: sandbox
+          - os: macos-latest
+            shard: rest
+        include:
+          - os: macos-latest
+            shard: rest-all
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
