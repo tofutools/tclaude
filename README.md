@@ -47,8 +47,9 @@ pretending. See the
 ## Install
 
 Linux and macOS (WSL counts as Linux). You also need tmux and at least one
-harness CLI. On Linux, the sandbox (Claude Code's and tclaude's) also needs
-`bubblewrap` and `socat`; `tclaude setup` checks for them.
+harness CLI. On Linux, Claude Code's sandbox also needs `bubblewrap` and
+`socat` (tclaude's own sandbox needs `bubblewrap`); `tclaude setup` checks for
+them.
 
 ```bash
 brew install tofutools/tap/tclaude                 # Homebrew, or:
