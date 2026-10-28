@@ -3870,6 +3870,7 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/groups/{name}/members/{conv}/move", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupMembersMove(w, r, g, r.PathValue("conv"))
 	}))
+	mux.HandleFunc("GET /v1/groups/{name}/kept-permissions", v1GroupRoute(handleGroupKeptPermissionsList))
 	mux.HandleFunc("DELETE /v1/groups/{name}/kept-permissions/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupKeptPermissionsDrop(w, r, g, r.PathValue("conv"))
 	}))
@@ -5093,6 +5094,27 @@ func keptPermissionGroupNames(agentID string) []string {
 		}
 	}
 	return names
+}
+
+// handleGroupKeptPermissionsList lists the agents that kept g's permissions
+// after leaving it, so whoever edits g's grants can see who else receives
+// them. Open, like the member listing.
+func handleGroupKeptPermissionsList(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
+	convs, err := db.ListRetainedPermissionHolders(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	type holder struct {
+		AgentID string `json:"agent_id,omitempty"`
+		ConvID  string `json:"conv_id"`
+		Title   string `json:"title"`
+	}
+	out := make([]holder, 0, len(convs))
+	for _, conv := range convs {
+		out = append(out, holder{AgentID: peerAgentID(conv), ConvID: conv, Title: agent.FreshTitle(conv)})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleGroupKeptPermissionsDrop ends the permissions an agent kept from g

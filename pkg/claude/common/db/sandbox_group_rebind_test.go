@@ -307,3 +307,34 @@ func TestMoveAgentGroupMemberKeepsPermissions(t *testing.T) {
 	_, err = MoveAgentGroupMember(convID, beta, alpha, MoveOptions{})
 	assert.Error(t, err, "alpha is gone")
 }
+
+// Retiring an agent ends its kept permissions: reinstating it (or a visitor
+// returning under the same id) must not bring them back.
+func TestRetireDropsKeptGroupPermissions(t *testing.T) {
+	setupTestDB(t)
+	const convID = "keep-perms-retire-conv"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	alpha, err := CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	beta, err := CreateAgentGroup("beta", "")
+	require.NoError(t, err)
+	require.NoError(t, ReplaceAgentGroupPermissions(alpha, []string{"alpha.slug"}, "test"))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: convID}))
+	_, err = MoveAgentGroupMember(convID, alpha, beta, MoveOptions{KeepPermissions: true})
+	require.NoError(t, err)
+	holders, err := ListRetainedPermissionHolders(alpha)
+	require.NoError(t, err)
+	assert.Equal(t, []string{convID}, holders)
+
+	_, err = RetireAgentAuthorizationByConv(convID, "test", "test")
+	require.NoError(t, err)
+	_, err = ReinstateAgentByID(agentID)
+	require.NoError(t, err)
+	held, err := HasAgentGroupPermissionForGroup(convID, alpha, "alpha.slug")
+	require.NoError(t, err)
+	assert.False(t, held, "a reinstated agent does not get kept permissions back")
+	holders, err = ListRetainedPermissionHolders(alpha)
+	require.NoError(t, err)
+	assert.Empty(t, holders)
+}

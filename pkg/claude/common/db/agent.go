@@ -2354,6 +2354,7 @@ func deleteAgentByConvID(convID string, unlaunched bool) (AgentDeletionCounts, e
 				{`DELETE FROM agent_group_members WHERE agent_id = ?`, &c.GroupMembers},
 				{`DELETE FROM agent_group_owners WHERE agent_id = ?`, &c.GroupOwners},
 				{`DELETE FROM agent_permissions WHERE agent_id = ?`, &c.Permissions},
+				{`DELETE FROM agent_retained_group_permissions WHERE agent_id = ?`, nil},
 				{`DELETE FROM agent_notify_prefs WHERE agent_id = ?`, &c.NotifyPrefs},
 				// Cron jobs are agent-keyed (JOH-26 PR3a): a job belongs to its
 				// owner/target actor, so it is torn down with the actor (and only
@@ -2468,6 +2469,9 @@ func RemoveAllAgentGroupMembershipsForConv(convID string) (int64, error) {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
+	if _, err := tx.Exec(`DELETE FROM agent_retained_group_permissions WHERE agent_id = ?`, agentID); err != nil {
+		return 0, err
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}

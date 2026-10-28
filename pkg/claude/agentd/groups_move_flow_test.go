@@ -104,6 +104,14 @@ func TestGroupMove_KeepPermissionsIsOperatorOnlyAndDroppable(t *testing.T) {
 		return body.Kept
 	}
 	assert.Equal(t, []string{"alpha"}, whoami())
+	list := agentReq(t, f, conv, http.MethodGet, "/v1/groups/alpha/kept-permissions", nil)
+	require.Equal(t, http.StatusOK, list.Code, "body=%s", list.Body.String())
+	var listed []struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, list, &listed)
+	require.Len(t, listed, 1, "alpha lists who still receives its grants")
+	assert.Equal(t, conv, listed[0].ConvID)
 	inbox, err := db.ListAgentMessagesForConv(conv, 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, inbox)

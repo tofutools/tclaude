@@ -70,10 +70,19 @@ test("a drop on the page's own groups moves in one call, optimistically", async 
 });
 
 test('unticking the permissions box keeps the group left\'s permissions', async (t) => {
-  const { dnd, bodies, onConfirm } = await setup(t);
+  const { dnd, bodies, toasts, onConfirm } = await setup(t, { respond: () => ok({ kept_permissions: true }) });
   onConfirm((options) => { options.checks.find((check) => check.key === 'permissions').checked = false; return true; });
   await dnd.move({ conv: 'c_p', agent: 'agt_p', sourceGroup: 'build', label: 'p' }, 'ops');
   assert.deepEqual(bodies, [{ to: 'ops', keep_permissions: true, keep_sandbox: false, keep_environment: false }]);
+  assert.deepEqual(toasts.at(-1), ['moved p: build → ops', false]);
+});
+
+test('a node that ignores keep_permissions is reported, not toasted as kept', async (t) => {
+  const { dnd, toasts, onConfirm } = await setup(t);
+  onConfirm((options) => { options.checks.find((check) => check.key === 'permissions').checked = false; return true; });
+  await dnd.move({ conv: 'c_p', agent: 'agt_p', sourceGroup: 'build', label: 'p' }, 'ops');
+  assert.equal(toasts.at(-1)[1], true);
+  assert.match(toasts.at(-1)[0], /did not keep build's permissions/);
 });
 
 test('unticking a move checkbox keeps that setting on the group left', async (t) => {

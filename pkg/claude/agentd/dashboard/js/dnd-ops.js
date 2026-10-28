@@ -250,6 +250,14 @@ export function createDndOps({
           body: JSON.stringify({to: targetGroup, keep_permissions: keep('permissions'), keep_sandbox: keep('sandbox'), keep_environment: keep('environment')}),
         });
         if (moveRes.ok) {
+          // A node without kept permissions ignores the field and moves with
+          // the new group's: say so rather than report the keep as done.
+          const moved = keep('permissions') ? await moveRes.json().catch(() => ({})) : {};
+          if (keep('permissions') && !moved.kept_permissions) {
+            toast(`moved ${label}: ${sourceGroup} → ${targetGroup}, but that node did not keep ${sourceGroup}'s permissions (it needs an update)`, true);
+            landed(ctx, payload, targetGroup);
+            return;
+          }
           toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
           landed(ctx, payload, targetGroup);
           return;

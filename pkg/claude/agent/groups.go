@@ -567,6 +567,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 	}
 	if len(members) == 0 {
 		fmt.Fprintln(stdout, "(no members)")
+		printKeptPermissionHolders(p.Name, stdout)
 		return rcOK
 	}
 	tbl := table.New(
@@ -602,7 +603,27 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
+	printKeptPermissionHolders(p.Name, stdout)
 	return rcOK
+}
+
+// printKeptPermissionHolders notes the non-members that still hold the
+// group's permissions (a move that kept them), so editing the group's grants
+// shows who else receives them. Older daemons lack the route; print nothing.
+func printKeptPermissionHolders(group string, stdout io.Writer) {
+	var holders []struct {
+		AgentID string `json:"agent_id"`
+		ConvID  string `json:"conv_id"`
+		Title   string `json:"title"`
+	}
+	if err := DaemonGet("/v1/groups/"+url.PathEscape(group)+"/kept-permissions", &holders); err != nil || len(holders) == 0 {
+		return
+	}
+	names := make([]string, 0, len(holders))
+	for _, h := range holders {
+		names = append(names, shortAgentID(h.AgentID, h.ConvID)+" "+h.Title)
+	}
+	fmt.Fprintf(stdout, "Also holding this group's permissions (kept after a move): %s\n", strings.Join(names, ", "))
 }
 
 // --- groups add ---
@@ -760,9 +781,10 @@ func runGroupsMove(p *groupsMoveParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	var resp struct {
-		ConvID      string `json:"conv_id"`
-		Sandbox     string `json:"sandbox"`
-		Environment string `json:"environment"`
+		ConvID          string `json:"conv_id"`
+		Sandbox         string `json:"sandbox"`
+		Environment     string `json:"environment"`
+		KeptPermissions bool   `json:"kept_permissions"`
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Group) + "/members/" + url.PathEscape(p.Conv) + "/move"
 	if err := DaemonRequest(http.MethodPost, path, map[string]any{
@@ -784,6 +806,11 @@ func runGroupsMove(p *groupsMoveParams, stdout, stderr io.Writer) int {
 			resp.Sandbox, resp.Environment)
 	}
 	if p.KeepPermissions {
+		if !resp.KeptPermissions {
+			// An older daemon ignores the field and moves with the defaults.
+			fmt.Fprintf(stderr, "Warning: the daemon did not keep group %q's permissions (restart it to pick up --keep-permissions); the agent now has only %q's.\n", p.Group, p.To)
+			return rcIOFailure
+		}
 		fmt.Fprintf(stdout, "  kept group %q's permissions (applies now)\n", p.Group)
 	}
 	return rcOK

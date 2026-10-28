@@ -141,6 +141,11 @@ func retireAgentAuthorizationWithDeparture(convID, by, reason string, requireCur
 	if _, err := tx.Exec(`DELETE FROM agent_group_members WHERE agent_id = ?`, agentID); err != nil {
 		return out, fmt.Errorf("unjoin groups: %w", err)
 	}
+	// Kept group permissions (a move that kept them) end with the agent: a
+	// reinstated actor or a returning visitor must not get them back.
+	if _, err := tx.Exec(`DELETE FROM agent_retained_group_permissions WHERE agent_id = ?`, agentID); err != nil {
+		return out, fmt.Errorf("drop kept group permissions: %w", err)
+	}
 	if err := syncGroupSourcedSettings(tx, agentID, 0); err != nil {
 		return out, fmt.Errorf("unjoin groups: rebind sandbox group: %w", err)
 	}

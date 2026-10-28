@@ -334,6 +334,33 @@ func ListRetainedPermissionGroups(agentID string) ([]int64, error) {
 	return out, rows.Err()
 }
 
+// ListRetainedPermissionHolders returns the current conversations of the
+// active agents that kept groupID's permissions without being members of it.
+func ListRetainedPermissionHolders(groupID int64) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT a.current_conv_id FROM agent_retained_group_permissions r
+		JOIN agents a ON a.agent_id = r.agent_id AND a.retired_at IS NULL
+		WHERE r.group_id = ? AND NOT EXISTS (
+			SELECT 1 FROM agent_group_members m WHERE m.group_id = r.group_id AND m.agent_id = r.agent_id)
+		ORDER BY r.retained_at, a.current_conv_id`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var conv string
+		if err := rows.Scan(&conv); err != nil {
+			return nil, err
+		}
+		out = append(out, conv)
+	}
+	return out, rows.Err()
+}
+
 // DropRetainedGroupPermissions ends an agent's kept permissions from groupID,
 // reporting whether it had any.
 func DropRetainedGroupPermissions(agentID string, groupID int64) (bool, error) {
