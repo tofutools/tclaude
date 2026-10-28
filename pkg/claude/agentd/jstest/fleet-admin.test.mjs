@@ -282,6 +282,15 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     { name: 'codex', display_name: 'Codex', installed: name !== 'inst_forge', version: '0.9.0', update_available: false, version_status: name === 'inst_forge' ? 'not_installed' : 'known', credential_present: null, usable: null },
     { name: 'copilot', display_name: 'Copilot', installed: false, version_status: 'not_installed' },
   ] });
+  const scripts = (id) => {
+    if (id === 'inst_lab') { const e = new Error('not shared'); e.status = 403; e.code = 'permission_denied'; throw e; }
+    if (id === 'inst_forge') return { scripts: [], jobs: [] };
+    return { scripts: [
+      { name: 'apt', label: 'System packages', has_status: true, has_update: true, update_command: 'sudo apt upgrade -y', state: 'ok', summary: '12 packages pending', update_available: true, checked_at: '2026-10-10T09:00:00Z',
+        items: [{ name: 'openssl', current: '3.0.1', latest: '3.0.2', update_available: true }] },
+      { name: 'dotfiles', label: 'dotfiles', has_status: true, has_update: false, state: 'ok', summary: '', update_available: false, items: [] },
+    ], jobs: [] };
+  };
   const harnessActions = {
     availability: async (node, o) => { harnessLog.push(['availability', node.id, o]); if (node.id === 'inst_lab') { const e = new Error('not shared'); e.status = 403; e.code = 'permission_denied'; throw e; } return avail(node.id); },
     operations: async (node) => { harnessLog.push(['operations', node.id]); return { recipes: [{ harness: 'codex', install_command: 'npm install -g @openai/codex@latest', update_command: 'npm install -g @openai/codex@latest' }, { harness: 'claude', install_command: 'npm i claude', update_command: 'claude update' }], modes: ['now', 'when_idle'] }; },
@@ -291,6 +300,9 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     backup: async (node, h) => { harnessLog.push(['backup', node.id, h]); return { receipt: {} }; },
     restore: async (node, h, b) => { harnessLog.push(['restore', node.id, h, b]); return { receipt: {}, availability: avail('') }; },
     push: async (node, h) => { harnessLog.push(['push', node.id, h]); return { receipt: {}, availability: avail('') }; },
+    updateScripts: async (node) => { harnessLog.push(['updateScripts', node.id]); return scripts(node.id); },
+    checkUpdateScripts: async (node, name) => { harnessLog.push(['checkUpdateScripts', node.id, name]); return scripts(node.id); },
+    runUpdateScript: async (node, name) => { harnessLog.push(['runUpdateScript', node.id, name]); return { id: 'sjob1', script: name, state: 'running', started_at: '2026-10-10T10:00:00Z' }; },
   };
   const runLog = [];
   let runSettings = { accept_remote_scripts: false, resource_limits: { memory: '1GiB', pids: 256 }, warning: 'Full remote code execution' };
@@ -807,6 +819,29 @@ test('harness matrix: one row per node, versions and updates per cell, an unshar
   await s.click(self.querySelector('[data-fa="update-all"]'));
   assert.deepEqual(s.harnessLog.find((l) => l[0] === 'start'), ['start', 'inst_self', { action: 'update', all: true, mode: 'when_idle' }]);
   assert.ok(s.q('#fleet-harness-jobs [data-job="job1"]'), 'the job is tracked');
+});
+
+test('custom updates: each node lists its own scripts with what is pending; update confirms and runs by name', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-update-scripts.js');
+  assert.equal(m.scriptView({ has_status: true, state: 'ok', update_available: false, items: [] }).text, 'up to date');
+  assert.equal(m.scriptView({ has_status: true, state: 'ok', update_available: true, items: [{ update_available: true }, { update_available: true }] }).text, '2 pending');
+  assert.equal(m.scriptView({ has_status: true, state: 'failed', error: 'status script exited 2' }).text, 'status script exited 2');
+  assert.equal(m.overviewBusy({ scripts: [{ state: 'checking' }] }), true);
+  await openHarnesses(s);
+  const box = s.q('#fleet-update-scripts');
+  const apt = box.querySelector('[data-script="apt"]');
+  assert.match(apt.textContent, /System packages.*↑ 12 packages pending/);
+  assert.match(apt.textContent, /openssl.*3\.0\.1.*3\.0\.2.*pending/);
+  assert.match(box.querySelector('[data-script="dotfiles"]').textContent, /up to date/);
+  assert.equal(box.querySelector('[data-script="dotfiles"] [data-fa="script-update"]'), null, 'no update script, no Update button');
+  assert.match(box.querySelector('[data-node="inst_forge"]').textContent, /no update scripts configured/);
+  assert.match(box.querySelector('[data-node="inst_lab"]').textContent, /node\.update is not shared with you/);
+  await s.click(apt.querySelector('[data-fa="script-update"]'));
+  assert.match(s.confirms.at(-1).body, /own update command for System packages.*sudo apt upgrade -y/);
+  assert.deepEqual(s.harnessLog.find((l) => l[0] === 'runUpdateScript'), ['runUpdateScript', 'inst_self', 'apt']);
+  await s.click(box.querySelector('[data-fa="script-check-all"]'));
+  assert.deepEqual(s.harnessLog.find((l) => l[0] === 'checkUpdateScripts'), ['checkUpdateScripts', 'inst_self', '']);
 });
 
 test('remote install can copy my login with the share warning; busy workers ask now or when idle; job polling', async (t) => {

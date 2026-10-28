@@ -39,7 +39,7 @@ async function loadModules(harness) {
 test('Profile dialog defaults start a capture and validation errors stay in the dialog', async (t) => {
   const harness = await createPreactHarness(t);
   const { createProfilesState, createProfilesActions, validateProfileDraft } = await loadModules(harness);
-  const state = createProfilesState({ activeTab: harness.signals.signal('activity'), activitySubtab: harness.signals.signal('performance') });
+  const state = createProfilesState({ activeTab: harness.signals.signal('diagnostics'), activitySubtab: harness.signals.signal('performance') });
   const calls = [];
   const actions = createProfilesActions({
     state,
@@ -68,7 +68,7 @@ test('Profile dialog defaults start a capture and validation errors stay in the 
   assert.deepEqual(validateProfileDraft({ seconds: '10', trace_seconds: '99', label: '  idle ' }, 600).body,
     { seconds: 10, trace_seconds: 10, label: 'idle' }, 'the trace never outlasts the CPU window');
 
-  const busyState = createProfilesState({ activeTab: harness.signals.signal('activity') });
+  const busyState = createProfilesState({ activeTab: harness.signals.signal('diagnostics') });
   const busy = createProfilesActions({
     state: busyState,
     fetchImpl: async () => ({ ok: false, status: 409, text: async () => 'a profile capture is already running\n' }),
@@ -82,7 +82,7 @@ test('Profile dialog defaults start a capture and validation errors stay in the 
 test('Profiles island lists captures with pprof viewer links and submits the dialog form', async (t) => {
   const harness = await createPreactHarness(t);
   const { createProfilesState, ProfilesApp } = await loadModules(harness);
-  const state = createProfilesState({ activeTab: harness.signals.signal('activity'), activitySubtab: harness.signals.signal('performance') });
+  const state = createProfilesState({ activeTab: harness.signals.signal('diagnostics'), activitySubtab: harness.signals.signal('performance') });
   const token = state.beginRequest();
   state.commitRequest(token, listing([capture('20261017-100000-abcdef', { label: 'idle fleet' })]));
 
@@ -132,7 +132,7 @@ test('Profiles island lists captures with pprof viewer links and submits the dia
 test('Sharing a capture picks an agent and posts it to the share endpoint', async (t) => {
   const harness = await createPreactHarness(t);
   const { createProfilesState, createProfilesActions } = await loadModules(harness);
-  const state = createProfilesState({ activeTab: harness.signals.signal('activity') });
+  const state = createProfilesState({ activeTab: harness.signals.signal('diagnostics') });
   const calls = [];
   const picks = [];
   const actions = createProfilesActions({

@@ -315,6 +315,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardFederationRoutes(mux)
 	registerDashboardPAFRoutes(mux)
 	registerNodeUpdateRoutes(mux)
+	registerNodeUpdateScriptRoutes(mux)
 	registerNodeRunRoutes(mux)
 	registerHarnessAvailabilityRoutes(mux)
 	registerHarnessOperationsRoutes(mux)
@@ -398,12 +399,13 @@ func handleDashboardStatic() http.Handler {
 // /costs bookmarks still load the SPA, whose router heals them to /usage/costs.
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
-	"messages": true, "usage": true, "costs": true, "activity": true, "config": true,
+	"messages": true, "usage": true, "costs": true, "diagnostics": true, "config": true,
 	"map": true, "fleet": true, "fleet-admin": true,
-	// Retired tabs the client heals to their Activity subtab (/audit →
-	// /activity/audit, /logs → /activity/logs, /debug → /activity/performance),
-	// kept so old bookmarks still load.
-	"audit": true, "logs": true, "debug": true,
+	// Retired tabs the client heals to their Diagnostics subtab (/audit →
+	// /diagnostics/audit, /logs → /diagnostics/logs, /debug →
+	// /diagnostics/performance), and Diagnostics' former name (/activity/<subtab>
+	// → /diagnostics/<subtab>), kept so old bookmarks still load.
+	"audit": true, "logs": true, "debug": true, "activity": true,
 }
 
 // isDashboardAppPath reports whether a path should serve the dashboard SPA

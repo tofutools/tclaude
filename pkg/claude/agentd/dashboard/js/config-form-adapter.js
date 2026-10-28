@@ -962,7 +962,7 @@ function assembleConfig() {
   if (!$('#cfg-dashboard-fused-toolbar-follow').checked) dashboard.fused_toolbar_fixed_node = true; else delete dashboard.fused_toolbar_fixed_node;
   // usage_collapse_subviews: false is the default; store only true.
   if ($('#cfg-dashboard-usage-collapse-subviews').checked) dashboard.usage_collapse_subviews = true; else delete dashboard.usage_collapse_subviews;
-  // show_debug_tab is retired: the poll-performance view (Activity ›
+  // show_debug_tab is retired: the poll-performance view (Diagnostics ›
   // Performance) is always shown, so a save drops the stale opt-in.
   delete dashboard.show_debug_tab;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;

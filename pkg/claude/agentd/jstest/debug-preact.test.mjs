@@ -35,7 +35,7 @@ test('Debug actions sequence overlapping loads, preserve API calls, and abort on
     harness.importDashboardModule('js/debug-state.js'),
     harness.importDashboardModule('js/debug-actions.js'),
   ]);
-  const state = createDebugState({ activeTab: harness.signals.signal('activity'), activitySubtab: harness.signals.signal('performance') });
+  const state = createDebugState({ activeTab: harness.signals.signal('diagnostics'), activitySubtab: harness.signals.signal('performance') });
   const pending = [];
   const actions = createDebugActions({
     state,
@@ -80,7 +80,7 @@ test('Debug reset POSTs before a fresh GET and exposes reset failures', async (t
     harness.importDashboardModule('js/debug-actions.js'),
     harness.importDashboardModule('js/debug-island.js'),
   ]);
-  const state = createDebugState({ activeTab: harness.signals.signal('activity'), activitySubtab: harness.signals.signal('performance') });
+  const state = createDebugState({ activeTab: harness.signals.signal('diagnostics'), activitySubtab: harness.signals.signal('performance') });
   const calls = [];
   const actions = createDebugActions({
     state,
@@ -116,7 +116,7 @@ test('Debug island keys endpoint and phase DOM and owns only an active 10s timer
     harness.importDashboardModule('js/debug-state.js'),
     harness.importDashboardModule('js/debug-island.js'),
   ]);
-  const activeTab = harness.signals.signal('activity');
+  const activeTab = harness.signals.signal('diagnostics');
   const state = createDebugState({ activeTab, activitySubtab: harness.signals.signal('performance') });
   let token = state.beginRequest();
   state.commitRequest(token, payload([
@@ -200,7 +200,7 @@ test('Debug island keys endpoint and phase DOM and owns only an active 10s timer
   await harness.act(() => { activeTab.value = 'groups'; });
   assert.equal(timers.size, 0, 'inactive Debug owns no timer');
   assert.ok(cancels >= 1, 'deactivation cancels any in-flight request');
-  await harness.act(() => { activeTab.value = 'activity'; });
+  await harness.act(() => { activeTab.value = 'diagnostics'; });
   assert.equal(loads.length, 3, 'reactivation loads immediately');
   assert.equal(timers.size, 1);
   await mounted.unmount();

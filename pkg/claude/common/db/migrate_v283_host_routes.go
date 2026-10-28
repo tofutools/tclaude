@@ -17,7 +17,7 @@ const hostRoutesSchema = `CREATE TABLE IF NOT EXISTS agent_host_routes (
  UNIQUE(publisher_agent_id, name)
 ) STRICT`
 
-func migrateV281toV282(d *sql.DB) error {
+func migrateV282toV283(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -29,7 +29,7 @@ func migrateV281toV282(d *sql.DB) error {
 	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_agent_host_routes_publisher ON agent_host_routes(publisher_conv_id, state)`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 282`); err != nil {
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 283`); err != nil {
 		return err
 	}
 	return tx.Commit()

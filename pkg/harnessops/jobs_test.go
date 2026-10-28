@@ -120,3 +120,25 @@ func TestHarnessRequestValidationAndFixedRecipes(t *testing.T) {
 		require.NotContains(t, r.InstallCommand, "sudo")
 	}
 }
+
+func TestHarnessOperationsCustomUpdateOverride(t *testing.T) {
+	s, _ := fixture(t)
+	s.hooks.UpdateOverride = func(name string) string {
+		if name == "codex" {
+			return "brew upgrade codex"
+		}
+		return ""
+	}
+	var ran Command
+	s.execute = func(_ context.Context, c Command) error { ran = c; return nil }
+	j, err := s.Start(Request{Action: "update", Harness: "codex"}, "operator", func(bool) bool { return true })
+	require.NoError(t, err)
+	j = waitJob(t, s, j.ID)
+	require.Equal(t, "succeeded", j.State)
+	require.Equal(t, "custom", j.Results[0].Recipe)
+	require.Equal(t, []string{"-c", "brew upgrade codex"}, ran.Args)
+	j, err = s.Start(Request{Action: "install", Harness: "codex"}, "operator", func(bool) bool { return true })
+	require.NoError(t, err)
+	j = waitJob(t, s, j.ID)
+	require.Equal(t, "fake", ran.Path, "an install keeps the official recipe")
+}

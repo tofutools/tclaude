@@ -20,6 +20,13 @@ type MoveOptions struct {
 	KeepSandbox bool
 	// KeepEnvironment keeps composing the source group's environment.
 	KeepEnvironment bool
+	// KeepPermissions keeps the source group's group permissions, still
+	// bound to that group and following its later edits
+	// (agent_retained_group_permissions). Unlike the sandbox, this applies
+	// immediately.
+	KeepPermissions bool
+	// By names the operator for the retained-permissions record.
+	By string
 }
 
 // MoveAgentGroupMember moves an agent from one group to another in one
@@ -102,7 +109,14 @@ func moveAgentGroupMemberTx(tx *sql.Tx, agentID string, fromGroupID, toGroupID i
 	if err := applyMoveOptions(tx, agentID, fromGroupID, opts); err != nil {
 		return MoveResult{}, err
 	}
-	if err := rebindSandboxResolutionGroup(tx, agentID, toGroupID); err != nil {
+	if opts.KeepPermissions {
+		if _, err := tx.Exec(`INSERT INTO agent_retained_group_permissions (agent_id, group_id, retained_at, retained_by)
+			VALUES (?, ?, ?, ?) ON CONFLICT(agent_id, group_id) DO NOTHING`,
+			agentID, fromGroupID, dbTime(time.Now()), opts.By); err != nil {
+			return MoveResult{}, err
+		}
+	}
+	if err := syncGroupSourcedSettings(tx, agentID, toGroupID); err != nil {
 		return MoveResult{}, err
 	}
 	snapshot, ok, err := loadAgentSandboxForRebind(tx, agentID)
@@ -153,6 +167,18 @@ func applyMoveOptions(q dbExecQuerier, agentID string, fromGroupID int64, opts M
 	}
 	snapshot.GroupBinding = binding
 	return storeAgentSandboxForRebind(q, agentID, snapshot)
+}
+
+// syncGroupSourcedSettings brings everything an agent takes from its groups
+// in step with its memberships after a membership change: a group it belongs
+// to again no longer needs a kept-permissions record (so leaving it later
+// really drops its permissions), and its sandbox source groups are rebound.
+func syncGroupSourcedSettings(q dbExecQuerier, agentID string, preferred int64) error {
+	if _, err := q.Exec(`DELETE FROM agent_retained_group_permissions WHERE agent_id = ?
+		AND group_id IN (SELECT group_id FROM agent_group_members WHERE agent_id = ?)`, agentID, agentID); err != nil {
+		return err
+	}
+	return rebindSandboxResolutionGroup(q, agentID, preferred)
 }
 
 // rebindSandboxResolutionGroup keeps an agent's recorded sandbox source groups
@@ -279,4 +305,73 @@ func storeAgentSandboxForRebind(q dbExecQuerier, agentID string, snapshot *sandb
 	}
 	_, err = q.Exec(`UPDATE agents SET effective_sandbox_config = ? WHERE agent_id = ?`, raw, agentID)
 	return err
+}
+
+// ListRetainedPermissionGroups returns the ids of the active groups whose
+// group permissions agentID kept when it was moved out of them, oldest first.
+func ListRetainedPermissionGroups(agentID string) ([]int64, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT r.group_id FROM agent_retained_group_permissions r
+		JOIN agent_groups g ON g.id = r.group_id AND g.archived_at IS NULL
+		WHERE r.agent_id = ? AND NOT EXISTS (
+			SELECT 1 FROM agent_group_members m WHERE m.group_id = r.group_id AND m.agent_id = r.agent_id)
+		ORDER BY r.retained_at, r.group_id`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ListRetainedPermissionHolders returns the current conversations of the
+// active agents that kept groupID's permissions without being members of it.
+func ListRetainedPermissionHolders(groupID int64) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT a.current_conv_id FROM agent_retained_group_permissions r
+		JOIN agents a ON a.agent_id = r.agent_id AND a.retired_at IS NULL
+		WHERE r.group_id = ? AND NOT EXISTS (
+			SELECT 1 FROM agent_group_members m WHERE m.group_id = r.group_id AND m.agent_id = r.agent_id)
+		ORDER BY r.retained_at, a.current_conv_id`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var conv string
+		if err := rows.Scan(&conv); err != nil {
+			return nil, err
+		}
+		out = append(out, conv)
+	}
+	return out, rows.Err()
+}
+
+// DropRetainedGroupPermissions ends an agent's kept permissions from groupID,
+// reporting whether it had any.
+func DropRetainedGroupPermissions(agentID string, groupID int64) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`DELETE FROM agent_retained_group_permissions WHERE agent_id = ? AND group_id = ?`, agentID, groupID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }

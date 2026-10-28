@@ -27,7 +27,7 @@ import (
 // Profile captures live under ~/.tclaude/data/profiles/<id>/, one directory
 // per capture with a meta.json describing it. Both the dashboard (in-process
 // capture) and `tclaude agentd profile` (over the pprof socket) write here, so
-// the Activity › Performance list shows every capture regardless of origin.
+// the Diagnostics › Performance list shows every capture regardless of origin.
 
 const (
 	profileMetaFile        = "meta.json"

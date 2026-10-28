@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { UpdateScriptsSection } from './fleet-admin-update-scripts.js';
 import { CREDENTIAL_FILE_HARNESSES, SHARE_WARNING, accessHint, cellView, harnessColumns, jobActive } from './fleet-harness-model.js';
 
 const html = htm.bind(h);
@@ -246,6 +247,7 @@ export function HarnessesPage({ view, actions, confirm, toast, copy, timers = gl
       <tbody>${jobList.map((entry) => html`<${JobRow} key=${entry.job.id} entry=${entry} copy=${copy} toast=${toast}
         onDismiss=${() => setJobs((cur) => { const next = { ...cur }; delete next[entry.job.id]; return next; })} />`)}</tbody>
     </table>`}
+    <${UpdateScriptsSection} nodes=${nodes} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />
     ${open && html`<${HarnessDialog} node=${open.node} row=${open.row} actions=${actions} confirm=${confirm} toast=${toast} onJob=${onJob}
       onClose=${() => setOpen(null)} onChanged=${(availability) => { if (availability) setAvail((cur) => ({ ...cur, [open.node.id]: { data: availability } })); }} />`}
   </div>`;

@@ -47,6 +47,7 @@ func groupsCmd() *cobra.Command {
 			groupsAddCmd(),
 			groupsRemoveCmd(),
 			groupsMoveCmd(),
+			groupsDropKeptCmd(),
 			groupsUpdateMemberCmd(),
 			groupsStopCmd(),
 			groupsResumeCmd(),
@@ -566,6 +567,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 	}
 	if len(members) == 0 {
 		fmt.Fprintln(stdout, "(no members)")
+		printKeptPermissionHolders(p.Name, stdout)
 		return rcOK
 	}
 	tbl := table.New(
@@ -601,7 +603,27 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
+	printKeptPermissionHolders(p.Name, stdout)
 	return rcOK
+}
+
+// printKeptPermissionHolders notes the non-members that still hold the
+// group's permissions (a move that kept them), so editing the group's grants
+// shows who else receives them. Older daemons lack the route; print nothing.
+func printKeptPermissionHolders(group string, stdout io.Writer) {
+	var holders []struct {
+		AgentID string `json:"agent_id"`
+		ConvID  string `json:"conv_id"`
+		Title   string `json:"title"`
+	}
+	if err := DaemonGet("/v1/groups/"+url.PathEscape(group)+"/kept-permissions", &holders); err != nil || len(holders) == 0 {
+		return
+	}
+	names := make([]string, 0, len(holders))
+	for _, h := range holders {
+		names = append(names, shortAgentID(h.AgentID, h.ConvID)+" "+h.Title)
+	}
+	fmt.Fprintf(stdout, "Also holding this group's permissions (kept after a move): %s\n", strings.Join(names, ", "))
 }
 
 // --- groups add ---
@@ -716,6 +738,7 @@ type groupsMoveParams struct {
 	To              string `pos:"true" help:"Group to move it to"`
 	KeepSandbox     bool   `long:"keep-sandbox" optional:"true" help:"Keep the current group's sandbox profile instead of taking the new group's"`
 	KeepEnvironment bool   `long:"keep-environment" optional:"true" help:"Keep the current group's environment variables instead of taking the new group's"`
+	KeepPermissions bool   `long:"keep-permissions" optional:"true" help:"Also keep the current group's group permissions after leaving it (operator only; undo with groups drop-kept-permissions)"`
 	AskHuman        string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
@@ -724,6 +747,9 @@ func groupsMoveCmd() *cobra.Command {
 		Use:   "move",
 		Short: "Move a conversation to another group",
 		Long: "Move a conversation from one group to another, keeping its role and description.\n\n" +
+			"The new group's permissions apply immediately and the current group's stop, unless the " +
+			"operator passes --keep-permissions, which keeps them (bound to that group, following its " +
+			"later changes) until `groups drop-kept-permissions` or the group is deleted.\n\n" +
 			"By default the agent takes the new group's sandbox profile and environment from its next " +
 			"resume or restart; the running process is unchanged. --keep-sandbox and --keep-environment " +
 			"leave either on the current group (following that group's later changes) instead. " +
@@ -755,15 +781,17 @@ func runGroupsMove(p *groupsMoveParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	var resp struct {
-		ConvID      string `json:"conv_id"`
-		Sandbox     string `json:"sandbox"`
-		Environment string `json:"environment"`
+		ConvID          string `json:"conv_id"`
+		Sandbox         string `json:"sandbox"`
+		Environment     string `json:"environment"`
+		KeptPermissions bool   `json:"kept_permissions"`
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Group) + "/members/" + url.PathEscape(p.Conv) + "/move"
 	if err := DaemonRequest(http.MethodPost, path, map[string]any{
 		"to":               p.To,
 		"keep_sandbox":     p.KeepSandbox,
 		"keep_environment": p.KeepEnvironment,
+		"keep_permissions": p.KeepPermissions,
 	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
@@ -777,6 +805,58 @@ func runGroupsMove(p *groupsMoveParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  sandbox profile: %s\n  environment: %s\n  (applies at the agent's next resume or restart)\n",
 			resp.Sandbox, resp.Environment)
 	}
+	if p.KeepPermissions {
+		if !resp.KeptPermissions {
+			// An older daemon ignores the field and moves with the defaults.
+			fmt.Fprintf(stderr, "Warning: the daemon did not keep group %q's permissions (restart it to pick up --keep-permissions); the agent now has only %q's.\n", p.Group, p.To)
+			return rcIOFailure
+		}
+		fmt.Fprintf(stdout, "  kept group %q's permissions (applies now)\n", p.Group)
+	}
+	return rcOK
+}
+
+// --- groups drop-kept-permissions ---
+
+type groupsDropKeptParams struct {
+	Group    string `pos:"true" help:"Group whose kept permissions to drop"`
+	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsDropKeptCmd() *cobra.Command {
+	return boa.CmdT[groupsDropKeptParams]{
+		Use:         "drop-kept-permissions",
+		Short:       "Stop an agent keeping a group's permissions after a move",
+		Long:        "Ends the group permissions an agent kept from a group it was moved out of with `groups move --keep-permissions`. Applies immediately.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsDropKeptParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Conv).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsDropKeptParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsDropKept(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsDropKept(p *groupsDropKeptParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Group) + "/kept-permissions/" + url.PathEscape(p.Conv)
+	if err := DaemonRequest(http.MethodDelete, path, nil, nil, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "%s no longer keeps group %q's permissions\n", p.Conv, p.Group)
 	return rcOK
 }
 

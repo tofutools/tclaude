@@ -267,7 +267,7 @@ Three properties make the trail defensible rather than decorative:
 - **Sudo is visible.** Requests, the operator's decision, the stated reason,
   and every command executed under the elevation all land in the trail.
 
-Browse and filter the trail in the dashboard's **Activity › Audit** view. Retention
+Browse and filter the trail in the dashboard's **Diagnostics › Audit** view. Retention
 defaults to 30 days; set `audit.retention_days` in
 `~/.tclaude/data/config.json` to keep more, or a negative value to keep
 forever. The hourly sweep re-reads the config, so changes apply without a
@@ -285,7 +285,7 @@ back to the lifecycle command that asked for it, so a dead agent is never
 just "gone": the trail distinguishes an ordered shutdown from a crash, and a
 crash from a launch that never came up. Spawn failures surface this evidence
 directly ("managed pane exited during startup (signal …)"), with the pane's
-output tail in the dashboard's Activity › Logs view.
+output tail in the dashboard's Diagnostics › Logs view.
 
 Empty cause fields mean the evidence was unavailable — the ledger never
 infers a cause it didn't observe.
