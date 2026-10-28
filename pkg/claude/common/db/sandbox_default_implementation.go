@@ -78,25 +78,23 @@ func ClearSandboxDefaultImplementation() error {
 	return DeleteDashboardPref(SandboxDefaultImplementationPrefKey)
 }
 
+// FreshInstallPrefKey is written by migrate when it creates the database from
+// nothing (no legacy JSON import). It is the "new install" signal; databases
+// created before this key existed never carry it, so they count as existing.
+const FreshInstallPrefKey = "tclaude.install.created_fresh"
+
 // SeedFreshInstallSandboxDefault writes SandboxDefaultTclaudeLayer when the
-// operator has not decided AND the database has never recorded a session — the
-// "new install" signal. An existing install stays undecided, so an upgrade
-// never changes how its next agent is confined; the Doctor tab asks instead.
-// Reports whether it wrote.
+// operator has not decided AND this database was created fresh by a binary
+// that knows about the install default. An existing install stays undecided, so
+// an upgrade never changes how its next agent is confined; the Doctor tab asks
+// instead. Reports whether it wrote.
 func SeedFreshInstallSandboxDefault() (bool, error) {
 	if _, decided, err := GetSandboxDefaultImplementation(); err != nil || decided {
 		return false, err
 	}
-	d, err := Open()
-	if err != nil {
+	_, fresh, err := GetDashboardPref(FreshInstallPrefKey)
+	if err != nil || !fresh {
 		return false, err
-	}
-	var sessions int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&sessions); err != nil {
-		return false, err
-	}
-	if sessions > 0 {
-		return false, nil
 	}
 	if _, err := SetSandboxDefaultImplementation(SandboxDefaultTclaudeLayer); err != nil {
 		return false, err

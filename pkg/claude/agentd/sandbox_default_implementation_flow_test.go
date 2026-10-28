@@ -122,3 +122,24 @@ func TestSpawn_InstallDefaultConfinesANewAgent(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "tclaude-layer", got)
 }
+
+// The default decides how every future agent is confined, so an agent without
+// sandbox-profiles.manage — group owners included — can read it but not change it.
+func TestSandboxImplInstallDefaultWritesNeedTheManageSlug(t *testing.T) {
+	f := newFlow(t)
+	const conv = "0f0e0d0c-0b0a-4908-8706-0504030201d1"
+	f.HaveGroup("crew")
+	f.HaveAliveSession(conv, "worker", "worker-pane", t.TempDir())
+	f.HaveMember("crew", conv)
+
+	asAgent := func(method string, body any) int {
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(
+			testharness.JSONRequest(t, method, "/v1/sandbox-impl-default", body), conv)).Code
+	}
+	assert.Equal(t, http.StatusOK, asAgent(http.MethodGet, nil))
+	assert.Equal(t, http.StatusForbidden, asAgent(http.MethodPut, map[string]any{"value": "harness"}))
+	assert.Equal(t, http.StatusForbidden, asAgent(http.MethodDelete, nil))
+	_, decided, err := db.GetSandboxDefaultImplementation()
+	require.NoError(t, err)
+	assert.False(t, decided, "a refused write must not record a decision")
+}

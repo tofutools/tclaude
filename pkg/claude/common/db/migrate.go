@@ -51,6 +51,11 @@ func migrate(db *sql.DB) error {
 	// The DB's true starting version, reported to the caller before any work
 	// (0 for a brand-new DB, before createSchema bumps it to 1).
 	from := ver
+	// freshInstall marks a database this binary created from nothing, as opposed
+	// to one it upgraded or filled from legacy JSON. Recorded once, after the
+	// chain reaches head, as the durable "new install" signal: the sessions table
+	// cannot serve, because kill/prune/cleanup empty it on long-lived installs.
+	freshInstall := false
 
 	if ver == 0 {
 		if err := createSchema(db); err != nil {
@@ -65,6 +70,11 @@ func migrate(db *sql.DB) error {
 			}
 			return err
 		}
+		var imported int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&imported); err != nil {
+			return fmt.Errorf("count legacy-imported sessions: %w", err)
+		}
+		freshInstall = imported == 0
 		ver = 1 // createSchema sets version to 1
 	}
 
@@ -93,6 +103,13 @@ func migrate(db *sql.DB) error {
 		}
 		r.reportApplied(step.version)
 		ver = step.version
+	}
+	if freshInstall {
+		if _, err := db.Exec(
+			`INSERT OR IGNORE INTO dashboard_prefs (key, value, updated_at) VALUES (?, '1', ?)`,
+			FreshInstallPrefKey, dbTime(time.Now())); err != nil {
+			return fmt.Errorf("record fresh install: %w", err)
+		}
 	}
 	r.reportDone(currentVersion)
 	return nil

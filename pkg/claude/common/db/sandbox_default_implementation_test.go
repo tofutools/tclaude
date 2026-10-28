@@ -32,12 +32,16 @@ func TestSeedFreshInstallSandboxDefaultOnlyOnAFreshInstall(t *testing.T) {
 	assert.Equal(t, SandboxDefaultHarness, value)
 }
 
+// An upgraded install has no fresh-install marker, and an empty sessions table
+// (kill, prune and cleanup all empty it) must not make it look new.
 func TestSeedFreshInstallSandboxDefaultLeavesAnExistingInstallUndecided(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "spwn-old", TmuxSession: "tmux-spwn-old", ConvID: "conv-old",
 		Status: "idle", CreatedAt: time.Now().UTC(),
 	}))
+	require.NoError(t, DeleteDashboardPref(FreshInstallPrefKey))
+	require.NoError(t, DeleteSession("spwn-old"))
 
 	seeded, err := SeedFreshInstallSandboxDefault()
 	require.NoError(t, err)
