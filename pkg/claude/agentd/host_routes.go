@@ -38,7 +38,8 @@ type hostRouteLease struct {
 
 var hostRouteLeases = struct {
 	sync.Mutex
-	items map[string]*hostRouteLease
+	items   map[string]*hostRouteLease
+	closing bool
 }{items: make(map[string]*hostRouteLease)}
 
 // Only mounted on the cookie-authenticated dashboard, never on buildMux's
@@ -113,6 +114,12 @@ func openHostRoute(route *db.AgentRoute, port int) (*hostRouteLease, error) {
 		groupID: route.GroupID, publisher: publisher, adapter: adapter, cancel: cancel,
 		consumer: routebroker.ConsumerAuth{LeaseID: id, RouteID: route.ID, AgentID: "operator-host", ConvID: id, LaunchGeneration: id, GroupGeneration: route.GroupGeneration}}
 	hostRouteLeases.Lock()
+	if hostRouteLeases.closing {
+		hostRouteLeases.Unlock()
+		cancel()
+		adapter.Close()
+		return nil, errors.New("host route runtime is shutting down")
+	}
 	if len(hostRouteLeases.items) >= 128 {
 		hostRouteLeases.Unlock()
 		cancel()
@@ -188,6 +195,15 @@ func closeHostRoute(id, reason string) {
 			slog.Warn("host route close audit failed", "lease", id, "error", err)
 		}
 	}
+}
+
+// shutdownHostRoutes stops admission under the same lock that registers a
+// listener, then drains every lease that was admitted before the gate closed.
+func shutdownHostRoutes() {
+	hostRouteLeases.Lock()
+	hostRouteLeases.closing = true
+	hostRouteLeases.Unlock()
+	closeAllHostRoutes()
 }
 
 func closeAllHostRoutes() {

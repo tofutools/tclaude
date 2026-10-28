@@ -124,7 +124,14 @@ func TestHostRoutesFlow(t *testing.T) {
 			case "publisher-exit":
 				require.NoError(t, db.MarkAgentRoutePublisherLost(route.ID, "publisher exited"))
 			case "shutdown":
-				closeAllHostRoutes()
+				t.Cleanup(func() {
+					hostRouteLeases.Lock()
+					hostRouteLeases.closing = false
+					hostRouteLeases.Unlock()
+				})
+				shutdownHostRoutes()
+				_, err := openHostRoute(route, 0)
+				require.ErrorContains(t, err, "shutting down")
 			case "operator-close":
 				require.Equal(t, http.StatusNoContent, request(http.MethodDelete, "/api/routes/host/"+lease.ID).Code)
 			}
