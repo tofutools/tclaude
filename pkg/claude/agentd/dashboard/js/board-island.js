@@ -17,9 +17,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import htm from 'htm';
 import { signal } from '@preact/signals';
 import {
-  BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, boardIdFromTitle, bump, changeBounds, connectArrow, contentBounds,
-  describeChanges, elementBounds, isBoardId, liveElements, mergeElements, newElement, normalizeBox,
-  reboundArrows, shapeAt, simplifyStroke, toExcalidraw, topHit,
+  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, alignMoves, boardIdFromTitle, bump, center, changeBounds,
+  cleanText, clipboardText, cloneElements, connectArrow, contentBounds, describeChanges, elementBounds, elementsInBox, isBoardId,
+  labelOf, labelOwners, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
+  reboundArrows, shapeAt, simplifyStroke, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
 import { companionAgents } from './companion-model.js';
 
@@ -35,7 +36,11 @@ const HISTORY_MAX = 100;
 
 async function jsonOrThrow(response) {
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    const error = new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -125,7 +130,8 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState(BOARD_COLORS[0]);
   const [fill, setFill] = useState(BOARD_FILLS[0]);
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState([]); // ids
+  const pointerAt = useRef(null); // the last board point under the pointer, for paste
   const [view, setView] = useState({ x: -40, y: -40, zoom: 1 });
   const [editingText, setEditingTextState] = useState(null); // {id, x, y, text, isNew}
   // finishText can run twice for one edit (Enter, then the textarea's blur as
@@ -219,6 +225,16 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       // before this PATCH have versions below result.version.
       void result;
     } catch (error) {
+      // A refused element (400) is dropped, with the rest retried at once:
+      // retrying it would hold every later edit back for good.
+      if (error?.status === 400 || error?.status === 413) {
+        const bad = /^elements\[(\d+)\]/.exec(error.message || '');
+        const drop = bad ? new Set([batch[Number(bad[1])]?.id]) : new Set(batch.map((el) => el.id));
+        if (!disposed.current) notify(`The board refused ${drop.size === 1 ? 'an edit' : `${drop.size} edits`}: ${error.message}`, true);
+        for (const el of batch) if (!drop.has(el.id) && !pending.current.has(el.id)) pending.current.set(el.id, el);
+        if (pending.current.size) void flush();
+        return;
+      }
       // Keep the edits; the next change or flush retries them.
       for (const el of batch) if (!pending.current.has(el.id)) pending.current.set(el.id, el);
       if (!disposed.current) {
@@ -306,7 +322,10 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     const ids = changed.map((el) => el.id);
     const temp = new Map(elements.current);
     for (const el of changed) temp.set(el.id, el);
-    return [...changed, ...reboundArrows(temp, ids)];
+    // A moved arrow that is also bound to a moved shape is saved once.
+    const out = new Map(changed.map((el) => [el.id, el]));
+    for (const arrow of reboundArrows(temp, ids)) out.set(arrow.id, arrow);
+    return [...out.values()];
   }
 
   function undo(redo = false) {
@@ -325,10 +344,50 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     commit(next, { record: false });
   }
 
+  // remove deletes elements; a deleted shape takes its label with it.
   function remove(ids) {
-    const next = ids.map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted).map((el) => bump(el, { isDeleted: true }));
+    const next = withLabels(elements.current, ids).map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted).map((el) => bump(el, { isDeleted: true }));
     commit(next);
-    setSelected('');
+    setSelected([]);
+  }
+
+  // moveBy commits moves of whole elements (each with its label) and
+  // rebinds the arrows on them. moves: Map(id -> {dx, dy}).
+  function moveBy(moves) {
+    const next = new Map();
+    for (const [id, { dx, dy }] of moves) {
+      for (const each of withLabels(elements.current, [id])) {
+        const el = elements.current.get(each);
+        if (el && !el.isDeleted && !next.has(each)) next.set(each, bump(el, { x: el.x + dx, y: el.y + dy }));
+      }
+    }
+    commit(withArrows([...next.values()]));
+  }
+
+  function align(how) {
+    const owners = labelOwners(elements.current);
+    const chosen = new Set(selected);
+    // Labels follow their shapes and arrows follow their ends.
+    const targets = selected.map((id) => elements.current.get(id))
+      .filter((el) => el && !el.isDeleted && el.type !== 'arrow' && !chosen.has(owners.get(el.id)));
+    moveBy(alignMoves(targets, how));
+  }
+
+  // paste adds copies of elements at the pointer (or beside the originals)
+  // and selects them.
+  function pasteElements(source) {
+    const box = contentBounds(source);
+    if (!box) return;
+    const at = pointerAt.current;
+    const dx = at ? at.x - box.x : 20;
+    const dy = at ? at.y - box.y : 20;
+    const copies = cloneElements(source, dx, dy);
+    commit(copies);
+    setSelected(copies.map((el) => el.id));
+  }
+
+  function selectionWithLabels() {
+    return withLabels(elements.current, selected).map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted);
   }
 
   // -- pointer input ----------------------------------------------------------
@@ -342,26 +401,39 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     if (event.button !== 0 && event.button !== 1) return;
     if (editingText) { finishText(); return; }
     const p = toBoard(event);
+    pointerAt.current = p;
     const svg = svgRef.current;
     svg?.setPointerCapture?.(event.pointerId);
     const live = liveElements(elements.current);
-    const panning = tool === 'hand' || event.button === 1 || event.shiftKey && tool === 'select' && !topHit(live, p.x, p.y);
+    const panning = tool === 'hand' || event.button === 1;
     if (panning) {
       gesture.current = { kind: 'pan', sx: event.clientX, sy: event.clientY, view };
       return;
     }
     if (tool === 'select') {
       const hit = topHit(live, p.x, p.y, 6 / view.zoom);
-      setSelected(hit?.id || '');
-      if (hit) {
-        const b = elementBounds(hit);
-        const onHandle = Math.abs(p.x - (b.x + b.width)) < 10 / view.zoom && Math.abs(p.y - (b.y + b.height)) < 10 / view.zoom && !hit.points && hit.type !== 'text';
-        active.current = new Set([hit.id]);
-        // The bound arrows' originals: the drag redraws them from these, and
-        // pointerup restores them so the commit (and its undo) starts clean.
-        const arrows = live.filter((el) => el.type === 'arrow' && (el.startBinding?.elementId === hit.id || el.endBinding?.elementId === hit.id));
-        gesture.current = { kind: onHandle ? 'resize' : 'move', id: hit.id, start: p, orig: hit, arrows };
+      if (!hit) {
+        // Empty space: a rubber band; with Shift it adds to the selection.
+        if (!event.shiftKey) setSelected([]);
+        gesture.current = { kind: 'band', start: p, now: p, base: event.shiftKey ? selected : [] };
+        return;
       }
+      if (event.shiftKey) {
+        setSelected(selected.includes(hit.id) ? selected.filter((id) => id !== hit.id) : [...selected, hit.id]);
+        return;
+      }
+      const ids = selected.includes(hit.id) ? selected : [hit.id];
+      if (!selected.includes(hit.id)) setSelected(ids);
+      const b = elementBounds(hit);
+      const onHandle = ids.length === 1 && Math.abs(p.x - (b.x + b.width)) < 10 / view.zoom && Math.abs(p.y - (b.y + b.height)) < 10 / view.zoom && !hit.points && hit.type !== 'text';
+      // A move carries the selection's labels; a resize only the shape.
+      const movers = onHandle ? [hit.id] : withLabels(elements.current, ids);
+      active.current = new Set(movers);
+      const origs = new Map(movers.map((id) => [id, elements.current.get(id)]).filter(([, el]) => el && !el.isDeleted));
+      // The bound arrows' originals: the drag redraws them from these, and
+      // pointerup restores them so the commit (and its undo) starts clean.
+      const arrows = live.filter((el) => el.type === 'arrow' && !origs.has(el.id) && (origs.has(el.startBinding?.elementId) || origs.has(el.endBinding?.elementId)));
+      gesture.current = { kind: onHandle ? 'resize' : 'move', id: hit.id, start: p, orig: hit, origs, arrows };
       return;
     }
     if (tool === 'eraser') {
@@ -400,9 +472,11 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   }
 
   function onPointerMove(event) {
+    const p = toBoard(event);
+    pointerAt.current = p;
     const g = gesture.current;
     if (!g) return;
-    const p = toBoard(event);
+    if (g.kind === 'band') { g.now = p; redraw(); return; }
     if (g.kind === 'pan') {
       setView({ ...g.view, x: g.view.x - (event.clientX - g.sx) / g.view.zoom, y: g.view.y - (event.clientY - g.sy) / g.view.zoom });
       return;
@@ -411,14 +485,15 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     const el = elements.current.get(g.id);
     if (!el) return;
     if (g.kind === 'move' || g.kind === 'resize') {
-      const next = g.kind === 'move'
-        ? { ...g.orig, x: g.orig.x + p.x - g.start.x, y: g.orig.y + p.y - g.start.y }
-        : { ...g.orig, width: Math.max(8, g.orig.width + p.x - g.start.x), height: Math.max(8, g.orig.height + p.y - g.start.y) };
-      elements.current.set(g.id, next);
+      if (g.kind === 'move') {
+        for (const [id, orig] of g.origs) elements.current.set(id, { ...orig, x: orig.x + p.x - g.start.x, y: orig.y + p.y - g.start.y });
+      } else {
+        elements.current.set(g.id, { ...g.orig, width: Math.max(8, g.orig.width + p.x - g.start.x), height: Math.max(8, g.orig.height + p.y - g.start.y) });
+      }
       // Rebind from the originals so a long drag does not inflate versions.
       const temp = new Map(elements.current);
       for (const arrow of g.arrows) temp.set(arrow.id, arrow);
-      for (const arrow of reboundArrows(temp, [g.id])) elements.current.set(arrow.id, arrow);
+      for (const arrow of reboundArrows(temp, [...g.origs.keys()])) if (!g.origs.has(arrow.id)) elements.current.set(arrow.id, arrow);
       g.moved = true;
     } else if (g.kind === 'draw') {
       const dx = p.x - g.start.x; const dy = p.y - g.start.y;
@@ -439,6 +514,13 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     gesture.current = null;
     active.current = new Set();
     if (!g) return;
+    if (g.kind === 'band') {
+      const box = normalizeBox(g.start.x, g.start.y, g.now.x, g.now.y);
+      const inside = box.width > 2 || box.height > 2 ? elementsInBox(liveElements(elements.current), box).map((el) => el.id) : [];
+      setSelected([...new Set([...g.base, ...inside])]);
+      redraw();
+      return;
+    }
     if (g.kind === 'erase') {
       const erased = [...g.erased].map((id) => elements.current.get(id)).filter(Boolean);
       // Restore the pre-erase copies, then commit the deletions as edits.
@@ -447,11 +529,16 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       return;
     }
     if (g.kind === 'move' || g.kind === 'resize') {
-      if (!g.moved) return;
-      const now = elements.current.get(g.id);
-      elements.current.set(g.id, g.orig);
+      // A click (no drag) on one element of a selection selects just it.
+      if (!g.moved) { if (selected.length > 1) setSelected([g.id]); return; }
+      const changed = [];
+      for (const [id, orig] of g.origs) {
+        const now = elements.current.get(id);
+        elements.current.set(id, orig);
+        changed.push(bump(orig, { x: now.x, y: now.y, width: now.width, height: now.height }));
+      }
       for (const arrow of g.arrows) elements.current.set(arrow.id, arrow);
-      commit(withArrows([bump(g.orig, { x: now.x, y: now.y, width: now.width, height: now.height })]));
+      commit(withArrows(changed));
       return;
     }
     if (g.kind !== 'draw') return;
@@ -479,7 +566,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       return;
     }
     commit([done]);
-    if (el.type !== 'freedraw') setSelected(done.id);
+    if (el.type !== 'freedraw') setSelected([done.id]);
   }
 
   function onWheel(event) {
@@ -505,16 +592,41 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     }
   }
 
+  // beginLabel edits a shape's label, or starts one (`<id>-label`, as the
+  // CLI writes labels).
+  function beginLabel(shape) {
+    const label = labelOf(elements.current, shape.id);
+    if (label) { beginText(label); return; }
+    const c = center(shape);
+    setEditingText({ id: '', shapeId: shape.id, x: c.x - 60, y: c.y - 12, text: '', size: 20, color: safeColor(shape.strokeColor, '#1e1e1e'), isNew: true });
+  }
+
+  function onDoubleClick(event) {
+    const p = toBoard(event);
+    const live = liveElements(elements.current);
+    const hit = topHit(live, p.x, p.y);
+    if (hit?.type === 'text') { beginText(hit); return; }
+    // Anywhere inside a shape (not only on an unfilled shape's outline).
+    const shape = shapeAt(live, p.x, p.y);
+    if (shape && shape.type !== 'text') beginLabel(shape);
+    else if (!hit && tool === 'select') beginText(null, p);
+  }
+
   function finishText() {
     const t = editingRef.current;
     setEditingText(null);
     if (!t) return;
     const text = t.text.replace(/\s+$/, '');
     if (t.isNew) {
-      if (text) {
-        const el = newElement('text', { x: t.x, y: t.y, text, fontSize: t.size, strokeColor: t.color });
-        commit([el]);
+      if (!text) return;
+      const shape = t.shapeId && elements.current.get(t.shapeId);
+      if (shape && !shape.isDeleted) {
+        const label = newLabel(shape, text, { strokeColor: t.color });
+        // A deleted `<id>-label` outranks a fresh version 1: revive it.
+        const old = elements.current.get(label.id);
+        commit([old ? bump(old, { ...label, version: old.version, isDeleted: false }) : label]);
       }
+      else commit([newElement('text', { x: t.x, y: t.y, text, fontSize: t.size, strokeColor: t.color })]);
       return;
     }
     const cur = elements.current.get(t.id);
@@ -526,26 +638,75 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   // -- keyboard ---------------------------------------------------------------
 
   useEffect(() => {
-    const onKey = (event) => {
+    const ours = (event) => {
       const target = event.target;
-      if (editingText || target?.closest?.('input, textarea, [contenteditable="true"], .companion-window')) return;
-      if (!shown() || (!target?.closest?.('#tab-boards') && target !== win?.document?.body)) return;
+      if (editingText || target?.closest?.('input, textarea, [contenteditable="true"], .companion-window')) return false;
+      return shown() && (!!target?.closest?.('#tab-boards') || target === win?.document?.body);
+    };
+    const onKey = (event) => {
+      if (!ours(event)) return;
       const key = event.key.toLowerCase();
-      if ((event.ctrlKey || event.metaKey) && key === 'z') {
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && key === 'z') {
         event.preventDefault();
         undo(event.shiftKey);
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && key === 'y') { event.preventDefault(); undo(true); return; }
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selected) { event.preventDefault(); remove([selected]); return; }
-      if (event.key === 'Escape') { setSelected(''); setTool('select'); return; }
+      if (mod && key === 'y') { event.preventDefault(); undo(true); return; }
+      if (mod && key === 'a') { event.preventDefault(); setSelected(liveElements(elements.current).map((el) => el.id)); return; }
+      if (mod && key === 'd') {
+        event.preventDefault();
+        const source = selectionWithLabels();
+        if (source.length) {
+          const copies = cloneElements(source, 20, 20);
+          commit(copies);
+          setSelected(copies.map((el) => el.id));
+        }
+        return;
+      }
+      if (mod || event.altKey) return;
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length) { event.preventDefault(); remove(selected); return; }
+      if (event.key === 'Escape') { setSelected([]); setTool('select'); return; }
       const t = BOARD_TOOLS.find((candidate) => candidate.key === key);
       if (t) setTool(t.id);
     };
+    // Copy and paste use the system clipboard in Excalidraw's format, so
+    // elements also move between boards and to and from excalidraw.com.
+    const onCopy = (event) => {
+      if (!ours(event) || !selected.length) return;
+      // Text the operator highlighted is theirs to copy.
+      const highlighted = win?.getSelection?.();
+      if (highlighted && !highlighted.isCollapsed) return;
+      event.preventDefault();
+      event.clipboardData?.setData('text/plain', clipboardText(selectionWithLabels()));
+      if (event.type === 'cut') remove(selected);
+    };
+    const onPaste = (event) => {
+      if (!ours(event)) return;
+      const text = event.clipboardData?.getData('text/plain') || '';
+      if (!text) return;
+      event.preventDefault();
+      const source = parseClipboard(text);
+      if (source) { pasteElements(source); return; }
+      // Plain text becomes a text element.
+      const clean = cleanText(text);
+      if (!clean.trim()) return;
+      const at = pointerAt.current || { x: view.x + 40, y: view.y + 40 };
+      const el = newElement('text', { x: at.x, y: at.y, text: clean, fontSize: 20, strokeColor: color });
+      commit([el]);
+      setSelected([el.id]);
+    };
     win?.addEventListener?.('keydown', onKey);
-    return () => win?.removeEventListener?.('keydown', onKey);
-  }, [editingText, selected, view, tool]);
+    win?.addEventListener?.('copy', onCopy);
+    win?.addEventListener?.('cut', onCopy);
+    win?.addEventListener?.('paste', onPaste);
+    return () => {
+      win?.removeEventListener?.('keydown', onKey);
+      win?.removeEventListener?.('copy', onCopy);
+      win?.removeEventListener?.('cut', onCopy);
+      win?.removeEventListener?.('paste', onPaste);
+    };
+  }, [editingText, selected, view, tool, color]);
 
   // -- participants -------------------------------------------------------------
 
@@ -588,8 +749,14 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   // -- render -------------------------------------------------------------------
 
   const live = liveElements(elements.current);
-  const sel = selected ? elements.current.get(selected) : null;
-  const selBox = sel && !sel.isDeleted ? elementBounds(sel) : null;
+  const sels = selected.map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted);
+  const sel = sels.length === 1 ? sels[0] : null;
+  const band = gesture.current?.kind === 'band' ? normalizeBox(gesture.current.start.x, gesture.current.start.y, gesture.current.now.x, gesture.current.now.y) : null;
+  const arrangeable = (() => {
+    const owners = labelOwners(elements.current);
+    const chosen = new Set(selected);
+    return sels.filter((el) => el.type !== 'arrow' && !chosen.has(owners.get(el.id))).length;
+  })();
   const pad = 6 / view.zoom;
   const transform = `scale(${view.zoom}) translate(${-view.x} ${-view.y})`;
   const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
@@ -625,26 +792,35 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
         onClick=${() => setTool(t.id)}>${t.icon}</button>`)}
       <span class="board-sep"></span>
       ${BOARD_COLORS.map((c) => html`<button key=${c} type="button" class=${`board-swatch${color === c ? ' on' : ''}`} style=${`background:${c}`}
-        aria-label=${`Stroke ${c}`} onClick=${() => { setColor(c); if (sel) commit([bump(sel, { strokeColor: c })]); }}></button>`)}
+        aria-label=${`Stroke ${c}`} onClick=${() => { setColor(c); if (sels.length) commit(sels.map((el) => bump(el, { strokeColor: c }))); }}></button>`)}
       <span class="board-sep"></span>
       ${BOARD_FILLS.map((c) => html`<button key=${c} type="button" class=${`board-swatch fill${fill === c ? ' on' : ''}`}
         style=${c === 'transparent' ? '' : `background:${c}`} aria-label=${c === 'transparent' ? 'No fill' : `Fill ${c}`}
-        onClick=${() => { setFill(c); if (sel && ['rectangle', 'ellipse', 'diamond'].includes(sel.type)) commit([bump(sel, { backgroundColor: c })]); }}>${c === 'transparent' ? '∅' : ''}</button>`)}
+        onClick=${() => { setFill(c); commit(sels.filter((el) => ['rectangle', 'ellipse', 'diamond'].includes(el.type)).map((el) => bump(el, { backgroundColor: c }))); }}>${c === 'transparent' ? '∅' : ''}</button>`)}
       <span class="board-sep"></span>
       <button type="button" class="board-tool" title="Undo (Ctrl+Z)" aria-label="Undo" onClick=${() => undo(false)}>↶</button>
       <button type="button" class="board-tool" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" onClick=${() => undo(true)}>↷</button>
-      ${sel && html`<button type="button" class="board-tool" title="Delete (Del)" aria-label="Delete selection" onClick=${() => remove([sel.id])}>🗑</button>`}
+      ${sels.length > 0 && html`<button type="button" class="board-tool" title="Delete (Del)" aria-label="Delete selection" onClick=${() => remove(selected)}>🗑</button>`}
+      ${arrangeable >= 2 && html`<span class="board-sep"></span>${ALIGNMENTS.filter((a) => arrangeable >= (a.min || 2)).map((a) => html`<button key=${a.id} type="button" class="board-tool"
+        title=${a.label} aria-label=${a.label} onClick=${() => align(a.id)}>${a.icon}</button>`)}`}
       <span class="board-zoom">${Math.round(view.zoom * 100)}%</span>
     </div>
     <div class="board-canvas-wrap">
       <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`}
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
-        onWheel=${onWheel} onDblClick=${(event) => { const p = toBoard(event); const hit = topHit(live, p.x, p.y); if (hit?.type === 'text') beginText(hit); else if (tool === 'select') beginText(null, p); }}>
+        onWheel=${onWheel} onDblClick=${onDoubleClick}>
         <g data-board-viewport transform=${transform}>
           ${live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} />`)}
-          ${selBox && html`<g data-board-chrome>
-            <rect class="board-selection" x=${selBox.x - pad} y=${selBox.y - pad} width=${selBox.width + pad * 2} height=${selBox.height + pad * 2} />
-            ${!sel.points && sel.type !== 'text' && html`<rect class="board-handle" x=${selBox.x + selBox.width - 4 / view.zoom} y=${selBox.y + selBox.height - 4 / view.zoom} width=${8 / view.zoom} height=${8 / view.zoom} />`}
+          ${(sels.length > 0 || band) && html`<g data-board-chrome>
+            ${sels.map((el) => {
+              const b = elementBounds(el);
+              return html`<rect key=${el.id} class="board-selection" x=${b.x - pad} y=${b.y - pad} width=${b.width + pad * 2} height=${b.height + pad * 2} />`;
+            })}
+            ${sel && !sel.points && sel.type !== 'text' && (() => {
+              const b = elementBounds(sel);
+              return html`<rect class="board-handle" x=${b.x + b.width - 4 / view.zoom} y=${b.y + b.height - 4 / view.zoom} width=${8 / view.zoom} height=${8 / view.zoom} />`;
+            })()}
+            ${band && html`<rect class="board-band" x=${band.x} y=${band.y} width=${band.width} height=${band.height} />`}
           </g>`}
         </g>
       </svg>
