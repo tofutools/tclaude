@@ -24,7 +24,7 @@ import {
   COMPANION_ACTIVE_PREF, COMPANION_MESSAGE_MAX, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
-  stewardSummonBody, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary,
+  stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -567,9 +567,9 @@ export function CompanionApp({
     else toggle();
   }
 
-  async function send(event) {
+  async function send(event, text = draft) {
     event?.preventDefault?.();
-    const body = composeCompanionMessage(draft, withContext
+    const body = composeCompanionMessage(text, withContext
       ? viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search })
       : '');
     if (!body || !activeAgent || sending) return;
@@ -581,7 +581,7 @@ export function CompanionApp({
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
-      setDraft('');
+      if (text === draft) setDraft('');
     } catch (error) {
       notify(`Message to ${activeAgent.name} failed: ${error?.message || error}`, true);
     } finally {
@@ -825,6 +825,10 @@ export function CompanionApp({
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
+    ${activeAgent?.online && activeAgent.steward && !parked.has(activeAgent.agentId) && !draft && html`<div class="companion-starters" aria-label="Ask the Steward">
+      ${STEWARD_STARTERS.map((starter) => html`<button key=${starter.label} type="button" disabled=${sending} title=${starter.text}
+        onClick=${() => send(null, starter.text)}>${starter.label}</button>`)}
+    </div>`}
     ${activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
       <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
