@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -80,10 +81,33 @@ func runGuideView(p *guideViewParams, stdout, stderr io.Writer) int {
 }
 
 type guideShowParams struct {
-	Tab    string `long:"tab" optional:"true" help:"Dashboard tab to switch to: groups, processes, terminals, messages, jobs, usage, config, access, diagnostics, plugins, map, fleet-admin"`
+	Tab    string `long:"tab" optional:"true" help:"Dashboard tab to switch to: groups, processes, terminals, messages, jobs, usage, config, access, diagnostics, plugins, map, fleet-admin, boards"`
 	Path   string `long:"path" optional:"true" help:"Dashboard path to open instead of a tab, e.g. /processes/templates/<id> or /access/sudo"`
 	Target string `long:"target" optional:"true" help:"Visible text of the control or heading to highlight on that view, e.g. 'Save draft'"`
 	Note   string `long:"note" optional:"true" help:"Short note shown next to the highlight (or on its own)"`
+
+	Circle    []string `long:"circle" optional:"true" help:"Draw a circle around the control or text with this visible text (repeatable)"`
+	Underline []string `long:"underline" optional:"true" help:"Underline the control or text with this visible text (repeatable)"`
+	Arrow     []string `long:"arrow" optional:"true" help:"Draw an arrow between two controls by visible text, as 'From text -> To text' (repeatable)"`
+}
+
+// guideMarks turns the mark flags into the cue's marks.
+func guideMarks(p *guideShowParams) ([]map[string]string, error) {
+	var marks []map[string]string
+	for _, t := range p.Circle {
+		marks = append(marks, map[string]string{"kind": "circle", "target": strings.TrimSpace(t)})
+	}
+	for _, t := range p.Underline {
+		marks = append(marks, map[string]string{"kind": "underline", "target": strings.TrimSpace(t)})
+	}
+	for _, a := range p.Arrow {
+		from, to, ok := strings.Cut(a, "->")
+		if !ok || strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+			return nil, fmt.Errorf("--arrow takes 'From text -> To text', got %q", a)
+		}
+		marks = append(marks, map[string]string{"kind": "arrow", "from": strings.TrimSpace(from), "target": strings.TrimSpace(to)})
+	}
+	return marks, nil
 }
 
 func guideShowCmd() *cobra.Command {
@@ -92,8 +116,10 @@ func guideShowCmd() *cobra.Command {
 		Short: "Move the operator's dashboard to a view and highlight a control with a note",
 		Long: "Posts a short-lived cue the operator's dashboard plays once: it switches to --tab or --path, then " +
 			"highlights the control or heading whose visible text matches --target, with --note beside it. " +
-			"Give at least one of the flags. The cue cannot press anything; the operator acts.\n\n" +
-			"Example: tclaude agent guide show --tab processes --target 'Save draft' --note 'Save once the diff looks right'",
+			"--circle, --underline and --arrow draw hand-drawn marks on that view, by visible text like --target, to " +
+			"point at several things at once. Give at least one of the flags. The cue cannot press anything; the operator acts.\n\n" +
+			"Example: tclaude agent guide show --tab processes --target 'Save draft' --note 'Save once the diff looks right'\n" +
+			"         tclaude agent guide show --circle 'Review' --arrow 'Rework -> Review' --note 'Rework never loops back'",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideShowParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGuideShow(p, os.Stdout, os.Stderr))
@@ -102,8 +128,13 @@ func guideShowCmd() *cobra.Command {
 }
 
 func runGuideShow(p *guideShowParams, stdout, stderr io.Writer) int {
-	if p.Tab == "" && p.Path == "" && p.Target == "" && p.Note == "" {
-		fmt.Fprintln(stderr, "Error: give at least one of --tab, --path, --target or --note")
+	marks, err := guideMarks(p)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if p.Tab == "" && p.Path == "" && p.Target == "" && p.Note == "" && len(marks) == 0 {
+		fmt.Fprintln(stderr, "Error: give at least one of --tab, --path, --target, --note, --circle, --underline or --arrow")
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
@@ -112,7 +143,7 @@ func runGuideShow(p *guideShowParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		ID int64 `json:"id"`
 	}
-	body := map[string]string{"tab": p.Tab, "path": p.Path, "target": p.Target, "note": p.Note}
+	body := map[string]any{"tab": p.Tab, "path": p.Path, "target": p.Target, "note": p.Note, "marks": marks}
 	if err := DaemonPost("/v1/dashboard/cue", body, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
