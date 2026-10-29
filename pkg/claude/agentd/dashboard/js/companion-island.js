@@ -1,0 +1,613 @@
+// companion-island.js -- the dashboard companion (tcl-6i0283): a floating,
+// minimizable window over every dashboard view that hosts agents' native
+// harness terminals. See companion-model.js for the concept.
+//
+//   chips   minimized: one pill per pinned agent, bottom-right, showing its
+//           status; "needs you" (a permission prompt or a question) turns the
+//           pill amber so a minimized agent never looks silently busy.
+//   peek    hovering a chip previews the last lines of the agent's pane,
+//           read-only (GET /api/companion/{agent}/peek): the keyboard stays
+//           with the page until the operator clicks.
+//   window  click or Ctrl+. grows the chip into a draggable, resizable window
+//           (edge drags snap it into a side panel or bottom drawer) with one
+//           tab per agent. The body is the agent's real terminal, so
+//           streaming, prompts and Esc interrupts are the harness's own.
+//
+// A web terminal attach displaces any other web view of the same session, so
+// opening an agent here first closes its Terminals-tab pane, and "open in
+// Terminals" parks this tab instead of fighting over the session.
+
+import { h, render } from 'preact';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import htm from 'htm';
+import {
+  COMPANION_ACTIVE_PREF, COMPANION_MESSAGE_MAX, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
+  clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
+  defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
+  stewardSummonBody, viewContext, withTab, withoutTab, zoneRect,
+} from './companion-model.js';
+import { registerCompanionController } from './companion-facade.js';
+import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+
+const html = htm.bind(h);
+
+const PEEK_DELAY_MS = 220;
+const PEEK_REFRESH_MS = 1500;
+
+function viewportOf(win) {
+  return { width: win?.innerWidth || 1280, height: win?.innerHeight || 800 };
+}
+
+function reducedMotion(win) {
+  try {
+    return !!win?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  } catch {
+    return false;
+  }
+}
+
+function readPref(prefs, key) {
+  try {
+    return prefs?.getItem?.(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writePref(prefs, key, value) {
+  try {
+    prefs?.setItem?.(key, value);
+  } catch { /* prefs unavailable: the session keeps working */ }
+}
+
+function Avatar({ agent }) {
+  const steward = agent?.steward;
+  return html`<span class=${`companion-avatar${steward ? ' steward' : ''}`} aria-hidden="true">${steward ? '✦' : (agent?.name || '?').slice(0, 1).toUpperCase()}</span>`;
+}
+
+function StatusDot({ status }) {
+  return html`<span class=${`companion-dot ${status}`} aria-hidden="true"></span>`;
+}
+
+// CompanionTerminal mounts the opaque xterm widget for one agent. It owns the
+// widget's whole lifecycle: a new agent id or a reconnect generation disposes
+// the old widget before attaching a fresh one.
+function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focusToken, onStatus }) {
+  const hostRef = useRef(null);
+  const widgetRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    let widget = null;
+    onStatus('connecting…');
+    Promise.resolve(loadRuntime ? loadRuntime() : true).then(() => {
+      if (cancelled || !hostRef.current) return;
+      widget = widgetFactory({
+        ...terminalAttachWidgetOptions(),
+        host: hostRef.current,
+        wsPath: `/api/open-window-ws/${encodeURIComponent(agent.agentId)}`,
+        initialRetry: true,
+        applicationClipboardShortcuts: agent.harness === 'copilot',
+        onStatus: (status) => { if (!cancelled) onStatus(status); },
+      });
+      widgetRef.current = widget;
+      widget.setActive(true);
+      void widget.connect();
+    }).catch((error) => {
+      if (!cancelled) onStatus('error');
+      console.error('companion terminal failed to start:', error);
+    });
+    return () => {
+      cancelled = true;
+      widgetRef.current = null;
+      widget?.dispose();
+    };
+  }, [agent.agentId, generation]);
+  useEffect(() => {
+    if (focusToken) widgetRef.current?.focus?.();
+  }, [focusToken]);
+  return html`<div class="companion-term-host" ref=${hostRef} data-companion-terminal=${agent.agentId}></div>`;
+}
+
+function Peek({ agent, lines, anchor }) {
+  if (!agent || !anchor) return null;
+  const style = `right:${Math.max(8, anchor.right)}px;bottom:${anchor.bottom}px`;
+  return html`<div class="companion-peek" role="tooltip" style=${style}>
+    <div class="companion-peek-head"><${Avatar} agent=${agent} /><b>${agent.name}</b>
+      <span class="companion-peek-meta">${companionStatusLabel(companionStatus(agent))} · click to open</span></div>
+    <pre class="companion-peek-body">${lines === null ? 'reading…' : lines.length ? lines.join('\n') : agent.online ? '(empty screen)' : '(offline)'}</pre>
+    <div class="companion-peek-foot">Read-only preview. The keyboard stays with the page until you click.</div>
+  </div>`;
+}
+
+function AddMenu({ agents, tabs, steward, onSummonSteward, onPin, onClose, busy }) {
+  const [filter, setFilter] = useState('');
+  const candidates = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    return [...agents.values()]
+      .filter((agent) => agent.online && !agent.steward && !tabs.includes(agent.agentId))
+      .filter((agent) => !needle || agent.name.toLowerCase().includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 40);
+  }, [agents, tabs, filter]);
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    globalThis.addEventListener?.('keydown', onKey);
+    return () => globalThis.removeEventListener?.('keydown', onKey);
+  }, [onClose]);
+  const stewardPinned = steward && tabs.includes(steward.agentId);
+  return html`<div class="companion-menu" role="menu" aria-label="Add a companion">
+    ${!stewardPinned && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
+      <span class="companion-avatar steward" aria-hidden="true">✦</span>
+      <span><b>${steward?.online ? 'Open the Steward' : 'Summon the Steward'}</b><small>Read-only helper for all of tclaude. Asks you before changing anything.</small></span>
+    </button>`}
+    <input type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
+      value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
+    <div class="companion-menu-list">
+      ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" onClick=${() => onPin(agent.agentId)}>
+        <${StatusDot} status=${companionStatus(agent)} /> ${agent.name}</button>`)
+        : html`<div class="companion-menu-empty">${filter ? 'No live agent matches.' : 'No other live agents.'}</div>`}
+    </div>
+  </div>`;
+}
+
+export function CompanionApp({
+  snapshot,
+  activeTab,
+  prefs,
+  fetchImpl = globalThis.fetch,
+  notify = () => {},
+  widgetFactory,
+  loadRuntime = null,
+  closeTerminalPanes = () => {},
+  openTerminalsPane = null,
+  win = globalThis.window,
+  registerController = registerCompanionController,
+}) {
+  const agents = useMemo(() => companionAgents(snapshot.value), [snapshot.value]);
+  const steward = useMemo(() => stewardAgent(agents), [agents]);
+  const [tabs, setTabs] = useState(() => parseTabs(readPref(prefs, COMPANION_TABS_PREF)));
+  const [active, setActive] = useState(() => {
+    const saved = readPref(prefs, COMPANION_ACTIVE_PREF);
+    return isAgentId(saved) ? saved : '';
+  });
+  const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState(() => {
+    const vp = viewportOf(win);
+    return clampPlacement(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || defaultPlacement(vp), vp);
+  });
+  const [guide, setGuide] = useState(null);
+  const [menu, setMenu] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [parked, setParked] = useState(() => new Set());
+  const [statuses, setStatuses] = useState({});
+  const [generation, setGeneration] = useState(0);
+  const [focusToken, setFocusToken] = useState(0);
+  const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
+  const [draft, setDraft] = useState('');
+  const [withContext, setWithContext] = useState(true);
+  const [sending, setSending] = useState(false);
+  const windowRef = useRef(null);
+  const chipRects = useRef(new Map());
+  const openFrom = useRef(null);
+
+  const activeId = tabs.includes(active) ? active : (tabs[0] || '');
+  const activeAgent = activeId ? agents.get(activeId) || null : null;
+
+  useEffect(() => writePref(prefs, COMPANION_TABS_PREF, JSON.stringify(tabs)), [tabs]);
+  useEffect(() => { if (activeId) writePref(prefs, COMPANION_ACTIVE_PREF, activeId); }, [activeId]);
+
+  // A pinned agent that was retired drops out of the snapshot; forget it once
+  // the snapshot is known so the chips never show a dead handle forever.
+  useEffect(() => {
+    if (!snapshot.value) return;
+    const gone = tabs.filter((id) => !agents.has(id));
+    if (gone.length) setTabs((current) => current.filter((id) => agents.has(id)));
+  }, [agents]);
+
+  const showAgent = useCallback((agentId, { focus = true } = {}) => {
+    if (!isAgentId(agentId)) return false;
+    const agent = agents.get(agentId);
+    closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
+    setParked((current) => {
+      if (!current.has(agentId)) return current;
+      const next = new Set(current);
+      next.delete(agentId);
+      return next;
+    });
+    setTabs((current) => withTab(current, agentId));
+    setActive(agentId);
+    setMenu(false);
+    setOpen(true);
+    if (focus) setFocusToken((n) => n + 1);
+    return true;
+  }, [agents, closeTerminalPanes]);
+
+  useEffect(() => registerController({ open: (agentId, options) => showAgent(agentId, options) }), [showAgent]);
+
+  const summonSteward = useCallback(async () => {
+    if (steward?.online) {
+      showAgent(steward.agentId);
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetchImpl('/api/scribe', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stewardSummonBody()),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      if (!isAgentId(result.agent_id)) throw new Error('the summon returned no agent id');
+      notify(`${result.reused ? 'Reopened' : 'Summoned'} the Steward.`);
+      showAgent(result.agent_id);
+    } catch (error) {
+      notify(`Could not summon the Steward: ${error?.message || error}`, true);
+    } finally {
+      setBusy(false);
+    }
+  }, [steward, fetchImpl, notify, showAgent]);
+
+  const closeTab = useCallback((agentId) => {
+    const next = withoutTab(tabs, agentId);
+    if (agentId === activeId) setActive(nextActive(tabs, agentId));
+    if (!next.length) setOpen(false);
+    setTabs(next);
+  }, [tabs, activeId]);
+
+  const minimize = useCallback(() => {
+    setMenu(false);
+    const node = windowRef.current;
+    const chip = chipRects.current.get(activeId);
+    if (!node || !chip || reducedMotion(win) || typeof node.animate !== 'function') {
+      setOpen(false);
+      return;
+    }
+    const from = node.getBoundingClientRect();
+    const animation = node.animate([
+      { transform: 'none', opacity: 1 },
+      { transform: `translate(${chip.left - from.left}px, ${chip.top - from.top}px) scale(${chip.width / from.width}, ${chip.height / from.height})`, opacity: 0.4 },
+    ], { duration: 160, easing: 'cubic-bezier(.4,0,.8,.4)', fill: 'forwards' });
+    animation.onfinish = () => { setOpen(false); animation.cancel(); };
+  }, [activeId, win]);
+
+  const toggle = useCallback(() => {
+    if (open) {
+      minimize();
+      return;
+    }
+    if (!tabs.length) {
+      setOpen(true);
+      return;
+    }
+    openFrom.current = chipRects.current.get(activeId) || null;
+    setOpen(true);
+    setFocusToken((n) => n + 1);
+  }, [open, tabs, activeId, minimize]);
+
+  // Ctrl+. toggles the window from anywhere, including from inside a focused
+  // terminal: capture phase, before xterm sees the key.
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.ctrlKey && !event.altKey && !event.metaKey && event.key === '.') {
+        event.preventDefault();
+        event.stopPropagation();
+        toggle();
+      }
+    };
+    win?.addEventListener?.('keydown', onKey, true);
+    return () => win?.removeEventListener?.('keydown', onKey, true);
+  }, [toggle, win]);
+
+  // Grow the window out of the chip it was opened from.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const from = openFrom.current;
+    openFrom.current = null;
+    const node = windowRef.current;
+    if (!from || !node || reducedMotion(win) || typeof node.animate !== 'function') return;
+    const to = node.getBoundingClientRect();
+    if (!to.width || !to.height) return;
+    node.animate([
+      { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`, opacity: 0.5, borderRadius: '20px' },
+      { transform: 'none', opacity: 1, borderRadius: '10px' },
+    ], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }, [open]);
+
+  // Keep a floating window on screen when the browser resizes.
+  useEffect(() => {
+    const onResize = () => setPlacement((p) => {
+      const vp = viewportOf(win);
+      return p.snap ? zoneRect(p.snap, vp, snapTop()) : clampPlacement(p, vp);
+    });
+    win?.addEventListener?.('resize', onResize);
+    return () => win?.removeEventListener?.('resize', onResize);
+  }, [win]);
+
+  function snapTop() {
+    try {
+      const nav = win?.document?.querySelector?.('nav');
+      const bottom = nav?.getBoundingClientRect?.().bottom;
+      return Number.isFinite(bottom) && bottom > 0 ? Math.round(bottom) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function savePlacement(p) {
+    writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
+  }
+
+  function onTitlePointerDown(event) {
+    if (event.button !== 0 || event.target.closest?.('button, input, [role="tab"]')) return;
+    const node = windowRef.current;
+    if (!node) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    const vp = viewportOf(win);
+    let start = placement;
+    if (start.snap) {
+      // Tearing a snapped window off restores a floating size under the pointer.
+      const floating = clampPlacement({ ...defaultPlacement(vp), ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || {}), snap: '' }, vp);
+      start = { ...floating, x: event.clientX - floating.w / 2, y: event.clientY - 14, snap: '' };
+      setPlacement(start);
+    }
+    const sx = event.clientX;
+    const sy = event.clientY;
+    let zone = '';
+    let last = start;
+    const move = (m) => {
+      last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
+      setPlacement(last);
+      zone = snapZone({ x: m.clientX, y: m.clientY }, viewportOf(win));
+      setGuide(zone ? zoneRect(zone, viewportOf(win), snapTop()) : null);
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      setGuide(null);
+      if (zone) {
+        savePlacement({ ...last, snap: '' });
+        setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
+        writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify({ ...last, snap: zone }));
+      } else {
+        savePlacement(last);
+      }
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  }
+
+  function onResizePointerDown(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    const start = placement;
+    const sx = event.clientX;
+    const sy = event.clientY;
+    let last = start;
+    const move = (m) => {
+      const dx = m.clientX - sx;
+      const dy = m.clientY - sy;
+      // A snapped panel resizes along its free edge only.
+      if (start.snap === 'right') last = { ...start, x: start.x + dx, w: start.w - dx };
+      else if (start.snap === 'left') last = { ...start, w: start.w + dx };
+      else if (start.snap === 'bottom') last = { ...start, y: start.y + dy, h: start.h - dy };
+      else last = { ...start, w: start.w + dx, h: start.h + dy };
+      last = start.snap ? { ...last, w: Math.max(360, last.w), h: Math.max(220, last.h) } : clampPlacement(last, viewportOf(win));
+      setPlacement(last);
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      if (!start.snap) savePlacement(last);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  }
+
+  // Peek: a short hover delay, then the pane text, refreshed while hovered.
+  const peekTimer = useRef(null);
+  const peekRefresh = useRef(null);
+  const peekAgent = useRef('');
+  function stopPeek() {
+    clearTimeout(peekTimer.current);
+    clearInterval(peekRefresh.current);
+    peekTimer.current = null;
+    peekRefresh.current = null;
+    peekAgent.current = '';
+    setPeek(null);
+  }
+  useEffect(() => stopPeek, []);
+  async function readPeek(agentId) {
+    try {
+      const response = await fetchImpl(`/api/companion/${encodeURIComponent(agentId)}/peek`, { credentials: 'same-origin' });
+      const result = await response.json().catch(() => ({}));
+      if (peekAgent.current !== agentId) return;
+      const lines = response.ok && Array.isArray(result.lines) ? result.lines.map(String) : [];
+      setPeek((current) => (current && current.agentId === agentId ? { ...current, lines } : current));
+    } catch {
+      if (peekAgent.current === agentId) setPeek((current) => (current ? { ...current, lines: [] } : current));
+    }
+  }
+  function startPeek(agentId, chip) {
+    stopPeek();
+    peekAgent.current = agentId;
+    peekTimer.current = setTimeout(() => {
+      const rect = chip.getBoundingClientRect();
+      const vp = viewportOf(win);
+      setPeek({ agentId, lines: null, anchor: { right: vp.width - rect.right, bottom: vp.height - rect.top + 8 } });
+      void readPeek(agentId);
+      peekRefresh.current = setInterval(() => void readPeek(agentId), PEEK_REFRESH_MS);
+    }, PEEK_DELAY_MS);
+  }
+
+  function onChipClick(agentId, event) {
+    stopPeek();
+    openFrom.current = event.currentTarget.getBoundingClientRect();
+    if (agentId) showAgent(agentId);
+    else toggle();
+  }
+
+  async function send(event) {
+    event?.preventDefault?.();
+    const body = composeCompanionMessage(draft, withContext
+      ? viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search })
+      : '');
+    if (!body || !activeAgent || sending) return;
+    setSending(true);
+    try {
+      const response = await fetchImpl('/api/operator-message', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: activeAgent.agentId, subject: '', body }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      setDraft('');
+    } catch (error) {
+      notify(`Message to ${activeAgent.name} failed: ${error?.message || error}`, true);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function resume(agent) {
+    try {
+      const response = await fetchImpl(`/api/agents/${encodeURIComponent(agent.agentId)}/resume`, { method: 'POST', credentials: 'same-origin' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      notify(`Resuming ${agent.name}…`);
+    } catch (error) {
+      notify(`Could not resume ${agent.name}: ${error?.message || error}`, true);
+    }
+  }
+
+  function moveToTerminals(agent) {
+    if (!openTerminalsPane) return;
+    setParked((current) => new Set(current).add(agent.agentId));
+    // Let the companion's widget detach before the Terminals pane attaches.
+    setTimeout(() => openTerminalsPane(agent.agentId, agent.name, agent.harness), 60);
+  }
+
+  const setStatusFor = useCallback((agentId) => (status) => setStatuses((current) => (current[agentId] === status ? current : { ...current, [agentId]: status })), []);
+
+  // -- render -----------------------------------------------------------------
+
+  const chipAgents = tabs.map((id) => agents.get(id)).filter(Boolean);
+  const needsCount = chipAgents.filter((agent) => companionStatus(agent) === 'needs').length;
+  const peekTarget = peek ? agents.get(peek.agentId) : null;
+
+  const chips = !open && html`<div class="companion-chips" role="toolbar" aria-label="Companions">
+    ${chipAgents.map((agent) => {
+      const status = companionStatus(agent);
+      return html`<button key=${agent.agentId} type="button"
+        class=${`companion-chip ${status}`}
+        ref=${(node) => { if (node) chipRects.current.set(agent.agentId, node.getBoundingClientRect()); }}
+        aria-label=${`${agent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
+        onMouseEnter=${(event) => startPeek(agent.agentId, event.currentTarget)}
+        onMouseLeave=${stopPeek}
+        onFocus=${(event) => startPeek(agent.agentId, event.currentTarget)}
+        onBlur=${stopPeek}
+        onClick=${(event) => onChipClick(agent.agentId, event)}>
+        <${Avatar} agent=${agent} />
+        <span class="companion-chip-name">${agent.name}</span>
+        ${status === 'needs' ? html`<span class="companion-chip-needs">needs you</span>` : html`<${StatusDot} status=${status} />`}
+      </button>`;
+    })}
+    ${!chipAgents.length && html`<button type="button" class="companion-chip companion-chip-steward"
+      aria-label="Open the companion (Ctrl+.)" title="Steward: your helper for all of tclaude (Ctrl+.)"
+      onClick=${(event) => onChipClick('', event)}>
+      <span class="companion-avatar steward" aria-hidden="true">✦</span><span class="companion-chip-name">Steward</span>
+    </button>`}
+  </div>`;
+
+  const style = `left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`;
+  const status = activeAgent ? companionStatus(activeAgent) : 'offline';
+  const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
+
+  const windowView = open && html`<section ref=${windowRef}
+    class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}`}
+    style=${style} role="dialog" aria-label="Companion" aria-modal="false">
+    <header class="companion-titlebar" onPointerDown=${onTitlePointerDown}>
+      <span class="companion-grip" aria-hidden="true">⋮⋮</span>
+      <div class="companion-tabs" role="tablist" aria-label="Companion agents">
+        ${chipAgents.map((agent) => {
+          const tabStatus = companionStatus(agent);
+          const selected = agent.agentId === activeId;
+          return html`<div key=${agent.agentId} class=${`companion-tab${selected ? ' selected' : ''}`}>
+            <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'}
+              title=${`${agent.name}: ${companionStatusLabel(tabStatus)}`}
+              onClick=${() => showAgent(agent.agentId)}>
+              <${Avatar} agent=${agent} /><span>${agent.name}</span><${StatusDot} status=${tabStatus} />
+            </button>
+            <button type="button" class="companion-tab-close" aria-label=${`Unpin ${agent.name}`} title="Unpin (the agent keeps running)"
+              onClick=${() => closeTab(agent.agentId)}>×</button>
+          </div>`;
+        })}
+        <button type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${menu ? 'true' : 'false'}
+          title="Summon the Steward or pin a live agent" onClick=${() => setMenu((v) => !v)}>＋</button>
+      </div>
+      <div class="companion-controls">
+        ${activeAgent && openTerminalsPane && html`<button type="button" aria-label="Open in the Terminals tab" title="Open in the Terminals tab"
+          onClick=${() => moveToTerminals(activeAgent)}>⤢</button>`}
+        <button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>
+      </div>
+    </header>
+    ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
+      onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
+    <div class="companion-body">
+      ${!activeAgent && html`<div class="companion-empty">
+        <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> The Steward</p>
+        <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
+          groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
+        <p class="companion-empty-note">It starts read-only and asks you to approve each change.</p>
+        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : steward?.online ? 'Open the Steward' : 'Summon the Steward'}</button>
+        <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
+      </div>`}
+      ${activeAgent && !activeAgent.online && html`<div class="companion-empty">
+        <p><b>${activeAgent.name}</b> is offline.</p>
+        <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
+      </div>`}
+      ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
+        <p><b>${activeAgent.name}</b> is open in the Terminals tab.</p>
+        <button type="button" class="companion-primary" onClick=${() => showAgent(activeAgent.agentId)}>Bring it back here</button>
+      </div>`}
+      ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
+        ${status === 'needs' && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
+        ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${termStatus === 'disconnected' || termStatus === 'error' || termStatus === 'authentication required'
+          ? html`${termStatus === 'authentication required' ? 'Sign-in required.' : 'Disconnected.'} <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
+          : termStatus}</div>`}
+        <${CompanionTerminal} key=${activeAgent.agentId} agent=${activeAgent} generation=${generation}
+          widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
+          onStatus=${setStatusFor(activeAgent.agentId)} />`}
+    </div>
+    ${activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
+      <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
+        <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
+      </label>
+      <input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
+        placeholder=${`Message ${activeAgent.name} (queued to its inbox; or type in the terminal above)`}
+        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => setDraft(event.currentTarget.value)} />
+      <button type="submit" disabled=${sending || !draft.trim()}>Send</button>
+    </form>`}
+    <div class="companion-resize" aria-hidden="true" onPointerDown=${onResizePointerDown}></div>
+  </section>`;
+
+  return html`
+    ${guide && html`<div class="companion-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
+    ${windowView}
+    ${chips}
+    ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
+    <${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`;
+}
+
+export function mountCompanionIsland({ host, registerCleanup, ...props }) {
+  render(html`<${CompanionApp} ...${props} />`, host);
+  registerCleanup(() => render(null, host));
+}
