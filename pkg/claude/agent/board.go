@@ -250,9 +250,22 @@ func runBoardShow(p *boardShowParams, id string, stdout, stderr io.Writer) int {
 		}
 		since = *p.Since
 	}
+	if p.View && since >= 0 {
+		fmt.Fprintln(stderr, "Error: --view lists the whole operator view; it does not combine with --since")
+		return rcInvalidArg
+	}
 	doc, err := fetchBoard(id, since)
 	if err != nil {
 		return boardErr(stderr, err)
+	}
+	if p.View && p.JSON {
+		v := doc.Presence.view()
+		if v == nil {
+			fmt.Fprintln(stderr, "Error: the operator does not have this board open right now; drop --view")
+			return rcNotFound
+		}
+		doc.Elements = elementsInView(doc.Elements, *v)
+		return writeBoardJSON(stdout, doc)
 	}
 	if p.JSON {
 		return writeBoardJSON(stdout, doc)
@@ -285,13 +298,7 @@ func runBoardShow(p *boardShowParams, id string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "The operator does not have this board open right now; drop --view to list everything.")
 			return rcOK
 		}
-		kept := doc.Elements[:0:0]
-		for _, raw := range doc.Elements {
-			var e boardElementView
-			if json.Unmarshal(raw, &e) == nil && (e.IsDeleted || view.overlaps(elementBox(e))) {
-				kept = append(kept, raw)
-			}
-		}
+		kept := elementsInView(doc.Elements, *view)
 		fmt.Fprintf(stdout, "%d of %d element(s) are in the operator's view:\n", len(kept), len(doc.Elements))
 		doc.Elements = nil
 		for _, raw := range kept {
@@ -318,6 +325,26 @@ func runBoardShow(p *boardShowParams, id string, stdout, stderr io.Writer) int {
 }
 
 type boardBox struct{ X, Y, W, H float64 }
+
+// view is the operator's view of the board, or nil.
+func (p *boardPresence) view() *boardBox {
+	if p == nil || p.OperatorView == nil {
+		return nil
+	}
+	v := p.OperatorView
+	return &boardBox{X: v.X, Y: v.Y, W: v.Width, H: v.Height}
+}
+
+func elementsInView(elems []json.RawMessage, view boardBox) []json.RawMessage {
+	kept := []json.RawMessage{}
+	for _, raw := range elems {
+		var e boardElementView
+		if json.Unmarshal(raw, &e) == nil && !e.IsDeleted && view.overlaps(elementBox(e)) {
+			kept = append(kept, raw)
+		}
+	}
+	return kept
+}
 
 func (b boardBox) overlaps(o boardBox) bool {
 	return o.X <= b.X+b.W && o.X+o.W >= b.X && o.Y <= b.Y+b.H && o.Y+o.H >= b.Y

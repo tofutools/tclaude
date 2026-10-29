@@ -343,7 +343,9 @@ test('the editor shows who is drawing and reports the operator\'s view of the bo
   await harness.act(() => wait(BOARD_POLL_MS + 50));
   assert.match(view.container.querySelector('.board-drawing-note').textContent, /alpha is drawing/);
   assert.ok(view.container.querySelector('.board-person.drawing'));
-  assert.deepEqual(views.at(-1), { x: -40, y: -40, width: 800, height: 400 }, 'the visible board area, in board units');
+  const { client, ...area } = views.at(-1);
+  assert.match(client, /^[a-z0-9]+$/, 'each editor reports under its own token');
+  assert.deepEqual(area, { x: -40, y: -40, width: 800, height: 400 }, 'the visible board area, in board units');
   const sent = views.length;
   await harness.act(() => wait(BOARD_POLL_MS + 50));
   assert.equal(views.length, sent, 'an unchanged view is not re-sent every poll');
@@ -352,6 +354,6 @@ test('the editor shows who is drawing and reports the operator\'s view of the bo
   presence = [];
   section.classList.remove('active');
   await harness.act(() => wait(BOARD_POLL_MS + 50));
-  assert.deepEqual(views.at(-1), {});
+  assert.deepEqual(views.at(-1), { client });
   await view.unmount();
 });
