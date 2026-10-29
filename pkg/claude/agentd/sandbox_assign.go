@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -27,11 +28,13 @@ import (
 // harness-builtin mode and that mode's attribution with it (see
 // db.AssignAgentSandboxImplementation). Nothing else about the agent changes.
 //
-// It refuses on a LIVE agent. The recorded posture is what the next launch
-// replays, so writing it under a running pane would leave the durable record
-// asserting containment the live process does not have, with no event to
-// reconcile the two — and the operator's own next step, waking the agent, is
-// what applies it. Stop the agent, assign, wake.
+// A plain assignment refuses on a LIVE agent. The recorded posture is what the
+// next launch replays, so writing it under a running pane would leave the
+// durable record asserting containment the live process does not have, with no
+// event to reconcile the two. Asking for `restart` closes that gap instead: the
+// daemon runs every gate first, then stops the idle agent, records the posture
+// and resumes the same conversation under it — the stop/assign/wake sequence as
+// one operation, like the sandbox unlock restart beside it.
 
 // handleAgentSandboxImplementation serves GET (read the durable posture) and
 // POST (assign a new implementation) on /v1/agent/{selector}/sandbox-impl.
@@ -54,7 +57,7 @@ func handleAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeSandboxImplementationResponse(w, convID, "")
+		writeSandboxImplementationResponse(w, convID, "", nil)
 		return
 	}
 	assignAgentSandboxImplementation(w, r, convID)
@@ -75,7 +78,7 @@ func dashboardSandboxImplementationAgent(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeSandboxImplementationResponse(w, resolved.ConvID, "")
+		writeSandboxImplementationResponse(w, resolved.ConvID, "", nil)
 		return
 	}
 	assignAgentSandboxImplementation(w, r, resolved.ConvID)
@@ -101,6 +104,11 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		// artifact of the old implementation rather than an operator's choice and
 		// the harness's own default is used instead.
 		Sandbox string `json:"sandbox,omitempty"`
+		// Restart lets a LIVE agent take the assignment: once every gate has
+		// passed, the idle agent is stopped, the posture recorded, and the same
+		// conversation resumed under it. Ignored for an agent that is already
+		// stopped, which the assignment leaves stopped.
+		Restart bool `json:"restart,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "decode request: "+err.Error())
@@ -143,10 +151,20 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		writeError(w, http.StatusConflict, "stale_generation", err.Error())
 		return
 	}
-	if isConvOnline(convID) {
-		writeError(w, http.StatusConflict, "agent_online",
-			"this agent is running, and a sandbox implementation is applied by the launch that follows it; stop the agent, assign, then wake it")
-		return
+	online := isConvOnline(convID)
+	var liveSession *db.SessionRow
+	if online {
+		if !body.Restart {
+			writeError(w, http.StatusConflict, "agent_online",
+				"this agent is running, and a sandbox implementation is applied by the launch that follows it; "+
+					"ask for a restart to apply it now, or stop the agent, assign, then wake it")
+			return
+		}
+		liveSession = pickAliveSession(convID)
+		if failure := agentRestartIdleFailure(liveSession, time.Now()); failure != "" {
+			writeError(w, http.StatusConflict, "agent_not_idle", failure)
+			return
+		}
 	}
 
 	current, err := durableRelaunchConfigForConv(convID)
@@ -225,17 +243,75 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	}
 
 	previous := current.SandboxImplementation
-	if err := db.AssignAgentSandboxImplementation(
-		agentID, implementation, mode, db.AssignedSandboxImplementationSource); err != nil {
-		if errors.Is(err, db.ErrTemporarySandboxOverrideActive) {
-			writeError(w, http.StatusConflict, "temporary_sandbox_override", err.Error())
+	persist := func() *spawnFailure {
+		err := db.AssignAgentSandboxImplementation(
+			agentID, implementation, mode, db.AssignedSandboxImplementationSource)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, db.ErrTemporarySandboxOverrideActive):
+			return &spawnFailure{
+				Status: http.StatusConflict, Kind: "temporary_sandbox_override", Msg: err.Error()}
+		default:
+			return &spawnFailure{
+				Status: http.StatusInternalServerError, Kind: "io",
+				Msg: "persist sandbox implementation: " + err.Error()}
+		}
+	}
+	if !online {
+		if fail := persist(); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "io",
-			"persist sandbox implementation: "+err.Error())
+		writeSandboxImplementationResponse(w, convID, previous, nil)
 		return
 	}
-	writeSandboxImplementationResponse(w, convID, previous)
+
+	// Restart path. Every gate above has passed, so the only refusals left are
+	// the ones a stop/resume can hit. An agent whose Claude subscription token
+	// is gone could not come back, so do not stop it.
+	if err := claudeSubscriptionRelaunchBlocked(agentID); err != nil {
+		writeError(w, http.StatusConflict, claudeSubscriptionLostCode, err.Error())
+		return
+	}
+	// Park attached clients across the stop/resume gap; the deferred finish
+	// returns them to a still-live old pane on any error path.
+	clientHandoff := beginAgentRestartTmuxHandoff(liveSession.TmuxSession)
+	defer clientHandoff.finishForConv(convID)
+
+	stopped := escalateShutdownUnderLaunchLock(convID, shutdownGrace)
+	if stopped.Outcome == shutdownFailed {
+		writeError(w, http.StatusInternalServerError, "shutdown_failed",
+			"could not stop the idle agent before changing its sandbox implementation: "+stopped.Detail)
+		return
+	}
+	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
+		writeError(w, http.StatusConflict, "stale_generation",
+			"agent generation changed while stopping; sandbox implementation was not changed: "+err.Error())
+		return
+	}
+	if fail := persist(); fail != nil {
+		// The posture did not change, so bring the agent back under the old one
+		// before reporting the persistence failure.
+		resume := resumeOneConvUnderLaunchLock(convID, false, nil)
+		clientHandoff.finishForConv(convID)
+		if resume.Action != "resumed" && resume.Action != "skipped:already_online" {
+			fail.Msg += "; restoring the stopped agent also failed: " + resume.Detail
+		}
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	resume := resumeOneConvUnderLaunchLock(convID, false, nil)
+	switchedClients := clientHandoff.finishForConv(convID)
+	if resume.Action != "resumed" {
+		writeError(w, http.StatusInternalServerError, "restart_failed",
+			"sandbox implementation "+implementation+" was recorded, but the agent could not be restarted: "+
+				resume.Detail+"; use the normal wake action to retry")
+		return
+	}
+	writeSandboxImplementationResponse(w, convID, previous, &sandboxImplementationRestart{
+		Action: resume.Action, SwitchedClients: switchedClients,
+	})
 }
 
 // assignedHarnessBuiltinMode decides which harness-builtin mode the new posture
@@ -356,13 +432,26 @@ type sandboxImplementationAssignmentWire struct {
 	// can create — from one the launch merely attempts and discloses when it
 	// cannot. Only the first is a promise a reader may repeat.
 	ResourceCgroupRequired bool `json:"resource_cgroup_required,omitempty"`
+	// Restart reports the stop/resume an assignment with restart performed on a
+	// live agent. Absent on a read and on an offline assignment.
+	Restart         string `json:"restart,omitempty"`
+	SwitchedClients int    `json:"switched_clients,omitempty"`
+}
+
+// sandboxImplementationRestart is what a restarting assignment adds to the
+// posture it reports.
+type sandboxImplementationRestart struct {
+	Action          string
+	SwitchedClients int
 }
 
 // writeSandboxImplementationResponse renders the posture a relaunch would use.
 // previous is the implementation an assignment just replaced, and is empty on a
 // read — the difference is what lets a client report a change rather than a
 // state.
-func writeSandboxImplementationResponse(w http.ResponseWriter, convID, previous string) {
+func writeSandboxImplementationResponse(
+	w http.ResponseWriter, convID, previous string, restart *sandboxImplementationRestart,
+) {
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
@@ -380,6 +469,11 @@ func writeSandboxImplementationResponse(w http.ResponseWriter, convID, previous 
 		limits = planned.Effective.ResourceLimits
 	}
 	implementation, normErr := sandboxpolicy.NormalizeImplementation(posture.SandboxImplementation)
+	var restartAction string
+	var switchedClients int
+	if restart != nil {
+		restartAction, switchedClients = restart.Action, restart.SwitchedClients
+	}
 	writeJSON(w, http.StatusOK, sandboxImplementationAssignmentWire{
 		ConvID:           convID,
 		AgentID:          agentID,
@@ -394,5 +488,7 @@ func writeSandboxImplementationResponse(w http.ResponseWriter, convID, previous 
 			resourceCgroupRequested(limits, implementation),
 		ResourceCgroupRequired: normErr == nil &&
 			sandboxpolicy.ResourceCgroupRequired(limits, implementation),
+		Restart:         restartAction,
+		SwitchedClients: switchedClients,
 	})
 }

@@ -514,6 +514,9 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   // closing a dialog they merely looked at does not raise a discard prompt.
   const dirty = request.phase === 'ready'
     && (choice !== current || pinned !== SANDBOX_IMPL_MODE_INHERIT);
+  // A running agent takes the assignment through a restart (stop, assign,
+  // resume); the server refuses a live assignment without it.
+  const restart = !!posture.online;
 
   const submit = async () => {
     if (submitGuard.current || !choice || request.phase !== 'ready' || !dirty) return;
@@ -527,6 +530,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         label: descriptor.label,
         implementation: choice,
         sandbox: pinned,
+        restart,
       }, descriptor);
     } catch (cause) { setError(errorMessage(cause)); }
     finally {
@@ -603,6 +607,12 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
             wizard="Leave this be unless you mean to bind it. Left alone, the recorded mode carries forward."
           /></p>
         `}
+        ${restart && html`
+          <p class="sandbox-impl-hint" id="sandbox-impl-restart"><${Words}
+            plain="This agent is running. Assigning restarts it in the same conversation under the new implementation; it must be idle (no turn, background agents, shells or monitors running)."
+            wizard="This familiar is awake. Binding the ward re-summons it under the new one; it must be at rest."
+          /></p>
+        `}
         ${posture.temporary_sandbox_active && html`
           <p class="sandbox-impl-hint" id="sandbox-impl-unlocked">⚠ the temporary sandbox unlock is active on this agent; restore its normal sandbox before assigning.</p>
         `}
@@ -613,7 +623,9 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
           onClick=${() => { void requestClose(); }}>Cancel</button>
         <button id="sandbox-impl-assign" class="primary" type="button"
           disabled=${busy || !dirty}
-          onClick=${submit}>${busy ? 'Assigning…' : 'Assign'}</button>
+          onClick=${submit}>${busy
+            ? (restart ? 'Restarting…' : 'Assigning…')
+            : (restart ? 'Assign & restart' : 'Assign')}</button>
       </div>
     </${Overlay}>
   `;

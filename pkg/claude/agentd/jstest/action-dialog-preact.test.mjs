@@ -892,8 +892,31 @@ test('sandbox-impl dialog assigns the picked implementation and the optional mod
   assign.click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls, [['assign', {
-    conv: 'agent-conv', label: 'worker', implementation: 'resource-only', sandbox: '',
+    conv: 'agent-conv', label: 'worker', implementation: 'resource-only', sandbox: '', restart: false,
   }]], 'an unpinned mode is sent EMPTY so the server decides what to carry forward');
+  assert.equal(assign.textContent.trim(), 'Assign', 'a stopped agent is only assigned');
+});
+
+test('sandbox-impl dialog restarts a running agent instead of refusing it', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker', harness: 'claude' },
+    sandboxImplActions(calls, { loadSandboxImpl: async () => sandboxImplPosture({ online: true }) }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  assert.ok(host.querySelector('#sandbox-impl-restart'), 'the dialog says the agent will be restarted');
+  const resourceOnly = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === 'resource-only');
+  await harness.act(() => resourceOnly.dispatchEvent(
+    new harness.window.Event('change', { bubbles: true })));
+  const assign = host.querySelector('#sandbox-impl-assign');
+  assert.equal(assign.textContent.trim(), 'Assign & restart');
+  assign.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].restart, true);
 });
 
 test('sandbox-impl dialog surfaces a refusal instead of closing', async (t) => {
@@ -975,7 +998,7 @@ test('sandbox-impl dialog pins a harness mode, and re-pinning alone is a real ch
   host.querySelector('#sandbox-impl-assign').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls, [['assign', {
-    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'on',
+    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'on', restart: false,
   }]]);
 });
 
@@ -1002,7 +1025,7 @@ test('sandbox-impl dialog treats a mode-only pin as assignable', async (t) => {
   host.querySelector('#sandbox-impl-assign').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls, [['assign', {
-    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'off',
+    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'off', restart: false,
   }]]);
 });
 

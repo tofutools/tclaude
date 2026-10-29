@@ -501,7 +501,8 @@ daemon, and `--repair` recreates your own deleted startup directory
 - `interrupt` interrupts an active Codex app-server turn;
   `codex-app-server status` shows drive diagnostics.
 - `sandbox-impl show|set` reads or assigns the durable sandbox
-  implementation an *offline* agent relaunches under. Its slug
+  implementation an agent relaunches under; `set --restart` applies it to a
+  running, idle agent by stopping, assigning and resuming it. Its slug
   (`agent.sandbox-impl`) is deliberately not owner-conferred and not
   default-granted — effectively human-only. See
   [Sandboxing](sandboxing.md).

@@ -832,15 +832,15 @@ function SandboxRestartMenuItem({ member }) {
 }
 
 // SandboxImplMenuItem opens the picker that assigns the sandbox IMPLEMENTATION
-// this agent will relaunch under. It is the inverse of the two items above: they
-// need a LIVE agent because they restart one, while this records durable intent
-// that the next launch applies — so a running agent is exactly when it cannot be
-// used, and saying why beats a 409 the operator has to click to discover.
+// this agent will relaunch under. The implementation is applied by a launch, so
+// for a running agent the dialog offers to restart it (stop, assign, resume)
+// rather than making the operator stop it first; a stopped agent is assigned and
+// left stopped.
 function SandboxImplMenuItem({ member }) {
   const label = member.title || member.conv_id;
   const regular = '🧩 sandbox implementation…';
   const title = member.online
-    ? `${regular} is unavailable while ${label} is running — the implementation is applied by the launch that follows it. Stop the agent first, assign, then wake it.`
+    ? `Choose which layer owns OS-level confinement for ${label}. It is running, so assigning restarts it (it must be idle) under the new implementation.`
     : `Choose which layer owns OS-level confinement for ${label}'s next launch — for example a per-agent cgroup (resource-only) for an agent created before that existed. Recorded now, applied when you wake it.`;
   // data-harness is a fallback only. The dialog renders its catalog from the
   // harness the SERVER reports with the posture; this covers the case where that
@@ -848,7 +848,7 @@ function SandboxImplMenuItem({ member }) {
   return html`<${MenuButton}
     member=${member} act="sandbox-impl" regular=${regular} wizard="🧩 ward implementation…"
     attrs=${{ 'data-harness': member.state?.harness || '' }}
-    title=${title} disabled=${!!member.online}
+    title=${title}
   />`;
 }
 

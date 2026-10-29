@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -112,6 +113,51 @@ func TestSandboxImplAssign_RefusesWhileTheAgentIsRunning(t *testing.T) {
 	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin),
 		showSandboxImpl(t, f, spawn.ConvID).Implementation,
 		"the refused assignment must not have written anything")
+}
+
+// With restart, a running agent does not have to be stopped by hand first: the
+// daemon stops the idle agent, records the posture and resumes the same
+// conversation, and that resumed launch carries the new implementation.
+func TestSandboxImplAssign_RestartAppliesToARunningIdleAgent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().Spawn("crew", "running-agent")
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.SetSessionStatus(spawn.ConvID, session.StatusIdle)
+
+	_, code, body := assignSandboxImpl(t, f, spawn.ConvID, map[string]any{
+		"implementation": string(sandboxpolicy.ImplementationOff), "restart": true,
+	})
+	require.Equalf(t, http.StatusOK, code, "assign body=%s", body)
+	assert.Contains(t, body, `"restart":"resumed"`)
+
+	wire := showSandboxImpl(t, f, spawn.ConvID)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), wire.Implementation)
+	assert.True(t, wire.Online, "the agent is running again after the restart")
+	relaunched, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), relaunched,
+		"the resumed launch must carry the assigned implementation")
+}
+
+// The restart is the same idle-only restart the other restart actions use, and
+// a refusal must leave the posture untouched.
+func TestSandboxImplAssign_RestartRefusesABusyAgentWithoutRecording(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().Spawn("crew", "busy-agent")
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.SetSessionStatus(spawn.ConvID, session.StatusWorking)
+
+	_, code, body := assignSandboxImpl(t, f, spawn.ConvID, map[string]any{
+		"implementation": string(sandboxpolicy.ImplementationOff), "restart": true,
+	})
+	assert.Equal(t, http.StatusConflict, code)
+	assert.Contains(t, body, "agent_not_idle")
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin),
+		showSandboxImpl(t, f, spawn.ConvID).Implementation)
 }
 
 // The temporary dashboard unlock preserves the normal posture underneath so

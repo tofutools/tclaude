@@ -364,20 +364,22 @@ export function createActionDialogActions({
         requestJSON(api, '/api/spawn-launch-catalog', { signal }).catch((cause) => { if (cause?.name === 'AbortError') throw cause; return null; })]);
       return { ...data, catalog: { harnesses: catalog?.harnesses || [], sandbox_impl: catalog?.sandbox_impl || {} } };
     },
-    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox }, owner) {
+    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, restart = false }, owner) {
       const payload = await requestJSON(
         nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ implementation, sandbox: sandbox || '' }),
+          body: JSON.stringify({ implementation, sandbox: sandbox || '', ...(restart ? { restart: true } : {}) }),
         },
       );
       state.close(owner);
       announceNodeChanged(node);
       const name = label || String(conv).slice(0, 8);
-      // Name the wake explicitly. The assignment changed nothing about the
-      // agent as it stands — it is recorded intent, and an operator who reads
-      // "assigned" as "applied" would believe a stopped agent is now bounded.
-      notify(`${name}: sandbox implementation → ${payload.sandbox_implementation} (applied when you wake it)`);
+      // Name the wake explicitly for a stopped agent. That assignment changed
+      // nothing about the agent as it stands — it is recorded intent, and an
+      // operator who reads "assigned" as "applied" would believe it is bounded.
+      notify(payload.restart
+        ? `${name}: sandbox implementation → ${payload.sandbox_implementation} (restarted)`
+        : `${name}: sandbox implementation → ${payload.sandbox_implementation} (applied when you wake it)`);
       await refresh();
       return payload;
     },

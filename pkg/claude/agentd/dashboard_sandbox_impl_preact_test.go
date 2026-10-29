@@ -64,11 +64,9 @@ func TestDashboardSandboxImplDialogWiring(t *testing.T) {
 	}
 }
 
-// The action records durable relaunch intent, which the NEXT launch applies —
-// the opposite liveness requirement from the restart actions beside it in the
-// same menu. Disabling it while the agent runs, with a reason, is what keeps an
-// operator from discovering the rule as a 409.
-func TestDashboardSandboxImplMenuItemIsOfflineOnly(t *testing.T) {
+// A running agent takes the assignment through a restart, so the item must stay
+// enabled while online — the dialog offers "Assign & restart" there.
+func TestDashboardSandboxImplMenuItemRestartsRunningAgents(t *testing.T) {
 	data, err := fs.ReadFile(dashboardAssetsFS, "js/groups-member-table.js")
 	if err != nil {
 		t.Fatalf("read groups-member-table.js: %v", err)
@@ -84,13 +82,11 @@ func TestDashboardSandboxImplMenuItemIsOfflineOnly(t *testing.T) {
 	}
 	body := source[start : start+end]
 
-	if !strings.Contains(body, "disabled=${!!member.online}") {
-		t.Error("the item must be disabled while the agent is ONLINE; " +
-			"the restart items beside it disable while OFFLINE, and copying " +
-			"that predicate would invert this action")
+	if strings.Contains(body, "disabled=") {
+		t.Error("the item must stay enabled for a running agent; the dialog restarts it")
 	}
-	if !strings.Contains(body, "member.online") || !strings.Contains(body, "Stop the agent first") {
-		t.Error("a disabled item must say why: the tooltip has to name the stop-assign-wake sequence")
+	if !strings.Contains(body, "member.online") || !strings.Contains(body, "restarts it") {
+		t.Error("the tooltip must say a running agent is restarted by the assignment")
 	}
 	// The dialog resolves the authoritative posture itself. A menu item that
 	// passed the row's recorded implementation would be handing the dialog
