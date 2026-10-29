@@ -152,7 +152,8 @@ func TestHostPublishLaunchErrorNamesCause(t *testing.T) {
 		agentID, _, err := db.EnsureAgentForConv(conv, conv)
 		require.NoError(t, err)
 		require.NoError(t, db.GrantAgentPermission(conv, PermRoutesPublishHost, "test"))
-		require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s-" + conv, ConvID: conv, Status: "idle", Harness: harnessName}))
+		require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s-" + conv, ConvID: conv, Status: "idle", Harness: harnessName,
+			SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer)}))
 		return agentID
 	}
 
@@ -162,6 +163,7 @@ func TestHostPublishLaunchErrorNamesCause(t *testing.T) {
 	rec := publish("host-cause-codex")
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "fresh codex spawn never gets one")
+	require.Contains(t, rec.Body.String(), "grant was already in place when it resumed")
 	require.NotContains(t, rec.Body.String(), "grant routes.publish-host, then")
 
 	openAgent := grant("host-cause-open", "claude")
@@ -178,6 +180,18 @@ func TestHostPublishLaunchErrorNamesCause(t *testing.T) {
 	rec = publish("host-cause-stale")
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "different launch generation")
+
+	// A launch outside tclaude's pane sandbox is named before the network,
+	// so widening the network is not suggested as the fix.
+	builtinAgent := grant("host-cause-builtin", "claude")
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s-host-cause-builtin", ConvID: "host-cause-builtin", Status: "idle", Harness: "claude",
+		SandboxImplementation: string(sandboxpolicy.ImplementationHarnessBuiltin)}))
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(builtinAgent, &sandboxpolicy.Snapshot{Version: sandboxpolicy.SnapshotVersion,
+		Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}))
+	rec = publish("host-cause-builtin")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "not launched in tclaude’s pane sandbox")
+	require.NotContains(t, rec.Body.String(), "open host networking")
 
 	grant("host-cause-unknown", "claude")
 	rec = publish("host-cause-unknown")

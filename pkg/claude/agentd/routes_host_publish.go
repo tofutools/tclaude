@@ -153,6 +153,22 @@ func validateHostPublishLaunch(agentID, convID, generation string) error {
 
 const hostPublishLaunchRemedy = "Host routes need tclaude’s pane sandbox with a private network, a pane-local harness, and the grant present when the agent launches or resumes; once those hold, stop the agent and run `tclaude agent resume` on it"
 
+// liveSessionSandboxImplementation reports the sandbox implementation of the
+// conversation's newest non-exited launch, as the session row recorded it.
+func liveSessionSandboxImplementation(convID string) (string, bool) {
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return "", false
+	}
+	for _, row := range rows {
+		if strings.EqualFold(strings.TrimSpace(row.Status), "exited") {
+			continue
+		}
+		return strings.TrimSpace(row.SandboxImplementation), true
+	}
+	return "", false
+}
+
 // hostPublishLaunchDiagnosis names the most specific known reason the current
 // launch holds no host-route helper. It reads only durable launch facts and
 // the daemon's in-memory credential table; it never reports a credential.
@@ -173,6 +189,9 @@ func hostPublishLaunchDiagnosis(agentID, convID, generation string) string {
 			return fmt.Sprintf("the %s harness runs behind a server boundary with no pane-local route helper", harnessName)
 		}
 	}
+	if implementation, ok := liveSessionSandboxImplementation(convID); ok && implementation != string(sandboxpolicy.ImplementationTclaudeLayer) {
+		return fmt.Sprintf("the agent is not launched in tclaude’s pane sandbox (this launch uses %q)", implementation)
+	}
 	if snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID); err == nil && snapshot != nil {
 		if reason := hostRouteNetworkReason(snapshot); reason != "" {
 			return reason
@@ -185,7 +204,7 @@ func hostPublishLaunchDiagnosis(agentID, convID, generation string) string {
 		restart = ", and an agentd restart since then invalidates it again"
 	}
 	if h != nil && !h.SupportsLaunchEnrollment() {
-		return fmt.Sprintf("no route helper is active for this launch: a fresh %s spawn never gets one, because its conversation id is unknown before the pane starts, so the helper is only attached on a later resume%s", harnessName, restart)
+		return fmt.Sprintf("no route helper is active for this launch: a fresh %s spawn never gets one, because its conversation id is unknown before the pane starts, and a resumed one gets one only if the grant was already in place when it resumed%s", harnessName, restart)
 	}
 	if runtime.GOOS == "linux" {
 		return "no route helper is active for this launch (the grant may have been added after launch, the launch may not use tclaude’s pane sandbox, or agentd restarted since, which invalidates every helper)"
