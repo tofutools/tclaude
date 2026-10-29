@@ -383,7 +383,14 @@ test('dictation fills the draft and sends when the operator ends with "send"', a
   let callbacks = null;
   let started = 0;
   const dictationImpl = (cb) => { callbacks = cb; return { supported: true, start: () => { started += 1; cb.onState(true); }, stop: () => cb.onState(false) }; };
-  const { view, harness, requests, controller } = await setup(t, { prefs, dictationImpl });
+  let failNext = false;
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => {
+    requests.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
+    if (failNext) return { ok: false, status: 502, statusText: 'Bad Gateway', json: async () => ({ message: 'agent unreachable' }) };
+    return { ok: true, status: 202, json: async () => ({ id: 1 }) };
+  };
+  const { view, harness, controller } = await setup(t, { prefs, dictationImpl, fetchImpl });
   await harness.act(() => controller().open(A));
   const mic = harness.getByRole(view.container, 'button', { name: /Dictate a message to alpha/ });
   await harness.act(() => mic.click());
@@ -395,6 +402,14 @@ test('dictation fills the draft and sends when the operator ends with "send"', a
   const mail = requests.find((r) => r.url === '/api/operator-message');
   assert.match(mail.body.body, /^what can I do here\n\n\[dashboard view:/);
   const voice = await harness.importDashboardModule('js/companion-voice.js');
-  assert.deepEqual(voice.splitSendCommand('ship it, send.'), { text: 'ship it', send: true });
-  assert.deepEqual(voice.splitSendCommand('please resend the mail'), { text: 'please resend the mail', send: false });
+  assert.equal(voice.isSendCommand('send'), true);
+  assert.equal(voice.isSendCommand(' Send it. '), true);
+  assert.equal(voice.isSendCommand('I want to send'), false, 'a pause after the verb is not the command');
+  assert.equal(voice.isSendCommand("don't send"), false);
+  // A failed send keeps the dictated draft.
+  failNext = true;
+  await harness.act(() => mic.click());
+  await harness.act(() => callbacks.onText('keep me'));
+  await harness.act(async () => { callbacks.onSend('keep me'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(view.container.querySelector('input.companion-draft').value, 'keep me');
 });
