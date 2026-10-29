@@ -289,3 +289,40 @@ func MarkDarwinRouteLaunchClosedTx(tx *sql.Tx, agentID, convID, generation strin
 		WHERE agent_id = ? AND conv_id = ? AND launch_generation = ?`, agentID, convID, generation)
 	return err
 }
+
+// WithDarwinRouteSlotClaims serializes a host bind against launch claims.
+// The callback must not call the database. Keeping the successfully bound
+// socket open prevents subsequent kernel slot reservations from choosing it.
+func WithDarwinRouteSlotClaims(bind func(map[int]bool) error) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(`SELECT slot FROM darwin_route_slot_claims`)
+	if err != nil {
+		return err
+	}
+	claimed := map[int]bool{}
+	for rows.Next() {
+		var slot int
+		if err := rows.Scan(&slot); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		claimed[slot] = true
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	if err := bind(claimed); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

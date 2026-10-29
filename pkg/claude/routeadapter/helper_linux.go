@@ -93,7 +93,7 @@ func ValidateHelper(ctx context.Context, cfg HelperConfig) error {
 		Routes []routeRecord `json:"routes"`
 	}
 	return GetUnixJSON(ctx, cfg.SocketPath,
-		"/v1/routes?group_id="+strconv.FormatInt(cfg.GroupIDs[0], 10),
+		helperPublisherListPath(cfg.GroupIDs[0]),
 		cfg.Credential, &payload)
 }
 
@@ -112,11 +112,24 @@ func cancelHandles(handles map[string]*helperHandle) {
 func syncPublisherRoutes(ctx context.Context, cfg HelperConfig, active map[string]*helperHandle) error {
 	seen := make(map[string]bool)
 	var firstErr error
-	for _, groupID := range cfg.GroupIDs {
+	// Every publisher-capable helper can discover its own host publications.
+	// A later host permission grant must not leave an existing group helper
+	// watching only its original group catalog. Broker authority still gates use.
+	selectors := append([]int64(nil), cfg.GroupIDs...)
+	hasHost := false
+	for _, id := range selectors {
+		if id == 0 {
+			hasHost = true
+		}
+	}
+	if !hasHost {
+		selectors = append(selectors, 0)
+	}
+	for _, groupID := range selectors {
 		var payload struct {
 			Routes []routeRecord `json:"routes"`
 		}
-		path := "/v1/routes?group_id=" + strconv.FormatInt(groupID, 10)
+		path := helperPublisherListPath(groupID)
 		if err := GetUnixJSON(ctx, cfg.SocketPath, path, cfg.Credential, &payload); err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -157,6 +170,9 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 	seen := make(map[string]bool)
 	var firstErr error
 	for _, groupID := range cfg.GroupIDs {
+		if groupID == 0 {
+			continue
+		}
 		var payload struct {
 			Leases []leaseRecord `json:"leases"`
 		}
@@ -346,4 +362,12 @@ func PostUnixJSON(ctx context.Context, socketPath, path, credential string, in, 
 		return nil
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
+}
+
+// Zero is a host-only discovery selector, never a group identity or consumer grant.
+func helperPublisherListPath(groupID int64) string {
+	if groupID == 0 {
+		return "/v1/routes?host=true"
+	}
+	return "/v1/routes?group_id=" + strconv.FormatInt(groupID, 10)
 }

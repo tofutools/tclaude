@@ -181,8 +181,8 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 	}
 	seen := make(map[int64]struct{}, len(helper.GroupIDs))
 	for _, groupID := range helper.GroupIDs {
-		if groupID <= 0 {
-			return fmt.Errorf("route helper group id must be positive")
+		if groupID < 0 {
+			return fmt.Errorf("route helper selector must be a positive group id or zero for host-only discovery")
 		}
 		if _, exists := seen[groupID]; exists {
 			return fmt.Errorf("route helper group id %d is duplicated", groupID)

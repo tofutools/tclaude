@@ -90,7 +90,13 @@ func (a *proxyRouteAuthority) Identity(ctx context.Context) (sandboxproxy.RouteI
 	if a == nil || len(a.config.GroupIDs) == 0 {
 		return sandboxproxy.RouteIdentity{}, errors.New("proxy route authority requires an explicit launch group")
 	}
-	groupID := a.config.GroupIDs[0]
+	var groupID int64
+	for _, id := range a.config.GroupIDs {
+		if id > 0 {
+			groupID = id
+			break
+		}
+	}
 	if groupID <= 0 {
 		return sandboxproxy.RouteIdentity{}, errors.New("proxy route authority group is invalid")
 	}
@@ -250,6 +256,9 @@ func (a *proxyRouteAuthority) ReleaseRoute(ctx context.Context, resolution sandb
 }
 
 func (a *proxyRouteAuthority) allowedGroup(groupID int64) bool {
+	if groupID <= 0 {
+		return false
+	}
 	for _, allowed := range a.config.GroupIDs {
 		if allowed == groupID {
 			return true
@@ -347,4 +356,20 @@ func proxyRouteEndpoint(raw string) (netip.AddrPort, error) {
 		return netip.AddrPort{}, errors.New("route lease endpoint has an invalid TCP port")
 	}
 	return netip.AddrPortFrom(addr, uint16(portNumber)), nil
+}
+
+// Host-only discovery is not consumer authority. Do not initialize a filtering
+// proxy resolver (or consume its credential FD) without an actual group.
+func proxyConsumerAuthorityConfig(config proxyRouteAuthorityConfig) *proxyRouteAuthorityConfig {
+	groups := []int64{}
+	for _, id := range config.GroupIDs {
+		if id > 0 {
+			groups = append(groups, id)
+		}
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	config.GroupIDs = groups
+	return &config
 }

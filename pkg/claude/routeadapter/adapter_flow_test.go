@@ -25,7 +25,7 @@ func TestAdapterFlowControlCarriesBulkPastSlowReaders(t *testing.T) {
 	_, _ = rand.Read(download)
 	_, _ = rand.Read(upload)
 
-	targetPort, consumerPort := freePort(t), freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(targetPort))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })
@@ -110,7 +110,7 @@ func TestAdapterFlowControlCarriesBulkPastSlowReaders(t *testing.T) {
 // client goes away before reading its tail. The pump's failed write must
 // end the connection, not leave it waiting for a drain that cannot finish.
 func TestAdapterFlowControlReleasesAClientThatLeavesEarly(t *testing.T) {
-	targetPort, consumerPort := freePort(t), freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(targetPort))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })

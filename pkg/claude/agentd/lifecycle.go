@@ -7586,6 +7586,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// before the pane starts (for example Codex's seed-based conv-id), refuse
 	// the route-enabled launch instead of producing an agent whose advertised
 	// routes can never attach.
+	groupRoutesEnabled := routeEnabled
+	hostRoutesEnabled := preConvID != "" && layeredLaunch && launchEnroll && hostPublishAllowed(preConvID) && hostRouteHelperEligible(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
+	if hostRoutesEnabled {
+		routeEnabled = true
+		if runtime.GOOS == "darwin" {
+			spawnArgs.DarwinRouteCapable = true
+		}
+	}
 	if routeEnabled {
 		if preConvID == "" {
 			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
@@ -7611,7 +7619,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		spawnArgs.RouteHelperConvID = preConvID
 		spawnArgs.RouteHelperLaunchGeneration = routeGeneration
 		spawnArgs.RouteHelperCredential = routeCredential
-		spawnArgs.RouteHelperGroupIDs = []int64{g.ID}
+		if g != nil && groupRoutesEnabled {
+			spawnArgs.RouteHelperGroupIDs = []int64{g.ID}
+		}
+		if hostRoutesEnabled {
+			spawnArgs.RouteHelperGroupIDs = append(spawnArgs.RouteHelperGroupIDs, 0)
+		}
+		if spawnArgs.DarwinRouteCapable {
+			spawnArgs.DarwinRouteAgentID = agentID
+		}
 		spawnArgs.RouteHelperProxyOnly = runtime.GOOS == "darwin"
 		routeHelperConvID = preConvID
 		routeHelperGeneration = routeGeneration
@@ -10795,6 +10811,15 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 	if (runtime.GOOS != "linux" && runtime.GOOS != "darwin") || a == nil || strings.TrimSpace(a.ConvID) == "" {
 		return nil
 	}
+	// A clone may already have staged the exact destination-group contract.
+	// Recomputing before its post-spawn memberships land would discard that plan.
+	if a.RouteHelperCredential != "" {
+		return nil
+	}
+	hostRoutesEnabled := hostPublishAllowed(a.ConvID) && hostRouteHelperEligible(a.Harness, a.SandboxImplementation, a.EffectiveSandbox)
+	if runtime.GOOS == "darwin" && hostRoutesEnabled {
+		a.DarwinRouteCapable = true
+	}
 	if runtime.GOOS == "darwin" && !a.DarwinRouteCapable {
 		return nil
 	}
@@ -10812,6 +10837,9 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 			routeGroups = append(routeGroups, group.ID)
 		}
 	}
+	if hostRoutesEnabled {
+		routeGroups = append(routeGroups, 0)
+	}
 	if len(routeGroups) == 0 {
 		return nil
 	}
@@ -10826,6 +10854,9 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 		return fmt.Errorf("resolve route helper identity for resume: %w", err)
 	}
 	a.RouteHelperAgentID = agentID
+	if a.DarwinRouteCapable {
+		a.DarwinRouteAgentID = agentID
+	}
 	a.RouteHelperConvID = a.ConvID
 	credential, generation, credentialErr := mintRouteHelperCredential(agentID, a.ConvID)
 	if credentialErr != nil {

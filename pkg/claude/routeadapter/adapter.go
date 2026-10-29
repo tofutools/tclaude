@@ -393,6 +393,31 @@ func (a *Adapter) open(ctx context.Context, consumer Consumer, pool []int) (stri
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
 }
 
+// OpenHost serves a pre-bound host-loopback listener outside sandbox slot
+// pools. The caller owns authority checks and avoidance of sandbox port claims.
+func (a *Adapter) OpenHost(ctx context.Context, consumer Consumer, listener net.Listener) (string, error) {
+	if listener == nil {
+		return "", errors.New("host listener is required")
+	}
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || !addr.IP.Equal(net.IPv4(127, 0, 0, 1)) {
+		_ = listener.Close()
+		return "", errors.New("host listener must bind 127.0.0.1")
+	}
+	channelCtx, cancel := context.WithCancel(ctx)
+	a.mu.Lock()
+	if a.closed || a.leases[consumer.LeaseID] != nil {
+		a.mu.Unlock()
+		cancel()
+		_ = listener.Close()
+		return "", errors.New("host route adapter closed or lease already exists")
+	}
+	a.leases[consumer.LeaseID] = &consumerState{routeID: consumer.RouteID, agentID: consumer.AgentID, listener: listener, cancel: cancel}
+	a.mu.Unlock()
+	go a.acceptConsumersLimited(channelCtx, listener, consumer, 8)
+	return listener.Addr().String(), nil
+}
+
 func (a *Adapter) CloseRoute(routeID string) {
 	a.mu.Lock()
 	state := a.routes[routeID]
@@ -438,7 +463,9 @@ func (a *Adapter) CloseLease(leaseID string) {
 	a.mu.Unlock()
 	if state != nil {
 		state.cancel()
-		_ = state.listener.Close()
+		if state.listener != nil {
+			_ = state.listener.Close()
+		}
 	}
 	a.release(leaseID)
 }
@@ -487,6 +514,14 @@ func (a *Adapter) LeaseIDs() []string {
 }
 
 func (a *Adapter) acceptConsumers(ctx context.Context, listener net.Listener, consumer Consumer) {
+	a.acceptConsumersLimited(ctx, listener, consumer, 0)
+}
+
+func (a *Adapter) acceptConsumersLimited(ctx context.Context, listener net.Listener, consumer Consumer, limit int) {
+	var slots chan struct{}
+	if limit > 0 {
+		slots = make(chan struct{}, limit)
+	}
 	defer func() {
 		a.mu.Lock()
 		delete(a.leases, consumer.LeaseID)
@@ -498,7 +533,20 @@ func (a *Adapter) acceptConsumers(ctx context.Context, listener net.Listener, co
 		if err != nil {
 			return
 		}
-		go a.consumerStream(ctx, conn, consumer)
+		if slots != nil {
+			select {
+			case slots <- struct{}{}:
+			default:
+				_ = conn.Close()
+				continue
+			}
+		}
+		go func() {
+			if slots != nil {
+				defer func() { <-slots }()
+			}
+			a.consumerStream(ctx, conn, consumer)
+		}()
 	}
 }
 
@@ -507,6 +555,16 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	brokerConn, adapterConn := net.Pipe()
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Cancelling a lease must interrupt blocked reads in both directions.
+	// The broker authority watcher exits on context cancellation; it cannot
+	// be relied on to close this session after its lease has been revoked.
+	closeStream := func() {
+		_ = raw.Close()
+		_ = brokerConn.Close()
+		_ = adapterConn.Close()
+	}
+	stopClose := context.AfterFunc(streamCtx, closeStream)
+	defer func() { stopClose(); closeStream() }()
 	window := a.window()
 	admitted := make(chan struct{})
 	refused := make(chan error, 1)
@@ -571,7 +629,9 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	opened := make(chan *helperPublisherStream, 1)
 	results := make(chan directionResult, 2)
 	go func() { results <- directionResult{rawToBroker: true, err: copyRawToBroker(raw, w, opened)} }()
-	go func() { results <- directionResult{err: copyBrokerToRaw(streamCtx, adapterConn, raw, w, window, opened)} }()
+	go func() {
+		results <- directionResult{err: copyBrokerToRaw(streamCtx, adapterConn, raw, w, window, opened)}
+	}()
 	first := <-results
 	// A local client CloseWrite is only a read-side EOF. Keep the broker
 	// channel and accepted listener alive for the publisher's reverse data.

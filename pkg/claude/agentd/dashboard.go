@@ -324,6 +324,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardPeerDownloadRoutes(mux)
 	registerDashboardPeerUploadRoutes(mux)
 	registerDashboardEditRoutes(mux)
+	registerDashboardHostRoutes(mux)
 }
 
 func dashboardProcessRoute(next http.HandlerFunc) http.HandlerFunc {
@@ -998,10 +999,10 @@ type snapshotPayload struct {
 	// to annotate group rows with outbound/inbound counts. Empty slice
 	// (not nil) so JS .length / .map() are safe.
 	Links []dashboardLink `json:"links"`
-	// RouteMap is the read-only Groups/Route map projection. It is loaded from
-	// the route authority's durable rows in one bounded batch and deliberately
-	// omits target, endpoint, launch-generation, and capability material. It is
-	// omitted entirely while the opt-in Groups Route map flag is off.
+	// RouteMap projects durable route authority and ephemeral host leases.
+	// Only operator host-loopback endpoints are included; publisher targets,
+	// agent endpoints, launch generations, and capability material are omitted.
+	// It is absent while the opt-in Groups Route map flag is off.
 	RouteMap *dashboardRouteMap `json:"route_map,omitempty"`
 	// Usage is the account-wide subscription usage readout (5h + 7d
 	// rolling windows) rendered in the dashboard's top bar. Always
@@ -1831,6 +1832,7 @@ type dashboardDarwinCapacity struct {
 }
 
 type dashboardRoute struct {
+	HostOnly          bool                     `json:"host_only,omitempty"`
 	ID                string                   `json:"id"`
 	GroupID           int64                    `json:"group_id"`
 	Group             string                   `json:"group"`
@@ -1849,6 +1851,9 @@ type dashboardRoute struct {
 }
 
 type dashboardRouteConsumer struct {
+	Mode             string `json:"mode,omitempty"`
+	ConsumerKind     string `json:"consumer_kind,omitempty"`
+	Endpoint         string `json:"endpoint,omitempty"`
 	ID               string `json:"id"`
 	ConsumerAgentID  string `json:"consumer_agent_id"`
 	ConsumerName     string `json:"consumer_name"`
@@ -3692,6 +3697,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// projection adds no per-route/per-member database work to the poll.
 	if groupsRouteMapEnabled {
 		routeMap := buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinLaunchesByGroup)
+		appendDashboardHostPublications(&routeMap)
 		out.RouteMap = &routeMap
 	}
 	for convID, slugs := range allGrants {

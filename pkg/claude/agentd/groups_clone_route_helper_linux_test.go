@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -55,4 +56,44 @@ func TestGroupsClone_RouteHelperContractCoversNoCopyAndCopy(t *testing.T) {
 		assert.Equal(t, response.Members[0].NewConv, helper.ConvID)
 		assert.NotEmpty(t, helper.Credential)
 	})
+}
+
+func TestHostOnlyCloneInstallsPublisherDiscovery(t *testing.T) {
+	for _, groupClone := range []bool{false, true} {
+		t.Run(map[bool]string{false: "agent", true: "group"}[groupClone], func(t *testing.T) {
+			f := newFlow(t)
+			const source = "host-only-clone-source"
+			group := makeRouteEligibleCloneSource(t, f, source, "host-only-clone", "spwn-host-only-clone")
+			require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID, nil, "test"))
+			require.NoError(t, db.GrantAgentPermission(source, agentd.PermRoutesPublishHost, "test"))
+			var newConv string
+			if groupClone {
+				result := groupCloneRequest(t, f, group.Name, nil)
+				require.Len(t, result.Members, 1)
+				require.Empty(t, result.Members[0].Error)
+				newConv = result.Members[0].NewConv
+			} else {
+				newConv = f.AsHuman().CloneFresh(source).NewConv
+			}
+			helper, ok := f.World.SpawnRouteHelper(newConv)
+			require.True(t, ok, "host-only clone requires a publisher helper")
+			require.Equal(t, []int64{0}, helper.GroupIDs)
+			require.NotEmpty(t, helper.Credential)
+		})
+	}
+}
+
+func TestHostOnlySpawnDoesNotEnableGroupConsumption(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("host-only-spawn")
+	require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID, []string{agentd.PermRoutesPublishHost}, "test"))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "host-only-private", NetworkAccess: sandboxpolicy.NetworkAccessNone})
+	require.NoError(t, err)
+	spawn := f.AsHuman().SpawnWith(group.Name, map[string]any{
+		"name": "host-only-worker", "harness": "claude", "sandbox_implementation": "tclaude-layer", "sandbox_profile": "host-only-private",
+	})
+	require.Equal(t, http.StatusOK, spawn.Code, spawn.Raw)
+	helper, ok := f.World.SpawnRouteHelper(spawn.ConvID)
+	require.True(t, ok, "host-only spawn should install its publisher helper")
+	require.Equal(t, []int64{0}, helper.GroupIDs, "plain group membership must not install group consumer authority")
 }

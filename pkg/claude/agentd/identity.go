@@ -511,8 +511,9 @@ const (
 	// Group-route authority is deliberately split: publishing exposes a
 	// publisher-owned listener, while consuming opens a lease to a peer route.
 	// Neither slug is a global default and neither substitutes for membership.
-	PermRoutesPublish = "routes.publish"
-	PermRoutesConsume = "routes.consume"
+	PermRoutesPublish     = "routes.publish"
+	PermRoutesPublishHost = "routes.publish-host"
+	PermRoutesConsume     = "routes.consume"
 	// The Git-remote / GitHub proxy lends agentd's OWN credentials — an SSH
 	// key, a GitHub token — to an agent that has been deliberately sandboxed
 	// away from them. That makes these unlike every other slug here: holding

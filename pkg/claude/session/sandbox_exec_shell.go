@@ -14,10 +14,8 @@ import (
 // tclaude's text alone once sandbox profiles carry operator-authored
 // pre-launch blocks.
 //
-// Every wrapper that renders this prefix must also locate it through
-// sandboxExecShellPrefix rather than a literal, so a command can still be
-// rewritten after the fact (tclaudeLayerPreserveRouteHelperFD) without the two
-// spellings drifting apart.
+// Every wrapper that renders or locates this boundary uses the same prefix
+// so the sandbox shell and command separator cannot drift apart.
 func sandboxExecShellPrefix() string {
 	return " -- " + clcommon.BootstrapShellCommandPrefix() + " -c "
 }

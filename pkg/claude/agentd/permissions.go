@@ -696,6 +696,10 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermNodeRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read shared peer platform, harnesses, labels and numeric resource summaries. Requires peer= scope."},
 	{Slug: PermSessionsRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer's shared live agent sessions and waiting states. Requires peer= scope; no local session authority."},
 	{
+		Slug:        PermRoutesPublishHost,
+		Description: "Publish and withdraw the caller’s host-only routes without sharing them with groups or peers. Not default-granted.",
+	},
+	{
 		Slug:        PermRoutesPublish,
 		ScopeDims:   []ScopeDim{ScopeDimGroup},
 		Description: "Register and withdraw routes owned by the caller. Requires current membership in the explicitly selected target group; not globally default-granted.",

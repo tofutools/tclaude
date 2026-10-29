@@ -23,6 +23,7 @@ const (
 // data plane deliberately does not appear here; adapters consume this
 // generation-bound record in a later milestone.
 type AgentRoute struct {
+	HostOnly                  bool
 	ID                        string
 	GroupID                   int64
 	GroupName                 string
@@ -132,6 +133,9 @@ func createAgentRoute(groupID int64, publisherAgentID, publisherConvID, launchGe
 // GetAgentRoute returns one route, including the stable group name snapshot
 // resolved from the current group row (display names never form identity).
 func GetAgentRoute(routeID string) (*AgentRoute, error) {
+	if IsHostRouteID(routeID) {
+		return getHostAgentRoute(routeID)
+	}
 	d, err := Open()
 	if err != nil {
 		return nil, err
@@ -241,10 +245,16 @@ func ListAgentRoutesBatch(groupIDs []int64) (map[int64][]*AgentRoute, error) {
 // route. It also closes all outstanding leases so a withdrawn route cannot
 // leave stale consumer authority behind.
 func WithdrawAgentRoute(routeID, publisherAgentID, publisherConvID, reason string) error {
+	if IsHostRouteID(routeID) {
+		return transitionHostAgentRoute(routeID, publisherAgentID, publisherConvID, RouteStateWithdrawn, reason)
+	}
 	return transitionAgentRoute(routeID, publisherAgentID, publisherConvID, RouteStateWithdrawn, reason, "withdraw")
 }
 
 func MarkAgentRoutePublisherLost(routeID, reason string) error {
+	if IsHostRouteID(routeID) {
+		return transitionHostAgentRoute(routeID, "", "", RouteStatePublisherLost, reason)
+	}
 	d, err := Open()
 	if err != nil {
 		return err
@@ -281,6 +291,9 @@ func MarkAgentRoutePublisherLost(routeID, reason string) error {
 // leave a consumable route behind while the reaper or SessionEnd hook settles
 // the session row.
 func markAgentRoutesPublisherLostTx(tx *sql.Tx, publisherConvID, launchGeneration, reason string) error {
+	if err := markHostAgentRoutesPublisherLostTx(tx, publisherConvID, launchGeneration, reason); err != nil {
+		return err
+	}
 	if strings.TrimSpace(publisherConvID) == "" {
 		return nil
 	}
@@ -384,6 +397,9 @@ func markAgentRouteConsumerLeasesLostTx(tx *sql.Tx, consumerAgentID, consumerCon
 }
 
 func OpenAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration string, groupGeneration int64) (*AgentRouteLease, error) {
+	if IsHostRouteID(routeID) {
+		return nil, errors.New("host-only routes cannot be consumed by agents")
+	}
 	return openAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration, groupGeneration, nil)
 }
 
@@ -659,4 +675,17 @@ func scanAgentRoute(s rowScanner) (*AgentRoute, error) {
 	route.CreatedAt = createdAt.Time()
 	route.WithdrawnAt = withdrawnAt.Time()
 	return &route, nil
+}
+
+// RecordHostRouteAudit records ephemeral operator leases without inventing an
+// agent identity or persisting authority that could survive a daemon restart.
+func RecordHostRouteAudit(action string, groupID int64, routeID, leaseID, detail string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO agent_route_audit
+		(at, action, result, group_id, route_id, lease_id, actor_agent_id, actor_conv_id, detail)
+		VALUES (?, ?, 'ok', ?, ?, ?, '', '', ?)`, dbTime(time.Now()), action, groupID, routeID, leaseID, detail)
+	return err
 }

@@ -17,12 +17,12 @@ func proxyRouteAuthorityConfigFromHelper(helper *TclaudeLayerRouteHelper) *proxy
 	if helper == nil {
 		return nil
 	}
-	return &proxyRouteAuthorityConfig{
+	return proxyConsumerAuthorityConfig(proxyRouteAuthorityConfig{
 		SocketPath: helper.SocketPath, AgentID: helper.AgentID,
 		ConvID: helper.ConvID, LaunchGeneration: helper.LaunchGeneration,
 		GroupIDs:          append([]int64(nil), helper.GroupIDs...),
 		HandoffSocketPath: helper.HandoffSocketPath,
-	}
+	})
 }
 
 // receiveProxyRouteCredential consumes the established one-shot descriptor

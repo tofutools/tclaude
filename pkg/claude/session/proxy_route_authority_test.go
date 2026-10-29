@@ -98,3 +98,23 @@ func TestProxyRouteAuthorityOpensAndReleasesGenerationBoundLease(t *testing.T) {
 	}
 	_ = os.Remove(socketPath)
 }
+
+func TestHostDiscoveryDoesNotAuthorizeProxyConsumption(t *testing.T) {
+	authority := newProxyRouteAuthority(proxyRouteAuthorityConfig{GroupIDs: []int64{0}}, "credential")
+	if authority.allowedGroup(0) {
+		t.Fatal("host discovery selector must not authorize consumer routes")
+	}
+	if _, err := authority.Identity(context.Background()); err == nil {
+		t.Fatal("host-only discovery has no group consumer identity")
+	}
+}
+
+func TestFilteringProxySkipsHostOnlyConsumerAuthority(t *testing.T) {
+	if config := proxyConsumerAuthorityConfig(proxyRouteAuthorityConfig{GroupIDs: []int64{0}}); config != nil {
+		t.Fatal("host-only selector must skip filtering proxy consumer identity setup")
+	}
+	config := proxyConsumerAuthorityConfig(proxyRouteAuthorityConfig{GroupIDs: []int64{0, 42}})
+	if config == nil || len(config.GroupIDs) != 1 || config.GroupIDs[0] != 42 {
+		t.Fatalf("mixed discovery must initialize proxy with real groups only: %#v", config)
+	}
+}

@@ -334,14 +334,12 @@ func (b *Broker) AttachPublisherReady(ctx context.Context, auth PublisherAuth, c
 		return err
 	}
 	s := b.newSession(ctx, rolePublisher, auth, ConsumerAuth{}, conn)
-	// Claim the wait-group slot before publishing the session under b.mu so
-	// Close cannot return between registration and Add.
-	b.wg.Add(1)
+	// Serialize admission and wait-group registration with Close. No Add
+	// may race Wait after Close has observed an empty broker.
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		s.close()
-		b.wg.Done()
 		ready(ErrClosed)
 		return ErrClosed
 	}
@@ -349,11 +347,11 @@ func (b *Broker) AttachPublisherReady(ctx context.Context, auth PublisherAuth, c
 	if r.publisher != nil {
 		b.mu.Unlock()
 		s.close()
-		b.wg.Done()
 		b.rejectedConnectionsMetric.Add(1)
 		ready(ErrPublisherAttached)
 		return ErrPublisherAttached
 	}
+	b.wg.Add(1)
 	r.publisher = s
 	s.route = r
 	b.publishersMetric.Add(1)
@@ -393,22 +391,20 @@ func (b *Broker) attachConsumer(ctx context.Context, auth ConsumerAuth, conn net
 		return fmt.Errorf("%w: consumer: %v", ErrUnauthorized, err)
 	}
 	s := b.newSession(ctx, roleConsumer, PublisherAuth{}, auth, conn)
-	b.wg.Add(1)
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		s.close()
-		b.wg.Done()
 		return ErrClosed
 	}
 	r := b.getRouteLocked(auth.RouteID)
 	if len(r.consumers) >= b.maxConsumersPerRoute {
 		b.mu.Unlock()
 		s.close()
-		b.wg.Done()
 		b.rejectedConnectionsMetric.Add(1)
 		return ErrConsumerLimit
 	}
+	b.wg.Add(1)
 	r.consumers[s] = struct{}{}
 	s.route = r
 	consumerCount := len(r.consumers)
@@ -452,6 +448,15 @@ func (b *Broker) Close() error {
 	b.wg.Wait()
 	b.emit(Event{Kind: "broker-closed"})
 	return nil
+}
+
+// PublisherAttached reports whether a route currently has a live data channel.
+// A durable ready route alone is not evidence that its namespace helper attached.
+func (b *Broker) PublisherAttached(routeID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	route := b.routes[routeID]
+	return !b.closed && route != nil && route.publisher != nil && route.publisher.ctx.Err() == nil
 }
 
 // Metrics returns bounded in-memory counters for diagnostics. It does not
@@ -753,8 +758,9 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 	b.pruneTombstonesLocked(r)
 	stream := r.streams[frame.Stream]
 	if stream == nil {
+		_, tombstoned := r.tombstones[frame.Stream]
 		b.mu.Unlock()
-		if _, ok := r.tombstones[frame.Stream]; ok || frame.Kind == KindWindow {
+		if tombstoned || frame.Kind == KindWindow {
 			return nil // see forwardFromConsumer
 		}
 		return fmt.Errorf("%w: unknown publisher stream", ErrProtocol)

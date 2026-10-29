@@ -359,7 +359,8 @@ func tclaudeLayerCommandWithRouteHelper(
 	if err != nil {
 		return "", err
 	}
-	command = tclaudeLayerPreserveRouteHelperFD(command)
+	// The relay passes the credential via ExtraFiles. Bubblewrap inherits
+	// non-CLOEXEC descriptors natively and has no --preserve-fds option.
 	engine, err := tclaudeLayerEnginePrefix(plan)
 	if err != nil {
 		return "", err
@@ -399,11 +400,6 @@ func tclaudeLayerRouteAuthorityRelayFlags(plan sandboxpolicy.MountPlan, helper T
 		flags += " --route-helper-group-id " + strconv.FormatInt(groupID, 10)
 	}
 	return flags
-}
-
-func tclaudeLayerPreserveRouteHelperFD(command string) string {
-	prefix := sandboxExecShellPrefix()
-	return strings.Replace(command, prefix, " --preserve-fds 1"+prefix, 1)
 }
 
 func tclaudeLayerRouteHelperBootstrapPrefix(helper TclaudeLayerRouteHelper) string {

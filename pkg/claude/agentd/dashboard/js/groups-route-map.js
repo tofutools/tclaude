@@ -1,7 +1,10 @@
 import { h, render } from 'preact';
-import { useEffect, useMemo } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { effectiveGroupsFocus, groupsFocusLocation } from './groups-focus.js';
+import { isLoopbackDashboard } from './helpers.js';
+import { remoteNodeID } from './fleet-model.js';
+import { hostRoutePreviewURL } from './groups-route-preview.js';
 
 const html = htm.bind(h);
 
@@ -18,21 +21,25 @@ function routeStatusClass(value) {
 }
 
 function Boundary({ value }) {
-  if (!value || value === 'in-group') return null;
+  if (!value || value === 'in-group' || value === 'host') return null;
   return html`<span class="route-boundary" title="The route authority no longer exposes this endpoint as a current member of the selected group">${statusLabel(value)} boundary</span>`;
 }
 
 function friendlyEndpoint(name, boundary) {
-  return boundary && boundary !== 'in-group' ? statusLabel(boundary) + ' boundary' : (name || 'hidden endpoint');
+  return boundary && boundary !== 'in-group' && boundary !== 'host' ? statusLabel(boundary) + ' boundary' : (name || 'hidden endpoint');
 }
 
+// Group names reject slashes; this local view key cannot collide.
+const HOST_ONLY_GROUP = 'host-only/';
 function routeGroups(snapshot) {
-  return (snapshot?.groups || []).filter((group) => !group.virtual);
+  const groups = (snapshot?.groups || []).filter((group) => !group.virtual);
+  return (snapshot?.route_map?.routes || []).some((route) => route.host_only)
+    ? [...groups, { name: HOST_ONLY_GROUP, label: 'Host only', members: [] }] : groups;
 }
 
 function routesForGroup(routeMap, groupName) {
   const routes = routeMap?.routes || [];
-  return groupName ? routes.filter((route) => route.group === groupName) : [];
+  return routes.filter((route) => groupName === HOST_ONLY_GROUP ? route.host_only : !route.host_only && groupName && route.group === groupName);
 }
 
 function edgeRows(routes) {
@@ -103,7 +110,51 @@ function RouteGraph({ routes, members, selected, onSelect }) {
   </div>`;
 }
 
-function RouteDetail({ route, onClose }) {
+function HostEndpointLink({ lease, local }) {
+  const url = hostRoutePreviewURL(lease, { local, hostname: window.location?.hostname });
+  return url
+    ? html`<span><code>${lease.endpoint}</code> · <a class="route-map-preview" href=${url} target="_blank" rel="noopener noreferrer"><code>${url}</code></a></span>`
+    : html`<code>${lease.endpoint}</code>`;
+}
+
+function HostRouteControls({ route, local }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [openedLease, setOpenedLease] = useState(null);
+  useEffect(() => {
+    if (openedLease && route !== openedLease.snapshot && !(route.consumers || []).some((consumer) => consumer.id === openedLease.id)) {
+      setOpenedLease(null);
+    }
+  }, [route, openedLease]);
+  const act = async (leaseID, mode = 'http') => {
+    setBusy(true);
+    setMessage('');
+    setOpenedLease(null);
+    try {
+      const response = await fetch(leaseID ? `/api/routes/host/${encodeURIComponent(leaseID)}` : `/api/routes/${encodeURIComponent(route.id)}/host`, {
+        method: leaseID ? 'DELETE' : 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, ...(leaseID ? {} : { body: JSON.stringify({ mode }) }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      if (!leaseID) {
+        const lease = await response.json();
+        setOpenedLease({ id: lease.id, endpoint: lease.endpoint, mode: lease.mode, snapshot: route });
+      }
+    } catch (error) { setMessage(String(error.message || error)); }
+    finally { setBusy(false); }
+  };
+  return html`<div>
+    <button type="button" disabled=${busy || route.state !== 'ready' || route.generation_health !== 'current'} onClick=${() => act('')}>Open on host</button>
+    <button type="button" disabled=${busy || route.state !== 'ready' || route.generation_health !== 'current'} onClick=${() => act('', 'tcp')}>Open TCP endpoint</button>
+    <p class="route-map-muted">Open on host creates an HTTP preview with the Host header set to the published target. Use Open TCP endpoint for other protocols. Both close when withdrawn.</p>
+    ${!local && html`<p class="route-map-muted">These endpoints are on the daemon host. Forward the endpoint port with an SSH tunnel to access it from this machine.</p>`}
+    ${(route.consumers || []).filter((consumer) => consumer.consumer_kind === 'host').map((consumer) => html`<p key=${consumer.id}><${HostEndpointLink} lease=${consumer} local=${local} /> <button type="button" disabled=${busy} onClick=${() => act(consumer.id)}>Close host endpoint</button></p>`)}
+    ${openedLease && !(route.consumers || []).some((consumer) => consumer.id === openedLease.id) && html`<p role="status">Host endpoint: <${HostEndpointLink} lease=${openedLease} local=${local} /></p>`}
+    ${message && html`<p role="status">${message}</p>`}
+  </div>`;
+}
+
+function RouteDetail({ route, onClose, local }) {
   if (!route) return html`<aside class="route-map-detail route-map-detail-empty"><strong>Select a route</strong><span>Choose an edge or exact-list row to inspect its safe authority status.</span></aside>`;
   return html`<aside class="route-map-detail" aria-label="Route details">
     <div class="route-map-detail-head"><div><span class="route-map-kicker">Route detail</span><h3>${route.name}</h3></div><button type="button" class="route-map-close" onClick=${onClose} aria-label="Close route detail">×</button></div>
@@ -114,9 +165,10 @@ function RouteDetail({ route, onClose }) {
       <div><dt>Lifecycle</dt><dd><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></dd></div>
       <div><dt>Generation</dt><dd><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span></dd></div>
     </dl>
+    <${HostRouteControls} key=${route.id} route=${route} local=${local} />
     <h4>Consumers</h4>
     ${route.consumers?.length ? html`<ul class="route-map-consumers">${route.consumers.map((consumer) => html`<li key=${consumer.id}><span>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)}</span><span class=${routeStatusClass(consumer.endpoint_state)}>${statusLabel(consumer.endpoint_state)}</span><span class=${routeStatusClass(consumer.consumer_health)}>${statusLabel(consumer.consumer_health)}</span><${Boundary} value=${consumer.boundary} /></li>`)}</ul>` : html`<p class="route-map-muted">No consumer lease.</p>`}
-    <p class="route-map-security-note">Read-only authority view. Endpoint addresses, targets, capabilities, credentials, and payload data are never shown.</p>
+    <p class="route-map-security-note">Host endpoints are loopback-only. Publisher targets, helper credentials, and payload data are never shown.</p>
   </aside>`;
 }
 
@@ -138,7 +190,7 @@ export function GroupsRouteMap({ state }) {
   const selectedByID = (map.routes || []).find((route) => route.id === selectedRouteID) || null;
   const picked = state.routeGroup.value;
   const groupName = (picked && groups.some((group) => group.name === picked) && picked)
-    || selectedByID?.group || groups[0]?.name || '';
+    || (selectedByID?.host_only ? HOST_ONLY_GROUP : selectedByID?.group) || groups[0]?.name || '';
   const mode = state.routeView.value;
   const setMode = (next) => {
     if (next === mode) return;
@@ -161,7 +213,7 @@ export function GroupsRouteMap({ state }) {
       state.setSubview('members', '');
     }
   }, [enabled, state]);
-  const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && route.group === groupName) || null, [map.routes, selectedRouteID, groupName]);
+  const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && (route.host_only ? groupName === HOST_ONLY_GROUP : route.group === groupName)) || null, [map.routes, selectedRouteID, groupName]);
   const routes = routesForGroup(map, groupName);
   const members = groups.find((group) => group.name === groupName)?.members || [];
   const darwinCapacity = map.darwin_capacity?.[groupName] || null;
@@ -206,15 +258,15 @@ export function GroupsRouteMap({ state }) {
       <button type="button" role="tab" aria-selected=${state.subview.value === 'routes'} class=${state.subview.value === 'routes' ? 'active' : ''} onClick=${() => changeSubview('routes')}>Route map</button>
     </div>
     ${isRoutes && html`<div class="route-map-toolbar">
-      <label>Group <select value=${groupName} onChange=${selectGroup}>${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}</select></label>
+      <label>Group <select value=${groupName} onChange=${selectGroup}>${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.label || group.name}</option>`)}</select></label>
       <div class="route-map-mode" role="group" aria-label="Route map view mode"><button type="button" class=${mode === 'graph' ? 'active' : ''} aria-pressed=${mode === 'graph'} onClick=${() => setMode('graph')}>Graph</button><button type="button" class=${mode === 'list' ? 'active' : ''} aria-pressed=${mode === 'list'} onClick=${() => setMode('list')}>Exact list</button></div>
       <span class="route-map-count" aria-live="polite">${routes.length} route${routes.length === 1 ? '' : 's'}</span>
     </div>`}
     ${isRoutes && map.platform === 'darwin' && html`<div class="route-map-disclosure" role="note">Darwin bounded capacity: ${darwinCapacityText} · ${map.darwin_boundary || 'Partial boundary disclosed'}</div>`}
     ${isRoutes && (!routes.length ? html`<div class="route-map-empty"><strong>No named routes in this group.</strong><span>When the route authority has records, this surface will show explicit publisher → consumer leases.</span></div>` : html`<div class=${`route-map-content route-map-mode-${mode}`}>
       ${mode === 'graph' && html`<${RouteGraph} routes=${routes} members=${members} selected=${selectedRouteID} onSelect=${navigateRoute} />`}
-      ${mode === 'list' && html`<div class="route-map-table-wrap"><table class="route-map-table"><caption class="sr-only">Exact named route listing</caption><thead><tr><th>Route</th><th>Publisher</th><th>Consumer</th><th>Transport</th><th>Lifecycle</th><th>Health</th></tr></thead><tbody>${routes.map((route) => html`<tr key=${route.id} class=${selectedRouteID === route.id ? 'is-selected' : ''} onClick=${() => navigateRoute(route.id)}><td><button type="button" class="route-map-link">${route.name}</button><code>${route.stable_reference}</code></td><td>${friendlyEndpoint(route.publisher_name, route.publisher_boundary)}</td><td>${route.consumers?.length ? route.consumers.map((consumer) => html`<span class="route-map-consumer-line" key=${consumer.id}>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)} · ${statusLabel(consumer.endpoint_state)}</span>`) : html`<span class="route-map-muted">none</span>`}</td><td>${route.transport || 'unknown'}</td><td><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></td><td><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span> · ${statusLabel(route.publisher_health)}</td></tr>`)}</tbody></table></div>`}
-      <${RouteDetail} route=${selectedRoute} onClose=${() => navigateRoute('')} />
+      ${mode === 'list' && html`<div class="route-map-table-wrap"><table class="route-map-table"><caption class="sr-only">Exact named route listing</caption><thead><tr><th>Route</th><th>Publisher</th><th>Consumer</th><th>Transport</th><th>Lifecycle</th><th>Health</th></tr></thead><tbody>${routes.map((route) => html`<tr key=${route.id} class=${selectedRouteID === route.id ? 'is-selected' : ''} onClick=${() => navigateRoute(route.id)}><td><button type="button" class="route-map-link">${route.name}</button>${route.host_only && html`<span class="route-map-muted">Host only</span>`}<code>${route.stable_reference}</code></td><td>${friendlyEndpoint(route.publisher_name, route.publisher_boundary)}</td><td>${route.consumers?.length ? route.consumers.map((consumer) => html`<span class="route-map-consumer-line" key=${consumer.id}>${friendlyEndpoint(consumer.consumer_name, consumer.boundary)} · ${statusLabel(consumer.endpoint_state)}</span>`) : html`<span class="route-map-muted">none</span>`}</td><td>${route.transport || 'unknown'}</td><td><span class=${routeStatusClass(route.state)}>${statusLabel(route.state)}</span></td><td><span class=${routeStatusClass(route.generation_health)}>${statusLabel(route.generation_health)}</span> · ${statusLabel(route.publisher_health)}</td></tr>`)}</tbody></table></div>`}
+      <${RouteDetail} route=${selectedRoute} local=${!remoteNodeID() && !snapshot?.peer_view && isLoopbackDashboard()} onClose=${() => navigateRoute('')} />
     </div>`)}
   </div>`;
 }
