@@ -35,7 +35,13 @@ tclaude -d
 and `shell`.
 When unset, the harness (and model/effort) come from the global default spawn
 profile (dashboard, or `tclaude agent profiles default set`); explicit
-`--harness`, `--model`, or `--effort` flags win per field. Without a global
+`--harness`, `--model`, or `--effort` flags win per field. When the profile
+targets the launch's harness, its launch posture applies too: sandbox mode,
+sandbox implementation, approval, AskUserQuestion timeout, auto-compact
+window, context-window cap, auto-review, trust-dir, remote control, auto
+memory, peer messaging, context features and fast mode. Every field yields to
+an explicit flag. The Copilot API and Codex app-server drives exist only under
+agentd and are not taken from the profile. Without a global
 profile, tclaude picks an installed harness from `PATH`, preferring Claude
 Code. Per-harness knobs — models, effort, sandbox and approval flags — are
 covered in [Harnesses](harnesses.md).
@@ -115,6 +121,17 @@ A recorded value the relaunch cannot honour — a Claude-only posture on a
 Codex resume, for example — is dropped rather than failing the resume. When
 the drop leaves the launch *less* confined than the record (`--sandbox`,
 `--ask-for-approval`), it is warned about on stderr rather than only logged.
+
+A posture field the conversation never recorded (a conversation started
+outside tclaude, or before that field was recorded) falls back to the global
+default spawn profile, as on a fresh launch — explicit flag, then recorded
+posture, then profile. A field recorded as "nothing pinned" is still the
+conversation's own decision and is not refilled; very old conversations whose
+posture lives only in the legacy session row cannot tell "nothing pinned" from
+unknown, so their blank fields take the profile. Sandbox mode, sandbox
+implementation and `--permission-profile` count as one decision: if any of
+them is passed or recorded, the profile supplies none of them. The profile's
+harness, model and effort never apply to a resume.
 
 Model and effort are not on the carried list: the harness itself remembers
 which model a conversation runs on.

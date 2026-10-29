@@ -126,13 +126,13 @@ type NewParams struct {
 	// profile (a spawned agent is the untrusted party) and Claude to inherit (no
 	// override — its settings.json is the operator's chosen posture). See
 	// JOH-192 / JOH-207.
-	Sandbox string `long:"sandbox" optional:"true" help:"The HARNESS'S OWN sandbox setting (per-harness) — not who enforces containment, which is --sandbox-impl. Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
+	Sandbox string `long:"sandbox" optional:"true" help:"The HARNESS'S OWN sandbox setting (per-harness) — not who enforces containment, which is --sandbox-impl. Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = global profile, then no override (each harness uses its own config)"`
 
 	// SandboxImplementation selects who owns OS-level containment. The default
 	// is the harness's historical behavior; tclaude-layer is a
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude’s built-in sandbox, harness OS sandbox off) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude’s built-in sandbox, harness OS sandbox off) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset = global profile, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.
@@ -146,6 +146,11 @@ type NewParams struct {
 	// reads CopilotAPI they are the same bool. Same reason as sandboxImplExplicit
 	// above: the carryover is the only place the distinction still exists.
 	copilotAPIDriveCarriedFrom string
+	// recordedLaunchFlags names the flags applyRecordedLaunchPosture found a
+	// recorded value for (applied, a recorded no-op, or dropped), so the default
+	// profile only fills what the conversation never recorded. Internal state,
+	// not a CLI parameter.
+	recordedLaunchFlags map[string]bool
 	// copilotAPIDriveDropped marks a launch that resolved the drive and then could
 	// not honour it, so the posture write asserts nil instead of false and the
 	// conversation's recorded choice survives. Internal state, not a CLI parameter.
@@ -178,7 +183,7 @@ type NewParams struct {
 	// daemon spawn path defaults it to each harness's safe value (Codex: never,
 	// so a detached pane can't deadlock; Claude: inherit, no override). See
 	// JOH-200.
-	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. Unset = no override (each harness uses its own config)"`
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. Unset = global profile, then no override (each harness uses its own config)"`
 
 	// ToolGovernance controls OpenCode's homogeneous built-in tool block. A
 	// direct session launch validates but does not default it; daemon launches
@@ -645,7 +650,9 @@ func runNew(params *NewParams) error {
 	// Validate --sandbox up front WITHOUT defaulting it: a FRESH
 	// `tclaude session new` is the human's own session, and the human is the
 	// trust root — tclaude must not silently override their config.toml
-	// sandbox_mode, so we emit a sandbox flag only when they pass it explicitly.
+	// sandbox_mode, so we emit a sandbox flag only when they pass it explicitly
+	// or their own global default spawn profile supplies it
+	// (applyGlobalDefaultLaunchProfile).
 	// (The daemon spawn path is where the secure default belongs — an
 	// agentd-spawned agent is the untrusted party — and it threads the resolved
 	// mode in explicitly.) On a --resume params.Sandbox may already carry the

@@ -60,7 +60,10 @@ takes `--harness`. When the flag is omitted, resolution is:
 1. **Explicit flag** — always wins.
 2. **Global default spawn profile** — set from the dashboard or
    `tclaude agent profiles default set`; its harness/model/effort apply to
-   fresh terminal launches, each field overridable per launch.
+   fresh terminal launches, each field overridable per launch. A profile for
+   the launch's harness also supplies its launch posture (sandbox, sandbox
+   implementation, approval, and the other per-launch knobs; see
+   [Sessions](sessions.md)).
 3. **First installed harness** — Claude Code is checked first; otherwise the
    registry is walked in sorted order (codex, copilot, gemini, opencode, pi) and the first
    harness whose binary is on `PATH` wins. With nothing installed the launch
