@@ -519,7 +519,14 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 		if explicit.has(field.flag) || field.supplied(params) {
 			continue
 		}
-		switch field.classify(field.carry(h, recorded, params)) {
+		outcome := field.classify(field.carry(h, recorded, params))
+		if outcome != carryUnrecorded {
+			if params.recordedLaunchFlags == nil {
+				params.recordedLaunchFlags = map[string]bool{}
+			}
+			params.recordedLaunchFlags[field.flag] = true
+		}
+		switch outcome {
 		case carryApplied:
 			carried = append(carried, "--"+field.flag)
 		case carryDropped:

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -147,6 +148,11 @@ func runNewWithGlobalDefault(params *NewParams, explicit explicitLaunchFields) e
 	if err := applyRecordedLaunchPosture(params, explicit); err != nil {
 		return err
 	}
+	// Whatever the record left unknown falls back to the default profile, the
+	// same baseline a fresh terminal launch gets.
+	if err := applyResumeDefaultLaunchProfile(params, explicit); err != nil {
+		return err
+	}
 	return runNew(params)
 }
 
@@ -200,9 +206,11 @@ func validateUnmatchedGroupSpawnFlags(params *NewParams) error {
 }
 
 // applyGlobalDefaultLaunchProfile gives fresh, human-owned terminal launches
-// the same harness/model/effort baseline as the dashboard. Other profile fields
-// deliberately remain agent-spawn policy: a directly attached human session
-// continues to respect the harness's own sandbox and approval configuration.
+// the same launch defaults as the dashboard: harness/model/effort, and — when
+// the profile targets the launch's harness — its launch posture (sandbox,
+// sandbox implementation, approval, and the other per-launch knobs; see
+// applyProfileLaunchPosture). The human stays the trust root: a profile is
+// configuration they chose, and every field still yields to an explicit flag.
 func applyGlobalDefaultLaunchProfile(params *NewParams, explicit explicitLaunchFields) error {
 	return applyGlobalDefaultLaunchProfileWithLookPath(params, explicit, exec.LookPath)
 }
@@ -281,7 +289,125 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 			params.Effort = value
 		}
 	}
+	if profileMatchesHarness {
+		applyProfileLaunchPosture(params, explicit, prof)
+	}
 	return nil
+}
+
+// applyResumeDefaultLaunchProfile fills a terminal `-r` from the global default
+// spawn profile, for the posture fields the conversation never recorded.
+//
+// It runs AFTER applyRecordedLaunchPosture, so the order is explicit flag >
+// recorded posture > profile. A recorded field — including one recorded as
+// "nothing pinned" — is the conversation's own decision and is never replaced
+// by an ambient default. Harness, model and effort are not touched: the harness
+// is the conversation's, and the harness itself remembers its model.
+func applyResumeDefaultLaunchProfile(params *NewParams, explicit explicitLaunchFields) error {
+	if params.ManagedLaunch || strings.TrimSpace(params.Resume) == "" || params.Shell ||
+		strings.TrimSpace(params.Harness) == ShellHarnessName {
+		return nil
+	}
+	h, err := harness.Resolve(strings.TrimSpace(params.Harness))
+	if err != nil {
+		return nil // runNew reports the unknown harness with its own message
+	}
+	prof, err := db.GlobalDefaultSpawnProfile()
+	if err != nil {
+		slog.Warn("session new: failed to load global default profile", "error", err)
+		return nil
+	}
+	if prof == nil || prof.Disabled {
+		// A disabled profile blocks fresh launches; a resume of an existing
+		// conversation simply gets no defaults from it.
+		return nil
+	}
+	profileHarness := strings.TrimSpace(prof.Harness)
+	if profileHarness == "" {
+		profileHarness = harness.DefaultName
+	}
+	if profileHarness != h.Name {
+		return nil
+	}
+	skip := explicitLaunchFields{}
+	for flag := range explicit {
+		skip[flag] = true
+	}
+	for flag := range params.recordedLaunchFlags {
+		skip[flag] = true
+	}
+	applyProfileLaunchPosture(params, skip, prof)
+	return nil
+}
+
+// applyProfileLaunchPosture fills the launch-posture flags the caller omitted
+// from a spawn profile the caller has already matched to the launch's harness.
+// runNew validates every filled value exactly as if it had been typed.
+//
+// Left out on purpose:
+//   - copilot-api / codex-app-server: both drives exist only under agentd,
+//     which allocates their channel before forking session new.
+//   - identity, group-context, ownership and environment fields: agent-spawn
+//     concepts with no direct-session counterpart.
+func applyProfileLaunchPosture(params *NewParams, explicit explicitLaunchFields, prof *db.SpawnProfile) {
+	fillString := func(flag string, dst *string, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || explicit.has(flag) || strings.TrimSpace(*dst) != "" {
+			return
+		}
+		*dst = value
+	}
+	fillBool := func(flag string, dst *bool, value *bool) {
+		if value == nil || explicit.has(flag) || *dst {
+			return
+		}
+		*dst = *value
+	}
+	fillString("sandbox", &params.Sandbox, prof.Sandbox)
+	if !explicit.has("sandbox-impl") && strings.TrimSpace(params.SandboxImpl) == "" &&
+		strings.TrimSpace(prof.SandboxImplementation) != "" {
+		params.SandboxImpl = strings.TrimSpace(prof.SandboxImplementation)
+		// A profile-supplied implementation is a fresh decision, never a
+		// replay, so runNew must judge its applicability even on a resume.
+		params.sandboxImplExplicit = true
+	}
+	fillString("ask-for-approval", &params.Approval, prof.Approval)
+	fillString("tools", &params.ToolGovernance, prof.ToolGovernance)
+	fillString("ask-user-question-timeout", &params.AskUserQuestionTimeout, prof.AskUserQuestionTimeout)
+	fillString("auto-compact-window", &params.AutoCompactWindow, prof.AutoCompactWindow)
+	if !explicit.has("context-window-max") && params.ContextWindowMax == 0 {
+		params.ContextWindowMax = prof.ContextWindowMax
+	}
+	fillBool("auto-review", &params.AutoReview, prof.AutoReview)
+	fillBool("trust-dir", &params.TrustDir, prof.TrustDir)
+	fillBool("remote-control", &params.RemoteControl, prof.RemoteControl)
+	fillBool("auto-memory", &params.AutoMemory, prof.AutoMemory)
+	fillBool("peer-messaging", &params.PeerMessaging, prof.PeerMessaging)
+	if len(prof.ContextFeatures) > 0 {
+		fillString("context-features", &params.ContextFeatures, formatContextFeaturesFlag(prof.ContextFeatures))
+	}
+	if prof.FastMode != nil {
+		mode := "off"
+		if *prof.FastMode {
+			mode = "on"
+		}
+		fillString("fast-mode", &params.FastMode, mode)
+	}
+}
+
+// formatContextFeaturesFlag renders a profile's feature map in the
+// --context-features spelling (slug=state pairs, comma-separated, sorted).
+func formatContextFeaturesFlag(features map[string]string) string {
+	slugs := make([]string, 0, len(features))
+	for slug := range features {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	parts := make([]string, 0, len(slugs))
+	for _, slug := range slugs {
+		parts = append(parts, slug+"="+features[slug])
+	}
+	return strings.Join(parts, ",")
 }
 
 // firstInstalledHarness chooses a spawnable registered harness whose launcher
