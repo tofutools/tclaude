@@ -54,24 +54,28 @@ export function isAgentId(value) {
 // over a stale one so the status reflects the running session.
 export function companionAgents(snapshot) {
   const out = new Map();
+  const add = (member, steward) => {
+    const agentId = member?.agent_id;
+    if (!isAgentId(agentId)) return;
+    const prev = out.get(agentId);
+    if (prev && (prev.online || member.online !== true)) return;
+    out.set(agentId, Object.freeze({
+      agentId,
+      convId: String(member.conv_id || ''),
+      name: String(member.title || member.name || agentId.slice(0, 12)),
+      online: member.online === true,
+      status: String(member.state?.status || ''),
+      detail: String(member.state?.status_detail || ''),
+      harness: String(member.harness || member.state?.harness || ''),
+      steward: steward || prev?.steward === true,
+    }));
+  };
   for (const group of snapshot?.groups || []) {
-    for (const member of group?.members || []) {
-      const agentId = member?.agent_id;
-      if (!isAgentId(agentId)) continue;
-      const prev = out.get(agentId);
-      if (prev && (prev.online || member.online !== true)) continue;
-      out.set(agentId, Object.freeze({
-        agentId,
-        convId: String(member.conv_id || ''),
-        name: String(member.title || member.name || agentId.slice(0, 12)),
-        online: member.online === true,
-        status: String(member.state?.status || ''),
-        detail: String(member.state?.status_detail || ''),
-        harness: String(member.harness || member.state?.harness || ''),
-        steward: group?.scribe === true && group?.name === STEWARD_NAME,
-      }));
-    }
+    const steward = group?.scribe === true && group?.name === STEWARD_NAME;
+    for (const member of group?.members || []) add(member, steward);
   }
+  // Agents outside every group are still agents the operator can pin.
+  for (const agent of [...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])]) add(agent, false);
   return out;
 }
 
@@ -208,12 +212,31 @@ export function viewContext({ activeTab = '', pathname = '', search = '' } = {})
 }
 
 export const COMPANION_MESSAGE_MAX = 8000;
+// The operator-mail endpoint caps a body at 16 KiB of UTF-8; stay under it.
+export const COMPANION_MESSAGE_MAX_BYTES = 15 * 1024;
+
+// clipUtf8 shortens s to at most maxBytes of UTF-8 without splitting a
+// character.
+export function clipUtf8(s, maxBytes) {
+  const encoder = new TextEncoder();
+  if (encoder.encode(s).length <= maxBytes) return s;
+  let out = '';
+  let bytes = 0;
+  for (const ch of s) {
+    const size = encoder.encode(ch).length;
+    if (bytes + size > maxBytes) break;
+    out += ch;
+    bytes += size;
+  }
+  return out;
+}
 
 // composeCompanionMessage builds the operator-mail body for the input row.
 export function composeCompanionMessage(text, context = '') {
   const body = String(text || '').trim().slice(0, COMPANION_MESSAGE_MAX);
   if (!body) return '';
-  return context ? `${body}\n\n[dashboard view: ${context}]` : body;
+  const suffix = context ? `\n\n[dashboard view: ${context}]` : '';
+  return clipUtf8(body, COMPANION_MESSAGE_MAX_BYTES - new TextEncoder().encode(suffix).length) + suffix;
 }
 
 export function stewardBrief() {
