@@ -225,3 +225,37 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
   .companion-chip.needs, .companion-peek { animation: none; }
   .companion-chip { transition: none; }
 }
+
+/* Annotation (js/companion-annotate.js, tcl-8vjjko): the operator draws over
+   the page; the window and chips step aside meanwhile. */
+body.companion-annotating .companion-window,
+body.companion-annotating .companion-chips { visibility: hidden; }
+.annotate-root { position: fixed; inset: 0; z-index: 95; }
+.annotate-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none;
+  background: rgba(13, 17, 23, .08); outline: 2px dashed var(--cmp-amber); outline-offset: -3px;
+}
+.annotate-canvas path { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 1px rgba(0, 0, 0, .6)); }
+.annotate-canvas text { fill: #0d1117; font: 700 11px ui-sans-serif, system-ui, sans-serif; text-anchor: middle; pointer-events: none; }
+.annotate-bar {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px;
+  max-width: calc(100vw - 24px); flex-wrap: wrap; padding: 6px 8px; border-radius: 10px;
+  background: var(--cmp-bar); border: 1px solid var(--cmp-edge); box-shadow: 0 8px 24px rgba(0, 0, 0, .5); color: var(--cmp-text); font-size: 12px;
+}
+.annotate-title { margin-right: 4px; white-space: nowrap; }
+.annotate-swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; }
+.annotate-swatch.on { border-color: #fff; }
+.annotate-note {
+  width: 260px; max-width: 50vw; resize: vertical; padding: 4px 8px; border-radius: 6px; font: inherit;
+  border: 1px solid var(--cmp-line); background: var(--cmp-bg); color: var(--cmp-text);
+}
+.annotate-btn, .annotate-send {
+  padding: 4px 10px; border-radius: 6px; border: 1px solid var(--cmp-line); background: transparent; color: var(--cmp-text); font: inherit; cursor: pointer;
+}
+.annotate-send:not(:disabled) { background: #238636; border-color: #2ea043; color: #fff; }
+.annotate-btn:disabled, .annotate-send:disabled { opacity: .5; cursor: default; }
+.companion-input .companion-annotate {
+  padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-amber-text); font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
+}
+.companion-input .companion-annotate:hover { border-color: var(--cmp-amber); }
