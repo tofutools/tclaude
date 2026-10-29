@@ -39,7 +39,7 @@ import {
 // path has its own handler) — see KNOWN_TABS in nav-history-core.js for the full
 // set ordering.
 const ROUTABLE_TABS = new Set([
-  'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
+  'groups', 'terminals', 'boards', 'jobs', 'processes', 'plugins', 'access',
   'messages', 'usage', 'diagnostics', 'config', 'map', 'fleet-admin',
 ]);
 
@@ -70,6 +70,8 @@ let ready = false;
 // whether it is reachable.
 function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
+  // Boards is reached through the Collab switch; its nav anchor is hidden.
+  if (tab === 'boards') return true;
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
 }
@@ -202,6 +204,10 @@ function activeLocationFromDOM() {
     // opened) degrades to the bare /terminals.
     const island = featureState('terminals');
     if (island) return normalizeLocation(island.location.value);
+  } else if (tab === 'boards') {
+    // The open board is island state, like the viewed terminal above.
+    const island = featureState('boards');
+    if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
     // Ask the island directly: an open template editor's id (the
     // /automations/processes/templates/<id> segment) is state the DOM never
@@ -227,6 +233,12 @@ function requestProcessesLocation(loc) {
 }
 
 function requestTerminalsLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
+function requestBoardsLocation(loc) {
   document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
     detail: { location: normalizeLocation(loc) },
   }));
@@ -289,6 +301,10 @@ function activate(loc, { traversal = false } = {}) {
       // than a click, and the island answers only to CORRECT the URL when the
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
+    } else if (loc.tab === 'boards') {
+      // Always sent, bare /boards included: Back from an open board must
+      // return the island to its list.
+      requestBoardsLocation(loc);
     } else if (loc.tab === 'diagnostics') {
       // A bare /diagnostics (hand-typed, or Back onto one) shows the default
       // view, so a later subtab never strands an entry on another one.
