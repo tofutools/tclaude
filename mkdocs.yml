@@ -59,6 +59,7 @@ nav:
       - Permissions and audit: permissions-and-audit.md
       - Teams at scale: teams-at-scale.md
       - Group routes: group-routes.md
+      - Collab boards: boards.md
       - Dashboard: dashboard.md
       - Operating remotely: remote.md
       - Profiling agentd: profiling.md
