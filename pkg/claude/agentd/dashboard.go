@@ -400,7 +400,7 @@ func handleDashboardStatic() http.Handler {
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "diagnostics": true, "config": true,
-	"map": true, "fleet": true, "fleet-admin": true,
+	"map": true, "fleet": true, "fleet-admin": true, "boards": true,
 	// Retired tabs the client heals to their Diagnostics subtab (/audit →
 	// /diagnostics/audit, /logs → /diagnostics/logs, /debug →
 	// /diagnostics/performance), and Diagnostics' former name (/activity/<subtab>

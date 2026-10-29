@@ -48,7 +48,7 @@ const (
 var guideTabs = map[string]bool{
 	"groups": true, "processes": true, "terminals": true, "messages": true, "jobs": true,
 	"usage": true, "config": true, "access": true, "diagnostics": true, "plugins": true,
-	"map": true, "fleet-admin": true,
+	"map": true, "fleet-admin": true, "boards": true,
 }
 
 type dashboardView struct {
@@ -251,7 +251,7 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 	}
 	tab := strings.TrimSpace(strings.ToLower(req.Tab))
 	if tab != "" && !guideTabs[tab] {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "unknown tab "+guideText(tab, 32)+"; known: groups, processes, terminals, messages, jobs, usage, config, access, diagnostics, plugins, map, fleet-admin")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "unknown tab "+guideText(tab, 32)+"; known: groups, processes, terminals, messages, jobs, usage, config, access, diagnostics, plugins, map, fleet-admin, boards")
 		return
 	}
 	path, ok := guideCuePath(req.Path)
