@@ -560,8 +560,11 @@ export function navigateToPath(path) {
   if (url.origin !== window.location.origin) return false;
   const loc = normalizeLocation(fromPath(url.pathname, url.search));
   if (!ROUTABLE_TABS.has(loc.tab) || !locationAvailable(loc)) return false;
-  activate(loc);
+  // Push first so the stack points at the new entry before activate() runs:
+  // any in-place correction it makes (a bare /config, a peer-view fallback)
+  // then rewrites the new entry, never the one the operator came from.
   record(loc);
+  activate(loc);
   return true;
 }
 
