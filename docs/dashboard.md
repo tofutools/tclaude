@@ -627,6 +627,24 @@ only points: it never presses anything, and it plays once, then fades after a
 few seconds or when you dismiss it. Both slugs are granted to the Steward when
 it is summoned and are not default-granted to other agents.
 
+**Mark up a view.** **✎** in the message row, or **Ctrl+Shift+.**, lays a
+drawing layer over the page you are on. Circle, underline or draw an arrow at
+what you mean, add a note, and **Send**. The agent cannot see your screen, so
+each mark is sent as words: what kind of mark it is and which control or text
+is under it (for example `1. circled “Approve plan” (button)`), numbered like
+the badges on your strokes, together with the view you are on. **Esc**
+cancels and **Ctrl+Z** undoes the last stroke.
+
+### Boards
+
+**Collab → Boards** holds shared drawing boards. You draw shapes, arrows,
+text and freehand strokes, and invited agents read the board as shapes and as
+an image and draw back with `tclaude agent board` (see
+[boards.md](boards.md)). An agent's edits flash as they arrive. When your
+edits settle, the board's agents get one short `[board <id>]` message saying
+what changed. **＋ Invite agent** adds a live agent, and **⤓** exports the
+board as an `.excalidraw` file. The Steward can draw on boards.
+
 A browser terminal attach takes the session over from any other web view, so
 opening an agent in the companion closes its Terminals-tab pane, and moving it
 to the Terminals tab parks the companion tab until you bring it back.
