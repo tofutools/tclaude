@@ -3,14 +3,19 @@
 package session
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func testRouteHelper() *TclaudeLayerRouteHelper {
@@ -201,5 +206,77 @@ func TestRouteHelperAcceptsLateConversation(t *testing.T) {
 	}
 	if _, err := wrapTclaudeLayerRouteHelper(helper.BinaryPath, *helper, "harness --run"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// This subprocess entry runs the production helper command/parser rather than
+// a script that ignores its arguments. The wrapper owns its lifetime.
+func TestRouteHelperCommandProcess(t *testing.T) {
+	separator := slices.Index(os.Args, "--")
+	if separator < 0 {
+		t.Skip("helper subprocess only")
+	}
+	args := os.Args[separator+1:]
+	if len(args) < 2 || args[0] != "session" || args[1] != tclaudeLayerRouteHelperCommand {
+		t.Fatal("unexpected helper command prefix")
+	}
+	command := tclaudeLayerRouteHelperCmd()
+	command.SetArgs(args[2:])
+	command.SetOut(os.Stdout)
+	command.SetErr(os.Stderr)
+	if err := command.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func TestRouteHelperLateConversationStartsHarness(t *testing.T) {
+	root := testutil.CanonicalTempDir(t)
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(root, "helper.sh")
+	script := "#!/bin/sh\nexec " + clcommon.ShellQuoteArg(binary) + " -test.run=^TestRouteHelperCommandProcess$ -- \"$@\"\n"
+	if err := os.WriteFile(launcher, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	helper := *testRouteHelper()
+	helper.BinaryPath = launcher
+	helper.ConvID = ""
+	helper.GroupIDs = []int64{0}
+	helper.SocketPath = filepath.Join(root, "not-yet-enrolled.sock")
+	wrapped, err := wrapTclaudeLayerRouteHelper(binary, helper, "printf harness-started; test ! -e /proc/self/fd/4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dummy, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dummy.Close()
+	credentialRead, credentialWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer credentialRead.Close()
+	_, err = credentialWrite.WriteString("launch-scoped-test-credential")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := credentialWrite.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "/bin/sh", "-c", wrapped)
+	command.ExtraFiles = []*os.File{dummy, credentialRead}
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("late-enrolled helper prevented harness startup: %v\n%s", err, output)
+	}
+	if string(output) != "harness-started" {
+		t.Fatalf("harness did not start: %q", output)
 	}
 }

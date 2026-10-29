@@ -259,6 +259,9 @@ func IsValidUUID(s string) bool {
 
 // ShellQuoteArg quotes a single argument for safe inclusion in a sh -c command string.
 func ShellQuoteArg(s string) string {
+	if s == "" {
+		return "''"
+	}
 	if !strings.ContainsAny(s, " \t\n\"'\\$`|&;<>(){}*?[]#~!") {
 		return s
 	}
