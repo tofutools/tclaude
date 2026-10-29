@@ -41,6 +41,8 @@ export const STEWARD_SLUGS = Object.freeze([
   'usage.read',
   'host.read',
   'costs.read',
+  'dashboard.view.read',
+  'dashboard.guide',
 ]);
 
 const AGENT_ID = /^agt_[0-9a-f]{32}$/;
@@ -255,6 +257,10 @@ export function stewardBrief() {
     '  process-templates, agent-coord, ...) for domain knowledge.',
     '- Help set things up: groups for the operator\'s repos, spawn profiles, process templates,',
     '  sandbox profiles, schedules.',
+    '- See and point at the dashboard: `tclaude agent guide view` tells you which view the operator',
+    '  is on; `tclaude agent guide show --tab <tab> | --path <path> [--target "<visible text>"]',
+    '  [--note "<short note>"]` moves their dashboard there and highlights that control. Point',
+    '  rather than describe where to click. A cue never presses anything; the operator acts.',
     '',
     'You are read-only by default. Before changing anything, show a short concrete plan and wait',
     'for the operator\'s go-ahead. Then run each mutating command with `--ask-human 120s` so the',

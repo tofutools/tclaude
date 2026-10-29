@@ -1250,6 +1250,9 @@ type snapshotPayload struct {
 	// quota samples or OpenCode has retained provider activity that needs a
 	// coverage warning in the 90-day history window.
 	UsageTabVisible bool `json:"usage_tab_visible"`
+	// CompanionCues are agents' recent dashboard-guidance cues (dashboard_guide.go),
+	// played once each by the companion island.
+	CompanionCues []companionCue `json:"companion_cues,omitempty"`
 	// RemoteAccess surfaces the optional network-exposed dashboard listener's
 	// live state so the Config tab can guide setup: whether the cert/passphrase
 	// material has been generated (run `tclaude remote-access setup` first) and
@@ -3961,6 +3964,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.CostTabWhatIf = showOnSub
 	out.BrokerRefusalsTotal, out.BrokerRefusalsUnplaceable = brokerRefusals.counts()
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
+	out.CompanionCues = activeCompanionCues()
 	out.Templates = templates
 	out.Profiles = profiles
 	var httpProxyNames []string
