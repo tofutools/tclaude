@@ -328,7 +328,7 @@ func (s *Server) connectRoute(
 		Detail:  refusalDetail(target, VerdictNotAuthorized),
 	}
 	if s.route == nil || strings.TrimSpace(s.identity.AgentID) == "" ||
-		strings.TrimSpace(s.identity.ConvID) == "" || strings.TrimSpace(s.identity.LaunchGeneration) == "" {
+		strings.TrimSpace(s.identity.LaunchGeneration) == "" {
 		s.report(carriage, target, refused)
 		return nil, refused, nil
 	}

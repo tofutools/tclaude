@@ -603,6 +603,11 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnGitWorktreeWriteDirs(cx.ConvID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnCodexGitCommonDir(cx.ConvID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(cx.ConvID, args.CodexGitCommonDirPinned)
+	s.w.RecordSpawnRouteHelper(cx.ConvID, RouteHelperLaunch{
+		AgentID: args.RouteHelperAgentID, ConvID: args.RouteHelperConvID,
+		LaunchGeneration: args.RouteHelperLaunchGeneration, Credential: args.RouteHelperCredential,
+		GroupIDs: args.RouteHelperGroupIDs,
+	})
 	// A daemon-spawned Codex pane carries a positional first-turn seed (its
 	// conv-id seed, which now also delivers the [system: ...] welcome). Capture
 	// it keyed by conv-id so a flow test can assert what the launch prompt

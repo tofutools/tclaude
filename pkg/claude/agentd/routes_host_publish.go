@@ -203,7 +203,7 @@ func hostPublishLaunchDiagnosis(agentID, convID, generation string) string {
 	if runtime.GOOS == "linux" {
 		restart = ", and an agentd restart since then invalidates it again"
 	}
-	if h != nil && !h.SupportsLaunchEnrollment() {
+	if runtime.GOOS == "darwin" && h != nil && !h.SupportsLaunchEnrollment() {
 		return fmt.Sprintf("no route helper is active for this launch: a fresh %s spawn never gets one, because its conversation id is unknown before the pane starts, and a resumed one gets one only if the grant was already in place when it resumed%s", harnessName, restart)
 	}
 	if runtime.GOOS == "linux" {

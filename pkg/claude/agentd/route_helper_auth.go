@@ -14,6 +14,10 @@ import (
 
 const routeHelperCredentialHeader = "X-Tclaude-Route-Helper-Credential"
 
+// Bound the interval in which a seed-based harness may enroll. A gated launch
+// left beyond this window must be resumed to receive a new helper capability.
+const routeHelperEnrollmentTTL = 15 * time.Minute
+
 type routeHelperCredential struct {
 	agentID          string
 	convID           string
@@ -32,7 +36,7 @@ var routeHelperCredentials = struct {
 func mintRouteHelperCredential(agentID, convID string) (credential, launchGeneration string, err error) {
 	agentID = strings.TrimSpace(agentID)
 	convID = strings.TrimSpace(convID)
-	if agentID == "" || convID == "" {
+	if agentID == "" {
 		return "", "", errors.New("route helper credential identity is incomplete")
 	}
 	credential, err = randomRouteHelperSecret(32)
@@ -45,14 +49,63 @@ func mintRouteHelperCredential(agentID, convID string) (credential, launchGenera
 	}
 	// A new launch generation supersedes every predecessor capability for this
 	// conversation, even when route authority itself remains continuous.
-	revokeRouteHelperCredentials(convID, "")
+	if convID != "" {
+		revokeRouteHelperCredentials(convID, "")
+	}
 	routeHelperCredentials.Lock()
+	for token, old := range routeHelperCredentials.items {
+		if old.agentID == agentID || old.convID == "" && time.Since(old.issuedAt) > routeHelperEnrollmentTTL {
+			delete(routeHelperCredentials.items, token)
+		}
+	}
 	routeHelperCredentials.items[credential] = routeHelperCredential{
 		agentID: agentID, convID: convID, launchGeneration: launchGeneration,
 		issuedAt: time.Now().UTC(),
 	}
 	routeHelperCredentials.Unlock()
 	return credential, launchGeneration, nil
+}
+
+// attachRouteHelperConversation is called only after daemon-owned spawn enrollment.
+// An unbound capability never authenticates requests, including discovery.
+func attachRouteHelperConversation(agentID, convID string) {
+	bound, err := db.AgentIDForConv(convID)
+	if err != nil || bound != agentID || agentID == "" {
+		return
+	}
+	routeHelperCredentials.Lock()
+	defer routeHelperCredentials.Unlock()
+	for token, capability := range routeHelperCredentials.items {
+		if capability.agentID == agentID && capability.convID == "" {
+			if time.Since(capability.issuedAt) > routeHelperEnrollmentTTL {
+				delete(routeHelperCredentials.items, token)
+				continue
+			}
+			capability.convID = convID
+			routeHelperCredentials.items[token] = capability
+		}
+	}
+}
+
+func revokePendingRouteHelperCredentials(agentID string) {
+	routeHelperCredentials.Lock()
+	defer routeHelperCredentials.Unlock()
+	for token, capability := range routeHelperCredentials.items {
+		if capability.convID == "" && capability.agentID == agentID {
+			delete(routeHelperCredentials.items, token)
+		}
+	}
+}
+
+func hasRouteHelperForConversation(agentID, convID string) bool {
+	routeHelperCredentials.RLock()
+	defer routeHelperCredentials.RUnlock()
+	for _, capability := range routeHelperCredentials.items {
+		if capability.agentID == agentID && capability.convID == convID && routeHelperCredentialCurrent(capability) {
+			return true
+		}
+	}
+	return false
 }
 
 func randomRouteHelperSecret(size int) (string, error) {
@@ -87,7 +140,7 @@ func routeHelperCredentialForRequest(r *http.Request) (routeHelperCredential, bo
 	capability, ok := routeHelperCredentials.items[token]
 	routeHelperCredentials.RUnlock()
 	if !ok || !routeHelperCredentialCurrent(capability) {
-		if ok {
+		if ok && (capability.convID != "" || time.Since(capability.issuedAt) > routeHelperEnrollmentTTL) {
 			revokeRouteHelperCredentials(capability.convID, capability.launchGeneration)
 		}
 		return routeHelperCredential{}, true, false

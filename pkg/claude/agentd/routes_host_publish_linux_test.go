@@ -91,7 +91,7 @@ func TestHostOnlyPublicationWithoutGroup(t *testing.T) {
 	go func() { _ = server.Serve(listener) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cfg := routeadapter.HelperConfig{SocketPath: socket, AgentID: agentID, ConvID: args.ConvID, LaunchGeneration: args.RouteHelperLaunchGeneration, Credential: args.RouteHelperCredential, GroupIDs: args.RouteHelperGroupIDs, PollInterval: 10 * time.Millisecond}
+	cfg := routeadapter.HelperConfig{SocketPath: socket, AgentID: agentID, LaunchGeneration: args.RouteHelperLaunchGeneration, Credential: args.RouteHelperCredential, GroupIDs: args.RouteHelperGroupIDs, PollInterval: 10 * time.Millisecond}
 	require.NoError(t, routeadapter.ValidateHelper(ctx, cfg))
 	helperCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
@@ -157,13 +157,12 @@ func TestHostPublishLaunchErrorNamesCause(t *testing.T) {
 		return agentID
 	}
 
-	// A fresh Codex spawn enrolls after its pane starts, so it never carries
-	// a helper; the error must say so rather than ask for the grant again.
+	// An older Codex launch without a helper must explain how to recover.
 	grant("host-cause-codex", "codex")
 	rec := publish("host-cause-codex")
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), "fresh codex spawn never gets one")
-	require.Contains(t, rec.Body.String(), "grant was already in place when it resumed")
+	require.Contains(t, rec.Body.String(), "no route helper is active")
+	require.Contains(t, rec.Body.String(), "agentd restarted")
 	require.NotContains(t, rec.Body.String(), "grant routes.publish-host, then")
 
 	openAgent := grant("host-cause-open", "claude")

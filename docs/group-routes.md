@@ -70,10 +70,11 @@ membership or group-level route opt-in is required for a directly granted host-o
 
 Grant the permission before launching; if the current launch has no route helper, relaunch after adding it.
 Host publishing uses the same pane-authoritative tclaude sandbox launch and publisher helper as group routes. On Linux, the helper
-is provisioned from the agent's effective host-publishing permission; on macOS, the launch also
+is provisioned from the agent's effective host-publishing permission, or staged before enrollment
+for a seed-based launch; on macOS, the launch also
 reserves its normal bounded Darwin route slots. Holding the permission does not prevent other launch
-shapes from starting, but publication refuses a launch without a current route contract. Seed-based
-harnesses such as Codex may need their initial launch followed by a resume to install that contract.
+shapes from starting, but publication refuses a launch without a current route contract. On Linux, fresh Codex launches attach the helper after daemon enrollment without requiring a resume.
+On macOS, seed-based harnesses such as Codex still need a resume to install that contract.
 On macOS, clones may also need a resume before their first host publication. A live grant is required
 for the publication lifetime; one-shot approvals do not create persistent host publications.
 

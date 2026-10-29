@@ -191,3 +191,15 @@ func TestRouteHelperHostDiscoverySelector(t *testing.T) {
 		t.Fatalf("missing host discovery selector: %s", wrapped)
 	}
 }
+
+func TestRouteHelperAcceptsLateConversation(t *testing.T) {
+	helper := testRouteHelper()
+	helper.ConvID = ""
+	effective := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
+	if err := validateTclaudeLayerRouteHelper(effective, helper); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wrapTclaudeLayerRouteHelper(helper.BinaryPath, *helper, "harness --run"); err != nil {
+		t.Fatal(err)
+	}
+}

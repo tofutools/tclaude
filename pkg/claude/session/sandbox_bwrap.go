@@ -173,7 +173,7 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 	if helper.BinaryPath != "" && !filepath.IsAbs(filepath.Clean(helper.BinaryPath)) {
 		return fmt.Errorf("route helper binary path must be absolute")
 	}
-	if strings.TrimSpace(helper.AgentID) == "" || strings.TrimSpace(helper.ConvID) == "" || strings.TrimSpace(helper.LaunchGeneration) == "" || strings.TrimSpace(helper.HandoffSocketPath) == "" || !filepath.IsAbs(filepath.Clean(helper.HandoffSocketPath)) {
+	if strings.TrimSpace(helper.AgentID) == "" || (helper.ProxyOnly && strings.TrimSpace(helper.ConvID) == "") || strings.TrimSpace(helper.LaunchGeneration) == "" || strings.TrimSpace(helper.HandoffSocketPath) == "" || !filepath.IsAbs(filepath.Clean(helper.HandoffSocketPath)) {
 		return fmt.Errorf("route helper launch identity is incomplete")
 	}
 	if len(helper.GroupIDs) == 0 {

@@ -241,3 +241,47 @@ func TestRouteHelperSiblingAttachesWithCapability(t *testing.T) {
 	replayed := startSibling(credential, launchGeneration, http.MethodPost, http.StatusUnauthorized)
 	require.NoError(t, replayed.Run(), "a replay of a revoked capability must be refused")
 }
+
+func TestRouteHelperPendingCredentialCannotAuthorize(t *testing.T) {
+	setupTestDB(t)
+	const agentID = "agt_pending_helper"
+	token, generation, err := mintRouteHelperCredential(agentID, "")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("", generation)
+	req, err := http.NewRequest(http.MethodGet, "/v1/routes?group_id=0", nil)
+	require.NoError(t, err)
+	req.Header.Set(routeHelperCredentialHeader, token)
+	req.Header.Set("X-Tclaude-Route-Conv-ID", "forged-conversation")
+	_, present, valid := routeHelperCredentialForRequest(req)
+	require.True(t, present)
+	require.False(t, valid)
+	attachRouteHelperConversation(agentID, "forged-conversation")
+	_, _, valid = routeHelperCredentialForRequest(req)
+	require.False(t, valid, "helper headers cannot attach a conversation")
+	_, _, err = db.EnsureAgentForConvWithID("real-conversation", agentID, "test")
+	require.NoError(t, err)
+	attachRouteHelperConversation(agentID, "real-conversation")
+	defer revokeRouteHelperCredentials("real-conversation", generation)
+	capability, _, valid := routeHelperCredentialForRequest(req)
+	require.True(t, valid, "early polling must not revoke an otherwise live pending capability")
+	require.Equal(t, "real-conversation", capability.convID)
+}
+
+func TestRouteHelperExpiredPendingCredentialCannotAttach(t *testing.T) {
+	setupTestDB(t)
+	const agentID = "agt_expired_helper"
+	token, _, err := mintRouteHelperCredential(agentID, "")
+	require.NoError(t, err)
+	routeHelperCredentials.Lock()
+	capability := routeHelperCredentials.items[token]
+	capability.issuedAt = time.Now().Add(-16 * time.Minute)
+	routeHelperCredentials.items[token] = capability
+	routeHelperCredentials.Unlock()
+	_, _, err = db.EnsureAgentForConvWithID("expired-conversation", agentID, "test")
+	require.NoError(t, err)
+	attachRouteHelperConversation(agentID, "expired-conversation")
+	routeHelperCredentials.RLock()
+	_, exists := routeHelperCredentials.items[token]
+	routeHelperCredentials.RUnlock()
+	require.False(t, exists)
+}

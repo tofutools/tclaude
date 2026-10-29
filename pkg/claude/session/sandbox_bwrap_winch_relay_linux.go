@@ -62,7 +62,6 @@ func validateRouteAuthorityMetadata(binding tclaudeLayerRelayOptions, proxyActiv
 	}
 	if strings.TrimSpace(binding.RouteSocketPath) == "" ||
 		strings.TrimSpace(binding.RouteAgentID) == "" ||
-		strings.TrimSpace(binding.RouteConvID) == "" ||
 		strings.TrimSpace(binding.RouteLaunchGeneration) == "" || len(binding.RouteGroupIDs) == 0 {
 		return fmt.Errorf("route authority metadata is incomplete")
 	}

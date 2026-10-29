@@ -111,6 +111,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		// from a spawn that never happened.
 		slog.Info("pending-spawn sweeper: session row gone; dropping pending spawn",
 			"label", ps.Label)
+		revokePendingRouteHelperCredentials(ps.AgentID)
 		deletePendingSpawnRow(ps.Label)
 		surfacePendingSpawnDrop(ps)
 		return
@@ -144,6 +145,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		if sess.Status == session.StatusExited {
 			slog.Info("pending-spawn sweeper: session exited before conv-id; dropping pending spawn",
 				"label", ps.Label)
+			revokePendingRouteHelperCredentials(ps.AgentID)
 			deletePendingSpawnRow(ps.Label)
 		}
 		return
@@ -161,6 +163,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		// into. Drop the row.
 		slog.Warn("pending-spawn sweeper: group gone; dropping pending spawn",
 			"label", ps.Label, "group_id", ps.GroupID)
+		revokePendingRouteHelperCredentials(ps.AgentID)
 		deletePendingSpawnRow(ps.Label)
 		return
 	}
@@ -198,6 +201,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 			requeuePendingSpawn(ps.Label, ps)
 			return
 		}
+		attachRouteHelperConversation(ps.AgentID, convID)
 		slog.Info("pending-spawn sweeper: already enrolled; cleared pending row",
 			"label", ps.Label, "conv", convID)
 		return
