@@ -105,8 +105,19 @@ export function GuideOverlay({ cue, element, onDismiss, win = globalThis.window 
   useEffect(() => {
     if (!element) return undefined;
     let frame = 0;
+    let last = '';
     const follow = () => {
-      setRect(element.getBoundingClientRect());
+      // The target left the page (the operator navigated away): stop pointing.
+      if (element.isConnected === false) {
+        onDismiss();
+        return;
+      }
+      const next = element.getBoundingClientRect();
+      const key = `${next.left},${next.top},${next.width},${next.height}`;
+      if (key !== last) {
+        last = key;
+        setRect(next);
+      }
       frame = win?.requestAnimationFrame?.(follow) || 0;
     };
     frame = win?.requestAnimationFrame?.(follow) || 0;

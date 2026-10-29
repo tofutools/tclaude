@@ -150,6 +150,41 @@ func guidePath(p string) (string, bool) {
 	return p, true
 }
 
+// guideCuePath is guidePath for cues: a cue only points, so it may not name a
+// location whose restore has side effects. A /terminals/<agent> selection
+// reattaches that agent's browser terminal, taking the session over from any
+// other web view, so cues may open the Terminals tab but not a terminal.
+func guideCuePath(p string) (string, bool) {
+	p, ok := guidePath(p)
+	if !ok {
+		return "", false
+	}
+	if strings.HasPrefix(p, "/terminals/") {
+		return "", false
+	}
+	return p, true
+}
+
+// guideViewPath validates a reported view: the pathname must be a dashboard
+// path, while the query (a Messages search, say) is kept as printable text.
+func guideViewPath(p string) (string, bool) {
+	pathname, query, _ := strings.Cut(strings.TrimSpace(p), "?")
+	pathname, ok := guidePath(pathname)
+	if !ok {
+		return "", false
+	}
+	if query != "" {
+		query = guideText(query, guideMaxPath)
+		if query != "" {
+			pathname += "?" + query
+		}
+	}
+	if len(pathname) > guideMaxPath*2 {
+		pathname = pathname[:guideMaxPath*2]
+	}
+	return pathname, true
+}
+
 // POST /api/companion/view — the dashboard reports the operator's view.
 func handleDashboardCompanionView(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
@@ -165,7 +200,7 @@ func handleDashboardCompanionView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid view: "+err.Error())
 		return
 	}
-	path, ok := guidePath(req.Path)
+	path, ok := guideViewPath(req.Path)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard path")
 		return
@@ -219,9 +254,9 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "unknown tab "+guideText(tab, 32)+"; known: groups, processes, terminals, messages, jobs, usage, config, access, diagnostics, plugins, map, fleet-admin")
 		return
 	}
-	path, ok := guidePath(req.Path)
+	path, ok := guideCuePath(req.Path)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard path such as /processes/templates/<id>")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard path such as /processes/templates/<id> (a cue may open the Terminals tab, not a terminal)")
 		return
 	}
 	target := guideText(req.Target, guideMaxTarget)
