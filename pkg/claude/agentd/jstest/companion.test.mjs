@@ -413,3 +413,36 @@ test('dictation fills the draft and sends when the operator ends with "send"', a
   await harness.act(async () => { callbacks.onSend('keep me'); await new Promise((r) => setTimeout(r, 0)); });
   assert.equal(view.container.querySelector('input.companion-draft').value, 'keep me');
 });
+
+test('an agent cue draws marks on the operator view and names the ones it cannot find', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
+  const guide = await harness.importDashboardModule('js/companion-guide.js');
+  const doc = harness.document;
+  const box = (text, left) => {
+    const el = doc.body.appendChild(doc.createElement('button'));
+    el.textContent = text;
+    el.getBoundingClientRect = () => ({ left, top: 100, right: left + 80, bottom: 124, width: 80, height: 24 });
+    return el;
+  };
+  box('Review', 100);
+  box('Rework', 400);
+  const snap = harness.signals.signal({ groups: [], companion_cues: [] });
+  const fetchImpl = async () => ({ ok: true, status: 204, json: async () => ({}) });
+  const view = await harness.mount(harness.html`<${CompanionApp} snapshot=${snap} activeTab=${harness.signals.signal('groups')}
+    prefs=${memoryPrefs()} fetchImpl=${fetchImpl} widgetFactory=${() => ({})} registerController=${() => () => {}} />`);
+  await harness.act(async () => {
+    snap.value = { groups: [], companion_cues: [{ id: 7, agent_name: 'steward', note: 'Rework never loops back', marks: [
+      { kind: 'circle', target: 'Review' }, { kind: 'arrow', from: 'Rework', target: 'Review' }, { kind: 'underline', target: 'Nowhere' },
+    ] }] };
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 3400)); });
+  const paths = [...doc.querySelectorAll('.companion-guide-marks path')];
+  assert.deepEqual(paths.map((p) => p.getAttribute('class')), ['mark-circle', 'mark-arrow']);
+  assert.match(doc.querySelector('.companion-guide-note').textContent, /Couldn't find “Nowhere”/);
+  const rect = { left: 100, top: 100, width: 80, height: 24 };
+  assert.match(guide.markPath('underline', rect), /^M96\.0,129\.0 Q/);
+  assert.equal(guide.markPath('arrow', rect, null), '', 'an arrow needs both ends');
+  await view.unmount();
+});
