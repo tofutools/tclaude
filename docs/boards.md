@@ -41,6 +41,7 @@ tclaude agent board add plan arrow --from <elemA> --to <elemB>
 tclaude agent board add plan rectangle --right-of api --link --text DB --id db   # beside api, with an arrow from it
 tclaude agent board move plan <elem> --x 300 --y 80   # its label and bound arrows follow
 tclaude agent board layout plan [--direction down]    # arrange the shapes along their arrows
+tclaude agent board from-process flow review          # draw process template "review" as a flowchart
 tclaude agent board text plan <elem> --text "API v2"
 tclaude agent board rm plan <elem> [<elem>...]
 tclaude agent board patch plan --file elements.json   # - reads stdin
@@ -115,6 +116,22 @@ When the operator links a board to a group, the members who are online then
 receive the invitation mail. An agent can only create a board for a group it
 belongs to. Choosing "No group" unlinks the board. Archiving or deleting the
 group also unlinks it in effect: the board stays, without the group.
+
+## Sketching a process
+
+`board from-process <board> <template>` draws a process template as a
+flowchart, so a process can be talked through on a board. Each step is a shape
+coloured by who performs it: yellow for human, blue for agent, green for
+program. Decisions are diamonds, and start and end are ellipses. Each outcome
+is an arrow, and an outcome that loops back (rework) goes around beneath the
+steps. A step's outcomes are labelled when it has more than one. The board is
+created if it does not exist. Elements are named `p-<step>`, so drawing the
+same template again replaces its steps in place. The command needs
+`boards.write` and `process.templates.read`.
+
+Changing the process itself remains a process-template edit (see the
+process-templates skill). The board is where the operator and agents agree on
+the change.
 
 ## Presence
 
