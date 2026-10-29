@@ -144,3 +144,14 @@ body:has(#tab-boards.active) main { padding: 0; }
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 420px;
   text-align: center; color: #868e96; font-size: 14px; pointer-events: none;
 }
+/* Presence (tcl-rawj2c): an agent looking at or drawing on the board. */
+.board-person.looking { border-color: #388bfd; }
+.board-person.drawing { border-color: #a371f7; box-shadow: 0 0 0 2px rgba(163, 113, 247, .25); }
+.board-person-doing { color: #a371f7; animation: board-doing 1s ease-in-out infinite alternate; }
+@keyframes board-doing { from { opacity: .4; } to { opacity: 1; } }
+.board-drawing-note {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); pointer-events: none;
+  padding: 4px 12px; border-radius: 999px; background: rgba(163, 113, 247, .15); color: #6e40c9;
+  border: 1px solid rgba(163, 113, 247, .45); font-size: 12px;
+}
+@media (prefers-reduced-motion: reduce) { .board-person-doing { animation: none; } }
