@@ -6,8 +6,9 @@
 // the daemon: local edits are batched into PATCH /api/boards/{id}, and a poll
 // (GET ?since=<version>) merges what agents changed. When the operator's edits
 // settle, the board's participating agents get one short text event describing
-// them (POST /api/boards/{id}/events), and a PNG snapshot is uploaded so agents
-// can look at the board as well as read it.
+// them (POST /api/boards/{id}/events) with a PNG of the changed region, and a
+// PNG snapshot of the whole board is uploaded so agents can look at the board
+// as well as read it.
 //
 // Element text is agent- or operator-supplied and is rendered as SVG text.
 
@@ -16,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import htm from 'htm';
 import { signal } from '@preact/signals';
 import {
-  BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, boardIdFromTitle, bump, connectArrow, contentBounds,
+  BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, boardIdFromTitle, bump, changeBounds, connectArrow, contentBounds,
   describeChanges, elementBounds, isBoardId, liveElements, mergeElements, newElement, normalizeBox,
   reboundArrows, shapeAt, simplifyStroke, toExcalidraw, topHit,
 } from './board-model.js';
@@ -28,6 +29,8 @@ export const BOARD_POLL_MS = 1000;
 export const BOARD_FLUSH_MS = 250;
 export const BOARD_EVENT_IDLE_MS = 1500;
 export const BOARD_SNAPSHOT_IDLE_MS = 2500;
+// The daemon's limit for an event image (boardMaxRegionBytes).
+const BOARD_EVENT_IMAGE_MAX = 2 << 20;
 const HISTORY_MAX = 100;
 
 async function jsonOrThrow(response) {
@@ -253,10 +256,20 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     if (!metaRef.current.participants.length) return;
     const text = describeChanges(elements.current, ids, before);
     if (!text) return;
+    const event = { text: `The operator ${text}.` };
+    // The changed region as an image (tcl-vs77ee), so agents can see exactly
+    // what changed. The event goes out without it if it cannot be drawn.
+    const box = changeBounds(elements.current, ids, before);
+    if (box && svgRef.current && rasterize) {
+      try {
+        const png = await rasterize(svgRef.current, box);
+        if (png && png.size <= BOARD_EVENT_IMAGE_MAX) event.image = await (await import('./board-export.js')).blobToBase64(png);
+      } catch { /* text only */ }
+    }
     try {
       await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/events`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: `The operator ${text}.` }),
+        body: JSON.stringify(event),
       });
     } catch { /* events are best-effort */ }
   }
