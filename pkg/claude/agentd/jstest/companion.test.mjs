@@ -38,7 +38,7 @@ function fakeWidgetFactory(mounted) {
   };
 }
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), fetchImpl } = {}) {
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), fetchImpl, speakerImpl = null } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -55,7 +55,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), fetc
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} fetchImpl=${fetchFn}
-    widgetFactory=${fakeWidgetFactory(mounted)} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -339,4 +339,41 @@ test('the Steward tab offers one-click setup starters that send with the view at
   // Typing hides the starters; other agents never show them.
   await harness.input(view.container.querySelector('input.companion-draft'), 'x');
   assert.equal(view.container.querySelector('.companion-starters'), null);
+});
+
+test('voice output speaks a reply when the turn ends and says when the agent needs you', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const spoken = [];
+  let cancelled = 0;
+  const speakerImpl = { supported: true, speak: (text) => spoken.push(text), cancel: () => { cancelled += 1; } };
+  const speechReads = [];
+  const fetchImpl = async (url) => {
+    if (String(url).includes('/speech')) {
+      speechReads.push(String(url));
+      const primed = String(url).endsWith('since=9000000000000000000');
+      return { ok: true, status: 200, json: async () => ({ now: 1000 + speechReads.length, items: primed ? [] : [{ text: 'Let me look.', at_ns: 2001 }, { text: 'You have **three** profiles.', at_ns: 2002 }] }) };
+    }
+    return { ok: true, status: 202, json: async () => ({}) };
+  };
+  const { view, harness: h, snap, controller } = await setup(t, { prefs, fetchImpl, speakerImpl, snapshot: snapshotWith({ aStatus: 'working' }) });
+  const voice = await h.importDashboardModule('js/companion-voice.js');
+  assert.equal(voice.speakableText('## Done\n\nI **renamed** `build` to compile:\n```sh\nmake\n```\nSee https://x.y/z.'),
+    'Done. I renamed build to compile: (code omitted). See a link');
+  assert.equal(voice.speakableText('Edited foo_bar_baz.go, run `go test ./...`'), 'Edited foo_bar_baz.go, run go test ./...');
+  assert.match(voice.speakableText('One. '.repeat(400), 50), /The rest is in the window\.$/);
+  await h.act(() => controller().open(A));
+  const toggle = h.getByRole(view.container, 'button', { name: /Speak alpha's replies aloud/ });
+  await h.act(async () => { toggle.click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.voice')), [A]);
+  assert.ok(speechReads[0].endsWith('since=9000000000000000000'), 'turning voice on primes the cursor, speaking nothing old');
+  await h.act(async () => { snap.value = snapshotWith({ aStatus: 'idle' }); await new Promise((r) => setTimeout(r, 0)); });
+  await h.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(spoken, ['You have three profiles.'], 'the turn\'s last text is spoken');
+  assert.match(speechReads.at(-1), /since=1001$/, 'the read starts at the primed cursor');
+  assert.equal(prefs.store.get('tclaude.dash.companion.voice.said.' + A), '2002', 'the reply is claimed, so other dashboard tabs stay quiet');
+  await h.act(async () => { snap.value = snapshotWith({ aStatus: 'awaiting_permission' }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(spoken.at(-1), 'alpha needs you: Bash(rm -rf build)');
+  await h.input(view.container.querySelector('input.companion-draft'), 'stop');
+  assert.ok(cancelled >= 1, 'typing stops speech');
 });
