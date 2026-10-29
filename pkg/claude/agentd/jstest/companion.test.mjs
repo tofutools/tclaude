@@ -351,14 +351,15 @@ test('voice output speaks a reply when the turn ends and says when the agent nee
     if (String(url).includes('/speech')) {
       speechReads.push(String(url));
       const primed = String(url).endsWith('since=9000000000000000000');
-      return { ok: true, status: 200, json: async () => ({ now: 1000 + speechReads.length, items: primed ? [] : [{ text: 'Let me look.' }, { text: 'You have **three** profiles.' }] }) };
+      return { ok: true, status: 200, json: async () => ({ now: 1000 + speechReads.length, items: primed ? [] : [{ text: 'Let me look.', at_ns: 2001 }, { text: 'You have **three** profiles.', at_ns: 2002 }] }) };
     }
     return { ok: true, status: 202, json: async () => ({}) };
   };
   const { view, harness: h, snap, controller } = await setup(t, { prefs, fetchImpl, speakerImpl, snapshot: snapshotWith({ aStatus: 'working' }) });
   const voice = await h.importDashboardModule('js/companion-voice.js');
   assert.equal(voice.speakableText('## Done\n\nI **renamed** `build` to compile:\n```sh\nmake\n```\nSee https://x.y/z.'),
-    'Done. I renamed build to compile:. (code omitted). See a link');
+    'Done. I renamed build to compile: (code omitted). See a link');
+  assert.equal(voice.speakableText('Edited foo_bar_baz.go, run `go test ./...`'), 'Edited foo_bar_baz.go, run go test ./...');
   assert.match(voice.speakableText('One. '.repeat(400), 50), /The rest is in the window\.$/);
   await h.act(() => controller().open(A));
   const toggle = h.getByRole(view.container, 'button', { name: /Speak alpha's replies aloud/ });
@@ -370,6 +371,7 @@ test('voice output speaks a reply when the turn ends and says when the agent nee
   await h.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(spoken, ['You have three profiles.'], 'the turn\'s last text is spoken');
   assert.match(speechReads.at(-1), /since=1001$/, 'the read starts at the primed cursor');
+  assert.equal(prefs.store.get('tclaude.dash.companion.voice.said.' + A), '2002', 'the reply is claimed, so other dashboard tabs stay quiet');
   await h.act(async () => { snap.value = snapshotWith({ aStatus: 'awaiting_permission' }); await new Promise((r) => setTimeout(r, 0)); });
   assert.equal(spoken.at(-1), 'alpha needs you: Bash(rm -rf build)');
   await h.input(view.container.querySelector('input.companion-draft'), 'stop');
