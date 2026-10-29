@@ -127,6 +127,8 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermJobsRun, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Request and inspect remote one-shot jobs in an allowed repository. Requires peer= scope. Peer grants independently require a receiving group and launch policy."},
 	{Slug: PermDashboardViewRead, Description: "Read which dashboard view the operator is currently looking at (tab, path, title). Granted to the companion Steward at summon; not default-granted."},
 	{Slug: PermDashboardGuide, Description: "Point at the operator's dashboard: switch it to a view and highlight a control with a short note. Cannot press buttons or change state. Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermBoardsRead, Description: "Read collab boards: list them, show their elements and fetch the latest PNG snapshot. Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermBoardsWrite, Description: "Create collab boards and add, change or delete elements on them (authored as the calling agent, which joins the board). Granted to the companion Steward at summon; not default-granted."},
 	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
 	{Slug: PermHumanInboxRead, Description: "Peer-only: read this node's human notifications and pending ask-human requests. Held only through unrestricted federation trust; not grantable, not requestable."},
 	{Slug: PermHumanInboxAnswer, Description: "Peer-only: reply to this node's agents' human notifications and answer their ask-human requests once (approve or deny). Held only through unrestricted federation trust; not grantable, not requestable."},
