@@ -266,6 +266,8 @@ var peerViewLocalRoutes = []string{
 	"/api/sandbox-profiles/{name}",
 	"/api/scribe",
 	"GET /api/scribe/{agent}/chat",
+	// The companion's hover preview reads this node's own pane text.
+	"GET /api/companion/{agent}/peek",
 	"/api/shutdown",
 	"/api/snapshot",
 	"/api/spawn-attachments",
