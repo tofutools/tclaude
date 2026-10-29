@@ -27,13 +27,16 @@ so every setup follows the same loop:
    ```bash
    tclaude agent sudo request groups.create groups.settings.default-dir \
      --duration 30m --reason "Set up your repos:
-   1. create groups api, web (you as owner)
-   2. set each group's default dir to ~/git/<repo>"
+   1. create groups api, web (I become their owner while setting them up)
+   2. set each group's default dir to ~/git/<repo>
+   3. give up my ownership of both groups"
    ```
    The operator approves it as a card in your companion window (it shows the
    slugs, the time limit and your reason). `--duration` is capped at 1h. For a
-   single one-off change, run that command with `--ask-human 120s` instead.
-   Never retry a denied request; ask what to change.
+   single one-off `groups …` change you may instead run that one command with
+   `--ask-human 120s`. Only commands that list `--ask-human` in their `--help`
+   accept it: profile and sandbox-profile writes always go through
+   `sudo request`. Never retry a denied request; ask what to change.
 5. **Execute** the plan step by step, stopping at the first error and saying
    what happened.
 6. **Verify** with the read commands, then point the operator at the result in
@@ -75,8 +78,14 @@ agent spawned into it starts there.
   receives (build/test commands, branch and PR conventions). Draft it from the
   repo's README/CONTRIBUTING and show it to the operator before setting it.
   Write it to a file and use `--file`, never inline shell quoting.
-- The operator owns groups they create in the dashboard. If they want an
-  agent to own one, that is `groups grant-owner <group> <conv>`; ask first.
+- **A group you create is owned by you.** Ownership carries lasting
+  group-scoped powers (spawning into it, its member permissions and
+  environment) that do not expire with the sudo window. Say so in the plan,
+  and end the plan by giving it up:
+  `tclaude agent groups revoke-owner <group> <your conv-id>` (your conv-id is
+  in `tclaude agent whoami`), unless the operator asks you to keep it. To make
+  another agent an owner, that is `groups grant-owner <group> <conv>`; ask
+  first.
 
 ## Spawn profiles
 
@@ -86,13 +95,18 @@ existing profile is the best template for the shape.
 
 ```bash
 tclaude agent profiles show <existing> --json > /tmp/profile.json   # start from a known-good shape
-# edit name/model/effort/... then:
+# edit name/model/effort/..., reset the access fields (below), then:
 tclaude agent profiles create --file /tmp/profile.json               # profiles.manage
 tclaude agent profiles default set <name>                            # global default; ask first
 ```
 
-Use `--help` on `profiles create|edit|default` if a field is unclear rather
-than inventing keys. Changing the global default changes every future spawn
+A copied profile also copies its **access**: `permission_overrides`,
+`is_owner` and `sandbox` grant every agent spawned from it those slugs,
+ownership and host access. Reset `permission_overrides` to empty and
+`is_owner` to false unless the operator asked for them, and list every
+non-empty access field explicitly in the plan. Use `--help` on
+`profiles create|edit|default` if a field is unclear rather than inventing
+keys. Changing the global default changes every future spawn
 that does not name a profile, so call that out in the plan.
 
 ## Sandbox profiles
@@ -104,7 +118,10 @@ pick a network posture. They are security policy: prefer
 reviews and saves in the dashboard, over creating one directly
 (`sandbox-profiles.manage`). The draft token comes from the dashboard's
 sandbox-profile editor; ask the operator to open it and give you the token.
-Assigning one to a group is `sandbox-profiles group set <group> <profile>`.
+Assigning one to a group is `sandbox-profiles group set <group> <profile>`
+(`sandbox-profiles.manage`). It changes host access for every agent in the
+group, so name the profile and what it grants in the plan, or leave the
+assignment to the operator in the dashboard.
 
 ## Schedules
 
