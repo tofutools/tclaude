@@ -437,6 +437,12 @@ func TestBoardsPresenceAgentsAndOperatorView(t *testing.T) {
 	require.NotNil(t, v)
 	assert.Equal(t, []float64{-40, 10, 800, 600}, []float64{v.X, v.Y, v.Width, v.Height})
 	assert.Equal(t, 5, v.AgeSeconds)
+	// Another editor tab clearing its own view leaves this one.
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"client": "tab-2"}).Code)
+	require.NotNil(t, read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView)
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"client": "tab-2", "x": 500, "y": 0, "width": 10, "height": 10}).Code)
+	assert.Equal(t, 500.0, read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView.X, "the newest view is the operator's")
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"client": "tab-2"}).Code)
 	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{}).Code)
 	assert.Nil(t, read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView, "{} clears the view")
 	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"x": 0, "y": 0, "width": 10, "height": 10}).Code)
