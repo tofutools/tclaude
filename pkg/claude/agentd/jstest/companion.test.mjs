@@ -83,6 +83,24 @@ test('summoning the Steward posts a read-only scoped scribe summon and attaches 
   assert.ok(post.body.slugs.every((slug) => /\.read$/.test(slug)), `only read slugs: ${post.body.slugs}`);
   assert.match(post.body.brief, /--ask-human/);
   assert.deepEqual(closed.at(-1), [S], 'any Terminals-tab pane of the agent is closed first');
+  // The summoned agent is not in a snapshot yet: the tab stays and says so.
+  assert.match(view.container.textContent, /Starting the agent/);
+  assert.ok(!/Summon the Steward/.test(view.container.querySelector('.companion-body').textContent), 'no second summon is offered while it starts');
+});
+
+test('the facade refuses an agent the snapshot does not know, so callers keep their fallback', async (t) => {
+  const { controller } = await setup(t);
+  assert.equal(controller().open(`agt_${'c'.repeat(32)}`), false);
+  assert.equal(controller().open(A), true);
+});
+
+test('agents outside every group can be pinned', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  const agents = m.companionAgents({ groups: [], ungrouped: [{ agent_id: B, conv_id: 'b', title: 'solo', online: true, state: { status: 'idle' } }] });
+  assert.equal(agents.get(B)?.name, 'solo');
+  const body = m.composeCompanionMessage('é'.repeat(9000), 'Groups (/)');
+  assert.ok(new TextEncoder().encode(body).length <= m.COMPANION_MESSAGE_MAX_BYTES);
 });
 
 test('a pinned agent awaiting permission shows "needs you" on its chip', async (t) => {

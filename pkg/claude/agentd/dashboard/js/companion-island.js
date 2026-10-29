@@ -21,7 +21,7 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_MESSAGE_MAX, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
+  COMPANION_ACTIVE_PREF, COMPANION_MESSAGE_MAX, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
   stewardSummonBody, viewContext, withTab, withoutTab, zoneRect,
@@ -32,6 +32,17 @@ import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 const html = htm.bind(h);
 
 const PEEK_DELAY_MS = 220;
+const PENDING_MS = 30000;
+
+// snapTopOf is where a snapped side panel starts: just below the nav bar.
+function snapTopOf(win) {
+  try {
+    const bottom = win?.document?.querySelector?.('nav')?.getBoundingClientRect?.().bottom;
+    return Number.isFinite(bottom) && bottom > 0 ? Math.round(bottom) : 0;
+  } catch {
+    return 0;
+  }
+}
 const PEEK_REFRESH_MS = 1500;
 
 function viewportOf(win) {
@@ -72,13 +83,14 @@ function StatusDot({ status }) {
 // CompanionTerminal mounts the opaque xterm widget for one agent. It owns the
 // widget's whole lifecycle: a new agent id or a reconnect generation disposes
 // the old widget before attaching a fresh one.
-function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focusToken, onStatus }) {
+function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focusToken, onStatus, onReconnectChange }) {
   const hostRef = useRef(null);
   const widgetRef = useRef(null);
   useEffect(() => {
     let cancelled = false;
     let widget = null;
     onStatus('connecting…');
+    onReconnectChange(false);
     Promise.resolve(loadRuntime ? loadRuntime() : true).then(() => {
       if (cancelled || !hostRef.current) return;
       widget = widgetFactory({
@@ -88,6 +100,7 @@ function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focu
         initialRetry: true,
         applicationClipboardShortcuts: agent.harness === 'copilot',
         onStatus: (status) => { if (!cancelled) onStatus(status); },
+        onReconnectChange: (available) => { if (!cancelled) onReconnectChange(!!available); },
       });
       widgetRef.current = widget;
       widget.setActive(true);
@@ -173,13 +186,16 @@ export function CompanionApp({
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState(() => {
     const vp = viewportOf(win);
-    return clampPlacement(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || defaultPlacement(vp), vp);
+    const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
+    if (saved?.snap) return zoneRect(saved.snap, vp, snapTopOf(win));
+    return clampPlacement(saved || defaultPlacement(vp), vp);
   });
   const [guide, setGuide] = useState(null);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   const [parked, setParked] = useState(() => new Set());
   const [statuses, setStatuses] = useState({});
+  const [reconnectable, setReconnectable] = useState({});
   const [generation, setGeneration] = useState(0);
   const [focusToken, setFocusToken] = useState(0);
   const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
@@ -189,6 +205,12 @@ export function CompanionApp({
   const windowRef = useRef(null);
   const chipRects = useRef(new Map());
   const openFrom = useRef(null);
+  // Agents just summoned or opened but not yet in a snapshot: kept pinned (and
+  // shown as starting) until a snapshot lists them or PENDING_MS passes.
+  const pending = useRef(new Map());
+  // The cleanup of an in-flight drag or resize, run if the island unmounts.
+  const gesture = useRef(null);
+  useEffect(() => () => gesture.current?.(), []);
 
   const activeId = tabs.includes(active) ? active : (tabs[0] || '');
   const activeAgent = activeId ? agents.get(activeId) || null : null;
@@ -200,13 +222,22 @@ export function CompanionApp({
   // the snapshot is known so the chips never show a dead handle forever.
   useEffect(() => {
     if (!snapshot.value) return;
-    const gone = tabs.filter((id) => !agents.has(id));
-    if (gone.length) setTabs((current) => current.filter((id) => agents.has(id)));
+    const now = Date.now();
+    for (const [id, until] of pending.current) {
+      if (agents.has(id) || until < now) pending.current.delete(id);
+    }
+    const keep = (id) => agents.has(id) || pending.current.has(id);
+    if (tabs.some((id) => !keep(id))) setTabs((current) => current.filter(keep));
   }, [agents]);
 
-  const showAgent = useCallback((agentId, { focus = true } = {}) => {
+  const showAgent = useCallback((agentId, { focus = true, starting = false } = {}) => {
     if (!isAgentId(agentId)) return false;
     const agent = agents.get(agentId);
+    // An id the snapshot does not know is only accepted for an agent this
+    // window just started; other callers keep their own fallback.
+    if (!agent && !starting && !pending.current.has(agentId)) return false;
+    if (!agent && starting) pending.current.set(agentId, Date.now() + PENDING_MS);
+    stopPeek();
     closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
     setParked((current) => {
       if (!current.has(agentId)) return current;
@@ -239,7 +270,7 @@ export function CompanionApp({
       if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
       if (!isAgentId(result.agent_id)) throw new Error('the summon returned no agent id');
       notify(`${result.reused ? 'Reopened' : 'Summoned'} the Steward.`);
-      showAgent(result.agent_id);
+      showAgent(result.agent_id, { starting: true });
     } catch (error) {
       notify(`Could not summon the Steward: ${error?.message || error}`, true);
     } finally {
@@ -271,6 +302,7 @@ export function CompanionApp({
   }, [activeId, win]);
 
   const toggle = useCallback(() => {
+    stopPeek();
     if (open) {
       minimize();
       return;
@@ -324,13 +356,7 @@ export function CompanionApp({
   }, [win]);
 
   function snapTop() {
-    try {
-      const nav = win?.document?.querySelector?.('nav');
-      const bottom = nav?.getBoundingClientRect?.().bottom;
-      return Number.isFinite(bottom) && bottom > 0 ? Math.round(bottom) : 0;
-    } catch {
-      return 0;
-    }
+    return snapTopOf(win);
   }
 
   function savePlacement(p) {
@@ -378,6 +404,11 @@ export function CompanionApp({
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
     handle.addEventListener('pointercancel', up);
+    gesture.current = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+    };
   }
 
   function onResizePointerDown(event) {
@@ -398,7 +429,17 @@ export function CompanionApp({
       else if (start.snap === 'left') last = { ...start, w: start.w + dx };
       else if (start.snap === 'bottom') last = { ...start, y: start.y + dy, h: start.h - dy };
       else last = { ...start, w: start.w + dx, h: start.h + dy };
-      last = start.snap ? { ...last, w: Math.max(360, last.w), h: Math.max(220, last.h) } : clampPlacement(last, viewportOf(win));
+      if (start.snap) {
+        const vp = viewportOf(win);
+        const w = Math.min(vp.width, Math.max(COMPANION_MIN_W, last.w));
+        const h = Math.max(COMPANION_MIN_H, last.h);
+        // Keep the panel glued to its edge however far the drag overshoots.
+        last = { ...last, w, h };
+        if (start.snap === 'right') last.x = vp.width - w;
+        if (start.snap === 'bottom') last.y = start.y + start.h - h;
+      } else {
+        last = clampPlacement(last, viewportOf(win));
+      }
       setPlacement(last);
     };
     const up = () => {
@@ -410,6 +451,11 @@ export function CompanionApp({
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
     handle.addEventListener('pointercancel', up);
+    gesture.current = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+    };
   }
 
   // Peek: a short hover delay, then the pane text, refreshed while hovered.
@@ -495,6 +541,7 @@ export function CompanionApp({
     setTimeout(() => openTerminalsPane(agent.agentId, agent.name, agent.harness), 60);
   }
 
+  const setReconnectFor = useCallback((agentId) => (available) => setReconnectable((current) => (current[agentId] === available ? current : { ...current, [agentId]: available })), []);
   const setStatusFor = useCallback((agentId) => (status) => setStatuses((current) => (current[agentId] === status ? current : { ...current, [agentId]: status })), []);
 
   // -- render -----------------------------------------------------------------
@@ -530,6 +577,8 @@ export function CompanionApp({
   const style = `left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`;
   const status = activeAgent ? companionStatus(activeAgent) : 'offline';
   const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
+  const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
+  const starting = !activeAgent && activeId && pending.current.has(activeId);
 
   const windowView = open && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}`}
@@ -562,7 +611,8 @@ export function CompanionApp({
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
     <div class="companion-body">
-      ${!activeAgent && html`<div class="companion-empty">
+      ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
+      ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> The Steward</p>
         <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
           groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
@@ -580,12 +630,12 @@ export function CompanionApp({
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
         ${status === 'needs' && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
-        ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${termStatus === 'disconnected' || termStatus === 'error' || termStatus === 'authentication required'
-          ? html`${termStatus === 'authentication required' ? 'Sign-in required.' : 'Disconnected.'} <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
+        ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
+          ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
           : termStatus}</div>`}
         <${CompanionTerminal} key=${activeAgent.agentId} agent=${activeAgent} generation=${generation}
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
-          onStatus=${setStatusFor(activeAgent.agentId)} />`}
+          onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
     ${activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
       <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
@@ -604,7 +654,7 @@ export function CompanionApp({
     ${windowView}
     ${chips}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
-    <${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`;
+    ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
 }
 
 export function mountCompanionIsland({ host, registerCleanup, ...props }) {
