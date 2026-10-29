@@ -175,21 +175,24 @@ export function speechRecognitionCtor(win = globalThis.window) {
   return win?.SpeechRecognition || win?.webkitSpeechRecognition || null;
 }
 
-// splitSendCommand reports whether dictated text ends with the spoken
-// command "send" and returns the text without it.
-export function splitSendCommand(text) {
-  const match = /^(.*?)[\s,.]*\bsend(?: it)?[.!]?\s*$/is.exec(String(text || ''));
-  if (!match) return { text: String(text || '').trim(), send: false };
-  return { text: match[1].trim(), send: true };
+// isSendCommand reports whether one finished phrase is the spoken command
+// "send" on its own. The recognizer finishes a phrase at every pause, so
+// "send" only counts when the operator paused before it: "I want to send
+// the report" or "don't send" never send.
+export function isSendCommand(phrase) {
+  return /^\s*send(?: it)?[.!]?\s*$/i.test(String(phrase || ''));
 }
 
 // createDictation wraps the browser's speech recognition: interim and final
 // text arrive through onText (the whole utterance so far), onState reports
-// listening on/off, and onSend fires when the operator ends with "send".
-// Chrome's recognizer runs in Google's cloud; the button says so.
+// listening on/off, and onSend fires when the operator says "send" as a
+// phrase of its own. stop() still delivers the words already heard but never
+// sends; abort() drops them. Chrome's recognizer runs in Google's cloud; the
+// button says so.
 export function createDictation(win = globalThis.window, { onText, onState, onSend, lang } = {}) {
   const Ctor = speechRecognitionCtor(win);
   let recognition = null;
+  let stopped = false;
   return {
     supported: !!Ctor,
     get active() { return !!recognition; },
@@ -199,27 +202,31 @@ export function createDictation(win = globalThis.window, { onText, onState, onSe
       r.continuous = true;
       r.interimResults = true;
       r.lang = lang || win?.navigator?.language || 'en-US';
-      let finals = '';
+      const finals = [];
+      stopped = false;
       r.onresult = (event) => {
+        if (recognition !== r) return;
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
-          if (result.isFinal) finals += `${result[0].transcript} `;
-          else interim += result[0].transcript;
+          const phrase = result[0].transcript;
+          if (!result.isFinal) {
+            interim += phrase;
+          } else if (isSendCommand(phrase) && !stopped) {
+            const text = finals.join(' ').replace(/\s+/g, ' ').trim();
+            onText?.(text);
+            onSend?.(text);
+            r.stop();
+            return;
+          } else {
+            finals.push(phrase);
+          }
         }
-        const heard = `${finals}${interim}`.replace(/\s+/g, ' ').trim();
-        const command = splitSendCommand(finals);
-        if (command.send && !interim.trim()) {
-          onText?.(command.text);
-          onSend?.(command.text);
-          r.stop();
-          return;
-        }
-        onText?.(heard);
+        onText?.(`${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim());
       };
       r.onerror = (event) => onState?.(false, event?.error || 'error');
       r.onend = () => {
-        recognition = null;
+        if (recognition === r) recognition = null;
         onState?.(false);
       };
       recognition = r;
@@ -227,7 +234,14 @@ export function createDictation(win = globalThis.window, { onText, onState, onSe
       onState?.(true);
     },
     stop() {
+      stopped = true;
       recognition?.stop();
+    },
+    abort() {
+      const r = recognition;
+      recognition = null;
+      r?.abort?.();
+      if (r) onState?.(false);
     },
   };
 }
