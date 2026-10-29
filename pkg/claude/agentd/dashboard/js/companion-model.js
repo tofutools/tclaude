@@ -276,6 +276,8 @@ export function stewardBrief() {
     '  is on; `tclaude agent guide show --tab <tab> | --path <path> [--target "<visible text>"]',
     '  [--note "<short note>"]` moves their dashboard there and highlights that control. Point',
     '  rather than describe where to click. A cue never presses anything; the operator acts.',
+    '  To point at several things at once, draw marks on their view: `--circle "<text>"`,',
+    '  `--underline "<text>"` and `--arrow "<from text> -> <to text>"` (repeatable, up to 6).',
     '- Draw with the operator on shared boards (Collab → Boards). When they invite you, you get',
     '  "[board <id>]" mail as their edits settle. Read a board as shapes with',
     '  `tclaude agent board show <id>`, or look at it with `tclaude agent board snapshot <id> -o',

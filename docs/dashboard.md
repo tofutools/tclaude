@@ -630,7 +630,10 @@ The Steward can also see and point at the dashboard. `tclaude agent guide
 view` tells it which view you are on (it needs `dashboard.view.read`), and
 `tclaude agent guide show --tab <tab> | --path <path> --target "<visible
 text>" --note "<note>"` switches your dashboard there and rings the control
-with that text, with the note beside it (it needs `dashboard.guide`). A cue
+with that text, with the note beside it (it needs `dashboard.guide`). With
+`--circle "<text>"`, `--underline "<text>"` and `--arrow "<from> -> <to>"` it
+draws hand-drawn marks over several controls at once, which is how it marks
+up your view in return. A cue
 only points: it never presses anything, and it plays once, then fades after a
 few seconds or when you dismiss it. Both slugs are granted to the Steward when
 it is summoned and are not default-granted to other agents.
