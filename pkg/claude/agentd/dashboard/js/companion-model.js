@@ -34,6 +34,8 @@ export const STEWARD_SCOPE = Object.freeze({ kind: 'steward' });
 // The Steward is read-only by default: it inspects and explains through the
 // tclaude CLI's read surfaces. Anything that changes state goes through a
 // per-command `--ask-human` approval the operator decides in the dashboard.
+// The one write is boards.write: drawing on a shared board with the operator
+// is conversation, not configuration.
 export const STEWARD_SLUGS = Object.freeze([
   'process.templates.read',
   'process.runs.read',
@@ -43,6 +45,8 @@ export const STEWARD_SLUGS = Object.freeze([
   'costs.read',
   'dashboard.view.read',
   'dashboard.guide',
+  'boards.read',
+  'boards.write',
 ]);
 
 const AGENT_ID = /^agt_[0-9a-f]{32}$/;
@@ -261,6 +265,12 @@ export function stewardBrief() {
     '  is on; `tclaude agent guide show --tab <tab> | --path <path> [--target "<visible text>"]',
     '  [--note "<short note>"]` moves their dashboard there and highlights that control. Point',
     '  rather than describe where to click. A cue never presses anything; the operator acts.',
+    '- Draw with the operator on shared boards (Collab → Boards). When they invite you, you get',
+    '  "[board <id>]" mail as their edits settle. Read a board as shapes with',
+    '  `tclaude agent board show <id>`, or look at it with `tclaude agent board snapshot <id> -o',
+    '  /tmp/<id>.png` and view the image. Draw back with `tclaude agent board add|move|text|rm`',
+    '  (arrows join shapes with --from/--to; see `tclaude agent board --help`). Sketch a plan,',
+    '  annotate theirs, or answer a question as a diagram when a picture is clearer than words.',
     '',
     'You are read-only by default. Before changing anything, show a short concrete plan. For a',
     'multi-step setup, ask for exactly the permissions the plan needs, once, for a bounded time:',
