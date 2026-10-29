@@ -53,10 +53,17 @@ type boardPresenceJSON struct {
 
 type boardActivity struct{ readAt, editAt time.Time }
 
+type boardViewAt struct {
+	view boardViewport
+	at   time.Time
+}
+
 type boardPresenceEntry struct {
 	agents map[string]*boardActivity
-	view   *boardViewport
-	viewAt time.Time
+	// views holds one viewport per open editor (a dashboard tab's client
+	// token); the newest is the operator's view, so a background tab
+	// clearing its own never hides the one in front.
+	views map[string]boardViewAt
 }
 
 type boardPresenceStore struct {
@@ -69,7 +76,7 @@ var boardPresence = &boardPresenceStore{boards: map[string]*boardPresenceEntry{}
 func (s *boardPresenceStore) entry(id string) *boardPresenceEntry {
 	e := s.boards[id]
 	if e == nil {
-		e = &boardPresenceEntry{agents: map[string]*boardActivity{}}
+		e = &boardPresenceEntry{agents: map[string]*boardActivity{}, views: map[string]boardViewAt{}}
 		s.boards[id] = e
 	}
 	return e
@@ -120,11 +127,26 @@ func (s *boardPresenceStore) noteEdit(id, agentID string) {
 	a.readAt = a.editAt
 }
 
-func (s *boardPresenceStore) setView(id string, view *boardViewport) {
+const boardMaxViewClients = 16
+
+func (s *boardPresenceStore) setView(id, client string, view *boardViewport) {
 	s.Lock()
 	defer s.Unlock()
 	e := s.entry(id)
-	e.view, e.viewAt = view, boardNow()
+	if view == nil {
+		delete(e.views, client)
+		return
+	}
+	now := boardNow()
+	for k, v := range e.views {
+		if now.Sub(v.at) >= boardOperatorView {
+			delete(e.views, k)
+		}
+	}
+	if _, ok := e.views[client]; !ok && len(e.views) >= boardMaxViewClients {
+		return
+	}
+	e.views[client] = boardViewAt{view: *view, at: now}
 }
 
 func (s *boardPresenceStore) forget(id string) {
@@ -151,14 +173,22 @@ func (s *boardPresenceStore) snapshot(id string) *boardPresenceJSON {
 		}
 	}
 	slices.SortFunc(out.Agents, func(a, b boardAgentPresence) int { return strings.Compare(a.AgentID, b.AgentID) })
-	if e.view != nil && now.Sub(e.viewAt) < boardOperatorView {
-		out.OperatorView = &boardOperatorViewJSON{boardViewport: *e.view, AgeSeconds: int(now.Sub(e.viewAt).Seconds())}
+	var newest *boardViewAt
+	for _, v := range e.views {
+		if now.Sub(v.at) < boardOperatorView && (newest == nil || v.at.After(newest.at)) {
+			v := v
+			newest = &v
+		}
+	}
+	if newest != nil {
+		out.OperatorView = &boardOperatorViewJSON{boardViewport: newest.view, AgeSeconds: int(now.Sub(newest.at).Seconds())}
 	}
 	return out
 }
 
-// POST /api/boards/{id}/view {x, y, width, height} — the part of the board
-// on the operator's screen; {} clears it (the operator left the board).
+// POST /api/boards/{id}/view {client, x, y, width, height} — the part of the
+// board on screen in one editor (client is that tab's token); without the
+// coordinates it clears that editor's view (the operator looked away).
 func handleDashboardBoardView(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -169,10 +199,15 @@ func handleDashboardBoardView(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 	var req struct {
+		Client              string
 		X, Y, Width, Height *float64
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid view: "+err.Error())
+		return
+	}
+	if len(req.Client) > 64 || !boardPrintable(req.Client, false) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "client must be a short printable token")
 		return
 	}
 	// Only real boards get presence state.
@@ -181,7 +216,7 @@ func handleDashboardBoardView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.X == nil && req.Y == nil && req.Width == nil && req.Height == nil {
-		boardPresence.setView(id, nil)
+		boardPresence.setView(id, req.Client, nil)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -191,6 +226,6 @@ func handleDashboardBoardView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "x, y, width and height must be finite and in range (width and height at least 1)")
 		return
 	}
-	boardPresence.setView(id, &boardViewport{X: *req.X, Y: *req.Y, Width: *req.Width, Height: *req.Height})
+	boardPresence.setView(id, req.Client, &boardViewport{X: *req.X, Y: *req.Y, Width: *req.Width, Height: *req.Height})
 	w.WriteHeader(http.StatusNoContent)
 }

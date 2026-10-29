@@ -135,6 +135,8 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const pointerAt = useRef(null); // the last board point under the pointer, for paste
   const [presence, setPresence] = useState(() => new Map()); // agent id -> drawing | looking
   const viewSent = useRef({ key: '', at: 0 });
+  // This editor's token: the daemon keeps one view per open editor.
+  const viewClient = useRef(Math.random().toString(36).slice(2, 12));
   const [view, setView] = useState({ x: -40, y: -40, zoom: 1 });
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -236,7 +238,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     viewSent.current = { key, at: Date.now() };
     try {
       await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/view`, {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(box || {}),
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client: viewClient.current, ...(box || {}) }),
       });
     } catch { /* presence is best-effort */ }
   }
