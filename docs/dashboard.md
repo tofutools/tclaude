@@ -644,6 +644,12 @@ prefers one that runs locally, so nothing is installed. The reply is read
 from the agent's own transcript, so it works for harnesses whose transcript
 tclaude can decode (Claude Code and Codex).
 
+**Dictation.** **🎤** in the message row dictates into the draft; end with
+"send" to send it, or press the button again to stop and edit first. It uses
+the browser's speech recognition (in Chrome the audio is recognised by
+Google's service) and is hidden where the browser has none. Starting to
+dictate stops any reply being spoken.
+
 **Mark up a view.** **✎** in the message row, or **Ctrl+Shift+.**, lays a
 drawing layer over the page you are on. Circle, underline or draw an arrow at
 what you mean, add a note, and **Send**. The agent cannot see your screen, so

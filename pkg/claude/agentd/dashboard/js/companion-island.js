@@ -29,7 +29,7 @@ import {
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
-import { VOICE_PREF, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, voiceTransitions } from './companion-voice.js';
+import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 
 const html = htm.bind(h);
@@ -224,6 +224,7 @@ function ApprovalCard({ request, fetchImpl, notify }) {
 
 export function CompanionApp({
   speakerImpl = null,
+  dictationImpl = null,
   snapshot,
   activeTab,
   prefs,
@@ -277,6 +278,25 @@ export function CompanionApp({
     },
   }), [speakerImpl, win]);
   const voiceReader = useMemo(() => createVoiceReader(fetchImpl), [fetchImpl]);
+  // Voice input (tcl-sqxkb0): dictation fills the draft; ending with "send"
+  // sends it. The callbacks read the latest send through a ref.
+  const [listening, setListening] = useState(false);
+  const dictationBase = useRef('');
+  const sendRef = useRef(null);
+  const joinDraft = (base, heard) => [base.trim(), heard.trim()].filter(Boolean).join(' ');
+  const dictation = useMemo(() => (dictationImpl || ((callbacks) => createDictation(win, callbacks)))({
+    onText: (heard) => setDraft(joinDraft(dictationBase.current, heard)),
+    onState: (on, error) => {
+      setListening(on);
+      if (error && error !== 'no-speech' && error !== 'aborted') {
+        notify(error === 'not-allowed' ? 'The browser blocked the microphone for this page.' : `Dictation stopped: ${error}`, true);
+      }
+    },
+    onSend: (heard) => {
+      const text = joinDraft(dictationBase.current, heard);
+      if (text) Promise.resolve(sendRef.current?.(null, text)).then(() => setDraft(''));
+    },
+  }), [dictationImpl, win]);
   const voiceStatuses = useRef(new Map());
   const [sending, setSending] = useState(false);
   const windowRef = useRef(null);
@@ -587,6 +607,20 @@ export function CompanionApp({
     openFrom.current = event.currentTarget.getBoundingClientRect();
     if (agentId) showAgent(agentId);
     else toggle();
+  }
+
+  sendRef.current = send;
+  // Dictation belongs to the agent it started for.
+  useEffect(() => () => dictation.stop(), [activeId, dictation]);
+
+  function toggleDictation() {
+    if (listening) {
+      dictation.stop();
+      return;
+    }
+    speaker.cancel();
+    dictationBase.current = draft;
+    dictation.start();
   }
 
   async function send(event, text = draft) {
@@ -928,6 +962,10 @@ export function CompanionApp({
       <input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
         placeholder=${`Message ${activeAgent.name} (queued to its inbox; or type in the terminal above)`}
         aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); setDraft(event.currentTarget.value); }} />
+      ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
+        aria-label=${listening ? 'Stop dictating' : `Dictate a message to ${activeAgent.name}`}
+        title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
+        onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
       <button type="submit" disabled=${sending || !draft.trim()}>Send</button>
       <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
