@@ -592,6 +592,36 @@ opens a popover with the run's mini-graph, the agent's node lit, and the run
 actions: decide, reassign node, promote, pause / resume. A run bound to the
 pane's agent opens as a vertical stepper with the agent's bounds strip.
 
+### The companion window
+
+A floating companion window sits on top of every dashboard view. It shows
+agents' real harness terminals, so you get the harness's own streaming,
+permission prompts and Esc interrupts without leaving the page you are on.
+
+- **Chips.** Minimized, each pinned agent is a pill in the bottom-right
+  corner with its status. An agent waiting on a permission prompt or a
+  question turns its pill amber with **needs you**.
+- **Peek.** Hovering a pill shows the last lines of the agent's screen,
+  read-only; the keyboard stays with the page until you click.
+- **Window.** Click a pill, or press **Ctrl+.** anywhere, to open the window.
+  Drag it by its title bar, resize it from the corner, or drag it against
+  the left, right or bottom edge to snap it into a side panel or drawer. Each
+  agent is a tab; **＋** pins another live agent, **×** unpins one (the agent
+  keeps running), **⤢** moves it to the Terminals tab and **–** minimizes.
+- **Message row.** Text sent from the row below the terminal is queued to the
+  agent's inbox, with the view you are on attached when **view** is ticked.
+
+With nothing pinned, the companion offers the **Steward**: a read-only
+helper for all of tclaude, summoned like a scribe (it lives in the `steward`
+scribe group, so you can also open it from Terminals). Ask it what you can do
+on a page, how your groups are configured, or to help set up groups,
+profiles, processes or your sandbox. It proposes a plan first and runs each
+change with `--ask-human`, so you approve every mutation in the dashboard.
+
+A browser terminal attach takes the session over from any other web view, so
+opening an agent in the companion closes its Terminals-tab pane, and moving it
+to the Terminals tab parks the companion tab until you bring it back.
+
 ## Automations
 
 Subtabs All / Exports / Cron jobs / Standing orders / Triggers:
