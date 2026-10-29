@@ -237,6 +237,160 @@ export function simplifyStroke(points, min = 1.5) {
   return out;
 }
 
+// ---- editing several elements (tcl-s1c73w) ----
+
+function inside(point, box) {
+  return point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height;
+}
+
+// labelOwners maps each live text element to the innermost shape its centre
+// sits in: a shape's label, the way agents (`board add --text`) write it.
+export function labelOwners(map) {
+  const shapes = liveElements(map).filter((el) => SHAPES.has(el.type));
+  const out = new Map();
+  for (const t of map.values()) {
+    if (t.isDeleted || t.type !== 'text') continue;
+    const c = center(t);
+    let best = null; let area = Infinity;
+    for (const s of shapes) {
+      const b = elementBounds(s);
+      if (inside(c, b) && b.width * b.height < area) { best = s; area = b.width * b.height; }
+    }
+    if (best) out.set(t.id, best.id);
+  }
+  return out;
+}
+
+// withLabels adds the labels of any shapes in `ids`, so a shape and its
+// label move, copy and delete together.
+export function withLabels(map, ids) {
+  const set = new Set(ids);
+  for (const [textId, ownerId] of labelOwners(map)) if (set.has(ownerId)) set.add(textId);
+  return [...set];
+}
+
+// labelOf returns the shape's label element, or null.
+export function labelOf(map, shapeId) {
+  const own = map.get(`${shapeId}-label`);
+  if (own && !own.isDeleted && own.type === 'text') return own;
+  for (const [textId, ownerId] of labelOwners(map)) if (ownerId === shapeId) return map.get(textId);
+  return null;
+}
+
+// newLabel builds a centred label for a shape, under the CLI's `<id>-label` id.
+export function newLabel(shape, text, props = {}, opts) {
+  const lines = String(text).split('\n');
+  const size = 20;
+  const width = Math.ceil(Math.max(...lines.map((l) => l.length), 1) * size * 0.6);
+  const height = Math.ceil(lines.length * size * 1.25);
+  const c = center(shape);
+  const id = `${shape.id}-label`.length <= 64 ? `${shape.id}-label` : undefined;
+  return newElement('text', {
+    ...(id ? { id } : {}), text, fontSize: size, textAlign: 'center', strokeColor: shape.strokeColor || '#1e1e1e',
+    x: c.x - width / 2, y: c.y - height / 2, width, height, ...props,
+  }, opts);
+}
+
+// elementsInBox returns the live elements lying wholly inside a box (a
+// rubber-band selection).
+export function elementsInBox(elements, box) {
+  return elements.filter((el) => {
+    if (el.isDeleted) return false;
+    const b = elementBounds(el);
+    return b.x >= box.x && b.y >= box.y && b.x + b.width <= box.x + box.width && b.y + b.height <= box.y + box.height;
+  });
+}
+
+export const ALIGNMENTS = Object.freeze([
+  { id: 'left', label: 'Align left', icon: '⇤' },
+  { id: 'center', label: 'Align centres horizontally', icon: '↔' },
+  { id: 'right', label: 'Align right', icon: '⇥' },
+  { id: 'top', label: 'Align top', icon: '⤒' },
+  { id: 'middle', label: 'Align centres vertically', icon: '↕' },
+  { id: 'bottom', label: 'Align bottom', icon: '⤓' },
+  { id: 'distribute-x', label: 'Space evenly horizontally', icon: '⋯', min: 3 },
+  { id: 'distribute-y', label: 'Space evenly vertically', icon: '⋮', min: 3 },
+]);
+
+// alignMoves returns Map(id -> {dx, dy}) that aligns or spaces the elements
+// (the shapes being arranged; their labels follow separately).
+export function alignMoves(elements, how) {
+  const boxes = elements.map((el) => ({ id: el.id, b: elementBounds(el) }));
+  const moves = new Map();
+  if (boxes.length < 2) return moves;
+  const minX = Math.min(...boxes.map(({ b }) => b.x));
+  const maxX = Math.max(...boxes.map(({ b }) => b.x + b.width));
+  const minY = Math.min(...boxes.map(({ b }) => b.y));
+  const maxY = Math.max(...boxes.map(({ b }) => b.y + b.height));
+  const set = (id, dx, dy) => { if (dx || dy) moves.set(id, { dx, dy }); };
+  if (how === 'distribute-x' || how === 'distribute-y') {
+    const horizontal = how === 'distribute-x';
+    const sorted = [...boxes].sort((a, b) => (horizontal ? a.b.x - b.b.x : a.b.y - b.b.y));
+    const total = sorted.reduce((sum, { b }) => sum + (horizontal ? b.width : b.height), 0);
+    const gap = ((horizontal ? maxX - minX : maxY - minY) - total) / (sorted.length - 1);
+    let at = horizontal ? minX : minY;
+    for (const { id, b } of sorted) {
+      if (horizontal) { set(id, at - b.x, 0); at += b.width + gap; } else { set(id, 0, at - b.y); at += b.height + gap; }
+    }
+    return moves;
+  }
+  for (const { id, b } of boxes) {
+    if (how === 'left') set(id, minX - b.x, 0);
+    else if (how === 'right') set(id, maxX - (b.x + b.width), 0);
+    else if (how === 'center') set(id, (minX + maxX) / 2 - (b.x + b.width / 2), 0);
+    else if (how === 'top') set(id, 0, minY - b.y);
+    else if (how === 'bottom') set(id, 0, maxY - (b.y + b.height));
+    else if (how === 'middle') set(id, 0, (minY + maxY) / 2 - (b.y + b.height / 2));
+  }
+  return moves;
+}
+
+export const CLIPBOARD_TYPE = 'excalidraw/clipboard';
+
+// clipboardText serialises elements the way Excalidraw puts them on the
+// clipboard, so a copy pastes into excalidraw.com and back.
+export function clipboardText(elements) {
+  return JSON.stringify({ type: CLIPBOARD_TYPE, elements: elements.map(({ server_version: _s, ...el }) => el) });
+}
+
+const PASTE_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'arrow', 'line', 'freedraw', 'text']);
+
+// parseClipboard reads clipboard text written by clipboardText (or by
+// Excalidraw); null when it is not board elements.
+export function parseClipboard(text) {
+  try {
+    const data = JSON.parse(text);
+    if (data?.type !== CLIPBOARD_TYPE || !Array.isArray(data.elements)) return null;
+    const out = data.elements.filter((el) => el && typeof el === 'object' && !el.isDeleted && PASTE_TYPES.has(el.type)
+      && Number.isFinite(el.x) && Number.isFinite(el.y));
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+// cloneElements copies elements as new version-1 elements moved by (dx, dy),
+// with fresh ids. Arrows keep bindings to elements copied with them and drop
+// the rest; a copied label keeps following its copied shape.
+export function cloneElements(elements, dx, dy, opts = {}) {
+  const ids = new Map(elements.map((el) => [el.id, newElementId(opts.random)]));
+  for (const el of elements) {
+    if (el.type === 'text' && /-label$/.test(el.id) && ids.has(el.id.slice(0, -6))) {
+      const owner = `${ids.get(el.id.slice(0, -6))}-label`;
+      if (owner.length <= 64) ids.set(el.id, owner);
+    }
+  }
+  const rebind = (binding) => (binding && ids.has(binding.elementId) ? { elementId: ids.get(binding.elementId) } : undefined);
+  return elements.map((el) => {
+    const { server_version: _s, customData: _c, startBinding, endBinding, ...rest } = el;
+    const copy = newElement(el.type, { ...rest, id: ids.get(el.id), x: el.x + dx, y: el.y + dy }, opts);
+    const start = rebind(startBinding); const end = rebind(endBinding);
+    if (start) copy.startBinding = start;
+    if (end) copy.endBinding = end;
+    return copy;
+  });
+}
+
 export function contentBounds(elements) {
   let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
   for (const el of elements) {

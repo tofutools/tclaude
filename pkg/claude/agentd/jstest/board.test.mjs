@@ -194,3 +194,107 @@ test('boards are routed under /boards with the open board as the selection', asy
   assert.equal(core.toPath({ tab: 'boards', selection: 'plan' }), '/boards/plan');
   assert.equal(core.toPath({ tab: 'boards' }), '/boards');
 });
+
+test('board model: labels follow shapes, align and space evenly, copies rebind, clipboard round-trips', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const map = new Map();
+  const add = (el) => { map.set(el.id, el); return el; };
+  const outer = add(m.newElement('rectangle', { id: 'outer', x: 0, y: 0, width: 400, height: 300 }));
+  const inner = add(m.newElement('rectangle', { id: 'inner', x: 50, y: 50, width: 100, height: 60 }));
+  add(m.newLabel(inner, 'API'));
+  add(m.newElement('text', { id: 'note', x: 300, y: 250, text: 'x' }));
+  assert.equal(map.get('inner-label').textAlign, 'center');
+  assert.equal(m.labelOwners(map).get('inner-label'), 'inner', 'the innermost shape owns a label');
+  assert.deepEqual(m.withLabels(map, ['inner']).sort(), ['inner', 'inner-label']);
+  assert.equal(m.labelOf(map, 'inner').id, 'inner-label');
+  assert.equal(m.labelOf(map, 'outer').id, 'note', 'a text inside a shape is its label too');
+  assert.deepEqual(m.elementsInBox([...map.values()], { x: 40, y: 40, width: 120, height: 80 }).map((el) => el.id).sort(), ['inner', 'inner-label']);
+
+  const boxes = [
+    m.newElement('rectangle', { id: 'p', x: 0, y: 0, width: 10, height: 10 }),
+    m.newElement('rectangle', { id: 'q', x: 50, y: 30, width: 20, height: 10 }),
+    m.newElement('rectangle', { id: 'r', x: 100, y: 5, width: 10, height: 10 }),
+  ];
+  assert.deepEqual([...m.alignMoves(boxes, 'left')], [['q', { dx: -50, dy: 0 }], ['r', { dx: -100, dy: 0 }]]);
+  assert.deepEqual(m.alignMoves(boxes, 'top').get('q'), { dx: 0, dy: -30 });
+  assert.deepEqual(m.alignMoves(boxes, 'middle').get('p'), { dx: 0, dy: 15 });
+  // Spacing evenly: 110 wide, 40 of boxes, so a 35 gap.
+  assert.deepEqual(m.alignMoves(boxes, 'distribute-x').get('q'), { dx: -5, dy: 0 });
+
+  const arrow = m.newElement('arrow', { id: 'ar', x: 0, y: 0, points: [[0, 0], [10, 0]], startBinding: { elementId: 'inner' }, endBinding: { elementId: 'outer' } });
+  const copies = m.cloneElements([inner, map.get('inner-label'), arrow], 20, 10);
+  const [ci, cl, ca] = copies;
+  assert.notEqual(ci.id, 'inner');
+  assert.equal(cl.id, `${ci.id}-label`, 'a copied label stays its shape\'s label');
+  assert.deepEqual(ca.startBinding, { elementId: ci.id });
+  assert.equal(ca.endBinding, undefined, 'a binding to an element not copied is dropped');
+  assert.deepEqual([ci.x, ci.y, ci.version], [70, 60, 1]);
+
+  const text = m.clipboardText([inner]);
+  assert.equal(JSON.parse(text).type, 'excalidraw/clipboard');
+  assert.equal(m.parseClipboard(text)[0].id, 'inner');
+  assert.equal(m.parseClipboard('hello'), null);
+  assert.equal(m.parseClipboard(JSON.stringify({ type: 'excalidraw/clipboard', elements: [{ type: 'image', x: 0, y: 0 }] })), null, 'unknown types are not pasted');
+});
+
+test('the editor rubber-band selects, aligns, labels a shape on double-click and deletes it with its label', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardsApp, createBoardsState, BOARD_FLUSH_MS } = await harness.importDashboardModule('js/board-island.js');
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const a = m.newElement('rectangle', { id: 'a', x: 100, y: 100, width: 100, height: 50 });
+  const b = m.newElement('rectangle', { id: 'b', x: 300, y: 200, width: 80, height: 40 });
+  const patches = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (init.method === 'PATCH') { patches.push(...JSON.parse(init.body).elements); return ok({ version: 2, accepted: 1 }); }
+    if (init.method === 'POST') return ok({}, 202);
+    return ok({ id: 'plan', title: 'Plan', version: 1, participants: [], elements: String(url).includes('since') ? [] : [a, m.newLabel(a, 'API'), b] });
+  };
+  const state = createBoardsState();
+  state.location.value = { tab: 'boards', selection: 'plan' };
+  boardsSection(harness);
+  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${harness.signals.signal({ groups: [] })} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  await harness.act(() => wait());
+  const svg = view.container.querySelector('svg.board-canvas');
+  // The view starts at (-40, -40): client = board + 40.
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 50, 50));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 500, 400));
+  assert.ok(svg.querySelector('.board-band'), 'the rubber band shows while dragging');
+  await harness.act(() => pointer(harness, svg, 'pointerup', 500, 400));
+  assert.equal(svg.querySelectorAll('.board-selection').length, 3, 'both shapes and the label are selected');
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Align left' }).click());
+  await harness.act(() => wait(BOARD_FLUSH_MS + 20));
+  assert.deepEqual(patches.map((el) => [el.id, el.x]), [['b', 100]], 'the label follows its shape, which is already left');
+
+  // Double-click a shape to label it, under the CLI's <id>-label id.
+  const dbl = 'ondblclick' in svg ? 'dblclick' : 'DblClick';
+  await harness.act(() => harness.fireEvent(svg, dbl, { clientX: 180, clientY: 260 }));
+  const input = view.container.querySelector('textarea.board-text-input');
+  assert.ok(input, 'a label editor opened');
+  await harness.input(input, 'DB');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  await harness.act(() => wait(BOARD_FLUSH_MS + 20));
+  const label = patches.find((el) => el.id === 'b-label');
+  assert.ok(label, 'the label was saved');
+  assert.equal(label.text, 'DB');
+
+  // Deleting the shape deletes its label.
+  patches.length = 0;
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 145, 245));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 145, 245));
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
+  await harness.act(() => wait(BOARD_FLUSH_MS + 20));
+  assert.deepEqual(patches.filter((el) => el.isDeleted).map((el) => el.id).sort(), ['b', 'b-label']);
+
+  // Pasting Excalidraw clipboard elements adds copies at the pointer.
+  patches.length = 0;
+  const paste = new harness.window.Event('paste', { bubbles: true, cancelable: true });
+  paste.clipboardData = { getData: () => m.clipboardText([a]) };
+  await harness.act(() => { harness.window.document.body.dispatchEvent(paste); });
+  await harness.act(() => wait(BOARD_FLUSH_MS + 20));
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0].type, 'rectangle');
+  assert.notEqual(patches[0].id, 'a');
+  assert.deepEqual([patches[0].x, patches[0].y], [105, 205], 'placed at the last pointer position');
+  await view.unmount();
+});
