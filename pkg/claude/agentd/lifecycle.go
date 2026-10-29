@@ -5350,6 +5350,9 @@ type spawnParams struct {
 	// materialises. Empty on ordinary inline spawns, whose actor is allocated
 	// together with the conv-id.
 	AgentID string
+	// routeHelperLaunchGeneration is daemon-owned intent, recovered from the
+	// exact wrapper session row when the pending sweeper resumes enrollment.
+	routeHelperLaunchGeneration string
 	// EffectiveSandbox is the immutable additive capability snapshot resolved
 	// at the trusted caller boundary. Daemon-managed launch paths pass a
 	// versioned snapshot even when it is explicitly empty.
@@ -7621,7 +7624,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve route helper identity"}
 		}
-		routeCredential, routeGeneration, credentialErr := mintRouteHelperCredential(agentID, preConvID)
+		var routeCredential, routeGeneration string
+		var credentialErr error
+		if preConvID == "" {
+			routeCredential, routeGeneration, credentialErr = stageRouteHelperCredential(agentID, label)
+		} else {
+			routeCredential, routeGeneration, credentialErr = mintRouteHelperCredential(agentID, preConvID)
+		}
 		if credentialErr != nil {
 			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 			if openCodeLaunch != nil {
@@ -7645,6 +7654,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		spawnArgs.RouteHelperProxyOnly = runtime.GOOS == "darwin"
 		routeHelperConvID = preConvID
 		routeHelperGeneration = routeGeneration
+		p.routeHelperLaunchGeneration = routeGeneration
 	}
 
 	// Final dir write-proof re-assertion, as late as possible before the fork:
@@ -8662,7 +8672,7 @@ func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID
 			requeuePendingSpawn(label, ps)
 			return
 		}
-		attachRouteHelperConversation(p.AgentID, convID)
+		attachRouteHelperConversation(p.AgentID, convID, p.routeHelperLaunchGeneration)
 		return
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
@@ -8741,7 +8751,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	if fail != nil {
 		return fail
 	}
-	attachRouteHelperConversation(p.AgentID, convID)
+	attachRouteHelperConversation(p.AgentID, convID, p.routeHelperLaunchGeneration)
 	helperActive := hasRouteHelperForConversation(p.AgentID, convID)
 	if runtime.GOOS == "linux" && g != nil && !helperActive {
 		enabled, err := db.IsAgentGroupRouteEnabled(g.ID, PermRoutesPublish, PermRoutesConsume)

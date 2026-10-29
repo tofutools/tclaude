@@ -103,21 +103,21 @@ func TestHostOnlySpawnDoesNotEnableGroupConsumption(t *testing.T) {
 // Codex's conversation is created by the harness after the helper launch args
 // have been frozen. Both route surfaces must work on that first launch.
 func TestCodexSpawnLateRouteHelper(t *testing.T) {
-	for _, delayed := range []bool{false, true} {
-		name := "inline"
-		if delayed {
-			name = "pending"
-		}
-		t.Run(name, func(t *testing.T) { testCodexSpawnLateRouteHelper(t, delayed) })
+	for _, mode := range []string{"inline", "pending", "sweeper"} {
+		t.Run(mode, func(t *testing.T) { testCodexSpawnLateRouteHelper(t, mode != "inline", mode == "sweeper") })
 	}
 }
 
-func testCodexSpawnLateRouteHelper(t *testing.T, pending bool) {
+func testCodexSpawnLateRouteHelper(t *testing.T, pending, sweep bool) {
 	f := newFlow(t)
 	var delayed *delayedCodexSpawner
 	if pending {
 		t.Cleanup(agentd.SetCodexAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
-		t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(30 * time.Second))
+		if sweep {
+			t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(20 * time.Millisecond))
+		} else {
+			t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(30 * time.Second))
+		}
 		delayed = &delayedCodexSpawner{t: t, w: f.World, inner: f.World.DefaultMocks(t).Spawner, release: make(chan struct{}), conv: map[string]string{}}
 		prev := agentd.Spawn
 		agentd.Spawn = delayed
@@ -139,6 +139,9 @@ func testCodexSpawnLateRouteHelper(t *testing.T, pending bool) {
 			spawn.ConvID = delayed.convID(spawn.Label)
 			if spawn.ConvID == "" {
 				return false
+			}
+			if sweep {
+				agentd.RunPendingSpawnSweepForTest()
 			}
 			member, err := db.FindMemberInGroup(group.ID, spawn.ConvID)
 			return err == nil && member != nil

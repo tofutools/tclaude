@@ -148,6 +148,11 @@ func saveSessionWithResumeProvenance(row *db.SessionRow) error {
 // Gated on the Claude Code harness the same way the production writes are, so a
 // Codex/OpenCode spawn records nothing.
 func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
+	if args.RouteHelperLaunchGeneration != "" {
+		if err := db.SetSessionExitLaunchGeneration(label, args.RouteHelperLaunchGeneration); err != nil {
+			return err
+		}
+	}
 	if args.Harness != "" && args.Harness != harness.DefaultName {
 		// As session.RecordLaunchPosture: the pinned window is recorded for
 		// every harness that honours one.
@@ -635,6 +640,9 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 		HarnessBuiltinMode:    launchHarnessBuiltinMode(codexHarnessName, args.Sandbox, args.SandboxImplementation),
 		SandboxImplementation: args.SandboxImplementation,
 	}); err != nil {
+		return err
+	}
+	if err := recordLaunchPosture(label, args); err != nil {
 		return err
 	}
 	s.w.Tmux.Register(label, cx.Cwd, cx)

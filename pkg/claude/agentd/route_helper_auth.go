@@ -23,6 +23,7 @@ type routeHelperCredential struct {
 	convID           string
 	launchGeneration string
 	issuedAt         time.Time
+	pendingSessionID string
 }
 
 var routeHelperCredentials = struct {
@@ -66,17 +67,34 @@ func mintRouteHelperCredential(agentID, convID string) (credential, launchGenera
 	return credential, launchGeneration, nil
 }
 
+// stageRouteHelperCredential also records the daemon-owned launch label so a
+// dropped predecessor reservation cannot revoke a replacement launch's helper.
+func stageRouteHelperCredential(agentID, sessionID string) (string, string, error) {
+	token, generation, err := mintRouteHelperCredential(agentID, "")
+	if err != nil {
+		return "", "", err
+	}
+	routeHelperCredentials.Lock()
+	capability, ok := routeHelperCredentials.items[token]
+	if ok {
+		capability.pendingSessionID = sessionID
+		routeHelperCredentials.items[token] = capability
+	}
+	routeHelperCredentials.Unlock()
+	return token, generation, nil
+}
+
 // attachRouteHelperConversation is called only after daemon-owned spawn enrollment.
 // An unbound capability never authenticates requests, including discovery.
-func attachRouteHelperConversation(agentID, convID string) {
+func attachRouteHelperConversation(agentID, convID, launchGeneration string) {
 	bound, err := db.AgentIDForConv(convID)
-	if err != nil || bound != agentID || agentID == "" {
+	if err != nil || bound != agentID || agentID == "" || launchGeneration == "" {
 		return
 	}
 	routeHelperCredentials.Lock()
 	defer routeHelperCredentials.Unlock()
 	for token, capability := range routeHelperCredentials.items {
-		if capability.agentID == agentID && capability.convID == "" {
+		if capability.agentID == agentID && capability.convID == "" && capability.launchGeneration == launchGeneration {
 			if time.Since(capability.issuedAt) > routeHelperEnrollmentTTL {
 				delete(routeHelperCredentials.items, token)
 				continue
@@ -87,11 +105,21 @@ func attachRouteHelperConversation(agentID, convID string) {
 	}
 }
 
-func revokePendingRouteHelperCredentials(agentID string) {
+// The wrapper persists the helper generation on its exact session row before
+// starting the pane, so sweeper enrollment survives without trusting helper input.
+func routeHelperGenerationForSession(sessionID string) string {
+	identity, err := db.GetSessionExitLaunchIdentity(sessionID)
+	if err != nil {
+		return ""
+	}
+	return identity.Generation
+}
+
+func revokePendingRouteHelperCredentials(agentID, sessionID string) {
 	routeHelperCredentials.Lock()
 	defer routeHelperCredentials.Unlock()
 	for token, capability := range routeHelperCredentials.items {
-		if capability.convID == "" && capability.agentID == agentID {
+		if capability.convID == "" && capability.agentID == agentID && capability.pendingSessionID == sessionID {
 			delete(routeHelperCredentials.items, token)
 		}
 	}

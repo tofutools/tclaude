@@ -267,12 +267,12 @@ func TestRouteHelperPendingCredentialCannotAuthorize(t *testing.T) {
 	rec = httptest.NewRecorder()
 	buildMux().ServeHTTP(rec, identityReq)
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "pending credentials cannot discover an identity")
-	attachRouteHelperConversation(agentID, "forged-conversation")
+	attachRouteHelperConversation(agentID, "forged-conversation", generation)
 	_, _, valid = routeHelperCredentialForRequest(req)
 	require.False(t, valid, "helper headers cannot attach a conversation")
 	_, _, err = db.EnsureAgentForConvWithID("real-conversation", agentID, "test")
 	require.NoError(t, err)
-	attachRouteHelperConversation(agentID, "real-conversation")
+	attachRouteHelperConversation(agentID, "real-conversation", generation)
 	defer revokeRouteHelperCredentials("real-conversation", generation)
 	capability, _, valid := routeHelperCredentialForRequest(req)
 	require.True(t, valid, "early polling must not revoke an otherwise live pending capability")
@@ -282,7 +282,7 @@ func TestRouteHelperPendingCredentialCannotAuthorize(t *testing.T) {
 func TestRouteHelperExpiredPendingCredentialCannotAttach(t *testing.T) {
 	setupTestDB(t)
 	const agentID = "agt_expired_helper"
-	token, _, err := mintRouteHelperCredential(agentID, "")
+	token, generation, err := mintRouteHelperCredential(agentID, "")
 	require.NoError(t, err)
 	routeHelperCredentials.Lock()
 	capability := routeHelperCredentials.items[token]
@@ -291,7 +291,7 @@ func TestRouteHelperExpiredPendingCredentialCannotAttach(t *testing.T) {
 	routeHelperCredentials.Unlock()
 	_, _, err = db.EnsureAgentForConvWithID("expired-conversation", agentID, "test")
 	require.NoError(t, err)
-	attachRouteHelperConversation(agentID, "expired-conversation")
+	attachRouteHelperConversation(agentID, "expired-conversation", generation)
 	routeHelperCredentials.RLock()
 	_, exists := routeHelperCredentials.items[token]
 	routeHelperCredentials.RUnlock()
@@ -306,7 +306,7 @@ func TestRouteHelperSurvivesRetriedEnrollment(t *testing.T) {
 	require.NoError(t, err)
 	defer revokeRouteHelperCredentials("", generation)
 	defer revokeRouteHelperCredentials("retry-conversation", generation)
-	params := spawnParams{AgentID: agentID, Harness: "codex", Name: "retry-worker"}
+	params := spawnParams{AgentID: agentID, routeHelperLaunchGeneration: generation, Harness: "codex", Name: "retry-worker"}
 	group := &db.AgentGroup{ID: -1, Name: "missing-group"}
 	require.NotNil(t, finishSpawnEnrollment(group, params, "retry-conversation"))
 	group.ID, err = db.CreateAgentGroup("retry-group", "")
@@ -364,4 +364,26 @@ func TestRouteHelperSyncTimeoutRemovesReservation(t *testing.T) {
 	req.Header.Set(routeHelperCredentialHeader, spawner.args.RouteHelperCredential)
 	_, _, valid := routeHelperCredentialForRequest(req)
 	require.False(t, valid)
+}
+
+func TestRouteHelperPredecessorCannotAttachReplacementCredential(t *testing.T) {
+	setupTestDB(t)
+	const agentID = "agt_recovered_helper"
+	_, oldGeneration, err := stageRouteHelperCredential(agentID, "old-launch")
+	require.NoError(t, err)
+	token, newGeneration, err := stageRouteHelperCredential(agentID, "new-launch")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("", newGeneration)
+	defer revokeRouteHelperCredentials("recovered-conversation", newGeneration)
+	_, _, err = db.EnsureAgentForConvWithID("recovered-conversation", agentID, "test")
+	require.NoError(t, err)
+	attachRouteHelperConversation(agentID, "recovered-conversation", oldGeneration)
+	req := httptest.NewRequest(http.MethodGet, "/v1/routes/helper-identity", nil)
+	req.Header.Set(routeHelperCredentialHeader, token)
+	_, _, valid := routeHelperCredentialForRequest(req)
+	require.False(t, valid, "predecessor enrollment must not attach the replacement launch's credential")
+	revokePendingRouteHelperCredentials(agentID, "old-launch")
+	attachRouteHelperConversation(agentID, "recovered-conversation", newGeneration)
+	_, _, valid = routeHelperCredentialForRequest(req)
+	require.True(t, valid)
 }
