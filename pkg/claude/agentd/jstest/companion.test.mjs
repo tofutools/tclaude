@@ -266,3 +266,52 @@ test('a pending sudo plan from a pinned agent is decided in its companion tab', 
   assert.ok(decision, 'the decision was posted');
   assert.deepEqual(decision.body, { decision: 'approve' });
 });
+
+test('annotation strokes are classified and named by what is under them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-annotate.js');
+  const circle = Array.from({ length: 16 }, (_, i) => [100 + 40 * Math.cos(i / 15 * 2 * Math.PI), 100 + 20 * Math.sin(i / 15 * 2 * Math.PI)]);
+  assert.equal(m.classifyStroke(circle), 'circle');
+  assert.equal(m.classifyStroke([[0, 50], [40, 52], [90, 49], [120, 51]]), 'underline');
+  assert.equal(m.classifyStroke([[0, 0], [60, 40], [120, 90]]), 'arrow');
+  assert.equal(m.classifyStroke([[0, 0], [5, 6], [2, 3]]), 'mark');
+  const at = (x, y) => (x > 50 ? { text: 'Review', role: 'button' } : { text: 'Intake', role: '' });
+  assert.equal(m.describeStroke(circle, at), 'circled “Review” (button)');
+  assert.equal(m.describeStroke([[10, 0], [60, 40], [120, 90]], at), 'drew an arrow from “Intake” to “Review” (button)');
+  assert.equal(m.composeAnnotation({ note: 'why?', lines: ['circled “Review” (button)'], view: 'Processes (/p)' }),
+    'why?\n\nThe operator marked up the dashboard view Processes (/p):\n1. circled “Review” (button)');
+});
+
+test('marking up the page sends the agent a numbered description of the marks', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, requests, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  const doc = harness.window.document;
+  const target = doc.createElement('button');
+  target.textContent = 'Approve plan';
+  doc.body.appendChild(target);
+  doc.elementsFromPoint = () => [target];
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: /Mark up this page for alpha/ }).click());
+  assert.ok(doc.body.classList.contains('companion-annotating'), 'the window steps aside while drawing');
+  const svg = view.container.querySelector('svg.annotate-canvas');
+  const fire = (type, x, y) => {
+    const camel = { pointerdown: 'PointerDown', pointermove: 'PointerMove', pointerup: 'PointerUp' }[type];
+    harness.fireEvent(svg, `on${type}` in svg ? type : camel, { button: 0, pointerId: 1, clientX: x, clientY: y });
+  };
+  await harness.act(() => {
+    fire('pointerdown', 140, 100);
+    for (let i = 1; i <= 15; i++) fire('pointermove', 100 + 40 * Math.cos(i / 15 * 2 * Math.PI), 100 + 20 * Math.sin(i / 15 * 2 * Math.PI));
+    fire('pointerup', 140, 100);
+  });
+  await harness.input(view.container.querySelector('textarea[aria-label="Note"]'), 'why is this greyed out?');
+  await harness.act(async () => {
+    view.container.querySelector('form.annotate-bar').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const mail = requests.find((r) => r.url === '/api/operator-message' && r.body.subject === '[annotation]');
+  assert.ok(mail, 'the markup was mailed');
+  assert.equal(mail.body.to, A);
+  assert.match(mail.body.body, /^why is this greyed out\?\n\nThe operator marked up the dashboard view Processes \(.*\):\n1\. circled “Approve plan” \(button\)/);
+  assert.equal(view.container.querySelector('svg.annotate-canvas'), null, 'the layer closes after sending');
+  assert.ok(!doc.body.classList.contains('companion-annotating'));
+});

@@ -28,6 +28,7 @@ import {
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
+import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 
 const html = htm.bind(h);
@@ -259,6 +260,8 @@ export function CompanionApp({
   const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
   const [draft, setDraft] = useState('');
   const [withContext, setWithContext] = useState(true);
+  // The agent the operator is marking up the page for (tcl-8vjjko), or null.
+  const [annotating, setAnnotating] = useState(null);
   const [sending, setSending] = useState(false);
   const windowRef = useRef(null);
   const chipRects = useRef(new Map());
@@ -382,11 +385,16 @@ export function CompanionApp({
         event.preventDefault();
         event.stopPropagation();
         toggle();
+      } else if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.code === 'Period') {
+        // Ctrl+Shift+. marks up the page for the agent in the window.
+        event.preventDefault();
+        event.stopPropagation();
+        startAnnotating();
       }
     };
     win?.addEventListener?.('keydown', onKey, true);
     return () => win?.removeEventListener?.('keydown', onKey, true);
-  }, [toggle, win]);
+  }, [toggle, win, activeAgent?.agentId, activeAgent?.online]);
 
   // Grow the window out of the chip it was opened from.
   useLayoutEffect(() => {
@@ -578,6 +586,40 @@ export function CompanionApp({
       notify(`Message to ${activeAgent.name} failed: ${error?.message || error}`, true);
     } finally {
       setSending(false);
+    }
+  }
+
+  // The window and chips stay mounted (the terminal keeps its stream) but
+  // step out of the way while the operator draws.
+  useEffect(() => {
+    win?.document?.body?.classList?.toggle?.('companion-annotating', !!annotating);
+    return () => win?.document?.body?.classList?.remove?.('companion-annotating');
+  }, [annotating, win]);
+
+  function startAnnotating() {
+    if (!activeAgent?.online) {
+      notify('Open a live agent in the companion first, then mark up the page for it.', true);
+      return;
+    }
+    setAnnotating({ agentId: activeAgent.agentId, name: activeAgent.name });
+  }
+
+  async function sendAnnotation({ note, lines }) {
+    const target = annotating;
+    if (!target) return;
+    const view = viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search });
+    const body = composeCompanionMessage(composeAnnotation({ note, lines, view }), view);
+    try {
+      const response = await fetchImpl('/api/operator-message', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: target.agentId, subject: '[annotation]', body }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      setAnnotating(null);
+      notify(`Sent your markup to ${target.name}.`);
+    } catch (error) {
+      notify(`Markup to ${target.name} failed: ${error?.message || error}`, true);
     }
   }
 
@@ -791,6 +833,8 @@ export function CompanionApp({
         placeholder=${`Message ${activeAgent.name} (queued to its inbox; or type in the terminal above)`}
         aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => setDraft(event.currentTarget.value)} />
       <button type="submit" disabled=${sending || !draft.trim()}>Send</button>
+      <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
+        title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
     </form>`}
     <div class="companion-resize" aria-hidden="true" onPointerDown=${onResizePointerDown}></div>
   </section>`;
@@ -799,6 +843,8 @@ export function CompanionApp({
     ${guide && html`<div class="companion-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
     ${windowView}
     ${chips}
+    ${annotating && html`<${AnnotateOverlay} agentName=${annotating.name} win=${win}
+      onSend=${sendAnnotation} onCancel=${() => setAnnotating(null)} />`}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
     ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} onDismiss=${dismissGuide} win=${win} />`}
     ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;

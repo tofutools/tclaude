@@ -21,12 +21,12 @@ export const GUIDE_FIND_STEP_MS = 250;
 // target.
 export const GUIDE_SETTLE_MS = 350;
 
-const TARGET_SELECTOR = [
+export const TARGET_SELECTOR = [
   'button', 'a[href]', '[role="button"]', '[role="tab"]', '[role="menuitem"]', '[role="link"]',
   'summary', 'label', 'h1', 'h2', 'h3', 'h4', 'th', 'legend', 'input[type="submit"]',
 ].join(',');
 
-function textOf(el) {
+export function textOf(el) {
   const label = el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '';
   const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
   return { label: label.replace(/\s+/g, ' ').trim(), text };
