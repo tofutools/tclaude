@@ -27,7 +27,7 @@ import {
   stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
-import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
+import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
@@ -863,13 +863,22 @@ export function CompanionApp({
     let marks = [];
     if (Array.isArray(cue.marks) && cue.marks.length) {
       const deadline = Date.now() + GUIDE_FIND_TIMEOUT_MS;
+      const resolved = (m) => m.element && (m.mark.kind !== 'arrow' || m.from);
+      let found = 0;
+      let progressAt = Date.now();
       while (cueRun.current === run) {
-        marks = cue.marks.map((mark) => ({
+        // Only the marks still missing are looked up again.
+        marks = cue.marks.map((mark, i) => (marks[i] && resolved(marks[i]) ? marks[i] : {
           mark,
           element: findGuideTarget(win?.document, mark.target, { loose: true }),
           from: mark.kind === 'arrow' ? findGuideTarget(win?.document, mark.from, { loose: true }) : null,
         }));
-        if (marks.every((m) => m.element && (m.mark.kind !== 'arrow' || m.from)) || Date.now() >= deadline) break;
+        const now = marks.filter(resolved).length;
+        if (now > found) { found = now; progressAt = Date.now(); }
+        if (now === marks.length || Date.now() >= deadline) break;
+        // Once the page has shown something, a mark that stays missing
+        // does not hold the rest back.
+        if ((found || element) && Date.now() - progressAt >= GUIDE_MARK_PATIENCE_MS) break;
         await wait(GUIDE_FIND_STEP_MS);
       }
     }
