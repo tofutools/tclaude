@@ -171,3 +171,42 @@ func TestBoardLayoutStacksAFlowDownwards(t *testing.T) {
 	require.Contains(t, byID, "e")
 	assert.Equal(t, rcInvalidArg, runBoardLayout(&boardLayoutParams{Direction: "sideways"}, "plan", &out, &errb))
 }
+
+func sceneOf(t *testing.T, elements string) *boardScene {
+	t.Helper()
+	var doc boardDoc
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"p","elements":[`+elements+`]}`), &doc))
+	return loadBoardScene(&doc)
+}
+
+func TestBoardLabelsBelongToTheInnermostShape(t *testing.T) {
+	s := sceneOf(t, `
+	 {"id":"box","type":"rectangle","x":0,"y":0,"width":500,"height":300,"version":1},
+	 {"id":"a","type":"rectangle","x":20,"y":20,"width":100,"height":50,"version":1},
+	 {"id":"t","type":"text","x":40,"y":35,"width":40,"height":20,"text":"A","version":1},
+	 {"id":"arr","type":"arrow","x":120,"y":45,"width":100,"height":0,"points":[[0,0],[100,0]],"startBinding":{"elementId":"a"},"version":1}`)
+	for i := 0; i < 20; i++ {
+		assert.Equal(t, "a", s.labelOwners()["t"], "the label belongs to a, not the group box")
+	}
+	changed := s.moveBy(map[string][2]float64{"box": {10, 0}})
+	assert.Equal(t, []string{"box"}, changed, "moving the group box leaves the inner shape's label alone")
+	changed = s.moveBy(map[string][2]float64{"a": {0, 100}})
+	assert.ElementsMatch(t, []string{"a", "t", "arr"}, changed, "the half-bound arrow follows a")
+	tipX, tipY := arrowEnd(s.view["arr"])
+	assert.InDelta(t, 220, tipX, 0.01, "its free tip stays put")
+	assert.InDelta(t, 45, tipY, 0.01)
+}
+
+func TestBoardLayoutBreaksACycleOnTheCycle(t *testing.T) {
+	// Board order c, x, y with x->y, y->x, y->c: c is downstream, not on the cycle.
+	s := sceneOf(t, `
+	 {"id":"c","type":"rectangle","x":0,"y":0,"width":100,"height":50,"version":1},
+	 {"id":"x","type":"rectangle","x":0,"y":100,"width":100,"height":50,"version":1},
+	 {"id":"y","type":"rectangle","x":0,"y":200,"width":100,"height":50,"version":1},
+	 {"id":"e1","type":"arrow","x":0,"y":0,"points":[[0,0],[1,1]],"startBinding":{"elementId":"x"},"endBinding":{"elementId":"y"},"version":1},
+	 {"id":"e2","type":"arrow","x":0,"y":0,"points":[[0,0],[1,1]],"startBinding":{"elementId":"y"},"endBinding":{"elementId":"x"},"version":1},
+	 {"id":"e3","type":"arrow","x":0,"y":0,"points":[[0,0],[1,1]],"startBinding":{"elementId":"y"},"endBinding":{"elementId":"c"},"version":1}`)
+	pos := layoutPositions(s, "right", 60)
+	assert.Less(t, pos["x"][0], pos["y"][0])
+	assert.Less(t, pos["y"][0], pos["c"][0], "c comes after y, which points at it")
+}
