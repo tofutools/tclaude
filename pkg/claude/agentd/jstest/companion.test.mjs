@@ -38,7 +38,7 @@ function fakeWidgetFactory(mounted) {
   };
 }
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), fetchImpl, speakerImpl = null } = {}) {
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), fetchImpl, speakerImpl = null, dictationImpl = null } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -55,7 +55,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), fetc
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} fetchImpl=${fetchFn}
-    widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -376,4 +376,40 @@ test('voice output speaks a reply when the turn ends and says when the agent nee
   assert.equal(spoken.at(-1), 'alpha needs you: Bash(rm -rf build)');
   await h.input(view.container.querySelector('input.companion-draft'), 'stop');
   assert.ok(cancelled >= 1, 'typing stops speech');
+});
+
+test('dictation fills the draft and sends when the operator ends with "send"', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  let callbacks = null;
+  let started = 0;
+  const dictationImpl = (cb) => { callbacks = cb; return { supported: true, start: () => { started += 1; cb.onState(true); }, stop: () => cb.onState(false) }; };
+  let failNext = false;
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => {
+    requests.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
+    if (failNext) return { ok: false, status: 502, statusText: 'Bad Gateway', json: async () => ({ message: 'agent unreachable' }) };
+    return { ok: true, status: 202, json: async () => ({ id: 1 }) };
+  };
+  const { view, harness, controller } = await setup(t, { prefs, dictationImpl, fetchImpl });
+  await harness.act(() => controller().open(A));
+  const mic = harness.getByRole(view.container, 'button', { name: /Dictate a message to alpha/ });
+  await harness.act(() => mic.click());
+  assert.equal(started, 1);
+  assert.equal(mic.getAttribute('aria-pressed'), 'true');
+  await harness.act(() => callbacks.onText('what can I do'));
+  assert.equal(view.container.querySelector('input.companion-draft').value, 'what can I do');
+  await harness.act(async () => { callbacks.onSend('what can I do here'); await new Promise((r) => setTimeout(r, 0)); });
+  const mail = requests.find((r) => r.url === '/api/operator-message');
+  assert.match(mail.body.body, /^what can I do here\n\n\[dashboard view:/);
+  const voice = await harness.importDashboardModule('js/companion-voice.js');
+  assert.equal(voice.isSendCommand('send'), true);
+  assert.equal(voice.isSendCommand(' Send it. '), true);
+  assert.equal(voice.isSendCommand('I want to send'), false, 'a pause after the verb is not the command');
+  assert.equal(voice.isSendCommand("don't send"), false);
+  // A failed send keeps the dictated draft.
+  failNext = true;
+  await harness.act(() => mic.click());
+  await harness.act(() => callbacks.onText('keep me'));
+  await harness.act(async () => { callbacks.onSend('keep me'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(view.container.querySelector('input.companion-draft').value, 'keep me');
 });

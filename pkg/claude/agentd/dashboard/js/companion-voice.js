@@ -168,3 +168,80 @@ export function createVoiceReader(fetchImpl) {
     },
   };
 }
+
+// ---- voice input (tcl-sqxkb0) ----
+
+export function speechRecognitionCtor(win = globalThis.window) {
+  return win?.SpeechRecognition || win?.webkitSpeechRecognition || null;
+}
+
+// isSendCommand reports whether one finished phrase is the spoken command
+// "send" on its own. The recognizer finishes a phrase at every pause, so
+// "send" only counts when the operator paused before it: "I want to send
+// the report" or "don't send" never send.
+export function isSendCommand(phrase) {
+  return /^\s*send(?: it)?[.!]?\s*$/i.test(String(phrase || ''));
+}
+
+// createDictation wraps the browser's speech recognition: interim and final
+// text arrive through onText (the whole utterance so far), onState reports
+// listening on/off, and onSend fires when the operator says "send" as a
+// phrase of its own. stop() still delivers the words already heard but never
+// sends; abort() drops them. Chrome's recognizer runs in Google's cloud; the
+// button says so.
+export function createDictation(win = globalThis.window, { onText, onState, onSend, lang } = {}) {
+  const Ctor = speechRecognitionCtor(win);
+  let recognition = null;
+  let stopped = false;
+  return {
+    supported: !!Ctor,
+    get active() { return !!recognition; },
+    start() {
+      if (!Ctor || recognition) return;
+      const r = new Ctor();
+      r.continuous = true;
+      r.interimResults = true;
+      r.lang = lang || win?.navigator?.language || 'en-US';
+      const finals = [];
+      stopped = false;
+      r.onresult = (event) => {
+        if (recognition !== r) return;
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          const phrase = result[0].transcript;
+          if (!result.isFinal) {
+            interim += phrase;
+          } else if (isSendCommand(phrase) && !stopped) {
+            const text = finals.join(' ').replace(/\s+/g, ' ').trim();
+            onText?.(text);
+            onSend?.(text);
+            r.stop();
+            return;
+          } else {
+            finals.push(phrase);
+          }
+        }
+        onText?.(`${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim());
+      };
+      r.onerror = (event) => onState?.(false, event?.error || 'error');
+      r.onend = () => {
+        if (recognition === r) recognition = null;
+        onState?.(false);
+      };
+      recognition = r;
+      r.start();
+      onState?.(true);
+    },
+    stop() {
+      stopped = true;
+      recognition?.stop();
+    },
+    abort() {
+      const r = recognition;
+      recognition = null;
+      r?.abort?.();
+      if (r) onState?.(false);
+    },
+  };
+}
