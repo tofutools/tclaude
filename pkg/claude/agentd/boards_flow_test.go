@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -304,4 +305,71 @@ func TestBoardsEventsMailOnlineParticipantsRateLimited(t *testing.T) {
 	rec = serve(http.MethodPost, "/api/boards/ev/participants", map[string]any{"agent_id": onlineID, "remove": true})
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.NotContains(t, rec.Body.String(), onlineID)
+}
+
+func TestBoardsEventImageIsARegionAgentsCanFetch(t *testing.T) {
+	f := newFlow(t)
+	now := time.Unix(1_800_000_000, 0)
+	t.Cleanup(agentd.ResetBoardEventsForTest(func() time.Time { return now }))
+	const conv = "board-region-3333"
+	f.HaveAliveSession(conv, "board-region", "tmux-board-region", f.TestCwd("region"))
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermBoardsRead, "test"))
+
+	dash := agentd.BuildDashboardHandlerForTest()
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+	}
+	agentGet := func(path string) *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, path, nil), conv))
+	}
+	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "rg", "title": "Regions"}).Code)
+	require.Equal(t, http.StatusOK, serve(http.MethodPost, "/api/boards/rg/participants", map[string]any{"agent_id": agentID}).Code)
+
+	png := append([]byte("\x89PNG\r\n\x1a\n"), []byte("the-changed-region")...)
+	image := base64.StdEncoding.EncodeToString(png)
+	require.Equal(t, http.StatusBadRequest, serve(http.MethodPost, "/api/boards/rg/events",
+		map[string]any{"text": "drew", "image": base64.StdEncoding.EncodeToString([]byte("GIF89a"))}).Code, "only PNGs")
+	require.Equal(t, http.StatusBadRequest, serve(http.MethodPost, "/api/boards/rg/events",
+		map[string]any{"text": "drew", "image": "not base64!"}).Code)
+
+	rec := serve(http.MethodPost, "/api/boards/rg/events", map[string]any{"text": "The operator drew a rectangle.", "image": image})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"region":1`)
+	rows, err := db.ListAgentMessagesForConv(conv, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Contains(t, rows[0].Body, "tclaude agent board snapshot rg --region 1")
+
+	got := agentGet("/v1/boards/rg/snapshot?region=1")
+	require.Equal(t, http.StatusOK, got.Code, "body=%s", got.Body.String())
+	assert.Equal(t, png, got.Body.Bytes())
+	assert.Equal(t, "1", got.Header().Get("X-Board-Region"))
+	assert.Equal(t, http.StatusNotFound, agentGet("/v1/boards/rg/snapshot?region=2").Code)
+	assert.Equal(t, http.StatusBadRequest, agentGet("/v1/boards/rg/snapshot?region=x").Code)
+
+	// The next event's image is the next region.
+	now = now.Add(3 * time.Second)
+	rec = serve(http.MethodPost, "/api/boards/rg/events", map[string]any{"text": "moved it", "image": image})
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"region":2`)
+
+	// Only the newest 20 are kept, numbered on past 9 -> 10 numerically.
+	for i := 3; i <= 22; i++ {
+		now = now.Add(3 * time.Second)
+		require.Equal(t, http.StatusOK, serve(http.MethodPost, "/api/boards/rg/events", map[string]any{"text": "again", "image": image}).Code)
+	}
+	assert.Equal(t, http.StatusNotFound, agentGet("/v1/boards/rg/snapshot?region=2").Code)
+	assert.Equal(t, http.StatusOK, agentGet("/v1/boards/rg/snapshot?region=3").Code)
+	assert.Equal(t, http.StatusOK, agentGet("/v1/boards/rg/snapshot?region=22").Code)
+	now = now.Add(3 * time.Second)
+	rec = serve(http.MethodPost, "/api/boards/rg/events", map[string]any{"text": "again", "image": image})
+	assert.Contains(t, rec.Body.String(), `"region":23`)
+
+	// Deleting the board deletes its event images; a new board of the same
+	// id does not hand out the old board's numbers.
+	require.Equal(t, http.StatusNoContent, serve(http.MethodDelete, "/api/boards/rg", nil).Code)
+	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "rg", "title": "Regions"}).Code)
+	assert.Equal(t, http.StatusNotFound, agentGet("/v1/boards/rg/snapshot?region=1").Code)
 }

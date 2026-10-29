@@ -458,7 +458,11 @@ func boardSnapshotPath(id string) string {
 	return filepath.Join(config.DataDir(), "boards", id+".png")
 }
 
-func serveBoardSnapshot(w http.ResponseWriter, id string) {
+func serveBoardSnapshot(w http.ResponseWriter, r *http.Request, id string) {
+	if region := r.URL.Query().Get("region"); region != "" {
+		serveBoardRegion(w, id, region)
+		return
+	}
 	b, err := db.GetCollabBoard(id)
 	if err != nil {
 		writeBoardStoreError(w, err)
@@ -545,6 +549,10 @@ func handleDashboardBoardDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := os.Remove(boardSnapshotPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		writeError(w, http.StatusInternalServerError, "io", "remove snapshot: "+err.Error())
+		return
+	}
+	if err := removeBoardRegions(id); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "remove event images: "+err.Error())
 		return
 	}
 	boardEvents.forget(id)
@@ -635,7 +643,7 @@ func handleDashboardBoardSnapshotGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id, ok := boardPathID(w, r); ok {
-		serveBoardSnapshot(w, id)
+		serveBoardSnapshot(w, r, id)
 	}
 }
 
@@ -717,8 +725,9 @@ type boardEventRecipient struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// POST /api/boards/{id}/events {text} — tell the board's online participants
-// what the operator just did on it.
+// POST /api/boards/{id}/events {text, image?} — tell the board's online
+// participants what the operator just did on it. image is an optional base64
+// PNG of the changed region (see dashboard_board_regions.go).
 func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -727,9 +736,10 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, boardMaxEventBytes+1024)
+	r.Body = http.MaxBytesReader(w, r.Body, boardMaxEventBytes+boardMaxRegionBytes*4/3+1024)
 	var req struct {
-		Text string `json:"text"`
+		Text  string `json:"text"`
+		Image string `json:"image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid event: "+err.Error())
@@ -738,6 +748,11 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(req.Text)
 	if text == "" || len(text) > boardMaxEventBytes || !boardPrintable(text, true) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("text must be printable, non-empty and at most %d bytes", boardMaxEventBytes))
+		return
+	}
+	image, err := decodeBoardRegion(req.Image)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
 	b, err := db.GetCollabBoard(id)
@@ -756,14 +771,27 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "at most one board event per board every 3s")
 		return
 	}
-	body := fmt.Sprintf("%s\n\n(Board %q is at version %d. Read it with `tclaude agent board show %s`, or `--since <version>` for changes only.)",
-		text, b.Title, b.Version, b.ID)
-	recipients := []boardEventRecipient{}
+	var online []*db.Agent
 	for _, agentID := range b.Participants {
 		a, err := db.GetAgent(agentID)
 		if err != nil || !a.Active() || a.CurrentConvID == "" || !isConvOnlineIn(a.CurrentConvID, alive) {
 			continue
 		}
+		online = append(online, a)
+	}
+	body := fmt.Sprintf("%s\n\n(Board %q is at version %d. Read it with `tclaude agent board show %s`, or `--since <version>` for changes only.)",
+		text, b.Title, b.Version, b.ID)
+	region := 0
+	if len(image) > 0 && len(online) > 0 {
+		if n, err := storeBoardRegion(b.ID, image); err == nil {
+			region = n
+			body += fmt.Sprintf("\n(See what changed: `tclaude agent board snapshot %s --region %d -o %s-region-%d.png`, then view the image.)",
+				b.ID, n, b.ID, n)
+		}
+	}
+	recipients := []boardEventRecipient{}
+	for _, a := range online {
+		agentID := a.AgentID
 		row := boardEventRecipient{AgentID: agentID, ConvID: a.CurrentConvID}
 		msgID, _, err := queueRegularAgentMessage(&db.AgentMessage{
 			FromConv: "", ToConv: a.CurrentConvID, Subject: "[board " + b.ID + "]", Body: body,
@@ -781,7 +809,11 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 		recipients = append(recipients, row)
 	}
 	setAuditTargetLabel(r, "board "+b.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"recipients": recipients})
+	resp := map[string]any{"recipients": recipients}
+	if region > 0 {
+		resp["region"] = region
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ---- agent surface (/v1/boards) ----
@@ -821,7 +853,7 @@ func handleBoardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id, ok := boardPathID(w, r); ok {
-		serveBoardSnapshot(w, id)
+		serveBoardSnapshot(w, r, id)
 	}
 }
 
