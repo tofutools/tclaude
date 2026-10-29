@@ -785,7 +785,7 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 	if len(image) > 0 && len(online) > 0 {
 		if n, err := storeBoardRegion(b.ID, image); err == nil {
 			region = n
-			body += fmt.Sprintf("\n(See what changed: `tclaude agent board snapshot %s --region %d -o /tmp/%s-region-%d.png`, then view the image.)",
+			body += fmt.Sprintf("\n(See what changed: `tclaude agent board snapshot %s --region %d -o %s-region-%d.png`, then view the image.)",
 				b.ID, n, b.ID, n)
 		}
 	}
