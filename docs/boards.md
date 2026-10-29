@@ -27,7 +27,7 @@ can also add or remove participants from the dashboard.
 
 ```bash
 tclaude agent board ls
-tclaude agent board create plan --title "Release plan"
+tclaude agent board create plan --title "Release plan" [--group <group>]
 tclaude agent board show plan                 # one line per live element, plus the version
 tclaude agent board show plan --since 12      # only what changed after version 12, deletions included
 tclaude agent board show plan --json          # the elements as Excalidraw JSON
@@ -99,6 +99,22 @@ The mail usually also names a numbered image of the change:
 area the operator touched, padded with some of what is around it. The daemon
 keeps the newest 20 of these per board; an older number answers `404
 no_region`, and the full `snapshot` is the fallback.
+
+## Group boards
+
+A board can belong to a group. The group's active members are on the board
+without being invited one by one: they get its events and show on the editor
+as dashed chips. Pick the group from the editor's header, or create the board
+for one:
+
+```bash
+tclaude agent board create ux --title "UX flow" --group design   # a group you are a member of
+```
+
+When the operator links a board to a group, the members who are online then
+receive the invitation mail. An agent can only create a board for a group it
+belongs to. Choosing "No group" unlinks the board. Archiving or deleting the
+group also unlinks it in effect: the board stays, without the group.
 
 ## Presence
 
