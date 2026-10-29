@@ -27,7 +27,7 @@ import {
   stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
-import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
+import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
@@ -859,9 +859,33 @@ export function CompanionApp({
         await wait(GUIDE_FIND_STEP_MS);
       }
     }
+    // Marks (tcl-0waby5) name their targets by visible text too.
+    let marks = [];
+    if (Array.isArray(cue.marks) && cue.marks.length) {
+      const deadline = Date.now() + GUIDE_FIND_TIMEOUT_MS;
+      const resolved = (m) => m.element && (m.mark.kind !== 'arrow' || m.from);
+      let found = 0;
+      let progressAt = Date.now();
+      while (cueRun.current === run) {
+        // Only the marks still missing are looked up again.
+        marks = cue.marks.map((mark, i) => (marks[i] && resolved(marks[i]) ? marks[i] : {
+          mark,
+          element: findGuideTarget(win?.document, mark.target, { loose: true }),
+          from: mark.kind === 'arrow' ? findGuideTarget(win?.document, mark.from, { loose: true }) : null,
+        }));
+        const now = marks.filter(resolved).length;
+        if (now > found) { found = now; progressAt = Date.now(); }
+        if (now === marks.length || Date.now() >= deadline) break;
+        // Once the page has shown something, a mark that stays missing
+        // does not hold the rest back.
+        if ((found || element) && Date.now() - progressAt >= GUIDE_MARK_PATIENCE_MS) break;
+        await wait(GUIDE_FIND_STEP_MS);
+      }
+    }
     if (cueRun.current !== run) return;
-    element?.scrollIntoView?.({ block: 'center', behavior: reducedMotion(win) ? 'auto' : 'smooth' });
-    setGuideCue({ cue, element });
+    const focus = element || marks.find((m) => m.element)?.element;
+    focus?.scrollIntoView?.({ block: 'center', behavior: reducedMotion(win) ? 'auto' : 'smooth' });
+    setGuideCue({ cue, element, marks });
   }
 
   // -- render -----------------------------------------------------------------
@@ -995,7 +1019,7 @@ export function CompanionApp({
     ${annotating && html`<${AnnotateOverlay} agentName=${annotating.name} win=${win}
       onSend=${sendAnnotation} onCancel=${() => setAnnotating(null)} />`}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
-    ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} onDismiss=${dismissGuide} win=${win} />`}
+    ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} marks=${guideCue.marks} onDismiss=${dismissGuide} win=${win} />`}
     ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
 }
 

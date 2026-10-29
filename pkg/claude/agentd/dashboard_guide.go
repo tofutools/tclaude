@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -42,6 +43,9 @@ const (
 	guideMaxNote     = 400
 	guideMaxTitle    = 160
 	guideViewMaxBody = 4 << 10
+	// A cue carries up to guideMaxMarks marks of two texts each; texts are
+	// cut to length after decoding, so the body may carry them long.
+	guideCueMaxBody = 32 << 10
 )
 
 // guideTabs are the dashboard's top-level tabs a cue may switch to.
@@ -58,6 +62,17 @@ type dashboardView struct {
 	At    time.Time `json:"at"`
 }
 
+// cueMark is a drawn mark on the operator's view (tcl-0waby5): a circle or
+// underline around the control whose visible text is Target, or an arrow
+// from the control named From to the one named Target.
+type cueMark struct {
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	From   string `json:"from,omitempty"`
+}
+
+const guideMaxMarks = 6
+
 type companionCue struct {
 	ID        int64     `json:"id"`
 	AgentID   string    `json:"agent_id,omitempty"`
@@ -66,6 +81,7 @@ type companionCue struct {
 	Path      string    `json:"path,omitempty"`
 	Target    string    `json:"target,omitempty"`
 	Note      string    `json:"note,omitempty"`
+	Marks     []cueMark `json:"marks,omitempty"`
 	At        time.Time `json:"at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -238,16 +254,37 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, guideViewMaxBody)
+	r.Body = http.MaxBytesReader(w, r.Body, guideCueMaxBody)
 	var req struct {
-		Tab    string `json:"tab"`
-		Path   string `json:"path"`
-		Target string `json:"target"`
-		Note   string `json:"note"`
+		Tab    string    `json:"tab"`
+		Path   string    `json:"path"`
+		Target string    `json:"target"`
+		Note   string    `json:"note"`
+		Marks  []cueMark `json:"marks"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid cue: "+err.Error())
 		return
+	}
+	if len(req.Marks) > guideMaxMarks {
+		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("at most %d marks per cue", guideMaxMarks))
+		return
+	}
+	marks := make([]cueMark, 0, len(req.Marks))
+	for _, m := range req.Marks {
+		mark := cueMark{Kind: strings.ToLower(strings.TrimSpace(m.Kind)), Target: guideText(m.Target, guideMaxTarget), From: guideText(m.From, guideMaxTarget)}
+		switch {
+		case mark.Kind != "circle" && mark.Kind != "underline" && mark.Kind != "arrow":
+			writeError(w, http.StatusBadRequest, "invalid_arg", "a mark is circle, underline or arrow")
+			return
+		case mark.Target == "":
+			writeError(w, http.StatusBadRequest, "invalid_arg", "a mark needs the visible text of its target")
+			return
+		case (mark.Kind == "arrow") != (mark.From != ""):
+			writeError(w, http.StatusBadRequest, "invalid_arg", "an arrow mark needs from and target; other marks take no from")
+			return
+		}
+		marks = append(marks, mark)
 	}
 	tab := strings.TrimSpace(strings.ToLower(req.Tab))
 	if tab != "" && !guideTabs[tab] {
@@ -261,11 +298,11 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 	}
 	target := guideText(req.Target, guideMaxTarget)
 	note := guideText(req.Note, guideMaxNote)
-	if tab == "" && path == "" && target == "" && note == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "a cue needs a tab, a path, a target or a note")
+	if tab == "" && path == "" && target == "" && note == "" && len(marks) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a cue needs a tab, a path, a target, a note or a mark")
 		return
 	}
-	cue := companionCue{Tab: tab, Path: path, Target: target, Note: note}
+	cue := companionCue{Tab: tab, Path: path, Target: target, Note: note, Marks: marks}
 	if convID != "" {
 		if res, _, err := agent.ResolveSelector(convID); err == nil {
 			cue.AgentID = res.AgentID
