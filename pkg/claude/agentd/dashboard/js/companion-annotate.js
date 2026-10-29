@@ -14,6 +14,7 @@ const html = htm.bind(h);
 
 export const ANNOTATE_COLORS = Object.freeze(['#ff4d4f', '#ffd43b', '#4dabf7', '#69db7c']);
 const LABEL_MAX = 80;
+export const ANNOTATE_NOTE_MAX = 2000;
 
 function bounds(points) {
   let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
@@ -54,13 +55,18 @@ export function labelFor(el) {
   for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
     if (node.tagName === 'BODY' || node.tagName === 'HTML') break;
     const { label, text } = textOf(node);
-    const field = ['INPUT', 'TEXTAREA'].includes(node.tagName) ? (node.value || node.getAttribute?.('placeholder') || '') : '';
+    // A field is named by its label or placeholder, never by what is typed
+    // in it (a token, a password).
+    const field = ['INPUT', 'TEXTAREA', 'SELECT'].includes(node.tagName)
+      ? ((node.labels?.[0]?.textContent || '').replace(/\s+/g, ' ').trim() || node.getAttribute?.('placeholder') || node.getAttribute?.('name') || '')
+      : '';
     const name = label || field || text;
     if (name && name.length <= LABEL_MAX) {
       const role = roleOf(node) || (node.closest?.(TARGET_SELECTOR) ? roleOf(node.closest(TARGET_SELECTOR)) : '');
       return { text: name, role };
     }
   }
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el?.tagName)) return { text: 'an unlabelled field', role: 'field' };
   const fallback = el ? textOf(el).text : '';
   return fallback ? { text: `${fallback.slice(0, LABEL_MAX - 1)}…`, role: '' } : null;
 }
@@ -80,30 +86,41 @@ function quote(found) {
   return `“${found.text}”${found.role ? ` (${found.role})` : ''}`;
 }
 
-// describeStroke turns one stroke into a line for the agent. `at(x, y)`
+// resolveStroke turns one stroke into {kind, line} for the agent. `at(x, y)`
 // resolves a viewport point to a label (labelFor of the element there).
-export function describeStroke(points, at) {
-  const kind = classifyStroke(points);
+export function resolveStroke(points, at) {
+  let kind = classifyStroke(points);
   const b = bounds(points);
   const cx = b.x + b.width / 2; const cy = b.y + b.height / 2;
-  if (kind === 'circle') return `circled ${quote(at(cx, cy))}`;
-  if (kind === 'underline') return `underlined ${quote(at(cx, b.y - 8) || at(cx, cy))}`;
-  if (kind === 'arrow') {
-    const [sx, sy] = points[0];
-    const [ex, ey] = points[points.length - 1];
-    return `drew an arrow from ${quote(at(sx, sy))} to ${quote(at(ex, ey))}`;
+  const [sx, sy] = points[0];
+  const [ex, ey] = points[points.length - 1];
+  if (kind === 'circle') return { kind, line: `circled ${quote(at(cx, cy))}` };
+  if (kind === 'underline') {
+    const above = at(cx, b.y - 8) || at(cx, cy);
+    const end = at(ex, ey);
+    // A flat stroke ending on a control that is not the text above it is a
+    // horizontal arrow pointing at that control.
+    if (!(end?.role && end.text !== above?.text)) return { kind, line: `underlined ${quote(above)}` };
+    kind = 'arrow';
   }
-  return `marked ${quote(at(cx, cy))}`;
+  if (kind === 'arrow') return { kind, line: `drew an arrow from ${quote(at(sx, sy))} to ${quote(at(ex, ey))}` };
+  return { kind, line: `marked ${quote(at(cx, cy))}` };
+}
+
+export function describeStroke(points, at) {
+  return resolveStroke(points, at).line;
 }
 
 // composeAnnotation builds the mail body: the note, then one numbered line
 // per stroke, matching the numbers drawn on the overlay.
-export function composeAnnotation({ note = '', lines = [], view = '' }) {
+// The view itself rides on the message as the usual "[dashboard view: ...]"
+// line.
+export function composeAnnotation({ note = '', lines = [] }) {
   const parts = [];
-  const clean = String(note || '').trim();
+  const clean = String(note || '').trim().slice(0, ANNOTATE_NOTE_MAX);
   if (clean) parts.push(clean);
   if (lines.length) {
-    parts.push(`The operator marked up the dashboard view ${view || 'they are on'}:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`);
+    parts.push(`The operator marked up the dashboard view they are on:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`);
   }
   return parts.join('\n\n');
 }
@@ -130,12 +147,28 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
   const [sending, setSending] = useState(false);
   const drawing = useRef(null);
   const rootRef = useRef(null);
+  const noteRef = useRef(null);
   const [, setTick] = useState(0);
+
+  // Focus moves into the layer (so no key reaches a terminal underneath) and
+  // back to where it was when the layer closes. The page cannot scroll out
+  // from under the strokes meanwhile.
+  useEffect(() => {
+    const opener = win?.document?.activeElement;
+    noteRef.current?.focus?.();
+    const root = rootRef.current;
+    const stopScroll = (event) => event.preventDefault();
+    root?.addEventListener?.('wheel', stopScroll, { passive: false });
+    return () => {
+      root?.removeEventListener?.('wheel', stopScroll);
+      setTimeout(() => { if (opener?.isConnected) opener.focus?.(); }, 0);
+    };
+  }, [win]);
 
   useEffect(() => {
     const onKey = (event) => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.target?.closest?.('textarea')) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.target?.closest?.('.annotate-note')) {
         event.preventDefault();
         setStrokes((list) => list.slice(0, -1));
       }
@@ -145,43 +178,48 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
   }, [onCancel, win]);
 
   function down(event) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || drawing.current) return;
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    drawing.current = { color, points: [[event.clientX, event.clientY]] };
+    drawing.current = { color, pointerId: event.pointerId, points: [[event.clientX, event.clientY]] };
     setTick((n) => n + 1);
   }
   function move(event) {
     const d = drawing.current;
-    if (!d) return;
+    if (!d || event.pointerId !== d.pointerId) return;
     const [lx, ly] = d.points[d.points.length - 1];
     if (Math.hypot(event.clientX - lx, event.clientY - ly) < 2) return;
     d.points.push([event.clientX, event.clientY]);
     setTick((n) => n + 1);
   }
-  function up() {
+  // resolve reads what is under a finished stroke right away, while the page
+  // still shows what the operator drew on.
+  function resolve(points) {
+    const doc = win?.document;
+    const root = rootRef.current;
+    // Look through the layer at the page underneath.
+    if (root) root.style.pointerEvents = 'none';
+    try {
+      return resolveStroke(points, (x, y) => {
+        const el = doc && elementAt(doc, x, y, '.annotate-root, #companion-root');
+        return el ? labelFor(el) : null;
+      });
+    } finally {
+      if (root) root.style.pointerEvents = '';
+    }
+  }
+
+  function up(event) {
     const d = drawing.current;
+    if (!d || event?.pointerId !== d.pointerId) return;
     drawing.current = null;
-    if (d && d.points.length > 1) setStrokes((list) => [...list, d]);
+    if (d.points.length > 1) setStrokes((list) => [...list, { ...d, ...resolve(d.points) }]);
     else setTick((n) => n + 1);
   }
 
   async function send(event) {
     event?.preventDefault?.();
     if (sending || (!strokes.length && !note.trim())) return;
-    const doc = win?.document;
-    const root = rootRef.current;
-    // Look through the layer at the page underneath.
-    if (root) root.style.pointerEvents = 'none';
-    let lines;
-    try {
-      const at = (x, y) => {
-        const el = doc && elementAt(doc, x, y, '.annotate-root, #companion-root');
-        return el ? labelFor(el) : null;
-      };
-      lines = strokes.map((stroke) => describeStroke(stroke.points, at));
-    } finally {
-      if (root) root.style.pointerEvents = '';
-    }
+    const lines = strokes.map((stroke) => stroke.line);
     setSending(true);
     try {
       await onSend({ note, lines });
@@ -191,14 +229,14 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
   }
 
   const live = drawing.current ? [...strokes, drawing.current] : strokes;
-  return html`<div class="annotate-root" ref=${rootRef}>
+  return html`<div class="annotate-root" ref=${rootRef} role="dialog" aria-modal="true" aria-label=${`Mark up this view for ${agentName}`}>
     <svg class="annotate-canvas" onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}
       aria-label="Annotation layer: draw on the page">
       ${live.map((stroke, i) => {
         const [x, y] = stroke.points[0];
         return html`<g key=${i}>
           <path d=${strokePath(stroke.points)} stroke=${stroke.color} />
-          ${i < strokes.length && classifyStroke(stroke.points) === 'arrow' && html`<path d=${arrowHead(stroke.points)} stroke=${stroke.color} />`}
+          ${i < strokes.length && stroke.kind === 'arrow' && html`<path d=${arrowHead(stroke.points)} stroke=${stroke.color} />`}
           ${i < strokes.length && html`<circle cx=${x} cy=${y} r="9" fill=${stroke.color} /><text x=${x} y=${y + 4}>${i + 1}</text>`}
         </g>`;
       })}
@@ -208,7 +246,7 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
       ${ANNOTATE_COLORS.map((c) => html`<button key=${c} type="button" class=${`annotate-swatch${color === c ? ' on' : ''}`}
         style=${`background:${c}`} aria-label=${`Pen ${c}`} aria-pressed=${color === c ? 'true' : 'false'} onClick=${() => setColor(c)}></button>`)}
       <button type="button" class="annotate-btn" title="Undo (Ctrl+Z)" disabled=${!strokes.length} onClick=${() => setStrokes((list) => list.slice(0, -1))}>↶</button>
-      <textarea class="annotate-note" rows="1" placeholder="Add a note (optional)" aria-label="Note" value=${note}
+      <textarea class="annotate-note" ref=${noteRef} rows="1" maxLength=${ANNOTATE_NOTE_MAX} placeholder="Add a note (optional)" aria-label="Note" value=${note}
         onInput=${(event) => setNote(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) send(event); }}></textarea>
       <button type="submit" class="annotate-send" disabled=${sending || (!strokes.length && !note.trim())}>${sending ? 'Sending…' : 'Send'}</button>
