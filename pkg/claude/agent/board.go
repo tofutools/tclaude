@@ -43,7 +43,7 @@ func boardCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			boardLsCmd(), boardShowCmd(), boardSnapshotCmd(), boardCreateCmd(),
-			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(),
+			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardLayoutCmd(),
 		},
 	}.ToCobra()
 }
@@ -386,6 +386,13 @@ type boardAddParams struct {
 	From  string   `long:"from" optional:"true" help:"Arrow: element id to start from (points are computed between the element centers)"`
 	To    string   `long:"to" optional:"true" help:"Arrow: element id to point at"`
 	ID    string   `long:"id" optional:"true" help:"Element id (default: generated)"`
+
+	RightOf string   `long:"right-of" optional:"true" help:"Place the shape to the right of this element id (centred on it), instead of --x/--y"`
+	LeftOf  string   `long:"left-of" optional:"true" help:"Place the shape to the left of this element id"`
+	Below   string   `long:"below" optional:"true" help:"Place the shape below this element id"`
+	Above   string   `long:"above" optional:"true" help:"Place the shape above this element id"`
+	Gap     *float64 `long:"gap" help:"Space to the --right-of/--left-of/--below/--above element (default 60)"`
+	Link    bool     `long:"link" optional:"true" help:"With a relative placement: also draw an arrow from that element to the new shape"`
 }
 
 var boardAddTypes = map[string]bool{"rectangle": true, "ellipse": true, "diamond": true, "text": true, "arrow": true, "line": true}
@@ -397,7 +404,10 @@ func boardAddCmd() *cobra.Command {
 		Long: "Adds one element and prints its id. Shapes take --x --y --w --h; text takes --text (and --x --y); " +
 			"--text on a shape or arrow adds a second, centred text element as its label (move it with the shape); " +
 			"an arrow either connects two elements (--from and --to, by element id) or spans --x --y by --w --h.\n\n" +
-			"Example: tclaude agent board add plan rectangle --x 100 --y 80 --text 'API'\n" +
+			"Place a shape relative to another with --right-of, --left-of, --below or --above <id> (centred on it, --gap " +
+			"apart); --link also draws an arrow from that element to the new one, so a flow is built step by step.\n\n" +
+			"Example: tclaude agent board add plan rectangle --x 100 --y 80 --text 'API' --id api\n" +
+			"         tclaude agent board add plan rectangle --right-of api --link --text 'DB' --id db\n" +
 			"         tclaude agent board add plan arrow --from <idA> --to <idB>",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -431,6 +441,32 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		fmt.Fprintln(stderr, "Error: give both --from and --to")
 		return rcInvalidArg
 	}
+	relDir, relRef, err := relativeTarget(p)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if relRef != "" && (typ == "arrow" || typ == "line") {
+		fmt.Fprintln(stderr, "Error: arrows and lines are placed with --from/--to or --x/--y, not --right-of and friends")
+		return rcInvalidArg
+	}
+	if p.Link && relRef == "" {
+		fmt.Fprintln(stderr, "Error: --link needs a relative placement (--right-of, --left-of, --below or --above)")
+		return rcInvalidArg
+	}
+	var ref boardElementView
+	if relRef != "" {
+		doc, err := fetchBoard(id, -1)
+		if err != nil {
+			return boardErr(stderr, err)
+		}
+		v, ok := loadBoardScene(doc).view[relRef]
+		if !ok {
+			fmt.Fprintf(stderr, "Error: board %s has no live element %s\n", id, relRef)
+			return rcNotFound
+		}
+		ref = v
+	}
 	elemID := p.ID
 	if elemID == "" {
 		elemID = boardRandomID()
@@ -449,6 +485,14 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		"fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "solid", "roughness": 1, "opacity": 100, "angle": 0,
 	}
 	x, y := floatOr(p.X, 0), floatOr(p.Y, 0)
+	if relRef != "" {
+		w, h := floatOr(p.W, 160), floatOr(p.H, 80)
+		if typ == "text" {
+			tw, th := boardTextSize(p.Text)
+			w, h = floatOr(p.W, tw), floatOr(p.H, th)
+		}
+		x, y = placeRelative(ref, w, h, relDir, floatOr(p.Gap, boardDefaultGap))
+	}
 	// A shape's or arrow's label is its own text element centred on it, the
 	// way the board editor reads and draws labels.
 	var labelX, labelY float64
@@ -504,6 +548,22 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 			"x": labelX - w/2, "y": labelY - h/2, "width": w, "height": h,
 		})
 	}
+	linkID := ""
+	if p.Link {
+		linkID = boardRandomID()
+		self := boardElementView{ID: elemID, Type: typ, X: e["x"].(float64), Y: e["y"].(float64)}
+		self.Width, _ = e["width"].(float64)
+		self.Height, _ = e["height"].(float64)
+		sx, sy, ex, ey := arrowBetween(ref, self)
+		elems = append(elems, map[string]any{
+			"id": linkID, "type": "arrow", "version": 1, "versionNonce": boardRandomNonce(), "isDeleted": false,
+			"updated": e["updated"], "strokeColor": stroke, "backgroundColor": "transparent",
+			"fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "solid", "roughness": 1, "opacity": 100, "angle": 0,
+			"x": sx, "y": sy, "width": math.Abs(ex - sx), "height": math.Abs(ey - sy),
+			"points":       [][2]float64{{0, 0}, {ex - sx, ey - sy}},
+			"startBinding": map[string]string{"elementId": relRef}, "endBinding": map[string]string{"elementId": elemID},
+		})
+	}
 	raws := make([]json.RawMessage, 0, len(elems))
 	for _, el := range elems {
 		raw, err := json.Marshal(el)
@@ -517,8 +577,15 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 	if err != nil {
 		return boardErr(stderr, err)
 	}
+	extra := ""
 	if labelID != "" {
-		fmt.Fprintf(stdout, "Added %s %s with label %s to board %s (version %d).\n", typ, elemID, labelID, id, resp.Version)
+		extra += " with label " + labelID
+	}
+	if linkID != "" {
+		extra += fmt.Sprintf(" and arrow %s from %s", linkID, relRef)
+	}
+	if extra != "" {
+		fmt.Fprintf(stdout, "Added %s %s%s to board %s (version %d).\n", typ, elemID, extra, id, resp.Version)
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "Added %s %s to board %s (version %d).\n", typ, elemID, id, resp.Version)
@@ -707,7 +774,7 @@ type boardMoveParams struct {
 func boardMoveCmd() *cobra.Command {
 	return boa.CmdT[boardMoveParams]{
 		Use:         "move <board> <element> [--x X] [--y Y]",
-		Short:       "Move an element",
+		Short:       "Move an element (its label and bound arrows follow)",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardMoveParams, _ *cobra.Command, args []string) {
@@ -721,14 +788,19 @@ func runBoardMove(p *boardMoveParams, id, elemID string, stdout, stderr io.Write
 		fmt.Fprintln(stderr, "Error: give --x and/or --y")
 		return rcInvalidArg
 	}
-	return editBoardElements(id, []string{elemID}, func(m map[string]any) {
-		if p.X != nil {
-			m["x"] = *p.X
-		}
-		if p.Y != nil {
-			m["y"] = *p.Y
-		}
-	}, stdout, stderr)
+	doc, err := fetchBoard(id, -1)
+	if err != nil {
+		return boardErr(stderr, err)
+	}
+	s := loadBoardScene(doc)
+	v, ok := s.view[elemID]
+	if !ok {
+		fmt.Fprintf(stderr, "Error: board %s has no live element %s\n", id, elemID)
+		return rcNotFound
+	}
+	// The shape's label and the arrows bound to it move with it.
+	d := [2]float64{floatOr(p.X, v.X) - v.X, floatOr(p.Y, v.Y) - v.Y}
+	return patchScene(id, s, s.moveBy(map[string][2]float64{elemID: d}), stdout, stderr)
 }
 
 type boardTextParams struct {
