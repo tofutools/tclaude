@@ -617,6 +617,14 @@ scribe group, so you can also open it from Terminals). Ask it what you can do
 on a page, how your groups are configured, or to help set up groups,
 profiles, processes or your sandbox. It proposes a plan first and runs each
 change with `--ask-human`, so you approve every mutation in the dashboard.
+While the Steward's tab is open and you have not typed anything, one-click
+starters sit above the message row: **What can I do here?**, **Review my
+setup**, **Set up my repos**, **Create a dev flow** and **Sketch on a board**.
+For setup the Steward follows the bundled `tclaude-setup` skill: it inspects
+first, asks only what it cannot infer, shows a numbered plan, and requests the
+permissions for the whole plan once, for a bounded time. You approve that
+request as a card in its companion tab. Run `tclaude setup
+--install-agent-skills` after upgrading to install new bundled skills.
 
 The Steward can also see and point at the dashboard. `tclaude agent guide
 view` tells it which view you are on (it needs `dashboard.view.read`), and
