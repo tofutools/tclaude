@@ -137,17 +137,25 @@ func appendClaudeProtectedRootDenies(settings map[string]any, readDirs, writeDir
 	if len(grants) == 0 {
 		return
 	}
+	var covered, patterns []string
 	protected, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
-		slog.Warn("claude sandbox: could not resolve protected roots", "error", err)
-		return
-	}
-	var covered []string
-	for _, root := range protected {
-		for _, dir := range grants {
-			if sandboxpolicy.GuardContainsOrEqual(dir, root) {
-				covered = append(covered, root)
-				break
+		// Fail closed: without a resolved Home no grant can be proven not to
+		// cover a protected root, so deny both in the spelling the `on` block
+		// uses, which Claude Code expands itself.
+		slog.Warn("claude sandbox: could not resolve protected roots; denying them by ~ spelling", "error", err)
+		covered = []string{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde}
+		for _, root := range covered {
+			patterns = append(patterns, root+"/**")
+		}
+	} else {
+		for _, root := range protected {
+			for _, dir := range grants {
+				if sandboxpolicy.GuardContainsOrEqual(dir, root) {
+					covered = append(covered, root)
+					patterns = append(patterns, claudeAbsolutePermissionPattern(root))
+					break
+				}
 			}
 		}
 	}
@@ -166,9 +174,8 @@ func appendClaudeProtectedRootDenies(settings map[string]any, readDirs, writeDir
 	}
 	appendSandboxFilesystemDirs(filesystem, "denyRead", covered)
 	appendSandboxFilesystemDirs(filesystem, "denyWrite", covered)
-	rules := make([]string, 0, 2*len(covered))
-	for _, root := range covered {
-		pattern := claudeAbsolutePermissionPattern(root)
+	rules := make([]string, 0, 2*len(patterns))
+	for _, pattern := range patterns {
 		rules = append(rules, "Read("+pattern+")", "Edit("+pattern+")")
 	}
 	appendClaudePermissionDeny(settings, rules)

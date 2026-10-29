@@ -2,6 +2,7 @@ package sandboxpolicy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -123,7 +124,8 @@ func ValidateProtectedAncestorWriteSupport(
 	implementation Implementation,
 	goos string,
 ) error {
-	if implementation.UsesTclaudeLayer() || implementation.OmitsOSConfinement() {
+	if implementation.UsesTclaudeLayer() || implementation.OmitsOSConfinement() ||
+		!slices.ContainsFunc(grants, func(grant FilesystemGrant) bool { return grant.Access == AccessWrite }) {
 		return nil
 	}
 	protected, err := ProtectedPaths()

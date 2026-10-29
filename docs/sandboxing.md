@@ -293,7 +293,9 @@ The axes:
 include, launch contract, or flag reopens them, and any read/write rule at or
 below one is refused. A rule on an *ancestor* is allowed and keeps the wall:
 `{"path": "~", "access": "write"}` makes the whole Home writable, including
-directories created later, while the protected roots stay hidden on top of it.
+directories created later, while the protected roots stay hidden on top of it
+under every implementation that enforces access rules (`off` and
+`resource-only` enforce none, so there the row changes nothing).
 tclaude’s sandbox also pins the directories between the grant and each
 protected root (`~/.tclaude`, `~/.claude`) so they cannot be renamed or
 removed: on Linux they become mount points, on macOS they get an unlink deny.

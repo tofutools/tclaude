@@ -193,14 +193,18 @@ func TestClaudeSettingsRedeniesProtectedRootsUnderAncestorGrant(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
 		t.Fatalf("decode %q: %v", raw, err)
 	}
-	sessions := home + "/.claude/sessions"
-	for _, key := range []string{"denyRead", "denyWrite"} {
-		if !slices.Contains(settings.Sandbox.Filesystem[key], sessions) {
-			t.Errorf("%s = %v, want it to contain %s", key, settings.Sandbox.Filesystem[key], sessions)
+	for _, root := range []string{home + "/.claude/sessions", home + "/.tclaude/data"} {
+		for _, key := range []string{"denyRead", "denyWrite"} {
+			if !slices.Contains(settings.Sandbox.Filesystem[key], root) {
+				t.Errorf("%s = %v, want it to contain %s", key, settings.Sandbox.Filesystem[key], root)
+			}
 		}
-	}
-	if !slices.Contains(settings.Permissions.Deny, "Edit(/"+sessions+"/**)") {
-		t.Errorf("permissions.deny = %v, want the Edit mirror for %s", settings.Permissions.Deny, sessions)
+		for _, tool := range []string{"Read", "Edit"} {
+			rule := tool + "(/" + root + "/**)"
+			if !slices.Contains(settings.Permissions.Deny, rule) {
+				t.Errorf("permissions.deny = %v, want %s", settings.Permissions.Deny, rule)
+			}
+		}
 	}
 
 	// A narrower grant that covers no protected root adds nothing.
