@@ -18,18 +18,41 @@ const PRIME_CURSOR = '9000000000000000000';
 // code blocks and tables are summarised, links and markup reduced to their
 // words, and a long reply cut at a sentence with a pointer to the window.
 export function speakableText(markdown, max = VOICE_SPOKEN_MAX) {
-  let text = String(markdown || '');
-  text = text.replace(/```[\s\S]*?(```|$)/g, ' (code omitted) ');
-  text = text.split('\n').filter((line) => !/^\s*\|.*\|\s*$/.test(line)).join('\n');
+  let text = String(markdown || '').replace(/\r\n?/g, '\n');
+  text = text.replace(/```[\s\S]*?(```|$)/g, '\n\n(code omitted)\n\n');
+  text = text.split('\n')
+    .filter((line) => !/^\s*\|.*\|\s*$/.test(line) && !/^\s*([-*_]\s*){3,}$/.test(line))
+    .map((line) => line.replace(/^\s*>\s?/, ''))
+    .join('\n');
   text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
   text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
   text = text.replace(/https?:\/\/\S+/g, 'a link');
   text = text.replace(/`([^`]*)`/g, '$1');
-  text = text.replace(/^\s{0,3}#{1,6}\s+/gm, '');
-  text = text.replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, '');
-  text = text.replace(/(\*\*|__|\*|_|~~)(?=\S)([^*_~]+?)\1/g, '$2');
-  text = text.replace(/\s*\n\s*/g, '. ').replace(/\.(\s*\.)+/g, '.').replace(/\s+/g, ' ').trim();
-  text = text.replace(/^\.\s*/, '');
+  // A heading is a sentence of its own; so is each list item.
+  text = text.replace(/^\s{0,3}#{1,6}\s+(.*)$/gm, '$1\n');
+  text = text.replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, '\u0001');
+  // Emphasis only at word boundaries, so snake_case and paths survive.
+  text = text.replace(/(^|[^\w*])(\*\*|\*|__|_|~~)(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, '$1$3');
+  // Blank lines and list items break sentences; a single newline inside a
+  // paragraph (hard-wrapped prose) is a space.
+  const sentences = [];
+  for (const para of text.split(/\n\s*\n/)) {
+    let current = '';
+    for (const raw of para.split('\n')) {
+      const item = raw.startsWith('\u0001');
+      const line = raw.replace(/\u0001/g, '').trim();
+      if (!line) continue;
+      if (item && current) {
+        sentences.push(current);
+        current = line;
+      } else {
+        current = current ? `${current} ${line}` : line;
+      }
+    }
+    if (current) sentences.push(current);
+  }
+  text = sentences.reduce((acc, part) => (!acc ? part : /[.!?:;,]$/.test(acc) ? `${acc} ${part}` : `${acc}. ${part}`), '');
+  text = text.replace(/\s+/g, ' ').trim();
   if (text.length <= max) return text;
   const cut = text.slice(0, max);
   const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
@@ -56,7 +79,7 @@ export function localVoice(synth, language = 'en') {
 
 // createSpeaker wraps window.speechSynthesis. Utterances queue in order;
 // cancel() stops speech at once (barge-in).
-export function createSpeaker(win = globalThis.window, { rate = 1.05 } = {}) {
+export function createSpeaker(win = globalThis.window, { rate = 1.05, onBlocked = () => {} } = {}) {
   const synth = win?.speechSynthesis;
   const Utterance = win?.SpeechSynthesisUtterance;
   const supported = !!(synth && Utterance);
@@ -70,6 +93,8 @@ export function createSpeaker(win = globalThis.window, { rate = 1.05 } = {}) {
       // voices send the text to a cloud service.
       const voice = localVoice(synth, win?.navigator?.language);
       if (voice) utterance.voice = voice;
+      // Browsers refuse speech until the page has had a click or key press.
+      utterance.onerror = (event) => { if (event?.error === 'not-allowed') onBlocked(); };
       synth.speak(utterance);
       return true;
     },
@@ -93,31 +118,53 @@ export function voiceTransitions(prev, next) {
   return out;
 }
 
-// createVoiceReader keeps one cursor per agent and fetches what it said since.
+// createVoiceReader keeps one cursor per agent and fetches what it said
+// since. Reads for one agent run one at a time, so a reply is never handed
+// out twice; the cursor moves only to the newest text actually returned (a
+// read that found nothing, or a transcript not readable yet, leaves it), and
+// a forgotten agent's late answer is dropped.
 export function createVoiceReader(fetchImpl) {
   const cursors = new Map();
+  const chains = new Map();
+  const generations = new Map();
+  function serial(agentId, task) {
+    const run = (chains.get(agentId) || Promise.resolve()).then(task, task);
+    chains.set(agentId, run.catch(() => {}));
+    return run;
+  }
   async function read(agentId, since) {
+    const generation = generations.get(agentId) || 0;
     const response = await fetchImpl(`/api/companion/${encodeURIComponent(agentId)}/speech?since=${since}`, { credentials: 'same-origin' });
     if (!response.ok) throw new Error(`${response.status}`);
     const body = await response.json();
-    if (body.now) cursors.set(agentId, String(body.now));
-    return Array.isArray(body.items) ? body.items : [];
+    if ((generations.get(agentId) || 0) !== generation) return null;
+    return body;
   }
+  const prime = (agentId) => serial(agentId, async () => {
+    if (cursors.has(agentId)) return;
+    const body = await read(agentId, PRIME_CURSOR);
+    if (body?.now) cursors.set(agentId, String(body.now));
+  });
   return {
     // prime starts an agent's cursor at the server's now.
-    async prime(agentId) {
-      if (cursors.has(agentId)) return;
-      await read(agentId, PRIME_CURSOR);
+    prime,
+    forget(agentId) {
+      cursors.delete(agentId);
+      generations.set(agentId, (generations.get(agentId) || 0) + 1);
     },
-    forget(agentId) { cursors.delete(agentId); },
-    // latest returns the agent's last text since the cursor ('' if none).
+    // latest returns {text, at} for the agent's last text since the cursor,
+    // or null when there is none.
     async latest(agentId) {
-      if (!cursors.has(agentId)) {
-        await read(agentId, PRIME_CURSOR);
-        return '';
-      }
-      const items = await read(agentId, cursors.get(agentId));
-      return items.length ? items[items.length - 1].text : '';
+      await prime(agentId);
+      return serial(agentId, async () => {
+        if (!cursors.has(agentId)) return null;
+        const body = await read(agentId, cursors.get(agentId));
+        const items = Array.isArray(body?.items) ? body.items.filter((it) => it?.text && it.at_ns) : [];
+        if (!items.length) return null;
+        const last = items[items.length - 1];
+        cursors.set(agentId, String(last.at_ns));
+        return { text: last.text, at: String(last.at_ns) };
+      });
     },
   };
 }

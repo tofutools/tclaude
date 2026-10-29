@@ -266,7 +266,16 @@ export function CompanionApp({
   const [annotating, setAnnotating] = useState(null);
   // Voice output (tcl-q3qcfw): agents whose replies are spoken aloud.
   const [voiceAgents, setVoiceAgents] = useState(() => new Set(parseVoiceAgents(readPref(prefs, VOICE_PREF))));
-  const speaker = useMemo(() => speakerImpl || createSpeaker(win), [speakerImpl, win]);
+  const voiceAgentsRef = useRef(voiceAgents);
+  voiceAgentsRef.current = voiceAgents;
+  const blockedHinted = useRef(false);
+  const speaker = useMemo(() => speakerImpl || createSpeaker(win, {
+    onBlocked: () => {
+      if (blockedHinted.current) return;
+      blockedHinted.current = true;
+      notify('The browser blocked the companion\'s voice until you click or type on the page.', true);
+    },
+  }), [speakerImpl, win]);
   const voiceReader = useMemo(() => createVoiceReader(fetchImpl), [fetchImpl]);
   const voiceStatuses = useRef(new Map());
   const [sending, setSending] = useState(false);
@@ -347,6 +356,12 @@ export function CompanionApp({
   }, [steward, fetchImpl, notify, showAgent]);
 
   const closeTab = useCallback((agentId) => {
+    setVoiceAgents((current) => {
+      if (!current.has(agentId)) return current;
+      const next = new Set(current);
+      next.delete(agentId);
+      return next;
+    });
     const next = withoutTab(tabs, agentId);
     if (agentId === activeId) setActive(nextActive(tabs, agentId));
     if (!next.length) setOpen(false);
@@ -597,35 +612,56 @@ export function CompanionApp({
   }
 
   useEffect(() => {
-    writePref(prefs, VOICE_PREF, JSON.stringify([...voiceAgents]));
-    for (const id of voiceAgents) voiceReader.prime(id).catch(() => {});
-  }, [voiceAgents, voiceReader]);
+    const pinned = [...voiceAgents].filter((id) => tabs.includes(id));
+    writePref(prefs, VOICE_PREF, JSON.stringify(pinned));
+    for (const id of pinned) voiceReader.prime(id).catch(() => {});
+  }, [voiceAgents, voiceReader, tabs]);
 
   // Speak when a voice agent's turn ends, or when it starts waiting on the
   // operator. Only transitions speak; the first sight of an agent is silent.
+  // Voice applies to pinned tabs only. Several dashboard tabs see the same
+  // transition, so each utterance is claimed in shared prefs first and the
+  // first tab to claim it speaks.
   useEffect(() => {
     if (!speaker.supported) return;
     const next = new Map();
     for (const id of voiceAgents) {
       const agent = agents.get(id);
-      if (agent) next.set(id, statusOf(agent));
+      if (agent && tabs.includes(id)) next.set(id, statusOf(agent));
     }
     const said = voiceTransitions(voiceStatuses.current, next);
     voiceStatuses.current = next;
-    const named = voiceAgents.size > 1;
+    const named = next.size > 1;
+    const claim = (key, value, fresh) => {
+      const previous = readPref(prefs, key);
+      if (previous && !fresh(previous)) return false;
+      writePref(prefs, key, value);
+      return true;
+    };
     for (const { agentId, kind } of said) {
       const agent = agents.get(agentId);
       if (!agent) continue;
       if (kind === 'needs') {
+        const now = Date.now();
+        if (!claim(`${VOICE_PREF}.needs.${agentId}`, String(now), (prev) => now - Number(prev) > 5000)) continue;
         speaker.speak(`${agent.name} needs you${agent.detail ? `: ${speakableText(agent.detail, 120)}` : '.'}`);
         continue;
       }
-      voiceReader.latest(agentId).then((text) => {
-        const spoken = speakableText(text);
-        if (spoken && voiceAgents.has(agentId)) speaker.speak(named ? `${agent.name}: ${spoken}` : spoken);
+      const speakReply = (retry) => voiceReader.latest(agentId).then((reply) => {
+        if (!voiceAgentsRef.current.has(agentId)) return;
+        if (!reply) {
+          // The transcript may land just after the status flips: look once more.
+          if (retry) setTimeout(() => speakReply(false), 1500);
+          return;
+        }
+        const fresh = (prev) => { try { return BigInt(reply.at) > BigInt(prev); } catch { return true; } };
+        if (!claim(`${VOICE_PREF}.said.${agentId}`, reply.at, fresh)) return;
+        const spoken = speakableText(reply.text);
+        if (spoken) speaker.speak(named ? `${agent.name}: ${spoken}` : spoken);
       }).catch(() => {});
+      speakReply(true);
     }
-  }, [agents, voiceAgents, snapshot.value]);
+  }, [agents, voiceAgents, tabs, snapshot.value]);
 
   function toggleVoice(agent) {
     setVoiceAgents((current) => {
