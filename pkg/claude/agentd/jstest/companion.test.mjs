@@ -80,7 +80,8 @@ test('summoning the Steward posts a read-only scoped scribe summon and attaches 
   assert.deepEqual(post.body.scope, { kind: 'steward' });
   assert.equal(post.body.background, true);
   assert.ok(!post.body.exclusive, 'the Steward keeps per-command --ask-human approvals available');
-  assert.ok(post.body.slugs.every((slug) => /\.read$/.test(slug) || slug === 'dashboard.guide'), `only read slugs plus pointing: ${post.body.slugs}`);
+  assert.ok(post.body.slugs.every((slug) => /\.read$/.test(slug) || ['dashboard.guide', 'boards.write'].includes(slug)), `only read slugs plus pointing and drawing: ${post.body.slugs}`);
+  assert.match(post.body.brief, /tclaude agent board show/);
   assert.match(post.body.brief, /--ask-human/);
   assert.deepEqual(closed.at(-1), [S], 'any Terminals-tab pane of the agent is closed first');
   // The summoned agent is not in a snapshot yet: the tab stays and says so.
