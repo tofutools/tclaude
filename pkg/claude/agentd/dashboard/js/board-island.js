@@ -126,7 +126,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const version = useRef(0);
   const [tick, setTick] = useState(0);
   const redraw = useCallback(() => setTick((n) => n + 1), []);
-  const [meta, setMeta] = useState({ title: boardId, participants: [] });
+  const [meta, setMeta] = useState({ title: boardId, participants: [], group: '', groupMembers: [] });
   const [status, setStatus] = useState('loading');
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState(BOARD_COLORS[0]);
@@ -174,7 +174,10 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
         const query = since ? `?since=${since}` : '';
         const board = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}${query}`, { credentials: 'same-origin' }));
         if (disposed.current) return;
-        setMeta({ title: board.title || boardId, participants: Array.isArray(board.participants) ? board.participants : [] });
+        setMeta({
+          title: board.title || boardId, participants: Array.isArray(board.participants) ? board.participants : [],
+          group: board.group || '', groupMembers: Array.isArray(board.group_members) ? board.group_members : [],
+        });
         setPresence(new Map((board.presence?.agents || []).map((a) => [a.agent_id, a.state])));
         const skip = new Set([...active.current, ...pending.current.keys()]);
         const incoming = board.elements || [];
@@ -750,19 +753,43 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
         body: JSON.stringify({ agent_id: agentId }),
       }));
       setMeta((m) => ({ ...m, participants: [...new Set([...m.participants, agentId])] }));
-      const name = agents.get(agentId)?.name || agentId;
-      await fetchImpl('/api/operator-message', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: agentId, subject: `[board ${boardId}] you're invited`,
-          body: `You're invited to the shared board "${meta.title}" (${boardId}). The operator draws there; you get a short event when their edits settle.\n`
-            + `Look: \`tclaude agent board show ${boardId}\` (elements as text; \`--view\` for what the operator has on screen) or \`tclaude agent board snapshot ${boardId} -o /tmp/${boardId}.png\` (an image to view).\n`
-            + `Draw: \`tclaude agent board add ${boardId} rectangle --x 100 --y 100 --w 160 --h 80 --text "Idea"\`, arrows with --from/--to element ids; build a flow with \`--right-of <id> --link\` and tidy it with \`board layout ${boardId}\`; \`board rm\`, \`board move\`, \`board text\`. See \`tclaude agent board --help\`.`,
-        }),
-      });
-      notify(`Invited ${name} to the board.`);
+      await sendInvite(agentId);
+      notify(`Invited ${agents.get(agentId)?.name || agentId} to the board.`);
     } catch (error) {
       notify(`Could not invite: ${error?.message || error}`, true);
+    }
+  }
+
+  // sendInvite tells an agent how to use the board.
+  function sendInvite(agentId, why = "You're invited to") {
+    return fetchImpl('/api/operator-message', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: agentId, subject: `[board ${boardId}] you're invited`,
+        body: `${why} the shared board "${meta.title}" (${boardId}). The operator draws there; you get a short event when their edits settle.\n`
+          + `Look: \`tclaude agent board show ${boardId}\` (elements as text; \`--view\` for what the operator has on screen) or \`tclaude agent board snapshot ${boardId} -o /tmp/${boardId}.png\` (an image to view).\n`
+          + `Draw: \`tclaude agent board add ${boardId} rectangle --x 100 --y 100 --w 160 --h 80 --text "Idea"\`, arrows with --from/--to element ids; build a flow with \`--right-of <id> --link\` and tidy it with \`board layout ${boardId}\`; \`board rm\`, \`board move\`, \`board text\`. See \`tclaude agent board --help\`.`,
+      }),
+    });
+  }
+
+  // setGroup makes the board a group's board (tcl-4yhow7): its members are
+  // on it without one-by-one invitations. The online ones newly on it are
+  // told how to use it.
+  async function setGroup(group) {
+    try {
+      const result = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/group`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group }),
+      }));
+      const members = Array.isArray(result.group_members) ? result.group_members : [];
+      const before = new Set([...meta.participants, ...meta.groupMembers]);
+      setMeta((m) => ({ ...m, group: result.group || '', groupMembers: members }));
+      const fresh = members.filter((id) => !before.has(id) && agents.get(id)?.online);
+      await Promise.allSettled(fresh.map((id) => sendInvite(id, `Your group "${result.group}" now has`)));
+      notify(result.group ? `This is now ${result.group}'s board${fresh.length ? `; told ${fresh.length} online member${fresh.length === 1 ? '' : 's'}` : ''}.` : 'The board no longer belongs to a group.');
+    } catch (error) {
+      notify(`Could not change the board's group: ${error?.message || error}`, true);
     }
   }
 
@@ -792,7 +819,8 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const pad = 6 / view.zoom;
   const transform = `scale(${view.zoom}) translate(${-view.x} ${-view.y})`;
   const drawing = [...presence].filter(([, state]) => state === 'drawing').map(([id]) => agents.get(id)?.name || id.slice(0, 12));
-  const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
+  const groupNames = [...new Set([meta.group, ...(snapshot.value?.groups || []).filter((g) => g?.name && !g.scribe && !g.archived).map((g) => g.name)].filter(Boolean))].sort();
+  const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId) && !meta.groupMembers.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
   void tick;
 
   return html`<div class="board-editor">
@@ -810,6 +838,13 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
             <button type="button" class="board-person-x" aria-label=${`Remove ${agent?.name || id} from the board`} onClick=${() => removeParticipant(id)}>×</button>
           </span>`;
         })}
+        ${meta.groupMembers.filter((id) => !meta.participants.includes(id)).map((id) => {
+          const agent = agents.get(id);
+          const state = presence.get(id) || '';
+          return html`<span key=${id} class=${`board-person via-group${agent?.online ? '' : ' offline'}${state ? ` ${state}` : ''}`} title=${`${agent?.name || id} (in group ${meta.group})${state === 'drawing' ? ' (drawing…)' : ''}`}>
+            <button type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
+          </span>`;
+        })}
         <span class="board-invite-wrap">
           <button type="button" class="board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent</button>
           ${invite && html`<div class="board-invite-menu" role="menu">
@@ -817,6 +852,11 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
               : html`<div class="board-invite-empty">No other live agents. Summon the Steward from the companion (Ctrl+.).</div>`}
           </div>`}
         </span>
+        <select class="board-group" aria-label="The board's group" title="A group's members are on its board without invitations"
+          value=${meta.group} onChange=${(event) => setGroup(event.currentTarget.value)}>
+          <option value="">No group</option>
+          ${groupNames.map((name) => html`<option key=${name} value=${name}>Group: ${name}</option>`)}
+        </select>
       </div>
       <button type="button" class="board-export" title="Download as .excalidraw"
         onClick=${() => import('./board-export.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(liveElements(elements.current))))}>⤓</button>
@@ -916,7 +956,7 @@ function BoardList({ fetchImpl, notify, onOpen }) {
     <div class="board-cards">
       ${(boards || []).map((b) => html`<button key=${b.id} type="button" class="board-card" onClick=${() => onOpen(b.id)}>
         <b>${b.title || b.id}</b>
-        <span>${b.element_count ?? 0} element${b.element_count === 1 ? '' : 's'}${b.participants?.length ? ` · ${b.participants.length} agent${b.participants.length === 1 ? '' : 's'}` : ''}</span>
+        <span>${b.element_count ?? 0} element${b.element_count === 1 ? '' : 's'}${b.participants?.length ? ` · ${b.participants.length} agent${b.participants.length === 1 ? '' : 's'}` : ''}${b.group ? ` · group ${b.group}` : ''}</span>
         <small>${b.updated_at ? new Date(b.updated_at).toLocaleString() : ''}</small>
       </button>`)}
     </div>

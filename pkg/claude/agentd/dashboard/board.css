@@ -155,3 +155,10 @@ body:has(#tab-boards.active) main { padding: 0; }
   border: 1px solid rgba(163, 113, 247, .45); font-size: 12px;
 }
 @media (prefers-reduced-motion: reduce) { .board-person-doing { animation: none; } }
+/* A group's board (tcl-4yhow7): members are on it without an invitation. */
+.board-person.via-group { border-style: dashed; }
+.board-person.via-group button { padding-right: 10px; }
+.board-group {
+  border: 1px solid var(--board-line); border-radius: 14px; background: var(--board-bar); color: var(--board-text);
+  font: inherit; font-size: 12px; padding: 3px 8px; max-width: 180px;
+}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -272,6 +273,7 @@ type boardSummaryJSON struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	ElementCount int       `json:"element_count"`
 	Participants []string  `json:"participants"`
+	Group        string    `json:"group,omitempty"`
 }
 
 type boardJSON struct {
@@ -285,6 +287,10 @@ type boardJSON struct {
 	SnapshotVersion *int64             `json:"snapshot_version,omitempty"`
 	Elements        []json.RawMessage  `json:"elements"`
 	Presence        *boardPresenceJSON `json:"presence,omitempty"`
+	// Group is the group the board belongs to; its active members are on the
+	// board (GroupMembers) without an invitation (tcl-4yhow7).
+	Group        string   `json:"group,omitempty"`
+	GroupMembers []string `json:"group_members,omitempty"`
 }
 
 // boardElementJSON stamps the stored body with its server_version.
@@ -304,6 +310,10 @@ func boardToJSON(b *db.CollabBoard, elems []db.CollabBoardElement) boardJSON {
 	out := boardJSON{
 		ID: b.ID, Title: b.Title, Version: b.Version, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt,
 		UpdatedBy: b.UpdatedBy, Participants: b.Participants, Elements: make([]json.RawMessage, 0, len(elems)),
+		Group: b.GroupName,
+	}
+	if members, err := db.CollabBoardGroupMembers(b); err == nil {
+		out.GroupMembers = members
 	}
 	if b.HasSnapshot {
 		v := b.SnapshotVersion
@@ -353,17 +363,49 @@ func serveBoardList(w http.ResponseWriter) {
 	for _, b := range boards {
 		out = append(out, boardSummaryJSON{
 			ID: b.ID, Title: b.Title, Version: b.Version, UpdatedAt: b.UpdatedAt,
-			ElementCount: b.ElementCount, Participants: b.Participants,
+			ElementCount: b.ElementCount, Participants: b.Participants, Group: b.GroupName,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"boards": out})
 }
 
-func serveBoardCreate(w http.ResponseWriter, r *http.Request, by string) {
+// resolveBoardGroup turns a group name into its id for linking a board; ""
+// is no group. An agent (agentID set) may only link a board to a group it is
+// in: the link mails the board's activity to every member.
+func resolveBoardGroup(w http.ResponseWriter, name, agentID string) (int64, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0, true
+	}
+	g, err := db.GetAgentGroupByName(name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return 0, false
+	}
+	if g == nil || g.IsArchived() {
+		writeError(w, http.StatusNotFound, "not_found", "no active group "+guideText(name, 80))
+		return 0, false
+	}
+	if agentID != "" {
+		m, err := db.FindAgentMemberInGroup(g.ID, agentID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return 0, false
+		}
+		if m == nil {
+			writeError(w, http.StatusForbidden, "not_member", "you can only link a board to a group you are a member of")
+			return 0, false
+		}
+	}
+	return g.ID, true
+}
+
+func serveBoardCreate(w http.ResponseWriter, r *http.Request, by, agentID string) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req struct {
 		ID    string `json:"id"`
 		Title string `json:"title"`
+		Group string `json:"group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid board: "+err.Error())
@@ -388,10 +430,24 @@ func serveBoardCreate(w http.ResponseWriter, r *http.Request, by string) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "board id must match [a-z0-9][a-z0-9-]{0,63}")
 		return
 	}
+	groupID, ok := resolveBoardGroup(w, req.Group, agentID)
+	if !ok {
+		return
+	}
 	b, err := db.CreateCollabBoard(id, title, by, boardMaxBoards)
 	if err != nil {
 		writeBoardStoreError(w, err)
 		return
+	}
+	if groupID > 0 {
+		if err := db.SetCollabBoardGroup(id, groupID); err != nil {
+			writeBoardStoreError(w, err)
+			return
+		}
+		if b, err = db.GetCollabBoard(id); err != nil {
+			writeBoardStoreError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, boardToJSON(b, nil))
 }
@@ -508,6 +564,42 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/boards/{id}/participants", handleDashboardBoardParticipants)
 	mux.HandleFunc("POST /api/boards/{id}/events", handleDashboardBoardEvent)
 	mux.HandleFunc("POST /api/boards/{id}/view", handleDashboardBoardView)
+	mux.HandleFunc("POST /api/boards/{id}/group", handleDashboardBoardGroup)
+}
+
+// POST /api/boards/{id}/group {group} — link the board to a group ("" unlinks).
+func handleDashboardBoardGroup(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	id, ok := boardPathID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		Group string `json:"group"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid group: "+err.Error())
+		return
+	}
+	groupID, ok := resolveBoardGroup(w, req.Group, "")
+	if !ok {
+		return
+	}
+	if err := db.SetCollabBoardGroup(id, groupID); err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	b, err := db.GetCollabBoard(id)
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	setAuditTargetLabel(r, "board "+b.ID)
+	out := boardToJSON(b, nil)
+	writeJSON(w, http.StatusOK, map[string]any{"group": out.Group, "group_members": out.GroupMembers})
 }
 
 func handleDashboardBoardList(w http.ResponseWriter, r *http.Request) {
@@ -521,7 +613,7 @@ func handleDashboardBoardCreate(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	serveBoardCreate(w, r, boardAuthorOperator)
+	serveBoardCreate(w, r, boardAuthorOperator, "")
 }
 
 func handleDashboardBoardRead(w http.ResponseWriter, r *http.Request) {
@@ -779,8 +871,17 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "at most one board event per board every 3s")
 		return
 	}
+	// The board's group's members are on it as well as those invited.
+	audience := slices.Clone(b.Participants)
+	if members, err := db.CollabBoardGroupMembers(b); err == nil {
+		for _, m := range members {
+			if !slices.Contains(audience, m) {
+				audience = append(audience, m)
+			}
+		}
+	}
 	var online []*db.Agent
-	for _, agentID := range b.Participants {
+	for _, agentID := range audience {
 		a, err := db.GetAgent(agentID)
 		if err != nil || !a.Active() || a.CurrentConvID == "" || !isConvOnlineIn(a.CurrentConvID, alive) {
 			continue
@@ -881,11 +982,11 @@ func handleBoardCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	author, _, ok := boardCaller(w, convID)
+	author, participant, ok := boardCaller(w, convID)
 	if !ok {
 		return
 	}
-	serveBoardCreate(w, r, author)
+	serveBoardCreate(w, r, author, participant)
 }
 
 func handleBoardPatch(w http.ResponseWriter, r *http.Request) {

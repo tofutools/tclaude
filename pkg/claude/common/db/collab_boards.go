@@ -45,6 +45,8 @@ type CollabBoard struct {
 	SnapshotAt      time.Time
 	ElementCount    int // live (non-deleted) elements
 	Participants    []string
+	GroupID         int64  // 0 = no group
+	GroupName       string // "" when unlinked or the group is archived
 }
 
 type CollabBoardElement struct {
@@ -62,14 +64,16 @@ var collabBoardWriteMu sync.Mutex
 
 const collabBoardColumns = `b.id, b.title, b.version, b.created_at, b.updated_at, b.updated_by,
  b.snapshot_version, b.snapshot_at,
- (SELECT COUNT(*) FROM collab_board_elements e WHERE e.board_id = b.id AND e.is_deleted = 0)`
+ (SELECT COUNT(*) FROM collab_board_elements e WHERE e.board_id = b.id AND e.is_deleted = 0),
+ COALESCE(b.group_id, 0),
+ COALESCE((SELECT g.name FROM agent_groups g WHERE g.id = b.group_id AND g.archived_at IS NULL), '')`
 
 func scanCollabBoard(row interface{ Scan(...any) error }) (*CollabBoard, error) {
 	var b CollabBoard
 	var created, updated, snapAt dbTimestamp
 	var snapVersion sql.NullInt64
 	if err := row.Scan(&b.ID, &b.Title, &b.Version, &created, &updated, &b.UpdatedBy,
-		&snapVersion, &snapAt, &b.ElementCount); err != nil {
+		&snapVersion, &snapAt, &b.ElementCount, &b.GroupID, &b.GroupName); err != nil {
 		return nil, err
 	}
 	b.CreatedAt, b.UpdatedAt, b.SnapshotAt = created.Time(), updated.Time(), snapAt.Time()
@@ -369,6 +373,53 @@ func SetCollabBoardParticipant(boardID, agentID string, remove bool) ([]string, 
 		return nil, err
 	}
 	return out, tx.Commit()
+}
+
+// SetCollabBoardGroup links the board to a group, or unlinks it (groupID 0).
+func SetCollabBoardGroup(boardID string, groupID int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	var group any
+	if groupID > 0 {
+		group = groupID
+	}
+	res, err := d.Exec(`UPDATE collab_boards SET group_id = ? WHERE id = ?`, group, boardID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCollabBoardNotFound
+	}
+	return nil
+}
+
+// CollabBoardGroupMembers returns the active (not retired) agents in the
+// board's group, or nothing when the board has no live group.
+func CollabBoardGroupMembers(b *CollabBoard) ([]string, error) {
+	if b.GroupID == 0 || b.GroupName == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT m.agent_id FROM agent_group_members m JOIN agents a ON a.agent_id = m.agent_id
+ WHERE m.group_id = ? AND a.retired_at IS NULL ORDER BY m.joined_at, m.agent_id`, b.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // SetCollabBoardSnapshot records which board version the stored PNG snapshot
