@@ -163,6 +163,32 @@
 
 body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-window { border-color: #7a5db0; }
 
+/* A companion agent's pending access request (a sudo plan or one
+   --ask-human command), decided in place. */
+.companion-approval {
+  flex: none; margin: 8px 8px 0; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--cmp-amber); background: #221a0c; font-size: 12.5px;
+  max-height: 45%; display: flex; flex-direction: column; gap: 6px; overflow: hidden;
+}
+.companion-approval-head { display: flex; align-items: center; gap: 8px; color: var(--cmp-amber-text); }
+.companion-approval-timer { margin-left: auto; color: var(--cmp-muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.companion-approval-slugs { display: flex; flex-wrap: wrap; gap: 4px; }
+.companion-approval-slugs code {
+  font-size: 11px; padding: 1px 6px; border-radius: 4px; color: var(--cmp-amber-text);
+  background: #2b2111; border: 1px solid #5a4410;
+}
+.companion-approval-body {
+  margin: 0; padding: 6px 8px; min-height: 0; overflow: auto; border-radius: 6px; background: var(--cmp-bg);
+  font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; white-space: pre-wrap; word-break: break-word;
+}
+.companion-approval-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.companion-approval-actions .companion-primary { margin: 0; }
+.companion-approval-deny {
+  padding: 6px 12px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-text); font: inherit; font-size: 13px; cursor: pointer;
+}
+.companion-approval-deny:hover { border-color: var(--cmp-red); }
+
 /* Guidance cues (js/companion-guide.js): a ring around the control an agent
    points at, and its note. Above the companion, below modal overlays. */
 .companion-guide-ring {
