@@ -20,6 +20,8 @@ import (
 type companionSpeechItem struct {
 	Text string    `json:"text"`
 	At   time.Time `json:"at"`
+	// AtNs is At in unix nanoseconds: the cursor to pass as since next.
+	AtNs int64 `json:"at_ns"`
 }
 
 func handleDashboardCompanionSpeech(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +50,7 @@ func handleDashboardCompanionSpeech(w http.ResponseWriter, r *http.Request) {
 		if it.Kind != "text" || it.At.IsZero() {
 			continue
 		}
-		items = append(items, companionSpeechItem{Text: it.Text, At: it.At})
+		items = append(items, companionSpeechItem{Text: it.Text, At: it.At, AtNs: it.At.UnixNano()})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items": items, "now": now.UnixNano(), "unavailable": live.Unavailable,
