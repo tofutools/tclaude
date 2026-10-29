@@ -565,14 +565,22 @@ export function CompanionApp({
       lastView.current = key;
       Promise.resolve(fetchImpl('/api/companion/view', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: key,
-      })).catch(() => { lastView.current = ''; });
+      })).then((response) => { if (response && response.ok === false) lastView.current = ''; })
+        .catch(() => { lastView.current = ''; });
+    };
+    // A top-level nav click switches the view without any navigation event;
+    // report once its handlers have run.
+    const onNavClick = (event) => {
+      if (event.target?.closest?.('nav [data-tab]')) setTimeout(report, 0);
     };
     report();
+    doc?.addEventListener?.('click', onNavClick);
     doc?.addEventListener?.('tclaude:snapshot', report);
     doc?.addEventListener?.('tclaude:navigated', report);
     doc?.addEventListener?.('visibilitychange', report);
     win?.addEventListener?.('popstate', report);
     return () => {
+      doc?.removeEventListener?.('click', onNavClick);
       doc?.removeEventListener?.('tclaude:snapshot', report);
       doc?.removeEventListener?.('tclaude:navigated', report);
       doc?.removeEventListener?.('visibilitychange', report);
