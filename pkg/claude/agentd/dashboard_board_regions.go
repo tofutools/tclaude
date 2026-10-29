@@ -21,23 +21,31 @@ import (
 // the newest boardMaxRegions, and the event mail names the command that
 // fetches it (`tclaude agent board snapshot <id> --region <n>`), so an agent
 // can look at exactly what changed rather than only read about it.
+//
+// Regions live under one directory per board lifetime (the board's creation
+// time), so a board deleted and created again under the same id never hands
+// an agent holding older mail an unrelated image under a reused number.
 
 const (
 	boardMaxRegionBytes = 2 << 20
 	boardMaxRegions     = 20
 )
 
-func boardRegionDir(id string) string {
+func boardRegionsRoot(id string) string {
 	return filepath.Join(filepath.Dir(boardSnapshotPath(id)), id+".regions")
 }
 
-func boardRegionPath(id string, n int) string {
-	return filepath.Join(boardRegionDir(id), strconv.Itoa(n)+".png")
+func boardRegionDir(b *db.CollabBoard) string {
+	return filepath.Join(boardRegionsRoot(b.ID), strconv.FormatInt(b.CreatedAt.UnixNano(), 10))
+}
+
+func boardRegionPath(b *db.CollabBoard, n int) string {
+	return filepath.Join(boardRegionDir(b), strconv.Itoa(n)+".png")
 }
 
 // boardRegionNumbers lists a board's stored region numbers, oldest first.
-func boardRegionNumbers(id string) ([]int, error) {
-	entries, err := os.ReadDir(boardRegionDir(id))
+func boardRegionNumbers(b *db.CollabBoard) ([]int, error) {
+	entries, err := os.ReadDir(boardRegionDir(b))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -77,14 +85,19 @@ func decodeBoardRegion(encoded string) ([]byte, error) {
 }
 
 // storeBoardRegion saves a region image under the next number and drops the
-// oldest beyond boardMaxRegions.
+// oldest beyond boardMaxRegions. The board is re-read under the lock that
+// board deletion also takes, so a board deleted meanwhile leaves no images.
 func storeBoardRegion(id string, data []byte) (int, error) {
 	boardSnapshotMu.Lock()
 	defer boardSnapshotMu.Unlock()
-	if err := os.MkdirAll(boardRegionDir(id), 0o700); err != nil {
+	b, err := db.GetCollabBoard(id)
+	if err != nil {
 		return 0, err
 	}
-	nums, err := boardRegionNumbers(id)
+	if err := os.MkdirAll(boardRegionDir(b), 0o700); err != nil {
+		return 0, err
+	}
+	nums, err := boardRegionNumbers(b)
 	if err != nil {
 		return 0, err
 	}
@@ -92,12 +105,12 @@ func storeBoardRegion(id string, data []byte) (int, error) {
 	if len(nums) > 0 {
 		next = nums[len(nums)-1] + 1
 	}
-	if err := writeBoardSnapshotFile(boardRegionPath(id, next), data); err != nil {
+	if err := writeBoardSnapshotFile(boardRegionPath(b, next), data); err != nil {
 		return 0, err
 	}
 	nums = append(nums, next)
 	for len(nums) > boardMaxRegions {
-		_ = os.Remove(boardRegionPath(id, nums[0]))
+		_ = os.Remove(boardRegionPath(b, nums[0]))
 		nums = nums[1:]
 	}
 	return next, nil
@@ -106,7 +119,7 @@ func storeBoardRegion(id string, data []byte) (int, error) {
 func removeBoardRegions(id string) error {
 	boardSnapshotMu.Lock()
 	defer boardSnapshotMu.Unlock()
-	return os.RemoveAll(boardRegionDir(id))
+	return os.RemoveAll(boardRegionsRoot(id))
 }
 
 // serveBoardRegion serves GET .../snapshot?region=N.
@@ -116,11 +129,12 @@ func serveBoardRegion(w http.ResponseWriter, id, raw string) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "region must be a positive number from a board event")
 		return
 	}
-	if _, err := db.GetCollabBoard(id); err != nil {
+	b, err := db.GetCollabBoard(id)
+	if err != nil {
 		writeBoardStoreError(w, err)
 		return
 	}
-	data, err := os.ReadFile(boardRegionPath(id, n))
+	data, err := os.ReadFile(boardRegionPath(b, n))
 	if errors.Is(err, os.ErrNotExist) {
 		writeError(w, http.StatusNotFound, "no_region", fmt.Sprintf("region %d is not stored (only the newest %d are kept); use the full snapshot", n, boardMaxRegions))
 		return
