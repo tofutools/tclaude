@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
 const reviewProcessYAML = `apiVersion: tclaude.dev/v1alpha1
@@ -69,13 +70,45 @@ func TestBoardFromProcessDrawsTheFlowOnANewBoard(t *testing.T) {
 	assert.Equal(t, "ellipse", els["p-begin"]["type"])
 	assert.Equal(t, "Implement", els["p-implement-label"]["text"])
 	assert.Equal(t, "choose", els["p-choose-label"]["text"], "an unnamed step is labelled by its id")
-	arrow := els["p-choose-ship-done"]
+	arrow := els["pa-choose-ship-done"]
 	require.NotNil(t, arrow)
 	assert.Equal(t, map[string]any{"elementId": "p-choose"}, arrow["startBinding"])
-	assert.Equal(t, "ship", els["p-choose-ship-done-label"]["text"], "a choice's outcomes are labelled")
-	assert.NotContains(t, els, "p-begin-next-implement-label", "a single way on is not")
+	assert.Equal(t, "ship", els["pa-choose-ship-done-label"]["text"], "a choice's outcomes are labelled")
+	assert.NotContains(t, els, "pa-begin-next-implement-label", "a single way on is not")
 	// Laid out along the flow: start, then implement, then the decision.
 	assert.Less(t, els["p-begin"]["x"].(float64), els["p-implement"]["x"].(float64))
 	assert.Less(t, els["p-implement"]["x"].(float64), els["p-choose"]["x"].(float64))
 }
 
+
+func TestBoardFromProcessRedrawReplacesTheSketch(t *testing.T) {
+	doc := &boardDoc{ID: "flow", Elements: []json.RawMessage{
+		// A step deleted on the board: the redraw must outrank the tombstone.
+		json.RawMessage(`{"id":"p-implement","type":"rectangle","version":5,"isDeleted":true}`),
+		// An outcome the process no longer has, and the operator's own note.
+		json.RawMessage(`{"id":"pa-choose-rework-design","type":"arrow","version":2,"x":0,"y":0,"points":[[0,0],[1,0]]}`),
+		json.RawMessage(`{"id":"note","type":"text","version":1,"x":0,"y":0,"width":50,"height":20,"text":"keep"}`),
+	}}
+	p, err := model.ParseAuthoring([]byte(reviewProcessYAML))
+	require.NoError(t, err)
+	els := map[string]map[string]any{}
+	for _, e := range processBoardElements(p.Template, p.Edges, doc, "right", 60) {
+		els[e["id"].(string)] = e
+	}
+	assert.Equal(t, int64(6), els["p-implement"]["version"])
+	assert.Equal(t, false, els["p-implement"]["isDeleted"])
+	assert.Equal(t, true, els["pa-choose-rework-design"]["isDeleted"], "a stale outcome is deleted")
+	assert.Equal(t, int64(3), els["pa-choose-rework-design"]["version"])
+	assert.NotContains(t, els, "note", "the operator's elements are left alone")
+	assert.Greater(t, els["p-begin"]["y"].(float64), 20.0, "the sketch goes below existing content")
+}
+
+func TestProcessIDsNeverCollide(t *testing.T) {
+	ids := newProcessIDs()
+	a, b := ids.get("p-", "a.b"), ids.get("p-", "a_b")
+	assert.Equal(t, "p-a_b", a)
+	assert.NotEqual(t, a, b, "a.b and a_b get different ids")
+	x := ids.get("p-", "x")
+	assert.NotEqual(t, x+"-label", ids.get("p-", "x-label"), "a step named x-label does not take x's label")
+	assert.Equal(t, a, ids.get("p-", "a.b"), "an id is stable once given")
+}

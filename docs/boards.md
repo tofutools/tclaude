@@ -125,9 +125,11 @@ coloured by who performs it: yellow for human, blue for agent, green for
 program. Decisions are diamonds, and start and end are ellipses. Each outcome
 is an arrow, and an outcome that loops back (rework) goes around beneath the
 steps. A step's outcomes are labelled when it has more than one. The board is
-created if it does not exist. Elements are named `p-<step>`, so drawing the
-same template again replaces its steps in place. The command needs
-`boards.write` and `process.templates.read`.
+created if it does not exist. A board holds one process sketch. Steps are
+named `p-<step>` and outcomes `pa-<from>-<outcome>-<to>`. Drawing again, with
+the same template or another, replaces the sketch: steps are updated in place
+and any element the new sketch lacks is deleted. Elements you added yourself
+are kept. The command needs `boards.write` and `process.templates.read`.
 
 Changing the process itself remains a process-template edit (see the
 process-templates skill). The board is where the operator and agents agree on

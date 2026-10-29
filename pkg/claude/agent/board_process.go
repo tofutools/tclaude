@@ -25,8 +25,9 @@ import (
 // process template as a flowchart, so the operator and agents can talk a
 // process through on a board. Steps are shapes (performer by colour, a
 // decision a diamond, start and end ellipses), each outcome is an arrow, and
-// the flow is laid out like `board layout`. Element ids are `p-<node>`, so
-// running it again redraws the same steps in place of the old ones.
+// the flow is laid out like `board layout`. A board holds one process
+// sketch: steps are `p-<step>` and outcomes `pa-<from>-<outcome>-<to>`, and
+// drawing again replaces the sketch (elements it no longer has are deleted).
 
 type boardFromProcessParams struct {
 	Direction string   `long:"direction" optional:"true" help:"Flow direction: right (default) or down"`
@@ -39,8 +40,9 @@ func boardFromProcessCmd() *cobra.Command {
 		Short: "Draw a process template on a board as a flowchart",
 		Long: "Draws the process template's steps as shapes (human steps yellow, agent steps blue, program steps green; " +
 			"decisions are diamonds, start and end ellipses) with an arrow per outcome, laid out along the flow. " +
-			"The board is created when it does not exist. Elements are named p-<step>, so drawing the same template " +
-			"again replaces its steps. Needs boards.write and process.templates.read.",
+			"The board is created when it does not exist. A board holds one process sketch: steps are named p-<step>, " +
+			"and drawing again (the same or another template) replaces the sketch. Needs boards.write and " +
+			"process.templates.read.",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardFromProcessParams, _ *cobra.Command, args []string) {
@@ -88,11 +90,11 @@ func runBoardFromProcess(p *boardFromProcessParams, boardID, templateID string, 
 		}
 		doc = &boardDoc{ID: boardID}
 	}
-	elems := processBoardElements(parsed.Template, parsed.Edges, loadBoardScene(doc), dir, gap)
+	elems := processBoardElements(parsed.Template, parsed.Edges, doc, dir, gap)
 	out := make([]json.RawMessage, 0, len(elems))
 	arrowCount := 0
 	for _, e := range elems {
-		if e["type"] == "arrow" {
+		if e["type"] == "arrow" && e["isDeleted"] == false {
 			arrowCount++
 		}
 		raw, err := json.Marshal(e)
@@ -114,30 +116,58 @@ func runBoardFromProcess(p *boardFromProcessParams, boardID, templateID string, 
 
 var boardIDUnsafe = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
-// processElementID names a step's element: p-<node>, or a hash when the
-// node id does not fit an element id.
-func processElementID(parts ...string) string {
-	id := "p-" + boardIDUnsafe.ReplaceAllString(strings.Join(parts, "-"), "_")
-	if len(id) > 58 { // room for "-label"
-		sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-		id = "p-" + hex.EncodeToString(sum[:12])
+// processIDs names the sketch's elements: p-<step> for steps and
+// pa-<from>-<outcome>-<to> for outcomes, each with room for its "-label".
+// Node ids may hold characters an element id cannot, and readable names can
+// clash (a.b and a_b, a step named x-label), so a name that does not fit or
+// is taken (with its label) falls back to a hash. Assigning in flow order
+// keeps the ids stable from one drawing to the next.
+type processIDs struct {
+	taken map[string]bool
+	ids   map[string]string
+}
+
+func newProcessIDs() *processIDs {
+	return &processIDs{taken: map[string]bool{}, ids: map[string]string{}}
+}
+
+func (p *processIDs) get(prefix string, parts ...string) string {
+	key := prefix + "\x00" + strings.Join(parts, "\x00")
+	if id, ok := p.ids[key]; ok {
+		return id
 	}
+	id := prefix + boardIDUnsafe.ReplaceAllString(strings.Join(parts, "-"), "_")
+	if len(id) > 58 || p.taken[id] || p.taken[id+"-label"] {
+		sum := sha256.Sum256([]byte(key))
+		id = prefix + hex.EncodeToString(sum[:12])
+	}
+	p.taken[id], p.taken[id+"-label"] = true, true
+	p.ids[key] = id
 	return id
+}
+
+func isProcessSketchID(id string) bool {
+	return strings.HasPrefix(id, "p-") || strings.HasPrefix(id, "pa-")
 }
 
 // processBoardElements builds the flowchart: shapes and labels for the
 // steps, arrows (labelled when a step has several outcomes) for the edges.
-// Existing p-* elements are replaced at a higher version; the drawing goes
+// It replaces the board's previous sketch: its elements are written above
+// their stored versions (deleted ones included, or the merge would keep the
+// deletion) and the ones the new sketch lacks are deleted. The drawing goes
 // below anything else on the board.
-func processBoardElements(t *model.Template, edges []model.Edge, existing *boardScene, dir string, gap float64) []map[string]any {
+func processBoardElements(t *model.Template, edges []model.Edge, doc *boardDoc, dir string, gap float64) []map[string]any {
 	now := time.Now().UnixMilli()
-	version := func(id string) int64 {
-		if m, ok := existing.raw[id]; ok {
-			v, _ := m["version"].(float64)
-			return int64(v) + 1
+	existing := loadBoardScene(doc)
+	stored := map[string]int64{}
+	for _, raw := range doc.Elements {
+		var v boardElementView
+		if json.Unmarshal(raw, &v) == nil && v.ID != "" {
+			stored[v.ID] = v.Version
 		}
-		return 1
 	}
+	version := func(id string) int64 { return stored[id] + 1 }
+	ids := newProcessIDs()
 	base := func(id, typ string) map[string]any {
 		return map[string]any{
 			"id": id, "type": typ, "version": version(id), "versionNonce": boardRandomNonce(), "isDeleted": false,
@@ -197,7 +227,7 @@ func processBoardElements(t *model.Template, edges []model.Edge, existing *board
 		case model.NodeTypeStart, model.NodeTypeEnd:
 			typ, w, h = "ellipse", 130.0, 70.0
 		}
-		e := base(processElementID(name), typ)
+		e := base(ids.get("p-", name), typ)
 		e["x"], e["y"], e["width"], e["height"] = 0.0, 0.0, w, h
 		e["backgroundColor"] = processStepColor(n)
 		put(e)
@@ -209,7 +239,7 @@ func processBoardElements(t *model.Template, edges []model.Edge, existing *board
 			text = string([]rune(text)[:39]) + "…"
 		}
 		tw, th := boardTextSize(text)
-		label := base(processElementID(name)+"-label", "text")
+		label := base(ids.get("p-", name)+"-label", "text")
 		label["text"], label["fontSize"], label["textAlign"] = text, boardFontSize, "center"
 		label["x"], label["y"], label["width"], label["height"] = w/2-tw/2, h/2-th/2, tw, th
 		put(label)
@@ -227,10 +257,10 @@ func processBoardElements(t *model.Template, edges []model.Edge, existing *board
 			if _, ok := t.Nodes[edge.To]; !ok {
 				continue
 			}
-			e := base(processElementID(edge.From, edge.Outcome, edge.To), "arrow")
+			e := base(ids.get("pa-", edge.From, edge.Outcome, edge.To), "arrow")
 			e["x"], e["y"], e["points"] = 0.0, 0.0, [][]float64{{0, 0}, {1, 0}}
-			e["startBinding"] = map[string]string{"elementId": processElementID(edge.From)}
-			e["endBinding"] = map[string]string{"elementId": processElementID(edge.To)}
+			e["startBinding"] = map[string]string{"elementId": ids.get("p-", edge.From)}
+			e["endBinding"] = map[string]string{"elementId": ids.get("p-", edge.To)}
 			put(e)
 			arrows = append(arrows, edge)
 		}
@@ -239,7 +269,7 @@ func processBoardElements(t *model.Template, edges []model.Edge, existing *board
 	// Lay the steps out along the arrows, below what the board already has.
 	offsetY := 0.0
 	for _, id := range existing.order {
-		if strings.HasPrefix(id, "p-") {
+		if isProcessSketchID(id) {
 			continue
 		}
 		v := existing.view[id]
@@ -255,18 +285,21 @@ func processBoardElements(t *model.Template, edges []model.Edge, existing *board
 	}
 	scene.moveBy(deltas)
 
-	// An outcome that goes back (rework) detours under the steps (beside
-	// them in a downward flow), so it does not lie on the arrow forward.
-	rank := map[string]int{}
-	for i, name := range names {
-		rank[name] = i
+	// An outcome that goes back (rework: to a step laid out no further along
+	// the flow) detours under the steps (beside them in a downward flow), so
+	// it does not lie on the arrow forward.
+	along := func(v boardElementView) float64 {
+		if dir == "down" {
+			return v.Y
+		}
+		return v.X
 	}
 	mid := map[string][2]float64{}
 	for _, edge := range arrows {
-		arrowID := processElementID(edge.From, edge.Outcome, edge.To)
+		arrowID := ids.get("pa-", edge.From, edge.Outcome, edge.To)
 		mx, my := arrowMid(scene.view[arrowID])
-		if rank[edge.To] <= rank[edge.From] {
-			from, to := scene.view[processElementID(edge.From)], scene.view[processElementID(edge.To)]
+		from, to := scene.view[ids.get("p-", edge.From)], scene.view[ids.get("p-", edge.To)]
+		if along(to) <= along(from) {
 			var sx, sy, cx, cy, ex, ey float64
 			if dir == "down" {
 				sx, sy = from.X+from.Width, from.Y+from.Height/2
@@ -291,7 +324,7 @@ func processBoardElements(t *model.Template, edges []model.Edge, existing *board
 		if outgoing[edge.From] < 2 || edge.Outcome == "" {
 			continue
 		}
-		arrowID := processElementID(edge.From, edge.Outcome, edge.To)
+		arrowID := ids.get("pa-", edge.From, edge.Outcome, edge.To)
 		mx, my := mid[arrowID][0], mid[arrowID][1]
 		tw, th := boardTextSize(edge.Outcome)
 		label := base(arrowID+"-label", "text")
@@ -302,6 +335,16 @@ func processBoardElements(t *model.Template, edges []model.Edge, existing *board
 	out := make([]map[string]any, 0, len(scene.order))
 	for _, id := range scene.order {
 		out = append(out, scene.raw[id])
+	}
+	// The previous sketch's elements this one does not have.
+	for _, id := range existing.order {
+		if _, kept := scene.raw[id]; kept || !isProcessSketchID(id) {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id": id, "type": existing.view[id].Type, "version": version(id), "versionNonce": boardRandomNonce(),
+			"isDeleted": true, "updated": now,
+		})
 	}
 	return out
 }
