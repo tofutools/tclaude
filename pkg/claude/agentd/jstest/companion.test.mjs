@@ -278,8 +278,19 @@ test('annotation strokes are classified and named by what is under them', async 
   const at = (x, y) => (x > 50 ? { text: 'Review', role: 'button' } : { text: 'Intake', role: '' });
   assert.equal(m.describeStroke(circle, at), 'circled “Review” (button)');
   assert.equal(m.describeStroke([[10, 0], [60, 40], [120, 90]], at), 'drew an arrow from “Intake” to “Review” (button)');
-  assert.equal(m.composeAnnotation({ note: 'why?', lines: ['circled “Review” (button)'], view: 'Processes (/p)' }),
-    'why?\n\nThe operator marked up the dashboard view Processes (/p):\n1. circled “Review” (button)');
+  assert.equal(m.composeAnnotation({ note: 'why?', lines: ['circled “Review” (button)'] }),
+    'why?\n\nThe operator marked up the dashboard view they are on:\n1. circled “Review” (button)');
+  // A flat stroke that ends on a different control is a horizontal arrow.
+  const flat = [[0, 50], [60, 52], [120, 50]];
+  const onButton = (x, y) => (x > 100 ? { text: 'Send', role: 'button' } : { text: 'Hello world', role: '' });
+  assert.equal(m.resolveStroke(flat, onButton).kind, 'arrow');
+  assert.equal(m.resolveStroke(flat, () => ({ text: 'Hello world', role: '' })).kind, 'underline');
+  // Field values never leave the page.
+  const doc = harness.window.document;
+  const input = doc.createElement('input');
+  input.type = 'password'; input.value = 'hunter2'; input.setAttribute('placeholder', 'API token');
+  doc.body.appendChild(input);
+  assert.deepEqual(m.labelFor(input), { text: 'API token', role: 'field' });
 });
 
 test('marking up the page sends the agent a numbered description of the marks', async (t) => {
@@ -311,7 +322,7 @@ test('marking up the page sends the agent a numbered description of the marks', 
   const mail = requests.find((r) => r.url === '/api/operator-message' && r.body.subject === '[annotation]');
   assert.ok(mail, 'the markup was mailed');
   assert.equal(mail.body.to, A);
-  assert.match(mail.body.body, /^why is this greyed out\?\n\nThe operator marked up the dashboard view Processes \(.*\):\n1\. circled “Approve plan” \(button\)/);
+  assert.match(mail.body.body, /^why is this greyed out\?\n\nThe operator marked up the dashboard view they are on:\n1\. circled “Approve plan” \(button\)\n\n\[dashboard view: Processes \(/);
   assert.equal(view.container.querySelector('svg.annotate-canvas'), null, 'the layer closes after sending');
   assert.ok(!doc.body.classList.contains('companion-annotating'));
 });

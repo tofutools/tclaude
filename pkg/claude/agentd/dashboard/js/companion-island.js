@@ -608,7 +608,7 @@ export function CompanionApp({
     const target = annotating;
     if (!target) return;
     const view = viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search });
-    const body = composeCompanionMessage(composeAnnotation({ note, lines, view }), view);
+    const body = composeCompanionMessage(composeAnnotation({ note, lines }), view);
     try {
       const response = await fetchImpl('/api/operator-message', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
