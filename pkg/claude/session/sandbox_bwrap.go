@@ -2122,7 +2122,7 @@ func bwrapArgsWithDaemonFinal(
 			// trigger the contract repair that preserves class-1 authority.
 			if !planWriteDirs[path] {
 				args = append(args, "--bind", path, path)
-				args, err = appendTclaudeLayerProtectedAncestorPins(args, path, &hideRemounts)
+				args, err = appendTclaudeLayerProtectedAncestorPins(args, path, &hideRemounts, false)
 				if err != nil {
 					return nil, err
 				}
@@ -2283,7 +2283,7 @@ func bwrapArgsWithDaemonFinal(
 			}
 			args = append(args, flag, source, path)
 			if entry.Mode == sandboxpolicy.MountRW && !entry.IsRemapped() {
-				args, err = appendTclaudeLayerProtectedAncestorPins(args, path, &hideRemounts)
+				args, err = appendTclaudeLayerProtectedAncestorPins(args, path, &hideRemounts, true)
 				if err != nil {
 					return nil, err
 				}
@@ -3058,8 +3058,8 @@ func appendTclaudeLayerProtectedRehides(
 	return args
 }
 
-// appendTclaudeLayerProtectedAncestorPins self-binds every existing directory
-// strictly between a writable same-path bind and a protected root beneath it.
+// appendTclaudeLayerProtectedAncestorPins self-binds every directory strictly
+// between a writable same-path bind and a protected root beneath it.
 // The protected re-hide is a mount on the protected root's dentry, and a
 // mount moves with its parent: under a writable `~`, `mv ~/.tclaude ~/x`
 // would succeed and leave a symlink-able hole at the protected path for the
@@ -3070,18 +3070,29 @@ func appendTclaudeLayerProtectedRehides(
 // created under `~` or inside a pinned directory stay live. It must be emitted
 // right after the writable bind and before the protected re-hides, which
 // re-establish the protected roots on top of it.
+//
+// A missing chain directory is created first: the protected re-hide would
+// create it anyway, after the pins, leaving it unpinned. A chain directory
+// that is a SYMLINK (a dotfile-managed ~/.claude) cannot be pinned at all —
+// a mount lands on the target, not the link — so the agent could replace the
+// link and capture the host's next write. strict refuses that launch; the
+// launch-contract callers pass false, keeping their pre-existing behavior.
 func appendTclaudeLayerProtectedAncestorPins(
 	args []string,
 	mountedPath string,
 	hideRemounts *tclaudeLayerHideRemounts,
+	strict bool,
 ) ([]string, error) {
-	pins, err := tclaudeLayerProtectedAncestorPins(mountedPath)
+	pins, err := tclaudeLayerProtectedAncestorPins(mountedPath, strict)
 	if err != nil {
 		return nil, err
 	}
 	for _, pin := range pins {
-		hideRemounts.noteReplacement(pin)
-		args = append(args, "--bind", pin, pin)
+		hideRemounts.noteReplacement(pin.path)
+		if pin.create {
+			args = append(args, "--perms", "0700", "--dir", pin.path)
+		}
+		args = append(args, "--bind", pin.path, pin.path)
 	}
 	return args, nil
 }
@@ -3095,22 +3106,31 @@ func appendTclaudeLayerProtectedAncestorPinsBestEffort(
 	mountedPath string,
 	hideRemounts *tclaudeLayerHideRemounts,
 ) []string {
-	pinned, err := appendTclaudeLayerProtectedAncestorPins(args, mountedPath, hideRemounts)
+	pinned, err := appendTclaudeLayerProtectedAncestorPins(args, mountedPath, hideRemounts, false)
 	if err != nil {
 		return args
 	}
 	return pinned
 }
 
-func tclaudeLayerProtectedAncestorPins(mountedPath string) ([]string, error) {
-	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+type tclaudeLayerAncestorPin struct {
+	path   string
+	create bool
+}
+
+func tclaudeLayerProtectedAncestorPins(mountedPath string, strict bool) ([]tclaudeLayerAncestorPin, error) {
+	resolved, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
 	}
+	lexical, err := sandboxpolicy.LexicalProtectedPaths()
+	if err != nil {
+		return nil, err
+	}
 	mountedPath = filepath.Clean(mountedPath)
 	seen := map[string]bool{}
-	var pins []string
-	for _, protected := range protectedRoots {
+	var pins []tclaudeLayerAncestorPin
+	for _, protected := range append(resolved, lexical...) {
 		if protected == mountedPath || !sandboxpolicy.PathContainsOrEqual(mountedPath, protected) {
 			continue
 		}
@@ -3129,17 +3149,30 @@ func tclaudeLayerProtectedAncestorPins(mountedPath string) ([]string, error) {
 			if seen[dir] {
 				continue
 			}
-			exists, err := bwrapBindSourceExists(dir)
-			if err != nil {
+			info, err := os.Lstat(dir)
+			switch {
+			case os.IsNotExist(err):
+				seen[dir] = true
+				pins = append(pins, tclaudeLayerAncestorPin{path: dir, create: true})
+				continue
+			case err != nil:
 				return nil, fmt.Errorf("protected-root ancestor %q: %w", dir, err)
-			}
-			if !exists {
-				// Nothing beneath it exists either, so there is no protected
-				// content to carry away by renaming it.
-				break
+			case info.Mode()&os.ModeSymlink != 0:
+				if strict {
+					return nil, fmt.Errorf(
+						"tclaude’s sandbox cannot keep protected directory %q sealed under the writable rule for %q: %q is a symlink, which a mount cannot pin against replacement; grant narrower directories instead of %q",
+						protected, mountedPath, dir, mountedPath)
+				}
+				// Nothing beneath a symlink is on this lexical chain.
+				i = -1
+				continue
+			case !info.IsDir():
+				// Not a directory: the protected root cannot exist beneath it.
+				i = -1
+				continue
 			}
 			seen[dir] = true
-			pins = append(pins, dir)
+			pins = append(pins, tclaudeLayerAncestorPin{path: dir})
 		}
 	}
 	return pins, nil

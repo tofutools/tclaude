@@ -1358,6 +1358,22 @@ func canonicalMissingDirectory(path string) (string, error) {
 // use this to explain exactly which protected root a rejected rule touched.
 func ProtectedPaths() ([]string, error) { return protectedPaths() }
 
+// LexicalProtectedPaths returns the protected roots as the host daemon and
+// harnesses spell them, WITHOUT symlink resolution. ProtectedPaths resolves
+// symlinks so a hide lands on the real directory; the unresolved chain is
+// what host tools walk on their next access, so a pin that keeps a symlinked
+// ~/.claude from being replaced has to look at this spelling too.
+func LexicalProtectedPaths() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory for protected sandbox paths: %w", err)
+	}
+	return []string{
+		filepath.Clean(tclcommon.TclaudeDataDir()),
+		filepath.Join(home, ".claude", "sessions"),
+	}, nil
+}
+
 func protectedPaths() ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

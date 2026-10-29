@@ -2184,3 +2184,43 @@ func TestTclaudeLayerNetworkDisclosesCodexRemoteProviderRouting(t *testing.T) {
 	assert.Contains(t, notices[0].Detail,
 		`Remotely delivered provider routing in effect: model_provider from enterpriseManaged layer "acme-workspace" (sha256:bundle).`)
 }
+
+// A dotfile-managed ~/.claude is a symlink, which no mount can pin: the agent
+// could replace the link under a writable Home and capture the host's next
+// write to ~/.claude/sessions. A profile write row on Home is refused there.
+func TestBwrapArgsRefusesHomeWriteOverSymlinkedProtectedParent(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	dotfiles := filepath.Join(home, "dotfiles", "claude")
+	require.NoError(t, os.MkdirAll(filepath.Join(dotfiles, "sessions"), 0o700))
+	require.NoError(t, os.Symlink(dotfiles, filepath.Join(home, ".claude")))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".tclaude", "data"), 0o700))
+
+	_, err = bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{{
+		Path: home, Mode: sandboxpolicy.MountRW,
+	}}})
+	require.ErrorContains(t, err, "is a symlink")
+	require.ErrorContains(t, err, filepath.Join(home, ".claude"))
+}
+
+// A protected root's parent that does not exist yet would be created by the
+// protected re-hide AFTER the pins, leaving it unpinned. It is created first.
+func TestBwrapArgsCreatesMissingProtectedParentBeforePinning(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".tclaude", "data"), 0o700))
+	claudeDir := filepath.Join(home, ".claude")
+
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{{
+		Path: home, Mode: sandboxpolicy.MountRW,
+	}}})
+	require.NoError(t, err)
+	homeBind := indexOfBwrapTriplet(got, "--bind", home)
+	pin := indexOfBwrapTriplet(got, "--bind", claudeDir)
+	require.NotEqual(t, -1, pin)
+	assert.Less(t, homeBind, pin)
+	assert.Equal(t, []string{"--dir", claudeDir}, got[pin-2:pin],
+		"the missing parent must be created immediately before its pin")
+}
