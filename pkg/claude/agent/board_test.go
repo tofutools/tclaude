@@ -107,3 +107,67 @@ func TestBoardAddShapeLabelIsACentredTextElement(t *testing.T) {
 	assert.EqualValues(t, 162, label["x"])
 	assert.EqualValues(t, 107.5, label["y"])
 }
+
+func patchedByID(patched []map[string]any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	for _, e := range patched {
+		out[e["id"].(string)] = e
+	}
+	return out
+}
+
+func TestBoardAddRightOfWithLinkPlacesAndConnects(t *testing.T) {
+	patched := fakeBoardDaemon(t)
+	var out, errb bytes.Buffer
+	rc := runBoardAdd(&boardAddParams{RightOf: "b", Link: true, ID: "c", Text: "DB"}, "plan", "rectangle", &out, &errb)
+	require.Equal(t, rcOK, rc, errb.String())
+	byID := patchedByID(*patched)
+	require.Len(t, byID, 3, "the shape, its label and the link arrow")
+	// b spans x 300..400, y 0..50: c goes 60 to its right, centred on it.
+	assert.EqualValues(t, 460, byID["c"]["x"])
+	assert.EqualValues(t, -15, byID["c"]["y"])
+	var arrow map[string]any
+	for id, e := range byID {
+		if e["type"] == "arrow" {
+			arrow = byID[id]
+		}
+	}
+	require.NotNil(t, arrow)
+	assert.Equal(t, map[string]any{"elementId": "b"}, arrow["startBinding"])
+	assert.Equal(t, map[string]any{"elementId": "c"}, arrow["endBinding"])
+	assert.EqualValues(t, 400, arrow["x"], "the arrow leaves b's right edge")
+	assert.Contains(t, out.String(), "and arrow")
+
+	rc = runBoardAdd(&boardAddParams{RightOf: "b", X: new(float64)}, "plan", "rectangle", &out, &errb)
+	assert.Equal(t, rcInvalidArg, rc, "--x and --right-of are exclusive")
+	rc = runBoardAdd(&boardAddParams{Link: true}, "plan", "rectangle", &out, &errb)
+	assert.Equal(t, rcInvalidArg, rc, "--link needs a relative placement")
+}
+
+func TestBoardMoveCarriesBoundArrows(t *testing.T) {
+	patched := fakeBoardDaemon(t)
+	var out, errb bytes.Buffer
+	y := 200.0
+	require.Equal(t, rcOK, runBoardMove(&boardMoveParams{Y: &y}, "plan", "a", &out, &errb), errb.String())
+	byID := patchedByID(*patched)
+	require.Contains(t, byID, "a")
+	require.Contains(t, byID, "e", "the arrow bound to a is re-run")
+	assert.EqualValues(t, 200, byID["a"]["y"])
+	assert.EqualValues(t, 3, byID["a"]["version"])
+	pts := byID["e"]["points"].([]any)
+	assert.Less(t, pts[1].([]any)[1].(float64), 0.0, "the arrow now climbs from a up to b")
+}
+
+func TestBoardLayoutStacksAFlowDownwards(t *testing.T) {
+	patched := fakeBoardDaemon(t)
+	var out, errb bytes.Buffer
+	require.Equal(t, rcOK, runBoardLayout(&boardLayoutParams{Direction: "down"}, "plan", &out, &errb), errb.String())
+	byID := patchedByID(*patched)
+	// a points at b: b goes one step below a (50 tall + 1.5 × 60 gap).
+	require.Contains(t, byID, "b")
+	assert.EqualValues(t, 0, byID["b"]["x"])
+	assert.EqualValues(t, 140, byID["b"]["y"])
+	assert.NotContains(t, byID, "a", "a is already where the layout puts it")
+	require.Contains(t, byID, "e")
+	assert.Equal(t, rcInvalidArg, runBoardLayout(&boardLayoutParams{Direction: "sideways"}, "plan", &out, &errb))
+}
