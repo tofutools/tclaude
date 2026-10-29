@@ -229,6 +229,13 @@ func TestOpenCodeModels_RecoversAfterASlowRefresh(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return len(openCodeModels{}.Models()) > 0
 	}, 2*time.Second, 10*time.Millisecond, "the slow refresh still lands")
+	// Publishing the catalog precedes the flight's return. The poll above
+	// the rate floor also queued a background caller, which can join that
+	// flight or start another once it returns. Drain both before backdating:
+	// either caller could otherwise overwrite the artificially stale entry.
+	require.Eventually(t, backgroundRefreshIdle,
+		2*time.Second, time.Millisecond, "the slow refresh batch completes")
+	completedCalls := calls.Load()
 
 	// And the machinery is not wedged: age it out and a further refresh runs.
 	openCodeModelCache.Lock()
@@ -237,7 +244,7 @@ func TestOpenCodeModels_RecoversAfterASlowRefresh(t *testing.T) {
 		time.Now().Add(-2 * openCodeModelRefreshMinInterval)
 	openCodeModelCache.Unlock()
 	_ = openCodeModels{}.Models()
-	require.Eventually(t, func() bool { return calls.Load() == 2 },
+	require.Eventually(t, func() bool { return calls.Load() == completedCalls+1 },
 		2*time.Second, 10*time.Millisecond,
 		"a completed slow refresh must not block later ones")
 }
