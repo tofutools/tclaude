@@ -126,8 +126,12 @@ A posture field the conversation never recorded (a conversation started
 outside tclaude, or before that field was recorded) falls back to the global
 default spawn profile, as on a fresh launch — explicit flag, then recorded
 posture, then profile. A field recorded as "nothing pinned" is still the
-conversation's own decision and is not refilled. The profile's harness, model
-and effort never apply to a resume.
+conversation's own decision and is not refilled; very old conversations whose
+posture lives only in the legacy session row cannot tell "nothing pinned" from
+unknown, so their blank fields take the profile. Sandbox mode, sandbox
+implementation and `--permission-profile` count as one decision: if any of
+them is passed or recorded, the profile supplies none of them. The profile's
+harness, model and effort never apply to a resume.
 
 Model and effort are not on the carried list: the harness itself remembers
 which model a conversation runs on.

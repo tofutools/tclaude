@@ -363,13 +363,24 @@ func applyProfileLaunchPosture(params *NewParams, explicit explicitLaunchFields,
 		}
 		*dst = *value
 	}
-	fillString("sandbox", &params.Sandbox, prof.Sandbox)
-	if !explicit.has("sandbox-impl") && strings.TrimSpace(params.SandboxImpl) == "" &&
-		strings.TrimSpace(prof.SandboxImplementation) != "" {
-		params.SandboxImpl = strings.TrimSpace(prof.SandboxImplementation)
-		// A profile-supplied implementation is a fresh decision, never a
-		// replay, so runNew must judge its applicability even on a resume.
-		params.sandboxImplExplicit = true
+	// Sandbox mode, implementation and a Codex permission profile are one
+	// containment decision: the implementation can force the mode, and a
+	// permission profile excludes --sandbox. Taking half of it from the profile
+	// would override (or collide with) the half the caller typed or the
+	// conversation recorded, so any one of them decided keeps the profile out
+	// of all of them.
+	sandboxDecided := explicit.has("sandbox") || explicit.has("sandbox-impl") ||
+		explicit.has("permission-profile") ||
+		strings.TrimSpace(params.Sandbox) != "" || strings.TrimSpace(params.SandboxImpl) != "" ||
+		strings.TrimSpace(params.PermissionProfile) != ""
+	if !sandboxDecided {
+		fillString("sandbox", &params.Sandbox, prof.Sandbox)
+		if impl := strings.TrimSpace(prof.SandboxImplementation); impl != "" {
+			params.SandboxImpl = impl
+			// A profile-supplied implementation is a fresh decision, never a
+			// replay, so runNew must judge its applicability even on a resume.
+			params.sandboxImplExplicit = true
+		}
 	}
 	fillString("ask-for-approval", &params.Approval, prof.Approval)
 	fillString("tools", &params.ToolGovernance, prof.ToolGovernance)

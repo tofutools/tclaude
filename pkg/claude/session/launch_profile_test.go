@@ -254,10 +254,11 @@ func TestGlobalDefaultLaunchProfile_ExplicitPostureFlagsWin(t *testing.T) {
 	setGlobalLaunchProfile(t, postureProfile())
 	params := &NewParams{Sandbox: harness.ClaudeSandboxOn}
 	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{
-		"sandbox": true, "sandbox-impl": true, "auto-memory": true,
+		"sandbox": true, "auto-memory": true,
 	}))
 	assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox)
-	assert.Empty(t, params.SandboxImpl, "an explicit --sandbox-impl= must not be filled")
+	assert.Empty(t, params.SandboxImpl,
+		"an explicit --sandbox keeps the profile's implementation out too: off would force it off")
 	assert.False(t, params.AutoMemory, "an explicit --auto-memory=false must not be filled")
 	assert.Equal(t, "acceptEdits", params.Approval, "omitted fields still come from the profile")
 }
@@ -301,9 +302,8 @@ func TestResumeDefaultLaunchProfile_FillsOnlyUnrecordedFields(t *testing.T) {
 	assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox, "recorded mode wins over the profile")
 	assert.False(t, params.AutoMemory, "a recorded false is the conversation's decision")
 	assert.Empty(t, params.Approval, "an explicit flag wins over the profile")
-	assert.Equal(t, string(sandboxpolicy.ImplementationOff), params.SandboxImpl,
-		"an unrecorded field falls back to the profile")
-	assert.Equal(t, "450000", params.AutoCompactWindow)
+	assert.Empty(t, params.SandboxImpl, "a recorded sandbox mode keeps the whole containment decision")
+	assert.Equal(t, "450000", params.AutoCompactWindow, "an unrecorded field falls back to the profile")
 	assert.Empty(t, params.Harness, "a resume never takes the profile's harness")
 	assert.Empty(t, params.Model)
 }
@@ -332,4 +332,31 @@ func TestResumeDefaultLaunchProfile_SkipsForeignHarnessAndManagedLaunches(t *tes
 		assert.Empty(t, params.Sandbox)
 		assert.Empty(t, params.SandboxImpl)
 	}
+}
+
+func TestGlobalDefaultLaunchProfile_PermissionProfileKeepsProfileSandboxOut(t *testing.T) {
+	setGlobalLaunchProfile(t, db.SpawnProfile{
+		Name: "codex-default", Harness: "codex", Sandbox: "workspace-write",
+	})
+	params := &NewParams{Harness: "codex", PermissionProfile: "mine"}
+	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{
+		"harness": true, "permission-profile": true,
+	}))
+	assert.Empty(t, params.Sandbox, "--permission-profile and --sandbox are mutually exclusive")
+}
+
+func TestResumeDefaultLaunchProfile_RecordedSandboxKeepsProfileImplementationOut(t *testing.T) {
+	cwd := carryoverTestHome(t)
+	setGlobalLaunchProfileInCurrentHome(t, postureProfile())
+	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
+		Version:            db.RelaunchProfileVersion,
+		HarnessBuiltinMode: ptr(harness.ClaudeSandboxOn),
+	})
+
+	params := &NewParams{Resume: carryoverConvID, Dir: cwd}
+	require.NoError(t, applyRecordedLaunchPosture(params, explicitLaunchFields{}))
+	require.NoError(t, applyResumeDefaultLaunchProfile(params, explicitLaunchFields{}))
+	assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox)
+	assert.Empty(t, params.SandboxImpl,
+		"the profile's off implementation would silently drop the recorded --sandbox on")
 }
