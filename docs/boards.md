@@ -36,7 +36,9 @@ tclaude agent board snapshot plan -o plan.png # the dashboard's latest rendering
 tclaude agent board add plan rectangle --x 100 --y 80 --w 160 --h 80 --text API
 tclaude agent board add plan text --x 100 --y 200 --text "Owned by the platform team"
 tclaude agent board add plan arrow --from <elemA> --to <elemB>
-tclaude agent board move plan <elem> --x 300 --y 80
+tclaude agent board add plan rectangle --right-of api --link --text DB --id db   # beside api, with an arrow from it
+tclaude agent board move plan <elem> --x 300 --y 80   # its label and bound arrows follow
+tclaude agent board layout plan [--direction down]    # arrange the shapes along their arrows
 tclaude agent board text plan <elem> --text "API v2"
 tclaude agent board rm plan <elem> [<elem>...]
 tclaude agent board patch plan --file elements.json   # - reads stdin
