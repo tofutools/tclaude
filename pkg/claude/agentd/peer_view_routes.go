@@ -268,6 +268,8 @@ var peerViewLocalRoutes = []string{
 	"GET /api/scribe/{agent}/chat",
 	// The companion's hover preview reads this node's own pane text.
 	"GET /api/companion/{agent}/peek",
+	// Voice output reads this node's own agents' transcripts.
+	"GET /api/companion/{agent}/speech",
 	"/api/shutdown",
 	"/api/snapshot",
 	"/api/spawn-attachments",
