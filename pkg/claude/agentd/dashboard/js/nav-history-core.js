@@ -42,7 +42,7 @@ export const DEFAULT_TAB = 'groups';
 // rather than an invalid tab, which keeps a stale/typo'd URL from breaking
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
-  'groups', 'terminals', 'jobs', 'processes', 'plugins',
+  'groups', 'terminals', 'boards', 'jobs', 'processes', 'plugins',
   'access', 'messages', 'usage', 'diagnostics', 'config', 'vegas',
   'map',
   'fleet-admin',
@@ -123,9 +123,10 @@ export const SELECTABLE_SUBTABS = {
 // with no subtab in between — so the entity lives in the SECOND path segment:
 //   - terminals/<agent-id> — the Terminals tab is viewing that agent's terminal.
 //   - messages/<folder> — the Messages tab has that folder open.
+//   - boards/<board-id> — the Boards view has that board open.
 // These tabs must not also appear in KNOWN_SUBTABS: a tab cannot have both a
 // subtab and a tab-level selection, because both would claim segment two.
-export const SELECTABLE_TABS = new Set(['terminals', 'messages']);
+export const SELECTABLE_TABS = new Set(['terminals', 'boards', 'messages']);
 
 // ITEM_TABS enumerates tab-level-selection tabs whose selection can itself
 // have one entry open, carried as `item` in the THIRD path segment:
