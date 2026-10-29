@@ -3,9 +3,11 @@
 package agentd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -134,4 +136,115 @@ func TestHostPermissionDoesNotBreakUnsupportedResume(t *testing.T) {
 	require.NoError(t, prepareRouteHelperResumeArgs(&args))
 	require.Empty(t, args.RouteHelperCredential)
 	require.Empty(t, args.RouteHelperGroupIDs)
+}
+
+func TestHostPublishLaunchErrorNamesCause(t *testing.T) {
+	setupTestDB(t)
+	mux := buildMux()
+	publish := func(conv string) *httptest.ResponseRecorder {
+		req := AsAgentPeer(httptest.NewRequest("POST", "/v1/routes/publish",
+			strings.NewReader(`{"host":true,"name":"web","target":"tcp://127.0.0.1:18080"}`)), conv)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	grant := func(conv, harnessName string) string {
+		agentID, _, err := db.EnsureAgentForConv(conv, conv)
+		require.NoError(t, err)
+		require.NoError(t, db.GrantAgentPermission(conv, PermRoutesPublishHost, "test"))
+		require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s-" + conv, ConvID: conv, Status: "idle", Harness: harnessName,
+			SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer)}))
+		return agentID
+	}
+
+	// A fresh Codex spawn enrolls after its pane starts, so it never carries
+	// a helper; the error must say so rather than ask for the grant again.
+	grant("host-cause-codex", "codex")
+	rec := publish("host-cause-codex")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "fresh codex spawn never gets one")
+	require.Contains(t, rec.Body.String(), "grant was already in place when it resumed")
+	require.NotContains(t, rec.Body.String(), "grant routes.publish-host, then")
+
+	openAgent := grant("host-cause-open", "claude")
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(openAgent, &sandboxpolicy.Snapshot{Version: sandboxpolicy.SnapshotVersion,
+		Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}))
+	rec = publish("host-cause-open")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "open host networking")
+
+	staleAgent := grant("host-cause-stale", "claude")
+	_, _, err := mintRouteHelperCredential(staleAgent, "host-cause-stale")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("host-cause-stale", "")
+	rec = publish("host-cause-stale")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "different launch generation")
+
+	// A launch outside tclaude's pane sandbox is named before the network,
+	// so widening the network is not suggested as the fix.
+	builtinAgent := grant("host-cause-builtin", "claude")
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s-host-cause-builtin", ConvID: "host-cause-builtin", Status: "idle", Harness: "claude",
+		SandboxImplementation: string(sandboxpolicy.ImplementationHarnessBuiltin)}))
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(builtinAgent, &sandboxpolicy.Snapshot{Version: sandboxpolicy.SnapshotVersion,
+		Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}))
+	rec = publish("host-cause-builtin")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "not launched in tclaude’s pane sandbox")
+	require.NotContains(t, rec.Body.String(), "open host networking")
+
+	grant("host-cause-unknown", "claude")
+	rec = publish("host-cause-unknown")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "agentd restarted since")
+}
+
+func TestHostRouteHelperIneligibleReason(t *testing.T) {
+	private := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}}
+	require.Empty(t, hostRouteHelperIneligibleReason("claude", "tclaude-layer", private))
+	require.Contains(t, hostRouteHelperIneligibleReason("claude", "", private), "pane sandbox")
+	require.Contains(t, hostRouteHelperIneligibleReason("opencode", "tclaude-layer", private), "server boundary")
+	require.Contains(t, hostRouteHelperIneligibleReason("claude", "tclaude-layer", nil), "no resolved sandbox profile")
+	open := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}
+	require.Contains(t, hostRouteHelperIneligibleReason("claude", "tclaude-layer", open), "open host networking")
+}
+
+func TestHostRouteResumeWarnsOnlyWhenHelperSkipped(t *testing.T) {
+	setupTestDB(t)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	_, _, err := db.EnsureAgentForConv("host-warn-open", "test")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission("host-warn-open", PermRoutesPublishHost, "test"))
+	open := clcommon.SpawnArgs{ConvID: "host-warn-open", Harness: "claude", SandboxImplementation: "tclaude-layer",
+		EffectiveSandbox: &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}}
+	require.NoError(t, prepareRouteHelperResumeArgs(&open))
+	require.Empty(t, open.RouteHelperCredential)
+	require.Contains(t, logs.String(), "conv=host-warn-open")
+	require.Contains(t, logs.String(), "open host networking")
+
+	logs.Reset()
+	_, _, err = db.EnsureAgentForConv("host-warn-private", "test")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission("host-warn-private", PermRoutesPublishHost, "test"))
+	private := clcommon.SpawnArgs{ConvID: "host-warn-private", Harness: "claude", SandboxImplementation: "tclaude-layer",
+		EffectiveSandbox: &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}}}
+	require.NoError(t, prepareRouteHelperResumeArgs(&private))
+	defer revokeRouteHelperCredentials(private.ConvID, "")
+	require.NotEmpty(t, private.RouteHelperCredential)
+	require.NotContains(t, logs.String(), "host-route helper", "an eligible launch must not warn")
+}
+
+func TestRouteHelperCredentialStaleness(t *testing.T) {
+	setupTestDB(t)
+	require.Empty(t, routeHelperCredentialStaleness("agent", "stale-conv", "gen"))
+	_, generation, err := mintRouteHelperCredential("agent", "stale-conv")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("stale-conv", "")
+	require.Equal(t, "ended", routeHelperCredentialStaleness("agent", "stale-conv", generation))
+	require.Equal(t, "other", routeHelperCredentialStaleness("agent", "stale-conv", "older-generation"))
+	require.Empty(t, routeHelperCredentialStaleness("other-agent", "stale-conv", generation))
 }
