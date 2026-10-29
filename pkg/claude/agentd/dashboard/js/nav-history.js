@@ -544,6 +544,27 @@ function onPopstate(e) {
   history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
 }
 
+// navigateToPath moves the dashboard to a same-origin path the way a user
+// navigation would: it activates the location and pushes a history entry, so
+// Back returns to where the operator was. Companion guidance cues use it
+// (companion-guide.js). Returns false, changing nothing, for a path that is
+// not a routable, currently available dashboard location.
+export function navigateToPath(path) {
+  if (!ready || typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return false;
+  let url;
+  try {
+    url = new URL(path, window.location.origin);
+  } catch {
+    return false;
+  }
+  if (url.origin !== window.location.origin) return false;
+  const loc = normalizeLocation(fromPath(url.pathname, url.search));
+  if (!ROUTABLE_TABS.has(loc.tab) || !locationAvailable(loc)) return false;
+  activate(loc);
+  record(loc);
+  return true;
+}
+
 // initNavHistory boots the router. Call it LATE in dashboard.js boot — after
 // every tab binder/island (bindTabs, the Costs and Audit islands, …) is installed
 // AND after the bounded first snapshot attempt. Restoring a deep-link URL clicks

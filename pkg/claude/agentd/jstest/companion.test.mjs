@@ -80,7 +80,7 @@ test('summoning the Steward posts a read-only scoped scribe summon and attaches 
   assert.deepEqual(post.body.scope, { kind: 'steward' });
   assert.equal(post.body.background, true);
   assert.ok(!post.body.exclusive, 'the Steward keeps per-command --ask-human approvals available');
-  assert.ok(post.body.slugs.every((slug) => /\.read$/.test(slug)), `only read slugs: ${post.body.slugs}`);
+  assert.ok(post.body.slugs.every((slug) => /\.read$/.test(slug) || slug === 'dashboard.guide'), `only read slugs plus pointing: ${post.body.slugs}`);
   assert.match(post.body.brief, /--ask-human/);
   assert.deepEqual(closed.at(-1), [S], 'any Terminals-tab pane of the agent is closed first');
   // The summoned agent is not in a snapshot yet: the tab stays and says so.
@@ -178,4 +178,59 @@ test('placement model: clamping, snap zones and status folding', async (t) => {
   assert.equal(m.composeCompanionMessage('  '), '');
   const agents = m.companionAgents(snapshotWith({ steward: true }));
   assert.equal(m.stewardAgent(agents).agentId, S);
+});
+
+test('the companion reports the operator view and plays a guidance cue once', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
+  const doc = harness.document;
+  const toolbar = doc.body.appendChild(doc.createElement('div'));
+  const save = toolbar.appendChild(doc.createElement('button'));
+  save.textContent = 'Save draft';
+  save.getBoundingClientRect = () => ({ left: 100, top: 50, right: 180, bottom: 74, width: 80, height: 24 });
+  const other = toolbar.appendChild(doc.createElement('button'));
+  other.textContent = 'Save draft and close the editor';
+  other.getBoundingClientRect = () => ({ left: 200, top: 50, right: 400, bottom: 74, width: 200, height: 24 });
+  const snap = harness.signals.signal({ groups: [], companion_cues: [{ id: 1, note: 'old', at: '' }] });
+  const posts = [];
+  const navigated = [];
+  const fetchImpl = async (url, init = {}) => { posts.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null }); return { ok: true, status: 204, json: async () => ({}) }; };
+  const view = await harness.mount(harness.html`<${CompanionApp} snapshot=${snap} activeTab=${harness.signals.signal('groups')}
+    prefs=${memoryPrefs()} fetchImpl=${fetchImpl} widgetFactory=${() => ({})} registerController=${() => () => {}}
+    navigate=${async (path) => { navigated.push(path); return true; }} />`);
+  const report = posts.find((p) => p.url === '/api/companion/view');
+  assert.ok(report, 'the view is reported on mount');
+  assert.equal(report.body.tab, 'groups');
+  assert.equal(doc.querySelector('.companion-guide-note'), null, 'a cue live before the page loaded is not replayed');
+  await harness.act(async () => {
+    snap.value = { groups: [], companion_cues: [{ id: 1, note: 'old' }, { id: 2, agent_name: 'steward', tab: 'processes', target: 'save draft', note: 'Save once the diff looks right' }] };
+    await new Promise((r) => setTimeout(r, 600));
+  });
+  // The cue plays from an effect that runs as that act settles; give its
+  // navigation and target search time inside a second act so its render flushes.
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 600)); });
+  assert.deepEqual(navigated, ['/processes']);
+  const note = doc.querySelector('.companion-guide-note');
+  assert.ok(note, 'the cue note is shown');
+  assert.match(note.textContent, /Save once the diff looks right/);
+  const ring = doc.querySelector('.companion-guide-ring');
+  assert.ok(ring, 'the matched control is ringed');
+  assert.match(ring.getAttribute('style'), /left:94px/, 'the exact match wins over the longer label');
+  await harness.act(() => harness.getByRole(doc.body, 'button', { name: 'Dismiss' }).click());
+  assert.equal(doc.querySelector('.companion-guide-note'), null);
+  await view.unmount();
+});
+
+test('guide target matching prefers exact, then prefix, then shorter text', async (t) => {
+  const harness = await createPreactHarness(t);
+  const g = await harness.importDashboardModule('js/companion-guide.js');
+  assert.ok(g.guideMatchScore({ text: 'Save draft' }, 'save draft') > g.guideMatchScore({ text: 'Save draft now' }, 'save draft'));
+  assert.ok(g.guideMatchScore({ text: 'Save draft now' }, 'save draft') > g.guideMatchScore({ text: 'Then save draft' }, 'save draft'));
+  assert.equal(g.guideMatchScore({ text: 'Validate' }, 'save'), 0);
+  assert.ok(g.guideMatchScore({ text: '', label: 'Open the companion' }, 'companion') > 0);
+  assert.equal(g.cuePath({ tab: 'usage' }), '/usage');
+  assert.equal(g.cuePath({ tab: 'usage', path: '/usage/costs' }), '/usage/costs');
+  const seen = new Set();
+  assert.deepEqual(g.newCues(seen, [{ id: 3 }], false), []);
+  assert.deepEqual(g.newCues(seen, [{ id: 3 }, { id: 5 }, { id: 4 }], true).map((c) => c.id), [4, 5]);
 });

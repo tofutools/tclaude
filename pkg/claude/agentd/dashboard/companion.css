@@ -163,6 +163,31 @@
 
 body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-window { border-color: #7a5db0; }
 
+/* Guidance cues (js/companion-guide.js): a ring around the control an agent
+   points at, and its note. Above the companion, below modal overlays. */
+.companion-guide-ring {
+  position: fixed; z-index: 92; pointer-events: none; border-radius: 8px;
+  border: 2px dashed #a371f7; box-shadow: 0 0 0 6px rgba(163, 113, 247, .18), 0 0 24px rgba(163, 113, 247, .35);
+  animation: companion-guide-in .25s ease-out, companion-guide-pulse 1.6s ease-in-out .25s infinite;
+}
+@keyframes companion-guide-in { from { opacity: 0; transform: scale(1.15); } }
+@keyframes companion-guide-pulse { 50% { box-shadow: 0 0 0 10px rgba(163, 113, 247, .08), 0 0 24px rgba(163, 113, 247, .35); } }
+.companion-guide-anchor { position: fixed; z-index: 93; }
+.companion-guide-float { position: fixed; z-index: 93; right: 16px; bottom: calc(var(--footer-h, 29px) + 58px); }
+.companion-guide-note {
+  display: flex; align-items: flex-start; gap: 8px; max-width: 330px; padding: 8px 10px;
+  background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 9px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .5); font-size: 12.5px; line-height: 1.4;
+  animation: companion-peek-in .15s ease-out;
+}
+.companion-guide-note b { display: block; color: #d2a8ff; font-size: 11.5px; }
+.companion-guide-note small { display: block; color: #8b949e; margin-top: 2px; }
+.companion-guide-note button { margin-left: auto; background: none; border: 0; color: #8b949e; cursor: pointer; font-size: 14px; padding: 0 2px; }
+.companion-guide-note button:hover { color: #e6edf3; }
+@media (prefers-reduced-motion: reduce) {
+  .companion-guide-ring, .companion-guide-note { animation: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .companion-chip.needs, .companion-peek { animation: none; }
   .companion-chip { transition: none; }

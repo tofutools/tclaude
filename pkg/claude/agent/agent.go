@@ -69,6 +69,7 @@ func Cmd() *cobra.Command {
 			processCmd(),
 			processTemplatesCmd(),
 			dashboardCmd(),
+			guideCmd(),
 		},
 	}.ToCobra()
 }
