@@ -53,11 +53,15 @@ func TestDashboardGuideViewAndCues(t *testing.T) {
 
 	// A view path must stay on the dashboard.
 	require.Equal(t, http.StatusBadRequest, postView(map[string]any{"tab": "x", "path": "https://evil.example/"}))
+	require.Equal(t, http.StatusNoContent, postView(map[string]any{"tab": "messages", "path": "/messages?q=http://example.com"}), "a search query may hold a URL")
 
 	// Cues are validated, then ride the snapshot with the agent's identity.
 	require.Equal(t, http.StatusBadRequest, cue(map[string]any{}))
 	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"tab": "nope"}))
 	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"path": "//evil.example/x"}))
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"path": "/terminals/agt_0123"}), "a cue may not attach a terminal")
+	require.Equal(t, http.StatusOK, cue(map[string]any{"path": "/terminals"}))
+	agentd.ResetDashboardGuideForTest()
 	require.Equal(t, http.StatusOK, cue(map[string]any{"tab": "Processes", "target": "Save draft", "note": "Save once\nthe diff\x07 looks right"}))
 
 	snapReq := testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil)
