@@ -449,3 +449,77 @@ func TestBoardsPresenceAgentsAndOperatorView(t *testing.T) {
 	now = now.Add(3 * time.Minute)
 	assert.Nil(t, read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView, "a stale view is dropped")
 }
+
+func TestBoardsBelongToAGroupWhoseMembersGetEvents(t *testing.T) {
+	f := newFlow(t)
+	now := time.Unix(1_800_000_000, 0)
+	t.Cleanup(agentd.ResetBoardEventsForTest(func() time.Time { return now }))
+	const (
+		member   = "board-grp-member-1111"
+		outsider = "board-grp-outsider-2222"
+	)
+	f.HaveAliveSession(member, "member", "tmux-board-member", f.TestCwd("member"))
+	f.HaveConvWithTitle(outsider, "outsider")
+	f.HaveGroup("design")
+	f.HaveMember("design", member)
+	memberID, _, err := db.EnsureAgentForConv(member, "test")
+	require.NoError(t, err)
+	_, _, err = db.EnsureAgentForConv(outsider, "test")
+	require.NoError(t, err)
+	for _, conv := range []string{member, outsider} {
+		require.NoError(t, db.GrantAgentPermission(conv, agentd.PermBoardsWrite, "test"))
+		require.NoError(t, db.GrantAgentPermission(conv, agentd.PermBoardsRead, "test"))
+	}
+	dash := agentd.BuildDashboardHandlerForTest()
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+	}
+	agent := func(conv, method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, path, body), conv))
+	}
+	type groupOut struct {
+		Group        string   `json:"group"`
+		GroupMembers []string `json:"group_members"`
+	}
+	group := func(rec *httptest.ResponseRecorder) groupOut {
+		t.Helper()
+		require.Contains(t, []int{http.StatusOK, http.StatusCreated}, rec.Code, "body=%s", rec.Body.String())
+		var out groupOut
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+
+	// An agent can only make a board for a group it is in.
+	assert.Equal(t, http.StatusForbidden, agent(outsider, http.MethodPost, "/v1/boards", map[string]any{"id": "x", "group": "design"}).Code)
+	assert.Equal(t, http.StatusNotFound, agent(member, http.MethodPost, "/v1/boards", map[string]any{"id": "x", "group": "nope"}).Code)
+	got := group(agent(member, http.MethodPost, "/v1/boards", map[string]any{"id": "ux", "title": "UX", "group": "design"}))
+	assert.Equal(t, groupOut{Group: "design", GroupMembers: []string{memberID}}, got)
+
+	// The operator links and unlinks boards; members get events uninvited.
+	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "flow", "title": "Flow"}).Code)
+	assert.Equal(t, http.StatusNotFound, serve(http.MethodPost, "/api/boards/flow/group", map[string]any{"group": "nope"}).Code)
+	assert.Equal(t, groupOut{Group: "design", GroupMembers: []string{memberID}}, group(serve(http.MethodPost, "/api/boards/flow/group", map[string]any{"group": "design"})))
+	rec := serve(http.MethodPost, "/api/boards/flow/events", map[string]any{"text": "The operator drew a box."})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), memberID, "a group member gets the event without an invitation")
+	rows, err := db.ListAgentMessagesForConv(member, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "[board flow]", rows[0].Subject)
+
+	var list struct {
+		Boards []struct{ ID, Group string }
+	}
+	require.NoError(t, json.Unmarshal(serve(http.MethodGet, "/api/boards", nil).Body.Bytes(), &list))
+	groups := map[string]string{}
+	for _, b := range list.Boards {
+		groups[b.ID] = b.Group
+	}
+	assert.Equal(t, map[string]string{"ux": "design", "flow": "design"}, groups)
+
+	assert.Equal(t, groupOut{}, group(serve(http.MethodPost, "/api/boards/flow/group", map[string]any{"group": ""})))
+	now = now.Add(3 * time.Second)
+	rec = serve(http.MethodPost, "/api/boards/flow/events", map[string]any{"text": "again"})
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), memberID, "an unlinked board stops mailing the group")
+}
