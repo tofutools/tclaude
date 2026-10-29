@@ -182,6 +182,7 @@ function ApprovalCard({ request, fetchImpl, notify }) {
   }, []);
   const summary = approvalSummary(request);
   const left = secondsLeft(request.deadline, now);
+  const expired = left === 0;
   async function decide(decision) {
     setBusy(decision);
     try {
@@ -190,6 +191,8 @@ function ApprovalCard({ request, fetchImpl, notify }) {
         body: JSON.stringify({ decision }),
       });
       if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+      // An extension leaves the request pending: free the buttons again.
+      if (decision === 'extend') setBusy('');
     } catch (error) {
       notify(`That decision could not be recorded: ${error?.message || error}`, true);
       setBusy('');
@@ -201,10 +204,18 @@ function ApprovalCard({ request, fetchImpl, notify }) {
       ${left !== null && html`<span class="companion-approval-timer" title="Declined automatically when this runs out">${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</span>`}
     </div>
     <div class="companion-approval-slugs">${summary.slugs.map((slug) => html`<code key=${slug}>${slug}</code>`)}</div>
+    <dl class="companion-approval-meta">
+      ${request.target_group && html`<dt>Group</dt><dd>${request.target_group}</dd>`}
+      ${request.target_conv_id && html`<dt>Target</dt><dd>${request.target_conv_title || request.target_conv_id}</dd>`}
+      ${request.scope_display && html`<dt>Scope</dt><dd><code>${request.scope_display}</code></dd>`}
+      ${request.path && !request.body && html`<dt>Endpoint</dt><dd><code>${request.method ? `${request.method} ` : ''}${request.path}</code></dd>`}
+    </dl>
     ${request.body && html`<pre class="companion-approval-body">${request.body}</pre>`}
     <div class="companion-approval-actions">
-      <button type="button" class="companion-approval-deny" disabled=${!!busy} onClick=${() => decide('deny')}>${busy === 'deny' ? 'Denying…' : 'Deny'}</button>
-      <button type="button" class="companion-primary" disabled=${!!busy} onClick=${() => decide('approve')}>${busy === 'approve' ? 'Approving…' : summary.kind === 'plan' ? 'Approve plan' : 'Approve'}</button>
+      ${expired ? html`<span class="companion-approval-expired">Timing out…</span>` : html`<button type="button" class="companion-approval-extend" disabled=${!!busy}
+        title="Push the auto-decline back five minutes" onClick=${() => decide('extend')}>+5 min</button>`}
+      <button type="button" class="companion-approval-deny" disabled=${!!busy || expired} onClick=${() => decide('deny')}>${busy === 'deny' ? 'Denying…' : 'Deny'}</button>
+      <button type="button" class="companion-primary" disabled=${!!busy || expired} onClick=${() => decide('approve')}>${busy === 'approve' ? 'Approving…' : summary.kind === 'plan' ? 'Approve plan' : 'Approve'}</button>
     </div>
   </div>`;
 }
@@ -745,6 +756,7 @@ export function CompanionApp({
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
     <div class="companion-body">
+      ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> The Steward</p>
@@ -763,7 +775,6 @@ export function CompanionApp({
         <button type="button" class="companion-primary" onClick=${() => showAgent(activeAgent.agentId)}>Bring it back here</button>
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
-        ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
         ${status === 'needs' && !activeApprovals.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
         ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
           ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
