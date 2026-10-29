@@ -380,7 +380,7 @@ type boardAddParams struct {
 	Y     *float64 `long:"y" help:"Top edge (default 0)"`
 	W     *float64 `long:"w" help:"Width (default 160 for shapes; arrows and lines: the x extent)"`
 	H     *float64 `long:"h" help:"Height (default 80 for shapes; arrows and lines: the y extent)"`
-	Text  string   `long:"text" optional:"true" help:"Text (required for text elements)"`
+	Text  string   `long:"text" optional:"true" help:"Text (required for text elements); on a shape or arrow it adds a centred text label element"`
 	Color string   `long:"color" optional:"true" help:"Stroke color: #rrggbb, #rgb or transparent (default #1e1e1e)"`
 	Bg    string   `long:"bg" optional:"true" help:"Fill color: #rrggbb, #rgb or transparent (default transparent)"`
 	From  string   `long:"from" optional:"true" help:"Arrow: element id to start from (points are computed between the element centers)"`
@@ -395,6 +395,7 @@ func boardAddCmd() *cobra.Command {
 		Use:   "add <board> <rectangle|ellipse|diamond|text|arrow|line>",
 		Short: "Add an element to a board",
 		Long: "Adds one element and prints its id. Shapes take --x --y --w --h; text takes --text (and --x --y); " +
+			"--text on a shape or arrow adds a second, centred text element as its label (move it with the shape); " +
 			"an arrow either connects two elements (--from and --to, by element id) or spans --x --y by --w --h.\n\n" +
 			"Example: tclaude agent board add plan rectangle --x 100 --y 80 --text 'API'\n" +
 			"         tclaude agent board add plan arrow --from <idA> --to <idB>",
@@ -448,18 +449,15 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		"fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "solid", "roughness": 1, "opacity": 100, "angle": 0,
 	}
 	x, y := floatOr(p.X, 0), floatOr(p.Y, 0)
+	// A shape's or arrow's label is its own text element centred on it, the
+	// way the board editor reads and draws labels.
+	var labelX, labelY float64
 	switch typ {
 	case "text":
-		const fontSize = 20.0
-		lines := strings.Split(p.Text, "\n")
-		widest := 0
-		for _, l := range lines {
-			widest = max(widest, len([]rune(l)))
-		}
-		e["text"], e["fontSize"], e["textAlign"] = p.Text, fontSize, "left"
+		w, h := boardTextSize(p.Text)
+		e["text"], e["fontSize"], e["textAlign"] = p.Text, boardFontSize, "left"
 		e["x"], e["y"] = x, y
-		e["width"] = floatOr(p.W, math.Ceil(float64(widest)*fontSize*0.6))
-		e["height"] = floatOr(p.H, math.Ceil(float64(len(lines))*fontSize*1.25))
+		e["width"], e["height"] = floatOr(p.W, w), floatOr(p.H, h)
 	case "arrow", "line":
 		if p.From != "" {
 			doc, err := fetchBoard(id, -1)
@@ -483,27 +481,60 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 			e["width"], e["height"] = math.Abs(w), math.Abs(h)
 		}
 		e["x"], e["y"] = x, y
-		if p.Text != "" {
-			e["text"] = p.Text
-		}
+		end := e["points"].([][2]float64)[1]
+		labelX, labelY = x+end[0]/2, y+end[1]/2
 	default:
+		w, h := floatOr(p.W, 160), floatOr(p.H, 80)
 		e["x"], e["y"] = x, y
-		e["width"], e["height"] = floatOr(p.W, 160), floatOr(p.H, 80)
-		if p.Text != "" {
-			e["text"] = p.Text
+		e["width"], e["height"] = w, h
+		labelX, labelY = x+w/2, y+h/2
+	}
+	elems := []map[string]any{e}
+	labelID := ""
+	if typ != "text" && p.Text != "" {
+		labelID = elemID + "-label"
+		if len(labelID) > 64 {
+			labelID = boardRandomID()
 		}
+		w, h := boardTextSize(p.Text)
+		elems = append(elems, map[string]any{
+			"id": labelID, "type": "text", "version": 1, "versionNonce": boardRandomNonce(), "isDeleted": false,
+			"updated": e["updated"], "strokeColor": stroke, "backgroundColor": "transparent", "opacity": 100, "angle": 0,
+			"text": p.Text, "fontSize": boardFontSize, "textAlign": "center",
+			"x": labelX - w/2, "y": labelY - h/2, "width": w, "height": h,
+		})
 	}
-	raw, err := json.Marshal(e)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
+	raws := make([]json.RawMessage, 0, len(elems))
+	for _, el := range elems {
+		raw, err := json.Marshal(el)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcIOFailure
+		}
+		raws = append(raws, raw)
 	}
-	resp, err := patchBoard(id, []json.RawMessage{raw})
+	resp, err := patchBoard(id, raws)
 	if err != nil {
 		return boardErr(stderr, err)
 	}
+	if labelID != "" {
+		fmt.Fprintf(stdout, "Added %s %s with label %s to board %s (version %d).\n", typ, elemID, labelID, id, resp.Version)
+		return rcOK
+	}
 	fmt.Fprintf(stdout, "Added %s %s to board %s (version %d).\n", typ, elemID, id, resp.Version)
 	return rcOK
+}
+
+const boardFontSize = 20.0
+
+// boardTextSize estimates a text element's box at boardFontSize.
+func boardTextSize(text string) (w, h float64) {
+	lines := strings.Split(text, "\n")
+	widest := 0
+	for _, l := range lines {
+		widest = max(widest, len([]rune(l)))
+	}
+	return math.Ceil(float64(widest) * boardFontSize * 0.6), math.Ceil(float64(len(lines)) * boardFontSize * 1.25)
 }
 
 func findBoardElements(doc *boardDoc, fromID, toID string) (from, to boardElementView, ok bool) {

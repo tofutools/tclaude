@@ -16,14 +16,21 @@ import (
 var (
 	ErrCollabBoardNotFound = errors.New("board not found")
 	ErrCollabBoardExists   = errors.New("board already exists")
+	ErrCollabBoardLimit    = errors.New("too many boards")
 )
 
 // CollabBoardTooManyElementsError reports a patch that would leave more live
 // elements on the board than its limit; the whole patch is rolled back.
-type CollabBoardTooManyElementsError struct{ Live, Limit int }
+type CollabBoardTooManyElementsError struct {
+	Count, Limit int
+	Stored       bool // the limit on stored rows (tombstones included), not live elements
+}
 
 func (e *CollabBoardTooManyElementsError) Error() string {
-	return fmt.Sprintf("board would hold %d live elements; the limit is %d", e.Live, e.Limit)
+	if e.Stored {
+		return fmt.Sprintf("board would store %d elements including deletions; the limit is %d", e.Count, e.Limit)
+	}
+	return fmt.Sprintf("board would hold %d live elements; the limit is %d", e.Count, e.Limit)
 }
 
 type CollabBoard struct {
@@ -89,7 +96,8 @@ func collabBoardParticipantsTx(q interface {
 	return out, rows.Err()
 }
 
-func CreateCollabBoard(id, title, by string) (*CollabBoard, error) {
+// CreateCollabBoard creates an empty board; maxBoards bounds how many exist.
+func CreateCollabBoard(id, title, by string, maxBoards int) (*CollabBoard, error) {
 	if id == "" || title == "" {
 		return nil, errors.New("board id and title required")
 	}
@@ -97,14 +105,29 @@ func CreateCollabBoard(id, title, by string) (*CollabBoard, error) {
 	if err != nil {
 		return nil, err
 	}
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM collab_boards`).Scan(&count); err != nil {
+		return nil, err
+	}
 	now := time.Now()
-	res, err := d.Exec(`INSERT INTO collab_boards (id, title, version, created_at, updated_at, updated_by)
+	res, err := tx.Exec(`INSERT INTO collab_boards (id, title, version, created_at, updated_at, updated_by)
  VALUES (?, ?, 0, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, id, title, dbTime(now), dbTime(now), by)
 	if err != nil {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, ErrCollabBoardExists
+	}
+	if count >= maxBoards {
+		return nil, ErrCollabBoardLimit
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return GetCollabBoard(id)
 }
@@ -176,7 +199,8 @@ func DeleteCollabBoard(id string) error {
 	return nil
 }
 
-// ListCollabBoardElements returns the board's elements in a stable order.
+// ListCollabBoardElements returns the board's elements in creation order,
+// which is their stacking order: an update keeps the row (and its rowid).
 // since < 0 selects the live elements only; since >= 0 selects every element
 // (tombstones included) whose server_version is above it.
 func ListCollabBoardElements(id string, since int64) ([]CollabBoardElement, error) {
@@ -193,7 +217,7 @@ func ListCollabBoardElements(id string, since int64) ([]CollabBoardElement, erro
 		q += ` AND server_version > ?`
 		args = append(args, since)
 	}
-	rows, err := d.Query(q+` ORDER BY server_version, element_id`, args...)
+	rows, err := d.Query(q+` ORDER BY rowid`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -219,8 +243,9 @@ func ListCollabBoardElements(id string, since int64) ([]CollabBoardElement, erro
 // is lower. When at least one element is accepted the board version is bumped
 // once and every accepted element is stamped with it. participant, when set,
 // joins the board in the same transaction. The patch is all-or-nothing: one
-// that would leave more than maxLive live elements changes nothing.
-func ApplyCollabBoardElements(id, by, participant string, elems []CollabBoardElement, maxLive int) (version int64, accepted int, err error) {
+// that would leave more than maxLive live elements, or more than maxStored
+// rows including tombstones, changes nothing.
+func ApplyCollabBoardElements(id, by, participant string, elems []CollabBoardElement, maxLive, maxStored int) (version int64, accepted int, err error) {
 	collabBoardWriteMu.Lock()
 	defer collabBoardWriteMu.Unlock()
 	d, err := Open()
@@ -279,12 +304,15 @@ func ApplyCollabBoardElements(id, by, participant string, elems []CollabBoardEle
 		accepted++
 	}
 	if accepted > 0 {
-		var live int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM collab_board_elements WHERE board_id = ? AND is_deleted = 0`, id).Scan(&live); err != nil {
+		var live, stored int
+		if err := tx.QueryRow(`SELECT COALESCE(SUM(is_deleted = 0), 0), COUNT(*) FROM collab_board_elements WHERE board_id = ?`, id).Scan(&live, &stored); err != nil {
 			return 0, 0, err
 		}
 		if live > maxLive {
-			return 0, 0, &CollabBoardTooManyElementsError{Live: live, Limit: maxLive}
+			return 0, 0, &CollabBoardTooManyElementsError{Count: live, Limit: maxLive}
+		}
+		if stored > maxStored {
+			return 0, 0, &CollabBoardTooManyElementsError{Count: stored, Limit: maxStored, Stored: true}
 		}
 		if _, err := tx.Exec(`UPDATE collab_boards SET version = ?, updated_at = ?, updated_by = ? WHERE id = ?`,
 			next, dbTime(time.Now()), by, id); err != nil {

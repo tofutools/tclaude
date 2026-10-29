@@ -49,6 +49,9 @@ const (
 const (
 	boardAuthorOperator   = "operator"
 	boardMaxLiveElements  = 5000
+	boardMaxStoredRows    = 20000 // live elements plus tombstones
+	boardMaxBoards        = 500
+	boardMaxVersion       = 1<<53 - 1 // stays exact in JavaScript numbers
 	boardMaxRequestBody   = 4 << 20
 	boardMaxSnapshotBytes = 8 << 20
 	boardMaxCoordinate    = 1e6
@@ -125,8 +128,11 @@ func normalizeBoardElement(raw json.RawMessage, author string) (db.CollabBoardEl
 	fail := func(format string, args ...any) (db.CollabBoardElement, error) {
 		return db.CollabBoardElement{}, fmt.Errorf("element %s: "+format, append([]any{e.ID}, args...)...)
 	}
-	if e.Version < 1 {
-		return fail("version must be an integer >= 1")
+	if e.Version < 1 || e.Version > boardMaxVersion {
+		return fail("version must be an integer from 1 to 2^53-1")
+	}
+	if e.VersionNonce < math.MinInt32 || e.VersionNonce > math.MaxInt32 {
+		return fail("versionNonce must be a 32-bit integer")
 	}
 	if e.Type == "" && !e.IsDeleted {
 		return fail("type is required")
@@ -192,8 +198,12 @@ func normalizeBoardElement(raw json.RawMessage, author string) (db.CollabBoardEl
 			return fail("binding elementId must be 1-64 characters of [A-Za-z0-9_-]")
 		}
 	}
-	if e.Updated < 0 {
+	if e.Updated < 0 || e.Updated > boardMaxVersion {
 		return fail("updated must be a millisecond epoch")
+	}
+	if e.IsDeleted {
+		// A tombstone only needs what the merge and sync read.
+		e = boardElement{ID: e.ID, Type: e.Type, Version: e.Version, VersionNonce: e.VersionNonce, IsDeleted: true, Updated: e.Updated}
 	}
 	e.CustomData = &boardElementMeta{Author: author}
 	body, err := json.Marshal(e)
@@ -311,6 +321,8 @@ func writeBoardStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "board not found")
 	case errors.Is(err, db.ErrCollabBoardExists):
 		writeError(w, http.StatusConflict, "exists", "a board with that id already exists")
+	case errors.Is(err, db.ErrCollabBoardLimit):
+		writeError(w, http.StatusConflict, "too_many_boards", fmt.Sprintf("at most %d boards; delete one first", boardMaxBoards))
 	case errors.As(err, &tooMany):
 		writeError(w, http.StatusBadRequest, "too_many_elements", err.Error())
 	default:
@@ -375,7 +387,7 @@ func serveBoardCreate(w http.ResponseWriter, r *http.Request, by string) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "board id must match [a-z0-9][a-z0-9-]{0,63}")
 		return
 	}
-	b, err := db.CreateCollabBoard(id, title, by)
+	b, err := db.CreateCollabBoard(id, title, by, boardMaxBoards)
 	if err != nil {
 		writeBoardStoreError(w, err)
 		return
@@ -434,7 +446,7 @@ func serveBoardPatch(w http.ResponseWriter, r *http.Request, id, author, partici
 		}
 		elems = append(elems, e)
 	}
-	version, accepted, err := db.ApplyCollabBoardElements(id, author, participant, elems, boardMaxLiveElements)
+	version, accepted, err := db.ApplyCollabBoardElements(id, author, participant, elems, boardMaxLiveElements, boardMaxStoredRows)
 	if err != nil {
 		writeBoardStoreError(w, err)
 		return
@@ -554,15 +566,6 @@ func handleDashboardBoardSnapshotPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "version must be the board version the snapshot shows")
 		return
 	}
-	b, err := db.GetCollabBoard(id)
-	if err != nil {
-		writeBoardStoreError(w, err)
-		return
-	}
-	if version > b.Version {
-		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("version %d is ahead of the board (version %d)", version, b.Version))
-		return
-	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, boardMaxSnapshotBytes))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
@@ -577,6 +580,23 @@ func handleDashboardBoardSnapshotPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "snapshot must be a PNG image")
 		return
 	}
+	// The check, the file and its recorded version change together, so two
+	// tabs saving at once cannot leave one's image under the other's version.
+	boardSnapshotMu.Lock()
+	defer boardSnapshotMu.Unlock()
+	b, err := db.GetCollabBoard(id)
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	if b.HasSnapshot && version < b.SnapshotVersion {
+		writeError(w, http.StatusConflict, "stale_snapshot", fmt.Sprintf("a snapshot of version %d is already stored", b.SnapshotVersion))
+		return
+	}
+	if version > b.Version {
+		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("version %d is ahead of the board (version %d)", version, b.Version))
+		return
+	}
 	if err := writeBoardSnapshotFile(boardSnapshotPath(id), data); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "store snapshot: "+err.Error())
 		return
@@ -587,6 +607,8 @@ func handleDashboardBoardSnapshotPut(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"version": version, "bytes": len(data)})
 }
+
+var boardSnapshotMu sync.Mutex
 
 func writeBoardSnapshotFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
@@ -723,15 +745,15 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 		writeBoardStoreError(w, err)
 		return
 	}
-	if !boardEvents.allow(id) {
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "at most one board event per board every 3s")
-		return
-	}
 	// Liveness is read now, not from the dashboard poll cache, so an agent
 	// that just stopped is not left durable mail (see the live announcement).
 	alive, err := session.LiveTmuxSessions()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "tmux", "list live agents: "+err.Error())
+		return
+	}
+	if !boardEvents.allow(id) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "at most one board event per board every 3s")
 		return
 	}
 	body := fmt.Sprintf("%s\n\n(Board %q is at version %d. Read it with `tclaude agent board show %s`, or `--since <version>` for changes only.)",
