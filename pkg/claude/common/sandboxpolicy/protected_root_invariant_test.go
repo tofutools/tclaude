@@ -1,9 +1,11 @@
 package sandboxpolicy
 
 // The protected-root invariant is absolute: no operator-authored profile input
-// — direct grant, include chain, spelling alias, missing path, or ancestor —
-// can produce an effective policy that reads or writes tclaude/harness
-// protected state. This file is the guard for that property.
+// — direct grant, include chain, spelling alias, or missing path — can produce
+// an effective policy that reads or writes tclaude/harness protected state.
+// This file is the guard for that property. A same-path grant on an ANCESTOR
+// (`~` write) is admitted, because every applier re-hides the protected roots
+// on top of it; such a grant never names the protected state itself.
 //
 // It was written when the break-glass feature was removed in TCL-791.
 // Break-glass was the one sanctioned exception, and removing it made the
@@ -81,9 +83,6 @@ func protectedSpellings(t *testing.T, home string) map[string]string {
 		"existing descendant":       existingChild,
 		"missing descendant":        missingChild,
 		"symlink into protected":    alias,
-		"ancestor: home":            home,
-		"ancestor: tilde":           "~",
-		"ancestor: filesystem root": string(filepath.Separator),
 	}
 	for i, path := range protected {
 		spellings["protected root "+string(rune('A'+i))] = path
@@ -92,8 +91,8 @@ func protectedSpellings(t *testing.T, home string) map[string]string {
 }
 
 // TestProtectedRootsRejectEveryReadWriteSpelling is layer 1: the gate itself.
-// normalizeFilesystem is the anchor — pathsIntersect is bidirectional, so an
-// ancestor grant is refused exactly like a descendant one.
+// normalizeFilesystem is the anchor: any grant at or below a protected root is
+// refused.
 func TestProtectedRootsRejectEveryReadWriteSpelling(t *testing.T) {
 	home, _, _, _ := protectedHome(t)
 	for name, path := range protectedSpellings(t, home) {
@@ -116,6 +115,37 @@ func TestProtectedRootsRejectEveryReadWriteSpelling(t *testing.T) {
 	}
 }
 
+// TestProtectedRootAncestorsAreAdmitted is the operator shape "write my whole
+// Home, keep the wall": a same-path read/write grant on an ancestor of a
+// protected root is admitted, and the appliers re-hide the protected roots on
+// top of it. A REMAPPED ancestor stays refused: it would project the protected
+// subtree to a guest path the host-path re-hide does not cover.
+func TestProtectedRootAncestorsAreAdmitted(t *testing.T) {
+	home, _, _, _ := protectedHome(t)
+	for name, path := range map[string]string{
+		"home":            home,
+		"tilde":           "~",
+		"filesystem root": string(filepath.Separator),
+	} {
+		for _, access := range []Access{AccessRead, AccessWrite} {
+			t.Run(name+"/"+string(access), func(t *testing.T) {
+				in := Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: path, Access: access}}}
+				_, err := Normalize(in)
+				require.NoError(t, err)
+				_, _, err = NormalizeForPersistence(in)
+				require.NoError(t, err)
+			})
+		}
+	}
+	t.Run("remapped ancestor", func(t *testing.T) {
+		_, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{
+			{Path: home, Access: AccessRead, MountPath: "/data"},
+		}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "intersects protected")
+	})
+}
+
 // TestProtectedRootsStillAcceptDeny proves the invariant is "nothing reopens a
 // protected root", not the weaker "protected paths are unusable". A deny never
 // widens, so it stays authorable — and this is what keeps the test above from
@@ -135,7 +165,7 @@ func TestProtectedRootsStillAcceptDeny(t *testing.T) {
 // TestCompositionCannotLaunderProtectedAccess is layer 2: includes and scope
 // resolution must not become the laundering route that the direct gate closes.
 func TestCompositionCannotLaunderProtectedAccess(t *testing.T) {
-	home, tclaudeData, _, _ := protectedHome(t)
+	_, tclaudeData, _, _ := protectedHome(t)
 	dangerous := Profile{Name: "leaf", Filesystem: []FilesystemGrant{{Path: tclaudeData, Access: AccessWrite}}}
 	innocent := Profile{Name: "wrapper", Includes: []string{"leaf"}}
 	nested := Profile{Name: "outer", Includes: []string{"wrapper"}}
@@ -177,12 +207,12 @@ func TestCompositionCannotLaunderProtectedAccess(t *testing.T) {
 		})
 	}
 
-	// And the ancestor form through composition, which is the subtler shape:
-	// $HOME contains the protected roots without naming them.
-	ancestor := Profile{Name: "leaf", Filesystem: []FilesystemGrant{{Path: home, Access: AccessWrite}}}
-	registry["leaf"] = ancestor
+	// A descendant reached through composition is refused like a direct one.
+	child := filepath.Join(tclaudeData, "child")
+	require.NoError(t, os.MkdirAll(child, 0o755))
+	registry["leaf"] = Profile{Name: "leaf", Filesystem: []FilesystemGrant{{Path: child, Access: AccessRead}}}
 	_, err := Flatten(innocent, lookup)
-	require.Error(t, err, "an ancestor grant reaching protected roots must be refused through includes too")
+	require.Error(t, err, "a grant beneath a protected root must be refused through includes too")
 }
 
 // TestNoProfileFieldCanCarryProtectedAccess is layer 3. The gate tests above
@@ -394,4 +424,23 @@ func TestPreLaunchBlocksCannotInjectFilesystemAuthority(t *testing.T) {
 				"mount entry %q is at or beneath protected root %q", entry.Path, root)
 		}
 	}
+}
+
+// A harness-native sandbox cannot pin the directories between a writable
+// ancestor and a protected root, so a write rule there is refused for it while
+// tclaude's own sandbox and the no-confinement implementations accept it.
+func TestProtectedAncestorWriteNeedsTclaudeLayer(t *testing.T) {
+	home, _, _, _ := protectedHome(t)
+	write := []FilesystemGrant{{Path: home, Access: AccessWrite}}
+	err := ValidateProtectedAncestorWriteSupport(write, ImplementationHarnessBuiltin, "linux")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported_sandbox_profile_protected_ancestor_write")
+	for _, impl := range []Implementation{ImplementationTclaudeLayer, ImplementationOff, ImplementationResourceOnly} {
+		require.NoError(t, ValidateProtectedAncestorWriteSupport(write, impl, "linux"), impl)
+	}
+	read := []FilesystemGrant{{Path: home, Access: AccessRead}}
+	require.NoError(t, ValidateProtectedAncestorWriteSupport(read, ImplementationHarnessBuiltin, "linux"),
+		"a read rule cannot rename anything")
+	narrow := []FilesystemGrant{{Path: filepath.Join(home, ".codex"), Access: AccessWrite}}
+	require.NoError(t, ValidateProtectedAncestorWriteSupport(narrow, ImplementationHarnessBuiltin, "linux"))
 }

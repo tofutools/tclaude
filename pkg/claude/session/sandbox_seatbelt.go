@@ -359,7 +359,52 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		routeSlots,
 		identity,
 	)
+	profile, params = appendSeatbeltProtectedAncestorPins(profile, params, protected)
 	return profile, params, nil
+}
+
+// appendSeatbeltProtectedAncestorPins denies unlink — which covers rename —
+// on the directory node of every ancestor of a protected root. The protected
+// hide is a path filter, so under a writable `~` an agent could otherwise
+// `mv ~/.tclaude ~/x` and read ~/x/data, which no rule names. The deny is a
+// literal on the ancestor itself, not a subpath: creating, writing, and
+// removing entries INSIDE ~/.tclaude or ~/.claude stays governed by the
+// ordinary regions, so new directories under a writable Home stay writable.
+// It is emitted unconditionally because pinning an ancestor that was not
+// writable anyway changes nothing.
+func appendSeatbeltProtectedAncestorPins(
+	profile string,
+	params []seatbeltProfileParam,
+	protected []string,
+) (string, []seatbeltProfileParam) {
+	seen := map[string]bool{}
+	var pins []string
+	for _, root := range protected {
+		for dir := filepath.Dir(root); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			if !seen[dir] {
+				seen[dir] = true
+				pins = append(pins, dir)
+			}
+		}
+	}
+	if len(pins) == 0 {
+		return profile, params
+	}
+	sort.Strings(pins)
+	var out strings.Builder
+	out.WriteString(profile)
+	out.WriteString("\n; Protected-root ancestors cannot be renamed or removed.\n")
+	out.WriteString("(deny file-write-unlink\n")
+	out.WriteString("  (require-any\n")
+	for i, dir := range pins {
+		name := fmt.Sprintf("PROTECTED_ANCESTOR_%d", i)
+		out.WriteString("    (literal (param \"")
+		out.WriteString(name)
+		out.WriteString("\"))\n")
+		params = append(params, seatbeltProfileParam{name: name, path: dir})
+	}
+	out.WriteString("  ))\n")
+	return out.String(), params
 }
 
 // validateSeatbeltProxyEndpoint holds the proxy floor's one IP destination to

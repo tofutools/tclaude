@@ -290,9 +290,22 @@ The axes:
 ### Protected roots
 
 `~/.tclaude/data` and `~/.claude/sessions` are an absolute wall. No profile,
-include, launch contract, or flag reopens them, and any read/write rule that
-*intersects* one is refused — ancestors count, so an ordinary row over
-`~/.claude` is rejected because it contains `sessions`. Comparison is by
+include, launch contract, or flag reopens them, and any read/write rule at or
+below one is refused. A rule on an *ancestor* is allowed and keeps the wall:
+`{"path": "~", "access": "write"}` makes the whole Home writable, including
+directories created later, while the protected roots stay hidden on top of it
+under every implementation that enforces access rules (`off` and
+`resource-only` enforce none, so there the row changes nothing).
+tclaude’s sandbox also pins the directories between the grant and each
+protected root (`~/.tclaude`, `~/.claude`) so they cannot be renamed or
+removed: on Linux they become mount points, on macOS they get an unlink deny.
+Their contents stay writable. A harness-native sandbox has no way to express
+that pin, so a *write* row on an ancestor is refused under `harness-builtin`
+with `unsupported_sandbox_profile_protected_ancestor_write`; a read row is
+fine. An ancestor row with a `mount_path` is refused everywhere, because the
+projection would carry the protected tree to a sandbox path the re-hide does
+not cover.
+Comparison is by
 filesystem identity, not string: case or Unicode-normalization spellings of a
 protected root are refused alike, on every volume, including for paths that do
 not exist yet. `~/.codex` is not protected and must be reopened under a denied

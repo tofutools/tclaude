@@ -238,7 +238,6 @@ func TestNormalizeFilesystemRejectsInvalidAndProtectedPaths(t *testing.T) {
 		{"bad access", safe, "access", Access("execute")},
 		{"protected exact", protected[0], "intersects protected", AccessRead},
 		{"protected child", filepath.Join(protected[1], "child"), "intersects protected", AccessWrite},
-		{"protected ancestor", home, "intersects protected", AccessRead},
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(safe, "file"), []byte("x"), 0o644))
 	require.NoError(t, syscall.Mkfifo(filepath.Join(safe, "fifo"), 0o644))
@@ -250,9 +249,12 @@ func TestNormalizeFilesystemRejectsInvalidAndProtectedPaths(t *testing.T) {
 		})
 	}
 
+	_, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: home, Access: AccessWrite}}})
+	require.NoError(t, err, "an ancestor grant is admitted; appliers re-hide the protected roots beneath it")
+
 	lookalike := filepath.Join(home, ".claude", "sessions-cache")
 	require.NoError(t, os.Mkdir(lookalike, 0o755))
-	_, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: lookalike, Access: AccessWrite}}})
+	_, err = Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: lookalike, Access: AccessWrite}}})
 	require.NoError(t, err, "shared string prefixes are not path ancestry")
 }
 

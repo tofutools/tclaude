@@ -350,6 +350,15 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 	if err != nil {
 		return "", fmt.Errorf("resolve protected sandbox roots: %w", err)
 	}
+	// The unresolved spellings too: a dotfile-managed ~/.claude is a symlink,
+	// and the ancestor unlink deny must name the link itself, which is what
+	// host tools walk on their next access. A hide on a link spelling is a
+	// redundant deny, never a widening.
+	lexicalRoots, err := sandboxpolicy.LexicalProtectedPaths()
+	if err != nil {
+		return "", err
+	}
+	protectedRoots = append(protectedRoots, lexicalRoots...)
 	protectedRoots = append(protectedRoots, finalHideDirs...)
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	if err != nil {
