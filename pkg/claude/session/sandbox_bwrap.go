@@ -2133,11 +2133,12 @@ func bwrapArgsWithDaemonFinal(
 	// Class 3 baseline: protected state is hidden after the harness root is
 	// writable. EffectiveProfile deliberately excludes this baseline because
 	// ordinary rules may never name these paths at all: normalizeFilesystem
-	// refuses any read/write rule intersecting a protected root, and TCL-791
+	// refuses any read/write rule at or below a protected root, and TCL-791
 	// removed break-glass, the one former exception. No policy input can
 	// therefore reopen a protected root: a plan entry on an ordinary ancestor
-	// still lands, and appendTclaudeLayerProtectedRehides restores the hides on
-	// top of it.
+	// still lands, appendTclaudeLayerProtectedAncestorPins pins the directories
+	// between it and the protected root, and appendTclaudeLayerProtectedRehides
+	// restores the hides on top of it.
 	//
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
