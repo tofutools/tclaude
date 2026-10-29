@@ -27,6 +27,7 @@ import {
   stewardSummonBody, viewContext, withTab, withoutTab, zoneRect,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
+import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 
 const html = htm.bind(h);
@@ -175,6 +176,7 @@ export function CompanionApp({
   openTerminalsPane = null,
   win = globalThis.window,
   registerController = registerCompanionController,
+  navigate = null,
 }) {
   const agents = useMemo(() => companionAgents(snapshot.value), [snapshot.value]);
   const steward = useMemo(() => stewardAgent(agents), [agents]);
@@ -544,6 +546,81 @@ export function CompanionApp({
   const setReconnectFor = useCallback((agentId) => (available) => setReconnectable((current) => (current[agentId] === available ? current : { ...current, [agentId]: available })), []);
   const setStatusFor = useCallback((agentId) => (status) => setStatuses((current) => (current[agentId] === status ? current : { ...current, [agentId]: status })), []);
 
+  // -- dashboard guidance ---------------------------------------------------
+  // Report the operator's view so companion agents can ask where they are
+  // (GET /v1/dashboard/view), and play the agents' pointing cues.
+
+  const lastView = useRef('');
+  useEffect(() => {
+    const doc = win?.document;
+    const report = () => {
+      if (doc?.visibilityState === 'hidden') return;
+      const view = {
+        tab: String(activeTab.value || ''),
+        path: `${win?.location?.pathname || '/'}${win?.location?.search || ''}`.slice(0, 240),
+        title: String(doc?.title || '').slice(0, 160),
+      };
+      const key = JSON.stringify(view);
+      if (key === lastView.current) return;
+      lastView.current = key;
+      Promise.resolve(fetchImpl('/api/companion/view', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: key,
+      })).catch(() => { lastView.current = ''; });
+    };
+    report();
+    doc?.addEventListener?.('tclaude:snapshot', report);
+    doc?.addEventListener?.('tclaude:navigated', report);
+    doc?.addEventListener?.('visibilitychange', report);
+    win?.addEventListener?.('popstate', report);
+    return () => {
+      doc?.removeEventListener?.('tclaude:snapshot', report);
+      doc?.removeEventListener?.('tclaude:navigated', report);
+      doc?.removeEventListener?.('visibilitychange', report);
+      win?.removeEventListener?.('popstate', report);
+    };
+  }, [win, fetchImpl]);
+
+  const seenCues = useRef(new Set());
+  const cuesPrimed = useRef(false);
+  const cueRun = useRef(0);
+  const [guideCue, setGuideCue] = useState(null); // {cue, element}
+  const dismissGuide = useCallback(() => { cueRun.current += 1; setGuideCue(null); }, []);
+  useEffect(() => {
+    if (!snapshot.value) return;
+    const fresh = newCues(seenCues.current, snapshot.value.companion_cues, cuesPrimed.current);
+    cuesPrimed.current = true;
+    if (fresh.length) void playCue(fresh[fresh.length - 1]);
+  }, [snapshot.value]);
+  useEffect(() => {
+    if (!guideCue) return undefined;
+    const run = cueRun.current;
+    const timer = setTimeout(() => { if (cueRun.current === run) setGuideCue(null); }, GUIDE_SHOW_MS);
+    return () => clearTimeout(timer);
+  }, [guideCue]);
+
+  async function playCue(cue) {
+    const run = ++cueRun.current;
+    setGuideCue(null);
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const path = cuePath(cue);
+    if (path && navigate) {
+      try { await navigate(path); } catch { /* stay on the current view */ }
+      await wait(GUIDE_SETTLE_MS);
+    }
+    let element = null;
+    if (cue.target) {
+      const deadline = Date.now() + GUIDE_FIND_TIMEOUT_MS;
+      while (cueRun.current === run) {
+        element = findGuideTarget(win?.document, cue.target);
+        if (element || Date.now() >= deadline) break;
+        await wait(GUIDE_FIND_STEP_MS);
+      }
+    }
+    if (cueRun.current !== run) return;
+    element?.scrollIntoView?.({ block: 'center', behavior: reducedMotion(win) ? 'auto' : 'smooth' });
+    setGuideCue({ cue, element });
+  }
+
   // -- render -----------------------------------------------------------------
 
   const chipAgents = tabs.map((id) => agents.get(id)).filter(Boolean);
@@ -654,6 +731,7 @@ export function CompanionApp({
     ${windowView}
     ${chips}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
+    ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} onDismiss=${dismissGuide} win=${win} />`}
     ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
 }
 
