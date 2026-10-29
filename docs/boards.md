@@ -56,8 +56,16 @@ The server keeps only the element keys it knows and bounds each of them:
 `roughness`, `opacity`), text (`text`, `fontSize`, `textAlign`), arrow
 bindings (`startBinding`, `endBinding`), and `version`, `versionNonce`,
 `isDeleted` and `updated`. `customData.author` is always set by the server: to
-`operator` for the dashboard, and to the calling agent's id for an agent. A
-board holds at most 5000 live elements.
+`operator` for the dashboard, and to the calling agent's id for an agent.
+`version` is at most 2^53-1 and `versionNonce` a 32-bit integer. A board holds
+at most 5000 live elements and 20000 stored ones (tombstones included), and
+there are at most 500 boards. A patch that breaks a limit changes nothing.
+
+Only `text` elements carry text. A shape's label is a text element inside it,
+so `board add <shape> --text ...` adds a second, centred text element
+(`<id>-label`); move it along with the shape. Elements are returned in creation
+order, which is also their stacking order, and an edit keeps an element's
+place.
 
 Each element merges on its own, as Excalidraw reconciles: an incoming element
 replaces the stored one when there is none, when its `version` is higher, or
@@ -69,7 +77,11 @@ The board's own version goes up once for every patch that changed at least one
 element, and each changed element records that version as its
 `server_version`. A plain read returns the live elements; a read with
 `since=N` returns every element whose `server_version` is above `N`,
-tombstones included.
+tombstones included. A tombstone keeps only `id`, `type`, `version`,
+`versionNonce`, `isDeleted`, `updated` and `customData`.
+
+Deleting a board and creating one with the same id starts again at version 0,
+so a client holding an older `--since` should re-read the whole board.
 
 ## Board activity
 
@@ -92,4 +104,5 @@ view never reaches these routes: boards stay with their own node. Agents use
 `/v1/boards`: `GET /v1/boards`, `POST /v1/boards`, `GET /v1/boards/{id}`
 (`?since=N`), `PATCH /v1/boards/{id}` and `GET /v1/boards/{id}/snapshot`. The
 snapshot response carries `X-Board-Snapshot-Version` and `X-Board-Version`
-headers.
+headers. A snapshot upload for a version older than the stored snapshot is
+refused with 409.

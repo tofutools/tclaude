@@ -90,3 +90,20 @@ func TestBoardSnapshotAge(t *testing.T) {
 	assert.Contains(t, snapshotAge("2", "5"), "3 version(s) newer")
 	assert.Contains(t, snapshotAge("", "5"), "unknown")
 }
+
+func TestBoardAddShapeLabelIsACentredTextElement(t *testing.T) {
+	patched := fakeBoardDaemon(t)
+	x, y := 100.0, 80.0
+	var out, errb bytes.Buffer
+	rc := runBoardAdd(&boardAddParams{X: &x, Y: &y, Text: "API", ID: "box"}, "plan", "rectangle", &out, &errb)
+	require.Equal(t, rcOK, rc, errb.String())
+	require.Len(t, *patched, 2)
+	assert.NotContains(t, (*patched)[0], "text", "the shape itself carries no text")
+	label := (*patched)[1]
+	assert.Equal(t, "box-label", label["id"])
+	assert.Equal(t, "text", label["type"])
+	assert.Equal(t, "API", label["text"])
+	// Centred on the 160x80 shape: center (180,120), label box 36x25.
+	assert.EqualValues(t, 162, label["x"])
+	assert.EqualValues(t, 107.5, label["y"])
+}
