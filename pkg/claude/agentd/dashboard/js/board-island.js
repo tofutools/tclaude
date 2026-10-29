@@ -51,6 +51,13 @@ function smoothPath(points) {
   return `${d} L${last[0]},${last[1]}`;
 }
 
+// Element colours come from agents too: only plain colour values reach the
+// SVG attributes and the text editor's inline style.
+const SAFE_COLOR = /^(#[0-9a-f]{3,8}|transparent)$/i;
+export function safeColor(value, fallback) {
+  return typeof value === 'string' && SAFE_COLOR.test(value) ? value : fallback;
+}
+
 function dash(el) {
   if (el.strokeStyle === 'dashed') return '8 6';
   if (el.strokeStyle === 'dotted') return '2 5';
@@ -58,8 +65,9 @@ function dash(el) {
 }
 
 export function BoardElement({ el, flash = false }) {
-  const stroke = el.strokeColor || '#1e1e1e';
-  const fill = el.backgroundColor && el.backgroundColor !== 'transparent' ? el.backgroundColor : 'none';
+  const stroke = safeColor(el.strokeColor, '#1e1e1e');
+  const background = safeColor(el.backgroundColor, 'transparent');
+  const fill = background !== 'transparent' ? background : 'none';
   const common = {
     stroke, 'stroke-width': el.strokeWidth || 2, 'stroke-dasharray': dash(el), 'stroke-linecap': 'round',
     'stroke-linejoin': 'round', opacity: (el.opacity ?? 100) / 100, 'data-element': el.id,
@@ -116,7 +124,11 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const [fill, setFill] = useState(BOARD_FILLS[0]);
   const [selected, setSelected] = useState('');
   const [view, setView] = useState({ x: -40, y: -40, zoom: 1 });
-  const [editingText, setEditingText] = useState(null); // {id, x, y, text, isNew}
+  const [editingText, setEditingTextState] = useState(null); // {id, x, y, text, isNew}
+  // finishText can run twice for one edit (Enter, then the textarea's blur as
+  // it unmounts); the ref lets the second call see the edit already finished.
+  const editingRef = useRef(null);
+  const setEditingText = (value) => { editingRef.current = value; setEditingTextState(value); };
   const [flash, setFlash] = useState(() => new Set());
   const [invite, setInvite] = useState(false);
   const svgRef = useRef(null);
@@ -131,6 +143,10 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const metaRef = useRef(meta);
   metaRef.current = meta;
 
+  // The island stays mounted while other tabs show: input and polling only
+  // apply while the Boards view is the active one.
+  const shown = () => !!win?.document?.querySelector?.('#tab-boards.active');
+
   const agents = useMemo(() => companionAgents(snapshot.value), [snapshot.value]);
 
   // Load, then poll for agents' edits.
@@ -144,8 +160,12 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
         if (disposed.current) return;
         setMeta({ title: board.title || boardId, participants: Array.isArray(board.participants) ? board.participants : [] });
         const skip = new Set([...active.current, ...pending.current.keys()]);
-        const changed = mergeElements(elements.current, board.elements || [], skip);
-        if (Number.isFinite(board.version)) version.current = Math.max(version.current, board.version);
+        const incoming = board.elements || [];
+        const changed = mergeElements(elements.current, incoming, skip);
+        // An element skipped because the operator holds it must come again on
+        // the next poll, so the cursor only moves past fully merged responses.
+        const skipped = incoming.some((el) => skip.has(el?.id));
+        if (Number.isFinite(board.version) && !skipped) version.current = Math.max(version.current, board.version);
         if (changed.length) {
           if (since) {
             const remote = changed.filter((id) => elements.current.get(id)?.customData?.author !== 'operator');
@@ -166,7 +186,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     void load(0).then(() => {
       const tickPoll = async () => {
         if (disposed.current) return;
-        if (win?.document?.visibilityState !== 'hidden') await load(version.current);
+        if (win?.document?.visibilityState !== 'hidden' && shown()) await load(version.current);
         if (!disposed.current) pollTimer = setTimeout(tickPoll, BOARD_POLL_MS);
       };
       pollTimer = setTimeout(tickPoll, BOARD_POLL_MS);
@@ -174,8 +194,11 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     return () => {
       disposed.current = true;
       clearTimeout(pollTimer);
+      const eventPending = !!timers.current.event;
       for (const timer of Object.values(timers.current)) clearTimeout(timer);
       void flush();
+      // Leaving the board still tells its agents what the last edits were.
+      if (eventPending) void sendEvent();
     };
   }, [boardId]);
 
@@ -189,7 +212,9 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
         method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ elements: batch }),
       }));
-      if (Number.isFinite(result.version)) version.current = Math.max(version.current, result.version);
+      // The poll cursor is not advanced from here: agent edits that landed
+      // before this PATCH have versions below result.version.
+      void result;
     } catch (error) {
       // Keep the edits; the next change or flush retries them.
       for (const el of batch) if (!pending.current.has(el.id)) pending.current.set(el.id, el);
@@ -218,19 +243,22 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
 
   function scheduleEvent() {
     clearTimeout(timers.current.event);
-    timers.current.event = setTimeout(async () => {
-      const { ids, before } = eventBatch.current;
-      eventBatch.current = { ids: [], before: new Map() };
-      if (!metaRef.current.participants.length) return;
-      const text = describeChanges(elements.current, ids, before);
-      if (!text) return;
-      try {
-        await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/events`, {
-          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: `The operator ${text}.` }),
-        });
-      } catch { /* events are best-effort */ }
-    }, BOARD_EVENT_IDLE_MS);
+    timers.current.event = setTimeout(sendEvent, BOARD_EVENT_IDLE_MS);
+  }
+
+  async function sendEvent() {
+    timers.current.event = null;
+    const { ids, before } = eventBatch.current;
+    eventBatch.current = { ids: [], before: new Map() };
+    if (!metaRef.current.participants.length) return;
+    const text = describeChanges(elements.current, ids, before);
+    if (!text) return;
+    try {
+      await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/events`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `The operator ${text}.` }),
+      });
+    } catch { /* events are best-effort */ }
   }
 
   // commit records operator edits: the merged map, the undo history, the
@@ -243,7 +271,9 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       undoEntry.push({ id: el.id, before: prev || null });
       if (!eventBatch.current.before.has(el.id)) eventBatch.current.before.set(el.id, prev);
       eventBatch.current.ids.push(el.id);
-      const authored = { ...el, customData: { ...(el.customData || {}), author: 'operator' } };
+      // server_version is the daemon's read stamp, not element data.
+      const { server_version: _stamp, ...data } = el;
+      const authored = { ...data, customData: { ...(el.customData || {}), author: 'operator' } };
       elements.current.set(el.id, authored);
       pending.current.set(el.id, authored);
     }
@@ -314,7 +344,10 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
         const b = elementBounds(hit);
         const onHandle = Math.abs(p.x - (b.x + b.width)) < 10 / view.zoom && Math.abs(p.y - (b.y + b.height)) < 10 / view.zoom && !hit.points && hit.type !== 'text';
         active.current = new Set([hit.id]);
-        gesture.current = { kind: onHandle ? 'resize' : 'move', id: hit.id, start: p, orig: hit };
+        // The bound arrows' originals: the drag redraws them from these, and
+        // pointerup restores them so the commit (and its undo) starts clean.
+        const arrows = live.filter((el) => el.type === 'arrow' && (el.startBinding?.elementId === hit.id || el.endBinding?.elementId === hit.id));
+        gesture.current = { kind: onHandle ? 'resize' : 'move', id: hit.id, start: p, orig: hit, arrows };
       }
       return;
     }
@@ -364,14 +397,15 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     if (g.kind === 'erase') { eraseAt(p); return; }
     const el = elements.current.get(g.id);
     if (!el) return;
-    if (g.kind === 'move') {
-      const moved = { ...g.orig, x: g.orig.x + p.x - g.start.x, y: g.orig.y + p.y - g.start.y };
-      elements.current.set(g.id, moved);
-      for (const arrow of reboundArrows(elements.current, [g.id])) elements.current.set(arrow.id, arrow);
-      g.moved = true;
-    } else if (g.kind === 'resize') {
-      elements.current.set(g.id, { ...g.orig, width: Math.max(8, g.orig.width + p.x - g.start.x), height: Math.max(8, g.orig.height + p.y - g.start.y) });
-      for (const arrow of reboundArrows(elements.current, [g.id])) elements.current.set(arrow.id, arrow);
+    if (g.kind === 'move' || g.kind === 'resize') {
+      const next = g.kind === 'move'
+        ? { ...g.orig, x: g.orig.x + p.x - g.start.x, y: g.orig.y + p.y - g.start.y }
+        : { ...g.orig, width: Math.max(8, g.orig.width + p.x - g.start.x), height: Math.max(8, g.orig.height + p.y - g.start.y) };
+      elements.current.set(g.id, next);
+      // Rebind from the originals so a long drag does not inflate versions.
+      const temp = new Map(elements.current);
+      for (const arrow of g.arrows) temp.set(arrow.id, arrow);
+      for (const arrow of reboundArrows(temp, [g.id])) elements.current.set(arrow.id, arrow);
       g.moved = true;
     } else if (g.kind === 'draw') {
       const dx = p.x - g.start.x; const dy = p.y - g.start.y;
@@ -403,6 +437,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       if (!g.moved) return;
       const now = elements.current.get(g.id);
       elements.current.set(g.id, g.orig);
+      for (const arrow of g.arrows) elements.current.set(arrow.id, arrow);
       commit(withArrows([bump(g.orig, { x: now.x, y: now.y, width: now.width, height: now.height })]));
       return;
     }
@@ -451,14 +486,14 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
 
   function beginText(el, p = null) {
     if (el) {
-      setEditingText({ id: el.id, x: el.x, y: el.y, text: el.text || '', size: el.fontSize || 20, color: el.strokeColor, isNew: false });
+      setEditingText({ id: el.id, x: el.x, y: el.y, text: el.text || '', size: el.fontSize || 20, color: safeColor(el.strokeColor, '#1e1e1e'), isNew: false });
     } else {
       setEditingText({ id: '', x: p.x, y: p.y - 12, text: '', size: 20, color, isNew: true });
     }
   }
 
   function finishText() {
-    const t = editingText;
+    const t = editingRef.current;
     setEditingText(null);
     if (!t) return;
     const text = t.text.replace(/\s+$/, '');
@@ -481,7 +516,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     const onKey = (event) => {
       const target = event.target;
       if (editingText || target?.closest?.('input, textarea, [contenteditable="true"], .companion-window')) return;
-      if (!target?.closest?.('#tab-boards') && target !== win?.document?.body) return;
+      if (!shown() || (!target?.closest?.('#tab-boards') && target !== win?.document?.body)) return;
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && key === 'z') {
         event.preventDefault();
@@ -685,35 +720,37 @@ export function createBoardsState() {
   return { location: signal({ tab: 'boards' }) };
 }
 
+// restoreBoardsLocation applies a router location (Back/Forward, a deep link,
+// a guide cue) to the island state.
+function restoreBoardsLocation(state, event) {
+  const location = event.detail?.location;
+  if (location?.tab !== 'boards') return;
+  state.location.value = isBoardId(location.selection) ? { tab: 'boards', selection: location.selection } : { tab: 'boards' };
+}
+
 export function BoardsApp({ state, snapshot, fetchImpl = globalThis.fetch, notify = () => {}, win = globalThis.window, rasterize = null, openAgent = null }) {
-  const [boardId, setBoardId] = useState(() => (isBoardId(state.location.value.selection) ? state.location.value.selection : ''));
-  const open = useCallback((id, { announce = true } = {}) => {
-    const next = isBoardId(id) ? id : '';
-    setBoardId(next);
-    const location = next ? { tab: 'boards', selection: next } : { tab: 'boards' };
+  const selection = state.location.value.selection;
+  const boardId = isBoardId(selection) ? selection : '';
+  const open = (id) => {
+    const location = isBoardId(id) ? { tab: 'boards', selection: id } : { tab: 'boards' };
     state.location.value = location;
-    if (announce) win?.document?.dispatchEvent?.(new win.CustomEvent('tclaude:navigated', { detail: { location } }));
-  }, [state, win]);
-  // The router asks for a location (Back/Forward, a deep link, a guide cue).
-  useEffect(() => {
-    const onRestore = (event) => {
-      const location = event.detail?.location;
-      if (location?.tab !== 'boards') return;
-      open(location.selection || '', { announce: false });
-    };
-    win?.document?.addEventListener?.('tclaude:restore-location', onRestore);
-    return () => win?.document?.removeEventListener?.('tclaude:restore-location', onRestore);
-  }, [open, win]);
+    win?.document?.dispatchEvent?.(new win.CustomEvent('tclaude:navigated', { detail: { location } }));
+  };
   return html`<div class="boards-app">
     <${CollabSwitch} current="boards" win=${win} />
     ${boardId
       ? html`<${BoardEditor} key=${boardId} boardId=${boardId} fetchImpl=${fetchImpl} notify=${notify} snapshot=${snapshot}
           win=${win} rasterize=${rasterize} onBack=${() => open('')} onOpenAgent=${openAgent} />`
-      : html`<${BoardList} fetchImpl=${fetchImpl} notify=${notify} onOpen=${(id) => open(id)} />`}
+      : html`<${BoardList} fetchImpl=${fetchImpl} notify=${notify} onOpen=${open} />`}
   </div>`;
 }
 
 export function mountBoardsIsland({ host, switchHost, registerCleanup, ...props }) {
+  // Listen before the first render so a boot-time restore is never missed.
+  const doc = (props.win || globalThis.window)?.document;
+  const onRestore = (event) => restoreBoardsLocation(props.state, event);
+  doc?.addEventListener?.('tclaude:restore-location', onRestore);
+  registerCleanup(() => doc?.removeEventListener?.('tclaude:restore-location', onRestore));
   render(html`<${BoardsApp} ...${props} />`, host);
   registerCleanup(() => render(null, host));
   if (switchHost) {
