@@ -210,3 +210,13 @@ func TestBoardLayoutBreaksACycleOnTheCycle(t *testing.T) {
 	assert.Less(t, pos["x"][0], pos["y"][0])
 	assert.Less(t, pos["y"][0], pos["c"][0], "c comes after y, which points at it")
 }
+
+func TestBoardViewOverlap(t *testing.T) {
+	view := boardBox{X: 0, Y: 0, W: 100, H: 100}
+	assert.True(t, view.overlaps(elementBox(boardElementView{X: 90, Y: 90, Width: 50, Height: 50})), "partly in view")
+	assert.False(t, view.overlaps(elementBox(boardElementView{X: 150, Y: 0, Width: 10, Height: 10})))
+	// An arrow is placed by its points, not its (often zero) box.
+	arrow := boardElementView{X: 200, Y: 50, Points: [][]float64{{0, 0}, {-150, 0}}}
+	assert.Equal(t, boardBox{X: 50, Y: 50, W: 150, H: 0}, elementBox(arrow))
+	assert.True(t, view.overlaps(elementBox(arrow)))
+}

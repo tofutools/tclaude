@@ -68,6 +68,22 @@ type boardDoc struct {
 	Participants    []string          `json:"participants"`
 	SnapshotVersion *int64            `json:"snapshot_version,omitempty"`
 	Elements        []json.RawMessage `json:"elements"`
+	Presence        *boardPresence    `json:"presence,omitempty"`
+}
+
+// boardPresence is who is on the board right now (tcl-rawj2c).
+type boardPresence struct {
+	Agents []struct {
+		AgentID string `json:"agent_id"`
+		State   string `json:"state"`
+	} `json:"agents"`
+	OperatorView *struct {
+		X          float64 `json:"x"`
+		Y          float64 `json:"y"`
+		Width      float64 `json:"width"`
+		Height     float64 `json:"height"`
+		AgeSeconds int     `json:"age_seconds"`
+	} `json:"operator_view"`
 }
 
 // boardElementView is the part of an element the CLI reads.
@@ -206,6 +222,7 @@ func writeBoardJSON(stdout io.Writer, v any) int {
 type boardShowParams struct {
 	Since *int64 `long:"since" help:"Only elements changed after this board version, deletions included"`
 	JSON  bool   `long:"json" help:"Output the board JSON (elements in Excalidraw form)"`
+	View  bool   `long:"view" help:"Only the elements in the part of the board the operator has on screen"`
 }
 
 func boardShowCmd() *cobra.Command {
@@ -214,7 +231,8 @@ func boardShowCmd() *cobra.Command {
 		Short: "Show a board's elements",
 		Long: "Prints the board version and one line per live element: type, id, rounded x,y,w,h, a text excerpt, " +
 			"and for arrows their bound endpoints. With --since N only the elements changed after version N are " +
-			"listed, deletions included. Remember the printed version and pass it as --since next time.",
+			"listed, deletions included. Remember the printed version and pass it as --since next time. " +
+			"With --view only the elements the operator currently has on screen are listed (\"this\", \"here\").",
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardShowParams, _ *cobra.Command, args []string) {
@@ -232,9 +250,22 @@ func runBoardShow(p *boardShowParams, id string, stdout, stderr io.Writer) int {
 		}
 		since = *p.Since
 	}
+	if p.View && since >= 0 {
+		fmt.Fprintln(stderr, "Error: --view lists the whole operator view; it does not combine with --since")
+		return rcInvalidArg
+	}
 	doc, err := fetchBoard(id, since)
 	if err != nil {
 		return boardErr(stderr, err)
+	}
+	if p.View && p.JSON {
+		v := doc.Presence.view()
+		if v == nil {
+			fmt.Fprintln(stderr, "Error: the operator does not have this board open right now; drop --view")
+			return rcNotFound
+		}
+		doc.Elements = elementsInView(doc.Elements, *v)
+		return writeBoardJSON(stdout, doc)
 	}
 	if p.JSON {
 		return writeBoardJSON(stdout, doc)
@@ -246,6 +277,37 @@ func runBoardShow(p *boardShowParams, id string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout)
 	if len(doc.Participants) > 0 {
 		fmt.Fprintf(stdout, "Participants: %s\n", strings.Join(doc.Participants, ", "))
+	}
+	var view *boardBox
+	if pr := doc.Presence; pr != nil {
+		var active []string
+		for _, a := range pr.Agents {
+			active = append(active, a.AgentID+" "+a.State)
+		}
+		if len(active) > 0 {
+			fmt.Fprintf(stdout, "Active now: %s\n", strings.Join(active, ", "))
+		}
+		if v := pr.OperatorView; v != nil {
+			view = &boardBox{X: v.X, Y: v.Y, W: v.Width, H: v.Height}
+			fmt.Fprintf(stdout, "The operator is looking at x=%d..%d y=%d..%d (as of %ds ago).\n",
+				int64(math.Round(v.X)), int64(math.Round(v.X+v.Width)), int64(math.Round(v.Y)), int64(math.Round(v.Y+v.Height)), v.AgeSeconds)
+		}
+	}
+	if p.View {
+		if view == nil {
+			fmt.Fprintln(stdout, "The operator does not have this board open right now; drop --view to list everything.")
+			return rcOK
+		}
+		kept := elementsInView(doc.Elements, *view)
+		fmt.Fprintf(stdout, "%d of %d element(s) are in the operator's view:\n", len(kept), len(doc.Elements))
+		doc.Elements = nil
+		for _, raw := range kept {
+			var e boardElementView
+			if json.Unmarshal(raw, &e) == nil {
+				fmt.Fprintln(stdout, "  "+formatBoardElement(e))
+			}
+		}
+		return rcOK
 	}
 	if since >= 0 {
 		fmt.Fprintf(stdout, "%d element(s) changed since version %d:\n", len(doc.Elements), since)
@@ -260,6 +322,52 @@ func runBoardShow(p *boardShowParams, id string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "  "+formatBoardElement(e))
 	}
 	return rcOK
+}
+
+type boardBox struct{ X, Y, W, H float64 }
+
+// view is the operator's view of the board, or nil.
+func (p *boardPresence) view() *boardBox {
+	if p == nil || p.OperatorView == nil {
+		return nil
+	}
+	v := p.OperatorView
+	return &boardBox{X: v.X, Y: v.Y, W: v.Width, H: v.Height}
+}
+
+func elementsInView(elems []json.RawMessage, view boardBox) []json.RawMessage {
+	kept := []json.RawMessage{}
+	for _, raw := range elems {
+		var e boardElementView
+		if json.Unmarshal(raw, &e) == nil && !e.IsDeleted && view.overlaps(elementBox(e)) {
+			kept = append(kept, raw)
+		}
+	}
+	return kept
+}
+
+func (b boardBox) overlaps(o boardBox) bool {
+	return o.X <= b.X+b.W && o.X+o.W >= b.X && o.Y <= b.Y+b.H && o.Y+o.H >= b.Y
+}
+
+// elementBox is the area an element covers; arrows, lines and strokes by
+// their points.
+func elementBox(e boardElementView) boardBox {
+	if len(e.Points) == 0 {
+		return boardBox{X: e.X, Y: e.Y, W: e.Width, H: e.Height}
+	}
+	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+	for _, pt := range e.Points {
+		if len(pt) < 2 {
+			continue
+		}
+		minX, maxX = math.Min(minX, pt[0]), math.Max(maxX, pt[0])
+		minY, maxY = math.Min(minY, pt[1]), math.Max(maxY, pt[1])
+	}
+	if math.IsInf(minX, 1) {
+		return boardBox{X: e.X, Y: e.Y}
+	}
+	return boardBox{X: e.X + minX, Y: e.Y + minY, W: maxX - minX, H: maxY - minY}
 }
 
 func formatBoardElement(e boardElementView) string {

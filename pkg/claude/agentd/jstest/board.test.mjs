@@ -322,3 +322,38 @@ test('the editor rubber-band selects, aligns, labels a shape on double-click and
   assert.deepEqual([patches[0].x, patches[0].y], [101, 210], 'placed at the last pointer position');
   await view.unmount();
 });
+
+test('the editor shows who is drawing and reports the operator\'s view of the board', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardsApp, createBoardsState, BOARD_POLL_MS } = await harness.importDashboardModule('js/board-island.js');
+  const views = [];
+  let presence = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).endsWith('/view')) { views.push(JSON.parse(init.body)); return ok({}, 204); }
+    return ok({ id: 'plan', title: 'Plan', version: 1, participants: [A], elements: [], presence: { agents: presence } });
+  };
+  const state = createBoardsState();
+  state.location.value = { tab: 'boards', selection: 'plan' };
+  const snapshot = harness.signals.signal({ groups: [{ name: 'team', members: [{ agent_id: A, conv_id: 'c', title: 'alpha', online: true, state: { status: 'idle' } }] }] });
+  const section = boardsSection(harness);
+  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  await harness.act(() => wait());
+  view.container.querySelector('svg.board-canvas').getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 400 });
+  presence = [{ agent_id: A, state: 'drawing' }];
+  await harness.act(() => wait(BOARD_POLL_MS + 50));
+  assert.match(view.container.querySelector('.board-drawing-note').textContent, /alpha is drawing/);
+  assert.ok(view.container.querySelector('.board-person.drawing'));
+  const { client, ...area } = views.at(-1);
+  assert.match(client, /^[a-z0-9]+$/, 'each editor reports under its own token');
+  assert.deepEqual(area, { x: -40, y: -40, width: 800, height: 400 }, 'the visible board area, in board units');
+  const sent = views.length;
+  await harness.act(() => wait(BOARD_POLL_MS + 50));
+  assert.equal(views.length, sent, 'an unchanged view is not re-sent every poll');
+
+  // Looking at another tab clears it.
+  presence = [];
+  section.classList.remove('active');
+  await harness.act(() => wait(BOARD_POLL_MS + 50));
+  assert.deepEqual(views.at(-1), { client });
+  await view.unmount();
+});

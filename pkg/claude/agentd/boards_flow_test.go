@@ -373,3 +373,79 @@ func TestBoardsEventImageIsARegionAgentsCanFetch(t *testing.T) {
 	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "rg", "title": "Regions"}).Code)
 	assert.Equal(t, http.StatusNotFound, agentGet("/v1/boards/rg/snapshot?region=1").Code)
 }
+
+func TestBoardsPresenceAgentsAndOperatorView(t *testing.T) {
+	f := newFlow(t)
+	now := time.Unix(1_800_000_000, 0)
+	t.Cleanup(agentd.ResetBoardEventsForTest(func() time.Time { return now }))
+	const conv = "board-presence-conv"
+	f.HaveConvWithTitle(conv, "presence")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermBoardsRead, "test"))
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermBoardsWrite, "test"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+	}
+	agent := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, path, body), conv))
+	}
+	type presence struct {
+		Agents []struct {
+			AgentID string `json:"agent_id"`
+			State   string `json:"state"`
+		} `json:"agents"`
+		OperatorView *struct {
+			X, Y, Width, Height float64
+			AgeSeconds          int `json:"age_seconds"`
+		} `json:"operator_view"`
+	}
+	read := func(rec *httptest.ResponseRecorder) presence {
+		t.Helper()
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var out struct{ Presence presence }
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out.Presence
+	}
+	states := func(p presence) map[string]string {
+		m := map[string]string{}
+		for _, a := range p.Agents {
+			m[a.AgentID] = a.State
+		}
+		return m
+	}
+	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "pr", "title": "Presence"}).Code)
+	assert.Empty(t, read(serve(http.MethodGet, "/api/boards/pr", nil)).Agents)
+
+	// An agent read is "looking"; an edit is "drawing" for a few seconds.
+	read(agent(http.MethodGet, "/v1/boards/pr", nil))
+	assert.Equal(t, map[string]string{agentID: "looking"}, states(read(serve(http.MethodGet, "/api/boards/pr?since=0", nil))))
+	require.Equal(t, http.StatusOK, agent(http.MethodPatch, "/v1/boards/pr", map[string]any{"elements": []any{rect("n1", 1, 1, 0)}}).Code)
+	assert.Equal(t, map[string]string{agentID: "drawing"}, states(read(serve(http.MethodGet, "/api/boards/pr", nil))))
+	now = now.Add(10 * time.Second)
+	assert.Equal(t, map[string]string{agentID: "looking"}, states(read(serve(http.MethodGet, "/api/boards/pr", nil))))
+	now = now.Add(time.Minute)
+	assert.Empty(t, read(serve(http.MethodGet, "/api/boards/pr", nil)).Agents)
+
+	// The operator's view reaches agent reads while it is fresh.
+	require.Equal(t, http.StatusBadRequest, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"x": 0, "y": 0, "width": 0, "height": 10}).Code)
+	require.Equal(t, http.StatusNotFound, serve(http.MethodPost, "/api/boards/nope/view", map[string]any{"x": 0, "y": 0, "width": 10, "height": 10}).Code)
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"x": -40, "y": 10, "width": 800, "height": 600}).Code)
+	now = now.Add(5 * time.Second)
+	v := read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView
+	require.NotNil(t, v)
+	assert.Equal(t, []float64{-40, 10, 800, 600}, []float64{v.X, v.Y, v.Width, v.Height})
+	assert.Equal(t, 5, v.AgeSeconds)
+	// Another editor tab clearing its own view leaves this one.
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"client": "tab-2"}).Code)
+	require.NotNil(t, read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView)
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"client": "tab-2", "x": 500, "y": 0, "width": 10, "height": 10}).Code)
+	assert.Equal(t, 500.0, read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView.X, "the newest view is the operator's")
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"client": "tab-2"}).Code)
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{}).Code)
+	assert.Nil(t, read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView, "{} clears the view")
+	require.Equal(t, http.StatusNoContent, serve(http.MethodPost, "/api/boards/pr/view", map[string]any{"x": 0, "y": 0, "width": 10, "height": 10}).Code)
+	now = now.Add(3 * time.Minute)
+	assert.Nil(t, read(agent(http.MethodGet, "/v1/boards/pr", nil)).OperatorView, "a stale view is dropped")
+}
