@@ -635,6 +635,15 @@ only points: it never presses anything, and it plays once, then fades after a
 few seconds or when you dismiss it. Both slugs are granted to the Steward when
 it is summoned and are not default-granted to other agents.
 
+**Voice.** **🔈** in the window's title bar turns voice on for the agent in
+the current tab (**🔊**). When its turn ends, its last message is read aloud;
+code blocks, tables and links are summarised, and a long reply is cut short
+with a pointer to the window. It also says when the agent needs you. Typing
+in the message row stops speech. Speech uses your browser's built-in voices and
+prefers one that runs locally, so nothing is installed. The reply is read
+from the agent's own transcript, so it works for harnesses whose transcript
+tclaude can decode (Claude Code and Codex).
+
 **Mark up a view.** **✎** in the message row, or **Ctrl+Shift+.**, lays a
 drawing layer over the page you are on. Circle, underline or draw an arrow at
 what you mean, add a note, and **Send**. The agent cannot see your screen, so

@@ -29,6 +29,7 @@ import {
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
+import { VOICE_PREF, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 
 const html = htm.bind(h);
@@ -222,6 +223,7 @@ function ApprovalCard({ request, fetchImpl, notify }) {
 }
 
 export function CompanionApp({
+  speakerImpl = null,
   snapshot,
   activeTab,
   prefs,
@@ -262,6 +264,11 @@ export function CompanionApp({
   const [withContext, setWithContext] = useState(true);
   // The agent the operator is marking up the page for (tcl-8vjjko), or null.
   const [annotating, setAnnotating] = useState(null);
+  // Voice output (tcl-q3qcfw): agents whose replies are spoken aloud.
+  const [voiceAgents, setVoiceAgents] = useState(() => new Set(parseVoiceAgents(readPref(prefs, VOICE_PREF))));
+  const speaker = useMemo(() => speakerImpl || createSpeaker(win), [speakerImpl, win]);
+  const voiceReader = useMemo(() => createVoiceReader(fetchImpl), [fetchImpl]);
+  const voiceStatuses = useRef(new Map());
   const [sending, setSending] = useState(false);
   const windowRef = useRef(null);
   const chipRects = useRef(new Map());
@@ -589,6 +596,51 @@ export function CompanionApp({
     }
   }
 
+  useEffect(() => {
+    writePref(prefs, VOICE_PREF, JSON.stringify([...voiceAgents]));
+    for (const id of voiceAgents) voiceReader.prime(id).catch(() => {});
+  }, [voiceAgents, voiceReader]);
+
+  // Speak when a voice agent's turn ends, or when it starts waiting on the
+  // operator. Only transitions speak; the first sight of an agent is silent.
+  useEffect(() => {
+    if (!speaker.supported) return;
+    const next = new Map();
+    for (const id of voiceAgents) {
+      const agent = agents.get(id);
+      if (agent) next.set(id, statusOf(agent));
+    }
+    const said = voiceTransitions(voiceStatuses.current, next);
+    voiceStatuses.current = next;
+    const named = voiceAgents.size > 1;
+    for (const { agentId, kind } of said) {
+      const agent = agents.get(agentId);
+      if (!agent) continue;
+      if (kind === 'needs') {
+        speaker.speak(`${agent.name} needs you${agent.detail ? `: ${speakableText(agent.detail, 120)}` : '.'}`);
+        continue;
+      }
+      voiceReader.latest(agentId).then((text) => {
+        const spoken = speakableText(text);
+        if (spoken && voiceAgents.has(agentId)) speaker.speak(named ? `${agent.name}: ${spoken}` : spoken);
+      }).catch(() => {});
+    }
+  }, [agents, voiceAgents, snapshot.value]);
+
+  function toggleVoice(agent) {
+    setVoiceAgents((current) => {
+      const next = new Set(current);
+      if (next.has(agent.agentId)) {
+        next.delete(agent.agentId);
+        voiceReader.forget(agent.agentId);
+        speaker.cancel();
+      } else {
+        next.add(agent.agentId);
+      }
+      return next;
+    });
+  }
+
   // The window and chips stay mounted (the terminal keeps its stream) but
   // step out of the way while the operator draws.
   useEffect(() => {
@@ -790,6 +842,10 @@ export function CompanionApp({
           title="Summon the Steward or pin a live agent" onClick=${() => setMenu((v) => !v)}>＋</button>
       </div>
       <div class="companion-controls">
+        ${activeAgent && speaker.supported && html`<button type="button" class=${`companion-voice${voiceAgents.has(activeAgent.agentId) ? ' on' : ''}`}
+          aria-pressed=${voiceAgents.has(activeAgent.agentId) ? 'true' : 'false'} aria-label=${`Speak ${activeAgent.name}'s replies aloud`}
+          title=${voiceAgents.has(activeAgent.agentId) ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
+          onClick=${() => toggleVoice(activeAgent)}>${voiceAgents.has(activeAgent.agentId) ? '🔊' : '🔈'}</button>`}
         ${activeAgent && openTerminalsPane && html`<button type="button" aria-label="Open in the Terminals tab" title="Open in the Terminals tab"
           onClick=${() => moveToTerminals(activeAgent)}>⤢</button>`}
         <button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>
@@ -835,7 +891,7 @@ export function CompanionApp({
       </label>
       <input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
         placeholder=${`Message ${activeAgent.name} (queued to its inbox; or type in the terminal above)`}
-        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => setDraft(event.currentTarget.value)} />
+        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); setDraft(event.currentTarget.value); }} />
       <button type="submit" disabled=${sending || !draft.trim()}>Send</button>
       <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
