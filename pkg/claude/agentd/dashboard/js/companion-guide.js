@@ -9,7 +9,7 @@
 // headings on the page; the companion's own window is never a target.
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 
 const html = htm.bind(h);
@@ -17,6 +17,7 @@ const html = htm.bind(h);
 export const GUIDE_SHOW_MS = 14000;
 export const GUIDE_FIND_TIMEOUT_MS = 3000;
 export const GUIDE_FIND_STEP_MS = 250;
+export const GUIDE_MARK_PATIENCE_MS = 1000;
 // Give a freshly activated view a moment to render before looking for the
 // target.
 export const GUIDE_SETTLE_MS = 350;
@@ -61,14 +62,16 @@ function visible(el) {
 
 // findGuideTarget returns the visible element best matching the target text,
 // outside the companion itself, or null. With loose, an element that is not
-// a control or heading (a graph node, a table cell) can match too when no
-// control does; the smallest matching element wins.
+// a control or heading (a graph node, a table cell) matches too, and a
+// better text match wins over a control: an exact "Review" node beats a
+// "Request review" button. Among equal matches the innermost element wins.
 export function findGuideTarget(doc, target, { exclude = '#companion-root', loose = false } = {}) {
   if (!doc || !target) return null;
   const strict = findIn(doc.querySelectorAll(TARGET_SELECTOR), target, exclude);
-  if (strict || !loose) return strict;
+  if (!loose) return strict.el;
   const short = [...doc.querySelectorAll('body *')].filter((el) => (el.textContent || '').length <= 200);
-  return findIn(short, target, exclude);
+  const any = findIn(short, target, exclude);
+  return (any.score > strict.score ? any : strict).el;
 }
 
 function findIn(elements, target, exclude) {
@@ -77,12 +80,14 @@ function findIn(elements, target, exclude) {
   for (const el of elements) {
     if (exclude && el.closest?.(exclude)) continue;
     const score = guideMatchScore(textOf(el), target);
-    if (score <= bestScore) continue;
+    // Elements come in document order, so a tie with an element inside the
+    // current best is the tighter fit (the span, not its row).
+    if (score < bestScore || (score === bestScore && !(best?.contains?.(el) && best !== el))) continue;
     if (!visible(el)) continue;
     best = el;
     bestScore = score;
   }
-  return best;
+  return { el: best, score: bestScore };
 }
 
 // cuePath turns a cue into the dashboard path to open, or '' to stay.
@@ -218,7 +223,7 @@ export function GuideOverlay({ cue, element, marks = [], onDismiss, win = global
   const missing = cue.target && !element;
   const lost = marks.filter((m) => !m.element || (m.mark.kind === 'arrow' && !m.from))
     .map((m) => (m.mark.kind === 'arrow' && !m.from ? m.mark.from : m.mark.target));
-  const drawn = marks.filter((m) => m.element && (m.mark.kind !== 'arrow' || m.from));
+  const drawn = useMemo(() => marks.filter((m) => m.element && (m.mark.kind !== 'arrow' || m.from)), [marks]);
   const markLayer = drawn.length ? html`<${GuideMarks} marks=${drawn} win=${win} />` : null;
   const note = html`<div class="companion-guide-note" role="status">
     <span class="companion-avatar steward" aria-hidden="true">✦</span>
