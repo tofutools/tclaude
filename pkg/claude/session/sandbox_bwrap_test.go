@@ -165,9 +165,10 @@ func countBwrapTriplet(args []string, flag, source, target string) int {
 //
 // The plan here is built the only way production builds one — through
 // Normalize and RenderMountPlan — because that is the path a reintroduced
-// reopen would have to travel. Two things are asserted together: that the
-// broadest ancestor grant is refused outright, and that the broadest grant
-// which IS legal still leaves every protected root hidden with no reopen.
+// reopen would have to travel. Two shapes are asserted: a writable Home (the
+// protected roots' common ancestor) is admitted but every protected root is
+// re-hidden on top of its bind, and deny-Home-reopen-a-child leaves every
+// protected root hidden with no reopen.
 func TestBwrapArgsHidesProtectedRootsWithNoReopens(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -184,14 +185,29 @@ func TestBwrapArgsHidesProtectedRootsWithNoReopens(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, protected, 2)
 
-	// A read grant on the protected roots' common ancestor is the cheapest way
-	// to reach them, and it is refused. This is why no bind below can cover a
-	// protected root in the first place.
-	_, err = sandboxpolicy.Normalize(sandboxpolicy.Profile{
-		Name:       "ancestor-read",
-		Filesystem: []sandboxpolicy.FilesystemGrant{{Path: home, Access: sandboxpolicy.AccessRead}},
+	// A write grant on the protected roots' common ancestor is admitted; the
+	// applier must restore every protected hide AFTER the Home bind.
+	homeWrite, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+		Name:       "home-write",
+		Filesystem: []sandboxpolicy.FilesystemGrant{{Path: "~", Access: sandboxpolicy.AccessWrite}},
 	})
-	require.ErrorContains(t, err, "intersects protected directory")
+	require.NoError(t, err)
+	homePlan, err := sandboxpolicy.RenderMountPlan(sandboxpolicy.EffectiveProfile{
+		Filesystem: homeWrite.Filesystem,
+	})
+	require.NoError(t, err)
+	homeArgs, err := bwrapArgs(nil, homePlan)
+	require.NoError(t, err)
+	homeBind := indexOfBwrapTriplet(homeArgs, "--bind", home)
+	require.NotEqual(t, -1, homeBind)
+	for _, root := range protected {
+		hides := indicesOfBwrapTriplet(homeArgs, "--tmpfs", root)
+		require.NotEmpty(t, hides, "protected root %s must be hidden", root)
+		assert.Less(t, homeBind, hides[len(hides)-1],
+			"protected root %s must be re-hidden after the Home bind", root)
+		assert.Equal(t, -1, indexOfBwrapTriplet(homeArgs, "--bind", root),
+			"no write reopen may exist for protected root %s", root)
+	}
 
 	// The widest legal shape: deny the ancestor, reopen an ordinary child.
 	normalized, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{

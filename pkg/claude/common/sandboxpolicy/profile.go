@@ -778,23 +778,33 @@ func normalizeFilesystemGrant(
 			index, resolved,
 		)
 	}
+	mountPath, err = normalizeMountPath(index, grant, resolved)
+	if err != nil {
+		return "", "", "", "", false, err
+	}
 	if grant.Access != AccessDeny {
+		remapped := mountPath != ""
 		for _, denied := range protected {
 			// Guard-biased on purpose: spelling restoration above already
 			// aligns the common case, but a not-yet-created grant path has no
 			// on-disk spelling to restore, so the residual folded collision has
 			// to be refused here rather than admitted.
-			if GuardPathsIntersect(resolved, denied) {
+			//
+			// A same-path row on an ANCESTOR of a protected root (`~` write) is
+			// admitted: every applier re-hides the protected roots on top of
+			// it (class 3 in mount_plan_render.go), so the row grants Home
+			// minus the wall. A row at or below a protected root still reopens
+			// it and is refused. A remapped ancestor stays refused because it
+			// would project the protected subtree to a guest path the host-path
+			// re-hide does not cover.
+			if GuardContainsOrEqual(denied, resolved) ||
+				(remapped && GuardContainsOrEqual(resolved, denied)) {
 				return "", "", "", "", false, fmt.Errorf(
 					"filesystem[%d].path %q intersects protected directory %q",
 					index, resolved, denied,
 				)
 			}
 		}
-	}
-	mountPath, err = normalizeMountPath(index, grant, resolved)
-	if err != nil {
-		return "", "", "", "", false, err
 	}
 	return spelling, resolved, mountPath, kind, missing, nil
 }

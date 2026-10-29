@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // claudeSettingsJSON collects every per-session Claude Code settings.json
@@ -89,6 +90,9 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 				"reason", "a reopen beneath the deny cannot be expressed as a permission rule (deny precedes allow)")
 		}
 	}
+	if strings.TrimSpace(spec.HarnessBuiltinMode) != ClaudeSandboxOff {
+		appendClaudeProtectedRootDenies(settings, spec.SandboxReadDirs, spec.SandboxWriteDirs)
+	}
 	if v := claudeAskTimeoutValue(spec.AskUserQuestionTimeout); v != "" {
 		settings["askUserQuestionTimeout"] = v
 	}
@@ -119,6 +123,55 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		return ""
 	}
 	return string(b)
+}
+
+// appendClaudeProtectedRootDenies re-denies every protected root a read/write
+// grant covers. Profile validation admits a grant on an ancestor of a protected
+// root (a writable `~`), relying on each applier to restore the wall on top of
+// it. Only the `on` block carries these denies unconditionally, so an inherit
+// launch over an operator settings.json without the hardening block would
+// otherwise hand the ancestor's access straight through. Nothing reopens
+// beneath a protected root, so the permission mirror is always expressible.
+func appendClaudeProtectedRootDenies(settings map[string]any, readDirs, writeDirs []string) {
+	grants := append(normalizedSandboxWriteDirs(readDirs), normalizedSandboxWriteDirs(writeDirs)...)
+	if len(grants) == 0 {
+		return
+	}
+	protected, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		slog.Warn("claude sandbox: could not resolve protected roots", "error", err)
+		return
+	}
+	var covered []string
+	for _, root := range protected {
+		for _, dir := range grants {
+			if sandboxpolicy.GuardContainsOrEqual(dir, root) {
+				covered = append(covered, root)
+				break
+			}
+		}
+	}
+	if len(covered) == 0 {
+		return
+	}
+	block, _ := settings["sandbox"].(map[string]any)
+	if block == nil {
+		block = map[string]any{}
+		settings["sandbox"] = block
+	}
+	filesystem, _ := block["filesystem"].(map[string]any)
+	if filesystem == nil {
+		filesystem = map[string]any{}
+		block["filesystem"] = filesystem
+	}
+	appendSandboxFilesystemDirs(filesystem, "denyRead", covered)
+	appendSandboxFilesystemDirs(filesystem, "denyWrite", covered)
+	rules := make([]string, 0, 2*len(covered))
+	for _, root := range covered {
+		pattern := claudeAbsolutePermissionPattern(root)
+		rules = append(rules, "Read("+pattern+")", "Edit("+pattern+")")
+	}
+	appendClaudePermissionDeny(settings, rules)
 }
 
 func appendSandboxFilesystemDirs(filesystem map[string]any, key string, dirs []string) {

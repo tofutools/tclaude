@@ -290,9 +290,15 @@ The axes:
 ### Protected roots
 
 `~/.tclaude/data` and `~/.claude/sessions` are an absolute wall. No profile,
-include, launch contract, or flag reopens them, and any read/write rule that
-*intersects* one is refused — ancestors count, so an ordinary row over
-`~/.claude` is rejected because it contains `sessions`. Comparison is by
+include, launch contract, or flag reopens them, and any read/write rule at or
+below one is refused. A rule on an *ancestor* is allowed and keeps the wall:
+`{"path": "~", "access": "write"}` makes the whole Home writable, including
+directories created later, while every launch re-hides the protected roots on
+top of it (tclaude’s sandbox on Linux and macOS, Codex's permission profile,
+OpenCode's rules, and Claude Code's own sandbox via `denyRead`/`denyWrite`).
+An ancestor row with a `mount_path` is still refused, because the projection
+would carry the protected tree to a sandbox path the re-hide does not cover.
+Comparison is by
 filesystem identity, not string: case or Unicode-normalization spellings of a
 protected root are refused alike, on every volume, including for paths that do
 not exist yet. `~/.codex` is not protected and must be reopened under a denied
