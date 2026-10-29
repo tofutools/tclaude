@@ -736,8 +736,8 @@ export async function handleRowAction(action) {
         // Open the picker that assigns the durable sandbox implementation. The
         // dialog loads the recorded posture itself — the row's sandbox fields
         // describe the LAST LAUNCH, which is a different question from what the
-        // next one will use. The button is disabled while the agent is online,
-        // and the daemon re-checks and refuses if it came back up meanwhile.
+        // next one will use. For a running agent the dialog asks the daemon to
+        // restart it under the new implementation.
         openSandboxImplDialog({
           conv: agent,
           label,

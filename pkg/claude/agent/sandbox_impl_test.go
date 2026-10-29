@@ -46,6 +46,27 @@ func TestRunSandboxImplSet_PostsTheSelectorAndBody(t *testing.T) {
 	assert.Contains(t, out, "wake the agent")
 }
 
+func TestRunSandboxImplSet_RestartIsSentAndReported(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"conv_id":"conv-legacy","sandbox_implementation":"resource-only",
+		"previous_sandbox_implementation":"harness-builtin","online":true,"restart":"resumed"}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{
+		Agent: "legacy-worker", Implementation: "resource-only", Restart: true,
+	}, &stdout, &stderr)
+
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 1)
+	body, ok := calls[0].body.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, body["restart"])
+	out := stdout.String()
+	assert.Contains(t, out, "restarted")
+	assert.NotContains(t, out, "applies to its next launch",
+		"a restarted agent already runs under the new posture")
+}
+
 func TestRunSandboxImplSet_PinsAnExplicitMode(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, ok(sandboxImplAssignedBody))

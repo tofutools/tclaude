@@ -18,10 +18,10 @@ import (
 // sandboxImplCmd is `tclaude agent sandbox-impl` — read or reassign the sandbox
 // IMPLEMENTATION an existing agent will relaunch under.
 //
-// There is no self-targeted form. The implementation is applied by a launch, and
-// the daemon refuses to reassign a running agent, so the target is always
-// another (stopped) agent named positionally rather than the `--target` flag the
-// self-defaulting lifecycle verbs use.
+// There is no self-targeted form. The implementation is applied by a launch, so
+// the target is another agent named positionally — stopped, or idle with
+// `set --restart` — rather than the `--target` flag the self-defaulting
+// lifecycle verbs use.
 func sandboxImplCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:     "sandbox-impl",
@@ -33,8 +33,9 @@ func sandboxImplCmd() *cobra.Command {
 			"created before an implementation existed is moved onto it: the classic case is giving an " +
 			"older agent `resource-only`, so its next launch runs in a per-agent cgroup with the " +
 			"accounting, OOM attribution and kill handle that brings.\n\n" +
-			"The assignment takes effect on the next launch, so the agent must be stopped: stop it, " +
-			"assign, then wake it. Both subcommands require the `agent.sandbox-impl` permission, " +
+			"The assignment takes effect on the next launch. A stopped agent is assigned and left " +
+			"stopped; a running agent needs `set --restart`, which stops the idle agent, assigns and " +
+			"resumes it. Both subcommands require the `agent.sandbox-impl` permission, " +
 			"which group ownership does NOT confer.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds:     []*cobra.Command{sandboxImplShowCmd(), sandboxImplSetCmd(), sandboxImplDefaultCmd()},
@@ -65,6 +66,7 @@ type sandboxImplSetParams struct {
 	Agent          string `pos:"true" help:"Agent selector: title, full conv-id, or 8+-char prefix"`
 	Implementation string `pos:"true" help:"harness-builtin | tclaude-layer | resource-only | off"`
 	Sandbox        string `long:"sandbox" optional:"true" help:"Pin the harness-builtin sandbox mode recorded alongside the implementation. Omitted, the agent's recorded mode is carried through the same resolution a launch applies."`
+	Restart        bool   `long:"restart" optional:"true" help:"If the agent is running, stop it (it must be idle), assign, and resume the same conversation under the new implementation. Without it, a running agent is refused."`
 	JSON           bool   `long:"json" help:"Emit the stable JSON object instead of the human view"`
 	AskHuman       string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
@@ -72,10 +74,11 @@ type sandboxImplSetParams struct {
 func sandboxImplSetCmd() *cobra.Command {
 	return boa.CmdT[sandboxImplSetParams]{
 		Use:   "set",
-		Short: "Assign the sandbox implementation an offline agent will relaunch under",
-		Long: "Records a new sandbox implementation for an existing agent. The agent must be stopped: " +
-			"the posture is applied by the launch that follows, so assigning it under a running pane " +
-			"would leave the record describing containment the live process does not have.\n\n" +
+		Short: "Assign the sandbox implementation an agent will relaunch under",
+		Long: "Records a new sandbox implementation for an existing agent. The posture is applied by " +
+			"the launch that follows, so a running agent is refused unless --restart is given: then, " +
+			"once every gate below has passed, the idle agent is stopped, the posture recorded, and the " +
+			"same conversation resumed under it. A stopped agent is assigned and left stopped.\n\n" +
 			"The recorded harness sandbox mode moves with the implementation, because the " +
 			"implementation decides what the harness's own sandbox may be — `resource-only`, `off` " +
 			"and `tclaude-layer` all derive the mode their launch runs under. A mode derived that way " +
@@ -128,6 +131,10 @@ type sandboxImplResp struct {
 	// proceed without — which the assignment probed — from one it merely
 	// attempts, which it did not.
 	ResourceCgroupRequired bool `json:"resource_cgroup_required,omitempty"`
+	// Restart is set when a --restart assignment stopped and resumed a live
+	// agent to apply it.
+	Restart         string `json:"restart,omitempty"`
+	SwitchedClients int    `json:"switched_clients,omitempty"`
 }
 
 // runSandboxImplShow reads one agent's durable posture and renders it.
@@ -185,6 +192,7 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 	body := map[string]any{
 		"implementation": implementation,
 		"sandbox":        strings.TrimSpace(p.Sandbox),
+		"restart":        p.Restart,
 	}
 	var resp sandboxImplResp
 	if err := DaemonRequest(http.MethodPost,
@@ -240,7 +248,9 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 	if resp.TemporarySandbox {
 		fmt.Fprintln(stdout, "  note: the temporary dashboard sandbox unlock is active; it suspends this posture until restored")
 	}
-	if resp.Online {
+	if resp.Restart != "" {
+		fmt.Fprintln(stdout, "  restarted: the agent is running under the new implementation")
+	} else if resp.Online {
 		fmt.Fprintln(stdout, "  note: the agent is running; the recorded posture applies to its next launch")
 	} else if resp.Previous != "" {
 		fmt.Fprintln(stdout, "  wake the agent to launch it under the new implementation")

@@ -120,18 +120,21 @@ get it back.
 ### Reassigning an existing agent
 
 ```bash
-tclaude agent stop <agent>
-tclaude agent sandbox-impl set <agent> resource-only
-tclaude agent resume <agent>
+tclaude agent sandbox-impl set <agent> resource-only --restart
 ```
 
 `tclaude agent sandbox-impl show|set` takes a positional selector (there is no
-self form and no `--target`), refuses while the agent is online, validates the
-assignment against the chain the *relaunch* will resolve, and probes cgroup
+self form and no `--target`). A stopped agent is assigned and left stopped
+(wake it to apply). A running agent is refused unless `--restart` is given:
+then, once every check below has passed, the agent — which must be fully
+idle — is stopped, assigned, and resumed in the same conversation, carrying
+any attached terminal across. The assignment is validated against the chain
+the *relaunch* will resolve, and probes cgroup
 creation for implementations that cannot launch without one. It needs the
 `agent.sandbox-impl` permission, which group ownership deliberately does not
 confer and which is not granted by default. The dashboard equivalent is
-**🧩 sandbox implementation…** in the agent's row menu. A harness mode that was
+**🧩 sandbox implementation…** in the agent's row menu, which restarts a
+running agent the same way. A harness mode that was
 merely derived from the old implementation is not carried forward; the harness
 default is recorded instead unless `--sandbox` pins one.
 
