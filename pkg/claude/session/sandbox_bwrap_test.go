@@ -200,6 +200,14 @@ func TestBwrapArgsHidesProtectedRootsWithNoReopens(t *testing.T) {
 	require.NoError(t, err)
 	homeBind := indexOfBwrapTriplet(homeArgs, "--bind", home)
 	require.NotEqual(t, -1, homeBind)
+	// The directories between Home and each protected root are pinned as
+	// mount points right after the Home bind, so a rename cannot carry the
+	// protected hide away from its path.
+	for _, parent := range []string{filepath.Join(home, ".tclaude"), filepath.Join(home, ".claude")} {
+		pin := indexOfBwrapTriplet(homeArgs, "--bind", parent)
+		require.NotEqual(t, -1, pin, "protected-root parent %s must be pinned", parent)
+		assert.Less(t, homeBind, pin)
+	}
 	for _, root := range protected {
 		hides := indicesOfBwrapTriplet(homeArgs, "--tmpfs", root)
 		require.NotEmpty(t, hides, "protected root %s must be hidden", root)

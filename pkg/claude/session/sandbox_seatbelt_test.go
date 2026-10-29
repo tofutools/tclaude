@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -191,12 +192,26 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
       (require-not (literal (param "READ_DENY_4_REOPEN_0")))
       (require-not (subpath (param "READ_DENY_4_REOPEN_0")))
     )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+  ))
 `
 	if got != want {
 		t.Fatalf("Seatbelt profile golden mismatch\nparams: %#v\nprofile:\n%s", params, got)
 	}
 	assert.NotContains(t, got, "Isolated networking",
 		"the host-open profile must remain byte-identical and gain no network denies")
+	for i, ancestor := range []string{"/Users", "/Users/dev", "/Users/dev/.claude", "/Users/dev/.tclaude"} {
+		assert.Contains(t, params, seatbeltProfileParam{
+			name: "PROTECTED_ANCESTOR_" + strconv.Itoa(i), path: ancestor,
+		})
+	}
 }
 
 func TestRenderSeatbeltProfileOptionallyAllowsMachRegister(t *testing.T) {

@@ -2401,6 +2401,11 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		); err != nil {
 			return "", "", nil, err
 		}
+		if err := sandboxpolicy.ValidateProtectedAncestorWriteSupport(
+			launchFilesystem, implementation, runtime.GOOS,
+		); err != nil {
+			return "", "", nil, err
+		}
 		// Nor can they express a rule naming a single file. Refuse the resume
 		// rather than bringing the agent back with that rule quietly gone.
 		if err := sandboxpolicy.ValidateFileGrantSupport(

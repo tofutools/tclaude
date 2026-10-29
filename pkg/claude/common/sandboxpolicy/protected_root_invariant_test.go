@@ -425,3 +425,22 @@ func TestPreLaunchBlocksCannotInjectFilesystemAuthority(t *testing.T) {
 		}
 	}
 }
+
+// A harness-native sandbox cannot pin the directories between a writable
+// ancestor and a protected root, so a write rule there is refused for it while
+// tclaude's own sandbox and the no-confinement implementations accept it.
+func TestProtectedAncestorWriteNeedsTclaudeLayer(t *testing.T) {
+	home, _, _, _ := protectedHome(t)
+	write := []FilesystemGrant{{Path: home, Access: AccessWrite}}
+	err := ValidateProtectedAncestorWriteSupport(write, ImplementationHarnessBuiltin, "linux")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported_sandbox_profile_protected_ancestor_write")
+	for _, impl := range []Implementation{ImplementationTclaudeLayer, ImplementationOff, ImplementationResourceOnly} {
+		require.NoError(t, ValidateProtectedAncestorWriteSupport(write, impl, "linux"), impl)
+	}
+	read := []FilesystemGrant{{Path: home, Access: AccessRead}}
+	require.NoError(t, ValidateProtectedAncestorWriteSupport(read, ImplementationHarnessBuiltin, "linux"),
+		"a read rule cannot rename anything")
+	narrow := []FilesystemGrant{{Path: filepath.Join(home, ".codex"), Access: AccessWrite}}
+	require.NoError(t, ValidateProtectedAncestorWriteSupport(narrow, ImplementationHarnessBuiltin, "linux"))
+}

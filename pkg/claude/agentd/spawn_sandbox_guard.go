@@ -190,6 +190,13 @@ func sandboxProfileCapabilityFailure(
 			http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_mount_path", err.Error()}
 	}
+	if err := sandboxpolicy.ValidateProtectedAncestorWriteSupport(
+		filesystem, implementation, runtime.GOOS,
+	); err != nil {
+		return &spawnFailure{
+			http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_protected_ancestor_write", err.Error()}
+	}
 	// A rule naming a single file needs the same namespace, and answering here
 	// too means the spawn API names the capability instead of the caller
 	// watching the pane die.

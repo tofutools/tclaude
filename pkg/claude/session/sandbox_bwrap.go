@@ -2122,6 +2122,10 @@ func bwrapArgsWithDaemonFinal(
 			// trigger the contract repair that preserves class-1 authority.
 			if !planWriteDirs[path] {
 				args = append(args, "--bind", path, path)
+				args, err = appendTclaudeLayerProtectedAncestorPins(args, path, &hideRemounts)
+				if err != nil {
+					return nil, err
+				}
 			}
 			existingPhase0WriteDirs = append(existingPhase0WriteDirs, path)
 		}
@@ -2277,6 +2281,12 @@ func bwrapArgsWithDaemonFinal(
 				}
 			}
 			args = append(args, flag, source, path)
+			if entry.Mode == sandboxpolicy.MountRW && !entry.IsRemapped() {
+				args, err = appendTclaudeLayerProtectedAncestorPins(args, path, &hideRemounts)
+				if err != nil {
+					return nil, err
+				}
+			}
 			args = appendTclaudeLayerProtectedRehides(
 				args,
 				path,
@@ -3047,6 +3057,93 @@ func appendTclaudeLayerProtectedRehides(
 	return args
 }
 
+// appendTclaudeLayerProtectedAncestorPins self-binds every existing directory
+// strictly between a writable same-path bind and a protected root beneath it.
+// The protected re-hide is a mount on the protected root's dentry, and a
+// mount moves with its parent: under a writable `~`, `mv ~/.tclaude ~/x`
+// would succeed and leave a symlink-able hole at the protected path for the
+// host daemon's next write. A directory that is itself a mount point cannot
+// be renamed or removed (EBUSY), so pinning the chain closes that. The pin
+// binds the same host directory the writable bind just exposed at the same
+// path, so it changes nothing about what is visible or writable — new entries
+// created under `~` or inside a pinned directory stay live. It must be emitted
+// right after the writable bind and before the protected re-hides, which
+// re-establish the protected roots on top of it.
+func appendTclaudeLayerProtectedAncestorPins(
+	args []string,
+	mountedPath string,
+	hideRemounts *tclaudeLayerHideRemounts,
+) ([]string, error) {
+	pins, err := tclaudeLayerProtectedAncestorPins(mountedPath)
+	if err != nil {
+		return nil, err
+	}
+	for _, pin := range pins {
+		hideRemounts.noteReplacement(pin)
+		args = append(args, "--bind", pin, pin)
+	}
+	return args, nil
+}
+
+// appendTclaudeLayerProtectedAncestorPinsBestEffort is the repair-path form:
+// the repairs run inside helpers that cannot fail, and a pin source that
+// cannot be inspected is simply not pinned there — the same directory was
+// already pinned when its writable bind was first emitted.
+func appendTclaudeLayerProtectedAncestorPinsBestEffort(
+	args []string,
+	mountedPath string,
+	hideRemounts *tclaudeLayerHideRemounts,
+) []string {
+	pinned, err := appendTclaudeLayerProtectedAncestorPins(args, mountedPath, hideRemounts)
+	if err != nil {
+		return args
+	}
+	return pinned
+}
+
+func tclaudeLayerProtectedAncestorPins(mountedPath string) ([]string, error) {
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
+	}
+	mountedPath = filepath.Clean(mountedPath)
+	seen := map[string]bool{}
+	var pins []string
+	for _, protected := range protectedRoots {
+		if protected == mountedPath || !sandboxpolicy.PathContainsOrEqual(mountedPath, protected) {
+			continue
+		}
+		// Walk up from the protected root's parent to just below the bind.
+		var chain []string
+		for dir := filepath.Dir(protected); dir != mountedPath; dir = filepath.Dir(dir) {
+			if dir == filepath.Dir(dir) {
+				chain = nil
+				break
+			}
+			chain = append(chain, dir)
+		}
+		// Outermost first, so each pin lands on the view the previous one set.
+		for i := len(chain) - 1; i >= 0; i-- {
+			dir := chain[i]
+			if seen[dir] {
+				continue
+			}
+			exists, err := bwrapBindSourceExists(dir)
+			if err != nil {
+				return nil, fmt.Errorf("protected-root ancestor %q: %w", dir, err)
+			}
+			if !exists {
+				// Nothing beneath it exists either, so there is no protected
+				// content to carry away by renaming it.
+				break
+			}
+			seen[dir] = true
+			pins = append(pins, dir)
+		}
+	}
+	return pins, nil
+}
+
 func appendTclaudeLayerContractRepairs(
 	args []string,
 	hide string,
@@ -3066,6 +3163,7 @@ func appendTclaudeLayerContractRepairs(
 		if hide != writeDir && sandboxpolicy.PathContainsOrEqual(hide, writeDir) {
 			hideRemounts.noteReplacement(writeDir)
 			args = append(args, "--bind", writeDir, writeDir)
+			args = appendTclaudeLayerProtectedAncestorPinsBestEffort(args, writeDir, hideRemounts)
 			repaired = append(repaired, writeDir)
 		}
 	}

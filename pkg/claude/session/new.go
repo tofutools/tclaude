@@ -741,6 +741,11 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
+	if err := sandboxpolicy.ValidateProtectedAncestorWriteSupport(
+		sandboxSnapshotActiveFilesystem(launchSandbox), sandboxImplementation, runtime.GOOS,
+	); err != nil {
+		return err
+	}
 	// Same shape, same reason, for a rule naming a single file: the directory
 	// lists below cannot carry one, so an implementation that enforces through
 	// them would launch with the rule silently absent.
@@ -2979,6 +2984,12 @@ func OneShotLaunchPosture(
 	// be reproduced. Refuse rather than replaying the rule at its host path,
 	// which would be a different policy than the one being replayed.
 	if err := sandboxpolicy.ValidateMountPathSupport(
+		sandboxSnapshotActiveFilesystem(effectiveSandbox),
+		implementation, runtime.GOOS,
+	); err != nil {
+		return harness.SpawnSpec{}, err
+	}
+	if err := sandboxpolicy.ValidateProtectedAncestorWriteSupport(
 		sandboxSnapshotActiveFilesystem(effectiveSandbox),
 		implementation, runtime.GOOS,
 	); err != nil {
