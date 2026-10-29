@@ -129,6 +129,7 @@ body:has(#tab-boards.active) main { padding: 0; }
 .board-canvas:not(.tool-select):not(.tool-hand):not(.tool-text) { cursor: crosshair; }
 .board-selection { fill: none; stroke: #1971c2; stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .board-handle { fill: #fff; stroke: #1971c2; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.board-band { fill: rgba(25, 113, 194, .08); stroke: #1971c2; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .board-flash { animation: board-flash 1.6s ease-out; }
 @keyframes board-flash {
   0%, 30% { filter: drop-shadow(0 0 6px #a371f7) drop-shadow(0 0 2px #a371f7); }
