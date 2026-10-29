@@ -1342,6 +1342,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/usage", handleUsage)
 	mux.HandleFunc("GET /v1/usage/summary", handleAccountUsage)
 	mux.HandleFunc("GET /v1/host/status", handleHostStatus)
+	mux.HandleFunc("GET /v1/dashboard/view", handleDashboardViewRead)
+	mux.HandleFunc("POST /v1/dashboard/cue", handleDashboardCue)
 	mux.HandleFunc("GET /v1/costs", handleAccountCosts)
 	registerUsageRuleRoutes(mux)
 	mux.HandleFunc("/v1/peers", handlePeers)
