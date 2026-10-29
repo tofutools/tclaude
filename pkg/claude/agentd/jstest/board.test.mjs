@@ -357,3 +357,37 @@ test('the editor shows who is drawing and reports the operator\'s view of the bo
   assert.deepEqual(views.at(-1), { client });
   await view.unmount();
 });
+
+test('making a board a group\'s board shows its members and tells the online ones', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardsApp, createBoardsState } = await harness.importDashboardModule('js/board-island.js');
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => {
+    requests.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
+    if (String(url).endsWith('/group')) return ok({ group: 'team', group_members: [A] });
+    if (init.method === 'POST') return ok({}, 202);
+    return ok({ id: 'plan', title: 'Plan', version: 1, participants: [], elements: [] });
+  };
+  const state = createBoardsState();
+  state.location.value = { tab: 'boards', selection: 'plan' };
+  const snapshot = harness.signals.signal({ groups: [{ name: 'team', members: [{ agent_id: A, conv_id: 'c', title: 'alpha', online: true, state: { status: 'idle' } }] }] });
+  boardsSection(harness);
+  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  await harness.act(() => wait());
+  const select = view.container.querySelector('select.board-group');
+  assert.deepEqual([...select.options].map((o) => o.value), ['', 'team']);
+  await harness.act(async () => {
+    [...select.options].forEach((option) => option.removeAttribute('selected'));
+    select.querySelector('option[value="team"]').setAttribute('selected', '');
+    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    await wait(10);
+  });
+  assert.deepEqual(requests.find((r) => r.url === '/api/boards/plan/group').body, { group: 'team' });
+  const chip = view.container.querySelector('.board-person.via-group');
+  assert.match(chip.textContent, /alpha/);
+  assert.ok(!chip.querySelector('.board-person-x'), 'a group member is not removed one by one');
+  const invite = requests.find((r) => r.url === '/api/operator-message');
+  assert.equal(invite.body.to, A);
+  assert.match(invite.body.body, /Your group "team" now has the shared board/);
+  await view.unmount();
+});

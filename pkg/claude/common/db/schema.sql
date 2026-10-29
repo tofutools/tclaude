@@ -2092,7 +2092,9 @@ CREATE TABLE collab_boards (
  updated_by TEXT NOT NULL DEFAULT '',
  snapshot_version INTEGER,
  snapshot_at INTEGER
-) STRICT;
+, group_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL) STRICT;
+
+CREATE INDEX idx_collab_boards_group ON collab_boards(group_id);
 
 CREATE TABLE collab_board_elements (
  board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,

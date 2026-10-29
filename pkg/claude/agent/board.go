@@ -57,6 +57,7 @@ type boardSummary struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	ElementCount int       `json:"element_count"`
 	Participants []string  `json:"participants"`
+	Group        string    `json:"group,omitempty"`
 }
 
 type boardDoc struct {
@@ -69,6 +70,8 @@ type boardDoc struct {
 	SnapshotVersion *int64            `json:"snapshot_version,omitempty"`
 	Elements        []json.RawMessage `json:"elements"`
 	Presence        *boardPresence    `json:"presence,omitempty"`
+	Group           string            `json:"group,omitempty"`
+	GroupMembers    []string          `json:"group_members,omitempty"`
 }
 
 // boardPresence is who is on the board right now (tcl-rawj2c).
@@ -201,10 +204,14 @@ func runBoardLs(p *boardLsParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTITLE\tVERSION\tELEMENTS\tPARTICIPANTS\tUPDATED")
+	fmt.Fprintln(tw, "ID\tTITLE\tVERSION\tELEMENTS\tPARTICIPANTS\tGROUP\tUPDATED")
 	for _, b := range resp.Boards {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\n", b.ID, b.Title, b.Version, b.ElementCount,
-			len(b.Participants), b.UpdatedAt.Local().Format("2006-01-02 15:04"))
+		group := b.Group
+		if group == "" {
+			group = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n", b.ID, b.Title, b.Version, b.ElementCount,
+			len(b.Participants), group, b.UpdatedAt.Local().Format("2006-01-02 15:04"))
 	}
 	_ = tw.Flush()
 	return rcOK
@@ -277,6 +284,9 @@ func runBoardShow(p *boardShowParams, id string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout)
 	if len(doc.Participants) > 0 {
 		fmt.Fprintf(stdout, "Participants: %s\n", strings.Join(doc.Participants, ", "))
+	}
+	if doc.Group != "" {
+		fmt.Fprintf(stdout, "Group: %s (its %d member(s) get the board's events)\n", doc.Group, len(doc.GroupMembers))
 	}
 	var view *boardBox
 	if pr := doc.Presence; pr != nil {
@@ -472,13 +482,16 @@ func snapshotAge(snapHeader, boardHeader string) string {
 
 type boardCreateParams struct {
 	Title string `long:"title" optional:"true" help:"Board title (defaults to the id)"`
+	Group string `long:"group" optional:"true" help:"Make it the board of a group you are in: every member gets its events"`
 }
 
 func boardCreateCmd() *cobra.Command {
 	return boa.CmdT[boardCreateParams]{
-		Use:         "create <board>",
-		Short:       "Create a board",
-		Long:        "Creates an empty board. The id is lowercase letters, digits and dashes (at most 64).",
+		Use:   "create <board>",
+		Short: "Create a board",
+		Long: "Creates an empty board. The id is lowercase letters, digits and dashes (at most 64). " +
+			"With --group the board belongs to that group (one you are a member of): its members are on the board " +
+			"without an invitation and get the operator's board events.",
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardCreateParams, _ *cobra.Command, args []string) {
@@ -489,10 +502,14 @@ func boardCreateCmd() *cobra.Command {
 
 func runBoardCreate(p *boardCreateParams, id string, stdout, stderr io.Writer) int {
 	var doc boardDoc
-	if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": id, "title": p.Title}, &doc, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": id, "title": p.Title, "group": p.Group}, &doc, DaemonOpts{}); err != nil {
 		return boardErr(stderr, err)
 	}
-	fmt.Fprintf(stdout, "Created board %s %q.\n", doc.ID, doc.Title)
+	if doc.Group != "" {
+		fmt.Fprintf(stdout, "Created board %s %q for group %s.\n", doc.ID, doc.Title, doc.Group)
+	} else {
+		fmt.Fprintf(stdout, "Created board %s %q.\n", doc.ID, doc.Title)
+	}
 	return rcOK
 }
 
