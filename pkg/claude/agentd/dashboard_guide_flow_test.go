@@ -83,4 +83,34 @@ func TestDashboardGuideViewAndCues(t *testing.T) {
 	require.Equal(t, "Save draft", snap.Cues[0].Target)
 	require.Equal(t, "Save once the diff looks right", snap.Cues[0].Note, "control bytes are dropped and newlines flattened")
 	require.NotEmpty(t, snap.Cues[0].AgentID)
+
+	// Marks are validated and ride the cue.
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": []map[string]any{{"kind": "scribble", "target": "x"}}}))
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": []map[string]any{{"kind": "circle"}}}), "a mark needs a target")
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": []map[string]any{{"kind": "arrow", "target": "Review"}}}), "an arrow needs from")
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": []map[string]any{{"kind": "circle", "target": "a", "from": "b"}}}))
+	seven := make([]map[string]any, 7)
+	for i := range seven {
+		seven[i] = map[string]any{"kind": "circle", "target": "x"}
+	}
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": seven}))
+	agentd.ResetDashboardGuideForTest()
+	require.Equal(t, http.StatusOK, cue(map[string]any{"marks": []map[string]any{
+		{"kind": "Circle", "target": "Review"}, {"kind": "arrow", "from": "Rework", "target": "Review"},
+	}}), "marks alone make a cue")
+	rec = testharness.Serve(dash, snapReq.Clone(snapReq.Context()))
+	var marked struct {
+		Cues []struct {
+			Marks []struct {
+				Kind   string `json:"kind"`
+				Target string `json:"target"`
+				From   string `json:"from"`
+			} `json:"marks"`
+		} `json:"companion_cues"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &marked))
+	require.Len(t, marked.Cues, 1)
+	require.Len(t, marked.Cues[0].Marks, 2)
+	require.Equal(t, "circle", marked.Cues[0].Marks[0].Kind)
+	require.Equal(t, "Rework", marked.Cues[0].Marks[1].From)
 }
