@@ -551,7 +551,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
           to: agentId, subject: `[board ${boardId}] you're invited`,
           body: `You're invited to the shared board "${meta.title}" (${boardId}). The operator draws there; you get a short event when their edits settle.\n`
             + `Look: \`tclaude agent board show ${boardId}\` (elements as text) or \`tclaude agent board snapshot ${boardId} -o /tmp/${boardId}.png\` (an image to view).\n`
-            + `Draw: \`tclaude agent board add ${boardId} rectangle --x 100 --y 100 --w 160 --h 80 --text "Idea"\`, arrows with --from/--to element ids, \`board rm\`, \`board move\`, \`board text\`. See \`tclaude agent board --help\`.`,
+            + `Draw: \`tclaude agent board add ${boardId} rectangle --x 100 --y 100 --w 160 --h 80 --text "Idea"\`, arrows with --from/--to element ids; build a flow with \`--right-of <id> --link\` and tidy it with \`board layout ${boardId}\`; \`board rm\`, \`board move\`, \`board text\`. See \`tclaude agent board --help\`.`,
         }),
       });
       notify(`Invited ${name} to the board.`);
