@@ -15,6 +15,15 @@ function ok(body, status = 200) {
 
 const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
+// The editor polls and takes keys only while the Boards section is active.
+function boardsSection(harness, active = true) {
+  const section = harness.window.document.createElement('section');
+  section.id = 'tab-boards';
+  if (active) section.classList.add('active');
+  harness.window.document.body.appendChild(section);
+  return section;
+}
+
 test('board model merges by version, then by lower nonce, and keeps tombstones', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/board-model.js');
@@ -111,6 +120,7 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
   const state = createBoardsState();
   state.location.value = { tab: 'boards', selection: 'plan' };
   const snapshot = harness.signals.signal({ groups: [{ name: 'team', members: [{ agent_id: A, conv_id: 'c', title: 'alpha', online: true, state: { status: 'idle' } }] }] });
+  const section = boardsSection(harness);
   const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
   await harness.act(() => wait());
   assert.match(view.container.querySelector('.board-people').textContent, /alpha/);
@@ -133,8 +143,13 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
   assert.ok(event, 'the participants got an event');
   assert.equal(event.body.text, 'The operator drew rectangle.');
   // Undo is a new version that deletes it.
-  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Undo' }).click());
-  assert.equal(svg.querySelectorAll('rect.board-el').length, 0);
+  // Board keys do nothing while another tab shows.
+  section.classList.remove('active');
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'z', ctrlKey: true }));
+  assert.equal(svg.querySelectorAll('rect.board-el').length, 1);
+  section.classList.add('active');
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'z', ctrlKey: true }));
+  assert.equal(svg.querySelectorAll('rect.board-el').length, 0, 'Ctrl+Z undoes the drawing');
 });
 
 test('an agent edit arriving on the poll is drawn and flashed', async (t) => {
@@ -153,7 +168,11 @@ test('an agent edit arriving on the poll is drawn and flashed', async (t) => {
   const state = createBoardsState();
   state.location.value = { tab: 'boards', selection: 'plan' };
   const snapshot = harness.signals.signal({ groups: [] });
+  const section = boardsSection(harness, false);
   const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  await harness.act(() => wait(BOARD_POLL_MS + 50));
+  assert.equal(polls, 0, 'no polling while another tab shows');
+  section.classList.add('active');
   await harness.act(() => wait(BOARD_POLL_MS + 50));
   assert.ok(polls >= 1, 'the editor polled with ?since');
   const text = view.container.querySelector('text.board-el');
