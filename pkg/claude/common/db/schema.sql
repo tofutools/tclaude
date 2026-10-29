@@ -2082,3 +2082,36 @@ CREATE TABLE agent_host_routes (
 ) STRICT;
 
 CREATE INDEX idx_agent_host_routes_publisher ON agent_host_routes(publisher_conv_id, state);
+
+CREATE TABLE collab_boards (
+ id TEXT PRIMARY KEY,
+ title TEXT NOT NULL,
+ version INTEGER NOT NULL DEFAULT 0,
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL,
+ updated_by TEXT NOT NULL DEFAULT '',
+ snapshot_version INTEGER,
+ snapshot_at INTEGER
+) STRICT;
+
+CREATE TABLE collab_board_elements (
+ board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,
+ element_id TEXT NOT NULL,
+ element_version INTEGER NOT NULL,
+ nonce INTEGER NOT NULL,
+ server_version INTEGER NOT NULL,
+ is_deleted INTEGER NOT NULL DEFAULT 0,
+ body TEXT NOT NULL,
+ PRIMARY KEY(board_id, element_id)
+) STRICT;
+
+CREATE INDEX idx_collab_board_elements_server_version ON collab_board_elements(board_id, server_version);
+
+CREATE TABLE collab_board_participants (
+ board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,
+ agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+ added_at INTEGER NOT NULL,
+ PRIMARY KEY(board_id, agent_id)
+) STRICT;
+
+CREATE INDEX idx_collab_board_participants_agent ON collab_board_participants(agent_id);
