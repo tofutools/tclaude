@@ -30,6 +30,7 @@ export const BOARD_POLL_MS = 1000;
 export const BOARD_FLUSH_MS = 250;
 export const BOARD_EVENT_IDLE_MS = 1500;
 export const BOARD_SNAPSHOT_IDLE_MS = 2500;
+export const BOARD_VIEW_REFRESH_MS = 30000;
 // The daemon's limit for an event image (boardMaxRegionBytes).
 const BOARD_EVENT_IMAGE_MAX = 2 << 20;
 const HISTORY_MAX = 100;
@@ -132,7 +133,11 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const [fill, setFill] = useState(BOARD_FILLS[0]);
   const [selected, setSelected] = useState([]); // ids
   const pointerAt = useRef(null); // the last board point under the pointer, for paste
+  const [presence, setPresence] = useState(() => new Map()); // agent id -> drawing | looking
+  const viewSent = useRef({ key: '', at: 0 });
   const [view, setView] = useState({ x: -40, y: -40, zoom: 1 });
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const [editingText, setEditingTextState] = useState(null); // {id, x, y, text, isNew}
   // finishText can run twice for one edit (Enter, then the textarea's blur as
   // it unmounts); the ref lets the second call see the edit already finished.
@@ -168,6 +173,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
         const board = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}${query}`, { credentials: 'same-origin' }));
         if (disposed.current) return;
         setMeta({ title: board.title || boardId, participants: Array.isArray(board.participants) ? board.participants : [] });
+        setPresence(new Map((board.presence?.agents || []).map((a) => [a.agent_id, a.state])));
         const skip = new Set([...active.current, ...pending.current.keys()]);
         const incoming = board.elements || [];
         const changed = mergeElements(elements.current, incoming, skip);
@@ -195,7 +201,9 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     void load(0).then(() => {
       const tickPoll = async () => {
         if (disposed.current) return;
-        if (win?.document?.visibilityState !== 'hidden' && shown()) await load(version.current);
+        const looking = win?.document?.visibilityState !== 'hidden' && shown();
+        void reportView(looking);
+        if (looking) await load(version.current);
         if (!disposed.current) pollTimer = setTimeout(tickPoll, BOARD_POLL_MS);
       };
       pollTimer = setTimeout(tickPoll, BOARD_POLL_MS);
@@ -203,6 +211,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     return () => {
       disposed.current = true;
       clearTimeout(pollTimer);
+      void reportView(false);
       const eventPending = !!timers.current.event;
       for (const timer of Object.values(timers.current)) clearTimeout(timer);
       void flush();
@@ -210,6 +219,27 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       if (eventPending) void sendEvent();
     };
   }, [boardId]);
+
+  // reportView tells the daemon which part of the board the operator has on
+  // screen (tcl-rawj2c), so an agent can read "this" with `board show
+  // --view`: on a change, every BOARD_VIEW_REFRESH_MS while it stays, and
+  // cleared when the operator looks away.
+  async function reportView(looking) {
+    const rect = svgRef.current?.getBoundingClientRect?.();
+    const v = viewRef.current;
+    const box = looking && rect?.width && rect?.height
+      ? { x: Math.round(v.x), y: Math.round(v.y), width: Math.max(1, Math.round(rect.width / v.zoom)), height: Math.max(1, Math.round(rect.height / v.zoom)) }
+      : null;
+    const key = box ? `${box.x},${box.y},${box.width},${box.height}` : '';
+    const last = viewSent.current;
+    if (key === last.key && (!key || Date.now() - last.at < BOARD_VIEW_REFRESH_MS)) return;
+    viewSent.current = { key, at: Date.now() };
+    try {
+      await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/view`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(box || {}),
+      });
+    } catch { /* presence is best-effort */ }
+  }
 
   async function flush() {
     clearTimeout(timers.current.flush);
@@ -724,7 +754,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
         body: JSON.stringify({
           to: agentId, subject: `[board ${boardId}] you're invited`,
           body: `You're invited to the shared board "${meta.title}" (${boardId}). The operator draws there; you get a short event when their edits settle.\n`
-            + `Look: \`tclaude agent board show ${boardId}\` (elements as text) or \`tclaude agent board snapshot ${boardId} -o /tmp/${boardId}.png\` (an image to view).\n`
+            + `Look: \`tclaude agent board show ${boardId}\` (elements as text; \`--view\` for what the operator has on screen) or \`tclaude agent board snapshot ${boardId} -o /tmp/${boardId}.png\` (an image to view).\n`
             + `Draw: \`tclaude agent board add ${boardId} rectangle --x 100 --y 100 --w 160 --h 80 --text "Idea"\`, arrows with --from/--to element ids; build a flow with \`--right-of <id> --link\` and tidy it with \`board layout ${boardId}\`; \`board rm\`, \`board move\`, \`board text\`. See \`tclaude agent board --help\`.`,
         }),
       });
@@ -759,6 +789,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   })();
   const pad = 6 / view.zoom;
   const transform = `scale(${view.zoom}) translate(${-view.x} ${-view.y})`;
+  const drawing = [...presence].filter(([, state]) => state === 'drawing').map(([id]) => agents.get(id)?.name || id.slice(0, 12));
   const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
   void tick;
 
@@ -770,8 +801,10 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       <div class="board-people" aria-label="Agents on this board">
         ${meta.participants.map((id) => {
           const agent = agents.get(id);
-          return html`<span key=${id} class=${`board-person${agent?.online ? '' : ' offline'}`} title=${agent ? `${agent.name}${agent.online ? '' : ' (offline)'}` : id}>
-            <button type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.steward ? '✦ ' : ''}${agent?.name || id.slice(0, 12)}</button>
+          const state = presence.get(id) || '';
+          const doing = state === 'drawing' ? ' (drawing…)' : state === 'looking' ? ' (looking at the board)' : '';
+          return html`<span key=${id} class=${`board-person${agent?.online ? '' : ' offline'}${state ? ` ${state}` : ''}`} title=${agent ? `${agent.name}${agent.online ? '' : ' (offline)'}${doing}` : id}>
+            <button type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.steward ? '✦ ' : ''}${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
             <button type="button" class="board-person-x" aria-label=${`Remove ${agent?.name || id} from the board`} onClick=${() => removeParticipant(id)}>×</button>
           </span>`;
         })}
@@ -832,6 +865,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
           if (event.key === 'Escape' || (event.key === 'Enter' && !event.shiftKey)) { event.preventDefault(); finishText(); }
         }}
         onBlur=${finishText}></textarea>`}
+      ${drawing.length > 0 && html`<div class="board-drawing-note" role="status">✎ ${drawing.join(', ')} ${drawing.length === 1 ? 'is' : 'are'} drawing…</div>`}
       ${!live.length && status === 'ready' && html`<div class="board-empty-hint">Pick a tool and draw. Invite an agent to draw with you; it reads the board as shapes and as an image.</div>`}
     </div>
   </div>`;

@@ -31,6 +31,7 @@ tclaude agent board create plan --title "Release plan"
 tclaude agent board show plan                 # one line per live element, plus the version
 tclaude agent board show plan --since 12      # only what changed after version 12, deletions included
 tclaude agent board show plan --json          # the elements as Excalidraw JSON
+tclaude agent board show plan --view          # only what the operator has on screen
 tclaude agent board snapshot plan -o plan.png # the dashboard's latest rendering
 tclaude agent board snapshot plan --region 3 -o change.png  # the image a board event named
 
@@ -98,6 +99,20 @@ The mail usually also names a numbered image of the change:
 area the operator touched, padded with some of what is around it. The daemon
 keeps the newest 20 of these per board; an older number answers `404
 no_region`, and the full `snapshot` is the fallback.
+
+## Presence
+
+Who is on a board is shown live, without chat. An agent that read the board
+in the last 30 seconds is *looking*. An agent whose edit landed in the last 6
+seconds is *drawing*. The editor marks both on the agent's chip and shows
+"… is drawing" over the canvas.
+
+The open editor also reports the part of the board on the operator's screen.
+`board show` prints it ("The operator is looking at x=… y=…"), and
+`board show --view` lists only the elements in it, which is what the operator
+means by "this" or "here". The view is dropped when the operator looks away or
+after 2 minutes without an update. Presence is held in memory and is not
+stored.
 
 ## Storage
 

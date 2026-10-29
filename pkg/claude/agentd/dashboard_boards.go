@@ -275,15 +275,16 @@ type boardSummaryJSON struct {
 }
 
 type boardJSON struct {
-	ID              string            `json:"id"`
-	Title           string            `json:"title"`
-	Version         int64             `json:"version"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
-	UpdatedBy       string            `json:"updated_by"`
-	Participants    []string          `json:"participants"`
-	SnapshotVersion *int64            `json:"snapshot_version,omitempty"`
-	Elements        []json.RawMessage `json:"elements"`
+	ID              string             `json:"id"`
+	Title           string             `json:"title"`
+	Version         int64              `json:"version"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+	UpdatedBy       string             `json:"updated_by"`
+	Participants    []string           `json:"participants"`
+	SnapshotVersion *int64             `json:"snapshot_version,omitempty"`
+	Elements        []json.RawMessage  `json:"elements"`
+	Presence        *boardPresenceJSON `json:"presence,omitempty"`
 }
 
 // boardElementJSON stamps the stored body with its server_version.
@@ -418,7 +419,9 @@ func serveBoardRead(w http.ResponseWriter, r *http.Request, id string) {
 		writeBoardStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, boardToJSON(b, elems))
+	out := boardToJSON(b, elems)
+	out.Presence = boardPresence.snapshot(id)
+	writeJSON(w, http.StatusOK, out)
 }
 
 // serveBoardPatch merges elements authored by author; participant (an agent
@@ -450,6 +453,9 @@ func serveBoardPatch(w http.ResponseWriter, r *http.Request, id, author, partici
 	if err != nil {
 		writeBoardStoreError(w, err)
 		return
+	}
+	if accepted > 0 {
+		boardPresence.noteEdit(id, participant)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"version": version, "accepted": accepted})
 }
@@ -501,6 +507,7 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/boards/{id}/snapshot", handleDashboardBoardSnapshotGet)
 	mux.HandleFunc("POST /api/boards/{id}/participants", handleDashboardBoardParticipants)
 	mux.HandleFunc("POST /api/boards/{id}/events", handleDashboardBoardEvent)
+	mux.HandleFunc("POST /api/boards/{id}/view", handleDashboardBoardView)
 }
 
 func handleDashboardBoardList(w http.ResponseWriter, r *http.Request) {
@@ -556,6 +563,7 @@ func handleDashboardBoardDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	boardEvents.forget(id)
+	boardPresence.forget(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -840,12 +848,23 @@ func handleBoardList(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleBoardRead(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermBoardsRead); !ok {
+	convID, ok := requirePermission(w, r, PermBoardsRead)
+	if !ok {
 		return
 	}
-	if id, ok := boardPathID(w, r); ok {
-		serveBoardRead(w, r, id)
+	id, ok := boardPathID(w, r)
+	if !ok {
+		return
 	}
+	// The read counts toward the agent's presence ("looking").
+	if convID != "" {
+		if agentID, err := db.AgentIDForConv(convID); err == nil && agentID != "" {
+			if _, err := db.GetCollabBoard(id); err == nil {
+				boardPresence.noteRead(id, agentID)
+			}
+		}
+	}
+	serveBoardRead(w, r, id)
 }
 
 func handleBoardSnapshot(w http.ResponseWriter, r *http.Request) {
