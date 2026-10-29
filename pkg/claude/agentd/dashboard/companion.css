@@ -269,3 +269,6 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 }
 .companion-starters button:hover, .companion-starters button:focus-visible { background: #6e40c955; outline: none; }
 .companion-starters button:disabled { opacity: .5; cursor: default; }
+
+/* Voice output toggle (tcl-q3qcfw). */
+.companion-controls .companion-voice.on { color: var(--cmp-green); }
