@@ -305,6 +305,10 @@ const companionDescriptor = createIslandDescriptor({
         notify: dependencies.notify, widgetFactory: mountTerminalWidget, loadRuntime: loadXtermRuntime,
         closeTerminalPanes: closeTerminalsForConvs,
         openTerminalsPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
+        navigate: async (path) => {
+          const { navigateToPath } = await import('./nav-history.js');
+          return navigateToPath(path);
+        },
       }),
     };
   },

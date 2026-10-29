@@ -618,6 +618,15 @@ on a page, how your groups are configured, or to help set up groups,
 profiles, processes or your sandbox. It proposes a plan first and runs each
 change with `--ask-human`, so you approve every mutation in the dashboard.
 
+The Steward can also see and point at the dashboard. `tclaude agent guide
+view` tells it which view you are on (it needs `dashboard.view.read`), and
+`tclaude agent guide show --tab <tab> | --path <path> --target "<visible
+text>" --note "<note>"` switches your dashboard there and rings the control
+with that text, with the note beside it (it needs `dashboard.guide`). A cue
+only points: it never presses anything, and it plays once, then fades after a
+few seconds or when you dismiss it. Both slugs are granted to the Steward when
+it is summoned and are not default-granted to other agents.
+
 A browser terminal attach takes the session over from any other web view, so
 opening an agent in the companion closes its Terminals-tab pane, and moving it
 to the Terminals tab parks the companion tab until you bring it back.
