@@ -355,8 +355,20 @@ func TestBoardsEventImageIsARegionAgentsCanFetch(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"region":2`)
 
+	// Only the newest 20 are kept, numbered on past 9 -> 10 numerically.
+	for i := 3; i <= 22; i++ {
+		now = now.Add(3 * time.Second)
+		require.Equal(t, http.StatusOK, serve(http.MethodPost, "/api/boards/rg/events", map[string]any{"text": "again", "image": image}).Code)
+	}
+	assert.Equal(t, http.StatusNotFound, agentGet("/v1/boards/rg/snapshot?region=2").Code)
+	assert.Equal(t, http.StatusOK, agentGet("/v1/boards/rg/snapshot?region=3").Code)
+	assert.Equal(t, http.StatusOK, agentGet("/v1/boards/rg/snapshot?region=22").Code)
+	now = now.Add(3 * time.Second)
+	rec = serve(http.MethodPost, "/api/boards/rg/events", map[string]any{"text": "again", "image": image})
+	assert.Contains(t, rec.Body.String(), `"region":23`)
+
 	// Deleting the board deletes its event images; a new board of the same
-	// id starts over.
+	// id does not hand out the old board's numbers.
 	require.Equal(t, http.StatusNoContent, serve(http.MethodDelete, "/api/boards/rg", nil).Code)
 	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "rg", "title": "Regions"}).Code)
 	assert.Equal(t, http.StatusNotFound, agentGet("/v1/boards/rg/snapshot?region=1").Code)
