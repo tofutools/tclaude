@@ -437,12 +437,22 @@ test('an agent cue draws marks on the operator view and names the ones it cannot
     ] }] };
     await new Promise((r) => setTimeout(r, 50));
   });
-  await harness.act(async () => { await new Promise((r) => setTimeout(r, 3400)); });
+  // A mark that stays missing does not hold up the rest for the full timeout.
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 2000)); });
   const paths = [...doc.querySelectorAll('.companion-guide-marks path')];
   assert.deepEqual(paths.map((p) => p.getAttribute('class')), ['mark-circle', 'mark-arrow']);
   assert.match(doc.querySelector('.companion-guide-note').textContent, /Couldn't find “Nowhere”/);
   const rect = { left: 100, top: 100, width: 80, height: 24 };
   assert.match(guide.markPath('underline', rect), /^M96\.0,129\.0 Q/);
   assert.equal(guide.markPath('arrow', rect, null), '', 'an arrow needs both ends');
+  // Loose finding: an exact graph node beats a partial control, and the
+  // innermost element of equal text wins over its row.
+  const sized = (el) => { el.getBoundingClientRect = () => ({ left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 }); return el; };
+  const row = sized(doc.body.appendChild(doc.createElement('div')));
+  const cell = sized(row.appendChild(doc.createElement('span')));
+  cell.textContent = 'Merge';
+  sized(doc.body.appendChild(doc.createElement('button'))).textContent = 'Merge now';
+  assert.equal(guide.findGuideTarget(doc, 'Merge', { loose: true }), cell);
+  assert.equal(guide.findGuideTarget(doc, 'Merge').textContent, 'Merge now', 'strict finding stays on controls');
   await view.unmount();
 });
