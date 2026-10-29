@@ -272,3 +272,10 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 
 /* Voice output toggle (tcl-q3qcfw). */
 .companion-controls .companion-voice.on { color: var(--cmp-green); }
+
+/* Dictation (tcl-sqxkb0). */
+.companion-input .companion-mic {
+  padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-text); font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.companion-input .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }

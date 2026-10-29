@@ -168,3 +168,66 @@ export function createVoiceReader(fetchImpl) {
     },
   };
 }
+
+// ---- voice input (tcl-sqxkb0) ----
+
+export function speechRecognitionCtor(win = globalThis.window) {
+  return win?.SpeechRecognition || win?.webkitSpeechRecognition || null;
+}
+
+// splitSendCommand reports whether dictated text ends with the spoken
+// command "send" and returns the text without it.
+export function splitSendCommand(text) {
+  const match = /^(.*?)[\s,.]*\bsend(?: it)?[.!]?\s*$/is.exec(String(text || ''));
+  if (!match) return { text: String(text || '').trim(), send: false };
+  return { text: match[1].trim(), send: true };
+}
+
+// createDictation wraps the browser's speech recognition: interim and final
+// text arrive through onText (the whole utterance so far), onState reports
+// listening on/off, and onSend fires when the operator ends with "send".
+// Chrome's recognizer runs in Google's cloud; the button says so.
+export function createDictation(win = globalThis.window, { onText, onState, onSend, lang } = {}) {
+  const Ctor = speechRecognitionCtor(win);
+  let recognition = null;
+  return {
+    supported: !!Ctor,
+    get active() { return !!recognition; },
+    start() {
+      if (!Ctor || recognition) return;
+      const r = new Ctor();
+      r.continuous = true;
+      r.interimResults = true;
+      r.lang = lang || win?.navigator?.language || 'en-US';
+      let finals = '';
+      r.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (result.isFinal) finals += `${result[0].transcript} `;
+          else interim += result[0].transcript;
+        }
+        const heard = `${finals}${interim}`.replace(/\s+/g, ' ').trim();
+        const command = splitSendCommand(finals);
+        if (command.send && !interim.trim()) {
+          onText?.(command.text);
+          onSend?.(command.text);
+          r.stop();
+          return;
+        }
+        onText?.(heard);
+      };
+      r.onerror = (event) => onState?.(false, event?.error || 'error');
+      r.onend = () => {
+        recognition = null;
+        onState?.(false);
+      };
+      recognition = r;
+      r.start();
+      onState?.(true);
+    },
+    stop() {
+      recognition?.stop();
+    },
+  };
+}
