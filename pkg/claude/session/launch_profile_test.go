@@ -238,6 +238,7 @@ func TestGlobalDefaultLaunchProfile_FreshLaunchInheritsLaunchPosture(t *testing.
 	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{}))
 	assert.Equal(t, harness.DefaultName, params.Harness)
 	assert.Equal(t, harness.ClaudeSandboxOff, params.Sandbox)
+	assert.Equal(t, `global default profile "posture-default"`, params.SandboxChosenBy)
 	assert.Equal(t, string(sandboxpolicy.ImplementationOff), params.SandboxImpl)
 	assert.True(t, params.sandboxImplExplicit, "a profile implementation is a fresh decision")
 	assert.Equal(t, "acceptEdits", params.Approval)
@@ -359,4 +360,20 @@ func TestResumeDefaultLaunchProfile_RecordedSandboxKeepsProfileImplementationOut
 	assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox)
 	assert.Empty(t, params.SandboxImpl,
 		"the profile's off implementation would silently drop the recorded --sandbox on")
+}
+
+// The terminal command path is what makes the resume fallback live; the fill
+// functions above are only reachable through it. runNew launches tmux, so the
+// wiring is pinned structurally: record first, then the profile, then launch.
+func TestTerminalResumeAppliesProfileAfterRecordedPosture(t *testing.T) {
+	fn := guardFunc(guardParse(t, "launch_profile.go", ""), "runNewWithGlobalDefault")
+	require.NotNil(t, fn)
+	order := callOrder(fn, "applyRecordedLaunchPosture", "applyResumeDefaultLaunchProfile", "runNew")
+	recorded, okRecorded := order["applyRecordedLaunchPosture"]
+	profile, okProfile := order["applyResumeDefaultLaunchProfile"]
+	launch, okLaunch := order["runNew"]
+	require.True(t, okRecorded && okProfile && okLaunch,
+		"runNewWithGlobalDefault must call all three: %v", order)
+	assert.Less(t, int(recorded), int(profile), "the record must win over the profile")
+	assert.Less(t, int(profile), int(launch), "the profile must be applied before launch")
 }

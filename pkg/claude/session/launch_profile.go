@@ -375,6 +375,12 @@ func applyProfileLaunchPosture(params *NewParams, explicit explicitLaunchFields,
 		strings.TrimSpace(params.PermissionProfile) != ""
 	if !sandboxDecided {
 		fillString("sandbox", &params.Sandbox, prof.Sandbox)
+		if params.Sandbox != "" && strings.TrimSpace(params.SandboxChosenBy) == "" {
+			// Attribute the containment to the profile, as the daemon does,
+			// rather than letting runNew record a flag the human never typed.
+			// Same shape as agent.ProvGlobalProfileSource (an import cycle away).
+			params.SandboxChosenBy = `global default profile "` + prof.Name + `"`
+		}
 		if impl := strings.TrimSpace(prof.SandboxImplementation); impl != "" {
 			params.SandboxImpl = impl
 			// A profile-supplied implementation is a fresh decision, never a
