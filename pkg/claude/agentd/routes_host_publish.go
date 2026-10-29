@@ -148,7 +148,7 @@ func validateHostPublishLaunch(agentID, convID, generation string) error {
 			return nil
 		}
 	}
-	return errors.New("host publishing requires a route-capable launch, but " + hostPublishLaunchDiagnosis(agentID, convID) + ". " + hostPublishLaunchRemedy)
+	return errors.New("host publishing requires a route-capable launch, but " + hostPublishLaunchDiagnosis(agentID, convID, generation) + ". " + hostPublishLaunchRemedy)
 }
 
 const hostPublishLaunchRemedy = "Host routes need tclaude’s pane sandbox with a private network, a pane-local harness, and the grant present when the agent launches or resumes; once those hold, stop the agent and run `tclaude agent resume` on it"
@@ -156,9 +156,14 @@ const hostPublishLaunchRemedy = "Host routes need tclaude’s pane sandbox with 
 // hostPublishLaunchDiagnosis names the most specific known reason the current
 // launch holds no host-route helper. It reads only durable launch facts and
 // the daemon's in-memory credential table; it never reports a credential.
-func hostPublishLaunchDiagnosis(agentID, convID string) string {
-	if runtime.GOOS == "linux" && routeHelperCredentialForOtherLaunch(agentID, convID) {
-		return "this agent’s route helper belongs to a different launch generation than the one making this request"
+func hostPublishLaunchDiagnosis(agentID, convID, generation string) string {
+	if runtime.GOOS == "linux" {
+		switch routeHelperCredentialStaleness(agentID, convID, generation) {
+		case "other":
+			return "this agent’s route helper belongs to a different launch generation than the one making this request"
+		case "ended":
+			return "this agent’s route helper belongs to a launch that is no longer live"
+		}
 	}
 	h := harnessForConv(convID)
 	harnessName := ""
@@ -173,8 +178,17 @@ func hostPublishLaunchDiagnosis(agentID, convID string) string {
 			return reason
 		}
 	}
-	if h != nil && !h.SupportsLaunchEnrollment() {
-		return fmt.Sprintf("no route helper is active for this launch: a fresh %s spawn never gets one, because its conversation id is unknown before the pane starts, so the helper is only attached on a later resume (and an agentd restart since that resume invalidates it again)", harnessName)
+	// Linux helper capabilities live only in daemon memory; macOS route
+	// launches are durable records that survive an agentd restart.
+	restart := ""
+	if runtime.GOOS == "linux" {
+		restart = ", and an agentd restart since then invalidates it again"
 	}
-	return "no route helper is active for this launch (the grant may have been added after launch, the launch may not use tclaude’s pane sandbox, or agentd restarted since, which invalidates every helper)"
+	if h != nil && !h.SupportsLaunchEnrollment() {
+		return fmt.Sprintf("no route helper is active for this launch: a fresh %s spawn never gets one, because its conversation id is unknown before the pane starts, so the helper is only attached on a later resume%s", harnessName, restart)
+	}
+	if runtime.GOOS == "linux" {
+		return "no route helper is active for this launch (the grant may have been added after launch, the launch may not use tclaude’s pane sandbox, or agentd restarted since, which invalidates every helper)"
+	}
+	return "no route-capable launch is active (the grant may have been added after launch, or the launch may not use tclaude’s pane sandbox)"
 }

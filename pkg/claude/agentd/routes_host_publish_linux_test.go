@@ -3,9 +3,11 @@
 package agentd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -191,4 +193,44 @@ func TestHostRouteHelperIneligibleReason(t *testing.T) {
 	require.Contains(t, hostRouteHelperIneligibleReason("claude", "tclaude-layer", nil), "no resolved sandbox profile")
 	open := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}
 	require.Contains(t, hostRouteHelperIneligibleReason("claude", "tclaude-layer", open), "open host networking")
+}
+
+func TestHostRouteResumeWarnsOnlyWhenHelperSkipped(t *testing.T) {
+	setupTestDB(t)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	_, _, err := db.EnsureAgentForConv("host-warn-open", "test")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission("host-warn-open", PermRoutesPublishHost, "test"))
+	open := clcommon.SpawnArgs{ConvID: "host-warn-open", Harness: "claude", SandboxImplementation: "tclaude-layer",
+		EffectiveSandbox: &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}}
+	require.NoError(t, prepareRouteHelperResumeArgs(&open))
+	require.Empty(t, open.RouteHelperCredential)
+	require.Contains(t, logs.String(), "conv=host-warn-open")
+	require.Contains(t, logs.String(), "open host networking")
+
+	logs.Reset()
+	_, _, err = db.EnsureAgentForConv("host-warn-private", "test")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission("host-warn-private", PermRoutesPublishHost, "test"))
+	private := clcommon.SpawnArgs{ConvID: "host-warn-private", Harness: "claude", SandboxImplementation: "tclaude-layer",
+		EffectiveSandbox: &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}}}
+	require.NoError(t, prepareRouteHelperResumeArgs(&private))
+	defer revokeRouteHelperCredentials(private.ConvID, "")
+	require.NotEmpty(t, private.RouteHelperCredential)
+	require.NotContains(t, logs.String(), "host-route helper", "an eligible launch must not warn")
+}
+
+func TestRouteHelperCredentialStaleness(t *testing.T) {
+	setupTestDB(t)
+	require.Empty(t, routeHelperCredentialStaleness("agent", "stale-conv", "gen"))
+	_, generation, err := mintRouteHelperCredential("agent", "stale-conv")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("stale-conv", "")
+	require.Equal(t, "ended", routeHelperCredentialStaleness("agent", "stale-conv", generation))
+	require.Equal(t, "other", routeHelperCredentialStaleness("agent", "stale-conv", "older-generation"))
+	require.Empty(t, routeHelperCredentialStaleness("other-agent", "stale-conv", generation))
 }

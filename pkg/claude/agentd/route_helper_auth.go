@@ -147,20 +147,28 @@ func routeHelperCapabilityActive(agentID, convID, generation string) bool {
 	return match.agentID != "" && routeHelperCredentialCurrent(match)
 }
 
-// routeHelperCredentialForOtherLaunch reports whether the daemon holds a
-// helper capability for this conversation that is not the current launch's,
-// i.e. the request comes from a launch the live helper does not belong to.
-func routeHelperCredentialForOtherLaunch(agentID, convID string) bool {
+// routeHelperCredentialStaleness explains why the daemon's helper capability
+// for this conversation does not authorize the given launch generation:
+// "other" when it belongs to a different generation, "ended" when it matches
+// the generation but that launch is no longer the live one, and "" when the
+// daemon holds no capability for the conversation at all.
+func routeHelperCredentialStaleness(agentID, convID, generation string) string {
 	agentID = strings.TrimSpace(agentID)
 	convID = strings.TrimSpace(convID)
+	generation = strings.TrimSpace(generation)
 	routeHelperCredentials.RLock()
 	defer routeHelperCredentials.RUnlock()
+	staleness := ""
 	for _, capability := range routeHelperCredentials.items {
-		if capability.agentID == agentID && capability.convID == convID {
-			return true
+		if capability.agentID != agentID || capability.convID != convID {
+			continue
 		}
+		if capability.launchGeneration == generation {
+			return "ended"
+		}
+		staleness = "other"
 	}
-	return false
+	return staleness
 }
 
 func requireRouteHelperCredential(w http.ResponseWriter, r *http.Request) (routeHelperCredential, bool) {
