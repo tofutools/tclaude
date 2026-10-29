@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -130,7 +131,10 @@ func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 	assert.Equal(t, map[string]bool{"b": true, "c": false}, deleted)
 	delta = decodeBoard(t, serve(http.MethodGet, "/api/boards/plan-a?since=1", nil))
 	require.Len(t, delta.Elements, 3)
+	assert.Equal(t, []string{"a", "b", "c"}, []string{delta.Elements[0].ID, delta.Elements[1].ID, delta.Elements[2].ID},
+		"elements keep their creation (stacking) order across edits")
 	assert.Equal(t, 5.0, delta.Elements[0].X, "the lower-nonce tie winner is stored")
+	assert.Zero(t, delta.Elements[1].X, "a tombstone keeps only what sync needs")
 
 	// Validation rejects are all-or-nothing.
 	for _, bad := range []map[string]any{
@@ -142,11 +146,29 @@ func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 		{"id": "z", "type": "rectangle", "version": 1, "opacity": 101},
 		{"id": "z", "type": "text", "version": 1, "text": "bell\x07"},
 		{"id": "z", "type": "arrow", "version": 1, "points": [][]float64{{0, 0, 0}}},
+		{"id": "z", "type": "rectangle", "version": int64(1) << 53},
+		{"id": "z", "type": "rectangle", "version": 1, "versionNonce": int64(1) << 40},
 	} {
 		rec := serve(http.MethodPatch, "/api/boards/plan-a", map[string]any{"elements": []any{rect("ok", 1, 1, 0), bad}})
 		require.Equal(t, http.StatusBadRequest, rec.Code, "element %v body=%s", bad, rec.Body.String())
 	}
 	assert.Equal(t, int64(3), decodeBoard(t, serve(http.MethodGet, "/api/boards/plan-a", nil)).Version)
+
+	// The live-element limit rolls the whole patch back.
+	many := make([]map[string]any, 0, 5000)
+	for i := range 4999 {
+		many = append(many, rect("m"+strconv.Itoa(i), 1, 1, 0))
+	}
+	rec = serve(http.MethodPatch, "/api/boards/plan-a", map[string]any{"elements": many})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "too_many_elements")
+	after := decodeBoard(t, serve(http.MethodGet, "/api/boards/plan-a", nil))
+	assert.Equal(t, int64(3), after.Version)
+	assert.Len(t, after.Elements, 2, "nothing of the refused patch is applied")
+
+	// A body over 4 MiB is refused outright.
+	big := []map[string]any{{"id": "big", "type": "text", "version": 1, "text": strings.Repeat("x", 5<<20)}}
+	require.Equal(t, http.StatusRequestEntityTooLarge, serve(http.MethodPatch, "/api/boards/plan-a", map[string]any{"elements": big}).Code)
 
 	// List, then delete.
 	rec = serve(http.MethodGet, "/api/boards", nil)
@@ -206,6 +228,8 @@ func TestBoardsSnapshotPutGet(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, put("?version=7", png), "a snapshot cannot be ahead of the board")
 	require.Equal(t, http.StatusRequestEntityTooLarge, put("?version=1", append(png, make([]byte, 8<<20)...)))
 	require.Equal(t, http.StatusOK, put("?version=1", png))
+	require.Equal(t, http.StatusOK, put("?version=1", png), "the same version may be re-rendered")
+	require.Equal(t, http.StatusConflict, put("?version=0", png), "an older snapshot never replaces a newer one")
 
 	rec := serve(boardDashReq(t, http.MethodGet, "/api/boards/snap/snapshot", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
