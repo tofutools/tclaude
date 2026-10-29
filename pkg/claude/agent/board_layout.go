@@ -50,41 +50,71 @@ func isBoardShape(t string) bool {
 	return t == "rectangle" || t == "ellipse" || t == "diamond"
 }
 
-// labelsOf returns the text elements that label a shape: its `<id>-label`
-// element, and any text whose centre lies inside the shape (the way the
-// editor reads a shape's label).
-func (s *boardScene) labelsOf(shapeID string) []string {
-	shape, ok := s.view[shapeID]
-	if !ok {
-		return nil
-	}
-	var out []string
+// labelOwners maps each text element that labels something to its owner:
+// an explicit `<id>-label` text belongs to <id>; otherwise a text belongs to
+// the smallest shape containing its centre (so a label inside a shape inside
+// a group box belongs to the shape, not the box), or failing that to an arrow
+// whose midpoint it sits on.
+func (s *boardScene) labelOwners() map[string]string {
+	owners := map[string]string{}
 	for _, id := range s.order {
 		v := s.view[id]
 		if v.Type != "text" {
 			continue
 		}
+		if owner, ok := strings.CutSuffix(id, "-label"); ok {
+			if _, exists := s.view[owner]; exists {
+				owners[id] = owner
+				continue
+			}
+		}
 		cx, cy := v.X+v.Width/2, v.Y+v.Height/2
-		inside := isBoardShape(shape.Type) && cx >= shape.X && cx <= shape.X+shape.Width && cy >= shape.Y && cy <= shape.Y+shape.Height
-		if id == shapeID+"-label" || inside {
-			out = append(out, id)
+		best, bestArea := "", math.Inf(1)
+		for _, sid := range s.order {
+			sv := s.view[sid]
+			if !isBoardShape(sv.Type) || cx < sv.X || cx > sv.X+sv.Width || cy < sv.Y || cy > sv.Y+sv.Height {
+				continue
+			}
+			if area := sv.Width * sv.Height; area < bestArea {
+				best, bestArea = sid, area
+			}
+		}
+		if best == "" {
+			for _, aid := range s.order {
+				av := s.view[aid]
+				if av.Type != "arrow" {
+					continue
+				}
+				if mx, my := arrowMid(av); math.Hypot(cx-mx, cy-my) <= 12 {
+					best = aid
+					break
+				}
+			}
+		}
+		if best != "" {
+			owners[id] = best
 		}
 	}
-	return out
+	return owners
 }
 
-// moveBy shifts elements (and the labels of the shapes among them) by their
-// deltas, then re-runs every arrow bound to a moved element between its
-// endpoints. It returns the ids it changed, in board order.
+// moveBy shifts elements (and the labels they own) by their deltas, then
+// re-runs every arrow bound to a moved element: between both ends when both
+// are bound, else from the bound end with the free tip kept where it was. It
+// returns the ids it changed, in board order.
 func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
+	owners := s.labelOwners()
 	changed := map[string]bool{}
 	shift := map[string][2]float64{}
 	for id, d := range deltas {
 		shift[id] = d
-		for _, label := range s.labelsOf(id) {
-			if _, own := deltas[label]; !own {
-				shift[label] = d
-			}
+	}
+	for label, owner := range owners {
+		if _, own := deltas[label]; own {
+			continue
+		}
+		if d, ok := deltas[owner]; ok {
+			shift[label] = d
 		}
 	}
 	for id, d := range shift {
@@ -98,21 +128,41 @@ func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
 		s.raw[id]["x"], s.raw[id]["y"] = v.X, v.Y
 		changed[id] = true
 	}
+	arrowLabels := map[string][]string{}
+	for label, owner := range owners {
+		if s.view[owner].Type == "arrow" {
+			arrowLabels[owner] = append(arrowLabels[owner], label)
+		}
+	}
 	for _, id := range s.order {
 		v := s.view[id]
-		if v.Type != "arrow" || v.StartBinding == nil || v.EndBinding == nil {
+		if v.Type != "arrow" || changed[id] {
 			continue
 		}
-		if !changed[v.StartBinding.ElementID] && !changed[v.EndBinding.ElementID] {
+		var from, to boardElementView
+		var okFrom, okTo bool
+		if v.StartBinding != nil {
+			from, okFrom = s.view[v.StartBinding.ElementID]
+		}
+		if v.EndBinding != nil {
+			to, okTo = s.view[v.EndBinding.ElementID]
+		}
+		if !(okFrom && changed[from.ID]) && !(okTo && changed[to.ID]) {
 			continue
 		}
-		from, okFrom := s.view[v.StartBinding.ElementID]
-		to, okTo := s.view[v.EndBinding.ElementID]
-		if !okFrom || !okTo {
-			continue
-		}
-		sx, sy, ex, ey := arrowBetween(from, to)
 		oldMidX, oldMidY := arrowMid(v)
+		var sx, sy, ex, ey float64
+		switch {
+		case okFrom && okTo:
+			sx, sy, ex, ey = arrowBetween(from, to)
+		case okFrom:
+			// The free tip stays; the tail leaves the moved shape's edge.
+			ex, ey = arrowEnd(v)
+			sx, sy, _, _ = arrowBetween(from, boardElementView{X: ex, Y: ey})
+		default:
+			sx, sy = v.X, v.Y
+			_, _, ex, ey = arrowBetween(boardElementView{X: sx, Y: sy}, to)
+		}
 		v.X, v.Y = sx, sy
 		v.Points = [][]float64{{0, 0}, {ex - sx, ey - sy}}
 		v.Width, v.Height = math.Abs(ex-sx), math.Abs(ey-sy)
@@ -123,13 +173,17 @@ func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
 		r["width"], r["height"] = v.Width, v.Height
 		changed[id] = true
 		// An arrow's label rides at its midpoint.
-		if lv, ok := s.view[id+"-label"]; ok && !changed[id+"-label"] {
-			midX, midY := arrowMid(v)
+		midX, midY := arrowMid(v)
+		for _, label := range arrowLabels[id] {
+			if changed[label] {
+				continue
+			}
+			lv := s.view[label]
 			lv.X += midX - oldMidX
 			lv.Y += midY - oldMidY
-			s.view[id+"-label"] = lv
-			s.raw[id+"-label"]["x"], s.raw[id+"-label"]["y"] = lv.X, lv.Y
-			changed[id+"-label"] = true
+			s.view[label] = lv
+			s.raw[label]["x"], s.raw[label]["y"] = lv.X, lv.Y
+			changed[label] = true
 		}
 	}
 	var out []string
@@ -139,6 +193,14 @@ func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
 		}
 	}
 	return out
+}
+
+func arrowEnd(v boardElementView) (float64, float64) {
+	if len(v.Points) == 0 || len(v.Points[len(v.Points)-1]) < 2 {
+		return v.X, v.Y
+	}
+	end := v.Points[len(v.Points)-1]
+	return v.X + end[0], v.Y + end[1]
 }
 
 func arrowMid(v boardElementView) (float64, float64) {
@@ -209,6 +271,9 @@ func relativeTarget(p *boardAddParams) (dir, ref string, err error) {
 	if set > 1 {
 		return "", "", fmt.Errorf("give only one of --right-of, --left-of, --below, --above")
 	}
+	if p.Gap != nil && (set == 0 || *p.Gap < 0) {
+		return "", "", fmt.Errorf("--gap applies to --right-of, --left-of, --below or --above, and must not be negative")
+	}
 	if set == 1 && (p.X != nil || p.Y != nil) {
 		return "", "", fmt.Errorf("--x/--y and a relative placement (--right-of, ...) are exclusive")
 	}
@@ -228,7 +293,7 @@ func boardLayoutCmd() *cobra.Command {
 		Short: "Lay out a board's shapes along their arrows",
 		Long: "Arranges the board's shapes as a flow: each shape is placed one step after the shapes that point at it " +
 			"(left to right, or top to bottom with --direction down), shapes in the same step are stacked, labels move " +
-			"with their shapes and arrows are re-run. Shapes no arrow touches go in a row after the flow. Text that labels " +
+			"with their shapes and arrows are re-run. Shapes no arrow touches are stacked after the flow. Text that labels " +
 			"nothing, lines and freehand strokes stay where they are.",
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -248,6 +313,10 @@ func runBoardLayout(p *boardLayoutParams, id string, stdout, stderr io.Writer) i
 		return rcInvalidArg
 	}
 	gap := floatOr(p.Gap, boardDefaultGap)
+	if gap < 0 {
+		fmt.Fprintln(stderr, "Error: --gap must not be negative")
+		return rcInvalidArg
+	}
 	doc, err := fetchBoard(id, -1)
 	if err != nil {
 		return boardErr(stderr, err)
@@ -260,6 +329,26 @@ func runBoardLayout(p *boardLayoutParams, id string, stdout, stderr io.Writer) i
 		deltas[shapeID] = [2]float64{pos[0] - v.X, pos[1] - v.Y}
 	}
 	return patchScene(id, s, s.moveBy(deltas), stdout, stderr)
+}
+
+// onCycle reports whether start reaches itself along arrows through shapes
+// that are not placed yet.
+func onCycle(start string, next map[string][]string, done map[string]bool) bool {
+	seen := map[string]bool{}
+	stack := append([]string(nil), next[start]...)
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if n == start {
+			return true
+		}
+		if done[n] || seen[n] {
+			continue
+		}
+		seen[n] = true
+		stack = append(stack, next[n]...)
+	}
+	return false
 }
 
 // layoutPositions computes a top-left for every shape: layers by longest
@@ -277,12 +366,21 @@ func layoutPositions(s *boardScene, dir string, gap float64) map[string][2]float
 	next := map[string][]string{}
 	indeg := map[string]int{}
 	linked := map[string]bool{}
+	// The editor binds an arrow drawn from a labelled shape to the label text
+	// on top of it; such an arrow joins the shape the text labels.
+	owners := s.labelOwners()
+	endpoint := func(id string) string {
+		if owner, ok := owners[id]; ok && s.view[id].Type == "text" {
+			return owner
+		}
+		return id
+	}
 	for _, id := range s.order {
 		v := s.view[id]
 		if v.Type != "arrow" || v.StartBinding == nil || v.EndBinding == nil {
 			continue
 		}
-		a, b := v.StartBinding.ElementID, v.EndBinding.ElementID
+		a, b := endpoint(v.StartBinding.ElementID), endpoint(v.EndBinding.ElementID)
 		if !isShape[a] || !isShape[b] || a == b {
 			continue
 		}
@@ -318,9 +416,11 @@ func layoutPositions(s *boardScene, dir string, gap float64) map[string][2]float
 				}
 			}
 		}
+		// Only cycles are left: break one at its first shape in board order
+		// that is on a cycle (reaches itself through unplaced shapes).
 		stuck := ""
 		for _, id := range shapes {
-			if linked[id] && !done[id] {
+			if linked[id] && !done[id] && onCycle(id, next, done) {
 				stuck = id
 				break
 			}
