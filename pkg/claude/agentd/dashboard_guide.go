@@ -43,6 +43,9 @@ const (
 	guideMaxNote     = 400
 	guideMaxTitle    = 160
 	guideViewMaxBody = 4 << 10
+	// A cue carries up to guideMaxMarks marks of two texts each; texts are
+	// cut to length after decoding, so the body may carry them long.
+	guideCueMaxBody = 32 << 10
 )
 
 // guideTabs are the dashboard's top-level tabs a cue may switch to.
@@ -251,7 +254,7 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, guideViewMaxBody)
+	r.Body = http.MaxBytesReader(w, r.Body, guideCueMaxBody)
 	var req struct {
 		Tab    string    `json:"tab"`
 		Path   string    `json:"path"`
