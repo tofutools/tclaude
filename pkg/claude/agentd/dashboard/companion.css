@@ -259,3 +259,13 @@ body.companion-annotating .companion-chips { visibility: hidden; }
   color: var(--cmp-amber-text); font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
 }
 .companion-input .companion-annotate:hover { border-color: var(--cmp-amber); }
+
+/* One-click starters for the Steward (guided setup, tcl-bifqbb). */
+.companion-starters { flex: none; display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 8px 0; border-top: 1px solid var(--cmp-line); }
+.companion-starters + .companion-input { border-top: 0; }
+.companion-starters button {
+  padding: 3px 10px; border-radius: 12px; border: 1px solid #6e40c9; background: #6e40c91f;
+  color: var(--cmp-text); font: inherit; font-size: 11px; cursor: pointer;
+}
+.companion-starters button:hover, .companion-starters button:focus-visible { background: #6e40c955; outline: none; }
+.companion-starters button:disabled { opacity: .5; cursor: default; }

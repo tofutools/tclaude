@@ -326,3 +326,17 @@ test('marking up the page sends the agent a numbered description of the marks', 
   assert.equal(view.container.querySelector('svg.annotate-canvas'), null, 'the layer closes after sending');
   assert.ok(!doc.body.classList.contains('companion-annotating'));
 });
+
+test('the Steward tab offers one-click setup starters that send with the view attached', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([S]) });
+  const { view, harness, requests, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }) });
+  await harness.act(() => controller().open(S));
+  const starter = harness.getByRole(view.container, 'button', { name: 'Set up my repos' });
+  await harness.act(async () => { starter.click(); await new Promise((r) => setTimeout(r, 0)); });
+  const mail = requests.find((r) => r.url === '/api/operator-message');
+  assert.equal(mail.body.to, S);
+  assert.match(mail.body.body, /^Help me set up a group for each of my repos.*\n\n\[dashboard view: Processes \(/s);
+  // Typing hides the starters; other agents never show them.
+  await harness.input(view.container.querySelector('input.companion-draft'), 'x');
+  assert.equal(view.container.querySelector('.companion-starters'), null);
+});
