@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -212,9 +214,12 @@ func TestRouteHelperAcceptsLateConversation(t *testing.T) {
 // This subprocess entry runs the production helper command/parser rather than
 // a script that ignores its arguments. The wrapper owns its lifetime.
 func TestRouteHelperCommandProcess(t *testing.T) {
+	if os.Getenv("TCLAUDE_TEST_ROUTE_HELPER_PROCESS") != "1" {
+		t.Skip("helper subprocess only")
+	}
 	separator := slices.Index(os.Args, "--")
 	if separator < 0 {
-		t.Skip("helper subprocess only")
+		t.Fatal("missing helper subprocess argument separator")
 	}
 	args := os.Args[separator+1:]
 	if len(args) < 2 || args[0] != "session" || args[1] != tclaudeLayerRouteHelperCommand {
@@ -271,8 +276,22 @@ func TestRouteHelperLateConversationStartsHarness(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", wrapped)
+	command.Env = append(os.Environ(), "TCLAUDE_TEST_ROUTE_HELPER_PROCESS=1")
 	command.ExtraFiles = []*os.File{dummy, credentialRead}
+	// A timeout must stop the helper too: SIGKILL on the wrapper alone bypasses
+	// its EXIT trap and leaves the helper retrying in the background.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error {
+		err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		if err == syscall.ESRCH {
+			return os.ErrProcessDone
+		}
+		return err
+	}
 	output, err := command.CombinedOutput()
+	if command.Process != nil {
+		_ = os.Remove("/tmp/tclaude-route-helper-ready-" + strconv.Itoa(command.Process.Pid))
+	}
 	if err != nil {
 		t.Fatalf("late-enrolled helper prevented harness startup: %v\n%s", err, output)
 	}
