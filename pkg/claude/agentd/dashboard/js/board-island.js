@@ -18,7 +18,7 @@ import htm from 'htm';
 import { signal } from '@preact/signals';
 import {
   ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, alignMoves, boardIdFromTitle, bump, center, changeBounds,
-  clipboardText, cloneElements, connectArrow, contentBounds, describeChanges, elementBounds, elementsInBox, isBoardId,
+  cleanText, clipboardText, cloneElements, connectArrow, contentBounds, describeChanges, elementBounds, elementsInBox, isBoardId,
   labelOf, labelOwners, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
   reboundArrows, shapeAt, simplifyStroke, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
@@ -36,7 +36,11 @@ const HISTORY_MAX = 100;
 
 async function jsonOrThrow(response) {
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    const error = new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -221,6 +225,16 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       // before this PATCH have versions below result.version.
       void result;
     } catch (error) {
+      // A refused element (400) is dropped, with the rest retried at once:
+      // retrying it would hold every later edit back for good.
+      if (error?.status === 400 || error?.status === 413) {
+        const bad = /^elements\[(\d+)\]/.exec(error.message || '');
+        const drop = bad ? new Set([batch[Number(bad[1])]?.id]) : new Set(batch.map((el) => el.id));
+        if (!disposed.current) notify(`The board refused ${drop.size === 1 ? 'an edit' : `${drop.size} edits`}: ${error.message}`, true);
+        for (const el of batch) if (!drop.has(el.id) && !pending.current.has(el.id)) pending.current.set(el.id, el);
+        if (pending.current.size) void flush();
+        return;
+      }
       // Keep the edits; the next change or flush retries them.
       for (const el of batch) if (!pending.current.has(el.id)) pending.current.set(el.id, el);
       if (!disposed.current) {
@@ -606,7 +620,12 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     if (t.isNew) {
       if (!text) return;
       const shape = t.shapeId && elements.current.get(t.shapeId);
-      if (shape && !shape.isDeleted) commit([newLabel(shape, text, { strokeColor: t.color })]);
+      if (shape && !shape.isDeleted) {
+        const label = newLabel(shape, text, { strokeColor: t.color });
+        // A deleted `<id>-label` outranks a fresh version 1: revive it.
+        const old = elements.current.get(label.id);
+        commit([old ? bump(old, { ...label, version: old.version, isDeleted: false }) : label]);
+      }
       else commit([newElement('text', { x: t.x, y: t.y, text, fontSize: t.size, strokeColor: t.color })]);
       return;
     }
@@ -655,6 +674,9 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     // elements also move between boards and to and from excalidraw.com.
     const onCopy = (event) => {
       if (!ours(event) || !selected.length) return;
+      // Text the operator highlighted is theirs to copy.
+      const highlighted = win?.getSelection?.();
+      if (highlighted && !highlighted.isCollapsed) return;
       event.preventDefault();
       event.clipboardData?.setData('text/plain', clipboardText(selectionWithLabels()));
       if (event.type === 'cut') remove(selected);
@@ -667,8 +689,10 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       const source = parseClipboard(text);
       if (source) { pasteElements(source); return; }
       // Plain text becomes a text element.
+      const clean = cleanText(text);
+      if (!clean.trim()) return;
       const at = pointerAt.current || { x: view.x + 40, y: view.y + 40 };
-      const el = newElement('text', { x: at.x, y: at.y, text: text.slice(0, 4000), fontSize: 20, strokeColor: color });
+      const el = newElement('text', { x: at.x, y: at.y, text: clean, fontSize: 20, strokeColor: color });
       commit([el]);
       setSelected([el.id]);
     };
