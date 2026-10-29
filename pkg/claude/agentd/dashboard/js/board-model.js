@@ -354,15 +354,77 @@ export function clipboardText(elements) {
 }
 
 const PASTE_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'arrow', 'line', 'freedraw', 'text']);
+const MAX_COORD = 1e6;
+const MAX_TEXT_BYTES = 4000;
+const COLOR = /^(#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3}|transparent)$/;
+const ELEMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+// cleanText makes text acceptable to the daemon: printable characters,
+// newlines and tabs only, at most 4000 bytes.
+export function cleanText(text, maxBytes = MAX_TEXT_BYTES) {
+  let out = String(text ?? '').replace(/\r\n?/g, '\n')
+    .replace(/[\p{C}\p{Z}]/gu, (ch) => (ch === '\n' || ch === '\t' || ch === ' ' ? ch : /\p{Z}/u.test(ch) ? ' ' : ''));
+  const encoder = new TextEncoder();
+  if (encoder.encode(out).length <= maxBytes) return out;
+  let bytes = 0; let cut = '';
+  for (const ch of out) {
+    bytes += encoder.encode(ch).length;
+    if (bytes > maxBytes) break;
+    cut += ch;
+  }
+  return cut;
+}
+
+const clampNum = (v, lo, hi, fallback) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback);
+
+// sanitizeElement keeps only the fields the daemon stores, each within its
+// rules, so a pasted element from anywhere (excalidraw.com included) saves.
+// Null when there is nothing usable.
+export function sanitizeElement(raw) {
+  if (!raw || typeof raw !== 'object' || raw.isDeleted || !PASTE_TYPES.has(raw.type)) return null;
+  if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y)) return null;
+  const el = {
+    id: typeof raw.id === 'string' && ELEMENT_ID.test(raw.id) ? raw.id : newElementId(),
+    type: raw.type,
+    x: clampNum(raw.x, -MAX_COORD, MAX_COORD, 0), y: clampNum(raw.y, -MAX_COORD, MAX_COORD, 0),
+    width: clampNum(raw.width, 0, MAX_COORD, 0), height: clampNum(raw.height, 0, MAX_COORD, 0),
+    angle: clampNum(raw.angle, -MAX_COORD, MAX_COORD, 0),
+    strokeColor: COLOR.test(raw.strokeColor || '') ? raw.strokeColor : '#1e1e1e',
+    backgroundColor: COLOR.test(raw.backgroundColor || '') ? raw.backgroundColor : 'transparent',
+    fillStyle: ['solid', 'hachure', 'none'].includes(raw.fillStyle) ? raw.fillStyle : 'solid',
+    strokeStyle: ['solid', 'dashed', 'dotted'].includes(raw.strokeStyle) ? raw.strokeStyle : 'solid',
+    strokeWidth: clampNum(raw.strokeWidth, 0.5, 20, 2),
+    roughness: clampNum(raw.roughness, 0, 2, 1),
+    opacity: clampNum(raw.opacity, 0, 100, 100),
+  };
+  if (LINEAR.has(raw.type)) {
+    const points = Array.isArray(raw.points) ? raw.points.slice(0, 5000) : [];
+    if (points.length < 2 || !points.every((p) => Array.isArray(p) && p.length === 2 && p.every((v) => Number.isFinite(v) && Math.abs(v) <= MAX_COORD))) return null;
+    el.points = points.map(([px, py]) => [px, py]);
+  }
+  if (raw.type === 'text') {
+    const text = cleanText(raw.text);
+    if (!text.trim()) return null;
+    el.text = text;
+    el.fontSize = clampNum(raw.fontSize, 4, 200, 20);
+    el.textAlign = ['left', 'center', 'right'].includes(raw.textAlign) ? raw.textAlign : 'left';
+  }
+  if (raw.type === 'arrow') {
+    for (const key of ['startBinding', 'endBinding']) {
+      const id = raw[key]?.elementId;
+      if (typeof id === 'string' && ELEMENT_ID.test(id)) el[key] = { elementId: id };
+    }
+  }
+  return el;
+}
 
 // parseClipboard reads clipboard text written by clipboardText (or by
-// Excalidraw); null when it is not board elements.
+// Excalidraw) as sanitized elements; null when it is not board elements.
 export function parseClipboard(text) {
   try {
     const data = JSON.parse(text);
     if (data?.type !== CLIPBOARD_TYPE || !Array.isArray(data.elements)) return null;
-    const out = data.elements.filter((el) => el && typeof el === 'object' && !el.isDeleted && PASTE_TYPES.has(el.type)
-      && Number.isFinite(el.x) && Number.isFinite(el.y));
+    const out = data.elements.slice(0, 5000).map(sanitizeElement).filter(Boolean);
     return out.length ? out : null;
   } catch {
     return null;
@@ -383,7 +445,10 @@ export function cloneElements(elements, dx, dy, opts = {}) {
   const rebind = (binding) => (binding && ids.has(binding.elementId) ? { elementId: ids.get(binding.elementId) } : undefined);
   return elements.map((el) => {
     const { server_version: _s, customData: _c, startBinding, endBinding, ...rest } = el;
-    const copy = newElement(el.type, { ...rest, id: ids.get(el.id), x: el.x + dx, y: el.y + dy }, opts);
+    const copy = newElement(el.type, {
+      ...rest, id: ids.get(el.id),
+      x: clampNum(el.x + dx, -MAX_COORD, MAX_COORD, 0), y: clampNum(el.y + dy, -MAX_COORD, MAX_COORD, 0),
+    }, opts);
     const start = rebind(startBinding); const end = rebind(endBinding);
     if (start) copy.startBinding = start;
     if (end) copy.endBinding = end;

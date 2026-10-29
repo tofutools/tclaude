@@ -236,6 +236,14 @@ test('board model: labels follow shapes, align and space evenly, copies rebind, 
   assert.equal(m.parseClipboard(text)[0].id, 'inner');
   assert.equal(m.parseClipboard('hello'), null);
   assert.equal(m.parseClipboard(JSON.stringify({ type: 'excalidraw/clipboard', elements: [{ type: 'image', x: 0, y: 0 }] })), null, 'unknown types are not pasted');
+  // Pasted elements are cut down to what the daemon accepts.
+  const [pasted] = m.parseClipboard(JSON.stringify({ type: 'excalidraw/clipboard', elements: [{
+    id: 'x', type: 'text', x: 5, y: 5, text: 'a\r\nb\u200bc\u00a0d', fontSize: 900, fillStyle: 'cross-hatch', strokeColor: 'red', seed: 7,
+  }] }));
+  assert.deepEqual([pasted.text, pasted.fontSize, pasted.fillStyle, pasted.strokeColor, pasted.seed], ['a\nbc d', 200, 'solid', '#1e1e1e', undefined]);
+  assert.equal(m.parseClipboard(JSON.stringify({ type: 'excalidraw/clipboard', elements: [{ type: 'line', x: 0, y: 0, points: 5 }] })), null, 'malformed points are not pasted');
+  assert.equal(new TextEncoder().encode(m.cleanText('é'.repeat(3000))).length, 4000, 'text is cut by bytes');
+  assert.equal(m.cloneElements([inner], 2e6, 0)[0].x, 1e6, 'a copy stays on the board');
 });
 
 test('the editor rubber-band selects, aligns, labels a shape on double-click and deletes it with its label', async (t) => {
@@ -278,10 +286,26 @@ test('the editor rubber-band selects, aligns, labels a shape on double-click and
   assert.ok(label, 'the label was saved');
   assert.equal(label.text, 'DB');
 
+  // A label deleted on its own and written again revives its tombstone, so
+  // the new text outranks the deletion.
+  patches.length = 0;
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 165, 260));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 165, 260));
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
+  await harness.act(() => wait(BOARD_FLUSH_MS + 20));
+  await harness.act(() => harness.fireEvent(svg, dbl, { clientX: 180, clientY: 260 }));
+  await harness.input(view.container.querySelector('textarea.board-text-input'), 'Store');
+  await harness.act(() => harness.fireEvent(view.container.querySelector('textarea.board-text-input'), 'keydown', { key: 'Enter' }));
+  await harness.act(() => wait(BOARD_FLUSH_MS + 20));
+  const revived = patches.filter((el) => el.id === 'b-label');
+  assert.deepEqual(revived.map((el) => el.isDeleted), [true, false]);
+  assert.ok(revived[1].version > revived[0].version);
+  assert.equal(revived[1].text, 'Store');
+
   // Deleting the shape deletes its label.
   patches.length = 0;
-  await harness.act(() => pointer(harness, svg, 'pointerdown', 145, 245));
-  await harness.act(() => pointer(harness, svg, 'pointerup', 145, 245));
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 141, 250));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 141, 250));
   await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
   await harness.act(() => wait(BOARD_FLUSH_MS + 20));
   assert.deepEqual(patches.filter((el) => el.isDeleted).map((el) => el.id).sort(), ['b', 'b-label']);
@@ -295,6 +319,6 @@ test('the editor rubber-band selects, aligns, labels a shape on double-click and
   assert.equal(patches.length, 1);
   assert.equal(patches[0].type, 'rectangle');
   assert.notEqual(patches[0].id, 'a');
-  assert.deepEqual([patches[0].x, patches[0].y], [105, 205], 'placed at the last pointer position');
+  assert.deepEqual([patches[0].x, patches[0].y], [101, 210], 'placed at the last pointer position');
   await view.unmount();
 });
