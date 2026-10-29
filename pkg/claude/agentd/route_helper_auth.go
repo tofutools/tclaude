@@ -147,6 +147,22 @@ func routeHelperCapabilityActive(agentID, convID, generation string) bool {
 	return match.agentID != "" && routeHelperCredentialCurrent(match)
 }
 
+// routeHelperCredentialForOtherLaunch reports whether the daemon holds a
+// helper capability for this conversation that is not the current launch's,
+// i.e. the request comes from a launch the live helper does not belong to.
+func routeHelperCredentialForOtherLaunch(agentID, convID string) bool {
+	agentID = strings.TrimSpace(agentID)
+	convID = strings.TrimSpace(convID)
+	routeHelperCredentials.RLock()
+	defer routeHelperCredentials.RUnlock()
+	for _, capability := range routeHelperCredentials.items {
+		if capability.agentID == agentID && capability.convID == convID {
+			return true
+		}
+	}
+	return false
+}
+
 func requireRouteHelperCredential(w http.ResponseWriter, r *http.Request) (routeHelperCredential, bool) {
 	capability, present, valid := routeHelperCredentialForRequest(r)
 	if !present || !valid {

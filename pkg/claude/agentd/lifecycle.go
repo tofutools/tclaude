@@ -7587,7 +7587,20 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// the route-enabled launch instead of producing an agent whose advertised
 	// routes can never attach.
 	groupRoutesEnabled := routeEnabled
-	hostRoutesEnabled := preConvID != "" && layeredLaunch && launchEnroll && hostPublishAllowed(preConvID) && hostRouteHelperEligible(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
+	hostRoutesEnabled := false
+	if preConvID != "" && hostPublishAllowed(preConvID) {
+		reason := hostRouteHelperIneligibleReason(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
+		if reason == "" && !layeredLaunch {
+			reason = "the agent is not launched in tclaude’s pane sandbox"
+		}
+		if reason == "" && !launchEnroll {
+			reason = "the launch has no pre-enrolled conversation identity"
+		}
+		hostRoutesEnabled = reason == ""
+		if !hostRoutesEnabled {
+			warnHostRouteHelperSkipped(preConvID, "spawn", reason)
+		}
+	}
 	if hostRoutesEnabled {
 		routeEnabled = true
 		if runtime.GOOS == "darwin" {
@@ -8709,6 +8722,11 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	spawnContextMsgID, _, fail := enrollSpawnedConv(g, p, convID, briefingInlined)
 	if fail != nil {
 		return fail
+	}
+	// Post-connect enrollment means the pane started before its conv-id was
+	// known, so no route helper could be attached to this launch.
+	if (runtime.GOOS == "linux" || runtime.GOOS == "darwin") && hostPublishAllowed(convID) {
+		warnHostRouteHelperSkipped(convID, "spawn", fmt.Sprintf("the %s harness enrolls after its pane starts, so a fresh spawn cannot carry the helper; resume the agent to attach one", h.Name))
 	}
 
 	// Post-spawn injection: rename the new pane to the agent's name and
@@ -10816,7 +10834,14 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 	if a.RouteHelperCredential != "" {
 		return nil
 	}
-	hostRoutesEnabled := hostPublishAllowed(a.ConvID) && hostRouteHelperEligible(a.Harness, a.SandboxImplementation, a.EffectiveSandbox)
+	hostRoutesEnabled := false
+	if hostPublishAllowed(a.ConvID) {
+		reason := hostRouteHelperIneligibleReason(a.Harness, a.SandboxImplementation, a.EffectiveSandbox)
+		hostRoutesEnabled = reason == ""
+		if !hostRoutesEnabled {
+			warnHostRouteHelperSkipped(a.ConvID, "resume", reason)
+		}
+	}
 	if runtime.GOOS == "darwin" && hostRoutesEnabled {
 		a.DarwinRouteCapable = true
 	}

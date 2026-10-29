@@ -135,3 +135,60 @@ func TestHostPermissionDoesNotBreakUnsupportedResume(t *testing.T) {
 	require.Empty(t, args.RouteHelperCredential)
 	require.Empty(t, args.RouteHelperGroupIDs)
 }
+
+func TestHostPublishLaunchErrorNamesCause(t *testing.T) {
+	setupTestDB(t)
+	mux := buildMux()
+	publish := func(conv string) *httptest.ResponseRecorder {
+		req := AsAgentPeer(httptest.NewRequest("POST", "/v1/routes/publish",
+			strings.NewReader(`{"host":true,"name":"web","target":"tcp://127.0.0.1:18080"}`)), conv)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	grant := func(conv, harnessName string) string {
+		agentID, _, err := db.EnsureAgentForConv(conv, conv)
+		require.NoError(t, err)
+		require.NoError(t, db.GrantAgentPermission(conv, PermRoutesPublishHost, "test"))
+		require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s-" + conv, ConvID: conv, Status: "idle", Harness: harnessName}))
+		return agentID
+	}
+
+	// A fresh Codex spawn enrolls after its pane starts, so it never carries
+	// a helper; the error must say so rather than ask for the grant again.
+	grant("host-cause-codex", "codex")
+	rec := publish("host-cause-codex")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "fresh codex spawn never gets one")
+	require.NotContains(t, rec.Body.String(), "grant routes.publish-host, then")
+
+	openAgent := grant("host-cause-open", "claude")
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(openAgent, &sandboxpolicy.Snapshot{Version: sandboxpolicy.SnapshotVersion,
+		Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}))
+	rec = publish("host-cause-open")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "open host networking")
+
+	staleAgent := grant("host-cause-stale", "claude")
+	_, _, err := mintRouteHelperCredential(staleAgent, "host-cause-stale")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("host-cause-stale", "")
+	rec = publish("host-cause-stale")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "different launch generation")
+
+	grant("host-cause-unknown", "claude")
+	rec = publish("host-cause-unknown")
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "agentd restarted since")
+}
+
+func TestHostRouteHelperIneligibleReason(t *testing.T) {
+	private := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}}
+	require.Empty(t, hostRouteHelperIneligibleReason("claude", "tclaude-layer", private))
+	require.Contains(t, hostRouteHelperIneligibleReason("claude", "", private), "pane sandbox")
+	require.Contains(t, hostRouteHelperIneligibleReason("opencode", "tclaude-layer", private), "server boundary")
+	require.Contains(t, hostRouteHelperIneligibleReason("claude", "tclaude-layer", nil), "no resolved sandbox profile")
+	open := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessInternet}}
+	require.Contains(t, hostRouteHelperIneligibleReason("claude", "tclaude-layer", open), "open host networking")
+}
