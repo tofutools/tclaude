@@ -38,9 +38,10 @@ type proxyRouteAuthorityConfig struct {
 }
 
 type proxyRouteAuthority struct {
-	config     proxyRouteAuthorityConfig
-	credential string
-	mu         sync.Mutex
+	config         proxyRouteAuthorityConfig
+	credential     string
+	attachedConvID string
+	mu             sync.Mutex
 }
 
 type proxyRouteView struct {
@@ -91,6 +92,12 @@ func (a *proxyRouteAuthority) conversationID(ctx context.Context) (string, error
 	if a.config.ConvID != "" {
 		return a.config.ConvID, nil
 	}
+	a.mu.Lock()
+	convID := a.attachedConvID
+	a.mu.Unlock()
+	if convID != "" {
+		return convID, nil
+	}
 	var identity struct {
 		AgentID    string `json:"agent_id"`
 		ConvID     string `json:"conv_id"`
@@ -102,6 +109,9 @@ func (a *proxyRouteAuthority) conversationID(ctx context.Context) (string, error
 	if identity.AgentID != a.config.AgentID || identity.Generation != a.config.LaunchGeneration || identity.ConvID == "" {
 		return "", errors.New("route helper identity is not attached to this launch")
 	}
+	a.mu.Lock()
+	a.attachedConvID = identity.ConvID
+	a.mu.Unlock()
 	return identity.ConvID, nil
 }
 

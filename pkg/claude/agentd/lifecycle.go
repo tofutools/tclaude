@@ -7583,7 +7583,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 	groupRoutesEnabled := routeEnabled
 	hostRoutesEnabled := false
-	if preConvID != "" && hostPublishAllowed(preConvID) || runtime.GOOS == "linux" && preConvID == "" {
+	// A grouped late-enrolled launch cannot resolve its effective grants yet.
+	// Stage host discovery speculatively; all publication remains permission-gated.
+	// Group membership supplies the durable identity reservation before launch.
+	if (preConvID != "" && hostPublishAllowed(preConvID)) ||
+		(runtime.GOOS == "linux" && preConvID == "" && g != nil) {
 		reason := hostRouteHelperIneligibleReason(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
 		if reason == "" && !layeredLaunch {
 			reason = "the agent is not launched in tclaude’s pane sandbox"
@@ -7694,6 +7698,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
 				"failed to reserve pending spawn " + label + ": " + err.Error()}
 		}
+	}
+
+	if reservedPending && !p.Async {
+		defer func() {
+			// A synchronous caller reports failure, so a reservation must not
+			// later enroll a worker that its template/process may already retry.
+			if failure != nil {
+				deletePendingSpawnRow(label)
+			}
+		}()
 	}
 
 	// launchFailed unwinds a spawn whose wrapper reported failure — whether
@@ -8646,7 +8660,9 @@ func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID
 		}
 		if !ensurePendingTaskRefBound(convID, ps) {
 			requeuePendingSpawn(label, ps)
+			return
 		}
+		attachRouteHelperConversation(p.AgentID, convID)
 		return
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
@@ -8723,11 +8739,17 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	// never delete the real, running agent's identity.
 	spawnContextMsgID, _, fail := enrollSpawnedConv(g, p, convID, briefingInlined)
 	if fail != nil {
-		revokePendingRouteHelperCredentials(p.AgentID)
 		return fail
 	}
 	attachRouteHelperConversation(p.AgentID, convID)
-	if hostPublishAllowed(convID) && !hasRouteHelperForConversation(p.AgentID, convID) {
+	helperActive := hasRouteHelperForConversation(p.AgentID, convID)
+	if runtime.GOOS == "linux" && g != nil && !helperActive {
+		enabled, err := db.IsAgentGroupRouteEnabled(g.ID, PermRoutesPublish, PermRoutesConsume)
+		if err == nil && enabled {
+			slog.Warn("group route helper is unavailable; relaunch the agent (pending helper enrollment expires after 15 minutes)", "conv", convID, "group", g.Name)
+		}
+	}
+	if hostPublishAllowed(convID) && !helperActive {
 		warnHostRouteHelperSkipped(convID, "spawn", "this launch has no eligible pane-local helper; use tclaude’s pane sandbox with private networking and relaunch")
 	}
 

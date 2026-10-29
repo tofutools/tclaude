@@ -74,6 +74,7 @@ is provisioned from the agent's effective host-publishing permission, or staged 
 for a seed-based launch; on macOS, the launch also
 reserves its normal bounded Darwin route slots. Holding the permission does not prevent other launch
 shapes from starting, but publication refuses a launch without a current route contract. On Linux, fresh Codex launches attach the helper after daemon enrollment without requiring a resume.
+A launch that stays unenrolled for more than 15 minutes must be resumed to receive a new helper credential.
 On macOS, seed-based harnesses such as Codex still need a resume to install that contract.
 On macOS, clones may also need a resume before their first host publication. A live grant is required
 for the publication lifetime; one-shot approvals do not create persistent host publications.

@@ -207,7 +207,7 @@ func hostPublishLaunchDiagnosis(agentID, convID, generation string) string {
 		return fmt.Sprintf("no route helper is active for this launch: a fresh %s spawn never gets one, because its conversation id is unknown before the pane starts, and a resumed one gets one only if the grant was already in place when it resumed%s", harnessName, restart)
 	}
 	if runtime.GOOS == "linux" {
-		return "no route helper is active for this launch (the grant may have been added after launch, the launch may not use tclaude’s pane sandbox, or agentd restarted since, which invalidates every helper)"
+		return "no route helper is active for this launch (the grant may have been added after launch, the launch may not use tclaude’s pane sandbox, pending helper enrollment exceeded 15 minutes, or agentd restarted since, which invalidates every helper)"
 	}
 	return "no route-capable launch is active (the grant may have been added after launch, or the launch may not use tclaude’s pane sandbox)"
 }

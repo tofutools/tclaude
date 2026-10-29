@@ -32,6 +32,8 @@ func testProxyRouteAuthorityLease(t *testing.T, late bool) {
 	defer listener.Close()
 	var seenCredential atomic.Int32
 	var closed atomic.Int32
+	var attached atomic.Bool
+	attached.Store(!late)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(proxyRouteCapabilityHeader) != "capability-only-in-memory" {
 			http.Error(w, "missing capability", http.StatusUnauthorized)
@@ -41,6 +43,10 @@ func testProxyRouteAuthorityLease(t *testing.T, late bool) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/routes/helper-identity":
+			if !attached.Load() {
+				http.Error(w, "pending", http.StatusUnauthorized)
+				return
+			}
 			_, _ = fmt.Fprint(w, `{"agent_id":"agt","conv_id":"conv","launch_generation":"launch"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/routes":
 			_, _ = fmt.Fprint(w, `{"group_id":42,"group_generation":7,"routes":[]}`)
@@ -89,6 +95,10 @@ func testProxyRouteAuthorityLease(t *testing.T, late bool) {
 		if identity.ConvID != "" {
 			t.Fatal("pending launch already has a conversation")
 		}
+		if _, err := authority.IdentityForRoute(ctx, sandboxproxy.RouteRequest{RouteID: "route-a"}); err == nil {
+			t.Fatal("unattached proxy identity authorized a route")
+		}
+		attached.Store(true)
 		identity, err = authority.IdentityForRoute(ctx, sandboxproxy.RouteRequest{RouteID: "route-a"})
 		if err != nil {
 			t.Fatal(err)
