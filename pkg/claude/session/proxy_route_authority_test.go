@@ -17,6 +17,12 @@ import (
 )
 
 func TestProxyRouteAuthorityOpensAndReleasesGenerationBoundLease(t *testing.T) {
+	for _, late := range []bool{false, true} {
+		t.Run(fmt.Sprint("late=", late), func(t *testing.T) { testProxyRouteAuthorityLease(t, late) })
+	}
+}
+
+func testProxyRouteAuthorityLease(t *testing.T, late bool) {
 	socketPath := "/tmp/tclaude-route-authority-" + strconv.Itoa(os.Getpid()) + ".sock"
 	_ = os.Remove(socketPath)
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
@@ -26,6 +32,8 @@ func TestProxyRouteAuthorityOpensAndReleasesGenerationBoundLease(t *testing.T) {
 	defer listener.Close()
 	var seenCredential atomic.Int32
 	var closed atomic.Int32
+	var attached atomic.Bool
+	attached.Store(!late)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(proxyRouteCapabilityHeader) != "capability-only-in-memory" {
 			http.Error(w, "missing capability", http.StatusUnauthorized)
@@ -34,6 +42,12 @@ func TestProxyRouteAuthorityOpensAndReleasesGenerationBoundLease(t *testing.T) {
 		seenCredential.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/routes/helper-identity":
+			if !attached.Load() {
+				http.Error(w, "pending", http.StatusUnauthorized)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"agent_id":"agt","conv_id":"conv","launch_generation":"launch"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/routes":
 			_, _ = fmt.Fprint(w, `{"group_id":42,"group_generation":7,"routes":[]}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/routes/route-a":
@@ -61,6 +75,9 @@ func TestProxyRouteAuthorityOpensAndReleasesGenerationBoundLease(t *testing.T) {
 	}()
 
 	config := proxyRouteAuthorityConfig{SocketPath: socketPath, AgentID: "agt", ConvID: "conv", LaunchGeneration: "launch", GroupIDs: []int64{42}, HandoffSocketPath: "/tmp/private-one-shot.sock"}
+	if late {
+		config.ConvID = ""
+	}
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +90,22 @@ func TestProxyRouteAuthorityOpensAndReleasesGenerationBoundLease(t *testing.T) {
 	identity, err := authority.Identity(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if late {
+		if identity.ConvID != "" {
+			t.Fatal("pending launch already has a conversation")
+		}
+		if _, err := authority.IdentityForRoute(ctx, sandboxproxy.RouteRequest{RouteID: "route-a"}); err == nil {
+			t.Fatal("unattached proxy identity authorized a route")
+		}
+		attached.Store(true)
+		identity, err = authority.IdentityForRoute(ctx, sandboxproxy.RouteRequest{RouteID: "route-a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if identity.ConvID != "conv" {
+			t.Fatal("late identity was not supplied by daemon")
+		}
 	}
 	resolution, err := authority.ResolveRoute(ctx, sandboxproxy.RouteRequest{Identity: identity, RouteID: "route-a", Port: 43127})
 	if err != nil {

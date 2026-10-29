@@ -22,6 +22,13 @@ const routeChannelPath = "/v1/routes/channel"
 
 func registerV1RouteAdapter(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+routeChannelPath, handleRouteChannel)
+	mux.HandleFunc("GET /v1/routes/helper-identity", func(w http.ResponseWriter, r *http.Request) {
+		capability, ok := requireRouteHelperCredential(w, r)
+		if !ok {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"agent_id": capability.agentID, "conv_id": capability.convID, "launch_generation": capability.launchGeneration})
+	})
 }
 
 // handleRouteChannel is the only production entry point from a namespace

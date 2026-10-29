@@ -38,9 +38,10 @@ type proxyRouteAuthorityConfig struct {
 }
 
 type proxyRouteAuthority struct {
-	config     proxyRouteAuthorityConfig
-	credential string
-	mu         sync.Mutex
+	config         proxyRouteAuthorityConfig
+	credential     string
+	attachedConvID string
+	mu             sync.Mutex
 }
 
 type proxyRouteView struct {
@@ -86,6 +87,34 @@ func (a *proxyRouteAuthority) credentialValue() string {
 	return a.credential
 }
 
+// conversationID uses only authenticated daemon data for a late-bound launch.
+func (a *proxyRouteAuthority) conversationID(ctx context.Context) (string, error) {
+	if a.config.ConvID != "" {
+		return a.config.ConvID, nil
+	}
+	a.mu.Lock()
+	convID := a.attachedConvID
+	a.mu.Unlock()
+	if convID != "" {
+		return convID, nil
+	}
+	var identity struct {
+		AgentID    string `json:"agent_id"`
+		ConvID     string `json:"conv_id"`
+		Generation string `json:"launch_generation"`
+	}
+	if err := a.request(ctx, http.MethodGet, "/v1/routes/helper-identity", nil, &identity); err != nil {
+		return "", err
+	}
+	if identity.AgentID != a.config.AgentID || identity.Generation != a.config.LaunchGeneration || identity.ConvID == "" {
+		return "", errors.New("route helper identity is not attached to this launch")
+	}
+	a.mu.Lock()
+	a.attachedConvID = identity.ConvID
+	a.mu.Unlock()
+	return identity.ConvID, nil
+}
+
 func (a *proxyRouteAuthority) Identity(ctx context.Context) (sandboxproxy.RouteIdentity, error) {
 	if a == nil || len(a.config.GroupIDs) == 0 {
 		return sandboxproxy.RouteIdentity{}, errors.New("proxy route authority requires an explicit launch group")
@@ -99,6 +128,14 @@ func (a *proxyRouteAuthority) Identity(ctx context.Context) (sandboxproxy.RouteI
 	}
 	if groupID <= 0 {
 		return sandboxproxy.RouteIdentity{}, errors.New("proxy route authority group is invalid")
+	}
+	if a.credentialValue() == "" {
+		return sandboxproxy.RouteIdentity{}, errors.New("route authority capability is unavailable")
+	}
+	if a.config.ConvID == "" {
+		// The proxy must start before the harness can produce a conversation.
+		// IdentityForRoute refreshes the identity before any route is used.
+		return sandboxproxy.RouteIdentity{AgentID: a.config.AgentID, LaunchGeneration: a.config.LaunchGeneration}, nil
 	}
 	var payload struct {
 		GroupID         int64 `json:"group_id"`
@@ -124,6 +161,10 @@ func (a *proxyRouteAuthority) IdentityForRoute(ctx context.Context, request sand
 	if a == nil || len(a.config.GroupIDs) == 0 {
 		return sandboxproxy.RouteIdentity{}, errors.New("proxy route authority has no launch groups")
 	}
+	convID, err := a.conversationID(ctx)
+	if err != nil {
+		return sandboxproxy.RouteIdentity{}, err
+	}
 	var route proxyRouteView
 	if err := a.request(ctx, http.MethodGet, "/v1/routes/"+url.PathEscape(request.RouteID), nil, &route); err != nil {
 		return sandboxproxy.RouteIdentity{}, fmt.Errorf("read named route group: %w", err)
@@ -133,7 +174,7 @@ func (a *proxyRouteAuthority) IdentityForRoute(ctx context.Context, request sand
 	}
 	return sandboxproxy.RouteIdentity{
 		GroupID: route.GroupID, GroupGeneration: route.GroupGeneration,
-		AgentID: a.config.AgentID, ConvID: a.config.ConvID,
+		AgentID: a.config.AgentID, ConvID: convID,
 		LaunchGeneration: a.config.LaunchGeneration,
 	}, nil
 }
@@ -145,8 +186,12 @@ func (a *proxyRouteAuthority) ResolveRoute(ctx context.Context, request sandboxp
 	if a == nil || strings.TrimSpace(a.credentialValue()) == "" {
 		return sandboxproxy.RouteResolution{}, errors.New("route authority capability is unavailable")
 	}
+	convID, identityErr := a.conversationID(ctx)
+	if identityErr != nil {
+		return sandboxproxy.RouteResolution{}, identityErr
+	}
 	if request.Identity.AgentID != a.config.AgentID ||
-		request.Identity.ConvID != a.config.ConvID ||
+		request.Identity.ConvID != convID ||
 		request.Identity.LaunchGeneration != a.config.LaunchGeneration ||
 		!a.allowedGroup(request.Identity.GroupID) {
 		return sandboxproxy.RouteResolution{}, errors.New("route request identity is not the live launch")
@@ -176,7 +221,7 @@ func (a *proxyRouteAuthority) ResolveRoute(ctx context.Context, request sandboxp
 		return sandboxproxy.RouteResolution{}, fmt.Errorf("open named route: %w", err)
 	}
 	if opened.ID == "" || opened.RouteID != request.RouteID ||
-		opened.ConsumerAgentID != a.config.AgentID || opened.ConsumerConvID != a.config.ConvID ||
+		opened.ConsumerAgentID != a.config.AgentID || opened.ConsumerConvID != convID ||
 		opened.ConsumerLaunchGeneration != a.config.LaunchGeneration ||
 		opened.GroupGeneration != request.Identity.GroupGeneration || opened.State != "open" {
 		if opened.ID != "" {
@@ -190,7 +235,7 @@ func (a *proxyRouteAuthority) ResolveRoute(ctx context.Context, request sandboxp
 		lease, pollErr := a.readLease(ctx, request.Identity.GroupID, opened.ID)
 		if pollErr == nil {
 			if lease.State != "open" || lease.RouteID != request.RouteID ||
-				lease.ConsumerAgentID != a.config.AgentID || lease.ConsumerConvID != a.config.ConvID ||
+				lease.ConsumerAgentID != a.config.AgentID || lease.ConsumerConvID != convID ||
 				lease.ConsumerLaunchGeneration != a.config.LaunchGeneration ||
 				lease.GroupGeneration != request.Identity.GroupGeneration {
 				_ = a.ReleaseRoute(context.Background(), sandboxproxy.RouteResolution{LeaseID: opened.ID, RouteID: request.RouteID})

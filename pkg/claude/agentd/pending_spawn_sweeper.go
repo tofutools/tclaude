@@ -111,6 +111,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		// from a spawn that never happened.
 		slog.Info("pending-spawn sweeper: session row gone; dropping pending spawn",
 			"label", ps.Label)
+		revokePendingRouteHelperCredentials(ps.AgentID, ps.Label)
 		deletePendingSpawnRow(ps.Label)
 		surfacePendingSpawnDrop(ps)
 		return
@@ -144,6 +145,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		if sess.Status == session.StatusExited {
 			slog.Info("pending-spawn sweeper: session exited before conv-id; dropping pending spawn",
 				"label", ps.Label)
+			revokePendingRouteHelperCredentials(ps.AgentID, ps.Label)
 			deletePendingSpawnRow(ps.Label)
 		}
 		return
@@ -161,6 +163,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		// into. Drop the row.
 		slog.Warn("pending-spawn sweeper: group gone; dropping pending spawn",
 			"label", ps.Label, "group_id", ps.GroupID)
+		revokePendingRouteHelperCredentials(ps.AgentID, ps.Label)
 		deletePendingSpawnRow(ps.Label)
 		return
 	}
@@ -198,6 +201,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 			requeuePendingSpawn(ps.Label, ps)
 			return
 		}
+		attachRouteHelperConversation(ps.AgentID, convID, routeHelperGenerationForSession(ps.Label))
 		slog.Info("pending-spawn sweeper: already enrolled; cleared pending row",
 			"label", ps.Label, "conv", convID)
 		return
@@ -213,19 +217,20 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		sshWorkaround = *ps.SSHWorkaround
 	}
 	p := spawnParams{
-		AgentID:          ps.AgentID,
-		Harness:          sess.Harness,
-		EffectiveSandbox: ps.EffectiveSandbox,
-		SSHWorkaround:    sshWorkaround,
-		SSHWorkaroundSet: true,
-		Role:             ps.Role,
-		Descr:            ps.Descr,
-		Name:             ps.Name,
-		InitialMessage:   ps.InitialMessage,
-		GroupContext:     ps.GroupContext,
-		ProfileContext:   ps.ProfileContext,
-		ReplyToConv:      ps.ReplyToConv,
-		SpawnedByConv:    ps.SpawnedByConv,
+		AgentID:                     ps.AgentID,
+		routeHelperLaunchGeneration: routeHelperGenerationForSession(ps.Label),
+		Harness:                     sess.Harness,
+		EffectiveSandbox:            ps.EffectiveSandbox,
+		SSHWorkaround:               sshWorkaround,
+		SSHWorkaroundSet:            true,
+		Role:                        ps.Role,
+		Descr:                       ps.Descr,
+		Name:                        ps.Name,
+		InitialMessage:              ps.InitialMessage,
+		GroupContext:                ps.GroupContext,
+		ProfileContext:              ps.ProfileContext,
+		ReplyToConv:                 ps.ReplyToConv,
+		SpawnedByConv:               ps.SpawnedByConv,
 		// The durable agent_id companions (JOH-321 F2): minutes have passed since
 		// the spawn was recorded, so the spawner may have rotated. These let
 		// finishSpawnEnrollment re-resolve its LIVE generation for the briefing

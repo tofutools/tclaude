@@ -1300,7 +1300,7 @@ func runNew(params *NewParams) error {
 		if !params.RouteHelperProxyOnly && runtime.GOOS != "linux" {
 			return fmt.Errorf("linux group-route helper requires Linux")
 		}
-		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperConvID) == "" || strings.TrimSpace(params.RouteHelperLaunchGeneration) == "" || strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath) == "" || len(params.RouteHelperGroupIDs) == 0 {
+		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperLaunchGeneration) == "" || strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath) == "" || len(params.RouteHelperGroupIDs) == 0 {
 			return fmt.Errorf("linux group-route helper launch identity is incomplete")
 		}
 		socketFloor := sandboxpolicy.AgentdSocketFloor()

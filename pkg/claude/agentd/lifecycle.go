@@ -5350,6 +5350,9 @@ type spawnParams struct {
 	// materialises. Empty on ordinary inline spawns, whose actor is allocated
 	// together with the conv-id.
 	AgentID string
+	// routeHelperLaunchGeneration is daemon-owned intent, recovered from the
+	// exact wrapper session row when the pending sweeper resumes enrollment.
+	routeHelperLaunchGeneration string
 	// EffectiveSandbox is the immutable additive capability snapshot resolved
 	// at the trusted caller boundary. Daemon-managed launch paths pass a
 	// versioned snapshot even when it is explicitly empty.
@@ -7260,7 +7263,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	routeHelperGeneration := ""
 	routeHelperCommitted := false
 	defer func() {
-		if routeHelperConvID != "" && !routeHelperCommitted {
+		if routeHelperGeneration != "" && !routeHelperCommitted {
 			revokeRouteHelperCredentials(routeHelperConvID, routeHelperGeneration)
 		}
 	}()
@@ -7435,8 +7438,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if routeErr != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve group route capability: " + routeErr.Error()}
 		}
-		if routeEnabled && (!layeredLaunch || !launchEnroll) {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pre-enrolled pane-authoritative launch with tclaude’s sandbox"}
+		if routeEnabled && !layeredLaunch {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pane-authoritative launch with tclaude’s sandbox"}
 		}
 	}
 	if p.Arrival != nil {
@@ -7581,23 +7584,22 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 		return landSpawnOffline(p, spawnHarness, preConvID)
 	}
-	// A Linux route-capable group must launch the namespace helper with a
-	// pre-enrolled identity. If the launch shape cannot prove that identity
-	// before the pane starts (for example Codex's seed-based conv-id), refuse
-	// the route-enabled launch instead of producing an agent whose advertised
-	// routes can never attach.
 	groupRoutesEnabled := routeEnabled
 	hostRoutesEnabled := false
-	if preConvID != "" && hostPublishAllowed(preConvID) {
+	// A grouped late-enrolled launch cannot resolve its effective grants yet.
+	// Stage host discovery speculatively; all publication remains permission-gated.
+	// Group membership supplies the durable identity reservation before launch.
+	if (preConvID != "" && hostPublishAllowed(preConvID)) ||
+		(runtime.GOOS == "linux" && preConvID == "" && g != nil) {
 		reason := hostRouteHelperIneligibleReason(spawnHarness.Name, spawnArgs.SandboxImplementation, spawnArgs.EffectiveSandbox)
 		if reason == "" && !layeredLaunch {
 			reason = "the agent is not launched in tclaude’s pane sandbox"
 		}
-		if reason == "" && !launchEnroll {
+		if reason == "" && !launchEnroll && runtime.GOOS != "linux" {
 			reason = "the launch has no pre-enrolled conversation identity"
 		}
 		hostRoutesEnabled = reason == ""
-		if !hostRoutesEnabled {
+		if !hostRoutesEnabled && preConvID != "" {
 			warnHostRouteHelperSkipped(preConvID, "spawn", reason)
 		}
 	}
@@ -7608,19 +7610,27 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 	if routeEnabled {
-		if preConvID == "" {
-			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
-			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "pre-enrolled route helper conversation identity is empty"}
+		var agentID string
+		var agentErr error
+		if preConvID != "" {
+			agentID, agentErr = db.AgentIDForConv(preConvID)
+		} else {
+			if p.AgentID == "" {
+				p.AgentID = db.NewAgentID()
+			}
+			agentID = p.AgentID
 		}
-		agentID, agentErr := db.AgentIDForConv(preConvID)
 		if agentErr != nil || strings.TrimSpace(agentID) == "" {
 			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
-			if agentErr == nil {
-				agentErr = errors.New("stable agent identity is empty")
-			}
-			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve route helper identity: " + agentErr.Error()}
+			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve route helper identity"}
 		}
-		routeCredential, routeGeneration, credentialErr := mintRouteHelperCredential(agentID, preConvID)
+		var routeCredential, routeGeneration string
+		var credentialErr error
+		if preConvID == "" {
+			routeCredential, routeGeneration, credentialErr = stageRouteHelperCredential(agentID, label)
+		} else {
+			routeCredential, routeGeneration, credentialErr = mintRouteHelperCredential(agentID, preConvID)
+		}
 		if credentialErr != nil {
 			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 			if openCodeLaunch != nil {
@@ -7644,6 +7654,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		spawnArgs.RouteHelperProxyOnly = runtime.GOOS == "darwin"
 		routeHelperConvID = preConvID
 		routeHelperGeneration = routeGeneration
+		p.routeHelperLaunchGeneration = routeGeneration
 	}
 
 	// Final dir write-proof re-assertion, as late as possible before the fork:
@@ -7677,7 +7688,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// the first was already returned to the caller. pendingHeld is the "some
 	// reservation exists for this label" predicate the shared claim/requeue/
 	// launch-marker sites key on.
-	reservedPending := (p.Async && !launchEnroll || p.nodeCapacityReserved) && p.pendingSpawnLabel == ""
+	reservedPending := (p.Async && !launchEnroll || p.nodeCapacityReserved ||
+		g != nil && preConvID == "" && routeHelperGeneration != "") && p.pendingSpawnLabel == ""
 	pendingHeld := reservedPending || p.pendingSpawnLabel != ""
 	if reservedPending {
 		if g == nil {
@@ -7696,6 +7708,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
 				"failed to reserve pending spawn " + label + ": " + err.Error()}
 		}
+	}
+
+	if reservedPending && !p.Async {
+		defer func() {
+			// A synchronous caller reports failure, so a reservation must not
+			// later enroll a worker that its template/process may already retry.
+			if failure != nil {
+				deletePendingSpawnRow(label)
+			}
+		}()
 	}
 
 	// launchFailed unwinds a spawn whose wrapper reported failure — whether
@@ -8124,6 +8146,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 					return nil, &spawnFailure{http.StatusConflict, "identity",
 						"pending spawn " + label + " was canceled or conflicted: " + detail}
 				}
+				routeHelperCommitted = true
 				return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
 					Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 			}
@@ -8144,11 +8167,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				requeuePendingSpawn(label, ps)
 				slog.Warn("spawn: inline enrollment failed; requeued for sweeper back-fill",
 					"label", label, "conv", convID, "error", fail.Msg)
+				routeHelperCommitted = true
 				return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
 					Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 			}
 			return nil, fail
 		}
+		routeHelperCommitted = true
 		return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
 			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
@@ -8178,6 +8203,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				backfillPendingSpawnInline(g, p, label, spawnHarness, launchedAt, backgroundBackfillBudget)
 			})
 		}
+		routeHelperCommitted = true
 		return &spawnOutcome{AgentID: p.AgentID, ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
 			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
@@ -8644,7 +8670,9 @@ func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID
 		}
 		if !ensurePendingTaskRefBound(convID, ps) {
 			requeuePendingSpawn(label, ps)
+			return
 		}
+		attachRouteHelperConversation(p.AgentID, convID, p.routeHelperLaunchGeneration)
 		return
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
@@ -8723,10 +8751,16 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	if fail != nil {
 		return fail
 	}
-	// Post-connect enrollment means the pane started before its conv-id was
-	// known, so no route helper could be attached to this launch.
-	if (runtime.GOOS == "linux" || runtime.GOOS == "darwin") && hostPublishAllowed(convID) {
-		warnHostRouteHelperSkipped(convID, "spawn", fmt.Sprintf("the %s harness enrolls after its pane starts, so a fresh spawn cannot carry the helper; resume the agent to attach one", h.Name))
+	attachRouteHelperConversation(p.AgentID, convID, p.routeHelperLaunchGeneration)
+	helperActive := hasRouteHelperForConversation(p.AgentID, convID)
+	if runtime.GOOS == "linux" && g != nil && !helperActive {
+		enabled, err := db.IsAgentGroupRouteEnabled(g.ID, PermRoutesPublish, PermRoutesConsume)
+		if err == nil && enabled {
+			slog.Warn("group route helper is unavailable; relaunch the agent (pending helper enrollment expires after 15 minutes)", "conv", convID, "group", g.Name)
+		}
+	}
+	if hostPublishAllowed(convID) && !helperActive {
+		warnHostRouteHelperSkipped(convID, "spawn", "this launch has no eligible pane-local helper; use tclaude’s pane sandbox with private networking and relaunch")
 	}
 
 	// Post-spawn injection: rename the new pane to the agent's name and
@@ -9943,7 +9977,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.SessionID != "" {
 		args = append(args, "--session-id", a.SessionID)
 	}
-	if a.RouteHelperAgentID != "" && a.RouteHelperConvID != "" {
+	if a.RouteHelperAgentID != "" {
 		args = append(args,
 			"--route-helper-agent-id", a.RouteHelperAgentID,
 			"--route-helper-conv-id", a.RouteHelperConvID,
@@ -10200,7 +10234,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	if a.GitWorktreeWriteDirsPinned {
 		args = append(args, "--git-worktree-write-dirs-pinned")
 	}
-	if a.RouteHelperAgentID != "" && a.RouteHelperConvID != "" {
+	if a.RouteHelperAgentID != "" {
 		args = append(args,
 			"--route-helper-agent-id", a.RouteHelperAgentID,
 			"--route-helper-conv-id", a.RouteHelperConvID,

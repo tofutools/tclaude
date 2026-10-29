@@ -33,8 +33,8 @@ func (b *lockedLogBuffer) String() string {
 
 // Scenario: a group grants routes.publish-host and a fresh Codex agent is
 // spawned into it. Codex enrolls only after its pane starts, so the launch
-// cannot carry a host-route helper. The operator must see that at spawn time
-// in the daemon log, not first as a failed `routes publish --host`.
+// cannot carry a helper without an eligible pane sandbox. The operator must
+// see that at spawn time, not first as a failed `routes publish --host`.
 func TestCodexSpawn_HostRouteGrantWarnsWithoutHelper(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("host routes are Linux/macOS only")
@@ -55,7 +55,7 @@ func TestCodexSpawn_HostRouteGrantWarnsWithoutHelper(t *testing.T) {
 	out := logs.String()
 	assert.Contains(t, out, "this launch has no host-route helper")
 	assert.Contains(t, out, "conv="+spawn.ConvID)
-	assert.Contains(t, out, "codex harness enrolls after its pane starts")
+	assert.Contains(t, out, "no eligible pane-local helper")
 }
 
 // Scenario: the same group grant with a Claude Code spawn that is not in
