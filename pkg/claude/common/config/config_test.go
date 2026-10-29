@@ -134,6 +134,11 @@ func TestMergeDefaultTypes_RespectsUncheckedTypes(t *testing.T) {
 	tracked := &NotificationConfig{KnownTypes: slices.Clone(NotifyTypes)}
 	assert.Nil(t, tracked.MergeDefaultTypes(), "all types known and unchecked: nothing re-added")
 	assert.Empty(t, tracked.Transitions)
+
+	// A category known from a newer tclaude survives marking by this one.
+	newer := &NotificationConfig{KnownTypes: append(slices.Clone(NotifyTypes), "future")}
+	newer.MarkNotifyTypesKnown()
+	assert.Contains(t, newer.KnownTypes, "future")
 }
 
 // HumanMessagesIntent is the checkbox state (default-on, off only on an

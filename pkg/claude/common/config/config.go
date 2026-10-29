@@ -4393,14 +4393,25 @@ func (c *NotificationConfig) MergeDefaultTypes() []string {
 
 // MarkNotifyTypesKnown records every current NotifyTypes category as
 // offered, so a later MergeDefaultTypes respects their on/off state. Call
-// it wherever the human edits the per-type selection. It writes
-// KnownTypes only when the effective known set differs, so a block whose
-// baseline already covers NotifyTypes stays minimal on disk.
+// it wherever the human edits the per-type selection. Categories already
+// known but absent from this binary's NotifyTypes (written by a newer
+// tclaude) are kept, so a downgrade-then-upgrade cannot re-enable them. It
+// writes KnownTypes only when the set grows, so a block whose baseline
+// already covers NotifyTypes stays minimal on disk.
 func (c *NotificationConfig) MarkNotifyTypesKnown() {
-	if c == nil || slices.Equal(c.knownNotifyTypes(), NotifyTypes) {
+	if c == nil {
 		return
 	}
-	c.KnownTypes = slices.Clone(NotifyTypes)
+	known := c.knownNotifyTypes()
+	merged := slices.Clone(known)
+	for _, ty := range NotifyTypes {
+		if !slices.Contains(merged, ty) {
+			merged = append(merged, ty)
+		}
+	}
+	if len(merged) != len(known) {
+		c.KnownTypes = merged
+	}
 }
 
 // knownNotifyTypes is KnownTypes, or notifyTypesBaseline for a block that
