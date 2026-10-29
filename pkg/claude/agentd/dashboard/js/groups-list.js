@@ -157,11 +157,11 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
   const defaultSpawnGroup = !!group.default_spawn_group;
   const wizardMode = isWizardActive();
   const contextTitle = wizardMode
-    ? (contextLength ? `Party lore (${contextLength} chars) delivered to every familiar summoned into this party — click to edit` : 'No party lore — click to inscribe it')
+    ? (contextLength ? `Party lore (${contextLength} chars) delivered to every hero summoned into this party — click to edit` : 'No party lore — click to inscribe it')
     : (contextLength ? `Startup context (${contextLength} chars) delivered to the inbox of agents spawned here — click to edit` : 'No startup context — click to set one');
   const notifyTitle = notify
-    ? (wizardMode ? 'Omens are enabled for this party’s familiars — click to silence the whole party (a familiar’s own 🔔 boon still speaks)' : 'OS notifications on for this group’s agents — click to mute the whole group (a per-agent 🔔 override still notifies)')
-    : (wizardMode ? 'Omens are SILENCED for this party’s familiars — click to restore them (familiars with their own 🔔 boon still speak)' : 'OS notifications MUTED for this group’s agents — click to unmute (members with a per-agent 🔔 override notify anyway)');
+    ? (wizardMode ? 'Omens are enabled for this party’s heroes — click to silence the whole party (a hero’s own 🔔 boon still speaks)' : 'OS notifications on for this group’s agents — click to mute the whole group (a per-agent 🔔 override still notifies)')
+    : (wizardMode ? 'Omens are SILENCED for this party’s heroes — click to restore them (heroes with their own 🔔 boon still speak)' : 'OS notifications MUTED for this group’s agents — click to unmute (members with a per-agent 🔔 override notify anyway)');
   const remoteTitle = policy === 'inherit'
     ? "Remote-control policy: inherit — defers to each spawn profile's own default. Click to set a group default: opt-in pre-checks Remote Access on, deny pre-checks it off, for agents spawned into this group (a per-spawn checkbox / flag still wins)."
     : policy === 'optin'
@@ -172,20 +172,20 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
     : (pinned ? 'Quick options are pinned open for this group — its header chips stay expanded even though auto-fold is on. Click to let them fold to icons again.' : "Pin this group's quick options open — its header chips stay expanded (not folded to icons) even while auto-fold is on. Click to fold them with the rest.");
   return html`
     <${MenuButton} ...${shared} data-act="group-settings" title="Edit directory, startup context, spawn defaults, environment, policies, and persistent link in one place" regular="⚙ settings…" wizard="⚙ party settings…" />
-    <${MenuButton} ...${shared} data-act="add-member" title=${wizardMode ? 'Invite an existing conversation to become a familiar in this party' : 'Add an existing conversation to this group'} regular="+ add member" wizard="+ add familiar" onClick=${(event) => {
+    <${MenuButton} ...${shared} data-act="add-member" title=${wizardMode ? 'Invite an existing conversation to become a hero in this party' : 'Add an existing conversation to this group'} regular="+ add member" wizard="+ add hero" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
       interactions.closeMenu(true);
       actions.openAddMember(group);
     }} />
-    <${MenuButton} data-act="cron-new" data-group=${name} data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ schedule…" wizard="⏳ bind ritual…" />
+    <${MenuButton} data-act="cron-new" data-group=${name} data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every hero, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ schedule…" wizard="⏳ bind ritual…" />
     <${MenuButton} data-act="standing-orders" data-group=${name} title=${wizardMode ? `Choose which durable decrees apply to party ${name}` : `Choose which standing orders apply to ${name}`} regular="📋 standing orders…" wizard="📜 standing orders…" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
       interactions.closeMenu(true);
       actions.openStandingOrders(group);
     }} />
-    <${MenuButton} data-act="message-new" data-group=${name} data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name })} data-label=${name} title=${wizardMode ? `Send a missive to party ${name} — every familiar, or a chosen subset` : `Send a one-shot message to ${name} — the whole group, or a ticked subset of its members`} regular="✉ message" wizard="✒ missive" />
+    <${MenuButton} data-act="message-new" data-group=${name} data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name })} data-label=${name} title=${wizardMode ? `Send a missive to party ${name} — every hero, or a chosen subset` : `Send a one-shot message to ${name} — the whole group, or a ticked subset of its members`} regular="✉ message" wizard="✒ missive" />
     <${MenuButton} ...${shared} data-act="view-group-messages" title=${wizardMode ? "Open this party's missives in the Messages tab" : "Open this group's messages in the Messages tab — every message touching a member (sent or received) plus the group's own multicasts"} regular="🗂 view messages" wizard="🗂 view missives" />
     <${MenuButton} ...${shared} data-act="set-group-context"
       title=${contextTitle}
@@ -201,8 +201,8 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
           ? 'Use this group when bare tclaude finds multiple groups for the same directory. Selecting it clears the previous default.'
           : 'Set a default spawn directory before making this the directory auto-join default.'}
     >${defaultSpawnGroup ? '★ directory auto-join default' : '☆ make directory auto-join default'}</button>
-    <button role="menuitem" ...${shared} data-act="set-group-permissions" title=${wizardMode ? 'Bestow party boons on every familiar in this party. Membership changes take effect immediately; a personal binding against one still wins.' : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.'}>🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${group.permissions?.length ? ` (${group.permissions.length})` : ''}…</button>
-    <${MenuButton} ...${shared} data-act="spawn-harness-policy" title=${wizardMode ? 'Set party wards for which realms may summon familiars into other realms' : 'Set group overrides for which harnesses may spawn agents on other harnesses'} regular="⇄ cross-harness spawns…" wizard="⇄ cross-realm summons…" onClick=${() => actions.openSpawnHarnessPolicy(group)} />
+    <button role="menuitem" ...${shared} data-act="set-group-permissions" title=${wizardMode ? 'Bestow party boons on every hero in this party. Membership changes take effect immediately; a personal binding against one still wins.' : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.'}>🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${group.permissions?.length ? ` (${group.permissions.length})` : ''}…</button>
+    <${MenuButton} ...${shared} data-act="spawn-harness-policy" title=${wizardMode ? 'Set party wards for which realms may summon heroes into other realms' : 'Set group overrides for which harnesses may spawn agents on other harnesses'} regular="⇄ cross-harness spawns…" wizard="⇄ cross-realm summons…" onClick=${() => actions.openSpawnHarnessPolicy(group)} />
     <${MenuButton} ...${shared} data-act="toggle-group-notify" data-enabled=${notify ? '1' : '0'} title=${notifyTitle} regular=${notify ? '🔔 notifications: on' : '🔕 notifications: muted'} wizard=${notify ? '🔔 omens: on' : '🔕 omens: silent'} />
     <button role="menuitem" ...${shared} data-act="set-group-remote-control" data-policy=${policy} data-next=${nextPolicy} title=${remoteTitle}>${policy === 'deny' ? '🚫' : '📱'} remote policy: ${policy === 'optin' ? 'opt-in' : policy}</button>
     ${quickFold ? html`<button role="menuitem" ...${shared} data-pinned=${pinned ? '1' : '0'} title=${quickPinTitle} onClick=${() => actions.toggleQuickPin(group)}>${pinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>` : null}
@@ -215,14 +215,14 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
     }} />
     <${MenuButton} ...${shared} data-act="nest-group" title=${wizardMode ? 'Nest this party under another party on the board — layout only' : 'Nest this group under another so it draws inside it on the board — collapse the parent to tuck the subgroup away. Board layout only.'} regular="📂 nest under…" wizard="📂 nest party under…" />
     ${group.parent ? html`<${MenuButton} ...${shared} data-act="unnest-group" data-parent=${group.parent} title=${`Move this ${wizardMode ? 'party' : 'group'} back to the top level (currently nested under ${group.parent}).`} regular=${`📂 un-nest (under ${group.parent})`} wizard=${`📂 un-nest party (under ${group.parent})`} />` : null}
-    <${MenuButton} ...${shared} data-act="clone-group" title=${wizardMode ? 'Mirror this party — copy its lore, boons, owners, and optionally its familiars into a new party' : 'Clone this group — copy every setting (directory, description, startup context, default profile, group permissions, max-members, notify) and the owners into a new group. Optionally clone the member agents too.'} regular="⧉ clone…" wizard="⧉ mirror party…" />
-    <${MenuButton} ...${shared} data-act="template-from-group" title=${wizardMode ? "Trace this party into a reusable summoning circle — preserve its classes, owners, familiars' grimoires, and party lore" : 'Save this group as a reusable template — snapshot its roles, owners, per-agent permissions and startup context into a blueprint you can instantiate as a fresh team'} regular="⧉ save as template…" wizard="🕯 trace as circle…" />
-    <${MenuButton} ...${shared} data-act="export-group" title=${wizardMode ? 'Seal this whole party — familiars, boons, missives, and conversation scrolls — into a portable archive' : 'Export this whole group — members, permissions, messages and every conversation — to a portable .zip or .paf archive'} regular="⤓ export…" wizard="⤓ seal party archive…" />
-    <${MenuButton} ...${shared} data-act="cleanup-group" title=${wizardMode ? 'Remove confirmed-slumbering familiars from this party' : 'Remove confirmed-offline members from this group'} regular="🧹 cleanup" wizard="🧹 tidy party" />
+    <${MenuButton} ...${shared} data-act="clone-group" title=${wizardMode ? 'Mirror this party — copy its lore, boons, owners, and optionally its heroes into a new party' : 'Clone this group — copy every setting (directory, description, startup context, default profile, group permissions, max-members, notify) and the owners into a new group. Optionally clone the member agents too.'} regular="⧉ clone…" wizard="⧉ mirror party…" />
+    <${MenuButton} ...${shared} data-act="template-from-group" title=${wizardMode ? "Trace this party into a reusable summoning circle — preserve its classes, owners, heroes' grimoires, and party lore" : 'Save this group as a reusable template — snapshot its roles, owners, per-agent permissions and startup context into a blueprint you can instantiate as a fresh team'} regular="⧉ save as template…" wizard="🕯 trace as circle…" />
+    <${MenuButton} ...${shared} data-act="export-group" title=${wizardMode ? 'Seal this whole party — heroes, boons, missives, and conversation scrolls — into a portable archive' : 'Export this whole group — members, permissions, messages and every conversation — to a portable .zip or .paf archive'} regular="⤓ export…" wizard="⤓ seal party archive…" />
+    <${MenuButton} ...${shared} data-act="cleanup-group" title=${wizardMode ? 'Remove confirmed-slumbering heroes from this party' : 'Remove confirmed-offline members from this group'} regular="🧹 cleanup" wizard="🧹 tidy party" />
     <${MenuButton} ...${shared} data-act="pull-repositories-group" title="Git pull — update repositories in this home directory and two levels below" regular="↓ pull repositories…" wizard="↓ summon latest code…" />
     <${MenuButton} ...${shared} data-act="sync-repositories-group" title="Git sync — fetch, prune stale remote references, then fast-forward pull" regular="↻ sync repositories…" wizard="✧ harmonize repositories…" />
-    <button role="menuitem" ...${shared} data-act="cleanup-worktrees-group" title=${wizardMode ? "Clean up git worktrees in this party's repos. Main repo and live-familiar worktrees are protected." : "Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected."}>🧹 cleanup worktrees…</button>
-    <${MenuButton} ...${shared} data-act="window-modal-group" title=${wizardMode ? 'Reveal or veil the scrying portals of familiars in this party. The familiars keep channeling either way.' : 'Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.'} regular="🪟 windows…" wizard="👁 familiars…" />
+    <button role="menuitem" ...${shared} data-act="cleanup-worktrees-group" title=${wizardMode ? "Clean up git worktrees in this party's repos. Main repo and live-hero worktrees are protected." : "Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected."}>🧹 cleanup worktrees…</button>
+    <${MenuButton} ...${shared} data-act="window-modal-group" title=${wizardMode ? 'Reveal or veil the scrying portals of heroes in this party. The heroes keep channeling either way.' : 'Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.'} regular="🪟 windows…" wizard="👁 heroes…" />
     ${group.default_cwd ? html`<${MenuButton} ...${shared} data-act="group-web-term" title=${wizardMode ? `Open a browser scrying portal in this party's default directory (${group.default_cwd.trim()})` : `Open a terminal in this group's default directory (${group.default_cwd.trim()}), in the browser (always a web terminal — never a native window)`} regular="🖥 open web terminal" wizard="🔮 open party portal" />` : null}
     <${MenuButton} ...${shared} className="danger" data-act="delete-group" data-members=${members.length} title=${wizardMode ? 'Disband this party' : 'Delete this group'} regular="delete group" wizard="disband party" />
   `;
@@ -356,7 +356,7 @@ function GroupProfileChip({ group, actions, kind }) {
         }
       }}
     >
-      <option value=${NEW_PROFILE} disabled=${!!newLock} title=${newLock || undefined}>${sandbox ? '＋ new sandbox profile…' : (isWizardActive() ? '＋ new pattern…' : '＋ new profile…')}${newLock ? ' 🔒' : ''}</option>
+      <option value=${NEW_PROFILE} disabled=${!!newLock} title=${newLock || undefined}>${sandbox ? '＋ new sandbox profile…' : (isWizardActive() ? '＋ new loadout…' : '＋ new profile…')}${newLock ? ' 🔒' : ''}</option>
       ${/* "no group layer", not "global layer only": clearing this control
            removes the GROUP layer, which is all this control owns. A launch
            into the group can still add an explicit sandbox profile on top of
@@ -732,17 +732,17 @@ function VirtualUngrouped({ group, snapshot, actions }) {
   const summary = html`<strong class="group-name"><${ThemeText} regular=${group.name} wizard="Unbound" /></strong>
     <${GroupActivity} members=${view.members} snapshot=${snapshot} />
     <${UngroupedRunCount} group=${group} snapshot=${snapshot} />
-    <${VirtualBadge} regularTitle="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group." wizardTitle="An ethereal party, not a true one — it cannot be renamed, dispelled, whispered to, or scheduled. It gathers familiars bound to no party." />
+    <${VirtualBadge} regularTitle="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group." wizardTitle="An ethereal party, not a true one — it cannot be renamed, dispelled, whispered to, or scheduled. It gathers heroes bound to no party." />
     <span class="muted">— <${ThemeText}
       regular=${`${view.members.length} agent${view.members.length === 1 ? '' : 's'} not in any group${view.hiddenOffline ? ` · ${view.hiddenOffline} offline hidden` : ''}`}
-      wizard=${`${view.members.length} unbound familiar${view.members.length === 1 ? '' : 's'}${view.hiddenOffline ? ` · ${view.hiddenOffline} slumbering hidden` : ''}`}
+      wizard=${`${view.members.length} unbound hero${view.members.length === 1 ? '' : 'es'}${view.hiddenOffline ? ` · ${view.hiddenOffline} slumbering hidden` : ''}`}
     /></span>`;
   const agentsBody = !view.members.length
-    ? html`<div class="muted"><${ThemeText} regular="(no ungrouped agents)" wizard="(no unbound familiars)" /></div>`
+    ? html`<div class="muted"><${ThemeText} regular="(no ungrouped agents)" wizard="(no unbound heroes)" /></div>`
     : !view.visible.length
       ? html`<div class="muted"><${ThemeText}
         regular=${`(${view.hiddenOffline} offline agent${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
-        wizard=${`(${view.hiddenOffline} slumbering familiar${view.hiddenOffline === 1 ? '' : 's'} hidden — enable "show slumbering" to reveal ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
+        wizard=${`(${view.hiddenOffline} slumbering hero${view.hiddenOffline === 1 ? '' : 'es'} hidden — enable "show slumbering" to reveal ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
       /></div>`
       : html`<${MemberTable} members=${view.visible} tableKey="virtual:ungrouped" ungrouped=${true} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
   const body = !processes ? agentsBody
@@ -757,7 +757,7 @@ function ConversationsTable({ rows }) {
       key=${row.conv_id} class="dnd-draggable" draggable=${true} data-key=${row.conv_id}
       data-dnd-source-conversation="1" data-dnd-conv=${row.conv_id}
       data-dnd-agent=${row.agent_id || row.conv_id} data-dnd-label=${row.title || row.conv_id}
-    ><td><${OnlineDot} online=${row.online} /></td><td class="id">${shortId(row.conv_id)}</td><td><span class="rowname">${row.title || '(untitled)'}</span></td><td><span class="last-hook">${row.modified ? relTime(row.modified) : ''}</span></td><td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv=${row.conv_id} data-label=${row.title || row.conv_id} title=${isWizardActive() ? 'Awaken this plain scroll as a familiar' : 'Promote this conversation into an agent'}>${isWizardActive() ? 'awaken' : 'promote'}</button></div></td></tr>`)}
+    ><td><${OnlineDot} online=${row.online} /></td><td class="id">${shortId(row.conv_id)}</td><td><span class="rowname">${row.title || '(untitled)'}</span></td><td><span class="last-hook">${row.modified ? relTime(row.modified) : ''}</span></td><td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv=${row.conv_id} data-label=${row.title || row.conv_id} title=${isWizardActive() ? 'Awaken this plain scroll as a hero' : 'Promote this conversation into an agent'}>${isWizardActive() ? 'awaken' : 'promote'}</button></div></td></tr>`)}
   </tbody></table>`;
 }
 
@@ -766,7 +766,7 @@ function RetiredTable({ rows }) {
     ${applySort('retired', rows, RETIRED_ACCESSORS).map((row) => html`<tr
       key=${row.conv_id} class="dnd-draggable" draggable=${true} data-key=${row.conv_id}
       data-dnd-source-retired="1" data-dnd-conv=${row.conv_id} data-dnd-agent=${row.agent_id || row.conv_id} data-dnd-label=${row.title || row.conv_id}
-    ><td><${OnlineDot} online=${row.online} /></td><td class="id" title=${idTooltip(row.agent_id, row.conv_id)}>${shortAgentId(row.agent_id, row.conv_id)}</td><td><span class="rowname">${row.title || '(untitled)'}</span></td><td><span class="last-hook">${row.retired_at ? relTime(row.retired_at) : ''}</span></td><td title=${row.retired_by || undefined}>${row.retired_by_display || row.retired_by || ''}</td><td class="muted">${row.retire_reason || ''}</td><td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv=${row.conv_id} data-agent=${row.agent_id || row.conv_id} data-label=${row.title || row.conv_id} title=${isWizardActive() ? 'Restore this banished familiar to active status' : 'Reinstate this agent back to active status'}>${isWizardActive() ? 'restore' : 'reinstate'}</button></div></td></tr>`)}
+    ><td><${OnlineDot} online=${row.online} /></td><td class="id" title=${idTooltip(row.agent_id, row.conv_id)}>${shortAgentId(row.agent_id, row.conv_id)}</td><td><span class="rowname">${row.title || '(untitled)'}</span></td><td><span class="last-hook">${row.retired_at ? relTime(row.retired_at) : ''}</span></td><td title=${row.retired_by || undefined}>${row.retired_by_display || row.retired_by || ''}</td><td class="muted">${row.retire_reason || ''}</td><td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv=${row.conv_id} data-agent=${row.agent_id || row.conv_id} data-label=${row.title || row.conv_id} title=${isWizardActive() ? 'Restore this banished hero to active status' : 'Reinstate this agent back to active status'}>${isWizardActive() ? 'restore' : 'reinstate'}</button></div></td></tr>`)}
   </tbody></table>`;
 }
 
@@ -774,7 +774,7 @@ function ReplacedTable({ rows }) {
   return html`<table><${SortHead} table="replaced" columns=${REPLACED_COLS} /><tbody>
     ${applySort('replaced', rows, REPLACED_ACCESSORS).map((row) => {
       const actor = row.actor_title || shortId(row.actor_conv_id);
-      return html`<tr key=${row.conv_id} data-key=${row.conv_id}><td><${OnlineDot} online=${row.online} /></td><td class="id">${shortId(row.conv_id)}</td><td><span class="rowname">${row.title || '(untitled)'}</span></td><td><span class="muted" title=${`${row.actor_title || row.actor_conv_id}${row.actor_retired ? ' (retired actor)' : ''}`}>${actor}${row.actor_retired ? ' 🪦' : ''}</span></td><td><span class="last-hook" title=${row.replaced_at || ''}>${row.reason || 'replaced'}${row.replaced_at ? ` · ${relTime(row.replaced_at)}` : ''}</span></td><td><div class="row-actions"><button data-act="copy-generation-id" data-conv=${row.conv_id} data-label=${row.title || row.conv_id} title="Copy this generation's full conv-id — inspect it out-of-band with 'claude --resume <id>' from its dir, or 'tclaude agent seance --target <id>'">copy id</button><button class="danger" data-act="delete-generation" data-conv=${row.conv_id} data-label=${row.title || row.conv_id} data-actor=${actor} title=${isWizardActive() ? 'Forever erase only this past incarnation. The living familiar and its other incarnations remain untouched.' : 'Permanently delete just this past generation (its .jsonl + DB rows). The live agent and its other generations are untouched.'}>${isWizardActive() ? 'erase incarnation' : 'delete generation'}</button></div></td></tr>`;
+      return html`<tr key=${row.conv_id} data-key=${row.conv_id}><td><${OnlineDot} online=${row.online} /></td><td class="id">${shortId(row.conv_id)}</td><td><span class="rowname">${row.title || '(untitled)'}</span></td><td><span class="muted" title=${`${row.actor_title || row.actor_conv_id}${row.actor_retired ? ' (retired actor)' : ''}`}>${actor}${row.actor_retired ? ' 🪦' : ''}</span></td><td><span class="last-hook" title=${row.replaced_at || ''}>${row.reason || 'replaced'}${row.replaced_at ? ` · ${relTime(row.replaced_at)}` : ''}</span></td><td><div class="row-actions"><button data-act="copy-generation-id" data-conv=${row.conv_id} data-label=${row.title || row.conv_id} title="Copy this generation's full conv-id — inspect it out-of-band with 'claude --resume <id>' from its dir, or 'tclaude agent seance --target <id>'">copy id</button><button class="danger" data-act="delete-generation" data-conv=${row.conv_id} data-label=${row.title || row.conv_id} data-actor=${actor} title=${isWizardActive() ? 'Forever erase only this past incarnation. The living hero and its other incarnations remain untouched.' : 'Permanently delete just this past generation (its .jsonl + DB rows). The live agent and its other generations are untouched.'}>${isWizardActive() ? 'erase incarnation' : 'delete generation'}</button></div></td></tr>`;
     })}
   </tbody></table>`;
 }
@@ -787,8 +787,8 @@ function PendingTable({ rows, group = '' }) {
       key=${row.label} data-key=${row.label} class="dnd-draggable" draggable=${true}
       data-dnd-pending="1" data-dnd-conv=${row.label} data-dnd-label=${row.label}
     ><td><${OnlineDot} online=${row.online} /></td><td class="id" title=${idTooltip(row.agent_id, row.agent_id ? '' : row.label)}>${shortAgentId(row.agent_id, '') || row.label}</td><td><span class="rowname">${row.name || row.role || '(unnamed)'}</span></td><td>${row.group || '(none)'}</td><td><span class="muted" title=${row.cwd || ''}>${row.cwd ? shortCwd(row.cwd) : ''}</span></td><td><span class="last-hook">${row.created_at ? relTime(row.created_at) : ''}</span></td><td><div class="row-actions"><button class="primary" disabled=${!row.online} data-act=${row.online ? 'focus-pending' : undefined} data-label=${row.online ? row.label : undefined} title=${row.online
-      ? (isWizardActive() ? "Open this would-be familiar's scrying portal so you can clear its summoning gate. Once cleared, it joins the living roster." : "Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.")
-      : (isWizardActive() ? 'This would-be familiar’s portal has vanished and will soon fade from the summoning gate.' : "This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.")}>${isWizardActive() ? 'open portal' : 'focus'}</button><button class="danger" data-act="delete-pending" data-label=${row.label} data-group=${group || undefined} title=${isWizardActive() ? 'Dispel this failed summoning and close its portal. It never became a familiar, so no conversation scroll is lost.' : 'Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.'}>${isWizardActive() ? '🪄 dispel' : '🗑 delete'}</button></div></td></tr>`)}
+      ? (isWizardActive() ? "Open this would-be hero's scrying portal so you can clear its summoning gate. Once cleared, it joins the living roster." : "Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.")
+      : (isWizardActive() ? 'This would-be hero’s portal has vanished and will soon fade from the summoning gate.' : "This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.")}>${isWizardActive() ? 'open portal' : 'focus'}</button><button class="danger" data-act="delete-pending" data-label=${row.label} data-group=${group || undefined} title=${isWizardActive() ? 'Dispel this failed summoning and close its portal. It never became a hero, so no conversation scroll is lost.' : 'Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.'}>${isWizardActive() ? '🪄 dispel' : '🗑 delete'}</button></div></td></tr>`)}
   </tbody></table>`;
 }
 
@@ -809,26 +809,26 @@ const VIRTUAL_NAMES = {
   conversations: {
     wizardName: 'Plain scrolls', regularEmpty: '(no non-agent conversations)', wizardEmpty: '(no plain scrolls)',
     regularTitle: "A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.",
-    wizardTitle: 'An ethereal party of plain scrolls without familiars. Drag one onto a party, or awaken it, to call forth a familiar.',
-    regularCount: (n) => `${n} conversation${n === 1 ? '' : 's'} that aren't agents`, wizardCount: (n) => `${n} plain scroll${n === 1 ? '' : 's'} awaiting ${n === 1 ? 'a familiar' : 'familiars'}`,
+    wizardTitle: 'An ethereal party of plain scrolls without heroes. Drag one onto a party, or awaken it, to call forth a hero.',
+    regularCount: (n) => `${n} conversation${n === 1 ? '' : 's'} that aren't agents`, wizardCount: (n) => `${n} plain scroll${n === 1 ? '' : 's'} awaiting ${n === 1 ? 'a hero' : 'heroes'}`,
   },
   retired: {
-    wizardName: 'Banished', regularEmpty: '(no retired agents)', wizardEmpty: '(no banished familiars)',
+    wizardName: 'Banished', regularEmpty: '(no retired agents)', wizardEmpty: '(no banished heroes)',
     regularTitle: 'A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.',
-    wizardTitle: 'An ethereal party of banished familiars returned to plain scrolls. Drag a familiar here to banish it; drag one onto a party, or restore it, to bring it back.',
-    regularCount: (n) => `${n} retired agent${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} banished familiar${n === 1 ? '' : 's'}`,
+    wizardTitle: 'An ethereal party of banished heroes returned to plain scrolls. Drag a hero here to banish it; drag one onto a party, or restore it, to bring it back.',
+    regularCount: (n) => `${n} retired agent${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} banished hero${n === 1 ? '' : 'es'}`,
   },
   replaced: {
     wizardName: 'Past incarnations', regularEmpty: '(no replaced generations)', wizardEmpty: '(no past incarnations)',
     regularTitle: 'A virtual group, not a real one — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.',
-    wizardTitle: 'An ethereal archive of superseded incarnations left by reincarnate / /clear. Copy a conv-id to scry one, or erase an incarnation to prune it. The living familiar is never affected.',
+    wizardTitle: 'An ethereal archive of superseded incarnations left by reincarnate / /clear. Copy a conv-id to scry one, or erase an incarnation to prune it. The living hero is never affected.',
     regularCount: (n) => `${n} replaced generation${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} past incarnation${n === 1 ? '' : 's'}`,
   },
   pending: {
-    wizardName: 'Summoning', regularEmpty: '(no pending spawns)', wizardEmpty: '(no familiars awaiting summoning)',
+    wizardName: 'Summoning', regularEmpty: '(no pending spawns)', wizardEmpty: '(no heroes awaiting summoning)',
     regularTitle: "A virtual group, not a real one — dashboard spawns waiting to clear a startup gate (untrusted dir / config prompt / OpenAI auth). Click a row's focus button to open its pane and clear the gate; it then becomes a normal agent.",
-    wizardTitle: "An ethereal antechamber for familiars caught at the summoning gate. Open a familiar's portal to clear the ward; it then joins the living roster.",
-    regularCount: (n) => `${n} pending spawn${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} familiar${n === 1 ? '' : 's'} caught at the summoning gate`,
+    wizardTitle: "An ethereal antechamber for heroes caught at the summoning gate. Open a hero's portal to clear the ward; it then joins the living roster.",
+    regularCount: (n) => `${n} pending spawn${n === 1 ? '' : 's'}`, wizardCount: (n) => `${n} hero${n === 1 ? '' : 'es'} caught at the summoning gate`,
   },
 };
 

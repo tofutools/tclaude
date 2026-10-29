@@ -37,7 +37,7 @@ func TestDashboardTransactionDeleteExclusiveOwnership(t *testing.T) {
 		`id="delete-agent-modal"`, `kind === 'delete-agent'`,
 		`plain="Wipes the conversation history (.jsonl)`,
 		`wizard="Burns the conversation scroll (.jsonl)`,
-		`plain="shared with another agent" wizard="shared with another familiar"`,
+		`plain="shared with another agent" wizard="shared with another hero"`,
 	} {
 		if !strings.Contains(island, required) {
 			t.Errorf("transaction island is missing delete ownership/copy contract %q", required)
@@ -60,7 +60,7 @@ func TestDashboardTransactionDeleteExclusiveOwnership(t *testing.T) {
 		t.Error("delete transaction does not freeze the probed worktree path")
 	}
 	if !strings.Contains(memberTable,
-		`member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar"`) {
+		`member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase hero"`) {
 		t.Error("ungrouped member menu lost its permanent-delete launcher/copy")
 	}
 	if strings.Count(memberTable, `act="delete-agent"`) != 1 {

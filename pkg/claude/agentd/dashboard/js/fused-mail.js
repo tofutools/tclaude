@@ -746,7 +746,7 @@ export function FusedMail({
   ];
   const aggregate = folder.id === 'all' || folder.id.startsWith('group:');
   return html`<div class="mail-client fused-mail" ref=${clientRef} onKeyDown=${(event) => !hasShownOverlay() && movePaneFocus(event, panes)}>
-    <${MailFilters} boxId="fused-mail-box-filter" boxPlaceholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
+    <${MailFilters} boxId="fused-mail-box-filter" boxPlaceholder=${wizard ? 'Seek a hero…' : 'Filter mailboxes (name / id)'}
       boxValue=${boxQuery} onBoxInput=${(value) => { nav.current = 'box'; setBoxQuery(value); }}
       onBoxKeyDown=${(event) => enterFirstRow({ event, container: clientRef.current?.querySelector('#fused-mail-sidebar'), ...SIDEBAR_ROWS, select: (row) => { const f = folderRows.get(row.dataset.id); if (f) pick(f); } })}
       id="fused-mail-filter" placeholder=${solo ? `Filter ${scopeName}'s messages` : scope ? `Filter messages on ${scopeName}` : 'Filter messages on every ticked node'}

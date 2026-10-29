@@ -108,7 +108,7 @@ const COPILOT_API_TITLE = 'EXPERIMENTAL: drive this Copilot agent over its embed
   + 'time. Copilot only.';
 const ENVIRONMENT_OVERRIDE_HELP = 'Explicit values override matching profile, group, and sandbox-profile variables. '
   + 'The resolved values are frozen for resume, restart, clone, and reincarnate.';
-const ENVIRONMENT_OVERRIDE_HELP_WIZARD = 'Explicit runes override matching pattern, party, and ward runes. '
+const ENVIRONMENT_OVERRIDE_HELP_WIZARD = 'Explicit runes override matching loadout, party, and ward runes. '
   + 'The resolved spellbook is sealed for awakening, reincanting, mirroring, and reincarnation.';
 const EFFECTIVE_ENVIRONMENT_HELP = 'Common configured values shown here; sandbox-profile variables are '
   + 'additionally resolved by the daemon at launch.';
@@ -1333,8 +1333,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <h3 id="agent-spawn-title">${queued
       ? html`<${Words} prefix="spawn-title" plain="Queued agent" wizard="Dormant summoning" />`
       : requestOnly
-        ? html`<${Words} prefix="spawn-title" plain="Request an agent" wizard="Petition for a familiar" />`
-        : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new familiar" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}</h3>
+        ? html`<${Words} prefix="spawn-title" plain="Request an agent" wizard="Petition for a hero" />`
+        : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new hero" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}</h3>
     ${queued && html`<div class="agent-spawn-queued-banner" id="agent-spawn-queued-banner">
       ⏸ ${wizard ? 'Prepared' : 'Queued'}${queued.createdAt ? ` ${relTime(queued.createdAt)}` : ''} · not running yet
     </div>`}
@@ -1345,7 +1345,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     ${remote && html`<${RemoteSourceFilter} remote=${remote} showFrom=${showFrom} setShowFrom=${setShowFrom} />`}
     <label class="cron-create-row" id="agent-spawn-load-profile-row"
       title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
-      <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Pattern" /></span>
+      <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Loadout" /></span>
       <div class="cron-create-target"><div class="cron-target-input-row">
         <select id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
           onChange=${(event) => changeProfile(event.currentTarget.value)}>
@@ -1360,7 +1360,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         <button id="agent-spawn-save-profile" type="button" disabled=${busy || !canSaveProfile}
           aria-disabled=${canSaveProfile ? undefined : 'true'} data-remote-spawn-free=${canSaveProfile ? '' : undefined}
           title=${canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it and pick the node it's saved on (the directory and worktree aren't stored)" : undefined}
-          onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as pattern…" /></button><${LockReason} id="agent-spawn-save-profile-lock" align="end" why=${canSaveProfile ? '' : `You can't save profiles on ${remote?.node || target?.name || 'that node'} or here: that needs unrestricted trust or the node.spawn.profiles.create grant.`}/>
+          onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as loadout…" /></button><${LockReason} id="agent-spawn-save-profile-lock" align="end" why=${canSaveProfile ? '' : `You can't save profiles on ${remote?.node || target?.name || 'that node'} or here: that needs unrestricted trust or the node.spawn.profiles.create grant.`}/>
       </div></div>
     </label>
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>

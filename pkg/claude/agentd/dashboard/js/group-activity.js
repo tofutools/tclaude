@@ -45,8 +45,8 @@ const VARIANT_LABEL = {
 };
 
 // The 🧙 wizard theme re-flavours the same tooltips with arcane verbs (the
-// operator's ask): hovering a group's bots in wizard mode reads "2 familiars
-// channeling · 1 familiar meditating" instead of "2 working · 1 idle". The
+// operator's ask): hovering a group's bots in wizard mode reads "2 heroes
+// channeling · 1 hero meditating" instead of "2 working · 1 idle". The
 // verbs echo the wizard state pill's vocabulary (helpers.js WIZARD_STATE) so
 // the two indicators speak the same language; merged 'asking' (permission +
 // input) collapses to one generic decree line. Purely cosmetic flair — the
@@ -63,12 +63,12 @@ const WIZARD_VERB = {
 
 // variantLabel builds the count-prefixed tooltip fragment for one variant in
 // the given theme. Regular (and any unknown/blank theme) → the honest noun,
-// e.g. "2 working"; 'wizard' → arcane flavour with a pluralised familiar,
-// e.g. "2 familiars channeling" / "1 familiar meditating". Pure string work
+// e.g. "2 working"; 'wizard' → arcane flavour with a pluralised hero,
+// e.g. "2 heroes channeling" / "1 hero meditating". Pure string work
 // over fixed vocab + an integer — no caller input, so it stays injection-safe.
 export function variantLabel(variant, n, theme) {
   if (theme === 'wizard') {
-    const noun = n === 1 ? 'familiar' : 'familiars';
+    const noun = n === 1 ? 'hero' : 'heroes';
     return `${n} ${noun} ${WIZARD_VERB[variant] || VARIANT_LABEL[variant]}`;
   }
   return `${n} ${VARIANT_LABEL[variant]}`;

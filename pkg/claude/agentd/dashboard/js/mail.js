@@ -1352,7 +1352,7 @@ export function accessWho(r) {
   // A cross-node link request (tcl-2ksi0k) comes from a peer node, not an agent.
   if (r.purpose === 'group_link') return r.link?.source_peer_label || r.conv_title || r.origin_peer || 'peer';
   if (r.purpose === 'peer_proposal') return r.proposal?.peer_label || r.origin_peer || 'peer';
-  const id = shortAgentId(r.agent_id, r.conv_id) || wz('unknown agent', 'unknown familiar');
+  const id = shortAgentId(r.agent_id, r.conv_id) || wz('unknown agent', 'unknown hero');
   // Lead with the human-readable agent name whenever caller refresh found one.
   // The row and reader both carry the stable agent + conversation identifiers
   // in their hover title, so repeating the short id in visible text only makes
@@ -1518,8 +1518,8 @@ function renderAccessRequests(list, pending) {
   const label = $('#access-banner-text');
   if (label && n > 0) {
     label.textContent = n === 1
-      ? wz('An agent is requesting access', 'A familiar begs a boon')
-      : wz(`${n} agents are requesting access`, `${n} familiars beg boons`);
+      ? wz('An agent is requesting access', 'A hero begs a boon')
+      : wz(`${n} agents are requesting access`, `${n} heroes beg boons`);
   }
 }
 

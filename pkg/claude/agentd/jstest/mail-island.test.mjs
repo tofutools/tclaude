@@ -141,7 +141,7 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => { state.value = { ...state.value }; });
-  assert.equal(mailboxFilter.getAttribute('placeholder'), 'Seek a familiar…');
+  assert.equal(mailboxFilter.getAttribute('placeholder'), 'Seek a hero…');
   assert.equal(messageFilter.getAttribute('placeholder'), 'Search the scrolls…');
   await mounted.unmount();
 });

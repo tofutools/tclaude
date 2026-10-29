@@ -115,7 +115,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 	for _, required := range []string{
 		"const retiredCount = snap.retired_total || 0",
 		"if (retiredCount) {",
-		"icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished familiars…')",
+		"icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished heroes…')",
 		"keywords: 'delete purge retired cleanup remove wipe agents'",
 	} {
 		if !strings.Contains(palette, required) {

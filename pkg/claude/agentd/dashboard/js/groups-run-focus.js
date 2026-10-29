@@ -263,8 +263,8 @@ export const DOCK_AGENT_TYPE = 'application/x-tclaude-agent';
 // without a pointer).
 // TODO(tcl-amd5lb): "+ spawn for node" once a run can spawn into its group.
 function PerformerDock({ members, busy, wizard }) {
-  return html`<div class="grf-dock" role="group" aria-label=${wizard ? 'Familiars' : 'Performers'} data-run-dock>
-    <span class="grf-dock-label">${wizard ? 'familiars' : 'performers'}</span>
+  return html`<div class="grf-dock" role="group" aria-label=${wizard ? 'Heroes' : 'Performers'} data-run-dock>
+    <span class="grf-dock-label">${wizard ? 'heroes' : 'performers'}</span>
     ${members.map((member) => html`<span key=${memberKey(member)} class=${`grf-dock-agent${busy.has(memberKey(member)) ? ' busy' : ''}`}
       draggable="true" data-run-dock-agent=${memberKey(member)}
       title=${`Drag ${memberName(member)} onto an agent node to hand it over`}
@@ -275,7 +275,7 @@ function PerformerDock({ members, busy, wizard }) {
       }}>
       <span class=${`pk-avatar ${performerColor(memberKey(member))}`} aria-hidden="true">${[...String(memberName(member) || '?')][0].toUpperCase()}</span>${memberName(member)}
     </span>`)}
-    <span class="grf-dock-note">${wizard ? 'drag a familiar onto its step' : 'drag onto an agent node to reassign'}</span>
+    <span class="grf-dock-note">${wizard ? 'drag a hero onto its step' : 'drag onto an agent node to reassign'}</span>
   </div>`;
 }
 

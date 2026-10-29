@@ -45,7 +45,7 @@ function labels(kind, current, nodeName = '') {
   const name = `${GLOBAL_DEFAULT_PROFILE_NAME}${on}`;
   return {
     id: 'dashboard-default-profile', icon: '🧠', className: 'user-default-model',
-    act: 'set-dash-profile', dataName: 'data-profile', create: isWizardActive() ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
+    act: 'set-dash-profile', dataName: 'data-profile', create: isWizardActive() ? '＋ new loadout…' : '＋ new profile…', none: '(none)',
     name,
     aria: current
       ? `${name}: ${current}. Click to change.`

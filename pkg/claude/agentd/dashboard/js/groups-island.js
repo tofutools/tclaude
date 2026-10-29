@@ -112,9 +112,9 @@ export function GroupsControls({ state, actions }) {
         id="filter-groups"
         type="text"
         aria-label=${wizard ? 'Filter parties' : 'Filter groups'}
-        placeholder=${wizard ? 'Filter parties & familiars' : 'Filter groups & members'}
+        placeholder=${wizard ? 'Filter parties & heroes' : 'Filter groups & members'}
         title=${wizard
-          ? 'Matches party name + familiar title/class/lore/grove/branch'
+          ? 'Matches party name + hero title/class/lore/grove/branch'
           : 'Matches group name + member title/role/descr/cwd/branch'}
         autocomplete="off"
         spellcheck=${false}
@@ -153,7 +153,7 @@ export function GroupsControls({ state, actions }) {
         aria-expanded=${state.viewOpen.value ? 'true' : 'false'}
         aria-controls="filter-groups-view-menu"
         title=${wizard
-          ? 'Choose which familiars and ethereal parties to show on this tab'
+          ? 'Choose which heroes and ethereal parties to show on this tab'
           : 'Choose which members and virtual groups to show on this tab'}
         onClick=${() => { state.viewOpen.value = !state.viewOpen.value; }}
       >

@@ -30,14 +30,14 @@ function Words({ plain, wizard }) {
 function agentLabel(agents, wizard = false) {
   if (!agents?.length) return '';
   const names = agents.map((agent) => agent.title || agent.conv_id.slice(0, 8));
-  return `${wizard ? 'familiar' : 'agent'}: ${names.join(', ')}`;
+  return `${wizard ? 'hero' : 'agent'}: ${names.join(', ')}`;
 }
 
 function wizardReason(reason) {
   return String(reason || '')
-    .replace('in use by a running agent', 'bound to a channeling familiar')
-    .replace('retired agent', 'banished familiar')
-    .replace('belongs to agent', 'belongs to familiar')
+    .replace('in use by a running agent', 'bound to a channeling hero')
+    .replace('retired agent', 'banished hero')
+    .replace('belongs to agent', 'belongs to hero')
     .replace('reinstate-resume loses this dir', 'restoration loses this directory')
     .replace('never removed', 'never pruned')
     .replace('safe to remove', 'safe to prune')
@@ -48,7 +48,7 @@ function wizardReason(reason) {
 function CleanupCandidateRow({ candidate, locked, wizard, onToggle }) {
   const disabled = candidate.is_main;
   const wizardCategory = ({
-    retired: 'banished', agent: 'familiar', live: 'channeling',
+    retired: 'banished', agent: 'hero', live: 'channeling',
   })[candidate.category] || candidate.category;
   return html`<div
     class=${`cleanup-row${disabled ? ' disabled' : ''}`}
@@ -293,7 +293,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
     : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${regularWhere}. ${scanFrame} Safe orphans, retired-agent leftovers, and bookkeeping-only stale records are pre-ticked; agent-bound or dirty worktrees remain unticked for review.`;
   const wizardHint = removable.length === 0 && staleRecords === 0
     ? `No removable worktrees or stale Git records found in ${wizardWhere}. ${scanFrame}`
-    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${wizardWhere}. ${scanFrame} Safe orphans, banished-familiar leftovers, and bookkeeping-only stale records are pre-ticked; familiar-bound or dirty worktrees remain unticked for review.`;
+    : `${removable.length} removable worktree${removable.length === 1 ? '' : 's'} and ${staleRecords} stale Git record${staleRecords === 1 ? '' : 's'} found in ${wizardWhere}. ${scanFrame} Safe orphans, banished-hero leftovers, and bookkeeping-only stale records are pre-ticked; hero-bound or dirty worktrees remain unticked for review.`;
   const retrying = !!submittedRequest;
   const selectedCountCopy = `${selected.length} of ${removable.length} worktrees + ${selectedStaleRecords} of ${staleRecords} stale records selected`;
   const removeCopy = `${selected.length} worktree${selected.length === 1 ? '' : 's'}`;

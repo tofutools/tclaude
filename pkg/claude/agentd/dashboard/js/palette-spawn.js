@@ -14,10 +14,10 @@ export function buildProfileSpawnCommands(snapshot, {
         // The spawn dialog sends a spawn request on a peer that shares it.
         peerView: 'spawn', icon: wiz('＋', '🔮'),
         label: wiz(`Spawn ${profile.name}${suffix}…`, `Summon ${profile.name}${suffix}…`),
-        hint: wiz('open the spawn dialog with this profile', 'open the summoning circle with this pattern')
+        hint: wiz('open the spawn dialog with this profile', 'open the summoning circle with this loadout')
           + (defaultGroup ? ` · ${defaultGroup}` : '')
           + (fast ? ' · fast mode (higher credit cost)' : ''),
-        keywords: 'spawn summon agent familiar profile pattern launch '
+        keywords: 'spawn summon agent hero profile loadout launch '
           + (profile.aliases || []).join(' ') + ' ' + (profile.model || '') + ' ' + (profile.harness || ''),
         run: () => openSpawn({ profileName: profile.name, defaultGroup, ...(fastOverride ? { fastMode: true } : {}) }),
       });

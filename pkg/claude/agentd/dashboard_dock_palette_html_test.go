@@ -180,7 +180,7 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 
 	// Item 5: the profiles section carries its FULL name in the dock (operator
 	// request); templates + roles keep their short headings.
-	must(`wizWord('Agent profiles', 'Familiar patterns')`, "the profiles section heading is spelled out (JOH-390 item 5)")
+	must(`wizWord('Agent profiles', 'Loadouts')`, "the profiles section heading is spelled out (JOH-390 item 5)")
 
 	// Item 6: the template card's per-item ⚙ deep-links into THAT template's
 	// editor (like profiles/roles), not the whole-kind manager.

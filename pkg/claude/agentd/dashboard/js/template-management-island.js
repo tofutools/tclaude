@@ -59,7 +59,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
         >${agents.length}
         <${Words}
           plain=${`agent${agents.length === 1 ? '' : 's'}`}
-          wizard=${`familiar${agents.length === 1 ? '' : 's'}`}
+          wizard=${`hero${agents.length === 1 ? '' : 'es'}`}
       /></span>
       ${template.work_pattern?.length > 0 &&
       html`<span
@@ -222,7 +222,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
       <p class="manage-intro">
         <${Words}
           plain="Reusable blueprints for a working group — a name, shared context and an ordered list of agent specs. Instantiate one to spawn a whole team in a single shot."
-          wizard="Reusable summoning circles for a whole party — a name, shared lore and an ordered roster of familiars. Cast one to summon the entire party in a single rite."
+          wizard="Reusable summoning circles for a whole party — a name, shared lore and an ordered roster of heroes. Cast one to summon the entire party in a single rite."
         />
       </p>
       <div class="filter-bar">
@@ -383,7 +383,7 @@ export function TemplateDuplicateDialog({
           step, description and default context. Only the name changes.</span
         ><span class="tpl-word-wizard"
           >Chalks an identical twin of <b>the circle</b> under a new name —
-          every familiar, rank, quest chapter, drumbeat, rite, lore and shared
+          every hero, rank, quest chapter, drumbeat, rite, lore and shared
           context. Only the name changes.</span
         >
       </div>
@@ -629,7 +629,7 @@ export function TemplateFromGroupDialog({
       html`<div class="modal-meta" id="template-from-group-update-note">
         <${Words}
           plain=${`⚠ A template “${name.trim()}” already exists — saving re-snapshots it in place; curated per-agent task briefs are kept for matching agents.`}
-          wizard=${`⚠ A circle “${name.trim()}” is already chalked — tracing redraws it in place; curated familiar briefs are kept for matching names.`}
+          wizard=${`⚠ A circle “${name.trim()}” is already chalked — tracing redraws it in place; curated hero briefs are kept for matching names.`}
         />
       </div>`}
       <div
@@ -699,7 +699,7 @@ export function TemplateStartersDialog({
       <div class="modal-meta">
         <${Words}
           plain="Copies a ready-made team into your own templates list — it does not spawn anything yet. Copying never overwrites a template of the same name."
-          wizard="Copies a ready-made party into your own circles — it summons no familiars yet. Copying never overwrites a circle of the same name."
+          wizard="Copies a ready-made party into your own circles — it summons no heroes yet. Copying never overwrites a circle of the same name."
         />
       </div>
       <div id="starters-list" class="starters-list">
@@ -1210,7 +1210,7 @@ function DeployRosterPreview({ template, prefix, profiles, defaultProfile }) {
     return html`<span class="tp-empty"
       ><${Words}
         plain="this template has no agents"
-        wizard="this circle names no familiars"
+        wizard="this circle names no heroes"
     /></span>`;
   const shown = prefix.trim() || '‹group›';
   const fallback = findProfileByHandle(profiles, defaultProfile);
@@ -2151,7 +2151,7 @@ function AgentRow({
   return html`<div class="template-agent-row" data-idx=${index}>
     <div class="template-agent-row-head">
       <span class="template-agent-num"
-        ><${Words} plain="Agent" wizard="Familiar" /> ${index + 1}</span
+        ><${Words} plain="Agent" wizard="Hero" /> ${index + 1}</span
       ><label
         class="template-agent-owner"
         title="Mark this agent as an owner of the instantiated group — a group can have several owners. This is unioned with the picked profile's own owner default (either one makes the agent an owner)."
@@ -2421,7 +2421,7 @@ function Concepts() {
         <li>
           <b>Rite of command — the opening whispers.</b> An ordered set of
           whispers spoken <b>once</b>, after the whole party has stood. Each
-          verse reaches one familiar (often the lead, who parcels out the quest)
+          verse reaches one hero (often the lead, who parcels out the quest)
           or the whole party. It sounds once at the summoning and does not echo
           — though a <b>re-brief</b> speaks the circle's <i>current</i> rite to
           the living party again on command.
@@ -2619,7 +2619,7 @@ export function TemplateEditor({
             }))} /><span
           ><${Words}
             plain="Give each agent its own worktree by default"
-            wizard="Give each familiar its own enchanted grove by default" /></span
+            wizard="Give each hero its own enchanted grove by default" /></span
       ></label>
       ${usageLinkable && usageLink.loaded
         ? html`<div
@@ -2645,7 +2645,7 @@ export function TemplateEditor({
           </div>`
         : null}
       <div class="template-agents-head">
-        <span><${Words} plain="Agents" wizard="Familiars" /></span
+        <span><${Words} plain="Agents" wizard="Heroes" /></span
         ><button
           type="button"
           id="template-editor-add-agent"
@@ -2653,7 +2653,7 @@ export function TemplateEditor({
           onClick=${() =>
             setAgents((agents) => [...agents, blankTemplateAgent()])}
         >
-          <${Words} plain="+ add agent" wizard="+ add familiar" />
+          <${Words} plain="+ add agent" wizard="+ add hero" />
         </button>
       </div>
       <div id="template-editor-agents">

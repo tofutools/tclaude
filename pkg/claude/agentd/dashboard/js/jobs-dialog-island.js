@@ -46,7 +46,7 @@ function CronTargetPicker({ value, onChange, snapshot, onPick, groupOnly = false
     <div class="cron-target-modes">
       ${groupOnly ? html`<span class="muted">Group target required for worker spawns</span>` : html`<${Fragment}>
       <label><input type="radio" name="cron-create-target-mode" value="solo" checked=${value.mode === 'solo'}
-        onChange=${() => setMode('solo')} /> <${Words} plain="Solo agent" wizard="Solo familiar"/></label>
+        onChange=${() => setMode('solo')} /> <${Words} plain="Solo agent" wizard="Solo hero"/></label>
       <label><input type="radio" name="cron-create-target-mode" value="group" checked=${value.mode === 'group'}
         onChange=${() => setMode('group')} /> <${Words} plain="Group (multicast)" wizard="Party (multicast)"/></label>
       </${Fragment}>`}
@@ -55,15 +55,15 @@ function CronTargetPicker({ value, onChange, snapshot, onPick, groupOnly = false
       <input id="cron-create-target" type="text" value=${value.target}
         placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck=${false}
         onInput=${(event) => onChange({ ...value, target: event.currentTarget.value })} />
-      <button type="button" id="cron-create-target-pick" title="Pick from the agent / familiar list" onClick=${onPick}>🔍</button>
+      <button type="button" id="cron-create-target-pick" title="Pick from the agent / hero list" onClick=${onPick}>🔍</button>
     </div>`}
     ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id="cron-create-target-scoped">
       <select id="cron-create-scoped-member" value=${value.target}
         onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
         ${memberOptions.length
-          ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a familiar)')}</option>${memberOptions.map((member) => html`
+          ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a hero)')}</option>${memberOptions.map((member) => html`
               <option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
-          : html`<option value="">${wizWord('(no members in this group)', '(no familiars in this party)')}</option>`}
+          : html`<option value="">${wizWord('(no members in this group)', '(no heroes in this party)')}</option>`}
       </select>
     </div>`}
     ${value.mode === 'group' && html`<div class="cron-target-input-row" id="cron-create-target-group">
@@ -103,7 +103,7 @@ function AgentPicker({ descriptor, snapshot, onChoose, onClose, confirmDiscard }
   return html`<${Overlay} id="cron-pick-target-modal" dialogClass="add-member-modal"
     labelledby="cron-pick-target-title" onClose=${onClose} dirty=${false} blocked=${false}
     confirmDiscard=${confirmDiscard}>
-    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick familiar"/></span></h3>
+    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span></h3>
     <input id="cron-pick-target-search" class="add-member-search" type="text" value=${query}
       placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck=${false}
       role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
@@ -215,7 +215,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
     if (problem) {
       const wizardMessages = {
         'group-target': 'Pick a party from the dropdown (or form one first via the Groups tab).',
-        'scoped-target': 'This party has no familiars to nudge — switch to Party (multicast), or invite a familiar to the party first.',
+        'scoped-target': 'This party has no heroes to nudge — switch to Party (multicast), or invite a hero to the party first.',
       };
       setError(wizWord(problem.message, wizardMessages[problem.code] || problem.message));
       return;
@@ -274,7 +274,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         <input id="cron-create-owner" type="text" value=${draft.owner}
           placeholder="blank = you (the operator) · or a sender: title / conv-id / 8+-char prefix" autocomplete="off" spellcheck=${false}
           onInput=${(event) => update({ owner: event.currentTarget.value })} />
-        <button type="button" id="cron-create-owner-pick" title="Pick from the agent / familiar list"
+        <button type="button" id="cron-create-owner-pick" title="Pick from the agent / hero list"
           onClick=${() => setPicker({ field: 'owner', title: 'Pick owner' })}>🔍</button>
       </div></div></label>
       <label class="cron-create-row"><span class="cron-create-label">Target</span>
@@ -290,7 +290,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         </select>
       </label>
       ${draft.target.mode === 'group' && draft.actionKind === 'message' && html`<label class="cron-create-row" id="cron-create-role-row"><span class="cron-create-label"
-        title="For a group / party target only: deliver only to members / familiars whose role / class matches. Blank or 'all' means the whole target.">
+        title="For a group / party target only: deliver only to members / heroes whose role / class matches. Blank or 'all' means the whole target.">
         <${Words} plain="Role filter" wizard="Class filter"/></span>
         <input id="cron-create-role" type="text" value=${draft.role}
           placeholder="optional — blank / all = entire target (e.g. dev)" autocomplete="off" spellcheck=${false}

@@ -114,7 +114,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
       <div>
         <h3 id="group-standing-orders-title">${wizard ? `✦ Decrees of party ${group}` : `Rules for ${group}`}</h3>
         <p class="muted">${wizard
-          ? 'Enduring commandments whispered to every familiar in this party.'
+          ? 'Enduring commandments whispered to every hero in this party.'
           : 'Durable guidance delivered to every agent in this group.'}</p>
       </div>
       <button type="button" class="group-standing-orders-close"
@@ -137,7 +137,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
             <div class="group-standing-orders-first-icon" aria-hidden="true">${wizard ? '📜' : '◎'}</div>
             <strong>${wizard ? 'The party bears no decrees' : 'No standing orders yet'}</strong>
             <p>${wizard
-              ? 'Inscribe the first enduring commandment. Present and future familiars alike shall heed its words.'
+              ? 'Inscribe the first enduring commandment. Present and future heroes alike shall heed its words.'
               : 'Create the first reusable rule for this group. It will apply to every current member and anyone added later.'}</p>
             <div class="group-standing-orders-first-actions">
               <button type="button" class="primary" onClick=${() => actions.openStandingOrderCreate(group)}>
@@ -166,7 +166,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
         <div class="group-standing-orders-section-heading">
           <strong>${wizard ? 'Decrees in force' : 'In force'}</strong>
           <span class="muted">${wizard
-            ? 'heeded by present and future familiars'
+            ? 'heeded by present and future heroes'
             : 'applies to all current and future members'}</span>
         </div>
         ${effective.length === 0

@@ -72,7 +72,7 @@ function CandidateRow({ candidate, index, highlighted, busy, onHighlight, onAdd 
     ${candidate._role ? html`<span class="role">${candidate._role}</span>` : null}
     ${candidate._descr ? html`<span class="descr">${candidate._descr}</span>` : null}
     ${(candidate.groups || []).length ? html`<span class="groups-tag"><span class="theme-copy-regular">in:</span><span class="theme-copy-wizard">parties:</span> ${(candidate.groups || []).join(', ')}</span>` : null}
-    ${candidate._promote ? html`<span class="groups-tag promote-tag" title="Not an agent / familiar yet — adding it here promotes it"><span class="theme-copy-regular">promotes to agent</span><span class="theme-copy-wizard">awakens as familiar</span></span>` : null}
+    ${candidate._promote ? html`<span class="groups-tag promote-tag" title="Not an agent / hero yet — adding it here promotes it"><span class="theme-copy-regular">promotes to agent</span><span class="theme-copy-wizard">awakens as hero</span></span>` : null}
   </div>`;
 }
 
@@ -212,7 +212,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     confirmDiscard=${confirmDiscard} guardBackdropDrag=${true}
   >
     <div>
-      <h3 id="add-member-title"><span class="theme-copy-regular">Add member to</span><span class="theme-copy-wizard">Invite familiar into party</span> <span class="muted" id="add-member-group">${descriptor.group}</span></h3>
+      <h3 id="add-member-title"><span class="theme-copy-regular">Add member to</span><span class="theme-copy-wizard">Invite hero into party</span> <span class="muted" id="add-member-group">${descriptor.group}</span></h3>
       <input id="add-member-search" class="add-member-search" type="text"
         value=${query} disabled=${busy} autofocus data-select-on-focus
         placeholder="Filter by title / role or class / descr / conv-id…"

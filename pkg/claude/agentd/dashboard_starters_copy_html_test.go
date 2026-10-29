@@ -29,7 +29,7 @@ func TestDashboardHTML_StartersCopyMechanism(t *testing.T) {
 	must("Copies a ready-made team into your own templates list", "regular intro leads with the copy fact")
 	must("does not spawn anything yet", "regular intro says it does not spawn")
 	must("Copies a ready-made party into your own circles", "wizard intro leads with the copy fact")
-	must("summons no familiars yet", "wizard intro says it summons nothing")
+	must("summons no heroes yet", "wizard intro says it summons nothing")
 
 	// (b) Per-row action button reads copy-not-cast, both vocab modes.
 	must("⤓ copy to my templates", "the regular install button says copy-to-my-templates")

@@ -24,7 +24,7 @@ import {
 const html = htm.bind(h);
 const WT_NEW = '__new__';
 const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns and group terminals; profile and per-spawn values override matching names.';
-const GROUP_ENVIRONMENT_HELP_WIZARD = 'Inherited by newly summoned familiars and sanctum terminals; pattern and per-summon runes '
+const GROUP_ENVIRONMENT_HELP_WIZARD = 'Inherited by newly summoned heroes and sanctum terminals; loadout and per-summon runes '
   + 'override matching names.';
 
 function errorMessage(error) { return error?.message || String(error); }
@@ -214,7 +214,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       registerClose=${registerClose}
       resizeKey="tclaude.dash.modalSize.clone-agent"
     >
-      <h3 id="clone-agent-title"><${Words} plain="Clone agent" wizard="⧉ Mirror familiar"/></h3>
+      <h3 id="clone-agent-title"><${Words} plain="Clone agent" wizard="⧉ Mirror hero"/></h3>
       <div class="modal-meta" id="clone-agent-meta">
         source: ${source}${descriptor.cwd ? `  ·  ${descriptor.cwd}` : ''}${descriptor.group ? `  ·  joins group: ${descriptor.group}` : ''}
       </div>
@@ -284,7 +284,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
         <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="clone-agent-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
-          <${Words} plain=${busy ? 'Cloning…' : 'Clone'} wizard=${busy ? 'Mirroring…' : 'Mirror familiar'}/>
+          <${Words} plain=${busy ? 'Cloning…' : 'Clone'} wizard=${busy ? 'Mirroring…' : 'Mirror hero'}/>
         </button>
       </div>
     </${Overlay}>
@@ -328,15 +328,15 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       confirmDiscard=${confirmDiscard}
       registerClose=${registerClose}
     >
-      <h3 id="reincarnate-agent-title"><${Words} plain="Reincarnate agent" wizard="Reincarnate familiar"/></h3>
+      <h3 id="reincarnate-agent-title"><${Words} plain="Reincarnate agent" wizard="Reincarnate hero"/></h3>
       <div class="modal-meta" id="reincarnate-agent-meta">target: ${target}</div>
       <div class="reincarnate-mode" id="reincarnate-mode" role="radiogroup" aria-label="Reincarnate mode">
         <label>
           <input type="radio" name="reincarnate-mode" value="self" checked=${!force} onChange=${() => setMode('self')} />
-          <span><${Words} plain="Ask the agent to reincarnate itself" wizard="Ask the familiar to reincarnate itself"/></span>
+          <span><${Words} plain="Ask the agent to reincarnate itself" wizard="Ask the hero to reincarnate itself"/></span>
           <span class="opt-note"><${Words}
             plain="— graceful. Sends the agent a message; at its next clean point it writes its own handoff, collecting the context that matters, then reincarnates. May take a moment. Recommended."
-            wizard="— graceful. Sends the familiar a missive; at its next clean point it writes its own handoff, gathers the lore that matters, then returns in a fresh vessel. Recommended."
+            wizard="— graceful. Sends the hero a missive; at its next clean point it writes its own handoff, gathers the lore that matters, then returns in a fresh vessel. Recommended."
           /></span>
         </label>
         <label>
@@ -344,7 +344,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
           <span>Force reincarnate now</span>
           <span class="opt-note"><${Words}
             plain="— immediate. The daemon spawns the successor and soft-exits the original right away. The agent gets no chance to write its own handoff — use only when it is stuck or unresponsive."
-            wizard="— immediate. The daemon summons the successor and dismisses the original at once. The familiar cannot write its own handoff — use only when it is stuck or unresponsive."
+            wizard="— immediate. The daemon summons the successor and dismisses the original at once. The hero cannot write its own handoff — use only when it is stuck or unresponsive."
           /></span>
         </label>
       </div>
@@ -352,7 +352,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
         <div id="reincarnate-self-fields">
           <p class="modal-hint"><${Words}
             plain="The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state."
-            wizard="The familiar receives a missive and reincarnates at a clean point. Because it gathers its own lore, the successor inherits a handoff reflecting the familiar's true working state."
+            wizard="The hero receives a missive and reincarnates at a clean point. Because it gathers its own lore, the successor inherits a handoff reflecting the hero's true working state."
           /></p>
           <label class="cron-create-row">
             <span class="cron-create-label">Focus hint</span>
@@ -363,7 +363,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
         <div id="reincarnate-force-fields">
           <p class="modal-hint"><${Words}
             plain=${html`Spawns a fresh session that inherits identity (groups, perms, ownership). The original is soft-exited. The successor keeps the agent's name; the replaced session is kept as <code>${'<name>-x'}</code> (see ▾ view → show replaced generations).`}
-            wizard=${html`Summons a fresh familiar that inherits identity (parties, boons, ownership). The original is dismissed. The successor keeps the familiar's name; the replaced vessel is kept as <code>${'<name>-x'}</code>.`}
+            wizard=${html`Summons a fresh hero that inherits identity (parties, boons, ownership). The original is dismissed. The successor keeps the hero's name; the replaced vessel is kept as <code>${'<name>-x'}</code>.`}
           /></p>
           <label class="cron-create-row">
             <span class="cron-create-label">Follow-up</span>
@@ -378,7 +378,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
         <button id="reincarnate-agent-submit" class="primary" type="button" disabled=${busy || (force && !normaliseFollowUp(followUp))} onClick=${submit}>
           <${Words}
             plain=${busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask agent')}
-            wizard=${busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask familiar')}
+            wizard=${busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask hero')}
           />
         </button>
       </div>
@@ -533,7 +533,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
         />
         <span class="task-link-hint"><${Words}
           plain=${groupAttachment ? "Leave the URL empty to clear this group's attachment." : "Leave the URL empty to clear this agent's task link."}
-          wizard=${groupAttachment ? "Leave the portal empty to unbind this party's portal." : "Leave the portal empty to unbind this familiar's quest."}
+          wizard=${groupAttachment ? "Leave the portal empty to unbind this party's portal." : "Leave the portal empty to unbind this hero's quest."}
         /></span>
       </div>
       <div class="field">
@@ -636,7 +636,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Default dir" wizard="Sanctum" /></span><input id="group-settings-default-cwd" ...${off('set-group-dir')} value=${values.defaultCwd} placeholder="absolute path" spellcheck="false" onInput=${(event) => set('defaultCwd', event.currentTarget.value)}/><button id="group-settings-default-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || browseBusy || !!browseLock || !can('set-group-dir')} title=${browseLock ? undefined : 'Browse for a directory'} onClick=${() => { void browseDefaultCwd(); }}><${Words} plain=${browseBusy ? 'Opening…' : 'Browse…'} wizard=${browseBusy ? 'Scrying…' : 'Scry…'} /></button><${LockReason} id="group-settings-default-cwd-browse-lock" why=${browseLock}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Startup context" wizard="Opening lore" /></span><textarea rows="5" ...${off('set-group-context')} value=${values.defaultContext} onInput=${(event) => set('defaultContext', event.currentTarget.value)}></textarea></label>
     <label class="cron-create-row" title="What tclaude re-injects into member agents after their context is compacted or cleared (/clear gets identity only, or nothing when off)"><span class="cron-create-label"><${Words} plain="Re-inject after compact" wizard="Memory ward" /></span><select id="group-settings-reinject" ...${off('set-group-context')} value=${values.reinjectAfterCompact} onChange=${(event) => set('reinjectAfterCompact', event.currentTarget.value)}><option value="contexts">identity + startup context</option><option value="identity">identity only</option><option value="off">off</option></select></label>
-    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Spawn profile" wizard="Familiar pattern" /></span><select ...${off('set-group-profile')} value=${values.defaultProfile} onChange=${(event) => set('defaultProfile', event.currentTarget.value)}><option value="">— none —</option>${profileNames.map((name) => html`<option value=${name}>${name}</option>`)}</select></label>
+    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Spawn profile" wizard="Loadout" /></span><select ...${off('set-group-profile')} value=${values.defaultProfile} onChange=${(event) => set('defaultProfile', event.currentTarget.value)}><option value="">— none —</option>${profileNames.map((name) => html`<option value=${name}>${name}</option>`)}</select></label>
     <div class="cron-create-row" id="group-settings-prompts-row" title="Saved prompts that open the task brief of agents spawned into this group, in order, when the spawn's profile names none."><span class="cron-create-label">Saved prompts</span><${SavedPromptChips} id="group-settings-prompt-refs" value=${values.defaultPrompts} onChange=${(refs) => set('defaultPrompts', refs)} disabled=${busy || !!promptsLock || !can('set-group-prompts')} confirmDiscard=${confirmDiscard}/><${LockReason} id="group-settings-prompts-lock" why=${promptsLock}/></div>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Sandbox profile" wizard="Ward" /></span><select ...${off('set-group-sandbox-profile')} value=${values.sandboxProfile} onChange=${(event) => set('sandboxProfile', event.currentTarget.value)}><option value="">— inherit global —</option>${sandboxNames.map((name) => html`<option value=${name}>${name}</option>`)}</select></label>
     <div class="cron-create-row" id="group-settings-environment-row"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${values.environment.map((entry, index) => html`<div class="sbx-row sbx-environment-row"><input class="sbx-env-name" ...${off('set-group-environment')} placeholder="NAME" value=${entry.name} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.currentTarget.value } : row))}/><input class="sbx-env-value" ...${off('set-group-environment')} placeholder="value" value=${entry.value} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, value: event.currentTarget.value } : row))}/><button type="button" ...${off('set-group-environment')} onClick=${() => set('environment', values.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><div class="sbx-add-row-help"><button type="button" class="sbx-add-row" ...${off('set-group-environment')} onClick=${() => set('environment', [...values.environment, { name: '', value: '' }])}><${Words} plain="＋ add variable" wizard="✦ bind rune" /></button><${HelpDisclosure} id="group-settings-environment-help" label="Group environment variables" help=${GROUP_ENVIRONMENT_HELP} content=${html`<${Words} plain=${GROUP_ENVIRONMENT_HELP} wizard=${GROUP_ENVIRONMENT_HELP_WIZARD} />`} open=${environmentHelpOpen === 'group-settings-environment-help'} setOpen=${setEnvironmentHelpOpen} /></div></div></div>

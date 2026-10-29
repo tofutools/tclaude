@@ -31,7 +31,7 @@ import { toolbarNode, toolbarRefusal, toolbarTarget } from './toolbar-node.js';
 
 const html = htm.bind(h);
 const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns and group terminals; profile and per-spawn values override matching names.';
-const GROUP_ENVIRONMENT_HELP_WIZARD = 'Inherited by newly summoned familiars and sanctum terminals; pattern and per-summon runes override matching names.';
+const GROUP_ENVIRONMENT_HELP_WIZARD = 'Inherited by newly summoned heroes and sanctum terminals; loadout and per-summon runes override matching names.';
 
 function Words({ plain, wizard, classPrefix = 'tpl-word' }) {
   return html`<span class=${`${classPrefix}-regular`}>${plain}</span

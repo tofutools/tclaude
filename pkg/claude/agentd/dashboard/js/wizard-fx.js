@@ -29,7 +29,7 @@ const SPARK_EMOJIS = ['✨', '⭐', '💫', '🪄', '🔥', '🌟'];
 const METEOR_EMOJIS = ['☄️', '🔥', '✨', '💥', '⭐', '🌟'];
 
 // Silly spell-flavoured one-liners the summon banner flashes when a new
-// familiar is conjured — the 🧙 twin of slop's "🎰 JACKPOT! 🎰". One is picked
+// hero is conjured — the 🧙 twin of slop's "🎰 JACKPOT! 🎰". One is picked
 // at random per spawn so a busy operator sees variety. Kept short so the
 // banner reads at a glance; the CSS clamps the font on narrow viewports.
 const SUMMON_QUOTES = [
@@ -38,13 +38,13 @@ const SUMMON_QUOTES = [
   '✨ You shall not pass!',
   '🪄 Abracadabra!',
   '⚡ Lightning bolt! Lightning bolt!',
-  '📜 A new familiar answers the call',
+  '📜 A new hero answers the call',
   '🔮 By the arcane, it lives!',
   '🐉 The summoning circle glows',
   '🎲 Natural 20 on the summon check',
   '🧪 It\'s alive… mostly',
   '👁️ The tower gains an apprentice',
-  '☄️ Rise, familiar, rise!',
+  '☄️ Rise, hero, rise!',
 ];
 
 // reducedMotion gates every effect so a user with
@@ -199,7 +199,7 @@ export function bindWizardStatusWatch() {
 // isWizardActive(); the two themes are mutually exclusive, so only the active
 // theme ever writes — no contention on the shared node.
 //
-// Each scroll pass shows the live familiar-count line plus a small random
+// Each scroll pass shows the live hero-count line plus a small random
 // sample from TICKER_QUOTES, joined with ✦ — short enough to actually read
 // before it slides off (the old design joined the whole pool into one wall of
 // text). The sample is re-rolled ONLY at scroll-loop boundaries
@@ -229,7 +229,7 @@ const TICKER_QUOTES = [
   '🗝️ The key was in .env the whole time',
   '🍄 You found a mushroom. It does nothing.',
   '📜 Scroll of Undo: single use only',
-  '🐸 The familiar got turned into a frog. Still passes CI.',
+  '🐸 The hero got turned into a frog. Still passes CI.',
   '🎩 Pulling a hotfix out of the hat',
   '🕸️ The crypt has excellent Wi-Fi',
   '⚗️ Alchemy is just chemistry without unit tests',
@@ -282,7 +282,7 @@ function tickerLines() {
   const onlineCount = (snap.agents || []).filter(a => a.online).length;
   if (!currentTickerQuotes.length) rollTickerQuotes();
   return [
-    `🧙 ${onlineCount} familiar${onlineCount === 1 ? '' : 's'} channeling the arcane`,
+    `🧙 ${onlineCount} hero${onlineCount === 1 ? '' : 'es'} channeling the arcane`,
     ...currentTickerQuotes,
   ];
 }
@@ -337,7 +337,7 @@ export function bindWizardMarquee() {
 // The 🧙 twin of slop-fx's slopJackpot(): fired by the spawn modal on a
 // successful POST. Flashes a random silly spell quote and rains an arcane
 // shower from the top edge — the wizard-mode "It's wizard time!" moment when a
-// new familiar is conjured. Silently no-ops when wizard mode is off (mirroring
+// new hero is conjured. Silently no-ops when wizard mode is off (mirroring
 // slopJackpot's slop-off no-op) so the spawn island can call it unconditionally
 // next to slopJackpot; the two themes are mutually exclusive, so only the
 // active one ever paints. reduced-motion suppresses it like every other

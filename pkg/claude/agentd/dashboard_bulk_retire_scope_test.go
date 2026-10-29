@@ -30,9 +30,9 @@ func TestDashboardBulkRetireScopeExpansion(t *testing.T) {
 		"openRetireAllPreview(status)",
 		"openRetireUngroupedPreview(status)",
 		"`Retire ${status} agents across all groups`",
-		"`Banish ${status} familiars across all parties`",
+		"`Banish ${status} heroes across all parties`",
 		"`Retire ${status} agents in Ungrouped`",
-		"`Banish ${status} familiars in Unbound`",
+		"`Banish ${status} heroes in Unbound`",
 		"including Ungrouped",
 		"including the Unbound",
 	} {
@@ -63,7 +63,7 @@ func TestDashboardBulkRetireScopeExpansion(t *testing.T) {
 	for _, required := range []string{
 		`descriptor.kind === 'retire-all-preview'`,
 		"`Retire ${descriptor.status} agents across all groups`",
-		"`Banish ${descriptor.status} familiars across all parties`",
+		"`Banish ${descriptor.status} heroes across all parties`",
 		"including Ungrouped",
 		"including the Unbound",
 		"descriptor.kind === 'retire-all-preview' ? html",

@@ -6979,7 +6979,7 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   width: min(900px, calc(100vw - 32px));
 }
 /* The summoning-circle template editor is user-resizable too (JOH-357), the
-   same escape hatch as spawn/clone above: many familiar rows + a role brief
+   same escape hatch as spawn/clone above: many hero rows + a role brief
    make the fixed dialog feel cramped. resize needs overflow non-visible on
    both axes, so this overrides the .template-editor-modal overflow-y:auto
    with overflow:auto. max-height:90vh (from .template-editor-modal) caps the
@@ -11856,7 +11856,7 @@ body.wizard .ctx-mana .ctx-seg.lit-red {
   100% { background-position: 200% 0%; }
 }
 /* The header icon (the shared .slop-icon click target) bobs like a floating
-   familiar in wizard mode — the wizard twin of slop's jiggle. */
+   hero in wizard mode — the wizard twin of slop's jiggle. */
 body.wizard header h1 .slop-icon {
   animation: wizard-float 3s ease-in-out infinite;
 }
@@ -11871,7 +11871,7 @@ body.wizard header h1 .slop-icon {
    data-act="power-on-group" / "shutdown-group") — re-skinned into gilded
    arcane levers, the spell-family twins of the 🔮 Summon trigger. Each keeps
    its go/stop meaning through a tinted gradient + glow: power on = an emerald
-   ✨ Awaken (rouse the sleeping familiars — a non-destructive resume),
+   ✨ Awaken (rouse the sleeping heroes — a non-destructive resume),
    shutdown = a crimson 🌙 Slumber (send them to sleep — a reversible stop,
    deliberately NOT the destructive Banish/retire). Gold edge, parchment text
    and the fantasy serif tie them to the rest of the 🧙 chrome.
@@ -11931,11 +11931,11 @@ body.wizard .group-actions button[data-act="shutdown-group"]:hover {
 
 /* ─── Wizard drag-to-banish portal (body.wizard #dnd-trash) ──────────
    The drag-to-retire bin, re-skinned for 🧙 mode. Retiring an agent IS
-   "banishing a familiar" (the retire dialog reads "Banish this familiar?"),
+   "banishing a hero" (the retire dialog reads "Banish this hero?"),
    so the mundane trashcan is swapped for a swirling banishment portal: the
    SVG hides, a 🌀 vortex glyph takes its place, the label reads "Banish",
    and the box wears the arcane violet-and-gold chrome with a purple glow.
-   Armed (a familiar hovering the portal) it flares crimson — the same
+   Armed (a hero hovering the portal) it flares crimson — the same
    reversible-but-destructive tone the retire dialog and the 🌙 Slumber
    lever carry — and the vortex spins up. The scale-on-arm still comes from
    the theme-neutral #dnd-trash.dnd-drop-over rule (this block leaves
@@ -12012,7 +12012,7 @@ body.wizard .wizard-pill[data-status="main_agent_idle"] {
   50%      { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 12px rgba(169, 123, 214, 0.85); }
 }
 /* A bright mote of arcane light that travels around the pill's rim while a
-   familiar channels — the "it's ALIVE" cue layered over the box-shadow pulse
+   hero channels — the "it's ALIVE" cue layered over the box-shadow pulse
    so the active state reads at a glance.
 
    Driven by offset-path (CSS Motion Path), NOT a conic gradient: the mote
@@ -12215,7 +12215,7 @@ body.wizard #slop-marquee-track {
    arcane chip in 🧙 mode (label + glyph swap live with the base .spawn-btn
    rules above). Same violet-void / mystic-purple-frame / gold-edge / parchment
    palette as the dialog it opens, so the trigger and the "Summon a new
-   familiar" modal read as one spell. The at-rest opacity fade is inherited from
+   hero" modal read as one spell. The at-rest opacity fade is inherited from
    the base rule; only the colours + serif change here. */
 body.wizard .spawn-btn {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
@@ -12231,7 +12231,7 @@ body.wizard .spawn-btn:hover {
   box-shadow: 0 0 14px rgba(169, 123, 214, 0.85);
 }
 
-/* ─── Wizard spawn modal — "Summon a new familiar" ──────────────────
+/* ─── Wizard spawn modal — "Summon a new hero" ──────────────────
    The 🧙 twin of slop's "🎰 PULL!" spawn lever, but taken further: the
    whole spawn dialog is re-skinned arcane (the slop theme only re-styles
    its submit button). Scoped to #agent-spawn-modal so the sibling modals
@@ -12245,7 +12245,7 @@ body.wizard #agent-spawn-title .spawn-title-regular { display: none; }
 body.wizard #agent-spawn-title .spawn-title-wizard { display: inline; }
 
 /* The "Group" field label swaps to "Party" in wizard mode — you Summon
-   Familiars into a party. Same pure-CSS span swap as the title above; the
+   Heroes into a party. Same pure-CSS span swap as the title above; the
    .spawn-group-word-* pair is used only on this one label, so the plain
    class-based reveal (no #id scope needed) stays effectively summon-only. */
 .spawn-group-word-wizard { display: none; }
@@ -12456,8 +12456,8 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal,
 
 /* ─── Wizard group settings — "Enchant party" ──────────────────────
    The consolidated party editor is a full sibling of Summon and the profile
-   editor: its fields determine the sanctum, lore, pattern, ward, runes, and
-   policies inherited by future familiars. Keep the skin id-scoped because the
+   editor: its fields determine the sanctum, lore, loadout, ward, runes, and
+   policies inherited by future heroes. Keep the skin id-scoped because the
    same overlay primitive is shared by ordinary action dialogs. */
 body.wizard #group-settings-modal .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -12516,8 +12516,8 @@ body.wizard #group-settings-modal #group-settings-submit:active:not(:disabled) {
 }
 body.wizard #group-settings-modal button:disabled { opacity: 0.7; }
 
-/* ─── Wizard retire modal — "Banish this familiar?" ─────────────────
-   The arcane counterpart to the Summon dialog above: retiring a familiar
+/* ─── Wizard retire modal — "Banish this hero?" ─────────────────
+   The arcane counterpart to the Summon dialog above: retiring a hero
    is the antonym of summoning one, so the 🧙 theme re-skins the retire
    confirmation to match. Unlike the spawn dialog (a .cron-create-modal),
    the retire modal is a generic .modal, so every rule is scoped to
@@ -12620,7 +12620,7 @@ body.wizard #retire-modal #retire-ok:disabled::after {
   letter-spacing: 1px;
 }
 
-/* ─── Wizard shutdown modal — "Slumber this familiar?" ──────────────
+/* ─── Wizard shutdown modal — "Slumber this hero?" ──────────────
    A reversible stop uses the established Slumber/Awaken vocabulary. Keep the
    rules scoped to this transaction overlay: shutdown shares the generic
    .modal surface with unrelated destructive dialogs. */
@@ -12743,7 +12743,7 @@ body.wizard #confirm-modal #confirm-ok:active {
 
 /* ─── Wizard cron dialog — "⏳ Bind a recurring ritual" ──────────────
    A cron job is a standing spell the wizard binds to the turning of the
-   hourglass: each tick it whispers to its target familiar. So the 🧙 theme
+   hourglass: each tick it whispers to its target hero. So the 🧙 theme
    re-skins the whole schedule-a-cron dialog arcane — the sibling of the
    Summon / Banish dialog re-skins above. Same midnight-violet void, mystic-
    purple frame + glow, tarnished-gold + parchment accents.
@@ -13069,7 +13069,7 @@ body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-
 }
 body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
 
-/* ─── Wizard invite-familiar picker ──────────────────────────────────
+/* ─── Wizard invite-hero picker ──────────────────────────────────
    #add-member-modal shares .add-member-modal with the sudo/cron target
    pickers, so every rule stays under this overlay id. */
 body.wizard #add-member-modal .add-member-modal {
@@ -13110,7 +13110,7 @@ body.wizard #add-member-modal .add-member-foot kbd {
 /* TCL-454: the shared Preact chooser is mounted at
    #cron-pick-target-modal for message sender, cron owner/target, and Access
    sudo launches. Give that separately-keyed overlay the same readable wizard
-   palette as the invite-familiar picker; without the id-scoped rules, broad
+   palette as the invite-hero picker; without the id-scoped rules, broad
    wizard span coloring makes its live row copy nearly black on #0d1117. */
 body.wizard #cron-pick-target-modal .add-member-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -13332,8 +13332,8 @@ body.wizard #group-create-modal .group-clone-preview .gcp-key { color: #b39ddb; 
 body.wizard #group-create-modal .group-clone-preview .gcp-val { color: #e7d9f5; }
 body.wizard #group-create-modal .group-clone-preview .gcp-val.muted { color: #8a7fa8; }
 
-/* ─── Wizard reply dialog — "✒ Answer the familiar" ─────────────────
-   The Human folder's reply dialog re-skinned arcane: answering a familiar's
+/* ─── Wizard reply dialog — "✒ Answer the hero" ─────────────────
+   The Human folder's reply dialog re-skinned arcane: answering a hero's
    raven is the mail-tab twin of the Summon / Bind / Form-a-party dialogs, so
    it gets the same midnight-violet void + mystic-purple frame + parchment
    accents. Like all its .cron-create-modal siblings, EVERY rule is scoped to
@@ -13499,12 +13499,12 @@ body.wizard #command-palette-btn::before {
 }
 body.wizard #command-palette-btn:hover { background: #3a2a63; border-color: #d9b45a; }
 
-/* ─── Wizard windows button + modal — "Reveal / veil familiars" ─────
+/* ─── Wizard windows button + modal — "Reveal / veil heroes" ─────
    The top-bar 🪟 windows… launcher and the bulk focus/unfocus dialog it
    opens. Like the 📖 Spellbook launcher beside it, the button's own ID
    (#window-all-btn) out-specifies the flat `body.wizard header button`
    skin, so we re-state the arcane chrome here; a per-theme label span swap
-   re-letters it "👁 familiars…" — the palette's reveal/veil-of-familiars
+   re-letters it "👁 heroes…" — the palette's reveal/veil-of-heroes
    voice. The dialog reuses the shared .cleanup-modal shell, so every rule is
    scoped to #window-modal: the sibling worktree-cleanup / retire-preview /
    delete-agent dialogs share that shell and must not inherit this dialog's
@@ -13520,7 +13520,7 @@ body.wizard #window-all-btn {
 }
 body.wizard #window-all-btn:hover { background: #3a2a63; border-color: #d9b45a; }
 
-/* Dialog title copy — a pure-CSS span swap, "Agent windows" → "Familiars'
+/* Dialog title copy — a pure-CSS span swap, "Agent windows" → "Heroes'
    windows". The h3 is the dialog's aria-labelledby, and display:none drops the
    hidden twin from the a11y tree, so only the active title is announced. */
 .window-title-wizard { display: none; }
@@ -13604,7 +13604,7 @@ body.wizard #window-modal .cleanup-empty { color: #b39ddb; }
 /* Footer: Cancel gets the tarnished-gold secondary treatment; the
    focus/unfocus submit becomes a gilded lever. Its label is JS-set with a live
    count, and the Preact window dialog swaps the verb+noun for the theme ("Focus 3 agents"
-   → "Reveal 3 familiars"), so — unlike the static Summon / Banish levers — the
+   → "Reveal 3 heroes"), so — unlike the static Summon / Banish levers — the
    CSS only gilds the chrome; the copy swap lives in the JS. The .cleanup-error
    line is deliberately left its base red (a status signal, not chrome). */
 body.wizard #window-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
@@ -13754,7 +13754,7 @@ body.wizard #cleanup-modal #cleanup-submit.danger:hover {
 }
 body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
 
-/* ─── Wizard bulk-retire preview — "Banish familiars" ────────────
+/* ─── Wizard bulk-retire preview — "Banish heroes" ────────────
    The group, Unbound, and all-parties retirement previews share this one
    transaction-owned overlay. Keep its arcane skin scoped to
    #retire-preview-modal so the sibling cleanup dialogs remain independent.
@@ -13834,7 +13834,7 @@ body.wizard #retire-preview-modal #retire-preview-submit.danger:hover {
 }
 body.wizard #retire-preview-modal #retire-preview-submit:disabled { opacity: 0.6; }
 
-/* ─── Wizard delete-retired preview — "Dispel banished familiars" ───
+/* ─── Wizard delete-retired preview — "Dispel banished heroes" ───
    This overlay shares .cleanup-modal with the bulk cleanup, retire-preview,
    and worktree-cleanup dialogs. Keep the violet surface, filters, preview
    list, and footer scoped to #delete-retired-modal. The initial delete lever
@@ -14003,7 +14003,7 @@ body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:disabled { opacity:
    next to the retire-preview / delete-retired / worktree-cleanup overlays, so
    every rule is scoped to #delete-group-modal. It mirrors #retire-modal's
    arcane surface, list chrome, checkbox copy and gilded Banish-style submit
-   while leaving the per-row decisions honest: "banish familiar + stop" vs
+   while leaving the per-row decisions honest: "banish hero + stop" vs
    "detach only" stays literal. */
 .delete-group-copy-wizard { display: none; }
 body.wizard #delete-group-modal .delete-group-copy-regular { display: none; }
@@ -14091,9 +14091,9 @@ body.wizard #delete-group-modal #delete-group-submit:disabled::after {
 /* ─── Wizard terminal picker — "🔮 Open a scrying portal" ────────────
    The which-dir picker that pops before a terminal window is opened for a
    single agent (Preact action dialog): pick Current / Worktree / Launch
-   dir, or Cancel. A terminal onto a familiar is a *scrying portal* in the
+   dir, or Cancel. A terminal onto a hero is a *scrying portal* in the
    palette's voice — the Terminals tab reads "🔮 Scrying", the bulk #window-modal
-   above conjures "a scrying portal for each chosen familiar" — so the 🧙 theme
+   above conjures "a scrying portal for each chosen hero" — so the 🧙 theme
    re-skins this single-agent picker to match that scrying-portal twin.
 
    #term-modal is a generic .modal (like the retire / edit-member dialogs), so
@@ -14247,8 +14247,8 @@ body.wizard #term-chooser-modal .modal-buttons button:hover { background: #3a2a6
    the same discipline the spawn re-skin follows.
 
    Unlike the spawn / retire titles (static spans, CSS-swapped per theme), this
-   dialog's title is JS-set — it carries the edited pattern's name — so its
-   per-theme copy swap ("New familiar pattern" / "Edit pattern: X") lives in
+   dialog's title is JS-set — it carries the edited loadout's name — so its
+   per-theme copy swap ("New loadout" / "Edit loadout: X") lives in
    modal-profiles.js's wizWord(), not here; this block only lends it the arcane
    serif. */
 body.wizard #profile-editor-modal .cron-create-modal {
@@ -14341,7 +14341,7 @@ body.wizard #profile-editor-modal #profile-editor-submit:disabled::before { cont
 
 /* ─── Wizard export modal — "📜 Scribe a chronicle" ─────────────────
    The 🧙 re-skin of the per-agent export dialog (Groups tab → agent cog →
-   📋 summary…). An export is the familiar committing the tale of its work to
+   📋 summary…). An export is the hero committing the tale of its work to
    a shareable scroll, so the theme casts the whole dialog as scribing a
    chronicle — the same arcane chrome as the Summon / Inscribe dialogs.
 
@@ -14520,8 +14520,8 @@ body.wizard :is(#paf-export-modal, #group-export-modal) button:disabled {
 }
 
 /* ─── Wizard dialog scrollbars — the "scroll"-bars go arcane ─────────
-   Every wizard-reskinned .cron-create-modal dialog (Summon a familiar /
-   Bind a cron / Form a party / edit a pattern / Scribe a chronicle) scrolls
+   Every wizard-reskinned .cron-create-modal dialog (Summon a hero /
+   Bind a cron / Form a party / edit a loadout / Scribe a chronicle) scrolls
    on a violet-void surface, so its scrollbar goes arcane too — a violet thumb
    with a gilded edge on a #140f28 track, the same "scroll"-bar pun the Messages
    tab uses. This OVERRIDES the base dark .cron-create-modal scrollbar (defined
@@ -14553,10 +14553,10 @@ body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal
   background: linear-gradient(180deg, #8f6fca, #4a367d);
 }
 
-/* ─── Wizard edit-agent modal — "Enchant this familiar" ─────────────
-   The third of the arcane dialog re-skins (Summon a familiar / Banish a
-   familiar / Enchant a familiar): the per-agent "+ role" cell and the ⚙
-   "edit" affordance both open this dialog to re-tune a familiar's title,
+/* ─── Wizard edit-agent modal — "Enchant this hero" ─────────────
+   The third of the arcane dialog re-skins (Summon a hero / Banish a
+   hero / Enchant a hero): the per-agent "+ role" cell and the ⚙
+   "edit" affordance both open this dialog to re-tune a hero's title,
    role, description and ownership. Like the retire modal it is a generic
    .modal, so every rule is scoped to #edit-member-modal — the sibling
    confirm / shutdown / term dialogs share the .modal class and must keep
@@ -14663,7 +14663,7 @@ body.wizard #edit-member-modal #edit-member-save:disabled {
 body.wizard #edit-member-modal #edit-member-save:disabled::before { content: none; }
 
 /* ─── Wizard task-link modal — "Bind a quest link" ────────────────
-   Mirrors the Enchant-familiar dialog while keeping this two-field editor
+   Mirrors the Enchant-hero dialog while keeping this two-field editor
    compact: violet void, parchment copy, gold focus, and a gilded bind lever. */
 body.wizard #task-link-modal .modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -14707,16 +14707,16 @@ body.wizard #task-link-modal #task-link-save:active {
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
 
-/* ─── Wizard profile vocabulary — "Familiar patterns" ───────────────
-   In 🧙 wizard mode we Summon Familiars, so a saved spawn profile is
-   re-lettered a "familiar pattern" everywhere its name surfaces as static
+/* ─── Wizard profile vocabulary — "Loadouts" ───────────────
+   In 🧙 wizard mode we Summon Heroes, so a saved spawn profile is
+   re-lettered a "loadout" everywhere its name surfaces as static
    copy: the Groups-cog ⧉ entry, the manage overlay's title + intro + the
    "+ new" action, and the Summon dialog's "Save as…" button. Each of those
    spots carries a .profiles-word-regular / .profiles-word-wizard span pair
    (the same pure-CSS swap the spawn/retire titles use); these three rules do
    the per-theme reveal. The pair is deliberately shared across every spot so
    one rule governs the whole vocabulary — it is only ever used for this swap.
-   The editor dialog's title is JS-set (it carries the edited pattern's name),
+   The editor dialog's title is JS-set (it carries the edited loadout's name),
    so that one string is swapped in modal-profiles.js, not here. */
 .profiles-word-wizard { display: none; }
 body.wizard .profiles-word-regular { display: none; }
@@ -14724,7 +14724,7 @@ body.wizard .profiles-word-wizard { display: inline; }
 
 /* Shared copy swap for cog-menu labels and the dialogs they open. Entity
    names are presentation-only (agent/group remain the wire nouns), so both
-   voices stay in the DOM and the active theme chooses familiar/party copy. */
+   voices stay in the DOM and the active theme chooses hero/party copy. */
 .theme-copy-wizard { display: none; }
 body.wizard .theme-copy-regular { display: none; }
 body.wizard .theme-copy-wizard { display: inline; }
@@ -14737,7 +14737,7 @@ body.wizard .group-perms-word-regular { display: none; }
 body.wizard .group-perms-word-wizard { display: inline; }
 
 /* Wizard sandbox-profile vocabulary — "Wards". A sandbox profile is a
-   protective ward that widens a familiar's reach, so in 🧙 mode every static
+   protective ward that widens a hero's reach, so in 🧙 mode every static
    spot naming it (the Groups-cog 🛡 entry, the manage overlay title + intro +
    "+ new" action, and the export/import dialog titles + copy) carries a
    .sandbox-word-regular / .sandbox-word-wizard span pair swapped by these
@@ -14758,13 +14758,13 @@ body.wizard .sandbox-word-wizard { display: inline; }
 body.wizard .roles-word-regular { display: none; }
 body.wizard .roles-word-wizard { display: inline; }
 
-/* ─── Wizard profiles manage overlay — the familiars' recipe book ────
+/* ─── Wizard profiles manage overlay — the heroes' recipe book ────
    The 🧙 re-skin of the "Spawn profiles" management overlay (Groups cog →
    ⧉ profiles…) — the list you pick a recipe to edit from. It launches the
    arcane editor (📜 Inscribe!), so the picker it opens from gets the matching
    arcane chrome. Scoped to #profiles-manage-modal so the sibling manage
    overlays (Templates… / Links…), which share .manage-overlay/.manage-modal,
-   keep the default chrome. The title now swaps its copy to "Familiar patterns"
+   keep the default chrome. The title now swaps its copy to "Loadouts"
    too (the .profiles-word span pair above), on top of this arcane re-skin. */
 body.wizard #profiles-manage-modal .manage-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -14983,7 +14983,7 @@ body.wizard #templates-manage-modal .filter-bar button.clear-filter { color: #b3
 body.wizard #templates-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
 
 /* "⤓ trace a party": tarnished-gold secondary. "+ chalk a new circle":
-   the gilded-arcane primary — the profiles overlay's "+ new pattern" twin. */
+   the gilded-arcane primary — the profiles overlay's "+ new loadout" twin. */
 body.wizard #templates-manage-modal #template-from-group-open {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -15066,7 +15066,7 @@ body.wizard #template-editor-modal .cron-create-modal h3 {
 }
 body.wizard #template-editor-modal .cron-create-label,
 body.wizard #template-editor-modal .template-agents-head { color: #b39ddb; }
-/* Every text/number input + textarea — the top rows AND the per-familiar rows
+/* Every text/number input + textarea — the top rows AND the per-hero rows
    — goes violet-void. input[type=number] carries the per-agent wave field
    (.ta-wave) and the wave-max-wait field, which the plain skin leaves
    browser-default; folding it in here keeps them consistent with the text
@@ -15081,11 +15081,11 @@ body.wizard #template-editor-modal textarea {
 body.wizard #template-editor-modal input[type=text]:focus,
 body.wizard #template-editor-modal input[type=number]:focus,
 body.wizard #template-editor-modal textarea:focus { border-color: #a97bd6; }
-/* Checkboxes (the per-familiar ★ owner box): accent-color is the one lever
+/* Checkboxes (the per-hero ★ owner box): accent-color is the one lever
    that recolors a native checkbox cross-browser — arcane purple to match the
    family's focus accent. */
 body.wizard #template-editor-modal input[type=checkbox] { accent-color: #a97bd6; }
-/* Familiar rows: violet-framed panels; the row number goes arcane purple,
+/* Hero rows: violet-framed panels; the row number goes arcane purple,
    the owner / permission labels parchment. */
 body.wizard #template-editor-modal .template-agent-row {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4);
@@ -15100,7 +15100,7 @@ body.wizard #template-editor-modal select.tw-sendto {
 }
 body.wizard #template-editor-modal select.tw-sendto:focus { border-color: #a97bd6; }
 body.wizard #template-editor-modal select.tw-sendto option { color: #1a1330; background: #e7d9f5; }
-/* The per-familiar library-reference selects — the role-library dropdown
+/* The per-hero library-reference selects — the role-library dropdown
    (JOH-351) and the launch-profile picker (JOH-350) — share the send-to
    select's arcane coat. Their labelled row wrappers (.template-agent-roleref)
    already read parchment-muted, so only the control itself needs skinning.
@@ -15154,7 +15154,7 @@ body.wizard #template-editor-modal .role-inspect-brieftext {
 body.wizard #template-editor-modal .role-inspect-foot {
   color: #9d86c9; border-top-color: rgba(122, 93, 176, 0.4);
 }
-/* Secondary + inline buttons (+ add familiar / ✕ remove / Cancel): the
+/* Secondary + inline buttons (+ add hero / ✕ remove / Cancel): the
    tarnished-gold treatment; :not(#template-editor-submit) keeps the Seal
    lever below out of this rule's reach. */
 body.wizard #template-editor-modal button:not(#template-editor-submit) {
@@ -15217,7 +15217,7 @@ body.wizard #template-editor-modal .tpl-concepts-table td { color: #e7d9f5; }
 /* ─── Wizard summon dialog — "🧙 Summon a hero party" ────────────────
    The unified summon/deploy dialog (JOH-245, JOH-373 folded the old cast
    dialog into it): pick a circle, speak the quest (or leave it blank to
-   just gather the party), and the preview shows the familiars the
+   just gather the party), and the preview shows the heroes the
    summoning will call forth. Violet-and-gilt skin, scoped to
    #template-deploy-modal. */
 body.wizard #template-deploy-modal .cron-create-modal {
@@ -15722,7 +15722,7 @@ body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-t
 
 /* ─── Wizard sandbox-profile dialogs — "Wards" ─────────────────────────
    The sandbox-profile manage overlay + its editor and export/import modals get
-   the same arcane chrome as the spawn-profile ("familiar pattern") dialogs —
+   the same arcane chrome as the spawn-profile ("loadout") dialogs —
    the sandbox dialog is now their sibling (wizard vocabulary, export/import).
    Each block is scoped to its own id so the shared .manage-modal / .cron-create-
    modal surfaces on sibling dialogs keep the default chrome; the scrollbar theme
@@ -16096,7 +16096,7 @@ body.wizard #role-editor-modal #role-editor-submit:hover:not(:disabled) {
 body.wizard #role-editor-modal #role-editor-submit:disabled { opacity: 0.7; }
 
 /* ─── Wizard party-lore dialog — "📜 The party's lore" ─────────────────
-   The group startup-context editor: the shared guidance every familiar
+   The group startup-context editor: the shared guidance every hero
    summoned into the party receives. Named "lore" (not "standing orders")
    so it stays distinct from the separate standing-orders feature, and to
    match the "Party lore" label the circle editor already uses. Scoped to
@@ -16162,7 +16162,7 @@ body.wizard #group-context-modal #group-context-submit:active {
 body.wizard #group-context-modal #group-context-submit:disabled { opacity: 0.7; }
 body.wizard #group-context-modal #group-context-submit:disabled::before { content: "📜 Inscribing…"; }
 
-/* ─── Wizard permissions editor — binding a familiar's powers ────────
+/* ─── Wizard permissions editor — binding a hero's powers ────────
    The 🧙 re-skin of the permanent-permissions tri-state editor
    (#perm-edit-modal), shared by the live-agent path AND the spawn / profile
    buffer editors — so it picks up the arcane chrome the moment wizard mode is
@@ -16781,7 +16781,7 @@ body.wizard #access-slugs .filter-bar button.clear-filter {
    the per-agent-row cog and the per-group-header cog — turns into a
    gilded arcane cogwheel: a tarnished-gold gear wreathed in a mystic-
    purple glow, forever turning under its own enchantment, as if a
-   wizard's clockwork familiar keeps winding it. Reach for one
+   wizard's clockwork hero keeps winding it. Reach for one
    (hover/focus) and the mechanism spins UP — the gear whirls and the
    glow flares to candle-gold. Pure chrome: the button, its data-act and
    its menu items are untouched; only the look changes. The glyph rides a
@@ -16968,8 +16968,8 @@ body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:active {
    Unlike the rest of the wizard re-skin (which only re-paints chrome and
    leaves the data tables their readable dark default), the Messages tab is
    themed all the way down — it's a mail client, and a wizard reads
-   correspondence delivered by familiars. The three panes become:
-     · sidebar → THE ROOKERY   — a roost of familiars (mailboxes)
+   correspondence delivered by heroes. The three panes become:
+     · sidebar → THE ROOKERY   — a roost of heroes (mailboxes)
      · list    → THE SCROLLS    — sealed missives, one row per scroll
      · reader  → THE UNFURLED SCROLL — the open letter (the showpiece)
    Each message also gets a "kind" (mail.js msgKind → data-kind), and the
@@ -18236,7 +18236,7 @@ body.wizard #agent-dock .dock-search-input:focus { border-color: #7c5cc4; }
    just a couple of tints), reading unmistakably as part of body.wizard's
    grimoire chrome. Kept STRICTLY scoped under #agent-dock so it never widens
    body.wizard globally (the anti-pin invariant); the section headings + card
-   names already speak the arcane vocabulary via wizWord (Patterns / Summoning
+   names already speak the arcane vocabulary via wizWord (Loadouts / Summoning
    circles / Classes). The one exception below is the top-bar toggle, a header
    control themed like its sibling buttons, not part of the dock's inner skin. */
 body.wizard #agent-dock .dock-inner {

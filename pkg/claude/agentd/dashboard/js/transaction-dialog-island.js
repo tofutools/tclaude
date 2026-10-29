@@ -226,22 +226,22 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
       ? `Detach the web terminal panes of the selected running agents in ${where}. The agents keep running — only the terminal views are dismissed.`
       : `Detach the terminal windows of the selected running agents in ${where} so the desktop is decluttered. The agents keep running — only the windows are dismissed.`;
   const wizardHint = direction === 'focus'
-    ? `Conjure a scrying portal for each chosen channeling familiar in ${wizardWhere}.`
-    : `Draw the veil over the chosen familiars' scrying portals in ${wizardWhere} so the desktop is decluttered. The familiars keep channeling — only the portals are dismissed.`;
+    ? `Conjure a scrying portal for each chosen channeling hero in ${wizardWhere}.`
+    : `Draw the veil over the chosen heroes' scrying portals in ${wizardWhere} so the desktop is decluttered. The heroes keep channeling — only the portals are dismissed.`;
   const plainVerb = direction === 'focus' ? 'Focus' : 'Unfocus';
   const wizardVerb = direction === 'focus' ? 'Reveal' : 'Veil';
   const count = selectedCandidates.length;
   return html`<${TransactionDialogFrame}
     id="window-modal"
     labelledby="window-title"
-    title=${html`<span class="window-title-regular">Agent windows</span><span class="window-title-wizard">Familiars' windows</span>`}
+    title=${html`<span class="window-title-regular">Agent windows</span><span class="window-title-wizard">Heroes' windows</span>`}
     dialogClass="cleanup-modal"
     busy=${busy}
     error=${error}
     errorID="window-error"
     primaryLabel=${html`<${Words}
       plain=${`${retrying ? 'Retry ' : ''}${plainVerb} ${count} agent${count === 1 ? '' : 's'}`}
-      wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} familiar${count === 1 ? '' : 's'}`}
+      wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} hero${count === 1 ? '' : 'es'}`}
     />`}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain=${`${plainVerb}ing…`}
@@ -263,7 +263,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         onChange=${() => setDirection('focus')}
       />
         <span class="window-dir-label-regular">Focus</span><span class="window-dir-label-wizard">👁 Reveal</span>
-        <span class="opt-note"><span class="window-dir-note-regular">— open or focus a terminal for each selected agent</span><span class="window-dir-note-wizard">— conjure a scrying portal for each chosen familiar</span></span>
+        <span class="opt-note"><span class="window-dir-note-regular">— open or focus a terminal for each selected agent</span><span class="window-dir-note-wizard">— conjure a scrying portal for each chosen hero</span></span>
       </label>
       <label><input
         type="radio" name="window-direction" value="unfocus"
@@ -271,7 +271,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         onChange=${() => setDirection('unfocus')}
       />
         <span class="window-dir-label-regular">Unfocus</span><span class="window-dir-label-wizard">🌫 Veil</span>
-        <span class="opt-note"><span class="window-dir-note-regular">— detach the terminal views so the dashboard or desktop is decluttered. Detach-only: a window or tab tclaude opened closes itself, other tabs are untouched. The agents keep running — never the agent process.</span><span class="window-dir-note-wizard">— draw the veil over the chosen familiars' scrying portals so the desktop is decluttered. Veil-only: a window or tab tclaude opened closes itself, other tabs are untouched. The familiars keep channeling — never the familiar itself.</span></span>
+        <span class="opt-note"><span class="window-dir-note-regular">— detach the terminal views so the dashboard or desktop is decluttered. Detach-only: a window or tab tclaude opened closes itself, other tabs are untouched. The agents keep running — never the agent process.</span><span class="window-dir-note-wizard">— draw the veil over the chosen heroes' scrying portals so the desktop is decluttered. Veil-only: a window or tab tclaude opened closes itself, other tabs are untouched. The heroes keep channeling — never the hero itself.</span></span>
       </label>
     </div>
     <div class="cleanup-toolbar">
@@ -323,7 +323,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
           <span class="id">${candidate.conv_id.slice(0, 8)}</span>
           ${candidate.roles.map((role) => html`<span class="cleanup-badge" key=${role}>${role}</span>`)}
         </label></div>
-      `) : html`<div class="cleanup-empty"><${Words} plain="no agents match the filter" wizard="no familiars match the filter" /></div>`}
+      `) : html`<div class="cleanup-empty"><${Words} plain="no agents match the filter" wizard="no heroes match the filter" /></div>`}
     </div>
   </${TransactionDialogFrame}>`;
 }
@@ -517,7 +517,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     />`;
     hint = html`<${Words}
       plain="Removes the selected confirmed-offline members from this group. Their conversations keep running and stay on disk — only the membership is dropped. Owners are excluded unless you opt in below."
-      wizard="Dismisses the selected confirmed-slumbering familiars from this party. Their conversation scrolls remain on disk — only the party bond is broken. Party owners are excluded unless you opt in below."
+      wizard="Dismisses the selected confirmed-slumbering heroes from this party. Their conversation scrolls remain on disk — only the party bond is broken. Party owners are excluded unless you opt in below."
     />`;
     primaryLabel = html`<${Words}
       plain=${count ? `Remove ${count} from ${descriptor.group}` : 'Remove from group'}
@@ -737,7 +737,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
       const count = cause.memberErrors;
       return {
         plain: `retire failed for ${count} ${count === 1 ? 'agent' : 'agents'}; group was not deleted`,
-        wizard: `banish failed for ${count} ${count === 1 ? 'familiar' : 'familiars'}; party was not disbanded`,
+        wizard: `banish failed for ${count} ${count === 1 ? 'hero' : 'heroes'}; party was not disbanded`,
       };
     }
     const message = cause?.message || String(cause);
@@ -795,7 +795,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     wizardBits.push(`${detachTargets.length} detached`);
   }
   const plainHint = `Deleting "${descriptor.group}" drops the group, owner rows, memberships, and group message history. Conversations are kept. ${plainBits.length ? `Preview: ${plainBits.join(', ')}.` : 'The group has no agents.'}`;
-  const wizardHint = `Disbanding "${descriptor.group}" erases the party, owner marks, memberships, and party message history. Conversation scrolls are kept. ${wizardBits.length ? `Preview: ${wizardBits.join(', ')}.` : 'The party has no familiars.'}`;
+  const wizardHint = `Disbanding "${descriptor.group}" erases the party, owner marks, memberships, and party message history. Conversation scrolls are kept. ${wizardBits.length ? `Preview: ${wizardBits.join(', ')}.` : 'The party has no heroes.'}`;
 
   return html`<${TransactionDialogFrame}
     id="delete-group-modal"
@@ -822,7 +822,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     <div class="cleanup-toolbar">
       <span class="cleanup-count" id="delete-group-count"><${Words}
         plain=${`${members.length} ${members.length === 1 ? 'agent' : 'agents'}: ${retireTargets.length} to retire, ${detachTargets.length} detach`}
-        wizard=${`${members.length} ${members.length === 1 ? 'familiar' : 'familiars'}: ${retireTargets.length} to banish, ${detachTargets.length} detach`}
+        wizard=${`${members.length} ${members.length === 1 ? 'hero' : 'heroes'}: ${retireTargets.length} to banish, ${detachTargets.length} detach`}
       /></span>
     </div>
     <div class="cleanup-list" id="delete-group-list">
@@ -851,12 +851,12 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
           ${member.role ? html`<span class="cleanup-badge">${member.role}</span>` : null}
           <span class="cleanup-badge"><${Words}
             plain=${willRetire ? 'retire + stop' : 'detach only'}
-            wizard=${willRetire ? 'banish familiar + stop' : 'detach only'}
+            wizard=${willRetire ? 'banish hero + stop' : 'detach only'}
           /></span>
           <span class="muted"> <${Words} plain=${plainWhy} wizard=${wizardWhy} /></span>
         </label></div>`;
       }) : html`<div class="cleanup-empty"><${Words}
-        plain="no agents in this group" wizard="no familiars in this party"
+        plain="no agents in this group" wizard="no heroes in this party"
       /></div>`}
     </div>
     <label class="delete-agent-wt" id="delete-group-retire-row">
@@ -866,10 +866,10 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
       />
       <span>
         <span class="delete-group-copy-regular">Retire checked agents before deleting the group</span>
-        <span class="delete-group-copy-wizard">Banish checked familiars before disbanding the party</span>
+        <span class="delete-group-copy-wizard">Banish checked heroes before disbanding the party</span>
         <span class="wt-note">
           <span class="delete-group-copy-regular">single-group agents are checked by default; agents also in other groups are unchecked by default and only detached unless you tick them</span>
-          <span class="delete-group-copy-wizard">single-party familiars are checked by default; familiars also in other parties are unchecked by default and only detached unless you tick them</span>
+          <span class="delete-group-copy-wizard">single-party heroes are checked by default; heroes also in other parties are unchecked by default and only detached unless you tick them</span>
         </span>
       </span>
     </label>
@@ -959,12 +959,12 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
         ? `Retire ${descriptor.status} agents in "Ungrouped"`
         : 'Retire ungrouped agents';
   const wizardTitle = descriptor.kind === 'retire-group-preview'
-    ? `Banish ${descriptor.status} familiars in "${descriptor.group}"`
+    ? `Banish ${descriptor.status} heroes in "${descriptor.group}"`
     : descriptor.kind === 'retire-all-preview'
-      ? `Banish ${descriptor.status} familiars across all parties`
+      ? `Banish ${descriptor.status} heroes across all parties`
       : descriptor.status
-        ? `Banish ${descriptor.status} familiars in "Unbound"`
-        : 'Banish unbound familiars';
+        ? `Banish ${descriptor.status} heroes in "Unbound"`
+        : 'Banish unbound heroes';
 
   const updateVisible = (checked) => {
     if (busy || locked) return;
@@ -1057,20 +1057,20 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
       : descriptor.kind === 'retire-group-preview'
       ? html`<${Words}
         plain=${`These ${descriptor.status} agents in group "${descriptor.group}" will be demoted to plain, reinstatable conversations. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.`}
-        wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.`}
+        wizard=${`These ${descriptor.status} heroes in party "${descriptor.group}" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked hero remains selected if its status changes before submit. Each ticked hero is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked heroes are banished.`}
       />`
       : descriptor.kind === 'retire-all-preview'
         ? html`<${Words}
           plain=${`These ${descriptor.status} agents span every group, including Ungrouped. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent will be demoted to a plain, reinstatable conversation, removed from every group, and have its grants revoked. Untick any you want to keep; only the ticked agents are retired.`}
-          wizard=${`These ${descriptor.status} familiars span every party, including the Unbound. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar will return to a restorable conversation scroll, leave every party, and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`}
+          wizard=${`These ${descriptor.status} heroes span every party, including the Unbound. Status is captured when this preview opens; a checked hero remains selected if its status changes before submit. Each ticked hero will return to a restorable conversation scroll, leave every party, and lose its boons. Untick any you want to keep; only the ticked heroes are banished.`}
         />`
         : html`<${Words}
           plain=${descriptor.status
             ? `These ${descriptor.status} agents are in the virtual Ungrouped group. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.`
             : 'These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.'}
           wizard=${descriptor.status
-            ? `These ${descriptor.status} familiars are in the ethereal Unbound party. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`
-            : 'These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.'}
+            ? `These ${descriptor.status} heroes are in the ethereal Unbound party. Status is captured when this preview opens; a checked hero remains selected if its status changes before submit. Each ticked hero will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked heroes are banished.`
+            : 'These unbound heroes belong to no party. Each ticked hero will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked heroes are banished.'}
         />`;
 
   return html`<${TransactionDialogFrame}
@@ -1086,7 +1086,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
       plain=${retrying ? 'Retry retire' : selectedCandidates.length === 1
         ? 'Retire 1 agent' : `Retire ${selectedCandidates.length} agents`}
       wizard=${retrying ? 'Retry banishment' : selectedCandidates.length === 1
-        ? 'Banish 1 familiar' : `Banish ${selectedCandidates.length} familiars`}
+        ? 'Banish 1 hero' : `Banish ${selectedCandidates.length} heroes`}
     />`}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain=${result ? 'Refreshing…' : 'Retiring…'}
@@ -1146,7 +1146,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${busy || locked}
           onChange=${changeShutdown}
         />
-        <span><${Words} plain="Also shut down running sessions" wizard="Also slumber running familiars" />
+        <span><${Words} plain="Also shut down running sessions" wizard="Also slumber running heroes" />
           <span class="wt-note">soft-exits each tmux pane (/exit) — conversations are kept either way</span>
         </span>
       </label>
@@ -1160,7 +1160,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
             if (!busy && !locked && shutdown) setDeleteWorktrees(event.currentTarget.checked);
           }}
         />
-        <span><${Words} plain="Also delete each agent’s git worktree + branch" wizard="Also dissolve each familiar’s git worktree + branch" />
+        <span><${Words} plain="Also delete each agent’s git worktree + branch" wizard="Also dissolve each hero’s git worktree + branch" />
           <span class="wt-note">The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; a branch is deleted with its worktree only if it is merged, so unmerged commits are kept.</span>
         </span>
       </label>
@@ -1404,7 +1404,7 @@ function RetireWorktreeChoice({ worktree, shutdown, checked, disabled, onChange 
     let reason = html`not removable`;
     if (worktree.kind === 'main') reason = html`the repo’s main worktree, never removed`;
     else if (worktree.shared) {
-      reason = html`<${Words} plain="shared with another agent" wizard="shared with another familiar"/>`;
+      reason = html`<${Words} plain="shared with another agent" wizard="shared with another hero"/>`;
     }
     return html`
       <label class="delete-agent-wt disabled" id="retire-wt-row">
@@ -1441,7 +1441,7 @@ function DeleteWorktreeChoice({ worktree, checked, disabled, onChange }) {
     let reason = html`not removable`;
     if (worktree.kind === 'main') reason = html`the repo’s main worktree, never removed`;
     else if (worktree.shared) {
-      reason = html`<${Words} plain="shared with another agent" wizard="shared with another familiar"/>`;
+      reason = html`<${Words} plain="shared with another agent" wizard="shared with another hero"/>`;
     }
     return html`
       <label class="delete-agent-wt disabled" id="delete-agent-wt-row">
@@ -1569,7 +1569,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
     }
   };
 
-  const title = html`<span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this familiar?</span>`;
+  const title = html`<span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this hero?</span>`;
   const retrying = !!submittedChoice;
   const busyLabel = html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
     plain="Retiring…" wizard="Banishing…" />`;
@@ -1593,7 +1593,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <p><${Words}
         plain="Demotes the agent to a plain conversation: revokes its group memberships and permission grants so it stops being an agent. The conversation itself stays on disk and can be reinstated later — this is the non-destructive soft-delete."
-        wizard="Returns the familiar to a plain conversation: revokes its party memberships and boons so it stops being a familiar. The conversation scroll stays on disk and can be restored later — banishment is not destruction."
+        wizard="Returns the hero to a plain conversation: revokes its party memberships and boons so it stops being a hero. The conversation scroll stays on disk and can be restored later — banishment is not destruction."
       /></p>
       <label class="delete-agent-wt" id="retire-shutdown-row">
         <input
@@ -1653,7 +1653,7 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
 
   const retrying = !!submittedRequest;
   const forceChoice = submittedRequest?.force === true;
-  const title = html`<${Words} plain="Shut down agent?" wizard="Slumber this familiar?" />`;
+  const title = html`<${Words} plain="Shut down agent?" wizard="Slumber this hero?" />`;
   const softLabel = html`<${Words}
     plain=${retrying && !forceChoice ? 'Retry soft exit' : 'Soft exit'}
     wizard=${retrying && !forceChoice ? 'Retry slumber' : '🌙 Slumber'}
@@ -1693,7 +1693,7 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <p><${Words}
         plain="Soft exit injects /exit into tmux pane. Conv jsonl is preserved; in-flight tool calls are interrupted."
-        wizard="Gentle slumber whispers /exit into the familiar's tmux pane. Its conversation scroll is preserved; in-flight invocations are interrupted. Force slumber immediately kills the tmux session and should be used only if gentle slumber is stuck."
+        wizard="Gentle slumber whispers /exit into the hero's tmux pane. Its conversation scroll is preserved; in-flight invocations are interrupted. Force slumber immediately kills the tmux session and should be used only if gentle slumber is stuck."
       /></p>
     </${TransactionDialogFrame}>
   `;
@@ -1780,7 +1780,7 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   const retrying = !!submittedRequest;
-  const title = html`<span class="theme-copy-regular">Permanently delete this agent?</span><span class="theme-copy-wizard">Permanently erase this familiar?</span>`;
+  const title = html`<span class="theme-copy-regular">Permanently delete this agent?</span><span class="theme-copy-wizard">Permanently erase this hero?</span>`;
   const initialLabel = html`<span class="theme-copy-regular">Delete forever</span><span class="theme-copy-wizard">Erase forever</span>`;
   return html`
     <${TransactionDialogFrame}
@@ -1803,7 +1803,7 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <p><${Words}
         plain="Wipes the conversation history (.jsonl) from disk and drops every group / membership / ownership / permission row for this agent. This cannot be undone."
-        wizard="Burns the conversation scroll (.jsonl) and erases every party membership, ownership mark, and boon bound to this familiar. This cannot be undone."
+        wizard="Burns the conversation scroll (.jsonl) and erases every party membership, ownership mark, and boon bound to this hero. This cannot be undone."
       /></p>
       <${DeleteWorktreeChoice}
         worktree=${worktree}

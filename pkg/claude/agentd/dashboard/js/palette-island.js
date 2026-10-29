@@ -13,7 +13,7 @@ const html = htm.bind(h);
 export const DEFAULT_PLACEHOLDER =
   'Type a command…  (hide all windows · focus an agent · go to a tab · spawn…)';
 export const WIZARD_PLACEHOLDER =
-  'Speak an incantation…  (banish a familiar · scry a tab · summon…)';
+  'Speak an incantation…  (banish a hero · scry a tab · summon…)';
 export const WIZARD_EMPTY = 'No such incantation in this tome';
 export const PROCESS_NODE_CHOOSER_SELECTOR = '.process-node-chooser';
 export const PALETTE_BLOCKING_OVERLAY_SELECTOR =

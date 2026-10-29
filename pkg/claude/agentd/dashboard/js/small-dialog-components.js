@@ -211,13 +211,13 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
           ? { plain: `⚠️ ${job.error}`, wizard: `⚠️ ${job.error}` }
           : {
               plain: '⚠️ the agent did not deliver an export',
-              wizard: '⚠️ the familiar did not deliver its scroll',
+              wizard: '⚠️ the hero did not deliver its scroll',
             });
       },
       onSlow() {
         setNote({
           plain: 'Still working — the agent may be busy with another task. Keep this open to download automatically when it lands.',
-          wizard: 'Still inscribing — the familiar may be occupied with another quest. Keep this open and the scroll will appear when ready.',
+          wizard: 'Still inscribing — the hero may be occupied with another quest. Keep this open and the scroll will appear when ready.',
         });
       },
     });
@@ -283,7 +283,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
         <div id="export-agent-form">
           <p class="export-intro"><${Words}
             plain="Ask this agent to consolidate a shareable export of the conversation — a summary or report for others to read. It runs on an isolated clone of the conversation, so the live agent is never disturbed; the file downloads here when it's ready. Multiple files are zipped automatically."
-            wizard="Ask this familiar to inscribe a shareable account of its conversation. The work runs through an isolated mirror, so the live familiar is never disturbed; the finished scroll appears here. Multiple scrolls are bundled automatically."
+            wizard="Ask this hero to inscribe a shareable account of its conversation. The work runs through an isolated mirror, so the live hero is never disturbed; the finished scroll appears here. Multiple scrolls are bundled automatically."
           /></p>
           <label class="cron-create-row">
             <span class="cron-create-label">Format</span>
@@ -348,7 +348,7 @@ export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard })
       <h3 id="term-title"><span class="term-title-regular">Open a terminal</span><span class="term-title-wizard">🔮 Open a scrying portal</span></h3>
       <p><${Words}
         plain=${html`Spawn a terminal window for this agent. <strong>Current</strong> is where it has most recently been editing files; <strong>Worktree</strong> is the git worktree/repo root around that; <strong>Launch</strong> is where Claude Code was started.`}
-        wizard=${html`Open a scrying portal for this familiar. <strong>Current</strong> is where it most recently worked its craft; <strong>Worktree</strong> is the surrounding git worktree/repo root; <strong>Launch</strong> is where it was summoned.`}
+        wizard=${html`Open a scrying portal for this hero. <strong>Current</strong> is where it most recently worked its craft; <strong>Worktree</strong> is the surrounding git worktree/repo root; <strong>Launch</strong> is where it was summoned.`}
       /></p>
       ${descriptor.label && html`<div class="modal-meta" id="term-meta">${descriptor.label}</div>`}
       <div class="modal-buttons">
@@ -370,7 +370,7 @@ const TERMINAL_CHOICES = Object.freeze([
     act: 'open-window', section: 'session', icon: '◉', wizardIcon: '👁',
     title: 'Open session window', wizardTitle: 'Reveal portal', tag: 'native', wizardTag: 'mortal window',
     plain: "Attach to the agent's live session (its TUI) in a terminal window on this machine. You see what the agent sees, and keystrokes go to it. Falls back to the browser when no window can be opened.",
-    wizard: "Open a window onto the familiar's living session. You see what it sees; your words reach it. A crystal is conjured if no window can be.",
+    wizard: "Open a window onto the hero's living session. You see what it sees; your words reach it. A crystal is conjured if no window can be.",
   }),
   Object.freeze({
     act: 'web-open-window', section: 'session', icon: '◉', wizardIcon: '🔮',
@@ -382,7 +382,7 @@ const TERMINAL_CHOICES = Object.freeze([
     act: 'term', section: 'shell', icon: '⌨', wizardIcon: '🕯',
     title: 'Shell in its directory', wizardTitle: 'Scrying portal', tag: 'native', wizardTag: 'mortal window',
     plain: "A new, separate shell in the agent's working directory (you pick launch, worktree or current dir next). The agent is not affected.",
-    wizard: "A fresh shell of your own in the familiar's lair (you pick which chamber next). The familiar is undisturbed.",
+    wizard: "A fresh shell of your own in the hero's lair (you pick which chamber next). The hero is undisturbed.",
   }),
   Object.freeze({
     act: 'web-term', section: 'shell', icon: '⌨', wizardIcon: '🕯',
@@ -433,10 +433,10 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
       <div onKeyDown=${onKeyDown}>
         <h3 id="term-chooser-title"><${Words} plain="Terminals & windows" wizard="🔮 Scrying portals" /></h3>
         <div class="term-chooser-meta">
-          <${Words} plain="for " wizard="for familiar " /><code>${descriptor.label}</code>${descriptor.cwd && html` · <span class="term-chooser-cwd">${descriptor.cwd}</span>`}
+          <${Words} plain="for " wizard="for hero " /><code>${descriptor.label}</code>${descriptor.cwd && html` · <span class="term-chooser-cwd">${descriptor.cwd}</span>`}
         </div>
         <div class="term-choices">
-          ${section('session', 'Watch or drive the agent', 'Gaze into the familiar')}
+          ${section('session', 'Watch or drive the agent', 'Gaze into the hero')}
           ${section('shell', 'Your own shell', 'Enter its lair')}
         </div>
         <p class="term-chooser-hint"><${Words}
@@ -559,7 +559,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       <div class="modal-meta" id="sandbox-impl-meta">${descriptor.label || shortId(descriptor.conv)}</div>
       <p><${Words}
         plain="Which layer owns OS-level confinement for this agent's launches. Recorded now and applied by the next launch — wake the agent to run under it."
-        wizard="Which layer holds the ward around this familiar. Bound now, taking effect the next time it is summoned."
+        wizard="Which layer holds the ward around this hero. Bound now, taking effect the next time it is summoned."
       /></p>
       ${request.phase === 'loading' && html`<p class="sandbox-impl-loading" id="sandbox-impl-loading">loading the recorded posture…</p>`}
       ${request.phase === 'error' && html`<div class="cron-create-error" id="sandbox-impl-load-error" role="alert">${request.error}</div>`}

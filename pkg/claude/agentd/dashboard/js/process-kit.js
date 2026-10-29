@@ -30,7 +30,7 @@ import { loopEdgeSuffix } from './process-loops.js';
 const html = htm.bind(h);
 
 export const PROCESS_NODE_KINDS = Object.freeze({
-  agent: { glyph: '🤖', label: 'Agent task', wizardLabel: 'Familiar rune', hint: 'prompt, performer slot, stages' },
+  agent: { glyph: '🤖', label: 'Agent task', wizardLabel: 'Hero rune', hint: 'prompt, performer slot, stages' },
   human: { glyph: '👤', label: 'Human step', wizardLabel: 'Mortal rune', hint: 'approve / input / do' },
   command: { glyph: '⌘', label: 'Command', wizardLabel: 'Incantation rune', hint: 'shell, in a sandbox' },
   decision: { glyph: '◆', label: 'Decision', wizardLabel: 'Forking rune', hint: 'on outcome or expression' },
@@ -67,7 +67,7 @@ const STATE_ALIASES = Object.freeze({
 
 export const PROCESS_SCOPES = Object.freeze({
   group: { glyph: '⌂', label: 'group scope', wizardLabel: 'circle-bound' },
-  agent: { glyph: '◉', label: 'agent scope', wizardLabel: 'familiar-bound' },
+  agent: { glyph: '◉', label: 'agent scope', wizardLabel: 'hero-bound' },
 });
 
 export function normalizeNodeKind(kind) {

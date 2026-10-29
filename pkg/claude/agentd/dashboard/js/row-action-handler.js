@@ -181,10 +181,10 @@ export async function handleRowAction(action) {
       }
       case 'remove-member': {
         const confirmed = await confirmModal({
-          title: wizWord('Remove member from group?', 'Dismiss familiar from party?'),
+          title: wizWord('Remove member from group?', 'Dismiss hero from party?'),
           body: wizWord(
             'This unsubscribes them from group messages and severs the manager-pattern path. Their conv keeps running.',
-            'This removes the familiar from party missives and severs the manager-pattern path. Its conversation keeps channeling.',
+            'This removes the hero from party missives and severs the manager-pattern path. Its conversation keeps channeling.',
           ),
           meta: `${label} → ${group}`,
           okLabel: wizWord('Remove', 'Dismiss'),

@@ -104,7 +104,7 @@ function dockSavePill(e, text) {
 function pillText() {
   return groupReorderActive
     ? wizWord('⧉ save group as template', '⧉ inscribe party as circle')
-    : wizWord('⚙ save agent as profile', '⚙ bind familiar as pattern');
+    : wizWord('⚙ save agent as profile', '⚙ save hero as loadout');
 }
 
 function bindDockSaveDnd() {

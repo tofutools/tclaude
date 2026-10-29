@@ -376,7 +376,7 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
     'tclaude:wizard', { detail: { active: true } },
   )));
   assert.equal(filter.getAttribute('aria-label'), 'Filter parties');
-  assert.equal(filter.placeholder, 'Filter parties & familiars');
+  assert.equal(filter.placeholder, 'Filter parties & heroes');
 
   const view = getByRole(mounted.container, 'button', { name: '▾ view' });
   await harness.act(() => harness.fireEvent(view, 'click'));
@@ -500,7 +500,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assert.equal(permanentDelete.dataset.agent, 'agt-loose');
   assert.equal(permanentDelete.dataset.conv, 'loose');
   assert.equal(permanentDelete.dataset.label, 'Loose');
-  assert.equal(permanentDelete.querySelector('.theme-copy-wizard').textContent, 'erase familiar');
+  assert.equal(permanentDelete.querySelector('.theme-copy-wizard').textContent, 'erase hero');
 
   const pending = host.querySelector('tr[data-key="gate-1"]');
   const retired = host.querySelector('tr[data-key="retired-1"]');
@@ -527,7 +527,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   )));
   const ungrouped = host.querySelector('details[data-dnd-target-ungrouped]');
   assert.match(ungrouped.querySelector('.subtable .theme-copy-wizard').textContent,
-    /slumbering familiar.*show slumbering/);
+    /slumbering hero.*show slumbering/);
   assert.match(ungrouped.querySelector('.group-virtual-badge').title,
     /cannot be renamed, dispelled, whispered to, or scheduled/);
 
@@ -1231,7 +1231,7 @@ test('member editor preserves dirty, IME, busy, stacked overlay and field-level 
   />`, host);
   await harness.input(host.querySelector('#edit-member-role'), 'reviewer');
   await harness.input(host.querySelector('#edit-member-tags'), 'one, two');
-  assert.match(host.querySelector('#edit-member-title').textContent, /Edit agent.*Enchant this familiar/,
+  assert.match(host.querySelector('#edit-member-title').textContent, /Edit agent.*Enchant this hero/,
     'plain and wizard copy remain in the Preact-owned dialog');
 
   const composed = new harness.window.Event('keydown', { bubbles: true, cancelable: true });

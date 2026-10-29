@@ -258,13 +258,13 @@
        panel's own on-dock collapse + edge tab. The remaining show/hide
        affordances are the in-dock "Hide ›/Furl ›" collapse and the edge chevron
        tab (dock.js drives both off the same body.dock-open state). -->
-  <!-- The label re-letters to "👁 familiars…" in 🧙 mode via the
+  <!-- The label re-letters to "👁 heroes…" in 🧙 mode via the
        .win-label-regular/.win-label-wizard span pair (CSS picks which shows —
        see the wizard windows button/modal rules in dashboard.css), matching
        how the sibling Power On / Shutdown chips swap to "✨ Awaken all" /
        "🌙 Slumber all". The aria-label names both voices so speech input
        matches either theme's visible label (WCAG Label-in-Name). -->
-  <button id="window-all-btn" data-act="window-modal-all" aria-label="Reveal or veil familiars — focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way."><span class="win-label-regular">🪟 windows…</span><span class="win-label-wizard">👁 familiars…</span></button>
+  <button id="window-all-btn" data-act="window-modal-all" aria-label="Reveal or veil heroes — focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way."><span class="win-label-regular">🪟 windows…</span><span class="win-label-wizard">👁 heroes…</span></button>
   <!-- Power on / shutdown re-flavour to "✨ Awaken all" / "🌙 Slumber all" in
        🧙 mode via the .pwr-label-regular/.pwr-label-wizard span pair (CSS picks
        which shows — see the wizard power-controls rules in dashboard.css). The
@@ -353,10 +353,10 @@
                open; the items themselves stay plain click targets. -->
           <input class="action-menu-filter" type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions" placeholder="filter actions…">
           <button role="menuitem" id="group-import-open" title="Import an agent .paf, or a group .zip / .paf produced by ⤓ export. The file decides which preview opens; nothing is written before you confirm. You can also drop a .paf onto the page."><span class="tpl-word-regular">⤒ import…</span><span class="tpl-word-wizard">⤒ unseal an archive</span></button>
-          <button role="menuitem" id="snapshots-open" title="This node's snapshot library: take, spawn from, export, share on a Board or publish agent snapshots, and see resilience policy status."><span class="tpl-word-regular">📸 snapshots…</span><span class="tpl-word-wizard">📸 captured familiars…</span></button>
+          <button role="menuitem" id="snapshots-open" title="This node's snapshot library: take, spawn from, export, share on a Board or publish agent snapshots, and see resilience policy status."><span class="tpl-word-regular">📸 snapshots…</span><span class="tpl-word-wizard">📸 captured heroes…</span></button>
           <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
           <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
-          <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ patterns…</span></button>
+          <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ loadouts…</span></button>
           <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
           <button role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — filesystem and environment policy applied at agent launch"><span class="sandbox-word-regular">🛡 sandbox profiles…</span><span class="sandbox-word-wizard">🛡 wards…</span></button>
@@ -385,12 +385,12 @@
       </span>
       <span class="theme-copy-wizard"><strong>party maneuvers:</strong>
         party banner → onto a party → bind beneath it; onto its top/bottom edge → reorder (or draw a top-level party back out) ·
-        familiar → another party ·
-        <em>Unbound</em> familiar → party ·
-        party familiar → <em>Unbound</em> (release) ·
+        hero → another party ·
+        <em>Unbound</em> hero → party ·
+        party hero → <em>Unbound</em> (release) ·
         <em>Plain scroll</em> → party (awaken + bind) ·
-        any familiar → <em>Banished</em> (banish) ·
-        <em>Banished</em> familiar → party (restore + bind)
+        any hero → <em>Banished</em> (banish) ·
+        <em>Banished</em> hero → party (restore + bind)
       </span>
     </aside>
   </section>
@@ -763,8 +763,8 @@
     <path d="M6 7l1 12.5a2 2 0 0 0 2 1.9h6a2 2 0 0 0 2-1.9L18 7"/>
     <path d="M10 11.5v6M14 11.5v6"/>
   </svg>
-  <!-- 🧙 wizard-mode glyph: retiring an agent IS "banishing a familiar"
-       (the retire dialog already says "Banish this familiar?"), so the
+  <!-- 🧙 wizard-mode glyph: retiring an agent IS "banishing a hero"
+       (the retire dialog already says "Banish this hero?"), so the
        mundane trashcan becomes a swirling banishment portal. body.wizard
        hides the SVG above and shows this vortex instead. -->
   <span class="dnd-trash-glyph-wizard" aria-hidden="true">🌀</span>

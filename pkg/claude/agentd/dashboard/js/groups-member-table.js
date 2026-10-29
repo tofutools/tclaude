@@ -760,13 +760,13 @@ function NotifyMenuItem({ member }) {
   let regular, wizard, title;
   if (mode === 'off') {
     regular = `${glyph} notify: off`; wizard = `${glyph} omens: silent`;
-    title = wizardCopy(`notifications muted for ${label} — click to force ON (overrides a group mute)`, `omens silenced for familiar ${label} — click to restore them (overrides a party silence)`);
+    title = wizardCopy(`notifications muted for ${label} — click to force ON (overrides a group mute)`, `omens silenced for hero ${label} — click to restore them (overrides a party silence)`);
   } else if (mode === 'on') {
     regular = `${glyph} notify: on`; wizard = `${glyph} omens: on`;
-    title = wizardCopy(`notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`, `omens forced ON for familiar ${label} (overrides a party silence) — click to inherit from the party`);
+    title = wizardCopy(`notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`, `omens forced ON for hero ${label} (overrides a party silence) — click to inherit from the party`);
   } else {
     regular = `${glyph} notify: inherit (${effective ? 'on' : 'off'})`; wizard = `${glyph} omens: inherit (${effective ? 'on' : 'silent'})`;
-    title = wizardCopy(`notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`, `omens inherit from the party (currently ${effective ? 'on' : 'silent'}) for familiar ${label} — click to silence`);
+    title = wizardCopy(`notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`, `omens inherit from the party (currently ${effective ? 'on' : 'silent'}) for hero ${label} — click to silence`);
   }
   return html`<${MenuButton} member=${member} act="toggle-agent-notify" attrs=${{ 'data-mode': mode }} regular=${regular} wizard=${wizard} title=${title} />`;
 }
@@ -777,8 +777,8 @@ function RemoteMenuItem({ member, canRemote }) {
   const on = !!member.state?.remote_control;
   const glyph = on ? '📱' : '📴';
   const title = on
-    ? wizardCopy(`Remote Access is ON for ${label} — reachable from the Claude app/phone. Click to turn it OFF.`, `Remote scrying is ON for familiar ${label} — reachable from the Claude app/phone. Click to close it.`)
-    : wizardCopy(`Remote Access is OFF for ${label}. Click to turn it ON — expose this agent to the Claude app/phone.`, `Remote scrying is OFF for familiar ${label}. Click to open it to the Claude app/phone.`);
+    ? wizardCopy(`Remote Access is ON for ${label} — reachable from the Claude app/phone. Click to turn it OFF.`, `Remote scrying is ON for hero ${label} — reachable from the Claude app/phone. Click to close it.`)
+    : wizardCopy(`Remote Access is OFF for ${label}. Click to turn it ON — expose this agent to the Claude app/phone.`, `Remote scrying is OFF for hero ${label}. Click to open it to the Claude app/phone.`);
   return html`<${MenuButton} member=${member} act="toggle-remote-control" attrs=${{ 'data-intent': on ? 'off' : 'on' }} regular=${`${glyph} remote: ${on ? 'on' : 'off'}`} wizard=${`${glyph} remote scrying: ${on ? 'on' : 'off'}`} title=${title} />`;
 }
 
@@ -806,7 +806,7 @@ function RestartMenuItem({ member }) {
     ? `${regular} is unavailable while ${label} is offline`
     : `Stop and restart ${label} under its current launch configuration. Re-resolves sandbox-profile rules. Requires the agent to be fully idle with no background agents or shell commands.`;
   return html`<${MenuButton}
-    member=${member} act="restart" regular=${regular} wizard="↻ reincant familiar"
+    member=${member} act="restart" regular=${regular} wizard="↻ reincant hero"
     title=${title} disabled=${!member.online}
   />`;
 }
@@ -896,13 +896,13 @@ function SendElsewhereItems({ member, group, snapshot }) {
   // teleport stay in the menu, greyed out with the reason, as the node chips do.
   const off = fleet ? '' : sendElsewhereOffReason(fleetState.node.value);
   return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
-    ${item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', off || (peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`), !!off)}
-    ${TELEPORT_ROUTES && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', off || `Teleport ${label} to another node; its home keeps its place for Recall home`, !!off) : null}
-    ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
-    ${!peerRow || acting ? html`<${MenuButton} member=${member} group=${group} act="snapshot-agent" attrs=${peerRow ? attrs('') : {}} regular="📸 snapshot…" wizard="📸 capture familiar…" title=${`Keep a named snapshot of ${label} on ${peerRow ? `${rowNode.name || 'its node'}` : 'this node'}; spawn from it, share or publish it later`} />` : null}
-    ${!peerRow || acting ? html`<${MenuButton} member=${member} group=${group} act="export-paf" attrs=${peerRow ? attrs('') : {}} regular="⤓ export (PAF)…" wizard="⤓ seal familiar (PAF)…" title=${`Export ${label} as a portable PAF file; importing it anywhere creates a new agent`} />` : null}
-    ${!peerRow || acting ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
-    ${TELEPORT_ROUTES && kind === 'visiting' && !pageNode && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
+    ${item('move', peerRow ? 'move here…' : 'move to…', 'relocate hero…', off || (peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`), !!off)}
+    ${TELEPORT_ROUTES && !peerRow ? item('teleport', 'teleport to…', 'teleport hero…', off || `Teleport ${label} to another node; its home keeps its place for Recall home`, !!off) : null}
+    ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror hero to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
+    ${!peerRow || acting ? html`<${MenuButton} member=${member} group=${group} act="snapshot-agent" attrs=${peerRow ? attrs('') : {}} regular="📸 snapshot…" wizard="📸 capture hero…" title=${`Keep a named snapshot of ${label} on ${peerRow ? `${rowNode.name || 'its node'}` : 'this node'}; spawn from it, share or publish it later`} />` : null}
+    ${!peerRow || acting ? html`<${MenuButton} member=${member} group=${group} act="export-paf" attrs=${peerRow ? attrs('') : {}} regular="⤓ export (PAF)…" wizard="⤓ seal hero (PAF)…" title=${`Export ${label} as a portable PAF file; importing it anywhere creates a new agent`} />` : null}
+    ${!peerRow || acting ? item('morph', 'morph…', 'shapeshift hero…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
+    ${TELEPORT_ROUTES && kind === 'visiting' && !pageNode && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall hero home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
 }
 
 function MenuSeparator() {
@@ -915,24 +915,24 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
   const canRemote = harnessCanRemoteControl(snapshot, member.state?.harness);
   const prefill = JSON.stringify({ targetMode: 'solo', target: member.agent_id || member.conv_id, owner: member.agent_id || member.conv_id });
   return html`
-    <${MenuButton} member=${member} act="view-agent-messages" regular="view messages" wizard="view missives" title=${wizardCopy("Open this agent's messages in the Messages tab", "Open this familiar's missives in the Messages tab")} />
-    <${MenuButton} member=${member} act="terminal-chooser" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="terminals & windows…" wizard="🔮 scrying portals…" title=${wizardCopy("Open a terminal: attach to this agent's live session, or a separate shell in its working directory — as a native window or in the browser (term / web term / open window / web window)", "Open a scrying portal: gaze into this familiar's live session, or open a shell of your own in its lair — as a mortal window or a browser crystal (term / web term / open window / web window)")} />
-    <${MenuButton} member=${member} act="export-summary" regular="summary…" wizard="inscribe scroll…" disabled=${!member.online} title=${member.online ? wizardCopy('Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.', 'Ask this familiar to inscribe a shareable account of its conversation and bring it here. Multiple scrolls are bundled automatically.') : wizardCopy('Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.', 'The familiar must be channeling to inscribe an export. Unavailable while it slumbers.')} />
-    <${MenuButton} member=${member} act="debug-export" regular="export debug info" wizard="inscribe ward diagnostics" title=${wizardCopy('Download the requested, resolved, and running launch configurations, including exact sandbox implementation and composed profiles. Task text and authorization tokens are redacted.', 'Download this familiar\'s requested, resolved, and running summoning configurations, including exact ward implementation and composed profiles. Quest text and authorization runes are redacted.')} />
+    <${MenuButton} member=${member} act="view-agent-messages" regular="view messages" wizard="view missives" title=${wizardCopy("Open this agent's messages in the Messages tab", "Open this hero's missives in the Messages tab")} />
+    <${MenuButton} member=${member} act="terminal-chooser" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="terminals & windows…" wizard="🔮 scrying portals…" title=${wizardCopy("Open a terminal: attach to this agent's live session, or a separate shell in its working directory — as a native window or in the browser (term / web term / open window / web window)", "Open a scrying portal: gaze into this hero's live session, or open a shell of your own in its lair — as a mortal window or a browser crystal (term / web term / open window / web window)")} />
+    <${MenuButton} member=${member} act="export-summary" regular="summary…" wizard="inscribe scroll…" disabled=${!member.online} title=${member.online ? wizardCopy('Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.', 'Ask this hero to inscribe a shareable account of its conversation and bring it here. Multiple scrolls are bundled automatically.') : wizardCopy('Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.', 'The hero must be channeling to inscribe an export. Unavailable while it slumbers.')} />
+    <${MenuButton} member=${member} act="debug-export" regular="export debug info" wizard="inscribe ward diagnostics" title=${wizardCopy('Download the requested, resolved, and running launch configurations, including exact sandbox implementation and composed profiles. Task text and authorization tokens are redacted.', 'Download this hero\'s requested, resolved, and running summoning configurations, including exact ward implementation and composed profiles. Quest text and authorization runes are redacted.')} />
     <${MenuSeparator} />
     ${!ungrouped ? html`<${MenuButton} member=${member} group=${group} act="edit-member" attrs=${{ onClick: (event) => {
       event.preventDefault();
       event.stopPropagation();
       interactions.closeMenu(true);
       actions.openMemberEditor(member, group, 'title');
-    } }} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this familiar — title, class, description, party ownership, and grimoire')} />
-      <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this familiar an owner of the party')} />` : null}
-    <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this familiar's grimoire of permanent boons and bindings")} />
-    <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon')} />
+    } }} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this hero — title, class, description, party ownership, and grimoire')} />
+      <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this hero an owner of the party')} />` : null}
+    <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this hero's grimoire of permanent boons and bindings")} />
+    <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this hero a time-bounded sudo boon')} />
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
     <${FastModeMenuItem} member=${member} />
-    <${MenuButton} member=${member} group=${group} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
+    <${MenuButton} member=${member} group=${group} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for hero ${label}`)} />
     ${member.agent_id && !snapshot?.peer_view && !(group?.fleet_node && !group.fleet_node.local) && !(member.fleet_node?.id && !isPageNode(member.fleet_node.id)) ? html`<${MenuButton} member=${member} group=${group} act="usage-budget" attrs=${{ onClick: (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -940,8 +940,8 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
       openUsageRulesManager({ tab: 'agents', agent: member.agent_id });
     } }} regular="💰 usage budget…" wizard="💰 tithe…" title=${wizardCopy(`See ${label}'s usage budgets; set its own usage profiles, extend a budget, snooze or exempt it`, `Weigh ${label}'s tithes; set its own, extend, snooze or exempt it`)} />` : null}
     <${MenuSeparator} />
-    ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror familiar" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this familiar into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
-    <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
+    ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror hero" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this hero into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
+    <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate hero" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this hero — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
     <${RestartMenuItem} member=${member} />
     <${SubscriptionMenuItems} member=${member} />
     <${SandboxRestartMenuItem} member=${member} />
@@ -950,8 +950,8 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${SendElsewhereItems} member=${member} group=${ungrouped ? null : group} snapshot=${snapshot} />
     <${MenuSeparator} />
     ${ungrouped
-      ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll')} />`
-      : html`<${MenuButton} member=${member} group=${group} act="remove-member" className="danger" regular="remove" wizard="dismiss from party" title=${wizardCopy('Remove this agent from the group', 'Remove this familiar from the party')} /><${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} />`}
+      ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this hero — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase hero" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this hero and its conversation scroll')} />`
+      : html`<${MenuButton} member=${member} group=${group} act="remove-member" className="danger" regular="remove" wizard="dismiss from party" title=${wizardCopy('Remove this agent from the group', 'Remove this hero from the party')} /><${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this hero — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} />`}
   `;
 }
 

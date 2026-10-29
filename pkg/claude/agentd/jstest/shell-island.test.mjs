@@ -460,7 +460,7 @@ test('global activity keeps keyed native bot identity across polls and wizard ch
   assertSameNode(mounted.container.querySelector('.ga-regular'), regular,
     'theme wording changes do not remount hidden animation rows');
   assertSameNode(regular.querySelector('.actbot-working'), working);
-  assert.match(mounted.container.querySelector('#global-activity').title, /familiars channeling/);
+  assert.match(mounted.container.querySelector('#global-activity').title, /heroes channeling/);
   await mounted.unmount();
 });
 
