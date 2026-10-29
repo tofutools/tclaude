@@ -46,6 +46,10 @@ The `notifications` block in `~/.tclaude/data/config.json`:
 
 - `transitions` — `{from, to}` rules with `*` wildcards; the defaults above
   apply when the list is omitted.
+- `known_types` — bookkeeping for `tclaude setup`: the per-type
+  categories this block has already been offered. Setup only adds a
+  category that is new to your config; one you switched off stays off.
+  Written automatically; you never need to edit it.
 - `cooldown_seconds` — per-session rate limit (default 5) so a flapping
   state does not spam you.
 - `human_messages` — also notify when an agent sends `tclaude agent

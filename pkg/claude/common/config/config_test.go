@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,9 +87,9 @@ func TestSetNotifyType_PreservesAdvancedRules(t *testing.T) {
 	assert.False(t, n.NotifyTypeEnabled("idle"))
 }
 
-// MergeDefaultTypes is additive: it fills in only the missing canonical
-// categories, leaves advanced + already-present rules untouched, returns
-// what it added in NotifyTypes order, and is idempotent on a full block.
+// MergeDefaultTypes is additive: it fills in only the categories the block
+// has not been offered yet, leaves advanced + already-present rules
+// untouched, returns what it added in NotifyTypes order, and is idempotent.
 func TestMergeDefaultTypes(t *testing.T) {
 	// nil receiver is safe and adds nothing.
 	assert.Nil(t, (*NotificationConfig)(nil).MergeDefaultTypes())
@@ -97,14 +98,18 @@ func TestMergeDefaultTypes(t *testing.T) {
 	full := DefaultConfig().Notifications
 	assert.Nil(t, full.MergeDefaultTypes(), "default block is already complete")
 
-	// An older/partial block: missing "error" + "exited", plus an advanced
-	// rule that must round-trip and must not light a canonical checkbox.
-	n := &NotificationConfig{Transitions: []TransitionRule{
-		{From: "*", To: "idle"},
-		{From: "*", To: "awaiting_permission"},
-		{From: "*", To: "awaiting_input"},
-		{From: "working", To: "idle"}, // advanced
-	}}
+	// A block that only knows the first three categories: "error" +
+	// "exited" are new to it, plus an advanced rule that must round-trip
+	// and must not light a canonical checkbox.
+	n := &NotificationConfig{
+		Transitions: []TransitionRule{
+			{From: "*", To: "idle"},
+			{From: "*", To: "awaiting_permission"},
+			{From: "*", To: "awaiting_input"},
+			{From: "working", To: "idle"}, // advanced
+		},
+		KnownTypes: []string{"idle", "awaiting_permission", "awaiting_input"},
+	}
 	added := n.MergeDefaultTypes()
 	assert.Equal(t, []string{"error", "exited"}, added, "added in NotifyTypes order")
 	for _, ty := range NotifyTypes {
@@ -112,9 +117,28 @@ func TestMergeDefaultTypes(t *testing.T) {
 	}
 	assert.Contains(t, n.Transitions, TransitionRule{From: "working", To: "idle"},
 		"advanced rule preserved")
+	assert.Equal(t, NotifyTypes, n.KnownTypes, "every category marked known")
 
 	// Idempotent: a second merge finds nothing to add.
 	assert.Nil(t, n.MergeDefaultTypes(), "second merge is a no-op")
+}
+
+// A category the human switched off must stay off across `tclaude setup`,
+// both for a block written before known_types existed and for one that
+// records it.
+func TestMergeDefaultTypes_RespectsUncheckedTypes(t *testing.T) {
+	legacy := &NotificationConfig{Transitions: []TransitionRule{{From: "*", To: "awaiting_permission"}}}
+	assert.Nil(t, legacy.MergeDefaultTypes(), "pre-tracking block: unchecked types stay off")
+	assert.Equal(t, []TransitionRule{{From: "*", To: "awaiting_permission"}}, legacy.Transitions)
+
+	tracked := &NotificationConfig{KnownTypes: slices.Clone(NotifyTypes)}
+	assert.Nil(t, tracked.MergeDefaultTypes(), "all types known and unchecked: nothing re-added")
+	assert.Empty(t, tracked.Transitions)
+
+	// A category known from a newer tclaude survives marking by this one.
+	newer := &NotificationConfig{KnownTypes: append(slices.Clone(NotifyTypes), "future")}
+	newer.MarkNotifyTypesKnown()
+	assert.Contains(t, newer.KnownTypes, "future")
 }
 
 // HumanMessagesIntent is the checkbox state (default-on, off only on an
