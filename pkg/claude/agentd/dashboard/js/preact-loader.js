@@ -277,6 +277,43 @@ export function mountDockFeature(dependencies = {}) {
   return mountIslandDescriptor(dockDescriptor, dependencies);
 }
 
+// The companion (tcl-6i0283): a floating window over every view that hosts
+// agents' native terminals, with the Steward as its default helper.
+const companionDescriptor = createIslandDescriptor({
+  name: 'companion',
+  label: 'Companion',
+  hosts: { host: '#companion-root' },
+  failureClass: 'companion-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./companion-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const prefsModule = import('./prefs.js');
+    const terminalsCoreModule = import('./terminals-core.js');
+    const xtermLoaderModule = import('./xterm-loader.js');
+    const terminalsTabModule = import('./terminals-tab.js');
+    const [
+      { mountCompanionIsland }, { dashboardState }, { dashPrefs },
+      { mountTerminalWidget }, { loadXtermRuntime }, { closeTerminalsForConvs, openWebWindowPane },
+    ] = await Promise.all([
+      islandModule, snapshotStoreModule, prefsModule,
+      terminalsCoreModule, xtermLoaderModule, terminalsTabModule,
+    ]);
+    return {
+      mount: (registerCleanup) => mountCompanionIsland({
+        host, registerCleanup,
+        snapshot: dashboardState.snapshot, activeTab: dashboardState.activeTab, prefs: dashPrefs,
+        notify: dependencies.notify, widgetFactory: mountTerminalWidget, loadRuntime: loadXtermRuntime,
+        closeTerminalPanes: closeTerminalsForConvs,
+        openTerminalsPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
+      }),
+    };
+  },
+});
+
+export function mountCompanionFeature(dependencies = {}) {
+  return mountIslandDescriptor(companionDescriptor, dependencies);
+}
+
 // Terminal chrome and open state are one ownership unit across the nav badge,
 // dashboard pane stack. xterm itself remains behind
 // the opaque host adapter loaded by terminal-shell-island.js.

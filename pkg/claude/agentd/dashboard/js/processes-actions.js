@@ -347,6 +347,13 @@ export function createProcessesActions({
   }
   async function openAgent(agentId, label) {
     if (!agentId) return false;
+    // The floating companion hosts the agent's native terminal over the
+    // editor, so the operator keeps the canvas in view while talking to it.
+    const { openInCompanion } = await import('./companion-facade.js');
+    if (openInCompanion(agentId)) {
+      state.setNotice(`Opened ${label} in the companion window.`);
+      return true;
+    }
     try {
       const response = await fetchImpl(`/api/open-window/${encodeURIComponent(agentId)}`, {
         method: 'POST', credentials: 'same-origin',
