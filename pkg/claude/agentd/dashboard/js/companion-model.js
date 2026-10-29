@@ -245,6 +245,17 @@ export function composeCompanionMessage(text, context = '') {
   return clipUtf8(body, COMPANION_MESSAGE_MAX_BYTES - new TextEncoder().encode(suffix).length) + suffix;
 }
 
+// STEWARD_STARTERS are one-click prompts shown above the message row while
+// the Steward's tab is open and nothing is typed: the usual ways in to
+// guided setup (tcl-bifqbb).
+export const STEWARD_STARTERS = Object.freeze([
+  { label: 'What can I do here?', text: 'What can I do on this page? Point me at the important controls.' },
+  { label: 'Review my setup', text: 'Review my tclaude setup (groups, spawn profiles, sandbox profiles, schedules) and tell me what is missing or worth changing. Do not change anything yet.' },
+  { label: 'Set up my repos', text: 'Help me set up a group for each of my repos, with sensible defaults. Ask me which repos first.' },
+  { label: 'Create a dev flow', text: 'Help me create a development process (implement, review, rework, merge, with me approving the merge) as a process template.' },
+  { label: 'Sketch on a board', text: 'Open a shared board for us and sketch how my groups and processes fit together right now.' },
+]);
+
 export function stewardBrief() {
   return [
     'You are the Steward: the operator\'s always-available helper for tclaude, shown in a floating',
@@ -281,6 +292,13 @@ export function stewardBrief() {
     'The operator approves or denies it as a card in your companion window. For a single change,',
     'run that one command with `--ask-human 120s` instead. Never retry a denied request; ask the',
     'operator what to change.',
+    '',
+    'For setup work (groups for repos, spawn profiles, sandbox profiles, schedules) follow the',
+    'tclaude-setup skill: inspect, ask only what you cannot infer, plan, request once, execute,',
+    'verify, then point at the result. Process templates: the process-templates skill. Group',
+    'templates: the agent-circles skill. Boards: create one with `tclaude agent board create',
+    '<id> --title "<title>"` when the operator asks for a sketch, draw on it, and open it for',
+    'them with `tclaude agent guide show --path /boards/<id>`.',
     '',
     'Keep answers short and practical; the window is small. Prefer showing the exact command',
     'or the dashboard place to click.',
