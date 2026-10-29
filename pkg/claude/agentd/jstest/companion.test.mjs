@@ -241,6 +241,7 @@ test('a pending sudo plan from a pinned agent is decided in its companion tab', 
   snapshot.access_requests = [
     { id: 'req-1', perm: 'sudo.groups.create,profiles.manage', agent_id: A, conv_id: 'conv-a', body: 'Plan: 1. create groups api, web\n2. add profile dev-default', status: 'pending', deadline: new Date(Date.now() + 90000).toISOString() },
     { id: 'req-2', perm: 'groups.create', agent_id: B, status: 'pending' },
+    { id: 'req-4', perm: 'groups.members.stop', agent_id: A, status: 'pending', target_group: 'api', target_conv_title: 'builder', target_conv_id: 'conv-x', path: '/v1/groups/api/stop' },
     { id: 'req-3', perm: 'groups.create', agent_id: A, status: 'approved' },
   ];
   const { view, harness, requests, controller } = await setup(t, { prefs, snapshot });
@@ -248,7 +249,11 @@ test('a pending sudo plan from a pinned agent is decided in its companion tab', 
   await harness.act(() => controller().open(A));
   const card = view.container.querySelector('.companion-approval');
   assert.ok(card, 'the plan card is shown in the tab');
-  assert.equal(view.container.querySelectorAll('.companion-approval').length, 1, 'only this agent\'s pending requests');
+  assert.equal(view.container.querySelectorAll('.companion-approval').length, 2, 'only this agent\'s pending requests');
+  const command = view.container.querySelectorAll('.companion-approval')[1];
+  assert.match(command.textContent, /Group\s*api/, 'the target group is shown');
+  assert.match(command.textContent, /Target\s*builder/, 'the target agent is shown');
+  assert.match(command.textContent, /\/v1\/groups\/api\/stop/, 'the endpoint shows when there is no body');
   assert.match(card.textContent, /Temporary permissions for a plan/);
   assert.match(card.textContent, /groups\.create/);
   assert.match(card.textContent, /create groups api, web/);
