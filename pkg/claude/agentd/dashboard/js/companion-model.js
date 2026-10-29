@@ -262,9 +262,12 @@ export function stewardBrief() {
     '  [--note "<short note>"]` moves their dashboard there and highlights that control. Point',
     '  rather than describe where to click. A cue never presses anything; the operator acts.',
     '',
-    'You are read-only by default. Before changing anything, show a short concrete plan and wait',
-    'for the operator\'s go-ahead. Then run each mutating command with `--ask-human 120s` so the',
-    'operator approves that exact command in the dashboard; never retry a denied request.',
+    'You are read-only by default. Before changing anything, show a short concrete plan. For a',
+    'multi-step setup, ask for exactly the permissions the plan needs, once, for a bounded time:',
+    '`tclaude agent sudo request <slug>... --duration 30m --reason "<the plan, step by step>"`.',
+    'The operator approves or denies it as a card in your companion window. For a single change,',
+    'run that one command with `--ask-human 120s` instead. Never retry a denied request; ask the',
+    'operator what to change.',
     '',
     'Keep answers short and practical; the window is small. Prefer showing the exact command',
     'or the dashboard place to click.',
@@ -279,4 +282,28 @@ export function stewardSummonBody() {
     background: true,
     brief: stewardBrief(),
   };
+}
+
+// approvalsFor lists the pending access requests (a `tclaude agent sudo`
+// plan, or one --ask-human command) the given agent is waiting on, so the
+// companion can show them where the operator is already talking to it.
+export function approvalsFor(snapshot, agent) {
+  if (!agent) return [];
+  const convs = new Set([agent.convId].filter(Boolean));
+  return (snapshot?.access_requests || []).filter((request) => {
+    if (request?.status && request.status !== 'pending') return false;
+    if (request?.proposal) return false; // federation proposals have their own flow
+    if (request?.agent_id) return request.agent_id === agent.agentId;
+    return convs.has(request?.conv_id) || convs.has(request?.current_conv_id);
+  });
+}
+
+// approvalSummary describes what approving a request grants, in one line.
+export function approvalSummary(request) {
+  const perm = String(request?.perm || '');
+  if (perm.startsWith('sudo.')) {
+    const slugs = perm.slice(5).split(',').filter(Boolean);
+    return { kind: 'plan', title: 'Temporary permissions for a plan', slugs };
+  }
+  return { kind: 'command', title: 'Permission for one command', slugs: perm ? [perm] : [] };
 }

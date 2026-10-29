@@ -24,7 +24,7 @@ import {
   COMPANION_ACTIVE_PREF, COMPANION_MESSAGE_MAX, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
-  stewardSummonBody, viewContext, withTab, withoutTab, zoneRect,
+  stewardSummonBody, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -160,6 +160,62 @@ function AddMenu({ agents, tabs, steward, onSummonSteward, onPin, onClose, busy 
       ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" onClick=${() => onPin(agent.agentId)}>
         <${StatusDot} status=${companionStatus(agent)} /> ${agent.name}</button>`)
         : html`<div class="companion-menu-empty">${filter ? 'No live agent matches.' : 'No other live agents.'}</div>`}
+    </div>
+  </div>`;
+}
+
+function secondsLeft(deadline, now) {
+  const at = Date.parse(deadline || '');
+  return Number.isFinite(at) ? Math.max(0, Math.round((at - now) / 1000)) : null;
+}
+
+// ApprovalCard is an agent's pending access request shown in its companion
+// tab: a whole plan's temporary permissions (`tclaude agent sudo`) or one
+// --ask-human command. Approve and Deny decide it the same way the Messages
+// tab does. The request body is agent-supplied text and is rendered as text.
+function ApprovalCard({ request, fetchImpl, notify }) {
+  const [busy, setBusy] = useState('');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const summary = approvalSummary(request);
+  const left = secondsLeft(request.deadline, now);
+  const expired = left === 0;
+  async function decide(decision) {
+    setBusy(decision);
+    try {
+      const response = await fetchImpl(`/api/access-requests/${encodeURIComponent(request.id)}/decision`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+      // An extension leaves the request pending: free the buttons again.
+      if (decision === 'extend') setBusy('');
+    } catch (error) {
+      notify(`That decision could not be recorded: ${error?.message || error}`, true);
+      setBusy('');
+    }
+  }
+  return html`<div class=${`companion-approval ${summary.kind}`} role="group" aria-label=${summary.title}>
+    <div class="companion-approval-head">
+      <b>${summary.title}</b>
+      ${left !== null && html`<span class="companion-approval-timer" title="Declined automatically when this runs out">${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</span>`}
+    </div>
+    <div class="companion-approval-slugs">${summary.slugs.map((slug) => html`<code key=${slug}>${slug}</code>`)}</div>
+    <dl class="companion-approval-meta">
+      ${request.target_group && html`<dt>Group</dt><dd>${request.target_group}</dd>`}
+      ${request.target_conv_id && html`<dt>Target</dt><dd>${request.target_conv_title || request.target_conv_id}</dd>`}
+      ${request.scope_display && html`<dt>Scope</dt><dd><code>${request.scope_display}</code></dd>`}
+      ${request.path && !request.body && html`<dt>Endpoint</dt><dd><code>${request.method ? `${request.method} ` : ''}${request.path}</code></dd>`}
+    </dl>
+    ${request.body && html`<pre class="companion-approval-body">${request.body}</pre>`}
+    <div class="companion-approval-actions">
+      ${expired ? html`<span class="companion-approval-expired">Timing out…</span>` : html`<button type="button" class="companion-approval-extend" disabled=${!!busy}
+        title="Push the auto-decline back five minutes" onClick=${() => decide('extend')}>+5 min</button>`}
+      <button type="button" class="companion-approval-deny" disabled=${!!busy || expired} onClick=${() => decide('deny')}>${busy === 'deny' ? 'Denying…' : 'Deny'}</button>
+      <button type="button" class="companion-primary" disabled=${!!busy || expired} onClick=${() => decide('approve')}>${busy === 'approve' ? 'Approving…' : summary.kind === 'plan' ? 'Approve plan' : 'Approve'}</button>
     </div>
   </div>`;
 }
@@ -631,13 +687,16 @@ export function CompanionApp({
 
   // -- render -----------------------------------------------------------------
 
+  const approvals = (agent) => approvalsFor(snapshot.value, agent);
+  // A pending approval is the clearest "needs you" there is.
+  const statusOf = (agent) => (approvals(agent).length ? 'needs' : companionStatus(agent));
   const chipAgents = tabs.map((id) => agents.get(id)).filter(Boolean);
-  const needsCount = chipAgents.filter((agent) => companionStatus(agent) === 'needs').length;
+  const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
 
   const chips = !open && html`<div class="companion-chips" role="toolbar" aria-label="Companions">
     ${chipAgents.map((agent) => {
-      const status = companionStatus(agent);
+      const status = statusOf(agent);
       return html`<button key=${agent.agentId} type="button"
         class=${`companion-chip ${status}`}
         ref=${(node) => { if (node) chipRects.current.set(agent.agentId, node.getBoundingClientRect()); }}
@@ -649,7 +708,7 @@ export function CompanionApp({
         onClick=${(event) => onChipClick(agent.agentId, event)}>
         <${Avatar} agent=${agent} />
         <span class="companion-chip-name">${agent.name}</span>
-        ${status === 'needs' ? html`<span class="companion-chip-needs">needs you</span>` : html`<${StatusDot} status=${status} />`}
+        ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? 'approval' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
       </button>`;
     })}
     ${!chipAgents.length && html`<button type="button" class="companion-chip companion-chip-steward"
@@ -660,7 +719,8 @@ export function CompanionApp({
   </div>`;
 
   const style = `left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`;
-  const status = activeAgent ? companionStatus(activeAgent) : 'offline';
+  const status = activeAgent ? statusOf(activeAgent) : 'offline';
+  const activeApprovals = activeAgent ? approvals(activeAgent) : [];
   const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
   const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
   const starting = !activeAgent && activeId && pending.current.has(activeId);
@@ -672,7 +732,7 @@ export function CompanionApp({
       <span class="companion-grip" aria-hidden="true">⋮⋮</span>
       <div class="companion-tabs" role="tablist" aria-label="Companion agents">
         ${chipAgents.map((agent) => {
-          const tabStatus = companionStatus(agent);
+          const tabStatus = statusOf(agent);
           const selected = agent.agentId === activeId;
           return html`<div key=${agent.agentId} class=${`companion-tab${selected ? ' selected' : ''}`}>
             <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'}
@@ -696,6 +756,7 @@ export function CompanionApp({
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
     <div class="companion-body">
+      ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> The Steward</p>
@@ -714,7 +775,7 @@ export function CompanionApp({
         <button type="button" class="companion-primary" onClick=${() => showAgent(activeAgent.agentId)}>Bring it back here</button>
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
-        ${status === 'needs' && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
+        ${status === 'needs' && !activeApprovals.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
         ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
           ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
           : termStatus}</div>`}
