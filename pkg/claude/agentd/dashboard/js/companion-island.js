@@ -859,9 +859,24 @@ export function CompanionApp({
         await wait(GUIDE_FIND_STEP_MS);
       }
     }
+    // Marks (tcl-0waby5) name their targets by visible text too.
+    let marks = [];
+    if (Array.isArray(cue.marks) && cue.marks.length) {
+      const deadline = Date.now() + GUIDE_FIND_TIMEOUT_MS;
+      while (cueRun.current === run) {
+        marks = cue.marks.map((mark) => ({
+          mark,
+          element: findGuideTarget(win?.document, mark.target, { loose: true }),
+          from: mark.kind === 'arrow' ? findGuideTarget(win?.document, mark.from, { loose: true }) : null,
+        }));
+        if (marks.every((m) => m.element && (m.mark.kind !== 'arrow' || m.from)) || Date.now() >= deadline) break;
+        await wait(GUIDE_FIND_STEP_MS);
+      }
+    }
     if (cueRun.current !== run) return;
-    element?.scrollIntoView?.({ block: 'center', behavior: reducedMotion(win) ? 'auto' : 'smooth' });
-    setGuideCue({ cue, element });
+    const focus = element || marks.find((m) => m.element)?.element;
+    focus?.scrollIntoView?.({ block: 'center', behavior: reducedMotion(win) ? 'auto' : 'smooth' });
+    setGuideCue({ cue, element, marks });
   }
 
   // -- render -----------------------------------------------------------------
@@ -995,7 +1010,7 @@ export function CompanionApp({
     ${annotating && html`<${AnnotateOverlay} agentName=${annotating.name} win=${win}
       onSend=${sendAnnotation} onCancel=${() => setAnnotating(null)} />`}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
-    ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} onDismiss=${dismissGuide} win=${win} />`}
+    ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} marks=${guideCue.marks} onDismiss=${dismissGuide} win=${win} />`}
     ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
 }
 
