@@ -776,7 +776,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   // setGroup makes the board a group's board (tcl-4yhow7): its members are
   // on it without one-by-one invitations. The online ones newly on it are
   // told how to use it.
-  async function setGroup(group) {
+  async function setGroup(group, select = null) {
     try {
       const result = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/group`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -789,6 +789,8 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       await Promise.allSettled(fresh.map((id) => sendInvite(id, `Your group "${result.group}" now has`)));
       notify(result.group ? `This is now ${result.group}'s board${fresh.length ? `; told ${fresh.length} online member${fresh.length === 1 ? '' : 's'}` : ''}.` : 'The board no longer belongs to a group.');
     } catch (error) {
+      // The select shows the old group again.
+      if (select) select.value = meta.group;
       notify(`Could not change the board's group: ${error?.message || error}`, true);
     }
   }
@@ -853,7 +855,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
           </div>`}
         </span>
         <select class="board-group" aria-label="The board's group" title="A group's members are on its board without invitations"
-          value=${meta.group} onChange=${(event) => setGroup(event.currentTarget.value)}>
+          value=${meta.group} onChange=${(event) => setGroup(event.currentTarget.value, event.currentTarget)}>
           <option value="">No group</option>
           ${groupNames.map((name) => html`<option key=${name} value=${name}>Group: ${name}</option>`)}
         </select>
