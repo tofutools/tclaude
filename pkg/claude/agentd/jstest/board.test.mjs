@@ -121,7 +121,9 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
   state.location.value = { tab: 'boards', selection: 'plan' };
   const snapshot = harness.signals.signal({ groups: [{ name: 'team', members: [{ agent_id: A, conv_id: 'c', title: 'alpha', online: true, state: { status: 'idle' } }] }] });
   const section = boardsSection(harness);
-  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  const boxes = [];
+  const rasterize = async (_svg, box) => { boxes.push(box); return new Blob(['PNG-region']); };
+  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} rasterize=${rasterize} />`);
   await harness.act(() => wait());
   assert.match(view.container.querySelector('.board-people').textContent, /alpha/);
   await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Rectangle' }).click());
@@ -142,6 +144,10 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
   const event = requests.find((r) => r.url === '/api/boards/plan/events');
   assert.ok(event, 'the participants got an event');
   assert.equal(event.body.text, 'The operator drew rectangle.');
+  // The event carries an image of the changed region with some context.
+  assert.equal(atob(event.body.image), 'PNG-region');
+  // The rectangle is at board (60, 60) 120x60 (the view starts at -40,-40).
+  assert.deepEqual(boxes[0], { x: -20, y: -20, width: 280, height: 220 });
   // Undo is a new version that deletes it.
   // Board keys do nothing while another tab shows.
   section.classList.remove('active');

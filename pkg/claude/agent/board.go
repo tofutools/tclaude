@@ -295,6 +295,7 @@ func formatBoardElement(e boardElementView) string {
 
 type boardSnapshotParams struct {
 	Output string `long:"output" short:"o" help:"File to write the PNG to"`
+	Region int    `long:"region" optional:"true" help:"Save the image of one operator change instead, as numbered in its board event mail"`
 }
 
 func boardSnapshotCmd() *cobra.Command {
@@ -302,7 +303,8 @@ func boardSnapshotCmd() *cobra.Command {
 		Use:   "snapshot <board>",
 		Short: "Save the board's latest PNG snapshot",
 		Long: "Writes the latest PNG rendering of the board, as the operator's dashboard last saved it, and says " +
-			"how far it lags the board's current version. Read it with an image-capable tool to see the layout.",
+			"how far it lags the board's current version. Read it with an image-capable tool to see the layout. " +
+			"With --region N it saves the cropped image of the change a board event mail named instead.",
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardSnapshotParams, _ *cobra.Command, args []string) {
@@ -316,13 +318,26 @@ func runBoardSnapshot(p *boardSnapshotParams, id string, stdout, stderr io.Write
 		fmt.Fprintln(stderr, "Error: -o <file.png> is required")
 		return rcInvalidArg
 	}
-	data, hdr, err := DaemonGetRaw(boardPath(id, "snapshot"))
+	if p.Region < 0 {
+		fmt.Fprintln(stderr, "Error: --region must be a positive number from a board event")
+		return rcInvalidArg
+	}
+	path := boardPath(id, "snapshot")
+	if p.Region > 0 {
+		path += "?region=" + strconv.Itoa(p.Region)
+	}
+	data, hdr, err := DaemonGetRaw(path)
 	if err != nil {
 		return boardErr(stderr, err)
 	}
 	if err := os.WriteFile(p.Output, data, 0o600); err != nil {
 		fmt.Fprintf(stderr, "Error: write %s: %v\n", p.Output, err)
 		return rcIOFailure
+	}
+	if p.Region > 0 {
+		fmt.Fprintf(stdout, "Wrote %s (%d bytes): the region the operator changed in event image %d. "+
+			"Use `board show` for the board's current elements.\n", p.Output, len(data), p.Region)
+		return rcOK
 	}
 	fmt.Fprintf(stdout, "Wrote %s (%d bytes). %s\n", p.Output, len(data),
 		snapshotAge(hdr.Get("X-Board-Snapshot-Version"), hdr.Get("X-Board-Version")))

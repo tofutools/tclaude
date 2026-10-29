@@ -249,6 +249,22 @@ export function contentBounds(elements) {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
+// changeBounds is the board area an edit batch touched: where the changed
+// elements are now and where they were before, padded with some context so
+// the image shows what the change sits next to. Null when nothing is left.
+export function changeBounds(map, changedIds, before, context = 80) {
+  const touched = [];
+  for (const id of new Set(changedIds)) {
+    const now = map.get(id);
+    if (now && !now.isDeleted) touched.push(now);
+    const prev = before.get(id);
+    if (prev && !prev.isDeleted) touched.push(prev);
+  }
+  const box = contentBounds(touched);
+  if (!box) return null;
+  return { x: box.x - context, y: box.y - context, width: box.width + context * 2, height: box.height + context * 2 };
+}
+
 function label(el, map) {
   if (el.type === 'text') return `text “${String(el.text || '').slice(0, 40)}”`;
   // A shape's label is the text inside it, when there is one.
