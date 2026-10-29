@@ -166,6 +166,9 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	// dry-run preview, the bytes written to disk, and the next GET all
 	// match exactly — config.Save persists this normalized form.
 	config.Normalize(cfg)
+	// The form shows every per-type checkbox, so an unchecked one is a
+	// choice `tclaude setup` must not undo.
+	cfg.Notifications.MarkNotifyTypesKnown()
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		http.Error(w, "marshal config: "+err.Error(), http.StatusInternalServerError)

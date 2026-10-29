@@ -115,8 +115,8 @@ func TestConfigureNotifications_FreshDeclineWritesNothing(t *testing.T) {
 	assert.False(t, config.NotificationsPresent(), "decline must not write a notifications block")
 }
 
-// The additive merge: a config predating a newer category gains that
-// category while every existing rule (including a from-specific advanced
+// The additive merge: a config that has not been offered a newer category
+// gains that category while every existing rule (including a from-specific advanced
 // rule), the cooldown and the Enabled state are preserved untouched.
 func TestConfigureNotifications_MergesMissingCategory(t *testing.T) {
 	tempHome(t)
@@ -132,6 +132,7 @@ func TestConfigureNotifications_MergesMissingCategory(t *testing.T) {
 		{From: "*", To: "error"},
 		{From: "working", To: "idle"}, // advanced rule, must round-trip
 	}
+	cfg.Notifications.KnownTypes = []string{"idle", "awaiting_permission", "awaiting_input", "error"}
 	require.NoError(t, config.Save(cfg))
 
 	out := captureStdout(t, func() {
@@ -148,8 +149,9 @@ func TestConfigureNotifications_MergesMissingCategory(t *testing.T) {
 		"advanced rules must be preserved")
 }
 
-// Disabling-then-merging: a disabled block still picks up new categories
-// (so re-enabling later includes them) without being flipped on.
+// Disabling-then-merging: a disabled block still picks up categories it
+// was never offered (so re-enabling later includes them) without being
+// flipped on.
 func TestConfigureNotifications_MergesIntoDisabledBlock(t *testing.T) {
 	tempHome(t)
 
@@ -158,6 +160,7 @@ func TestConfigureNotifications_MergesIntoDisabledBlock(t *testing.T) {
 	cfg.Notifications.Transitions = []config.TransitionRule{
 		{From: "*", To: "idle"}, // only one category
 	}
+	cfg.Notifications.KnownTypes = []string{"idle"}
 	require.NoError(t, config.Save(cfg))
 
 	configureNotifications(&Params{Yes: true})
@@ -167,5 +170,31 @@ func TestConfigureNotifications_MergesIntoDisabledBlock(t *testing.T) {
 	assert.False(t, n.Enabled, "merge must not enable a disabled block")
 	for _, ty := range config.NotifyTypes {
 		assert.True(t, n.NotifyTypeEnabled(ty), "category %q merged into disabled block", ty)
+	}
+}
+
+// THE regression: per-type categories the human unchecked (in the
+// dashboard or by hand-editing transitions) must survive `tclaude setup`,
+// both for a block written before known_types existed and for one that
+// records it.
+func TestConfigureNotifications_UncheckedTypesStayOff(t *testing.T) {
+	for _, known := range [][]string{nil, config.NotifyTypes} {
+		tempHome(t)
+
+		cfg := config.DefaultConfig()
+		cfg.Notifications.Enabled = true
+		cfg.Notifications.Transitions = []config.TransitionRule{{From: "*", To: "awaiting_permission"}}
+		cfg.Notifications.KnownTypes = known
+		require.NoError(t, config.Save(cfg))
+
+		out := captureStdout(t, func() {
+			configureNotifications(&Params{Yes: true})
+		})
+		assert.NotContains(t, out, "Added new notification")
+
+		n := notifConfig(t)
+		require.NotNil(t, n)
+		assert.Equal(t, []config.TransitionRule{{From: "*", To: "awaiting_permission"}}, n.Transitions,
+			"unchecked categories must not be re-enabled (known_types=%v)", known)
 	}
 }

@@ -1769,6 +1769,9 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 			for ty, on := range body.Types {
 				n.SetNotifyType(ty, on)
 			}
+			if len(body.Types) > 0 {
+				n.MarkNotifyTypesKnown()
+			}
 			if body.HumanMessages != nil {
 				if *body.HumanMessages {
 					// Absence is the default-on state — keep the config

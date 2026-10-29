@@ -3390,6 +3390,14 @@ type NotificationConfig struct {
 	// Browser delivery needs a dashboard tab open, granted the browser's
 	// notification permission, in a secure context (https or localhost).
 	Delivery string `json:"delivery,omitempty"`
+
+	// KnownTypes records the per-type categories (NotifyTypes) this block
+	// has already been offered, so `tclaude setup` can tell a category the
+	// human switched off (known, rule absent → leave it off) from one
+	// introduced by a newer tclaude (unknown → add it). Empty means a block
+	// written before tracking existed; it is treated as knowing
+	// notifyTypesBaseline. See MergeDefaultTypes.
+	KnownTypes []string `json:"known_types,omitempty"`
 }
 
 // Notification delivery channels — the accepted values of
@@ -4292,6 +4300,19 @@ var NotifyTypes = []string{
 	"exited",
 }
 
+// notifyTypesBaseline is the NotifyTypes set that existed before
+// NotificationConfig.KnownTypes was tracked. A block without KnownTypes is
+// treated as already knowing these, so a category the human unchecked is
+// not re-enabled by setup. Frozen: append new categories to NotifyTypes
+// only, never here.
+var notifyTypesBaseline = []string{
+	"idle",
+	"awaiting_permission",
+	"awaiting_input",
+	"error",
+	"exited",
+}
+
 // IsNotifyType reports whether to is one of the canonical NotifyTypes the
 // per-type selector manages. Transitions to any other state (or with a
 // non-wildcard From) are "advanced" rules the selector leaves untouched.
@@ -4343,11 +4364,13 @@ func (c *NotificationConfig) SetNotifyType(to string, on bool) {
 	c.Transitions = kept
 }
 
-// MergeDefaultTypes additively ensures every currently-supported
-// notification category (NotifyTypes) has its wildcard rule {from:"*",
-// to:<type>} present, adding any that are missing and returning the
-// destinations it added (in NotifyTypes order; nil if none). Existing
-// rules — including from-specific "advanced" rules — and the
+// MergeDefaultTypes additively enables every currently-supported
+// notification category (NotifyTypes) the block has not been offered
+// before (absent from KnownTypes, or from notifyTypesBaseline when
+// KnownTypes is empty), returning the destinations it added (in NotifyTypes
+// order; nil if none), and then marks every category known. A category the
+// human already knew about and switched off stays off. Existing rules —
+// including from-specific "advanced" rules — and the
 // cooldown/command/human-message settings are left untouched. This is how
 // `tclaude setup` picks up categories introduced in a newer tclaude
 // version without overwriting the user's other notification choices. A
@@ -4356,14 +4379,37 @@ func (c *NotificationConfig) MergeDefaultTypes() []string {
 	if c == nil {
 		return nil
 	}
+	known := c.knownNotifyTypes()
 	var added []string
 	for _, ty := range NotifyTypes {
-		if !c.NotifyTypeEnabled(ty) {
+		if !slices.Contains(known, ty) && !c.NotifyTypeEnabled(ty) {
 			c.SetNotifyType(ty, true)
 			added = append(added, ty)
 		}
 	}
+	c.MarkNotifyTypesKnown()
 	return added
+}
+
+// MarkNotifyTypesKnown records every current NotifyTypes category as
+// offered, so a later MergeDefaultTypes respects their on/off state. Call
+// it wherever the human edits the per-type selection. It writes
+// KnownTypes only when the effective known set differs, so a block whose
+// baseline already covers NotifyTypes stays minimal on disk.
+func (c *NotificationConfig) MarkNotifyTypesKnown() {
+	if c == nil || slices.Equal(c.knownNotifyTypes(), NotifyTypes) {
+		return
+	}
+	c.KnownTypes = slices.Clone(NotifyTypes)
+}
+
+// knownNotifyTypes is KnownTypes, or notifyTypesBaseline for a block that
+// predates tracking.
+func (c *NotificationConfig) knownNotifyTypes() []string {
+	if len(c.KnownTypes) == 0 {
+		return notifyTypesBaseline
+	}
+	return c.KnownTypes
 }
 
 // HumanMessagesIntent reports the human-messages preference independent of
