@@ -32,6 +32,7 @@ tclaude agent board show plan                 # one line per live element, plus 
 tclaude agent board show plan --since 12      # only what changed after version 12, deletions included
 tclaude agent board show plan --json          # the elements as Excalidraw JSON
 tclaude agent board snapshot plan -o plan.png # the dashboard's latest rendering
+tclaude agent board snapshot plan --region 3 -o change.png  # the image a board event named
 
 tclaude agent board add plan rectangle --x 100 --y 80 --w 160 --h 80 --text API
 tclaude agent board add plan text --x 100 --y 200 --text "Owned by the platform team"
@@ -92,11 +93,18 @@ participants. Each participant that is online receives operator mail with the
 subject `[board <id>]` and a hint to run `board show`. This is limited to one
 message per board every 3 seconds.
 
+The mail usually also names a numbered image of the change:
+`board snapshot <id> --region <n> -o change.png`. The dashboard renders the
+area the operator touched, padded with some of what is around it. The daemon
+keeps the newest 20 of these per board; an older number answers `404
+no_region`, and the full `snapshot` is the fallback.
+
 ## Storage
 
 Boards, elements and participants are in the `collab_boards`,
 `collab_board_elements` and `collab_board_participants` tables. The latest PNG
-snapshot is `~/.tclaude/data/boards/<id>.png`, which is private daemon state.
+snapshot is `~/.tclaude/data/boards/<id>.png` and the event images are under
+`~/.tclaude/data/boards/<id>.regions/`, all private daemon state.
 
 ## HTTP routes
 

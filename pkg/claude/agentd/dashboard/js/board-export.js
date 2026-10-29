@@ -48,6 +48,14 @@ export async function svgToPng(svg, box, { documentRef = globalThis.document, wi
   }
 }
 
+// blobToBase64 encodes a Blob (the PNG) for a JSON body.
+export async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return globalThis.btoa(binary);
+}
+
 // downloadText offers a text file to the operator (the .excalidraw export).
 export function downloadText(name, text, { documentRef = globalThis.document, windowRef = globalThis.window } = {}) {
   const url = windowRef.URL.createObjectURL(new windowRef.Blob([text], { type: 'application/json' }));
