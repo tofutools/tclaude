@@ -21248,7 +21248,7 @@ details[open]:not(.subgroups-folded) > summary .gp-subtree-total { display: none
 .gf-run-controls { display: inline-flex; align-items: center; gap: 4px; }
 .gf-section { margin: 0 0 6px; }
 .gf-section-head {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 4px; margin: 0 0 6px; padding: 3px 0;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 10px; margin: 0 0 6px; padding: 3px 0;
   border-bottom: 1px solid #21262d; color: #8b949e; font-size: 11px;
 }
 .gf-section-head:hover { color: #c9d1d9; border-bottom-color: #30363d; }
@@ -21258,7 +21258,10 @@ details[open]:not(.subgroups-folded) > summary .gp-subtree-total { display: none
 }
 .gf-section-toggle:disabled { cursor: default; }
 .gf-section-toggle:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
-.group-header-actions.gf-section-actions { margin: 0; }
+/* The controls (taller than the toggle, more so in wizard's fonts) overhang
+   into the head's padding instead of growing it, so a section line keeps
+   one height whether its controls ride it (folded) or not (open). */
+.group-header-actions.gf-section-actions { margin: -3px 0; }
 /* Open, the controls leave the line for the content's first column: the
    member table's untitled header cell, and the runs' slim title row,
    padded like that cell so both rows of controls share one left edge. */
