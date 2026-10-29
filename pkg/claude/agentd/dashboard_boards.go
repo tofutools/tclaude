@@ -687,13 +687,6 @@ func (l *boardEventLimiter) forget(id string) {
 	delete(l.last, id)
 }
 
-// ResetBoardEventsForTest clears the board event rate limiter.
-func ResetBoardEventsForTest() {
-	boardEvents.Lock()
-	defer boardEvents.Unlock()
-	boardEvents.last = map[string]time.Time{}
-}
-
 type boardEventRecipient struct {
 	AgentID   string `json:"agent_id"`
 	ConvID    string `json:"conv_id"`
