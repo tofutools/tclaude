@@ -2505,6 +2505,9 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		return "", "", nil, fmt.Errorf("load auto-memory posture for conversation %s: %w", convID, err)
 	}
 	session.ApplyAutoMemoryEnv(h, autoMemory, resumeEnv)
+	// Same as the spawn path: the agent view would move this resumed
+	// conversation out of its pane. See session.ApplyAgentViewEnv.
+	session.ApplyAgentViewEnv(h, resumeEnv)
 	// Mirror the spawn path's peer-messaging posture for the same reason, though
 	// this one rides the `--settings` payload the spec builds rather than the
 	// env: a session that explicitly opted INTO Claude Code's own messaging mesh
