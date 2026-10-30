@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -43,8 +44,9 @@ func expandAgentResumeSelector(params *NewParams) error {
 		return nil // likewise for an unusable --dir
 	}
 	if !strings.HasPrefix(selector, db.AgentIDPrefix) {
-		if _, _, err := resolveResumeConv(h, resumeIDFromParam(h, selector), params.Global, cwd); err == nil {
-			return nil
+		_, _, err := resolveResumeConv(h, resumeIDFromParam(h, selector), params.Global, cwd)
+		if !errors.Is(err, errResumeNotFound) {
+			return nil // resolved, or an error runNew reports
 		}
 	}
 	convID, err := ResolveAgentResumeSelector(selector)

@@ -43,6 +43,12 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 		}
 		params.Dir = params.Cwd
 	}
+	if err := adoptResumePassthrough(params); err != nil {
+		return err
+	}
+	if err := resolveResumeLast(params); err != nil {
+		return err
+	}
 	if err := expandAgentResumeSelector(params); err != nil {
 		return err
 	}
