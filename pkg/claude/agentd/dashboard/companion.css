@@ -354,5 +354,6 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-approval-from { color: #8b949e; font-size: 12px; }
 .companion-access { background: none; border: 1px solid #d29922; border-radius: 6px; color: #e6c07b; cursor: pointer; font-size: 12px; padding: 1px 7px; }
 
-/* A dialog opened from the window must not land behind it. */
-body:has(.modal-overlay.show) .companion-window { z-index: 90; }
+/* The dialogs the window opens must not land behind it. Other plain modals
+   stay under it, so an agent can be used beside the editor it is helping with. */
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show) .companion-window { z-index: 90; }

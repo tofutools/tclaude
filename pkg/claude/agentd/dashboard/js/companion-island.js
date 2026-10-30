@@ -30,6 +30,7 @@ import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { ApprovalCard, ElevatedBand, openAccessPanel } from './companion-approval.js';
+import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
@@ -983,8 +984,14 @@ export function CompanionApp({
     // Capture, like the Terminals tab: the shortcut works from the terminal,
     // the tabs and the title bar, before xterm or the browser sees it.
     const onKey = (event) => {
-      if (!isComposeMessageShortcut(event) || !event.target?.closest?.('.companion-window')) return;
-      if (doc.querySelector('.modal-overlay.show')) return;
+      if (!isComposeMessageShortcut(event)) return;
+      // A repeat with the composer open must not reach macOS Cmd+M, on any tab.
+      if (doc.querySelector('#operator-message-modal.show')) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (!event.target?.closest?.('.companion-window') || hasShownOverlay()) return;
       if (composeRef.current()) {
         event.preventDefault();
         event.stopPropagation();
