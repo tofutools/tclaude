@@ -190,6 +190,8 @@ export function createStandaloneTerminalsPage({
 
   actions = createTerminalShellActions({
     state, fetchImpl, windowRef, documentRef, onReattachPane: reattachPane,
+    // A page that lost the terminal must not hide it from whoever took it.
+    onPaneDisconnected: (pane) => detachConversations.delete(pane.seed.hideConv),
   });
 
   function consumeHash() {
