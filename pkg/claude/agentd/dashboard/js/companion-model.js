@@ -345,6 +345,15 @@ export function decisionsFor(snapshot, agent) {
     .sort((a, b) => a.id - b.id);
 }
 
+// pendingDecisions lists every unanswered decision in the fleet, oldest
+// first: the companion's "to decide" queue, so the operator can answer them
+// all in one place whichever agent asked.
+export function pendingDecisions(snapshot) {
+  return (snapshot?.messages || [])
+    .filter((m) => Array.isArray(m?.options) && m.options.length > 1 && !m.decision && (m.from_agent || m.from_conv))
+    .sort((a, b) => a.id - b.id);
+}
+
 // decisionSpeech is what voice says when a decision arrives.
 export function decisionSpeech(agent, decision) {
   const question = decision.subject || String(decision.body || '').split('\n')[0];
