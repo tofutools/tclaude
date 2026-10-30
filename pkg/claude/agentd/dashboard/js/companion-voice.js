@@ -118,6 +118,20 @@ export function voiceTransitions(prev, next) {
   return out;
 }
 
+// decisionArrivals compares each agent's newest open decision id with the
+// previous one and returns the agents that asked another decision since: a
+// question put while the agent already waits on the operator changes no
+// status, so voiceTransitions alone would let it pass unspoken. The first
+// sight of an agent is silent.
+export function decisionArrivals(prev, next) {
+  const out = [];
+  for (const [agentId, id] of next) {
+    const before = prev.get(agentId);
+    if (before !== undefined && id > before) out.push(agentId);
+  }
+  return out;
+}
+
 // createVoiceReader keeps one cursor per agent and fetches what it said
 // since. Reads for one agent run one at a time, so a reply is never handed
 // out twice; the cursor moves only to the newest text actually returned (a
