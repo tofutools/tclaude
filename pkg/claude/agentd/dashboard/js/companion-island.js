@@ -21,15 +21,15 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_MESSAGE_MAX, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
+  COMPANION_ACTIVE_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
   stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary, decisionsFor, decisionSpeech, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
-import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
+import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, claimCueOpen, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
-import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, voiceTransitions } from './companion-voice.js';
+import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 
 const html = htm.bind(h);
@@ -356,6 +356,7 @@ export function CompanionApp({
     },
   }), [dictationImpl, win]);
   const voiceStatuses = useRef(new Map());
+  const voiceDecisions = useRef(new Map());
   const [sending, setSending] = useState(false);
   const windowRef = useRef(null);
   const chipRects = useRef(new Map());
@@ -730,6 +731,10 @@ export function CompanionApp({
     }
     const said = voiceTransitions(voiceStatuses.current, next);
     voiceStatuses.current = next;
+    const asked = new Map();
+    for (const id of next.keys()) asked.set(id, decisionsFor(snapshot.value, agents.get(id)).at(-1)?.id || 0);
+    const arrived = decisionArrivals(voiceDecisions.current, asked);
+    voiceDecisions.current = asked;
     const named = next.size > 1;
     const claim = (key, value, fresh) => {
       const previous = readPref(prefs, key);
@@ -761,6 +766,15 @@ export function CompanionApp({
         if (spoken && !quiet()) speaker.speak(named ? `${agent.name}: ${spoken}` : spoken);
       }).catch(() => {});
       speakReply(true);
+    }
+    // A further decision from an agent already waiting on the operator.
+    const spoken = new Set(said.filter((s) => s.kind === 'needs').map((s) => s.agentId));
+    for (const agentId of arrived) {
+      const agent = agents.get(agentId);
+      const decision = agent && !spoken.has(agentId) && decisionsFor(snapshot.value, agent).at(-1);
+      if (!decision) continue;
+      if (!claim(`${VOICE_PREF}.decision.${agentId}`, String(decision.id), (prev) => decision.id > Number(prev))) continue;
+      if (!quiet()) speaker.speak(speakableText(decisionSpeech(agent, decision), 400));
     }
   }, [agents, voiceAgents, tabs, snapshot.value]);
 
@@ -907,14 +921,40 @@ export function CompanionApp({
     }
     showAgent(agent.agentId, { focus: false });
   }
+  const openForCueRef = useRef(openForCue);
+  openForCueRef.current = openForCue;
+
+  // A hand-over that lands while this dashboard tab is hidden waits for the
+  // operator to come back to it. One tab acts on each hand-over: the first
+  // to claim it in shared prefs.
+  const heldOpen = useRef(null);
+  const handOver = (cue) => {
+    if (!claimCueOpen(readPref(prefs, COMPANION_CUE_OPEN_PREF), cue)) return;
+    writePref(prefs, COMPANION_CUE_OPEN_PREF, String(cue.id));
+    openForCueRef.current(cue);
+  };
+  useEffect(() => {
+    const doc = win?.document;
+    const onVisible = () => {
+      const cue = heldOpen.current;
+      if (!cue || doc?.visibilityState === 'hidden') return;
+      heldOpen.current = null;
+      if (cueOpenDue(cue, Date.now())) handOver(cue);
+    };
+    doc?.addEventListener?.('visibilitychange', onVisible);
+    return () => doc?.removeEventListener?.('visibilitychange', onVisible);
+  }, [win]);
 
   async function playCue(cue) {
     const run = ++cueRun.current;
     setGuideCue(null);
     // An agent the Steward hands over opens in the window, in the dashboard
     // tab the operator is looking at only: a terminal attach takes over
-    // from any other view, so hidden tabs must not race for it.
-    if (cue.open && win?.document?.visibilityState !== 'hidden') openForCue(cue);
+    // from any other view, so a hidden tab holds it until it is shown.
+    if (cue.open) {
+      if (win?.document?.visibilityState === 'hidden') heldOpen.current = cue;
+      else handOver(cue);
+    }
     if (!cue.tab && !cue.path && !cue.target && !cue.note && !cue.marks?.length) return;
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const path = cuePath(cue);
