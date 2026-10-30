@@ -293,6 +293,35 @@ test('a decision from a pinned agent is answered with a button in its companion 
   assert.deepEqual(reply.body, { id: 7, choice: 2, body: 'keep it narrow' });
 });
 
+test('a cue can open the agent that needs the operator in the companion window', async (t) => {
+  const { view, harness, snap } = await setup(t);
+  assert.equal(view.container.querySelector('.companion-window'), null);
+  await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
+  await harness.act(async () => {
+    snap.value = { ...snap.value, companion_cues: [{ id: 3, agent_name: 'steward', open: B }] };
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const tab = harness.getByRole(view.container, 'tab', { name: /bravo/ });
+  assert.equal(tab.getAttribute('aria-selected'), 'true', 'bravo is pinned and shown');
+  assert.equal(harness.window.document.querySelector('.companion-guide-note'), null, 'an open-only cue draws nothing');
+});
+
+test('an open cue only pins the agent while the operator is typing to another tab', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, snap, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.input(view.container.querySelector('input.companion-draft'), 'half a thought');
+  await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
+  await harness.act(async () => {
+    snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(harness.getByRole(view.container, 'tab', { name: /alpha/ }).getAttribute('aria-selected'), 'true', 'the draft keeps its agent');
+  assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'false', 'bravo is pinned beside it');
+  assert.equal(view.container.querySelector('input.companion-draft').value, 'half a thought');
+});
+
 test('decision speech names the question and the options', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/companion-model.js');
