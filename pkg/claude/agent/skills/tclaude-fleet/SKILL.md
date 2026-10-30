@@ -118,6 +118,24 @@ When the operator brings an idea:
   task force (`tclaude agent task-force stand-down <g>`). Idle agents still
   cost attention in every brief.
 
+## Daily summary
+
+When the operator wants a regular round-up, schedule one to yourself
+(`self.schedule`; ask for it with the rest of the plan if it is refused):
+
+```bash
+tclaude agent cron add --name daily-summary --cron '0 17 * * 1-5' \
+  --body "Daily summary: read the fleet brief and send the operator what shipped, what is waiting on them and what is stuck."
+```
+
+On each tick, read `tclaude agent fleet --all --json` and send one
+`notify-human` titled "Daily summary" in three short lists: **shipped**
+(merged PRs, finished work), **waiting on you** (approvals, decisions, PRs to
+review, oldest first) and **stuck** (failed turns, agents idle with no PR).
+Leave a list out when it is empty, and when nothing changed say so in one
+line. Ask the operator for the time; `tclaude agent cron ls` and `cron rm`
+change or stop it.
+
 ## Decisions
 
 When the operator has to choose, ask with options so they answer in one
