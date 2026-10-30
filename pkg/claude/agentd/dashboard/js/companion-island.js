@@ -24,11 +24,12 @@ import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
-  stewardSummonBody, STEWARD_STARTERS, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary, decisionsFor, decisionSpeech, pendingDecisions,
+  stewardSummonBody, STEWARD_STARTERS, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenDue, cueOpenKey, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
+import { ApprovalCard, openAccessPanel } from './companion-approval.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 
@@ -163,62 +164,6 @@ function AddMenu({ agents, tabs, steward, onSummonSteward, onPin, onClose, busy 
       ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" onClick=${() => onPin(agent.agentId)}>
         <${agent.scribe ? Avatar : StatusDot} agent=${agent} status=${companionStatus(agent)} /> ${agent.name}</button>`)
         : html`<div class="companion-menu-empty">${filter ? 'No live agent matches.' : 'No other live agents.'}</div>`}
-    </div>
-  </div>`;
-}
-
-function secondsLeft(deadline, now) {
-  const at = Date.parse(deadline || '');
-  return Number.isFinite(at) ? Math.max(0, Math.round((at - now) / 1000)) : null;
-}
-
-// ApprovalCard is an agent's pending access request shown in its companion
-// tab: a whole plan's temporary permissions (`tclaude agent sudo`) or one
-// --ask-human command. Approve and Deny decide it the same way the Messages
-// tab does. The request body is agent-supplied text and is rendered as text.
-function ApprovalCard({ request, fetchImpl, notify }) {
-  const [busy, setBusy] = useState('');
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  const summary = approvalSummary(request);
-  const left = secondsLeft(request.deadline, now);
-  const expired = left === 0;
-  async function decide(decision) {
-    setBusy(decision);
-    try {
-      const response = await fetchImpl(`/api/access-requests/${encodeURIComponent(request.id)}/decision`, {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision }),
-      });
-      if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
-      // An extension leaves the request pending: free the buttons again.
-      if (decision === 'extend') setBusy('');
-    } catch (error) {
-      notify(`That decision could not be recorded: ${error?.message || error}`, true);
-      setBusy('');
-    }
-  }
-  return html`<div class=${`companion-approval ${summary.kind}`} role="group" aria-label=${summary.title}>
-    <div class="companion-approval-head">
-      <b>${summary.title}</b>
-      ${left !== null && html`<span class="companion-approval-timer" title="Declined automatically when this runs out">${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</span>`}
-    </div>
-    <div class="companion-approval-slugs">${summary.slugs.map((slug) => html`<code key=${slug}>${slug}</code>`)}</div>
-    <dl class="companion-approval-meta">
-      ${request.target_group && html`<dt>Group</dt><dd>${request.target_group}</dd>`}
-      ${request.target_conv_id && html`<dt>Target</dt><dd>${request.target_conv_title || request.target_conv_id}</dd>`}
-      ${request.scope_display && html`<dt>Scope</dt><dd><code>${request.scope_display}</code></dd>`}
-      ${request.path && !request.body && html`<dt>Endpoint</dt><dd><code>${request.method ? `${request.method} ` : ''}${request.path}</code></dd>`}
-    </dl>
-    ${request.body && html`<pre class="companion-approval-body">${request.body}</pre>`}
-    <div class="companion-approval-actions">
-      ${expired ? html`<span class="companion-approval-expired">Timing out…</span>` : html`<button type="button" class="companion-approval-extend" disabled=${!!busy}
-        title="Push the auto-decline back five minutes" onClick=${() => decide('extend')}>+5 min</button>`}
-      <button type="button" class="companion-approval-deny" disabled=${!!busy || expired} onClick=${() => decide('deny')}>${busy === 'deny' ? 'Denying…' : 'Deny'}</button>
-      <button type="button" class="companion-primary" disabled=${!!busy || expired} onClick=${() => decide('approve')}>${busy === 'approve' ? 'Approving…' : summary.kind === 'plan' ? 'Approve plan' : 'Approve'}</button>
     </div>
   </div>`;
 }
@@ -704,6 +649,11 @@ export function CompanionApp({
 
   function onChipClick(agentId, event) {
     stopPeek();
+    // Asking for permission is answered where it is quickest, in the panel.
+    if (agentId && approvalsFor(snapshot.value, agents.get(agentId)).length) {
+      openAccessPanel({ agentId, launcher: event.currentTarget, documentRef: win?.document });
+      return;
+    }
     openFrom.current = event.currentTarget.getBoundingClientRect();
     if (agentId) showAgent(agentId);
     else toggle();
@@ -1052,6 +1002,8 @@ export function CompanionApp({
   const statusOf = (agent) => (approvals(agent).length || decisions(agent).length ? 'needs' : companionStatus(agent));
   const chipAgents = tabs.map((id) => agents.get(id)).filter(Boolean);
   const queue = pendingDecisions(snapshot.value);
+  const toApprove = pendingApprovals(snapshot.value);
+  const elsewhere = toApprove.filter((request) => !chipAgents.some((agent) => approvalsFor({ access_requests: [request] }, agent).length));
   const showQueue = deciding && queue.length > 0;
   const askerName = (d) => agents.get(d.from_agent)?.name || d.from_title || 'an agent';
   const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
@@ -1071,7 +1023,7 @@ export function CompanionApp({
         onClick=${(event) => onChipClick(agent.agentId, event)}>
         <${Avatar} agent=${agent} />
         <span class="companion-chip-name">${agent.name}</span>
-        ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? 'approval' : decisions(agent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
+        ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? '🔑 approval' : decisions(agent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
       </button>`;
     })}
     ${queue.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
@@ -1079,6 +1031,12 @@ export function CompanionApp({
       title="Agents are waiting for you to choose"
       onClick=${(event) => { stopPeek(); openFrom.current = event.currentTarget.getBoundingClientRect(); setDeciding(true); setOpen(true); }}>
       <span class="companion-decide-mark" aria-hidden="true">◆</span><span class="companion-chip-name">${queue.length} to decide</span>
+    </button>`}
+    ${elsewhere.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
+      aria-label=${`${elsewhere.length} permission ${elsewhere.length === 1 ? 'request' : 'requests'} from other agents. Open them`}
+      title="Agents are asking for permission"
+      onClick=${(event) => { stopPeek(); openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document }); }}>
+      <span aria-hidden="true">🔑</span><span class="companion-chip-name">${elsewhere.length} to approve</span>
     </button>`}
     ${!chipAgents.length && html`<button type="button" class="companion-chip companion-chip-steward"
       aria-label="Open the companion (Ctrl+.)" title="Steward: your helper for all of tclaude (Ctrl+.)"
@@ -1128,6 +1086,10 @@ export function CompanionApp({
           onClick=${() => toggleVoice(activeAgent)}>${voiceAgents.has(activeAgent.agentId) ? '🔊' : '🔈'}</button>`}
         ${activeAgent && openTerminalsPane && html`<button type="button" aria-label="Open in the Terminals tab" title="Open in the Terminals tab"
           onClick=${() => moveToTerminals(activeAgent)}>⤢</button>`}
+        ${toApprove.length > 0 && html`<button type="button" class="companion-access"
+          aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
+          title="Agents are asking for permission"
+          onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
         <button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>
       </div>
     </header>

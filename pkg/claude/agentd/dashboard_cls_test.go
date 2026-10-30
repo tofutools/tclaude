@@ -24,7 +24,7 @@ func TestDashboardStartupLayoutCurtain(t *testing.T) {
 	for _, check := range []struct {
 		source, needle, why string
 	}{
-		{html, `class="hide-processes dashboard-booting"`, "the parser must curtain the shell before its first paint"},
+		{html, `class="hide-processes hide-collab dashboard-booting"`, "the parser must curtain the shell before its first paint"},
 		{css, `body.dashboard-booting > *`, "booting boxes must stay in layout but out of paint"},
 		{css, `animation: dashboard-boot-failsafe 0s 8s forwards`, "a JS fault must not leave the dashboard permanently hidden"},
 		{css, `animation: dashboard-boot-label-failsafe 0s 8s forwards`, "the CSS failsafe must retire its loading label"},
