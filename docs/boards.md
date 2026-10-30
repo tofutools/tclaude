@@ -1,5 +1,9 @@
 # Collab boards
 
+Boards are experimental and opt-in: turn on `features.collab` in the
+dashboard's Config tab (Experimental). Until then the Boards view, its API and
+the `tclaude agent board` commands are absent.
+
 A collab board is a shared drawing board for the operator and agents. The
 operator draws in the dashboard's board editor; agents read and change the same
 board with `tclaude agent board`. Boards live in the daemon's SQLite database,

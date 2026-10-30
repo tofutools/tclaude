@@ -71,7 +71,7 @@ let ready = false;
 function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
   // Boards is reached through the Collab switch; its nav anchor is hidden.
-  if (tab === 'boards') return true;
+  if (tab === 'boards') return !document.body.classList.contains('hide-collab');
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
 }

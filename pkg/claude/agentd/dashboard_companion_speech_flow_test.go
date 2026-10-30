@@ -20,6 +20,7 @@ import (
 // its text only, never its tool calls, from the agent's own transcript.
 func TestDashboardCompanionSpeech_ReturnsTheAgentsTextAfterTheCursor(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",

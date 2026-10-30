@@ -17,7 +17,7 @@ import {
 import { focusNextMessagesAttention, renderMailTab, renderAccessRequests } from './mail-bridge.js';
 import { renderGroupsTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
-import { applyProcessesTabVisibility } from './processes.js';
+import { applyCollabVisibility, applyProcessesTabVisibility } from './processes.js';
 import { renderDock } from './dock.js';
 // lastSnapshot is dashboard.js's shared state — read directly, written via the
 // setLastSnapshot setter. All deliberate, benign cycles are TDZ-safe —
@@ -264,6 +264,7 @@ export async function refresh(options) {
     renderDock();
     renderLinksTab();
     applyProcessesTabVisibility(data);
+    applyCollabVisibility(data);
     renderMailTab();
     renderDashDefaultProfile();
     renderDashSandboxProfile();
