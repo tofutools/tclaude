@@ -11,7 +11,7 @@
 }
 
 .companion-chips {
-  position: fixed; right: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 90;
+  position: fixed; right: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 950;
   display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap-reverse; justify-content: flex-end;
   max-width: calc(100vw - 32px); pointer-events: none;
 }
@@ -36,6 +36,7 @@
   background: #2d333b; color: #fff; font-size: 11px; font-weight: 700;
 }
 .companion-avatar.steward { background: var(--cmp-steward); font-size: 12px; }
+.companion-avatar.scribe { background: #2f4a6b; font-size: 11px; }
 .companion-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--cmp-muted); }
 .companion-dot.working { background: var(--cmp-blue); box-shadow: 0 0 0 3px rgba(88, 166, 255, .18); }
 .companion-dot.needs { background: var(--cmp-amber); }
@@ -43,7 +44,7 @@
 .companion-dot.offline { background: transparent; border: 1px solid var(--cmp-muted); }
 
 .companion-peek {
-  position: fixed; z-index: 91; width: min(420px, calc(100vw - 32px));
+  position: fixed; z-index: 951; width: min(420px, calc(100vw - 32px));
   background: var(--cmp-bg); color: var(--cmp-text); border: 1px solid var(--cmp-edge); border-radius: 10px;
   box-shadow: 0 14px 34px rgba(0, 0, 0, .55); overflow: hidden; pointer-events: none;
   animation: companion-peek-in .12s ease-out;
@@ -58,8 +59,11 @@
 }
 .companion-peek-foot { padding: 5px 10px; border-top: 1px solid var(--cmp-line); color: var(--cmp-muted); font-size: 11px; }
 
+/* The companion stays above page chrome (tooltips, pills, plain modals), and
+   under toasts (960), confirmations (1000) and the access banner. A plain
+   modal's document-level keys (Esc, Tab) still reach it from the draft row. */
 .companion-window {
-  position: fixed; z-index: 90; display: flex; flex-direction: column;
+  position: fixed; z-index: 950; display: flex; flex-direction: column;
   background: var(--cmp-bg); color: var(--cmp-text);
   border: 1px solid var(--cmp-edge); border-radius: 10px; overflow: hidden;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .6); transform-origin: 0 0;
@@ -156,7 +160,7 @@
 .companion-window.snapped .companion-resize::after { display: none; }
 
 .companion-snap-guide {
-  position: fixed; z-index: 89; pointer-events: none; border-radius: 8px;
+  position: fixed; z-index: 949; pointer-events: none; border-radius: 8px;
   background: rgba(88, 166, 255, .10); border: 1px dashed var(--cmp-blue);
 }
 .companion-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -199,14 +203,14 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 /* Guidance cues (js/companion-guide.js): a ring around the control an agent
    points at, and its note. Above the companion, below modal overlays. */
 .companion-guide-ring {
-  position: fixed; z-index: 92; pointer-events: none; border-radius: 8px;
+  position: fixed; z-index: 952; pointer-events: none; border-radius: 8px;
   border: 2px dashed #a371f7; box-shadow: 0 0 0 6px rgba(163, 113, 247, .18), 0 0 24px rgba(163, 113, 247, .35);
   animation: companion-guide-in .25s ease-out, companion-guide-pulse 1.6s ease-in-out .25s infinite;
 }
 @keyframes companion-guide-in { from { opacity: 0; transform: scale(1.15); } }
 @keyframes companion-guide-pulse { 50% { box-shadow: 0 0 0 10px rgba(163, 113, 247, .08), 0 0 24px rgba(163, 113, 247, .35); } }
-.companion-guide-anchor { position: fixed; z-index: 93; }
-.companion-guide-float { position: fixed; z-index: 93; right: 16px; bottom: calc(var(--footer-h, 29px) + 58px); }
+.companion-guide-anchor { position: fixed; z-index: 953; }
+.companion-guide-float { position: fixed; z-index: 953; right: 16px; bottom: calc(var(--footer-h, 29px) + 58px); }
 .companion-guide-note {
   display: flex; align-items: flex-start; gap: 8px; max-width: 330px; padding: 8px 10px;
   background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 9px;
@@ -230,7 +234,7 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
    the page; the window and chips step aside meanwhile. */
 body.companion-annotating .companion-window,
 body.companion-annotating .companion-chips { visibility: hidden; }
-.annotate-root { position: fixed; inset: 0; z-index: 95; }
+.annotate-root { position: fixed; inset: 0; z-index: 955; }
 .annotate-canvas {
   position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none;
   background: rgba(13, 17, 23, .08); outline: 2px dashed var(--cmp-amber); outline-offset: -3px;
@@ -282,7 +286,7 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 
 /* Agent marks on the operator's view (tcl-0waby5): hand-drawn circles,
    underlines and arrows a cue draws over the page. */
-.companion-guide-marks { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 92; pointer-events: none; overflow: visible; }
+.companion-guide-marks { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 952; pointer-events: none; overflow: visible; }
 .companion-guide-marks path {
   fill: none; stroke: #a371f7; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
   filter: drop-shadow(0 0 3px rgba(163, 113, 247, .55));
