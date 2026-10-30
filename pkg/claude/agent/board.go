@@ -43,7 +43,7 @@ func boardCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			boardLsCmd(), boardShowCmd(), boardSnapshotCmd(), boardCreateCmd(),
-			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardLayoutCmd(), boardFromProcessCmd(),
+			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardLayoutCmd(), boardFromProcessCmd(), boardFromFleetCmd(),
 		},
 	}.ToCobra()
 }

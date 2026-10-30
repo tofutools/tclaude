@@ -301,6 +301,7 @@ export function stewardBrief() {
     '  (arrows join shapes with --from/--to). Build a flow step by step with `board add <id>',
     '  rectangle --right-of <prev> --link --text "<step>"`, and tidy it with `board layout <id>`.',
     '  `board from-process <id> <template>` draws a process template as a flowchart to talk it through.',
+    '  `board from-fleet <id>` draws the fleet (a column per group, a card per agent) to talk staffing over.',
     '  See `tclaude agent board --help`. Sketch a plan,',
     '  annotate theirs, or answer a question as a diagram when a picture is clearer than words.',
     '- "[annotation]" mail is the operator marking up the dashboard view they are on: a numbered',
