@@ -23,6 +23,27 @@ func TestApplyAgentViewEnvDisablesTheViewForClaudeCode(t *testing.T) {
 	assert.Equal(t, "1", env[harness.AgentViewDisableEnvVar])
 }
 
+// The launch paths call ApplyAgentViewEnv first and ApplyContextFeaturesEnv
+// second. That order is the opt-in: only an explicit agent-view=on may clear the
+// default, and reordering them would leave the selector claiming "on" while the
+// view stays off.
+func TestAgentViewContextFeatureOverridesTheDefault(t *testing.T) {
+	claude, err := harness.ResolveSpawnable(harness.DefaultName)
+	require.NoError(t, err)
+
+	for state, want := range map[string]string{
+		harness.ContextFeatureOn:  "",
+		harness.ContextFeatureOff: "1",
+	} {
+		env := map[string]string{}
+		ApplyAgentViewEnv(claude, env)
+		ApplyContextFeaturesEnv(claude, map[string]string{"agent-view": state}, env)
+		got, ok := env[harness.AgentViewDisableEnvVar]
+		assert.True(t, ok, state)
+		assert.Equal(t, want, got, state)
+	}
+}
+
 func TestApplyAgentViewEnvNoOpForOtherHarnesses(t *testing.T) {
 	codex, err := harness.ResolveSpawnable(harness.CodexName)
 	require.NoError(t, err)

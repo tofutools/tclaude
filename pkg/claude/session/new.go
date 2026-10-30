@@ -1491,8 +1491,9 @@ func runNew(params *NewParams) error {
 	// memory files that every other agent on the repo would inherit. No-op for
 	// harnesses without an auto-memory system. See ApplyAutoMemoryEnv.
 	ApplyAutoMemoryEnv(h, autoMemory, additionalEnv)
-	// A managed pane cannot have Claude Code's agent view: it moves the
-	// conversation out of the pane. See ApplyAgentViewEnv.
+	// Claude Code's agent view moves the conversation out of the pane, so it
+	// defaults off. This must stay before ApplyContextFeaturesEnv, which is how
+	// an explicit agent-view=on opts back in. See ApplyAgentViewEnv.
 	ApplyAgentViewEnv(h, additionalEnv)
 	// Trim this pane's Claude Code startup context to what the operator actually
 	// wants the agent thinking about. Sparse and opt-in: an empty map injects
