@@ -55,9 +55,16 @@ func TestSteward_AccessFromConfigAndReachableByAnyAgent(t *testing.T) {
 	assert.True(t, has(conv, agentd.PermMessageDirect), "messaging by default")
 	assert.False(t, has(conv, agentd.PermAgentSpawn), "no spawning by default")
 	assert.False(t, has(conv, agentd.PermNodeExec), "a summon cannot ask for more")
+	spaced := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "slugs": []string{agentd.PermNodeExec}, "scope": map[string]any{"kind": " steward"}, "brief": "Help.",
+	})))
+	require.Equalf(t, http.StatusOK, spaced.Code, "summon body=%s", spaced.Body.String())
+	assert.False(t, has(decodeScribeResp(t, spaced).ConvID, agentd.PermNodeExec), "nor by spelling the scope differently")
 
 	assert.Less(t, send("steward"), 300, "the Steward has an address")
 	assert.Less(t, send(conv), 300, "and takes mail from any agent")
+	copied := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": conv, "cc": []string{"steward"}, "body": "copy"}), worker)
+	assert.NotEqual(t, http.StatusNotFound, testharness.Serve(f.Mux, copied).Code, "the address works in cc too")
 	rows, err := db.ListAgentMessagesForConv(conv, 10)
 	require.NoError(t, err)
 	delivered := 0

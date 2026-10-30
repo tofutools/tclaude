@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -91,6 +92,37 @@ func liveStewardConvs() []string {
 // isStewardAddress reports whether a message target means "the Steward".
 func isStewardAddress(to string) bool {
 	return strings.EqualFold(strings.TrimSpace(to), stewardAddress) && collabRoutesEnabled()
+}
+
+// resolveStewardAddresses turns the address "steward" into the newest live
+// Steward, in To and Cc alike, before any routing looks at them. It answers the
+// request and returns false when no Steward is online.
+func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
+	var steward string
+	resolve := func(address *string) bool {
+		if !isStewardAddress(*address) {
+			return true
+		}
+		if steward == "" {
+			stewards := liveStewardConvs()
+			if len(stewards) == 0 {
+				writeError(w, http.StatusNotFound, "not_found", "no Steward is online; the operator can summon one from the companion window")
+				return false
+			}
+			steward = stewards[len(stewards)-1]
+		}
+		*address = steward
+		return true
+	}
+	if !resolve(&req.To) {
+		return false
+	}
+	for i := range req.Cc {
+		if !resolve(&req.Cc[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // reachableAsSteward reports whether conv is a live Steward. Any agent may
