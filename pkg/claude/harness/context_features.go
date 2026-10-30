@@ -115,7 +115,7 @@ var contextFeatureCatalog = []ContextFeature{
 	{
 		Slug:   "agent-view",
 		Label:  "Agent view",
-		Descr:  "The in-harness agent/fleet view. tclaude's dashboard already covers this.",
+		Descr:  "The in-harness agent/fleet view. Off by default in tclaude panes: it moves the conversation out of the pane, where tclaude cannot track it. Set to on to keep it anyway.",
 		EnvVar: "CLAUDE_CODE_DISABLE_AGENT_VIEW",
 	},
 	{

@@ -294,6 +294,14 @@ default; your own configuration rules.
   cross-pollute the per-project memory store. Opt back in per launch with
   `--auto-memory`. `CLAUDE.md` is unaffected. See
   [memory-files](utilities.md#tclaude-memory-files) for inspecting the store.
+- **The agent view is off by default.** tclaude launches Claude Code with
+  `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, so left arrow in a managed pane is a plain
+  cursor key. The view forks a conversation into a background daemon outside
+  tmux, where tclaude cannot track it, deliver messages to it, or attach to it,
+  and quitting the view ends the pane. Opt back in per launch with
+  `--context-features agent-view=on` if you accept that. `tclaude task run`
+  and `tclaude agent spawn --non-interactive` have no opt-in; the flag is
+  rejected for the latter. `claude` run outside tclaude is unaffected.
 - **Cross-session messaging is off by default.** Claude Code ships its own
   agent-to-agent mesh (the `ListAgents` and `SendMessage` tools over a
   per-session socket). That is a second coordination channel with none of
