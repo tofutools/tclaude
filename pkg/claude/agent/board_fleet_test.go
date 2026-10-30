@@ -66,6 +66,17 @@ func TestFleetBoardElementsDrawAColumnPerGroup(t *testing.T) {
 	assert.Contains(t, els, "fa-agt_a-title")
 	assert.Equal(t, "👩💻 asker\nneeds you: permission", els["fa-agt_a-api-label"]["text"])
 
+	// A card the operator deleted comes back above its tombstone's version.
+	elems, _ = fleetBoardElements(&fleet, &boardDoc{ID: "fleet", Elements: []json.RawMessage{
+		json.RawMessage(`{"id":"fa-agt_a-api","type":"rectangle","version":9,"isDeleted":true}`),
+	}}, false)
+	for _, e := range elems {
+		if e["id"] == "fa-agt_a-api" {
+			assert.Equal(t, int64(10), e["version"])
+			assert.Equal(t, false, e["isDeleted"])
+		}
+	}
+
 	// A redraw stays where the previous map was, under the operator's marks.
 	prev := &boardDoc{ID: "fleet", Elements: []json.RawMessage{
 		json.RawMessage(`{"id":"fg-title","type":"text","version":2,"x":0,"y":500,"width":300,"height":30,"text":"Fleet"}`),

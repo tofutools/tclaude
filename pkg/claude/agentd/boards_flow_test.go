@@ -180,6 +180,27 @@ func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, serve(http.MethodPatch, "/api/boards/plan-a", map[string]any{"elements": []any{}}).Code)
 }
 
+// `board fleet-changes` tells the operator's deleted cards from a redraw's by
+// the tombstone's author, which a read with ?since= returns.
+func TestBoardsTombstoneKeepsItsAuthor(t *testing.T) {
+	_ = newFlow(t)
+	dash := agentd.BuildDashboardHandlerForTest()
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+	}
+	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "map", "title": "Map"}).Code)
+	require.Equal(t, http.StatusOK, serve(http.MethodPatch, "/api/boards/map", map[string]any{"elements": []map[string]any{rect("card", 1, 1, 0)}}).Code)
+	gone := rect("card", 2, 2, 0)
+	gone["isDeleted"] = true
+	require.Equal(t, http.StatusOK, serve(http.MethodPatch, "/api/boards/map", map[string]any{"elements": []map[string]any{gone}}).Code)
+
+	assert.Empty(t, decodeBoard(t, serve(http.MethodGet, "/api/boards/map", nil)).Elements, "a plain read has live elements only")
+	b := decodeBoard(t, serve(http.MethodGet, "/api/boards/map?since=0", nil))
+	require.Len(t, b.Elements, 1)
+	assert.True(t, b.Elements[0].IsDeleted)
+	assert.Equal(t, "operator", b.Elements[0].CustomData.Author)
+}
+
 func TestBoardsAgentRoutesNeedSlugsAndForceAuthor(t *testing.T) {
 	f := newFlow(t)
 	const conv = "board-agent-conv"
