@@ -340,12 +340,13 @@ test('a hand-over cue on a hidden dashboard tab waits until the tab is shown', a
   assert.equal(view.container.querySelector('.companion-window'), null, 'nothing opens while hidden');
   await show();
   assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true', 'bravo opens on return');
-  assert.equal(prefs.store.get('tclaude.dash.companion.cue-open'), '5', 'the hand-over is claimed for the other dashboard tabs');
+  assert.match(prefs.store.get('tclaude.dash.companion.cue-open'), /^5@/, 'the hand-over is claimed for the other dashboard tabs');
 
   // A hand-over another tab already took, or one that went stale, is dropped.
   const g = await harness.importDashboardModule('js/companion-guide.js');
-  assert.equal(g.claimCueOpen('5', { id: 5 }), false);
-  assert.equal(g.claimCueOpen('5', { id: 6 }), true);
+  assert.equal(g.claimCueOpen('5@t1', { id: 5, at: 't1' }), false);
+  assert.equal(g.claimCueOpen('5@t1', { id: 6, at: 't2' }), true);
+  assert.equal(g.claimCueOpen('5@t1', { id: 1, at: 't3' }), true, 'ids restart with the daemon');
   assert.equal(g.claimCueOpen(null, { id: 1 }), true);
   assert.equal(g.cueOpenDue({ at: new Date(1000).toISOString() }, 1000 + g.CUE_OPEN_PATIENCE_MS + 1), false);
   assert.equal(g.cueOpenDue({ at: new Date(1000).toISOString() }, 2000), true);
