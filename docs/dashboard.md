@@ -618,13 +618,22 @@ on a page, how your groups are configured, or to help set up groups,
 profiles, processes or your sandbox. It proposes a plan first and runs each
 change with `--ask-human`, so you approve every mutation in the dashboard.
 While the Steward's tab is open and you have not typed anything, one-click
-starters sit above the message row: **What can I do here?**, **Review my
+starters sit above the message row: **Brief me**, **What can I do here?**, **Review my
 setup**, **Set up my repos**, **Create a dev flow** and **Sketch on a board**.
 For setup the Steward follows the bundled `tclaude-setup` skill: it inspects
 first, asks only what it cannot infer, shows a numbered plan, and requests the
 permissions for the whole plan once, for a bounded time. You approve that
 request as a card in its companion tab. Run `tclaude setup
 --install-agent-skills` after upgrading to install new bundled skills.
+
+The Steward sees the whole fleet. `tclaude agent fleet` lists every agent
+in every group with its status, task link and presented PRs, and ranks what
+needs you: pending approvals first, then permission prompts, questions,
+failed turns, agents tclaude is recovering, presented PRs, unread messages
+and agents that have sat idle for ten minutes or more. **Brief me** asks the
+Steward for that, most urgent first. The listing needs `fleet.read`, which
+the Steward is granted when it is summoned and other agents are not;
+`--group <name>` narrows it to one group and `--json` gives the raw brief.
 
 The Steward can also see and point at the dashboard. `tclaude agent guide
 view` tells it which view you are on (it needs `dashboard.view.read`), and
