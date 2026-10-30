@@ -14,6 +14,11 @@
 // Everything here is DOM-free so it can be tested directly.
 
 export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
+// Whether the window is open: per browser tab (sessionStorage), since an open
+// window attaches its terminal, and that takes over from other views.
+export const COMPANION_OPEN_PREF = 'tclaude.dash.companion.open';
+// The live helpers already seen, so one the operator closed stays closed.
+export const COMPANION_HELPERS_PREF = 'tclaude.dash.companion.helpers';
 export const COMPANION_ACTIVE_PREF = 'tclaude.dash.companion.active';
 // The newest hand-over cue (guide show --open) a dashboard tab acted on.
 export const COMPANION_CUE_OPEN_PREF = 'tclaude.dash.companion.cue-open';
@@ -65,7 +70,7 @@ export function isAgentId(value) {
 // over a stale one so the status reflects the running session.
 export function companionAgents(snapshot) {
   const out = new Map();
-  const add = (member, steward) => {
+  const add = (member, steward, scribe) => {
     const agentId = member?.agent_id;
     if (!isAgentId(agentId)) return;
     const prev = out.get(agentId);
@@ -79,14 +84,16 @@ export function companionAgents(snapshot) {
       detail: String(member.state?.status_detail || ''),
       harness: String(member.harness || member.state?.harness || ''),
       steward: steward || prev?.steward === true,
+      scribe: scribe || prev?.scribe === true,
     }));
   };
   for (const group of snapshot?.groups || []) {
-    const steward = group?.scribe === true && group?.name === STEWARD_NAME;
-    for (const member of group?.members || []) add(member, steward);
+    const scribe = group?.scribe === true;
+    const steward = scribe && group?.name === STEWARD_NAME;
+    for (const member of group?.members || []) add(member, steward, scribe);
   }
   // Agents outside every group are still agents the operator can pin.
-  for (const agent of [...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])]) add(agent, false);
+  for (const agent of [...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])]) add(agent, false, false);
   return out;
 }
 
@@ -99,6 +106,37 @@ export function stewardAgent(agents) {
     fallback = fallback || agent;
   }
   return fallback;
+}
+
+// liveHelpers lists the live scribes and Stewards, whichever summoned them:
+// the agents the companion keeps track of by itself.
+export function liveHelpers(agents) {
+  const out = [];
+  for (const agent of agents.values()) {
+    if (agent.scribe && agent.online) out.push(agent.agentId);
+  }
+  return out;
+}
+
+// syncHelperTabs follows the live helpers: one newly seen gets a tab, one
+// that went away loses it, and one the operator closed stays closed while it
+// lives (it is known, so it is not added again). The tab on screen is kept
+// even when its helper ends, for the operator to read and close. Tabs the
+// operator pinned are never pushed out by a helper.
+export function syncHelperTabs(tabs, live, known, keep) {
+  const alive = new Set(live);
+  let next = tabs;
+  const nextKnown = new Set();
+  for (const id of known) {
+    if (alive.has(id)) nextKnown.add(id);
+    else if (id !== keep) next = withoutTab(next, id);
+  }
+  for (const id of live) {
+    if (known.has(id)) continue;
+    nextKnown.add(id);
+    if (next.length < COMPANION_MAX_TABS) next = withTab(next, id);
+  }
+  return { tabs: next, known: nextKnown };
 }
 
 // companionStatus folds an agent's runtime state into the four states a chip
