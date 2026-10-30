@@ -34,8 +34,9 @@ export const STEWARD_SCOPE = Object.freeze({ kind: 'steward' });
 // The Steward is read-only by default: it inspects and explains through the
 // tclaude CLI's read surfaces. Anything that changes state goes through a
 // per-command `--ask-human` approval the operator decides in the dashboard.
-// The one write is boards.write: drawing on a shared board with the operator
-// is conversation, not configuration.
+// The writes are boards.write and human.notify: drawing on a shared board
+// with the operator, and putting a decision to them, are conversation, not
+// configuration.
 export const STEWARD_SLUGS = Object.freeze([
   'process.templates.read',
   'process.runs.read',
@@ -48,6 +49,7 @@ export const STEWARD_SLUGS = Object.freeze([
   'boards.read',
   'boards.write',
   'fleet.read',
+  'human.notify',
 ]);
 
 const AGENT_ID = /^agt_[0-9a-f]{32}$/;
@@ -271,6 +273,10 @@ export function stewardBrief() {
     '  (approvals, permission prompts, questions, failed turns, PRs, unread messages, idle agents).',
     '  When asked for a brief, lead with what needs them, oldest first, one line each, then what is',
     '  moving. Do not paste the raw listing.',
+    '- When the operator has to choose (a direction, a design, a trade-off), put it as a decision:',
+    '  `tclaude agent notify-human -s "<question>" "<context>" --option "<A>" --option "<B>"',
+    '  [--recommend N] [--attach mock.png]`. It shows as buttons in your companion tab and the pick',
+    '  comes back as "Decision: <option>" mail. Decide mechanics yourself; ask about taste.',
     '- Explain tclaude and the dashboard view the operator is on ("what can I do here?").',
     '- Inspect their setup through the tclaude CLI read surfaces: `tclaude agent groups ls`,',
     '  `tclaude agent ls`, `tclaude agent profiles ls`, `tclaude agent templates ls`,',
@@ -326,6 +332,24 @@ export function stewardSummonBody() {
     background: true,
     brief: stewardBrief(),
   };
+}
+
+// decisionsFor lists the decisions the given agent put to the operator
+// (`notify-human --option ...`) that are still unanswered, oldest first.
+export function decisionsFor(snapshot, agent) {
+  if (!agent) return [];
+  return (snapshot?.messages || [])
+    .filter((m) => Array.isArray(m?.options) && m.options.length > 1 && !m.decision
+      && (m.from_agent ? m.from_agent === agent.agentId : m.from_conv === agent.convId))
+    .sort((a, b) => a.id - b.id);
+}
+
+// decisionSpeech is what voice says when a decision arrives.
+export function decisionSpeech(agent, decision) {
+  const question = decision.subject || String(decision.body || '').split('\n')[0];
+  const options = decision.options.map((o, i) => (i + 1 === decision.recommended ? `${o}, which it recommends` : o));
+  const ended = /[.?!]$/.test(question) ? question : `${question}.`;
+  return `${agent.name} asks you to decide: ${ended} ${options.length} options: ${options.join('; ')}.`;
 }
 
 // approvalsFor lists the pending access requests (a `tclaude agent sudo`
