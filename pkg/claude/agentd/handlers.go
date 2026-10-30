@@ -684,7 +684,7 @@ func resolveMessageRouting(w http.ResponseWriter, fromID, targetID string) (grou
 		}
 		return via.ID, via.Name, true
 	}
-	if !holdsPermission(fromID, PermMessageDirect) {
+	if !holdsPermission(fromID, PermMessageDirect) && !reachableAsSteward(targetID) {
 		writeError(w, http.StatusForbidden, "auth",
 			fmt.Sprintf("no shared group with %s and you do not own a group containing it; "+
 				"messaging an agent outside your group requires the %q permission "+
@@ -774,6 +774,14 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	if strings.HasPrefix(req.To, multicastPrefix) {
 		handleMulticast(w, fromID, req)
 		return
+	}
+	if isStewardAddress(req.To) {
+		stewards := liveStewardConvs()
+		if len(stewards) == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no Steward is online; the operator can summon one from the companion window")
+			return
+		}
+		req.To = stewards[len(stewards)-1]
 	}
 	target, matches, err := agent.ResolveSelector(req.To)
 	if errors.Is(err, agent.ErrAmbiguous) {

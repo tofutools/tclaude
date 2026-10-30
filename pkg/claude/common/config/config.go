@@ -101,6 +101,9 @@ type Config struct {
 	// Claude Code at its default model/effort); see ScribeProfileName.
 	Scribe *ScribeConfig `json:"scribe,omitempty"`
 
+	// Steward sets what a freshly summoned Steward may do — see StewardConfig.
+	Steward *StewardConfig `json:"steward,omitempty"`
+
 	// Audit holds the audit-log retention policy (JOH-268). Absent block /
 	// absent keys fall back to the built-in default — see
 	// ResolvedAuditRetentionDays.
@@ -1318,6 +1321,47 @@ func (c *Config) ScribeProfileName() string {
 		return ""
 	}
 	return strings.TrimSpace(c.Scribe.Profile)
+}
+
+// StewardConfig is the access a Steward (the companion's chief of staff) is
+// born with. Absent or blank fields take the defaults: operator-level reads and
+// messaging. Anything beyond that goes through an approval.
+type StewardConfig struct {
+	// Reads is "operator" or "fleet"; see the StewardReads constants.
+	Reads string `json:"reads,omitempty"`
+	// Writes is "none", "messaging" or "workers"; see the StewardWrites
+	// constants.
+	Writes string `json:"writes,omitempty"`
+}
+
+const (
+	// StewardReadsOperator reads what the operator reads across tclaude.
+	StewardReadsOperator = "operator"
+	// StewardReadsFleet reads the fleet, the boards and the dashboard view.
+	StewardReadsFleet = "fleet"
+
+	// StewardWritesNone keeps only what talking to the operator needs.
+	StewardWritesNone = "none"
+	// StewardWritesMessaging adds messaging any agent.
+	StewardWritesMessaging = "messaging"
+	// StewardWritesWorkers adds starting workers and setting their task.
+	StewardWritesWorkers = "workers"
+)
+
+// StewardReads returns the configured read level, defaulted. Nil-safe.
+func (c *Config) StewardReads() string {
+	if c != nil && c.Steward != nil && c.Steward.Reads != "" {
+		return c.Steward.Reads
+	}
+	return StewardReadsOperator
+}
+
+// StewardWrites returns the configured write level, defaulted. Nil-safe.
+func (c *Config) StewardWrites() string {
+	if c != nil && c.Steward != nil && c.Steward.Writes != "" {
+		return c.Steward.Writes
+	}
+	return StewardWritesMessaging
 }
 
 // CostConfig holds cost display knobs and estimated API spend alert limits.
@@ -4219,6 +4263,19 @@ func Validate(c *Config) []string {
 					name, *value, MaxTerminalAttachDelayMS))
 			}
 		}
+	}
+
+	switch c.StewardReads() {
+	case StewardReadsOperator, StewardReadsFleet:
+	default:
+		errs = append(errs, fmt.Sprintf("steward.reads %q is not one of %s, %s",
+			c.StewardReads(), StewardReadsOperator, StewardReadsFleet))
+	}
+	switch c.StewardWrites() {
+	case StewardWritesNone, StewardWritesMessaging, StewardWritesWorkers:
+	default:
+		errs = append(errs, fmt.Sprintf("steward.writes %q is not one of %s, %s, %s",
+			c.StewardWrites(), StewardWritesNone, StewardWritesMessaging, StewardWritesWorkers))
 	}
 
 	// An empty/absent scheme resolves to the default; only a non-empty value

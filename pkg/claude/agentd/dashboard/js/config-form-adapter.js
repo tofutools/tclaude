@@ -623,6 +623,8 @@ function populateConfigForm(cfg) {
   // means the harness default. Async (fetches the profile list), like the ask
   // profile select above.
   void populateScribeProfileSelect((cfg.scribe || {}).profile);
+  setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
+  setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
 
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
@@ -996,6 +998,13 @@ function assembleConfig() {
   const scribeProfile = controlValue($('#scribe-profile')).trim();
   if (scribeProfile) scribe.profile = scribeProfile; else delete scribe.profile;
   if (Object.keys(scribe).length) cfg.scribe = scribe; else delete cfg.scribe;
+  // Like scribe: the defaults are not written out.
+  const steward = (cfg.steward && typeof cfg.steward === 'object') ? cfg.steward : {};
+  const stewardReads = controlValue($('#cfg-steward-reads'));
+  const stewardWrites = controlValue($('#cfg-steward-writes'));
+  if (stewardReads && stewardReads !== 'operator') steward.reads = stewardReads; else delete steward.reads;
+  if (stewardWrites && stewardWrites !== 'messaging') steward.writes = stewardWrites; else delete steward.writes;
+  if (Object.keys(steward).length) cfg.steward = steward; else delete cfg.steward;
 
   // focus is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, set the one form-owned key, and

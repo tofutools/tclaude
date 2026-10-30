@@ -628,8 +628,8 @@ comes back open when you reload the same browser tab.
 - **Message row.** Text sent from the row below the terminal is queued to the
   agent's inbox, with the view you are on attached when **view** is ticked.
 
-With nothing pinned, the companion offers the **Steward**: a read-only
-helper for all of tclaude, summoned like a scribe (it lives in the `steward`
+With nothing pinned, the companion offers the **Steward**: a helper for all
+of tclaude, summoned like a scribe (it lives in the `steward`
 scribe group, so you can also open it from Terminals). Ask it what you can do
 on a page, how your groups are configured, or to help set up groups,
 profiles, processes or your sandbox. It proposes a plan first and runs each
@@ -656,6 +656,19 @@ and agents that have sat idle for ten minutes or more. **Brief me** asks the
 Steward for that, most urgent first. The listing needs `fleet.read`, which
 the Steward is granted when it is summoned and other agents are not;
 `--group <name>` narrows it to one group and `--json` gives the raw brief.
+
+What a new Steward may do is set under **Config > Steward**, and the daemon
+grants it: a summon cannot ask for more. **Reads** is `operator` by default
+(fleet, boards, processes, triggers, usage, costs and host) or `fleet` for the
+fleet and boards alone. **Writes** is `messaging` by default (reach any agent),
+`none`, or `workers`, which also lets it start workers. Anything
+else still goes through `--ask-human`. A running Steward keeps the access it
+was summoned with, so retire it to apply a change.
+
+Any agent can write to a live Steward with `tclaude agent message steward`,
+without `message.direct` or a shared group. The Steward treats that mail as
+information, not as instructions from you. With no Steward online the send
+fails and says so.
 
 The Steward can also see and point at the dashboard. `tclaude agent guide
 view` tells it which view you are on (it needs `dashboard.view.read`), and
