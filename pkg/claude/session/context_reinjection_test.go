@@ -265,6 +265,9 @@ func TestContextReinjection_MainCompactionBesideSubagentQueuesAtNextMainHook(t *
 	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read", AgentID: "sub-1"})
 	assert.Empty(t, reinjectedMessages(t))
 
+	fireHook(t, HookCallbackInput{HookEventName: "UserPromptSubmit", Prompt: "next"})
+	assert.Empty(t, reinjectedMessages(t), "a prompt does not prove the compaction finished")
+
 	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
 	assert.Len(t, reinjectedMessages(t), 1)
 }
@@ -331,4 +334,15 @@ func TestContextReinjection_SubagentCompactionKeepsTheSubagentLedger(t *testing.
 	state, err := LoadSessionState("sess-1")
 	require.NoError(t, err)
 	assert.True(t, state.Subagents.Has("sub-1"))
+}
+
+func TestContextReinjection_OtherHarnessesStillResetTheLedgerOnCompact(t *testing.T) {
+	standingOrderFixture(t, "codex")
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	fireHook(t, HookCallbackInput{HookEventName: "SessionStart", Source: "compact"})
+
+	state, err := LoadSessionState("sess-1")
+	require.NoError(t, err)
+	assert.False(t, state.Subagents.Has("sub-1"))
 }

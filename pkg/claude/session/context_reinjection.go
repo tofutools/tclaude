@@ -97,6 +97,13 @@ func QueueContextReinjection(input HookCallbackInput, envSessionID string) {
 	queueReinjection(convID, boundary)
 }
 
+// subagentsShareCompactionHooks reports whether a harness announces a
+// subagent's compaction through the main thread's hooks.
+func subagentsShareCompactionHooks(harnessName string) bool {
+	h, err := harness.Resolve(harnessName)
+	return err == nil && h.Compaction != nil
+}
+
 // holdReinjection defers an unattributed compaction and reports whether it
 // did. With no subagent running the compaction can only be the main thread's.
 // Anything stopping the proof from working declines the hold: a spurious
@@ -129,7 +136,9 @@ func holdReinjection(state *SessionState, convID string) bool {
 // event a missing boundary means the compaction was a subagent's.
 func settleHeldReinjection(input HookCallbackInput, envSessionID string) {
 	switch input.HookEventName {
-	case "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure":
+	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure":
+		// Not UserPromptSubmit: a prompt is not proof the main thread is past
+		// a compaction, and every turn it starts reaches one of these anyway.
 	default:
 		return
 	}
