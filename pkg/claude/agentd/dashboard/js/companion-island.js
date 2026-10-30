@@ -21,7 +21,7 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
+  COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
   stewardSummonBody, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
@@ -137,6 +137,16 @@ function Peek({ agent, lines, anchor }) {
     <pre class="companion-peek-body">${lines === null ? 'reading…' : lines.length ? lines.join('\n') : agent.online ? '(empty screen)' : '(offline)'}</pre>
     <div class="companion-peek-foot">Read-only preview. The keyboard stays with the page until you click.</div>
   </div>`;
+}
+
+const RECLAIM_CLOSE_MS = 1000;
+const DETACHED_CHECK_MS = 1000;
+
+function without(set, value) {
+  if (!set.has(value)) return set;
+  const next = new Set(set);
+  next.delete(value);
+  return next;
 }
 
 // How recently a key in the terminal counts as still typing when a cue lands.
@@ -264,6 +274,10 @@ export function CompanionApp({
   const [guide, setGuide] = useState(null);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [detached, setDetached] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF))));
+  const detachedRef = useRef(detached);
+  detachedRef.current = detached;
+  const detachedWindows = useRef(new Map());
   const [parked, setParked] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF))));
   const [statuses, setStatuses] = useState({});
   const [reconnectable, setReconnectable] = useState({});
@@ -356,6 +370,7 @@ export function CompanionApp({
     writePref(prefs, COMPANION_ACTIVE_PREF, activeId);
     writePref(sessionPrefs, COMPANION_ACTIVE_PREF, activeId);
   }, [activeId, sessionPrefs]);
+  useEffect(() => writePref(sessionPrefs, COMPANION_DETACHED_PREF, JSON.stringify([...detached])), [detached, sessionPrefs]);
   useEffect(() => writePref(sessionPrefs, COMPANION_PARKED_PREF, JSON.stringify([...parked])), [parked, sessionPrefs]);
   useEffect(() => writePref(sessionPrefs, COMPANION_OPEN_PREF, open ? '1' : '0'), [open, sessionPrefs]);
 
@@ -396,7 +411,10 @@ export function CompanionApp({
     if (tabs.some((id) => !keep(id))) setTabs((current) => current.filter(keep));
   }, [agents]);
 
-  const showAgent = useCallback((agentId, { focus = true, starting = false } = {}) => {
+  // A detached agent stays in its own window: opening its tab only shows where
+  // it went. Attaching here would throw that window off the terminal, and the
+  // window has no idea why. Only Bring it back here reclaims it.
+  const showAgent = useCallback((agentId, { focus = true, starting = false, reclaim = false } = {}) => {
     if (!isAgentId(agentId)) return false;
     const agent = agents.get(agentId);
     // An id the snapshot does not know is only accepted for an agent this
@@ -405,13 +423,11 @@ export function CompanionApp({
     if (!agent && starting) pending.current.set(agentId, Date.now() + PENDING_MS);
     setHelperClosed(agentId, false);
     stopPeek();
-    closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
-    setParked((current) => {
-      if (!current.has(agentId)) return current;
-      const next = new Set(current);
-      next.delete(agentId);
-      return next;
-    });
+    if (reclaim || !detachedRef.current.has(agentId)) {
+      closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
+      setParked((current) => without(current, agentId));
+      setDetached((current) => without(current, agentId));
+    }
     setTabs((current) => withTab(current, agentId));
     setActive(agentId);
     setDeciding(false);
@@ -888,12 +904,38 @@ export function CompanionApp({
   function detachToWindow(agent) {
     const rect = windowRef.current?.getBoundingClientRect?.();
     const size = rect ? { width: rect.width, height: rect.height } : null;
-    if (!detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: { x: win?.screenX, y: win?.screenY } })) {
+    const opened = detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: { x: win?.screenX, y: win?.screenY } });
+    if (!opened) {
       notify('Could not detach: allow pop-ups for this dashboard.', true);
       return;
     }
+    detachedWindows.current.set(agent.agentId, opened);
     setParked((current) => new Set(current).add(agent.agentId));
+    setDetached((current) => new Set(current).add(agent.agentId));
   }
+
+  // Attach first: the window sees it lost the terminal, so closing it cannot
+  // hide the terminal from here.
+  function reclaim(agentId) {
+    const opened = detachedWindows.current.get(agentId);
+    detachedWindows.current.delete(agentId);
+    showAgent(agentId, { reclaim: true });
+    if (opened) setTimeout(() => opened.close?.(), RECLAIM_CLOSE_MS);
+  }
+
+  // A detached window the operator closed hands the agent back.
+  useEffect(() => {
+    if (!detached.size) return undefined;
+    const check = setInterval(() => {
+      for (const [agentId, opened] of detachedWindows.current) {
+        if (!opened.closed) continue;
+        detachedWindows.current.delete(agentId);
+        setParked((current) => without(current, agentId));
+        setDetached((current) => without(current, agentId));
+      }
+    }, DETACHED_CHECK_MS);
+    return () => clearInterval(check);
+  }, [detached.size]);
 
   function moveToTerminals(agent) {
     if (!openTerminalsPane) return;
@@ -1249,8 +1291,8 @@ export function CompanionApp({
         <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
       </div>`}
       ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
-        <p><b>${activeAgent.name}</b> is open outside this window.</p>
-        <button type="button" class="companion-primary" onClick=${() => showAgent(activeAgent.agentId)}>Bring it back here</button>
+        <p><b>${activeAgent.name}</b> is open ${detached.has(activeAgent.agentId) ? 'in its own window' : 'in the Terminals tab'}.</p>
+        <button type="button" class="companion-primary" onClick=${() => reclaim(activeAgent.agentId)}>Bring it back here</button>
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
         ${status === 'needs' && !activeApprovals.length && !activeDecisions.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}

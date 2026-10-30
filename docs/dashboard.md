@@ -650,7 +650,8 @@ while you dictate.
 
 In the window, ✉ or Ctrl/Cmd+M sends the active agent a queued message, as in
 the Terminals tab, and ⇄ morphs it onto another harness, model or profile. ⧉
-detaches it into its own browser window, and **Bring it back here** returns it.
+detaches it into its own browser window. It stays there until you press
+**Bring it back here** or close that window.
 
 Give the Steward an idea and it follows the bundled `tclaude-fleet`
 skill. It restates the idea and asks what it cannot find out itself, sketching

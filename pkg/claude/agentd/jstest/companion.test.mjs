@@ -1034,11 +1034,12 @@ test('Ctrl/Cmd+M and the title bar message the active agent; morph opens from th
   assert.equal(morphs[0].agent, A);
 });
 
-test('detaching hands the agent to its own window, and a blocked pop-up changes nothing', async (t) => {
-  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
-  let allowed = false;
+test('a detached agent keeps its window until the operator brings it back', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]) });
+  const opened = { closed: false, close() { this.closed = true; } };
+  let result = null;
   const calls = [];
-  const { view, harness, controller, mounted } = await setup(t, { prefs, detachWindow: (agent) => { calls.push(agent); return allowed; } });
+  const { view, harness, controller, mounted } = await setup(t, { prefs, detachWindow: (agent) => { calls.push(agent); return result; } });
   await harness.act(() => controller().open(A));
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   const detach = () => harness.act(async () => {
@@ -1047,9 +1048,20 @@ test('detaching hands the agent to its own window, and a blocked pop-up changes 
   });
   await detach();
   assert.equal(mounted[0].disposed, false, 'blocked: the terminal stays');
-  allowed = true;
+  result = opened;
   await detach();
   assert.deepEqual(calls, [A, A]);
   assert.equal(mounted[0].disposed, true, 'the window lets go of the terminal');
-  assert.match(view.container.textContent, /open outside this window/);
+  assert.match(view.container.textContent, /open in its own window/);
+
+  await harness.act(() => harness.getByRole(view.container, 'tab', { name: /bravo/ }).click());
+  await harness.act(() => harness.getByRole(view.container, 'tab', { name: /alpha/ }).click());
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.match(view.container.textContent, /open in its own window/, 'a tab click does not take it back');
+
+  await harness.act(async () => {
+    harness.getByRole(view.container, 'button', { name: 'Bring it back here' }).click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.doesNotMatch(view.container.textContent, /open in its own window/);
 });
