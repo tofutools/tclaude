@@ -43,6 +43,7 @@ tclaude agent board move plan <elem> --x 300 --y 80   # its label and bound arro
 tclaude agent board layout plan [--direction down]    # arrange the shapes along their arrows
 tclaude agent board from-process flow review          # draw process template "review" as a flowchart
 tclaude agent board from-fleet fleet                  # draw the fleet: a column per group, a card per agent
+tclaude agent board fleet-changes fleet               # read the operator's edits on that map as staffing proposals
 tclaude agent board text plan <elem> --text "API v2"
 tclaude agent board rm plan <elem> [<elem>...]
 tclaude agent board patch plan --file elements.json   # - reads stdin
@@ -133,6 +134,13 @@ cards: its elements are `fg-…` and `fa-…`, a card whose
 agent is gone is removed, and your own notes and arrows stay. Circle an agent,
 or draw an arrow from it to another group, and the Steward reads that as you
 talking about staffing. The command needs `boards.write` and `fleet.read`.
+
+`board fleet-changes <board>` reads your edits back as staffing proposals: a
+card dragged to another column or an arrow from a card to another column
+(move), a deleted card (remove), and a note written in a column (add). It
+changes nothing. The Steward confirms the list with you, asks for what it needs
+to act, and draws the map again, which puts the cards back in place. It needs
+`boards.read` and `fleet.read`.
 
 ## Sketching a process
 

@@ -41,7 +41,7 @@ func TestBoardFromProcessDrawsTheFlowOnANewBoard(t *testing.T) {
 		switch {
 		case path == "/v1/process/templates/review":
 			return 200, "", string(shown)
-		case method == http.MethodGet && path == "/v1/boards/flow":
+		case method == http.MethodGet && path == "/v1/boards/flow?since=0":
 			return 404, "not_found", ""
 		case method == http.MethodPost:
 			return 201, "", `{"id":"flow","title":"Review flow"}`
