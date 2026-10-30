@@ -274,10 +274,17 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     } catch (error) {
       if (error?.status === 400 || error?.status === 413) {
         const bad = /^elements\[(\d+)\]/.exec(error.message || '');
+        // A batch over the size limit only grows as edits merge into it, so
+        // it would hold back every later save.
+        if (error.status === 413) {
+          forgetEdits(batch.map((el) => el.id));
+          if (!disposed.current) notify(`The board refused your latest edits as too large, so they were not saved: ${error.message}`, true);
+          return;
+        }
         if (!bad) {
-          // Refused as a whole (too many elements, too large), so no one edit
-          // is at fault and deleting shapes can make room. Keep them all; the
-          // next change retries them, and until then the status says so.
+          // Refused as a whole for too many elements, so no one edit is at
+          // fault and deleting shapes can make room. Keep them all; the next
+          // change retries them, and until then the status says so.
           keep();
           refused.current = true;
           if (!disposed.current) {

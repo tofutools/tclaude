@@ -384,6 +384,22 @@ test('a finished send leaves text typed after it started', async (t) => {
   assert.equal(draft().value, 'second');
 });
 
+test('an open cue takes over a terminal that only holds focus', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, snap, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const keys = harness.window.document.createElement('textarea');
+  view.container.querySelector('.companion-term-host').appendChild(keys);
+  keys.focus();
+  await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
+  await harness.act(async () => {
+    snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true');
+});
+
 test('an open cue only pins the agent while the operator is typing in the terminal', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, snap, controller, mounted } = await setup(t, { prefs });
@@ -392,6 +408,7 @@ test('an open cue only pins the agent while the operator is typing in the termin
   const keys = harness.window.document.createElement('textarea');
   view.container.querySelector('.companion-term-host').appendChild(keys);
   keys.focus();
+  keys.dispatchEvent(new harness.window.Event('keydown', { bubbles: true }));
   await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
   await harness.act(async () => {
     snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };

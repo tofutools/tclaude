@@ -137,6 +137,9 @@ function Peek({ agent, lines, anchor }) {
   </div>`;
 }
 
+// How recently a key in the terminal counts as still typing when a cue lands.
+const CUE_TYPING_WINDOW_MS = 3000;
+
 function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, onClose, busy }) {
   const [filter, setFilter] = useState('');
   const candidates = useMemo(() => {
@@ -927,6 +930,17 @@ export function CompanionApp({
     return () => clearTimeout(timer);
   }, [guideCue]);
 
+  const lastTerminalKey = useRef(0);
+  useEffect(() => {
+    const doc = win?.document;
+    if (!doc) return undefined;
+    const onKey = (event) => {
+      if (event.target?.closest?.('.companion-term-host')) lastTerminalKey.current = Date.now();
+    };
+    doc.addEventListener('keydown', onKey, true);
+    return () => doc.removeEventListener('keydown', onKey, true);
+  }, [win]);
+
   // openForCue opens the agent a cue hands over. While the operator is
   // typing or dictating to the current tab it is only pinned, never switched
   // to: a switch would take the terminal they are typing in, or the draft they
@@ -935,8 +949,9 @@ export function CompanionApp({
     const agent = agents.get(cue.open);
     if (!agent) return;
     const by = cue.agent_name || 'An agent';
-    const inTerminal = !!win?.document?.activeElement?.closest?.('.companion-term-host');
-    if (draftRef.current.trim() || listeningRef.current || inTerminal) {
+    // Focus alone is no signal: it stays in the terminal long after the last key.
+    const typing = Date.now() - lastTerminalKey.current < CUE_TYPING_WINDOW_MS;
+    if (draftRef.current.trim() || listeningRef.current || typing) {
       setTabs((current) => withTab(current, agent.agentId));
       notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
       return;
