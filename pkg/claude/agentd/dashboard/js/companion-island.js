@@ -21,10 +21,10 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
+  COMPANION_ACTIVE_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_HELPERS_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
-  stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary, decisionsFor, decisionSpeech, pendingDecisions,
+  stewardSummonBody, STEWARD_STARTERS, liveHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary, decisionsFor, decisionSpeech, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenDue, cueOpenKey, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -76,7 +76,8 @@ function writePref(prefs, key, value) {
 
 function Avatar({ agent }) {
   const steward = agent?.steward;
-  return html`<span class=${`companion-avatar${steward ? ' steward' : ''}`} aria-hidden="true">${steward ? '✦' : (agent?.name || '?').slice(0, 1).toUpperCase()}</span>`;
+  const mark = steward ? '✦' : agent?.scribe ? '✎' : (agent?.name || '?').slice(0, 1).toUpperCase();
+  return html`<span class=${`companion-avatar${steward ? ' steward' : agent?.scribe ? ' scribe' : ''}`} aria-hidden="true">${mark}</span>`;
 }
 
 function StatusDot({ status }) {
@@ -140,11 +141,11 @@ function AddMenu({ agents, tabs, steward, onSummonSteward, onPin, onClose, busy 
   const candidates = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     return [...agents.values()]
-      .filter((agent) => agent.online && !agent.steward && !tabs.includes(agent.agentId))
+      .filter((agent) => agent.online && agent.agentId !== steward?.agentId && !tabs.includes(agent.agentId))
       .filter((agent) => !needle || agent.name.toLowerCase().includes(needle))
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => (b.scribe - a.scribe) || a.name.localeCompare(b.name))
       .slice(0, 40);
-  }, [agents, tabs, filter]);
+  }, [agents, tabs, steward, filter]);
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
     globalThis.addEventListener?.('keydown', onKey);
@@ -160,7 +161,7 @@ function AddMenu({ agents, tabs, steward, onSummonSteward, onPin, onClose, busy 
       value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
     <div class="companion-menu-list">
       ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" onClick=${() => onPin(agent.agentId)}>
-        <${StatusDot} status=${companionStatus(agent)} /> ${agent.name}</button>`)
+        <${agent.scribe ? Avatar : StatusDot} agent=${agent} status=${companionStatus(agent)} /> ${agent.name}</button>`)
         : html`<div class="companion-menu-empty">${filter ? 'No live agent matches.' : 'No other live agents.'}</div>`}
     </div>
   </div>`;
@@ -275,6 +276,7 @@ export function CompanionApp({
   closeTerminalPanes = () => {},
   openTerminalsPane = null,
   win = globalThis.window,
+  sessionPrefs: sessionPrefsImpl = null,
   registerController = registerCompanionController,
   navigate = null,
 }) {
@@ -285,7 +287,11 @@ export function CompanionApp({
     const saved = readPref(prefs, COMPANION_ACTIVE_PREF);
     return isAgentId(saved) ? saved : '';
   });
-  const [open, setOpen] = useState(false);
+  const sessionPrefs = useMemo(() => {
+    if (sessionPrefsImpl) return sessionPrefsImpl;
+    try { return win?.sessionStorage ?? null; } catch { return null; }
+  }, [win, sessionPrefsImpl]);
+  const [open, setOpen] = useState(() => readPref(sessionPrefs, COMPANION_OPEN_PREF) === '1');
   const [placement, setPlacement] = useState(() => {
     const vp = viewportOf(win);
     const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
@@ -373,6 +379,19 @@ export function CompanionApp({
 
   useEffect(() => writePref(prefs, COMPANION_TABS_PREF, JSON.stringify(tabs)), [tabs]);
   useEffect(() => { if (activeId) writePref(prefs, COMPANION_ACTIVE_PREF, activeId); }, [activeId]);
+  useEffect(() => writePref(sessionPrefs, COMPANION_OPEN_PREF, open ? '1' : '0'), [open, sessionPrefs]);
+
+  // Live scribes and Stewards keep a tab without being pinned.
+  const knownHelpers = useRef(null);
+  const onScreen = open ? activeId : '';
+  useEffect(() => {
+    if (!snapshot.value) return;
+    if (!knownHelpers.current) knownHelpers.current = new Set(parseTabs(readPref(prefs, COMPANION_HELPERS_PREF)));
+    const { tabs: next, known } = syncHelperTabs(tabs, liveHelpers(agents), knownHelpers.current, onScreen);
+    knownHelpers.current = known;
+    writePref(prefs, COMPANION_HELPERS_PREF, JSON.stringify([...known]));
+    if (next !== tabs) setTabs(next);
+  }, [agents, snapshot.value]);
 
   // A pinned agent that was retired drops out of the snapshot; forget it once
   // the snapshot is known so the chips never show a dead handle forever.
