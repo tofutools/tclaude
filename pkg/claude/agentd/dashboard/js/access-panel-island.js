@@ -7,12 +7,12 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ApprovalCard, OPEN_ACCESS_PANEL_EVENT } from './companion-approval.js';
-import { approvalsFor, companionAgents, pendingApprovals } from './companion-model.js';
+import { approvalsFor, companionAgents, pendingAccess, pendingApprovals } from './companion-model.js';
 import { applyChromeTopInset } from './chrome-inset.js';
 
 const html = htm.bind(h);
 
-export function AccessPanel({ snapshot, fetchImpl, notify, documentRef = globalThis.document }) {
+export function AccessPanel({ snapshot, fetchImpl, notify, openInMessages = () => {}, documentRef = globalThis.document }) {
   const [opened, setOpened] = useState(null); // {agentId, launcher}
   const panel = useRef(null);
   const hadSome = useRef(false);
@@ -20,7 +20,7 @@ export function AccessPanel({ snapshot, fetchImpl, notify, documentRef = globalT
     const open = (event) => {
       applyChromeTopInset();
       hadSome.current = false;
-      setOpened({ agentId: event.detail?.agentId || '', launcher: event.detail?.launcher || null });
+      setOpened({ agentId: event.detail?.agentId || '', launcher: event.detail?.launcher || null, returnFocus: event.detail?.returnFocus || null });
     };
     documentRef.addEventListener(OPEN_ACCESS_PANEL_EVENT, open);
     return () => documentRef.removeEventListener(OPEN_ACCESS_PANEL_EVENT, open);
@@ -28,16 +28,20 @@ export function AccessPanel({ snapshot, fetchImpl, notify, documentRef = globalT
 
   const close = () => {
     const held = panel.current?.contains?.(documentRef.activeElement);
-    const launcher = opened?.launcher;
+    // The launcher may have gone with the last request.
+    const target = opened?.launcher?.isConnected ? opened.launcher : opened?.returnFocus;
     setOpened(null);
-    if (held && launcher?.isConnected) launcher.focus({ preventScroll: true });
+    if ((held || documentRef.activeElement === documentRef.body) && target?.isConnected) target.focus({ preventScroll: true });
   };
   const requests = opened ? pendingApprovals(snapshot.value) : [];
+  const elsewhere = opened ? pendingAccess(snapshot.value).length - requests.length : 0;
   useEffect(() => {
     if (!opened) return;
-    if (requests.length) hadSome.current = true;
+    if (requests.length || elsewhere) hadSome.current = true;
     else if (hadSome.current) close();
-  }, [opened, requests.length]);
+    // An answered card takes the focus with it; Esc must keep working.
+    if (documentRef.activeElement === documentRef.body) panel.current?.focus?.({ preventScroll: true });
+  }, [opened, requests.length, elsewhere]);
   useEffect(() => { if (opened) panel.current?.focus?.({ preventScroll: true }); }, [opened]);
   if (!opened) return null;
 
@@ -55,8 +59,11 @@ export function AccessPanel({ snapshot, fetchImpl, notify, documentRef = globalT
       <button type="button" aria-label="Close" title="Close (Esc). Requests keep waiting" onClick=${close}>×</button>
     </header>
     <div class="access-panel-list">
-      ${ordered.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} from=${nameOf(request)} />`)}
-      ${!ordered.length && html`<p class="access-panel-empty">Nothing is waiting for your OK.</p>`}
+      ${ordered.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} from=${nameOf(request)}
+        onMore=${() => { close(); openInMessages(request.id); }} />`)}
+      ${!ordered.length && !elsewhere && html`<p class="access-panel-empty">Nothing is waiting for your OK.</p>`}
+      ${elsewhere > 0 && html`<button type="button" class="access-panel-more" onClick=${() => { close(); openInMessages(); }}>
+        ${elsewhere === 1 ? '1 request needs' : `${elsewhere} requests need`} a closer look in Messages</button>`}
     </div>
   </aside>`;
 }

@@ -329,6 +329,10 @@ const accessPanelDescriptor = createIslandDescriptor({
       mount: (registerCleanup) => mountAccessPanelIsland({
         host, registerCleanup, snapshot: dashboardState.snapshot,
         fetchImpl: (...args) => globalThis.fetch(...args), notify: dependencies.notify,
+        openInMessages: async (id) => {
+          const { focusAccessRequest } = await import('./mail-bridge.js');
+          return focusAccessRequest(id);
+        },
       }),
     };
   },
