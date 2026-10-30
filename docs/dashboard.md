@@ -594,6 +594,12 @@ pane's agent opens as a vertical stepper with the agent's bounds strip.
 
 ### The companion window
 
+The companion, the Steward, [boards](boards.md), the fleet brief, decisions and
+dashboard guidance are experimental and off by default. Turn them on with the
+**Collab** switch under Config > Experimental, or `features.collab` in
+config.json; no restart is needed. While it is off, their daemon routes return
+404 with the code `collab_disabled` and a message pointing at the flag.
+
 A floating companion window sits on top of every dashboard view. It shows
 agents' real harness terminals, so you get the harness's own streaming,
 permission prompts and Esc interrupts without leaving the page you are on.
