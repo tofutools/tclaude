@@ -80,7 +80,7 @@ const (
 	fleetPRReady    = "pr"         // an open PR the agent presented
 	fleetMessages   = "messages"   // unread notifications in Messages
 	fleetIdleLonger = "idle"       // online and idle for a while
-	fleetRecovering = "recovering" // tclaude is recovering a crashed agent
+	fleetRecovering = "recovering" // a crashed agent: being recovered, or recovery stopped
 )
 
 var fleetRank = map[string]int{
@@ -139,7 +139,10 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 	}
 	byConv := map[string]*membership{}
 	for _, g := range groups {
-		members, _ := db.ListAgentGroupMembers(g.ID)
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			return nil, err
+		}
 		for _, m := range members {
 			mb := byConv[m.ConvID]
 			if mb == nil {
@@ -157,7 +160,10 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 		return nil, err
 	}
 	tasks, _ := db.ListAgentTaskRefs()
-	prs, _ := listVisiblePresentedPRs()
+	prs, err := listVisiblePresentedPRs()
+	if err != nil {
+		return nil, err
+	}
 
 	brief := &fleetBrief{GeneratedAt: now, Attention: []fleetItem{}, Agents: []fleetAgent{}}
 	titles := map[string]string{} // agent_id → title, for approvals
@@ -237,7 +243,11 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 		brief.Attention = append(brief.Attention, item)
 	}
 	if group == "" {
-		if n, err := db.CountUnreadHumanMessages(); err == nil && n > 0 {
+		n, err := db.CountUnreadHumanMessages()
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
 			brief.UnreadMessages = n
 			brief.Attention = append(brief.Attention, fleetItem{Kind: fleetMessages, Detail: plural(n, "unread message") + " in Messages"})
 		}
@@ -315,9 +325,14 @@ func fleetAgentAttention(a fleetAgent, state agentState, now time.Time) []fleetI
 			}
 		}
 	}
+	detail := ""
 	switch state.RecoveryStatus {
-	case db.AgentRecoveryStatusCrashed, db.AgentRecoveryStatusRestarting, db.AgentRecoveryStatusBackoff, db.AgentRecoveryStatusSuppressed:
-		detail := "is being recovered (" + state.RecoveryStatus + ")"
+	case db.AgentRecoveryStatusCrashed, db.AgentRecoveryStatusRestarting, db.AgentRecoveryStatusBackoff:
+		detail = "is being recovered (" + state.RecoveryStatus + ")"
+	case db.AgentRecoveryStatusSuppressed:
+		detail = "crashed and automatic recovery has stopped: it needs you to restart it"
+	}
+	if detail != "" {
 		if state.RecoveryReason != "" {
 			detail += ": " + state.RecoveryReason
 		}

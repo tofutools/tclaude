@@ -21,6 +21,59 @@ func setSteward(t *testing.T, reads, writes string) {
 	require.NoError(t, config.Save(cfg))
 }
 
+// The Steward's group is fixed: a summon under any other name would land where
+// nothing recognises it. The name compares after trimming.
+func TestSteward_SummonRejectsAnotherName(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	summon := func(name string) int {
+		return testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+			"name": name, "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+		}))).Code
+	}
+	assert.Equal(t, http.StatusBadRequest, summon("jeeves"))
+	assert.Equal(t, http.StatusBadRequest, summon(""))
+	assert.Equal(t, http.StatusOK, summon(" steward "))
+}
+
+// The operator's own doors take the steward address too.
+func TestSteward_ReachableFromTheDashboard(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	mux := dashMessageMux(t)
+	operatorSend := func() int {
+		return testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/operator-message",
+			map[string]any{"to": "steward", "body": "hello"})).Code
+	}
+	require.Equal(t, http.StatusNotFound, operatorSend(), "no live Steward")
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	conv := decodeScribeResp(t, rec).ConvID
+
+	require.Equal(t, http.StatusAccepted, operatorSend())
+	rows, err := db.ListAgentMessagesForConv(conv, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Equal(t, "hello", rows[0].Body)
+
+	const worker = "stwd-aaaa-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(worker, "worker-bee")
+	f.HaveGroup("team")
+	f.HaveMember("team", worker)
+	f.HaveAliveSession(worker, "stwd2", "tclaude-stwd2", f.TestCwd("work"))
+	sent := postDashMessage(t, mux, map[string]any{"from": worker, "to": "steward", "body": "from a worker"})
+	require.Less(t, sent.Code, 300, sent.Body.String())
+	rows, err = db.ListAgentMessagesForConv(conv, 10)
+	require.NoError(t, err)
+	assert.Equal(t, "from a worker", rows[0].Body)
+}
+
 // A Steward's access comes from config, whatever the summon asks for, and any
 // agent can reach a live one.
 func TestSteward_AccessFromConfigAndReachableByAnyAgent(t *testing.T) {

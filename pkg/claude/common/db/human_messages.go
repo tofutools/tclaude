@@ -669,13 +669,15 @@ func MarkAllHumanMessagesRead() (int, error) {
 
 // DeleteReadHumanMessages hard-deletes every message that has been
 // marked read — the manual "clear read messages" control on the tab.
-// Unread messages are left untouched. Returns how many rows were removed.
+// Unread messages and decisions still waiting on the operator are left
+// untouched: reading a decision does not answer it. Returns how many rows
+// were removed.
 func DeleteReadHumanMessages() (int, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`DELETE FROM human_messages WHERE read_at IS NOT NULL`)
+	res, err := d.Exec(`DELETE FROM human_messages WHERE read_at IS NOT NULL AND NOT (options != '' AND decision = '')`)
 	if err != nil {
 		return 0, fmt.Errorf("delete read human messages: %w", err)
 	}
@@ -688,7 +690,9 @@ func DeleteReadHumanMessages() (int, error) {
 // dashboard clear-read action; filesystem removal happens after commit and an
 // agentd reconciler retries any failed removal.
 func DeleteReadHumanMessagesWithAttachments() (int, []string, error) {
-	return deleteHumanMessagesWithAttachments("read_at IS NOT NULL", "m.read_at IS NOT NULL", nil)
+	return deleteHumanMessagesWithAttachments(
+		"read_at IS NOT NULL AND NOT (options != '' AND decision = '')",
+		"m.read_at IS NOT NULL AND NOT (m.options != '' AND m.decision = '')", nil)
 }
 
 // DeleteHumanMessage hard-deletes a single message by id, regardless of

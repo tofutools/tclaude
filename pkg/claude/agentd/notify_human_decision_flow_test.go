@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -33,6 +34,8 @@ func TestHumanDecision_PickComesBackAsMail(t *testing.T) {
 		{"body": "x", "options": []string{"only one"}},
 		{"body": "x", "options": []string{"a", "a"}},
 		{"body": "x", "options": []string{"a", "two\nlines"}},
+		{"body": "x", "options": []string{"a", "two\u2028lines"}},
+		{"body": "x", "options": []string{"a", "two\u2029paragraphs"}},
 		{"body": "x", "options": []string{"a", "b"}, "recommended": 3},
 		{"body": "x", "options": []string{"a", "b", "c", "d", "e", "f", "g"}},
 		{"body": "x", "recommended": 1},
@@ -118,4 +121,85 @@ func TestHumanDecision_PickComesBackAsMail(t *testing.T) {
 	plain, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "fyi"})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, postDashReply(t, mux, map[string]any{"id": plain, "choice": 1}).Code)
+}
+
+// With Collab off a stored decision reads as a plain notification and cannot
+// be answered; turning it back on brings the buttons back.
+func TestHumanDecision_HiddenWithCollabOff(t *testing.T) {
+	f := newFlow(t)
+	enableCollab(t)
+	const sender = "hdof-aaaa-bbbb-cccc-000000000001"
+	f.HaveGroup("design")
+	f.HaveMember("design", sender)
+	id, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "which?", Options: []string{"a", "b"}, Recommended: 2})
+	require.NoError(t, err)
+	_, err = db.MarkHumanMessageRead(id)
+	require.NoError(t, err)
+
+	mux := dashMessageMux(t)
+	optionsInSnapshot := func() (riding bool, options []string, recommended int) {
+		snap := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+		require.Equal(t, http.StatusOK, snap.Code)
+		var s struct {
+			Messages []struct {
+				ID          int64    `json:"id"`
+				Options     []string `json:"options"`
+				Recommended int      `json:"recommended"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &s))
+		for _, m := range s.Messages {
+			if m.ID == id {
+				return true, m.Options, m.Recommended
+			}
+		}
+		return false, nil, 0
+	}
+	riding, options, recommended := optionsInSnapshot()
+	require.True(t, riding)
+	require.Equal(t, []string{"a", "b"}, options)
+	require.Equal(t, 2, recommended)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Features.Collab = false
+	require.NoError(t, config.Save(cfg))
+	_, options, recommended = optionsInSnapshot()
+	assert.Empty(t, options)
+	assert.Zero(t, recommended)
+	reply := postDashReply(t, mux, map[string]any{"id": id, "choice": 1})
+	require.Equal(t, http.StatusNotFound, reply.Code, reply.Body.String())
+	assert.Contains(t, reply.Body.String(), "collab_disabled")
+	orig, err := db.GetHumanMessage(id)
+	require.NoError(t, err)
+	assert.Empty(t, orig.Decision)
+}
+
+// A pick that cannot be delivered is released whole: the decision can be
+// answered again, and it is unread again if it was unread.
+func TestHumanDecision_FailedDeliveryRestoresUnread(t *testing.T) {
+	f := newFlow(t)
+	enableCollab(t)
+	const sender = "hdfl-aaaa-bbbb-cccc-000000000001"
+	f.HaveGroup("design")
+	f.HaveMember("design", sender)
+	f.HaveAliveSession(sender, "hdfl", "tclaude-hdfl", f.TestCwd("work"))
+	seedRegularBacklog(t, sender, regularMessageQueueLimitForTest)
+	mux := dashMessageMux(t)
+
+	unread, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "unread?", Options: []string{"a", "b"}})
+	require.NoError(t, err)
+	seen, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "seen?", Options: []string{"a", "b"}})
+	require.NoError(t, err)
+	_, err = db.MarkHumanMessageRead(seen)
+	require.NoError(t, err)
+
+	for id, wantRead := range map[int64]bool{unread: false, seen: true} {
+		reply := postDashReply(t, mux, map[string]any{"id": id, "choice": 1})
+		require.NotEqual(t, http.StatusOK, reply.Code, reply.Body.String())
+		orig, err := db.GetHumanMessage(id)
+		require.NoError(t, err)
+		assert.Empty(t, orig.Decision)
+		assert.Equal(t, wantRead, orig.IsRead())
+	}
 }

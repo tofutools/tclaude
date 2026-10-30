@@ -633,7 +633,10 @@ of tclaude, summoned like a scribe (it lives in the `steward`
 scribe group, so you can also open it from Terminals). Ask it what you can do
 on a page, how your groups are configured, or to help set up groups,
 profiles, processes or your sandbox. It proposes a plan first and runs each
-change with `--ask-human`, so you approve every mutation in the dashboard.
+change with `--ask-human`, so you approve it in the dashboard. The exceptions
+are what its Writes setting gives it at birth, which need no prompt:
+`message.direct` under `messaging`, and `message.direct`, `agent.spawn` and
+`agent.task` under `workers`.
 While the Steward's tab is open and you have not typed anything, one-click
 starters sit above the message row: **Brief me**, **I have an idea**, **What can I do here?**, **Review my
 setup**, **Set up my repos**, **Create a dev flow** and **Sketch on a board**.
