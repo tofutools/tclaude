@@ -15,10 +15,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -41,12 +43,62 @@ var humanMsgNotify = notify.SendHumanMessage
 type notifyHumanRequest struct {
 	Body    string `json:"body"`
 	Subject string `json:"subject"`
+	notifyHumanDecision
 }
 
 type notifyHumanAttachmentMetadata struct {
 	Body    string `json:"body"`
 	Subject string `json:"subject"`
 	Name    string `json:"name"`
+	notifyHumanDecision
+}
+
+// notifyHumanDecision turns a notification into a decision put to the
+// operator: they pick one of Options (as buttons in the companion window
+// and the Messages tab) and the pick comes back to the agent as mail.
+type notifyHumanDecision struct {
+	Options     []string `json:"options,omitempty"`
+	Recommended int      `json:"recommended,omitempty"` // 1-based, 0 none
+}
+
+const (
+	minDecisionOptions   = 2
+	maxDecisionOptions   = 6
+	maxDecisionOptionLen = 120
+)
+
+// normalize trims the options and checks them: 2–6 distinct, single-line,
+// at most maxDecisionOptionLen bytes each, and a recommendation in range.
+func (d *notifyHumanDecision) normalize() error {
+	if len(d.Options) == 0 {
+		if d.Recommended != 0 {
+			return fmt.Errorf("recommended needs options")
+		}
+		return nil
+	}
+	if len(d.Options) < minDecisionOptions || len(d.Options) > maxDecisionOptions {
+		return fmt.Errorf("a decision takes %d to %d options, got %d", minDecisionOptions, maxDecisionOptions, len(d.Options))
+	}
+	seen := map[string]bool{}
+	for i, o := range d.Options {
+		o = strings.TrimSpace(o)
+		switch {
+		case o == "":
+			return fmt.Errorf("option %d is empty", i+1)
+		case len(o) > maxDecisionOptionLen:
+			return fmt.Errorf("option %d is too long: %d bytes, max %d", i+1, len(o), maxDecisionOptionLen)
+		case strings.ContainsFunc(o, unicode.IsControl):
+			return fmt.Errorf("option %d must be a single line without control characters", i+1)
+		case seen[o]:
+			return fmt.Errorf("option %d repeats %q", i+1, o)
+		}
+		seen[o] = true
+		d.Options[i] = o
+	}
+	if d.Recommended < 0 || d.Recommended > len(d.Options) {
+		return fmt.Errorf("recommended must be between 1 and %d", len(d.Options))
+	}
+	return nil
 }
 
 // Size caps for a human notification. A notification is a short
@@ -152,12 +204,23 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("subject too long: %d bytes, max %d", len(body.Subject), maxNotifyHumanSubjectLen))
 		return
 	}
-	id, err := recordHumanMessage(callerConv, body.Subject, body.Body)
+	if err := body.normalize(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if len(body.Options) > 0 && callerConv == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a decision needs an agent to send the pick back to; options are for agents")
+		return
+	}
+	m, fromTitle, groupName := newHumanMessageRow(callerConv, body.Subject, body.Body, "", "", "")
+	m.Options, m.Recommended = body.Options, body.Recommended
+	id, err := db.InsertHumanMessage(m)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"failed to record message: "+err.Error())
 		return
 	}
+	dispatchHumanMessageNotification(callerConv, fromTitle, groupName, body.Subject, body.Body)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})
 }
 
@@ -194,6 +257,14 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	meta.Body = strings.TrimSpace(meta.Body)
 	meta.Subject = strings.TrimSpace(meta.Subject)
 	meta.Name = sanitizeExportFilename(meta.Name)
+	if err := meta.normalize(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if len(meta.Options) > 0 && callerConv == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a decision needs an agent to send the pick back to; options are for agents")
+		return
+	}
 	// The body may be empty here — and only here. This route always carries at
 	// least one published file, so a subject plus the attachment is already a
 	// complete message; the bodiless notification is "here is the artifact,
@@ -284,6 +355,7 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	message, fromTitle, groupName := newHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
+	message.Options, message.Recommended = meta.Options, meta.Recommended
 	id, err := db.InsertHumanMessageWithAttachments(message, attachments)
 	if err != nil {
 		removeStoredAttachmentFiles(attachments)
@@ -738,6 +810,12 @@ type dashboardHumanMessage struct {
 	// single download card; Attachments carries the full set.
 	Attachment  *dashboardHumanMessageAttachment   `json:"attachment,omitempty"`
 	Attachments []*dashboardHumanMessageAttachment `json:"attachments,omitempty"`
+	// A decision put to the operator: its options, the agent's recommended
+	// one (1-based, 0 none) and, once answered, the pick.
+	Options     []string `json:"options,omitempty"`
+	Recommended int      `json:"recommended,omitempty"`
+	Decision    string   `json:"decision,omitempty"`
+	DecidedAt   string   `json:"decided_at,omitempty"`
 }
 
 // dashboardHumanMessageAttachment is one downloadable file on a notification.
@@ -1106,8 +1184,23 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 		// dashboard JS calls .map() on it directly.
 		return []dashboardHumanMessage{}, 0
 	}
+	loaded := len(rows)
+	// Decisions still waiting on the operator ride along even once read, so
+	// the companion window can keep offering their buttons.
+	if undecided, err := db.ListUndecidedHumanMessages(snapshotRecentHumanMessages); err == nil {
+		have := make(map[int64]bool, len(rows))
+		for _, m := range rows {
+			have[m.ID] = true
+		}
+		for _, m := range undecided {
+			if !have[m.ID] {
+				rows = append(rows, m)
+			}
+		}
+		sort.SliceStable(rows, func(i, j int) bool { return rows[i].ID > rows[j].ID })
+	}
 	out, unread := humanMessageViews(rows)
-	if len(rows) == snapshotMaxHumanMessages {
+	if loaded == snapshotMaxHumanMessages {
 		if _, all, _, err := db.HumanMessageStats(); err == nil {
 			unread = all
 		}
@@ -1179,6 +1272,14 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 			Body:      m.Body,
 			CreatedAt: m.CreatedAt.Format(time.RFC3339),
 			Read:      m.IsRead(),
+			Options:   m.Options,
+			Decision:  m.Decision,
+		}
+		if len(m.Options) > 0 {
+			view.Recommended = m.Recommended
+		}
+		if !m.DecidedAt.IsZero() {
+			view.DecidedAt = m.DecidedAt.Format(time.RFC3339)
 		}
 		for _, a := range m.Attachments {
 			view.Attachments = append(view.Attachments, dashboardHumanMessageAttachmentView(m.ID, a))
@@ -1459,6 +1560,9 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		ID              int64  `json:"id"`
 		Body            string `json:"body"`
 		AttachmentToken string `json:"attachment_token"`
+		// Choice answers a decision: the 1-based option the operator
+		// picked. Body is then an optional note to go with it.
+		Choice int `json:"choice"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -1469,7 +1573,7 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "id is required")
 		return
 	}
-	if body.Body == "" && body.AttachmentToken == "" {
+	if body.Body == "" && body.AttachmentToken == "" && body.Choice == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
 		return
 	}
@@ -1487,6 +1591,21 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found",
 			fmt.Sprintf("no human message #%d to reply to", body.ID))
 		return
+	}
+	decision := ""
+	if body.Choice != 0 {
+		switch {
+		case len(orig.Options) == 0:
+			writeError(w, http.StatusBadRequest, "invalid_arg", "this notification is not a decision")
+			return
+		case body.Choice < 1 || body.Choice > len(orig.Options):
+			writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("choice must be between 1 and %d", len(orig.Options)))
+			return
+		case orig.Decision != "":
+			writeError(w, http.StatusConflict, "decided", "already decided: "+orig.Decision)
+			return
+		}
+		decision = orig.Options[body.Choice-1]
 	}
 	if orig.ProcessCommandID != "" {
 		if body.AttachmentToken != "" {
@@ -1532,7 +1651,9 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("reply: enumerate live tmux sessions failed; treating target as offline", "error", err)
 	}
-	if !isConvOnlineIn(target, aliveSessions) {
+	// A decision is durable: the pick is queued for an offline agent and
+	// delivered when it resumes, so the operator can answer at any time.
+	if decision == "" && !isConvOnlineIn(target, aliveSessions) {
 		writeError(w, http.StatusConflict, "offline", "the agent is offline — it has no live session to receive a reply")
 		return
 	}
@@ -1541,12 +1662,32 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "attachments", err.Error())
 		return
 	}
-	if body.Body == "" && len(attachments) == 0 {
+	replyBody := body.Body
+	if decision != "" {
+		replyBody = decisionReplyBody(orig, decision, body.Body)
+	}
+	if replyBody == "" && len(attachments) == 0 {
 		if durableDir != "" {
 			_ = os.RemoveAll(durableDir)
 		}
 		writeError(w, http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
 		return
+	}
+	// A decision is claimed before its mail is queued: only the first pick
+	// counts, so two clicks racing from two views cannot both reach the agent.
+	if decision != "" {
+		claimed, err := db.DecideHumanMessage(body.ID, decision)
+		if err != nil || !claimed {
+			if durableDir != "" {
+				_ = os.RemoveAll(durableDir)
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", "record decision: "+err.Error())
+			} else {
+				writeError(w, http.StatusConflict, "decided", "this decision has already been answered")
+			}
+			return
+		}
 	}
 	// Deliver as a sender-less operator message on the universal inbox.
 	// The async worker owns readiness/hold checks, retries, and consumption.
@@ -1555,13 +1696,18 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		FromConv:         "",
 		ToConv:           target,
 		Subject:          replySubjectFor(orig.Subject, orig.ID),
-		Body:             body.Body,
+		Body:             replyBody,
 		ToRecipients:     []string{target},
 		OperatorAuthored: true,
 	}, attachments)
 	if err != nil {
 		if durableDir != "" {
 			_ = os.RemoveAll(durableDir)
+		}
+		if decision != "" {
+			if err := db.UndecideHumanMessage(body.ID); err != nil {
+				slog.Warn("reply: release decision after failed delivery", "id", body.ID, "error", err)
+			}
 		}
 		if full, ok := agentMessageQueueFull(err); ok {
 			writeQueueFull(w, target, full)
@@ -1590,6 +1736,24 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		"pending":     pending,
 		"attachments": attachments,
 	})
+}
+
+// decisionReplyBody is the mail an agent gets when the operator answers its
+// decision: the pick first, so it reads at a glance, then the question it
+// answers and the operator's note.
+func decisionReplyBody(orig *db.HumanMessage, decision, note string) string {
+	question := orig.Subject
+	if question == "" {
+		question, _, _ = strings.Cut(orig.Body, "\n")
+	}
+	if r := []rune(question); len(r) > 200 {
+		question = string(r[:200]) + "…"
+	}
+	out := fmt.Sprintf("Decision: %s\n\n(the operator's answer to your notification #%d: %s)", decision, orig.ID, question)
+	if note != "" {
+		out += "\n\nNote from the operator: " + note
+	}
+	return out
 }
 
 func resolveProcessHumanMessage(_ context.Context, _ *db.HumanMessage, _ string) error { //nolint:staticcheck // Temporary stub intentionally always errors behind the nil-capable seam.
