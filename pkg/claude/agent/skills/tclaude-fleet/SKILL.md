@@ -129,12 +129,15 @@ tclaude agent cron add --name daily-summary --cron '0 17 * * 1-5' \
 ```
 
 On each tick, read `tclaude agent fleet --all --json` and send one
-`notify-human` titled "Daily summary" in three short lists: **shipped**
-(merged PRs, finished work), **waiting on you** (approvals, decisions, PRs to
+`notify-human -s "Daily summary"` in three short lists: **shipped** (merged
+PRs, finished work), **waiting on you** (approvals, decisions, PRs to
 review, oldest first) and **stuck** (failed turns, agents idle with no PR).
-Leave a list out when it is empty, and when nothing changed say so in one
-line. Ask the operator for the time; `tclaude agent cron ls` and `cron rm`
-change or stop it.
+The brief is a snapshot: keep a short note of what you reported last time
+(and of PRs from agents since retired, which drop out of it) so "shipped"
+and "nothing changed" mean since the last summary. Leave a list out when it
+is empty. Ask the operator for the time. A tick while you are offline is
+skipped. To change the time, find the job's ID with `tclaude agent cron ls`,
+`cron rm <id>` and add it again; `cron disable` / `cron enable` pause it.
 
 ## Decisions
 
