@@ -465,6 +465,52 @@ test('the companion stays out of the page until features.collab is on', async (t
   assert.equal(view.container.querySelector('.companion-chips'), null);
 });
 
+test('a permission request opens in a right-hand panel from its pill, and the panel closes when answered', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const deadline = new Date(Date.now() + 120000).toISOString();
+  const snapshot = {
+    ...snapshotWith(), collab_enabled: true,
+    access_requests: [
+      { id: 'r2', perm: 'agent.spawn', agent_id: B, conv_title: 'bravo', status: 'pending', deadline: new Date(Date.now() + 200000).toISOString() },
+      { id: 'r1', perm: 'sudo.groups.create', agent_id: A, status: 'pending', deadline },
+      { id: 'r3', perm: 'x', agent_id: A, status: 'approved' },
+      { id: 'r4', perm: 'y', agent_id: A, status: 'pending', proposal: {} },
+    ],
+  };
+  const { view, harness, snap, requests } = await setup(t, { prefs, snapshot });
+  const { AccessPanelGate } = await harness.importDashboardModule('js/access-panel-island.js');
+  const panelView = await harness.mount(harness.html`<${AccessPanelGate} snapshot=${snap} fetchImpl=${async (url, init) => { requests.push({ url: String(url), body: JSON.parse(init.body) }); return { ok: true, status: 200 }; }} notify=${() => {}} />`);
+  const panelHost = panelView.container;
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(panelHost.querySelector('.access-panel'), null, 'closed until asked for');
+
+  const chip = harness.getByRole(view.container, 'button', { name: /alpha: / });
+  assert.match(chip.textContent, /approval/);
+  await harness.act(() => chip.click());
+  assert.equal(view.container.querySelector('.companion-window'), null, 'the window stays minimized');
+  const cards = panelHost.querySelectorAll('.companion-approval');
+  assert.equal(cards.length, 2, 'pending requests from every agent, without federation proposals');
+  assert.match(cards[0].textContent, /groups\.create/, 'the agent asked about comes first');
+  assert.match(cards[1].textContent, /bravo/, 'each names its agent');
+  assert.ok(harness.getByRole(view.container, 'button', { name: /1 permission request from other agents/ }), 'bravo has no pill, so a pill says it is waiting');
+
+  await harness.act(async () => { harness.getByRole(cards[0], 'button', { name: /Approve/ }).click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(requests.find((r) => r.url.includes('/decision')).body, { decision: 'approve' });
+  await harness.act(async () => { snap.value = { ...snap.value, access_requests: [] }; });
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(panelHost.querySelector('.access-panel'), null, 'it closes when nothing is left');
+});
+
+test('a Terminals tab knows its agent is asking for permission', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { paneApprovals } = await harness.importDashboardModule('js/terminal-shell-island.js');
+  const snapshot = { collab_enabled: true, access_requests: [{ id: 'r', perm: 'x', agent_id: A, status: 'pending' }, { id: 'c', perm: 'y', conv_id: 'conv-b', status: 'pending' }] };
+  assert.equal(paneApprovals({ seed: { agent: A } }, snapshot).length, 1);
+  assert.equal(paneApprovals({ seed: { agent: 'conv-b' } }, snapshot).length, 1, 'a pane seeded with a conv id');
+  assert.equal(paneApprovals({ seed: { agent: B } }, snapshot).length, 0);
+  assert.equal(paneApprovals({ seed: { agent: A } }, { ...snapshot, collab_enabled: false }).length, 0, 'the panel is part of Collab');
+});
+
 test('decisions from every agent wait in one "to decide" queue', async (t) => {
   const C = `agt_${'c'.repeat(32)}`;
   const snapshot = snapshotWith();

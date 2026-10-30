@@ -410,12 +410,19 @@ export function decisionSpeech(agent, decision) {
 export function approvalsFor(snapshot, agent) {
   if (!agent) return [];
   const convs = new Set([agent.convId].filter(Boolean));
-  return (snapshot?.access_requests || []).filter((request) => {
-    if (request?.status && request.status !== 'pending') return false;
-    if (request?.proposal) return false; // federation proposals have their own flow
+  return pendingApprovals(snapshot).filter((request) => {
     if (request?.agent_id) return request.agent_id === agent.agentId;
     return convs.has(request?.conv_id) || convs.has(request?.current_conv_id);
   });
+}
+
+// pendingApprovals lists every access request waiting on the operator, the one
+// timing out soonest first: what the quick permissions panel shows.
+export function pendingApprovals(snapshot) {
+  const due = (request) => Date.parse(request?.deadline || '') || Infinity;
+  return (snapshot?.access_requests || [])
+    .filter((request) => (!request?.status || request.status === 'pending') && !request?.proposal) // federation proposals have their own flow
+    .sort((a, b) => due(a) - due(b));
 }
 
 // approvalSummary describes what approving a request grants, in one line.
