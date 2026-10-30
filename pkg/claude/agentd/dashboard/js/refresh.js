@@ -17,7 +17,7 @@ import {
 import { focusNextMessagesAttention, renderMailTab, renderAccessRequests } from './mail-bridge.js';
 import { renderGroupsTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
-import { applyProcessesTabVisibility } from './processes.js';
+import { applyCollabVisibility, applyProcessesTabVisibility } from './processes.js';
 import { renderDock } from './dock.js';
 // lastSnapshot is dashboard.js's shared state — read directly, written via the
 // setLastSnapshot setter. All deliberate, benign cycles are TDZ-safe —
@@ -264,6 +264,7 @@ export async function refresh(options) {
     renderDock();
     renderLinksTab();
     applyProcessesTabVisibility(data);
+    applyCollabVisibility(data);
     renderMailTab();
     renderDashDefaultProfile();
     renderDashSandboxProfile();
@@ -505,8 +506,11 @@ function cycleTab(dir) {
   // Processes is an Automations subtab whose own anchor is always hidden, so
   // while it is open, step from the Automations position instead.
   const processesActive = !!document.querySelector('nav [data-tab="processes"].active');
+  // Boards likewise sits under Collab (the terminals anchor).
+  const boardsActive = !!document.querySelector('nav [data-tab="boards"].active');
   const active = tabs.findIndex(b => b.classList.contains('active')
-    || (processesActive && b.dataset.tab === 'jobs'));
+    || (processesActive && b.dataset.tab === 'jobs')
+    || (boardsActive && b.dataset.tab === 'terminals'));
   // active < 0 ⇒ the current tab is itself hidden (e.g. you were on Vegas
   // and slop just turned off); start the step from the first visible tab.
   const from = active < 0 ? 0 : active;

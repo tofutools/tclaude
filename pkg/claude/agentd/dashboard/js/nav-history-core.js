@@ -42,7 +42,7 @@ export const DEFAULT_TAB = 'groups';
 // rather than an invalid tab, which keeps a stale/typo'd URL from breaking
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
-  'groups', 'terminals', 'jobs', 'processes', 'plugins',
+  'groups', 'terminals', 'boards', 'jobs', 'processes', 'plugins',
   'access', 'messages', 'usage', 'diagnostics', 'config', 'vegas',
   'map',
   'fleet-admin',
@@ -78,7 +78,7 @@ export const KNOWN_SUBTABS = {
   diagnostics: new Set(['audit', 'logs', 'performance', 'doctor']),
   config: new Set([
     'appearance', 'terminals', 'notifications', 'agents', 'context', 'costs',
-    'assistants', 'daemon', 'logs', 'experimental', 'advanced',
+    'assistants', 'steward', 'daemon', 'logs', 'experimental', 'advanced',
   ]),
   'fleet-admin': new Set([
     'setup', 'peers', 'harnesses', 'run', 'spawns', 'invites', 'grants', 'models', 'sharing',
@@ -123,9 +123,10 @@ export const SELECTABLE_SUBTABS = {
 // with no subtab in between — so the entity lives in the SECOND path segment:
 //   - terminals/<agent-id> — the Terminals tab is viewing that agent's terminal.
 //   - messages/<folder> — the Messages tab has that folder open.
+//   - boards/<board-id> — the Boards view has that board open.
 // These tabs must not also appear in KNOWN_SUBTABS: a tab cannot have both a
 // subtab and a tab-level selection, because both would claim segment two.
-export const SELECTABLE_TABS = new Set(['terminals', 'messages']);
+export const SELECTABLE_TABS = new Set(['terminals', 'boards', 'messages']);
 
 // ITEM_TABS enumerates tab-level-selection tabs whose selection can itself
 // have one entry open, carried as `item` in the THIRD path segment:
@@ -462,6 +463,15 @@ export function fromPath(pathname, search) {
     return normalizeLocation({ tab, selection: decodeSelection(second), item: decodeSelection(third), params });
   }
   return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third), item: decodeSelection(fourth), params });
+}
+
+// isKnownPath reports whether fromPath reads a pathname as a real route rather
+// than falling back to the default location for an unknown first segment. A
+// caller that must refuse a bad path asks this first: the two parse alike.
+export function isKnownPath(pathname) {
+  const [first] = String(pathname || '').split(/[?#]/, 1)[0].split('/').filter(Boolean);
+  return first === undefined || first === 'dashboard' || first === 'automations' || first === 'fleet'
+    || KNOWN_TABS.has(first) || Object.hasOwn(RENAMED_TABS, first) || Object.hasOwn(LEGACY_TAB_LOCATIONS, first);
 }
 
 // ---- Stale-target resolution --------------------------------------------

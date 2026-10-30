@@ -1,0 +1,140 @@
+package agentd_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+func TestDashboardGuideViewAndCues(t *testing.T) {
+	f := newFlow(t)
+	enableCollab(t)
+	agentd.ResetDashboardGuideForTest()
+	t.Cleanup(agentd.ResetDashboardGuideForTest)
+	f.HaveConvWithTitle("steward-conv", "steward")
+	dash := agentd.BuildDashboardHandlerForTest()
+	postView := func(body map[string]any) int {
+		req := testharness.JSONRequest(t, http.MethodPost, "/api/companion/view", body)
+		req.Header.Set("Origin", "http://127.0.0.1:0")
+		return testharness.Serve(dash, req).Code
+	}
+
+	// Nothing is readable or postable without the slugs.
+	require.Equal(t, http.StatusForbidden, accountQuery(t, f, "steward-conv", "/v1/dashboard/view").Code)
+	cue := func(body map[string]any) int {
+		r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/dashboard/cue", body), "steward-conv")
+		return testharness.Serve(f.Mux, r).Code
+	}
+	require.Equal(t, http.StatusForbidden, cue(map[string]any{"tab": "groups"}))
+	require.NoError(t, db.GrantAgentPermission("steward-conv", agentd.PermDashboardViewRead, "test"))
+	require.NoError(t, db.GrantAgentPermission("steward-conv", agentd.PermDashboardGuide, "test"))
+
+	// Before the dashboard reports anything the view is unknown.
+	r := accountQuery(t, f, "steward-conv", "/v1/dashboard/view")
+	require.Equal(t, http.StatusOK, r.Code)
+	require.Contains(t, r.Body.String(), `"known":false`)
+
+	// The dashboard reports the operator's view; the agent reads it back.
+	require.Equal(t, http.StatusNoContent, postView(map[string]any{"tab": "processes", "path": "/processes/templates/deploy", "title": "tclaude"}))
+	r = accountQuery(t, f, "steward-conv", "/v1/dashboard/view")
+	var view struct {
+		Known bool   `json:"known"`
+		Tab   string `json:"tab"`
+		Path  string `json:"path"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body.Bytes(), &view))
+	require.True(t, view.Known)
+	require.Equal(t, "processes", view.Tab)
+	require.Equal(t, "/processes/templates/deploy", view.Path)
+
+	// A view path must stay on the dashboard.
+	require.Equal(t, http.StatusBadRequest, postView(map[string]any{"tab": "x", "path": "https://evil.example/"}))
+	require.Equal(t, http.StatusNoContent, postView(map[string]any{"tab": "messages", "path": "/messages?q=http://example.com"}), "a search query may hold a URL")
+
+	// Cues are validated, then ride the snapshot with the agent's identity.
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{}))
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"tab": "nope"}))
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"path": "//evil.example/x"}))
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"path": "/terminals/agt_0123"}), "a cue may not attach a terminal")
+	for _, sneaky := range []string{"/x/../terminals/agt_0123", "/%74erminals/agt_0123", "/terminals/./agt_0123", "/x/%2e%2e/terminals/agt_0123"} {
+		require.Equal(t, http.StatusBadRequest, cue(map[string]any{"path": sneaky}), sneaky)
+	}
+	require.NotEqual(t, http.StatusBadRequest, cue(map[string]any{"path": "/terminals/"}), "the Terminals tab itself is fine")
+	require.Equal(t, http.StatusOK, cue(map[string]any{"path": "/terminals"}))
+	agentd.ResetDashboardGuideForTest()
+	require.Equal(t, http.StatusOK, cue(map[string]any{"tab": "Processes", "target": "Save draft", "note": "Save once\nthe diff\x07 looks right"}))
+
+	snapReq := testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil)
+	snapReq.Header.Set("Origin", "http://127.0.0.1:0")
+	rec := testharness.Serve(dash, snapReq)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var snap struct {
+		Cues []struct {
+			ID      int64  `json:"id"`
+			AgentID string `json:"agent_id"`
+			Tab     string `json:"tab"`
+			Target  string `json:"target"`
+			Note    string `json:"note"`
+		} `json:"companion_cues"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap))
+	require.Len(t, snap.Cues, 1)
+	require.Equal(t, "processes", snap.Cues[0].Tab)
+	require.Equal(t, "Save draft", snap.Cues[0].Target)
+	require.Equal(t, "Save once the diff looks right", snap.Cues[0].Note, "control bytes are dropped and newlines flattened")
+	require.NotEmpty(t, snap.Cues[0].AgentID)
+
+	// Marks are validated and ride the cue.
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": []map[string]any{{"kind": "scribble", "target": "x"}}}))
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": []map[string]any{{"kind": "circle"}}}), "a mark needs a target")
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": []map[string]any{{"kind": "arrow", "target": "Review"}}}), "an arrow needs from")
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": []map[string]any{{"kind": "circle", "target": "a", "from": "b"}}}))
+	seven := make([]map[string]any, 7)
+	for i := range seven {
+		seven[i] = map[string]any{"kind": "circle", "target": "x"}
+	}
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"marks": seven}))
+	agentd.ResetDashboardGuideForTest()
+	require.Equal(t, http.StatusOK, cue(map[string]any{"marks": []map[string]any{
+		{"kind": "Circle", "target": "Review"}, {"kind": "arrow", "from": "Rework", "target": "Review"},
+	}}), "marks alone make a cue")
+	rec = testharness.Serve(dash, snapReq.Clone(snapReq.Context()))
+	var marked struct {
+		Cues []struct {
+			Marks []struct {
+				Kind   string `json:"kind"`
+				Target string `json:"target"`
+				From   string `json:"from"`
+			} `json:"marks"`
+		} `json:"companion_cues"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &marked))
+	require.Len(t, marked.Cues, 1)
+	require.Len(t, marked.Cues[0].Marks, 2)
+	require.Equal(t, "circle", marked.Cues[0].Marks[0].Kind)
+	require.Equal(t, "Rework", marked.Cues[0].Marks[1].From)
+
+	// A cue can hand the operator an agent to open, by name or id.
+	f.HaveGroup("api")
+	f.HaveConvWithTitle("builder-conv", "builder")
+	f.HaveMember("api", "builder-conv")
+	builderID, err := db.AgentIDForConv("builder-conv")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"open": "nobody-by-that-name"}))
+	agentd.ResetDashboardGuideForTest()
+	require.Equal(t, http.StatusOK, cue(map[string]any{"open": "builder"}), "an agent to open alone makes a cue")
+	rec = testharness.Serve(dash, snapReq.Clone(snapReq.Context()))
+	var opened struct {
+		Cues []struct {
+			Open string `json:"open"`
+		} `json:"companion_cues"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &opened))
+	require.Len(t, opened.Cues, 1)
+	require.Equal(t, builderID, opened.Cues[0].Open, "resolved to the stable agent id")
+}

@@ -1619,3 +1619,33 @@ func TestCloseTerminalTab(t *testing.T) {
 	assert.True(t, cfg.CloseTerminalTab(TerminalTabDetached, TerminalTabAgentTerminal))
 	assert.False(t, cfg.CloseTerminalTab(TerminalTabDetached, TerminalTabGroupTerminal))
 }
+
+func TestStewardAccessDefaultsAndValidates(t *testing.T) {
+	var none *Config
+	assert.Equal(t, StewardReadsOperator, none.StewardReads(), "operator-level reads by default")
+	assert.Equal(t, StewardWritesMessaging, none.StewardWrites(), "messaging by default")
+
+	c := &Config{Steward: &StewardConfig{Reads: StewardReadsFleet, Writes: StewardWritesWorkers}}
+	assert.Equal(t, StewardReadsFleet, c.StewardReads())
+	assert.Equal(t, StewardWritesWorkers, c.StewardWrites())
+	assert.Empty(t, Validate(c))
+
+	errs := strings.Join(Validate(&Config{Steward: &StewardConfig{Reads: "root", Writes: "all"}}), "\n")
+	assert.Contains(t, errs, "steward.reads")
+	assert.Contains(t, errs, "steward.writes")
+
+	assert.Empty(t, none.StewardName())
+	assert.Empty(t, (&Config{Steward: &StewardConfig{Name: "group:all"}}).StewardName(), "a hand edit cannot alias a group")
+	assert.Empty(t, Validate(&Config{Steward: &StewardConfig{Name: "Mr Jeeves"}}))
+	for _, name := range []string{"group:all", "a/b", "a  b", "x@y", strings.Repeat("x", MaxStewardNameLen+1)} {
+		assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{Name: name}}), "\n"), "steward.name", name)
+	}
+
+	assert.Empty(t, none.StewardStartupPrompt())
+	c = &Config{Steward: &StewardConfig{StartupPrompt: " Reply in Swedish.\n"}}
+	assert.Equal(t, "Reply in Swedish.", c.StewardStartupPrompt())
+	assert.Empty(t, Validate(c))
+	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: strings.Repeat("x", MaxStewardStartupPromptLen+1)}}), "\n"), "steward.startup_prompt")
+	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: "a\x1bb"}}), "\n"), "steward.startup_prompt")
+	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: "a\r\nb"}}), "\n"), "steward.startup_prompt", "a summon refuses \\r")
+}

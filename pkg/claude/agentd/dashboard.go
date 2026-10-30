@@ -400,7 +400,7 @@ func handleDashboardStatic() http.Handler {
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "diagnostics": true, "config": true,
-	"map": true, "fleet": true, "fleet-admin": true,
+	"map": true, "fleet": true, "fleet-admin": true, "boards": true,
 	// Retired tabs the client heals to their Diagnostics subtab (/audit →
 	// /diagnostics/audit, /logs → /diagnostics/logs, /debug →
 	// /diagnostics/performance), and Diagnostics' former name (/activity/<subtab>
@@ -1077,6 +1077,15 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
+	// CollabEnabled gates the experimental companion window, boards and the
+	// Collab switch. Re-read on every snapshot so a Config-tab change takes
+	// effect without restarting agentd, matching collabRoute.
+	CollabEnabled bool `json:"collab_enabled"`
+	// StewardName is what the operator calls their Steward, empty by default.
+	StewardName string `json:"steward_name,omitempty"`
+	// StewardElevated is what each live Steward holds beyond Config and the
+	// defaults, by agent id. Sent only with Collab on.
+	StewardElevated map[string]stewardElevation `json:"steward_elevated,omitempty"`
 	// TriggersEnabled gates the experimental Automations subview and compact
 	// Groups projection. Re-read on every snapshot so Config changes take
 	// effect without restarting agentd, matching triggerRoute.
@@ -1250,6 +1259,9 @@ type snapshotPayload struct {
 	// quota samples or OpenCode has retained provider activity that needs a
 	// coverage warning in the 90-day history window.
 	UsageTabVisible bool `json:"usage_tab_visible"`
+	// CompanionCues are agents' recent dashboard-guidance cues (dashboard_guide.go),
+	// played once each by the companion island.
+	CompanionCues []companionCue `json:"companion_cues,omitempty"`
 	// RemoteAccess surfaces the optional network-exposed dashboard listener's
 	// live state so the Config tab can guide setup: whether the cert/passphrase
 	// material has been generated (run `tclaude remote-access setup` first) and
@@ -3460,6 +3472,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		FusedToolbarFixedNode:         cfg.FusedToolbarFixedNode(),
 		UsageCollapseSubviews:         cfg.UsageCollapseSubviews(),
 		ProcessesEnabled:              cfg.ProcessesEnabled(),
+		CollabEnabled:                 cfg.CollabEnabled(),
+		StewardName:                   cfg.StewardName(),
 		TriggersEnabled:               triggersEnabled,
 		GroupsRouteMapEnabled:         groupsRouteMapEnabled,
 		GroupAttachmentsMode:          cfg.GroupAttachmentsMode(),
@@ -3961,6 +3975,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.CostTabWhatIf = showOnSub
 	out.BrokerRefusalsTotal, out.BrokerRefusalsUnplaceable = brokerRefusals.counts()
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
+	if cfg.CollabEnabled() {
+		out.StewardElevated = stewardElevations(cfg, permissionsState{
+			Defaults:  out.Permissions.Defaults,
+			Grants:    out.Permissions.Grants,
+			Overrides: out.Permissions.Overrides,
+		})
+		out.CompanionCues = activeCompanionCues()
+	}
 	out.Templates = templates
 	out.Profiles = profiles
 	var httpProxyNames []string

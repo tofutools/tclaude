@@ -1,0 +1,1228 @@
+// companion-island.js -- the dashboard companion (tcl-6i0283): a floating,
+// minimizable window over every dashboard view that hosts agents' native
+// harness terminals. See companion-model.js for the concept.
+//
+//   chips   minimized: one pill per pinned agent, bottom-right, showing its
+//           status; "needs you" (a permission prompt or a question) turns the
+//           pill amber so a minimized agent never looks silently busy.
+//   peek    hovering a chip previews the last lines of the agent's pane,
+//           read-only (GET /api/companion/{agent}/peek): the keyboard stays
+//           with the page until the operator clicks.
+//   window  click or Ctrl+. grows the chip into a draggable, resizable window
+//           (edge drags snap it into a side panel or bottom drawer) with one
+//           tab per agent. The body is the agent's real terminal, so
+//           streaming, prompts and Esc interrupts are the harness's own.
+//
+// A web terminal attach displaces any other web view of the same session, so
+// opening an agent here first closes its Terminals-tab pane, and "open in
+// Terminals" parks this tab instead of fighting over the session.
+
+import { h, render } from 'preact';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import htm from 'htm';
+import {
+  COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
+  clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
+  defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
+  stewardSummonBody, STEWARD_STARTERS, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
+} from './companion-model.js';
+import { registerCompanionController } from './companion-facade.js';
+import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
+import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
+import { ApprovalCard, ElevatedBand, openAccessPanel } from './companion-approval.js';
+import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
+import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+
+const html = htm.bind(h);
+
+const PEEK_DELAY_MS = 220;
+const PENDING_MS = 30000;
+
+// snapTopOf is where a snapped side panel starts: just below the nav bar.
+function snapTopOf(win) {
+  try {
+    const bottom = win?.document?.querySelector?.('nav')?.getBoundingClientRect?.().bottom;
+    return Number.isFinite(bottom) && bottom > 0 ? Math.round(bottom) : 0;
+  } catch {
+    return 0;
+  }
+}
+const PEEK_REFRESH_MS = 1500;
+
+function viewportOf(win) {
+  return { width: win?.innerWidth || 1280, height: win?.innerHeight || 800 };
+}
+
+function reducedMotion(win) {
+  try {
+    return !!win?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  } catch {
+    return false;
+  }
+}
+
+function readPref(prefs, key) {
+  try {
+    return prefs?.getItem?.(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writePref(prefs, key, value) {
+  try {
+    prefs?.setItem?.(key, value);
+  } catch { /* prefs unavailable: the session keeps working */ }
+}
+
+function Avatar({ agent }) {
+  const steward = agent?.steward;
+  const mark = steward ? '✦' : agent?.scribe ? '✎' : (agent?.name || '?').slice(0, 1).toUpperCase();
+  return html`<span class=${`companion-avatar${steward ? ' steward' : agent?.scribe ? ' scribe' : ''}`} aria-hidden="true">${mark}</span>`;
+}
+
+function StatusDot({ status }) {
+  return html`<span class=${`companion-dot ${status}`} aria-hidden="true"></span>`;
+}
+
+// CompanionTerminal mounts the opaque xterm widget for one agent. It owns the
+// widget's whole lifecycle: a new agent id or a reconnect generation disposes
+// the old widget before attaching a fresh one.
+function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focusToken, onStatus, onReconnectChange }) {
+  const hostRef = useRef(null);
+  const widgetRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    let widget = null;
+    onStatus('connecting…');
+    onReconnectChange(false);
+    Promise.resolve(loadRuntime ? loadRuntime() : true).then(() => {
+      if (cancelled || !hostRef.current) return;
+      widget = widgetFactory({
+        ...terminalAttachWidgetOptions(),
+        host: hostRef.current,
+        wsPath: `/api/open-window-ws/${encodeURIComponent(agent.agentId)}`,
+        initialRetry: true,
+        applicationClipboardShortcuts: agent.harness === 'copilot',
+        onStatus: (status) => { if (!cancelled) onStatus(status); },
+        onReconnectChange: (available) => { if (!cancelled) onReconnectChange(!!available); },
+      });
+      widgetRef.current = widget;
+      widget.setActive(true);
+      void widget.connect();
+    }).catch((error) => {
+      if (!cancelled) onStatus('error');
+      console.error('companion terminal failed to start:', error);
+    });
+    return () => {
+      cancelled = true;
+      widgetRef.current = null;
+      widget?.dispose();
+    };
+  }, [agent.agentId, generation]);
+  useEffect(() => {
+    if (focusToken) widgetRef.current?.focus?.();
+  }, [focusToken]);
+  return html`<div class="companion-term-host" ref=${hostRef} data-companion-terminal=${agent.agentId}></div>`;
+}
+
+function Peek({ agent, lines, anchor }) {
+  if (!agent || !anchor) return null;
+  const style = `right:${Math.max(8, anchor.right)}px;bottom:${anchor.bottom}px`;
+  return html`<div class="companion-peek" role="tooltip" style=${style}>
+    <div class="companion-peek-head"><${Avatar} agent=${agent} /><b>${agent.name}</b>
+      <span class="companion-peek-meta">${companionStatusLabel(companionStatus(agent))} · click to open</span></div>
+    <pre class="companion-peek-body">${lines === null ? 'reading…' : lines.length ? lines.join('\n') : agent.online ? '(empty screen)' : '(offline)'}</pre>
+    <div class="companion-peek-foot">Read-only preview. The keyboard stays with the page until you click.</div>
+  </div>`;
+}
+
+// How recently a key in the terminal counts as still typing when a cue lands.
+const CUE_TYPING_WINDOW_MS = 3000;
+
+function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, onClose, busy }) {
+  const [filter, setFilter] = useState('');
+  const candidates = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    return [...agents.values()]
+      .filter((agent) => agent.online && agent.agentId !== steward?.agentId && !tabs.includes(agent.agentId))
+      .filter((agent) => !needle || agent.name.toLowerCase().includes(needle))
+      .sort((a, b) => (b.scribe - a.scribe) || a.name.localeCompare(b.name))
+      .slice(0, 40);
+  }, [agents, tabs, steward, filter]);
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    globalThis.addEventListener?.('keydown', onKey);
+    return () => globalThis.removeEventListener?.('keydown', onKey);
+  }, [onClose]);
+  const stewardPinned = steward && tabs.includes(steward.agentId);
+  return html`<div class="companion-menu" role="menu" aria-label="Add a companion">
+    ${!stewardPinned && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
+      <span class="companion-avatar steward" aria-hidden="true">✦</span>
+      <span><b>${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
+    </button>`}
+    <input type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
+      value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
+    <div class="companion-menu-list">
+      ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" onClick=${() => onPin(agent.agentId)}>
+        <${agent.scribe ? Avatar : StatusDot} agent=${agent} status=${companionStatus(agent)} /> ${agent.name}</button>`)
+        : html`<div class="companion-menu-empty">${filter ? 'No live agent matches.' : 'No other live agents.'}</div>`}
+    </div>
+  </div>`;
+}
+
+// DecisionCard is a decision the agent put to the operator with
+// `notify-human --option ...`: its question, any attached image, and one
+// button per option. The pick (plus an optional note) goes back to the agent
+// as mail, even if it is offline. All of it is agent text, rendered as text.
+function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
+  const [busy, setBusy] = useState(0);
+  const [note, setNote] = useState('');
+  const image = (decision.attachments || []).find((a) => a.previewable);
+  async function choose(choice) {
+    setBusy(choice);
+    try {
+      const response = await fetchImpl('/api/human-messages/reply', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: decision.id, choice, body: note.trim() }),
+      });
+      if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+    } catch (error) {
+      notify(`That decision could not be sent: ${error?.message || error}`, true);
+      setBusy(0);
+    }
+  }
+  const question = decision.subject || 'Decision';
+  return html`<div class="companion-decision" role="group" aria-label=${`Decision: ${question}`}>
+    <div class="companion-approval-head"><b>${question}</b>${from && html`<span class="companion-decision-from">${from}</span>`}</div>
+    ${decision.body && decision.body !== decision.subject && html`<p class="companion-decision-body">${decision.body}</p>`}
+    <div class="companion-decision-options">
+      ${decision.options.map((option, i) => {
+        const recommended = i + 1 === decision.recommended;
+        return html`<button key=${option} type="button" class=${recommended ? 'companion-primary' : ''} disabled=${!!busy}
+          title=${recommended ? 'The agent recommends this one' : ''} onClick=${() => choose(i + 1)}>
+          ${busy === i + 1 ? 'Sending…' : option}${recommended && busy !== i + 1 ? html` <span class="companion-decision-rec">★</span>` : ''}
+        </button>`;
+      })}
+    </div>
+    <input class="companion-decision-note" type="text" placeholder="Add a note (optional)" value=${note} disabled=${!!busy}
+      aria-label="Note to send with your choice" onInput=${(event) => setNote(event.currentTarget.value)} />
+    ${image && html`<a class="companion-decision-image" href=${image.url} target="_blank" rel="noopener"><img src=${image.url} alt=${image.filename || 'attached image'} /></a>`}
+  </div>`;
+}
+
+export function CompanionApp({
+  speakerImpl = null,
+  dictationImpl = null,
+  snapshot,
+  activeTab,
+  prefs,
+  fetchImpl = globalThis.fetch,
+  notify = () => {},
+  widgetFactory,
+  loadRuntime = null,
+  closeTerminalPanes = () => {},
+  openTerminalsPane = null,
+  win = globalThis.window,
+  sessionPrefs: sessionPrefsImpl = null,
+  registerController = registerCompanionController,
+  navigate = null,
+}) {
+  const agents = useMemo(() => companionAgents(snapshot.value), [snapshot.value]);
+  const customName = snapshot.value?.steward_name || '';
+  const stewardLabel = customName || 'the Steward';
+  const steward = useMemo(() => stewardAgent(agents), [agents]);
+  const [tabs, setTabs] = useState(() => parseTabs(readPref(prefs, COMPANION_TABS_PREF)));
+  const sessionPrefs = useMemo(() => {
+    if (sessionPrefsImpl) return sessionPrefsImpl;
+    try { return win?.sessionStorage ?? null; } catch { return null; }
+  }, [win, sessionPrefsImpl]);
+  const [active, setActive] = useState(() => {
+    const saved = readPref(sessionPrefs, COMPANION_ACTIVE_PREF) || readPref(prefs, COMPANION_ACTIVE_PREF);
+    return isAgentId(saved) ? saved : '';
+  });
+  const [open, setOpen] = useState(() => readPref(sessionPrefs, COMPANION_OPEN_PREF) === '1');
+  const [placement, setPlacement] = useState(() => {
+    const vp = viewportOf(win);
+    const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
+    if (saved?.snap) return zoneRect(saved.snap, vp, snapTopOf(win));
+    return clampPlacement(saved || defaultPlacement(vp), vp);
+  });
+  const [guide, setGuide] = useState(null);
+  const [menu, setMenu] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [parked, setParked] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF))));
+  const [statuses, setStatuses] = useState({});
+  const [reconnectable, setReconnectable] = useState({});
+  const [generation, setGeneration] = useState(0);
+  const [focusToken, setFocusToken] = useState(0);
+  const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
+  // Unsent text per agent id, so a draft stays with the agent it was written
+  // for however the active tab changes.
+  const [drafts, setDrafts] = useState({});
+  const setDraft = (agentId, text) => setDrafts((current) => {
+    const { [agentId]: _replaced, ...rest } = current;
+    return text ? { ...rest, [agentId]: text } : rest;
+  });
+  // deciding shows the fleet-wide "to decide" queue over the window body.
+  const [deciding, setDeciding] = useState(false);
+  // Answering the last decision ends the queue: a later decision must not
+  // cover the window again while the operator is typing in it.
+  const queueSize = pendingDecisions(snapshot.value).length;
+  useEffect(() => { if (!queueSize) setDeciding(false); }, [queueSize]);
+  const draftRef = useRef('');
+  const [withContext, setWithContext] = useState(true);
+  // The agent the operator is marking up the page for (tcl-8vjjko), or null.
+  const [annotating, setAnnotating] = useState(null);
+  // Voice output (tcl-q3qcfw): agents whose replies are spoken aloud.
+  const [voiceAgents, setVoiceAgents] = useState(() => new Set(parseVoiceAgents(readPref(prefs, VOICE_PREF))));
+  const voiceAgentsRef = useRef(voiceAgents);
+  voiceAgentsRef.current = voiceAgents;
+  const blockedHinted = useRef(false);
+  const speaker = useMemo(() => speakerImpl || createSpeaker(win, {
+    onBlocked: () => {
+      if (blockedHinted.current) return;
+      blockedHinted.current = true;
+      notify('The browser blocked the companion\'s voice until you click or type on the page.', true);
+    },
+  }), [speakerImpl, win]);
+  const voiceReader = useMemo(() => createVoiceReader(fetchImpl), [fetchImpl]);
+  // Voice input (tcl-sqxkb0): dictation fills the draft; ending with "send"
+  // sends it. The callbacks read the latest send through a ref.
+  const [listening, setListening] = useState(false);
+  const dictationBase = useRef('');
+  const sendRef = useRef(null);
+  // A dictation belongs to the agent it started for; results that land after
+  // a switch are dropped. listeningRef keeps replies from being spoken into
+  // the open mic.
+  const dictationAgent = useRef('');
+  const activeIdRef = useRef('');
+  const listeningRef = useRef(false);
+  const ownDictation = () => dictationAgent.current && dictationAgent.current === activeIdRef.current;
+  const joinDraft = (base, heard) => [base.trim(), heard.trim()].filter(Boolean).join(' ');
+  const dictation = useMemo(() => (dictationImpl || ((callbacks) => createDictation(win, callbacks)))({
+    onText: (heard) => { if (ownDictation()) setDraft(dictationAgent.current, joinDraft(dictationBase.current, heard)); },
+    onState: (on, error) => {
+      listeningRef.current = on;
+      setListening(on);
+      if (error && error !== 'no-speech' && error !== 'aborted') {
+        notify(error === 'not-allowed' ? 'The browser blocked the microphone for this page.' : `Dictation stopped: ${error}`, true);
+      }
+    },
+    onSend: (heard) => {
+      if (!ownDictation()) return;
+      const text = joinDraft(dictationBase.current, heard);
+      if (!text) return;
+      // The draft takes the final words first: a send clears the draft it
+      // sent, and only when the message really went out.
+      setDraft(dictationAgent.current, text);
+      void sendRef.current?.(null, text);
+    },
+  }), [dictationImpl, win]);
+  const voiceStatuses = useRef(new Map());
+  const voiceDecisions = useRef(new Map());
+  const [sending, setSending] = useState(false);
+  const windowRef = useRef(null);
+  const chipRects = useRef(new Map());
+  const openFrom = useRef(null);
+  // Agents just summoned or opened but not yet in a snapshot: kept pinned (and
+  // shown as starting) until a snapshot lists them or PENDING_MS passes.
+  const pending = useRef(new Map());
+  // The cleanup of an in-flight drag or resize, run if the island unmounts.
+  const gesture = useRef(null);
+  useEffect(() => () => gesture.current?.(), []);
+
+  const activeId = tabs.includes(active) ? active : (tabs[0] || '');
+  const activeAgent = activeId ? agents.get(activeId) || null : null;
+  const draft = drafts[activeId] || '';
+  draftRef.current = draft;
+
+  useEffect(() => writePref(prefs, COMPANION_TABS_PREF, JSON.stringify(tabs)), [tabs]);
+  useEffect(() => {
+    if (!activeId) return;
+    writePref(prefs, COMPANION_ACTIVE_PREF, activeId);
+    writePref(sessionPrefs, COMPANION_ACTIVE_PREF, activeId);
+  }, [activeId, sessionPrefs]);
+  useEffect(() => writePref(sessionPrefs, COMPANION_PARKED_PREF, JSON.stringify([...parked])), [parked, sessionPrefs]);
+  useEffect(() => writePref(sessionPrefs, COMPANION_OPEN_PREF, open ? '1' : '0'), [open, sessionPrefs]);
+
+  // Live scribes and Stewards keep a tab without being pinned.
+  const closedHelpers = useRef(null);
+  const closedList = () => {
+    if (!closedHelpers.current) closedHelpers.current = parseClosedHelpers(readPref(prefs, COMPANION_CLOSED_PREF));
+    return closedHelpers.current;
+  };
+  const setHelperClosed = (agentId, closed) => {
+    const list = closedList();
+    if (closed === list.has(agentId)) return;
+    if (closed) list.add(agentId); else list.delete(agentId);
+    writePref(prefs, COMPANION_CLOSED_PREF, JSON.stringify([...list]));
+  };
+  useEffect(() => {
+    if (!snapshot.value) return;
+    const keep = new Set([...pending.current.keys(), open ? activeId : ''].filter(Boolean));
+    const next = syncHelperTabs(tabs, agents, closedList(), keep);
+    if (next !== tabs) setTabs(next);
+  }, [agents, snapshot.value, open, activeId]);
+
+  // However an agent comes to be attached here (a tab chosen, a reload, the
+  // active tab closing), this view takes over from its Terminals pane.
+  useEffect(() => {
+    if (open && activeId && !parked.has(activeId)) closeTerminalPanes([activeId, activeAgent?.convId].filter(Boolean));
+  }, [open, activeId, activeAgent?.convId, parked]);
+
+  // A pinned agent that was retired drops out of the snapshot; forget it once
+  // the snapshot is known so the chips never show a dead handle forever.
+  useEffect(() => {
+    if (!snapshot.value) return;
+    const now = Date.now();
+    for (const [id, until] of pending.current) {
+      if (agents.has(id) || until < now) pending.current.delete(id);
+    }
+    const keep = (id) => agents.has(id) || pending.current.has(id);
+    if (tabs.some((id) => !keep(id))) setTabs((current) => current.filter(keep));
+  }, [agents]);
+
+  const showAgent = useCallback((agentId, { focus = true, starting = false } = {}) => {
+    if (!isAgentId(agentId)) return false;
+    const agent = agents.get(agentId);
+    // An id the snapshot does not know is only accepted for an agent this
+    // window just started; other callers keep their own fallback.
+    if (!agent && !starting && !pending.current.has(agentId)) return false;
+    if (!agent && starting) pending.current.set(agentId, Date.now() + PENDING_MS);
+    setHelperClosed(agentId, false);
+    stopPeek();
+    closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
+    setParked((current) => {
+      if (!current.has(agentId)) return current;
+      const next = new Set(current);
+      next.delete(agentId);
+      return next;
+    });
+    setTabs((current) => withTab(current, agentId));
+    setActive(agentId);
+    setDeciding(false);
+    setMenu(false);
+    setOpen(true);
+    if (focus) setFocusToken((n) => n + 1);
+    return true;
+  }, [agents, closeTerminalPanes]);
+
+  useEffect(() => registerController({ open: (agentId, options) => showAgent(agentId, options) }), [showAgent]);
+
+  const summonSteward = useCallback(async () => {
+    if (steward?.online) {
+      showAgent(steward.agentId);
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetchImpl('/api/scribe', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stewardSummonBody()),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      if (!isAgentId(result.agent_id)) throw new Error('the summon returned no agent id');
+      notify(`${result.reused ? 'Reopened' : 'Summoned'} ${stewardLabel}.`);
+      showAgent(result.agent_id, { starting: true });
+    } catch (error) {
+      notify(`Could not summon ${stewardLabel}: ${error?.message || error}`, true);
+    } finally {
+      setBusy(false);
+    }
+  }, [steward, stewardLabel, fetchImpl, notify, showAgent]);
+
+  const closeTab = useCallback((agentId) => {
+    if (agents.get(agentId)?.scribe) setHelperClosed(agentId, true);
+    setVoiceAgents((current) => {
+      if (!current.has(agentId)) return current;
+      const next = new Set(current);
+      next.delete(agentId);
+      return next;
+    });
+    const next = withoutTab(tabs, agentId);
+    if (agentId === activeId) setActive(nextActive(tabs, agentId));
+    if (!next.length) setOpen(false);
+    setTabs(next);
+  }, [tabs, activeId, agents]);
+
+  const minimize = useCallback(() => {
+    setMenu(false);
+    setDeciding(false);
+    const node = windowRef.current;
+    const chip = chipRects.current.get(activeId);
+    if (!node || !chip || reducedMotion(win) || typeof node.animate !== 'function') {
+      setOpen(false);
+      return;
+    }
+    const from = node.getBoundingClientRect();
+    const animation = node.animate([
+      { transform: 'none', opacity: 1 },
+      { transform: `translate(${chip.left - from.left}px, ${chip.top - from.top}px) scale(${chip.width / from.width}, ${chip.height / from.height})`, opacity: 0.4 },
+    ], { duration: 160, easing: 'cubic-bezier(.4,0,.8,.4)', fill: 'forwards' });
+    animation.onfinish = () => { setOpen(false); animation.cancel(); };
+  }, [activeId, win]);
+
+  const toggle = useCallback(() => {
+    stopPeek();
+    if (open) {
+      minimize();
+      return;
+    }
+    if (!tabs.length) {
+      setOpen(true);
+      return;
+    }
+    openFrom.current = chipRects.current.get(activeId) || null;
+    setOpen(true);
+    setFocusToken((n) => n + 1);
+  }, [open, tabs, activeId, minimize]);
+
+  // Ctrl+. toggles the window from anywhere, including from inside a focused
+  // terminal: capture phase, before xterm sees the key.
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.ctrlKey && !event.altKey && !event.metaKey && event.key === '.') {
+        event.preventDefault();
+        event.stopPropagation();
+        toggle();
+      } else if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.code === 'Period') {
+        // Ctrl+Shift+. marks up the page for the agent in the window.
+        event.preventDefault();
+        event.stopPropagation();
+        startAnnotating();
+      }
+    };
+    win?.addEventListener?.('keydown', onKey, true);
+    return () => win?.removeEventListener?.('keydown', onKey, true);
+  }, [toggle, win, activeAgent?.agentId, activeAgent?.online]);
+
+  // Grow the window out of the chip it was opened from.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const from = openFrom.current;
+    openFrom.current = null;
+    const node = windowRef.current;
+    if (!from || !node || reducedMotion(win) || typeof node.animate !== 'function') return;
+    const to = node.getBoundingClientRect();
+    if (!to.width || !to.height) return;
+    node.animate([
+      { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`, opacity: 0.5, borderRadius: '20px' },
+      { transform: 'none', opacity: 1, borderRadius: '10px' },
+    ], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }, [open]);
+
+  // Keep a floating window on screen when the browser resizes.
+  useEffect(() => {
+    const onResize = () => setPlacement((p) => {
+      const vp = viewportOf(win);
+      return p.snap ? zoneRect(p.snap, vp, snapTop()) : clampPlacement(p, vp);
+    });
+    win?.addEventListener?.('resize', onResize);
+    return () => win?.removeEventListener?.('resize', onResize);
+  }, [win]);
+
+  function snapTop() {
+    return snapTopOf(win);
+  }
+
+  function savePlacement(p) {
+    writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
+  }
+
+  function onTitlePointerDown(event) {
+    if (event.button !== 0 || event.target.closest?.('button, input, [role="tab"]')) return;
+    const node = windowRef.current;
+    if (!node) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    const vp = viewportOf(win);
+    let start = placement;
+    if (start.snap) {
+      // Tearing a snapped window off restores a floating size under the pointer.
+      const floating = clampPlacement({ ...defaultPlacement(vp), ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || {}), snap: '' }, vp);
+      start = { ...floating, x: event.clientX - floating.w / 2, y: event.clientY - 14, snap: '' };
+      setPlacement(start);
+    }
+    const sx = event.clientX;
+    const sy = event.clientY;
+    let zone = '';
+    let last = start;
+    const move = (m) => {
+      last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
+      setPlacement(last);
+      zone = snapZone({ x: m.clientX, y: m.clientY }, viewportOf(win));
+      setGuide(zone ? zoneRect(zone, viewportOf(win), snapTop()) : null);
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      setGuide(null);
+      if (zone) {
+        savePlacement({ ...last, snap: '' });
+        setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
+        writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify({ ...last, snap: zone }));
+      } else {
+        savePlacement(last);
+      }
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+    gesture.current = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+    };
+  }
+
+  function onResizePointerDown(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    const start = placement;
+    const sx = event.clientX;
+    const sy = event.clientY;
+    let last = start;
+    const move = (m) => {
+      const dx = m.clientX - sx;
+      const dy = m.clientY - sy;
+      // A snapped panel resizes along its free edge only.
+      if (start.snap === 'right') last = { ...start, x: start.x + dx, w: start.w - dx };
+      else if (start.snap === 'left') last = { ...start, w: start.w + dx };
+      else if (start.snap === 'bottom') last = { ...start, y: start.y + dy, h: start.h - dy };
+      else last = { ...start, w: start.w + dx, h: start.h + dy };
+      if (start.snap) {
+        const vp = viewportOf(win);
+        const w = Math.min(vp.width, Math.max(COMPANION_MIN_W, last.w));
+        const h = Math.max(COMPANION_MIN_H, last.h);
+        // Keep the panel glued to its edge however far the drag overshoots.
+        last = { ...last, w, h };
+        if (start.snap === 'right') last.x = vp.width - w;
+        if (start.snap === 'bottom') last.y = start.y + start.h - h;
+      } else {
+        last = clampPlacement(last, viewportOf(win));
+      }
+      setPlacement(last);
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      if (!start.snap) savePlacement(last);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+    gesture.current = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+    };
+  }
+
+  // Peek: a short hover delay, then the pane text, refreshed while hovered.
+  const peekTimer = useRef(null);
+  const peekRefresh = useRef(null);
+  const peekAgent = useRef('');
+  function stopPeek() {
+    clearTimeout(peekTimer.current);
+    clearInterval(peekRefresh.current);
+    peekTimer.current = null;
+    peekRefresh.current = null;
+    peekAgent.current = '';
+    setPeek(null);
+  }
+  useEffect(() => stopPeek, []);
+  async function readPeek(agentId) {
+    try {
+      const response = await fetchImpl(`/api/companion/${encodeURIComponent(agentId)}/peek`, { credentials: 'same-origin' });
+      const result = await response.json().catch(() => ({}));
+      if (peekAgent.current !== agentId) return;
+      const lines = response.ok && Array.isArray(result.lines) ? result.lines.map(String) : [];
+      setPeek((current) => (current && current.agentId === agentId ? { ...current, lines } : current));
+    } catch {
+      if (peekAgent.current === agentId) setPeek((current) => (current ? { ...current, lines: [] } : current));
+    }
+  }
+  function startPeek(agentId, chip) {
+    stopPeek();
+    peekAgent.current = agentId;
+    peekTimer.current = setTimeout(() => {
+      const rect = chip.getBoundingClientRect();
+      const vp = viewportOf(win);
+      setPeek({ agentId, lines: null, anchor: { right: vp.width - rect.right, bottom: vp.height - rect.top + 8 } });
+      void readPeek(agentId);
+      peekRefresh.current = setInterval(() => void readPeek(agentId), PEEK_REFRESH_MS);
+    }, PEEK_DELAY_MS);
+  }
+
+  function onChipClick(agentId, event) {
+    stopPeek();
+    // Asking for permission is answered where it is quickest, in the panel.
+    if (agentId && approvalsFor(snapshot.value, agents.get(agentId)).length) {
+      openAccessPanel({ agentId, launcher: event.currentTarget, documentRef: win?.document });
+      return;
+    }
+    openFrom.current = event.currentTarget.getBoundingClientRect();
+    if (agentId) showAgent(agentId);
+    else toggle();
+  }
+
+  sendRef.current = send;
+  activeIdRef.current = activeId || '';
+  // Switching agents (or closing) drops a dictation outright.
+  useEffect(() => () => dictation.abort?.(), [activeId, dictation]);
+
+  function toggleDictation() {
+    if (listening) {
+      dictation.stop();
+      return;
+    }
+    speaker.cancel();
+    dictationBase.current = draft;
+    dictationAgent.current = activeId || '';
+    dictation.start();
+  }
+
+  async function send(event, text = draft) {
+    event?.preventDefault?.();
+    const context = withContext
+      ? viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search })
+      : '';
+    if (!companionMessageFits(text, context)) {
+      notify('That message is too long to send. Shorten it and try again.', true);
+      return false;
+    }
+    const body = composeCompanionMessage(text, context);
+    if (!body || !activeAgent || sending) return false;
+    setSending(true);
+    try {
+      const response = await fetchImpl('/api/operator-message', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: activeAgent.agentId, subject: '', body }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      // Whatever was typed while this went out stays.
+      setDrafts((current) => {
+        if (current[activeAgent.agentId] !== text) return current;
+        const { [activeAgent.agentId]: _sent, ...rest } = current;
+        return rest;
+      });
+      return true;
+    } catch (error) {
+      notify(`Message to ${activeAgent.name} failed: ${error?.message || error}`, true);
+      return false;
+    } finally {
+      setSending(false);
+    }
+  }
+
+  useEffect(() => {
+    const pinned = [...voiceAgents].filter((id) => tabs.includes(id));
+    writePref(prefs, VOICE_PREF, JSON.stringify(pinned));
+    for (const id of pinned) voiceReader.prime(id).catch(() => {});
+  }, [voiceAgents, voiceReader, tabs]);
+
+  // Speak when a voice agent's turn ends, or when it starts waiting on the
+  // operator. Only transitions speak; the first sight of an agent is silent.
+  // Voice applies to pinned tabs only. Several dashboard tabs see the same
+  // transition, so each utterance is claimed in shared prefs first and the
+  // first tab to claim it speaks.
+  useEffect(() => {
+    if (!speaker.supported) return;
+    const next = new Map();
+    const quiet = () => listeningRef.current; // never speak into an open mic
+    for (const id of voiceAgents) {
+      const agent = agents.get(id);
+      if (agent && tabs.includes(id)) next.set(id, statusOf(agent));
+    }
+    const said = voiceTransitions(voiceStatuses.current, next);
+    voiceStatuses.current = next;
+    const asked = new Map();
+    for (const id of next.keys()) asked.set(id, decisionsFor(snapshot.value, agents.get(id)).at(-1)?.id || 0);
+    const arrived = decisionArrivals(voiceDecisions.current, asked);
+    voiceDecisions.current = asked;
+    const named = next.size > 1;
+    const claim = (key, value, fresh) => {
+      const previous = readPref(prefs, key);
+      if (previous && !fresh(previous)) return false;
+      writePref(prefs, key, value);
+      return true;
+    };
+    for (const { agentId, kind } of said) {
+      const agent = agents.get(agentId);
+      if (!agent) continue;
+      if (kind === 'needs') {
+        const now = Date.now();
+        if (!claim(`${VOICE_PREF}.needs.${agentId}`, String(now), (prev) => now - Number(prev) > 5000)) continue;
+        const decision = decisionsFor(snapshot.value, agent).at(-1);
+        if (!quiet()) speaker.speak(decision ? speakableText(decisionSpeech(agent, decision), 400)
+          : `${agent.name} needs you${agent.detail ? `: ${speakableText(agent.detail, 120)}` : '.'}`);
+        continue;
+      }
+      const speakReply = (retry) => voiceReader.latest(agentId).then((reply) => {
+        if (!voiceAgentsRef.current.has(agentId)) return;
+        if (!reply) {
+          // The transcript may land just after the status flips: look once more.
+          if (retry) setTimeout(() => speakReply(false), 1500);
+          return;
+        }
+        const fresh = (prev) => { try { return BigInt(reply.at) > BigInt(prev); } catch { return true; } };
+        if (!claim(`${VOICE_PREF}.said.${agentId}`, reply.at, fresh)) return;
+        const spoken = speakableText(reply.text);
+        if (spoken && !quiet()) speaker.speak(named ? `${agent.name}: ${spoken}` : spoken);
+      }).catch(() => {});
+      speakReply(true);
+    }
+    // A further decision from an agent already waiting on the operator.
+    const spoken = new Set(said.filter((s) => s.kind === 'needs').map((s) => s.agentId));
+    for (const agentId of arrived) {
+      const agent = agents.get(agentId);
+      const decision = agent && !spoken.has(agentId) && decisionsFor(snapshot.value, agent).at(-1);
+      if (!decision) continue;
+      if (!claim(`${VOICE_PREF}.decision.${agentId}`, String(decision.id), (prev) => decision.id > Number(prev))) continue;
+      if (!quiet()) speaker.speak(speakableText(decisionSpeech(agent, decision), 400));
+    }
+  }, [agents, voiceAgents, tabs, snapshot.value]);
+
+  function toggleVoice(agent) {
+    setVoiceAgents((current) => {
+      const next = new Set(current);
+      if (next.has(agent.agentId)) {
+        next.delete(agent.agentId);
+        voiceReader.forget(agent.agentId);
+        speaker.cancel();
+      } else {
+        next.add(agent.agentId);
+      }
+      return next;
+    });
+  }
+
+  // The window and chips stay mounted (the terminal keeps its stream) but
+  // step out of the way while the operator draws.
+  useEffect(() => {
+    win?.document?.body?.classList?.toggle?.('companion-annotating', !!annotating);
+    return () => win?.document?.body?.classList?.remove?.('companion-annotating');
+  }, [annotating, win]);
+
+  function startAnnotating() {
+    if (!activeAgent?.online) {
+      notify('Open a live agent in the companion first, then mark up the page for it.', true);
+      return;
+    }
+    setAnnotating({ agentId: activeAgent.agentId, name: activeAgent.name });
+  }
+
+  async function sendAnnotation({ note, lines }) {
+    const target = annotating;
+    if (!target) return;
+    const view = viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search });
+    const text = composeAnnotation({ note, lines });
+    // Clipped, the agent would miss marks while the operator is told it all
+    // went out. The overlay stays open with the strokes intact.
+    if (!companionMessageFits(text, view)) {
+      notify('That markup is too long to send. Undo some marks or shorten the note, then send again.', true);
+      return;
+    }
+    const body = composeCompanionMessage(text, view);
+    try {
+      const response = await fetchImpl('/api/operator-message', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: target.agentId, subject: '[annotation]', body }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      setAnnotating(null);
+      notify(`Sent your markup to ${target.name}.`);
+    } catch (error) {
+      notify(`Markup to ${target.name} failed: ${error?.message || error}`, true);
+    }
+  }
+
+  async function resume(agent) {
+    try {
+      const response = await fetchImpl(`/api/agents/${encodeURIComponent(agent.agentId)}/resume`, { method: 'POST', credentials: 'same-origin' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      notify(`Resuming ${agent.name}…`);
+    } catch (error) {
+      notify(`Could not resume ${agent.name}: ${error?.message || error}`, true);
+    }
+  }
+
+  function moveToTerminals(agent) {
+    if (!openTerminalsPane) return;
+    setParked((current) => new Set(current).add(agent.agentId));
+    // Let the companion's widget detach before the Terminals pane attaches.
+    setTimeout(() => openTerminalsPane(agent.agentId, agent.name, agent.harness), 60);
+  }
+
+  const setReconnectFor = useCallback((agentId) => (available) => setReconnectable((current) => (current[agentId] === available ? current : { ...current, [agentId]: available })), []);
+  const setStatusFor = useCallback((agentId) => (status) => setStatuses((current) => (current[agentId] === status ? current : { ...current, [agentId]: status })), []);
+
+  // -- dashboard guidance ---------------------------------------------------
+  // Report the operator's view so companion agents can ask where they are
+  // (GET /v1/dashboard/view), and play the agents' pointing cues.
+
+  const lastView = useRef('');
+  useEffect(() => {
+    const doc = win?.document;
+    const report = () => {
+      if (doc?.visibilityState === 'hidden') return;
+      const view = {
+        tab: String(activeTab.value || ''),
+        path: `${win?.location?.pathname || '/'}${win?.location?.search || ''}`.slice(0, 240),
+        title: String(doc?.title || '').slice(0, 160),
+      };
+      const key = JSON.stringify(view);
+      if (key === lastView.current) return;
+      lastView.current = key;
+      Promise.resolve(fetchImpl('/api/companion/view', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: key,
+      })).then((response) => { if (response && response.ok === false) lastView.current = ''; })
+        .catch(() => { lastView.current = ''; });
+    };
+    // A top-level nav click switches the view without any navigation event;
+    // report once its handlers have run.
+    const onNavClick = (event) => {
+      if (event.target?.closest?.('nav [data-tab]')) setTimeout(report, 0);
+    };
+    report();
+    doc?.addEventListener?.('click', onNavClick);
+    doc?.addEventListener?.('tclaude:snapshot', report);
+    doc?.addEventListener?.('tclaude:navigated', report);
+    doc?.addEventListener?.('visibilitychange', report);
+    win?.addEventListener?.('popstate', report);
+    return () => {
+      doc?.removeEventListener?.('click', onNavClick);
+      doc?.removeEventListener?.('tclaude:snapshot', report);
+      doc?.removeEventListener?.('tclaude:navigated', report);
+      doc?.removeEventListener?.('visibilitychange', report);
+      win?.removeEventListener?.('popstate', report);
+    };
+  }, [win, fetchImpl]);
+
+  const seenCues = useRef(new Set());
+  const cuesPrimed = useRef(false);
+  const cueRun = useRef(0);
+  const [guideCue, setGuideCue] = useState(null); // {cue, element}
+  const dismissGuide = useCallback(() => { cueRun.current += 1; setGuideCue(null); }, []);
+  useEffect(() => {
+    if (!snapshot.value) return;
+    const fresh = newCues(seenCues.current, snapshot.value.companion_cues, cuesPrimed.current);
+    cuesPrimed.current = true;
+    // Every hand-over counts; only the newest cue's pointing is played.
+    for (const cue of fresh) if (cue.open) openCue(cue);
+    if (fresh.length) void playCue(fresh[fresh.length - 1]);
+  }, [snapshot.value]);
+  useEffect(() => {
+    if (!guideCue) return undefined;
+    const run = cueRun.current;
+    const timer = setTimeout(() => { if (cueRun.current === run) setGuideCue(null); }, GUIDE_SHOW_MS);
+    return () => clearTimeout(timer);
+  }, [guideCue]);
+
+  const lastTerminalKey = useRef(0);
+  useEffect(() => {
+    const doc = win?.document;
+    if (!doc) return undefined;
+    const onKey = (event) => {
+      if (event.target?.closest?.('.companion-term-host')) lastTerminalKey.current = Date.now();
+    };
+    doc.addEventListener('keydown', onKey, true);
+    return () => doc.removeEventListener('keydown', onKey, true);
+  }, [win]);
+
+  // openForCue opens the agent a cue hands over. While the operator is
+  // typing or dictating to the current tab it is only pinned, never switched
+  // to: a switch would take the terminal they are typing in, or the draft they
+  // are writing, away from under them.
+  function openForCue(cue) {
+    const agent = agents.get(cue.open);
+    if (!agent) return;
+    const by = cue.agent_name || 'An agent';
+    // Focus alone is no signal: it stays in the terminal long after the last key.
+    const typing = Date.now() - lastTerminalKey.current < CUE_TYPING_WINDOW_MS;
+    if (draftRef.current.trim() || listeningRef.current || typing) {
+      setTabs((current) => withTab(current, agent.agentId));
+      notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
+      return;
+    }
+    showAgent(agent.agentId, { focus: false });
+  }
+  const openForCueRef = useRef(openForCue);
+  openForCueRef.current = openForCue;
+
+  // A hand-over that lands while this dashboard tab is hidden waits for the
+  // operator to come back to it. One tab acts on each hand-over: the first
+  // to claim it in shared prefs.
+  const heldOpen = useRef([]);
+  const handOver = (cue) => {
+    const take = () => {
+      const stored = readPref(prefs, COMPANION_CUE_OPEN_PREF);
+      if (!claimCueOpen(stored, cue)) return;
+      writePref(prefs, COMPANION_CUE_OPEN_PREF, cueOpenClaimed(stored, cue));
+      openForCueRef.current(cue);
+    };
+    const focused = win?.document?.hasFocus?.() ?? true;
+    if (focused) take();
+    else setTimeout(take, CUE_OPEN_UNFOCUSED_DELAY_MS);
+  };
+  // An agent the Steward hands over opens in the window, in the dashboard
+  // tab the operator is looking at only: a terminal attach takes over from
+  // any other view, so a hidden tab holds it until it is shown.
+  const openCue = (cue) => {
+    if (win?.document?.visibilityState === 'hidden') heldOpen.current.push(cue);
+    else handOver(cue);
+  };
+  useEffect(() => {
+    const doc = win?.document;
+    const onVisible = () => {
+      const held = heldOpen.current;
+      if (!held.length || doc?.visibilityState === 'hidden') return;
+      heldOpen.current = [];
+      for (const cue of held) if (cueOpenDue(cue, Date.now())) handOver(cue);
+    };
+    doc?.addEventListener?.('visibilitychange', onVisible);
+    return () => doc?.removeEventListener?.('visibilitychange', onVisible);
+  }, [win]);
+
+  async function playCue(cue) {
+    const run = ++cueRun.current;
+    setGuideCue(null);
+    if (!cue.tab && !cue.path && !cue.target && !cue.note && !cue.marks?.length) return;
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const path = cuePath(cue);
+    if (path && navigate) {
+      try { await navigate(path); } catch { /* stay on the current view */ }
+      await wait(GUIDE_SETTLE_MS);
+    }
+    let element = null;
+    if (cue.target) {
+      const deadline = Date.now() + GUIDE_FIND_TIMEOUT_MS;
+      while (cueRun.current === run) {
+        element = findGuideTarget(win?.document, cue.target);
+        if (element || Date.now() >= deadline) break;
+        await wait(GUIDE_FIND_STEP_MS);
+      }
+    }
+    // Marks (tcl-0waby5) name their targets by visible text too.
+    let marks = [];
+    if (Array.isArray(cue.marks) && cue.marks.length) {
+      const deadline = Date.now() + GUIDE_FIND_TIMEOUT_MS;
+      const resolved = (m) => m.element && (m.mark.kind !== 'arrow' || m.from);
+      let found = 0;
+      let progressAt = Date.now();
+      while (cueRun.current === run) {
+        // Only the marks still missing are looked up again.
+        marks = cue.marks.map((mark, i) => (marks[i] && resolved(marks[i]) ? marks[i] : {
+          mark,
+          element: findGuideTarget(win?.document, mark.target, { loose: true }),
+          from: mark.kind === 'arrow' ? findGuideTarget(win?.document, mark.from, { loose: true }) : null,
+        }));
+        const now = marks.filter(resolved).length;
+        if (now > found) { found = now; progressAt = Date.now(); }
+        if (now === marks.length || Date.now() >= deadline) break;
+        // Once the page has shown something, a mark that stays missing
+        // does not hold the rest back.
+        if ((found || element) && Date.now() - progressAt >= GUIDE_MARK_PATIENCE_MS) break;
+        await wait(GUIDE_FIND_STEP_MS);
+      }
+    }
+    if (cueRun.current !== run) return;
+    const focus = element || marks.find((m) => m.element)?.element;
+    focus?.scrollIntoView?.({ block: 'center', behavior: reducedMotion(win) ? 'auto' : 'smooth' });
+    setGuideCue({ cue, element, marks });
+  }
+
+  // -- render -----------------------------------------------------------------
+
+  const approvals = (agent) => approvalsFor(snapshot.value, agent);
+  const decisions = (agent) => decisionsFor(snapshot.value, agent);
+  // A pending approval or decision is the clearest "needs you" there is.
+  const statusOf = (agent) => (approvals(agent).length || decisions(agent).length ? 'needs' : companionStatus(agent));
+  const chipAgents = tabs.map((id) => agents.get(id)).filter(Boolean);
+  const queue = pendingDecisions(snapshot.value);
+  const toApprove = pendingApprovals(snapshot.value);
+  const elsewhere = toApprove.filter((request) => !chipAgents.some((agent) => approvalsFor({ access_requests: [request] }, agent).length));
+  const showQueue = deciding && queue.length > 0;
+  const askerName = (d) => agents.get(d.from_agent)?.name || d.from_title || 'an agent';
+  const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
+  const peekTarget = peek ? agents.get(peek.agentId) : null;
+
+  const chips = !open && html`<div class="companion-chips" role="toolbar" aria-label="Companions">
+    ${chipAgents.map((agent) => {
+      const status = statusOf(agent);
+      return html`<button key=${agent.agentId} type="button"
+        class=${`companion-chip ${status}`}
+        ref=${(node) => { if (node) chipRects.current.set(agent.agentId, node.getBoundingClientRect()); }}
+        aria-label=${`${agent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
+        onMouseEnter=${(event) => startPeek(agent.agentId, event.currentTarget)}
+        onMouseLeave=${stopPeek}
+        onFocus=${(event) => startPeek(agent.agentId, event.currentTarget)}
+        onBlur=${stopPeek}
+        onClick=${(event) => onChipClick(agent.agentId, event)}>
+        <${Avatar} agent=${agent} />
+        <span class="companion-chip-name">${agent.name}</span>
+        ${elevatedAccess(snapshot.value, agent) && html`<span title="Elevated access">🔓</span>`}
+        ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? '🔑 approval' : decisions(agent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
+      </button>`;
+    })}
+    ${queue.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
+      aria-label=${`${queue.length} ${queue.length === 1 ? 'decision' : 'decisions'} to make. Open them`}
+      title="Agents are waiting for you to choose"
+      onClick=${(event) => { stopPeek(); openFrom.current = event.currentTarget.getBoundingClientRect(); setDeciding(true); setOpen(true); }}>
+      <span class="companion-decide-mark" aria-hidden="true">◆</span><span class="companion-chip-name">${queue.length} to decide</span>
+    </button>`}
+    ${elsewhere.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
+      aria-label=${`${elsewhere.length} permission ${elsewhere.length === 1 ? 'request' : 'requests'} from other agents. Open them`}
+      title="Agents are asking for permission"
+      onClick=${(event) => { stopPeek(); openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document }); }}>
+      <span aria-hidden="true">🔑</span><span class="companion-chip-name">${elsewhere.length} to approve</span>
+    </button>`}
+    ${!chipAgents.length && html`<button type="button" class="companion-chip companion-chip-steward"
+      aria-label="Open the companion (Ctrl+.)" title=${`${customName || 'Steward'}: your helper for all of tclaude (Ctrl+.)`}
+      onClick=${(event) => onChipClick('', event)}>
+      <span class="companion-avatar steward" aria-hidden="true">✦</span><span class="companion-chip-name">${customName || 'Steward'}</span>
+    </button>`}
+  </div>`;
+
+  const style = `left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`;
+  const status = activeAgent ? statusOf(activeAgent) : 'offline';
+  const activeApprovals = activeAgent ? approvals(activeAgent) : [];
+  const activeElevated = elevatedAccess(snapshot.value, activeAgent);
+  const activeDecisions = activeAgent ? decisions(activeAgent) : [];
+  const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
+  const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
+  const starting = !activeAgent && activeId && pending.current.has(activeId);
+
+  const windowView = open && html`<section ref=${windowRef}
+    class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}`}
+    style=${style} role="dialog" aria-label="Companion" aria-modal="false">
+    <header class="companion-titlebar" onPointerDown=${onTitlePointerDown}>
+      <span class="companion-grip" aria-hidden="true">⋮⋮</span>
+      <div class="companion-tabs" role="tablist" aria-label="Companion agents">
+        ${chipAgents.map((agent) => {
+          const tabStatus = statusOf(agent);
+          const selected = agent.agentId === activeId && !showQueue;
+          return html`<div key=${agent.agentId} class=${`companion-tab${selected ? ' selected' : ''}`}>
+            <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'}
+              title=${`${agent.name}: ${companionStatusLabel(tabStatus)}`}
+              onClick=${() => showAgent(agent.agentId)}>
+              <${Avatar} agent=${agent} /><span>${agent.name}</span>${elevatedAccess(snapshot.value, agent) && html`<span class="companion-tab-elevated" title="Elevated access">🔓</span>`}<${StatusDot} status=${tabStatus} />
+            </button>
+            <button type="button" class="companion-tab-close" aria-label=${`Unpin ${agent.name}`} title="Unpin (the agent keeps running)"
+              onClick=${() => closeTab(agent.agentId)}>×</button>
+          </div>`;
+        })}
+        ${queue.length > 0 && html`<div class=${`companion-tab companion-decide-tab${showQueue ? ' selected' : ''}`}>
+          <button type="button" role="tab" aria-selected=${showQueue ? 'true' : 'false'} title="Decisions agents are waiting on"
+            onClick=${() => setDeciding((v) => !v)}><span class="companion-decide-mark" aria-hidden="true">◆</span><span>${queue.length} to decide</span></button>
+        </div>`}
+        <button type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${menu ? 'true' : 'false'}
+          title=${`Summon ${stewardLabel} or pin a live agent`} onClick=${() => setMenu((v) => !v)}>＋</button>
+      </div>
+      <div class="companion-controls">
+        ${activeAgent && speaker.supported && html`<button type="button" class=${`companion-voice${voiceAgents.has(activeAgent.agentId) ? ' on' : ''}`}
+          aria-pressed=${voiceAgents.has(activeAgent.agentId) ? 'true' : 'false'} aria-label=${`Speak ${activeAgent.name}'s replies aloud`}
+          title=${voiceAgents.has(activeAgent.agentId) ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
+          onClick=${() => toggleVoice(activeAgent)}>${voiceAgents.has(activeAgent.agentId) ? '🔊' : '🔈'}</button>`}
+        ${activeAgent && openTerminalsPane && html`<button type="button" aria-label="Open in the Terminals tab" title="Open in the Terminals tab"
+          onClick=${() => moveToTerminals(activeAgent)}>⤢</button>`}
+        ${toApprove.length > 0 && html`<button type="button" class="companion-access"
+          aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
+          title="Agents are asking for permission"
+          onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
+        <button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>
+      </div>
+    </header>
+    ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
+      stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
+    <div class="companion-body">
+      ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
+        ${activeApprovals.length > 0 && html`<p class="companion-decide-note" role="status">${activeAgent.name} also has
+          ${activeApprovals.length === 1 ? ' an approval' : ` ${activeApprovals.length} approvals`} waiting:
+          <button type="button" onClick=${() => setDeciding(false)}>show</button></p>`}
+        ${queue.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} from=${askerName(decision)} />`)}
+      </div>`}
+      ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
+      ${!showQueue && activeDecisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
+      ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
+      ${!activeAgent && !starting && html`<div class="companion-empty">
+        <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>
+        <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
+          groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
+        <p class="companion-empty-note">Config > Steward sets what it can do without asking.</p>
+        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
+        <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
+      </div>`}
+      ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
+      ${activeAgent && !activeAgent.online && html`<div class="companion-empty">
+        <p><b>${activeAgent.name}</b> is offline.</p>
+        <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
+      </div>`}
+      ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
+        <p><b>${activeAgent.name}</b> is open in the Terminals tab.</p>
+        <button type="button" class="companion-primary" onClick=${() => showAgent(activeAgent.agentId)}>Bring it back here</button>
+      </div>`}
+      ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
+        ${status === 'needs' && !activeApprovals.length && !activeDecisions.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
+        ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
+          ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
+          : termStatus}</div>`}
+        <${CompanionTerminal} key=${activeAgent.agentId} agent=${activeAgent} generation=${generation}
+          widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
+          onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
+    </div>
+    ${!showQueue && activeAgent?.online && activeAgent.steward && !parked.has(activeAgent.agentId) && !draft && html`<div class="companion-starters" aria-label="Ask the Steward">
+      ${STEWARD_STARTERS.map((starter) => html`<button key=${starter.label} type="button" disabled=${sending} title=${starter.text}
+        onClick=${() => send(null, starter.text)}>${starter.label}</button>`)}
+    </div>`}
+    ${!showQueue && activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
+      <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
+        <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
+      </label>
+      <input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
+        placeholder=${`Message ${activeAgent.name} (queued to its inbox; or type in the terminal above)`}
+        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />
+      ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
+        aria-label=${`Dictate a message to ${activeAgent.name}`}
+        title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
+        onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
+      <button type="submit" disabled=${sending || !draft.trim()}>Send</button>
+      <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
+        title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
+    </form>`}
+    <div class="companion-resize" aria-hidden="true" onPointerDown=${onResizePointerDown}></div>
+  </section>`;
+
+  return html`
+    ${guide && html`<div class="companion-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
+    ${windowView}
+    ${chips}
+    ${annotating && html`<${AnnotateOverlay} agentName=${annotating.name} win=${win}
+      onSend=${sendAnnotation} onCancel=${() => setAnnotating(null)} />`}
+    ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
+    ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} marks=${guideCue.marks} onDismiss=${dismissGuide} win=${win} />`}
+    ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
+}
+
+// CompanionGate keeps the whole companion out of the page while
+// features.collab is off: no chips, no Ctrl+., and no registered controller,
+// so callers of openInCompanion take their usual path.
+export function CompanionGate(props) {
+  return props.snapshot.value?.collab_enabled === true ? html`<${CompanionApp} ...${props} />` : null;
+}
+
+export function mountCompanionIsland({ host, registerCleanup, ...props }) {
+  render(html`<${CompanionGate} ...${props} />`, host);
+  registerCleanup(() => render(null, host));
+}

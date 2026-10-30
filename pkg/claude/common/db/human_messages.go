@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -38,6 +39,13 @@ type HumanMessage struct {
 	ProcessNodeID    string
 	ProcessCommandID string
 	Attachments      []*HumanMessageAttachment
+	// Options turn the notification into a decision put to the operator:
+	// 2–6 short choices, Recommended the 1-based one the agent suggests (0
+	// none). Decision is the option the operator picked, DecidedAt when.
+	Options     []string
+	Recommended int
+	Decision    string
+	DecidedAt   time.Time
 }
 
 // HumanMessageAttachment is one daemon-owned downloadable artifact published
@@ -98,10 +106,11 @@ func insertHumanMessage(exec humanMessageExecer, m *HumanMessage) (int64, error)
 	res, err := exec.Exec(`
 		INSERT INTO human_messages
 			(from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
-			 process_run_id, process_node_id, process_command_id)
-		VALUES (?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 process_run_id, process_node_id, process_command_id, options, recommended)
+		VALUES (?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.FromConv, m.FromConv, m.FromTitle, m.GroupName, m.Subject, m.Body,
-		dbTime(created), readAt, m.ProcessRunID, m.ProcessNodeID, m.ProcessCommandID)
+		dbTime(created), readAt, m.ProcessRunID, m.ProcessNodeID, m.ProcessCommandID,
+		encodeHumanMessageOptions(m.Options), m.Recommended)
 	if err != nil {
 		return 0, fmt.Errorf("insert human message: %w", err)
 	}
@@ -440,14 +449,80 @@ func HumanMessageStats() (total, unread int, lastAt time.Time, err error) {
 	return total, unread, last.Time(), err
 }
 
+// humanMessageCols is the column list scanHumanMessage reads, in order.
+const humanMessageCols = `id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
+		       process_run_id, process_node_id, process_command_id, options, recommended, decision, decided_at`
+
+func scanHumanMessage(row interface{ Scan(...any) error }) (*HumanMessage, error) {
+	var m HumanMessage
+	var created, readAt, decidedAt dbTimestamp
+	var options string
+	if err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
+		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID,
+		&options, &m.Recommended, &m.Decision, &decidedAt); err != nil {
+		return nil, err
+	}
+	m.CreatedAt = created.Time()
+	m.ReadAt = readAt.Time()
+	m.DecidedAt = decidedAt.Time()
+	if options != "" {
+		_ = json.Unmarshal([]byte(options), &m.Options)
+	}
+	return &m, nil
+}
+
+func encodeHumanMessageOptions(options []string) string {
+	if len(options) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(options)
+	return string(b)
+}
+
+// DecideHumanMessage records the operator's pick on a decision and marks
+// the message read. Only the first decision counts: it returns false when
+// the message is already decided (or is not a decision).
+func DecideHumanMessage(id int64, decision string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	now := dbTime(time.Now())
+	res, err := d.Exec(`
+		UPDATE human_messages
+		SET decision = ?, decided_at = ?, read_at = COALESCE(read_at, ?)
+		WHERE id = ? AND options != '' AND decision = ''`, decision, now, now, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// UndecideHumanMessage releases a decision whose pick could not be
+// delivered, so the operator can answer again.
+func UndecideHumanMessage(id int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE human_messages SET decision = '', decided_at = NULL WHERE id = ?`, id)
+	return err
+}
+
+// ListUndecidedHumanMessages returns the newest decisions still waiting on
+// the operator, at most limit.
+func ListUndecidedHumanMessages(limit int) ([]*HumanMessage, error) {
+	return queryHumanMessages(`WHERE options != '' AND decision = '' ORDER BY id DESC LIMIT ?`, limit)
+}
+
 func queryHumanMessages(tail string, args ...any) ([]*HumanMessage, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	rows, err := d.Query(`
-		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
-		       process_run_id, process_node_id, process_command_id
+		SELECT `+humanMessageCols+`
 		FROM human_messages
 		`+tail, args...)
 	if err != nil {
@@ -457,15 +532,11 @@ func queryHumanMessages(tail string, args ...any) ([]*HumanMessage, error) {
 
 	var out []*HumanMessage
 	for rows.Next() {
-		var m HumanMessage
-		var created, readAt dbTimestamp
-		if err := rows.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
-			&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); err != nil {
+		m, err := scanHumanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		m.CreatedAt = created.Time()
-		m.ReadAt = readAt.Time()
-		out = append(out, &m)
+		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -490,26 +561,21 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`
-		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
-		       process_run_id, process_node_id, process_command_id
+		SELECT `+humanMessageCols+`
 		FROM human_messages
 		WHERE id = ?`, id)
-	var m HumanMessage
-	var created, readAt dbTimestamp
-	switch err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
-		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); {
+	m, err := scanHumanMessage(row)
+	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
 	case err != nil:
 		return nil, err
 	}
-	m.CreatedAt = created.Time()
-	m.ReadAt = readAt.Time()
 	m.Attachments, err = ListHumanMessageAttachmentsFor(m.ID)
 	if err != nil {
 		return nil, err
 	}
-	return &m, nil
+	return m, nil
 }
 
 // FindHumanMessageForProcessCommand returns the first matching process
@@ -521,20 +587,15 @@ func FindHumanMessageForProcessCommand(commandID, subject string) (*HumanMessage
 		return nil, err
 	}
 	row := d.QueryRow(`
-		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
-		       process_run_id, process_node_id, process_command_id
+		SELECT `+humanMessageCols+`
 		FROM human_messages WHERE process_command_id = ? AND subject = ? ORDER BY id ASC LIMIT 1`, commandID, subject)
-	var m HumanMessage
-	var created, readAt dbTimestamp
-	if err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
-		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); errors.Is(err, sql.ErrNoRows) {
+	m, err := scanHumanMessage(row)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	m.CreatedAt = created.Time()
-	m.ReadAt = readAt.Time()
-	return &m, nil
+	return m, nil
 }
 
 // CountUnreadHumanMessages returns how many human messages are unread —
@@ -608,13 +669,15 @@ func MarkAllHumanMessagesRead() (int, error) {
 
 // DeleteReadHumanMessages hard-deletes every message that has been
 // marked read — the manual "clear read messages" control on the tab.
-// Unread messages are left untouched. Returns how many rows were removed.
+// Unread messages and decisions still waiting on the operator are left
+// untouched: reading a decision does not answer it. Returns how many rows
+// were removed.
 func DeleteReadHumanMessages() (int, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`DELETE FROM human_messages WHERE read_at IS NOT NULL`)
+	res, err := d.Exec(`DELETE FROM human_messages WHERE read_at IS NOT NULL AND NOT (options != '' AND decision = '')`)
 	if err != nil {
 		return 0, fmt.Errorf("delete read human messages: %w", err)
 	}
@@ -627,7 +690,9 @@ func DeleteReadHumanMessages() (int, error) {
 // dashboard clear-read action; filesystem removal happens after commit and an
 // agentd reconciler retries any failed removal.
 func DeleteReadHumanMessagesWithAttachments() (int, []string, error) {
-	return deleteHumanMessagesWithAttachments("read_at IS NOT NULL", "m.read_at IS NOT NULL", nil)
+	return deleteHumanMessagesWithAttachments(
+		"read_at IS NOT NULL AND NOT (options != '' AND decision = '')",
+		"m.read_at IS NOT NULL AND NOT (m.options != '' AND m.decision = '')", nil)
 }
 
 // DeleteHumanMessage hard-deletes a single message by id, regardless of

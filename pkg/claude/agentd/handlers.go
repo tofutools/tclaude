@@ -684,7 +684,7 @@ func resolveMessageRouting(w http.ResponseWriter, fromID, targetID string) (grou
 		}
 		return via.ID, via.Name, true
 	}
-	if !holdsPermission(fromID, PermMessageDirect) {
+	if !holdsPermission(fromID, PermMessageDirect) && !reachableAsSteward(targetID) {
 		writeError(w, http.StatusForbidden, "auth",
 			fmt.Sprintf("no shared group with %s and you do not own a group containing it; "+
 				"messaging an agent outside your group requires the %q permission "+
@@ -707,6 +707,9 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	var req sendReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if !resolveStewardAddresses(w, &req) {
 		return
 	}
 	if group, peer, ok := splitFederatedGroup(req.To); ok {
