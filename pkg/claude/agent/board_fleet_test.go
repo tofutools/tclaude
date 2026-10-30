@@ -32,14 +32,14 @@ func TestFleetBoardElementsDrawAColumnPerGroup(t *testing.T) {
 		els[e["id"].(string)] = e
 	}
 	assert.Equal(t, 3, cards, "offline agents only with --all")
-	assert.NotContains(t, els, "fa-agt_d")
-	assert.Equal(t, "#ffec99", els["fa-agt_a"]["backgroundColor"], "waiting on the operator is yellow")
-	assert.Equal(t, "#b2f2bb", els["fa-agt_b"]["backgroundColor"], "working is green")
-	assert.Equal(t, "builder\nworking\nPR r#7", els["fa-agt_b-label"]["text"])
-	assert.Equal(t, "idler\nidle\ntcl-1", els["fa-agt_c-label"]["text"])
+	assert.NotContains(t, els, "fa-agt_d-web")
+	assert.Equal(t, "#ffec99", els["fa-agt_a-api"]["backgroundColor"], "waiting on the operator is yellow")
+	assert.Equal(t, "#b2f2bb", els["fa-agt_b-api"]["backgroundColor"], "working is green")
+	assert.Equal(t, "builder\nworking\nPR r#7", els["fa-agt_b-api-label"]["text"])
+	assert.Equal(t, "idler\nidle\ntcl-1", els["fa-agt_c-web-label"]["text"])
 	assert.Equal(t, "api", els["fg-api-label"]["text"])
-	assert.Less(t, els["fa-agt_a"]["x"].(float64), els["fa-agt_c"]["x"].(float64), "a column per group")
-	assert.Less(t, els["fa-agt_a"]["y"].(float64), els["fa-agt_b"]["y"].(float64), "cards stack in their column")
+	assert.Less(t, els["fa-agt_a-api"]["x"].(float64), els["fa-agt_c-web"]["x"].(float64), "a column per group")
+	assert.Less(t, els["fa-agt_a-api"]["y"].(float64), els["fa-agt_b-api"]["y"].(float64), "cards stack in their column")
 	assert.Equal(t, true, els["fa-agt_gone"]["isDeleted"], "a card from the previous map is removed")
 	assert.Equal(t, int64(4), els["fa-agt_gone"]["version"])
 	assert.NotContains(t, els, "note", "the operator's elements are left alone")
@@ -48,4 +48,33 @@ func TestFleetBoardElementsDrawAColumnPerGroup(t *testing.T) {
 
 	_, all := fleetBoardElements(&fleet, &boardDoc{ID: "fleet"}, true)
 	assert.Equal(t, 4, all)
+
+	// An agent in two groups has a card in each; a group named "title" does
+	// not take the title's id; unprintable characters are dropped.
+	fleet.Agents[0].Groups = []string{"api", "title"}
+	fleet.Agents[0].Title = "👩\u200d💻 asker"
+	elems, cards = fleetBoardElements(&fleet, &boardDoc{ID: "fleet"}, false)
+	assert.Equal(t, 4, cards)
+	seen := map[string]bool{}
+	els = map[string]map[string]any{}
+	for _, e := range elems {
+		id := e["id"].(string)
+		require.False(t, seen[id], "duplicate id %s", id)
+		seen[id] = true
+		els[id] = e
+	}
+	assert.Contains(t, els, "fa-agt_a-title")
+	assert.Equal(t, "👩💻 asker\nneeds you: permission", els["fa-agt_a-api-label"]["text"])
+
+	// A redraw stays where the previous map was, under the operator's marks.
+	prev := &boardDoc{ID: "fleet", Elements: []json.RawMessage{
+		json.RawMessage(`{"id":"fg-title","type":"text","version":2,"x":0,"y":500,"width":300,"height":30,"text":"Fleet"}`),
+		json.RawMessage(`{"id":"circle","type":"ellipse","version":1,"x":0,"y":560,"width":300,"height":400}`),
+	}}
+	elems, _ = fleetBoardElements(&fleet, prev, false)
+	for _, e := range elems {
+		if e["id"] == "fg-title" {
+			assert.Equal(t, 500.0, e["y"])
+		}
+	}
 }
