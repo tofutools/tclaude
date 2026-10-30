@@ -1635,6 +1635,7 @@ func TestStewardAccessDefaultsAndValidates(t *testing.T) {
 	assert.Contains(t, errs, "steward.writes")
 
 	assert.Empty(t, none.StewardName())
+	assert.Empty(t, (&Config{Steward: &StewardConfig{Name: "group:all"}}).StewardName(), "a hand edit cannot alias a group")
 	assert.Empty(t, Validate(&Config{Steward: &StewardConfig{Name: "Mr Jeeves"}}))
 	for _, name := range []string{"group:all", "a/b", "a  b", "x@y", strings.Repeat("x", MaxStewardNameLen+1)} {
 		assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{Name: name}}), "\n"), "steward.name", name)
@@ -1646,4 +1647,5 @@ func TestStewardAccessDefaultsAndValidates(t *testing.T) {
 	assert.Empty(t, Validate(c))
 	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: strings.Repeat("x", MaxStewardStartupPromptLen+1)}}), "\n"), "steward.startup_prompt")
 	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: "a\x1bb"}}), "\n"), "steward.startup_prompt")
+	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: "a\r\nb"}}), "\n"), "steward.startup_prompt", "a summon refuses \\r")
 }

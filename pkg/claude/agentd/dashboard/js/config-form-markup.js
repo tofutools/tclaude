@@ -908,7 +908,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
         <${Setting} title="Startup prompt" forId="cfg-steward-startup-prompt" wide k="steward.startup_prompt"
           summary="Your own instructions, added to what every new Steward is told when it starts. A running Steward keeps the prompt it started with.">
-          <${ConfigTextarea} id="cfg-steward-startup-prompt" class="cfg-json" rows="6" maxlength="4000" aria-label="Steward startup prompt"
+          <${ConfigTextarea} id="cfg-steward-startup-prompt" class="cfg-json" rows="6" maxlength="10000" aria-label="Steward startup prompt"
             placeholder="Optional. For example: Reply in Swedish. Start every brief with open pull requests."></${ConfigTextarea}>
         </${Setting}>
       </${Group}>
