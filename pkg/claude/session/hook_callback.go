@@ -1355,8 +1355,13 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		// (e.g. sub-agents that died with a previous process). A /clear
 		// or /resume transition lands here too; a background sub-agent
 		// that somehow survives one re-adds itself via Sight() on its
-		// next hook.
-		state.Subagents = nil
+		// next hook. A compaction restarts nothing, and Claude Code fires
+		// this very event for a subagent's own compaction, with no agent_id,
+		// so it must leave the ledger alone: the re-injection needs to know
+		// a subagent is running.
+		if input.Source != "compact" {
+			state.Subagents = nil
+		}
 		// Background shells are children of the harness PROCESS, and
 		// monitors belong to it, which a /clear or /resume does not
 		// restart — so unlike sub-agents both can genuinely outlive this

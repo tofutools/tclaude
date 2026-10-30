@@ -2082,3 +2082,9 @@ CREATE TABLE agent_host_routes (
 ) STRICT;
 
 CREATE INDEX idx_agent_host_routes_publisher ON agent_host_routes(publisher_conv_id, state);
+
+CREATE TABLE held_context_reinjections (
+		session_id        TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+		conv_id           TEXT NOT NULL,
+		transcript_offset INTEGER NOT NULL
+	);

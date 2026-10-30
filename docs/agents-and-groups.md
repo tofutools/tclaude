@@ -197,6 +197,12 @@ default, as above), `identity` (identity only after a compaction too), or
 tclaude agent groups set-reinject myteam identity
 ```
 
+Only the agent's own compaction counts, not one by an in-harness subagent.
+Claude Code's compaction hooks look the same for both, so while a subagent is
+running tclaude holds the message until the agent's next turn event and sends
+it only if the main transcript recorded a compaction. If the transcript can't
+be read it sends the message anyway.
+
 ### Group spawn environment
 
 The dashboard's consolidated **Group settings** dialog edits the default
