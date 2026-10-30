@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -880,5 +882,20 @@ func TestIsAgentStuck(t *testing.T) {
 			got := isAgentStuck(tc.sessionID, tc.timeout)
 			assert.Equal(t, tc.want, got, "isAgentStuck(%q, %v)", tc.sessionID, tc.timeout)
 		})
+	}
+}
+
+// A task pane stays interactive, so it must not get the agent view: /exit, which
+// task sequencing sends into the pane, would land in the list's prompt instead.
+func TestTaskClaudeEnvDisablesAgentView(t *testing.T) {
+	cmd := exec.Command("true")
+	cmd.Env = taskClaudeEnv([]string{"KEEP=1", harness.AgentViewDisableEnvVar + "=0"}, "/tmp/signal")
+
+	env := cmd.Environ()
+	if !slices.Contains(env, "KEEP=1") || !slices.Contains(env, "TCLAUDE_TASK_SIGNAL=/tmp/signal") {
+		t.Fatalf("task env lost entries: %v", env)
+	}
+	if !slices.Contains(env, harness.AgentViewDisableEnvVar+"=1") || slices.Contains(env, harness.AgentViewDisableEnvVar+"=0") {
+		t.Fatalf("agent view must end up disabled: %v", env)
 	}
 }

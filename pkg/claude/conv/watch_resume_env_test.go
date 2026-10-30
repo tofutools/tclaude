@@ -244,6 +244,41 @@ func TestResumeLaunchCmd_InjectsResumeOverrideForClaude(t *testing.T) {
 		"the configured override must be exported onto the Claude resume command")
 }
 
+// A resumed Claude pane must not get the agent view any more than a fresh one:
+// it would move the conversation out of the pane tclaude is tracking.
+func TestResumeLaunchCmd_DisablesAgentViewForClaudeOnly(t *testing.T) {
+	withResumeConfig(t)
+	t.Setenv(harness.AgentViewDisableEnvVar, "")
+	want := harness.AgentViewDisableEnvVar + "=1"
+
+	cmd, _, _, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
+	require.NoError(t, err)
+	assert.Contains(t, cmd, want)
+
+	cmd, _, _, err = resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, cmd, want)
+}
+
+// A recorded agent-view=on is the operator's opt-in and must survive a resume, or
+// the conversation would silently lose the view it asked to keep.
+func TestResumeLaunchCmd_AgentViewOptInSurvivesResume(t *testing.T) {
+	withResumeConfig(t)
+	t.Setenv(harness.AgentViewDisableEnvVar, "")
+	_, _, err := db.EnsureAgentForConv(resumeConvClaude, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "agent-view-opt-in", ConvID: resumeConvClaude, Cwd: t.TempDir(),
+		Harness: "claude", Status: "idle",
+	}))
+	require.NoError(t, db.SetSessionContextFeatures("agent-view-opt-in",
+		map[string]string{"agent-view": harness.ContextFeatureOn}))
+
+	cmd, _, _, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, cmd, harness.AgentViewDisableEnvVar+"=1")
+}
+
 // The override is Claude-Code-specific: a Codex resume must NOT carry it (Codex
 // has no such prompt and the env var is meaningless there).
 func TestResumeLaunchCmd_NoResumeOverrideForCodex(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/executil"
@@ -413,6 +414,15 @@ type taskRunOpts struct {
 	maxStuckNudges      int
 }
 
+// taskClaudeEnv is the environment of a task's Claude Code process. This path
+// launches claude itself rather than through session.runNew, so it pins the agent
+// view off on its own: the pane stays interactive, and a task moved into the
+// background would strand the /exit that sequencing sends into the pane. Later
+// entries win in exec.Cmd.Env, so an inherited value cannot turn the view back on.
+func taskClaudeEnv(environ []string, signalPath string) []string {
+	return append(environ, "TCLAUDE_TASK_SIGNAL="+signalPath, harness.AgentViewDisableEnvVar+"=1")
+}
+
 // runClaude runs Claude Code interactively with the given prompt.
 // Claude gets full terminal I/O — the user can approve permissions,
 // answer questions, etc. When the user types /exit or Claude exits,
@@ -442,7 +452,7 @@ func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, op
 
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), "TCLAUDE_TASK_SIGNAL="+signalPath)
+	cmd.Env = taskClaudeEnv(os.Environ(), signalPath)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
