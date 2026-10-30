@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -156,6 +157,7 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 		}
 	}
 
+	titleBase := "" // the group's name, unless the operator named this agent
 	// The Steward is a Collab surface; other scribes are not.
 	if body.Scope != nil && strings.TrimSpace(body.Scope.Kind) == stewardScopeKind {
 		if !collabRoutesEnabled() {
@@ -169,7 +171,8 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 			return
 		}
 		body.Slugs = stewardSlugs(cfg)
-		body.Brief = strings.TrimRight(body.Brief, "\n") + "\n\n" + stewardAccessNote(cfg)
+		body.Brief = stewardBrief(body.Brief, cfg)
+		titleBase = cfg.StewardName()
 	}
 
 	name := strings.TrimSpace(body.Name)
@@ -281,7 +284,7 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	if body.Background {
 		focus = scribeFocusNone
 	}
-	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, focus, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
+	out, reused, fail := summonScribe(name, titleBase, overrides, brief, body.Exclusive, focus, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -365,7 +368,7 @@ var scribeSummonMu sync.Mutex
 // exact compatible structured scope when requested, or spawn a fresh uniquely
 // named agent in the shared pre-trusted workdir with birth-time grants. focus
 // says how the scribe's terminal surfaces.
-func summonScribe(name string, overrides map[string]db.PermissionOverride, brief string, exclusive bool, focus scribeFocus, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
+func summonScribe(name, titleBase string, overrides map[string]db.PermissionOverride, brief string, exclusive bool, focus scribeFocus, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
 
@@ -412,7 +415,7 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 	// Synchronous (Async left false) so the conv-id materialises for the
 	// grants + the response.
 	p := spawnParams{
-		Name:                uniqueScribeName(name),
+		Name:                uniqueScribeName(cmp.Or(titleBase, name)),
 		Role:                scribeScopeRole(scopeKey),
 		Descr:               scribeScopeDescr(scopeKey),
 		TaskURL:             taskURL,

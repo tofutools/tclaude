@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -1329,6 +1331,11 @@ func (c *Config) ScribeProfileName() string {
 type StewardConfig struct {
 	// Reads is "operator" or "fleet"; see the StewardReads constants.
 	Reads string `json:"reads,omitempty"`
+	// Name is what the operator calls their Steward. Empty means "the Steward".
+	Name string `json:"name,omitempty"`
+	// StartupPrompt is the operator's own instructions, added to the brief of
+	// every new Steward.
+	StartupPrompt string `json:"startup_prompt,omitempty"`
 	// Writes is "none", "messaging" or "workers"; see the StewardWrites
 	// constants.
 	Writes string `json:"writes,omitempty"`
@@ -1347,6 +1354,34 @@ const (
 	// StewardWritesWorkers adds starting workers and setting their task.
 	StewardWritesWorkers = "workers"
 )
+
+// MaxStewardStartupPromptLen caps steward.startup_prompt, leaving a Steward's
+// brief room for its built-in text within the initial-message limit.
+const MaxStewardStartupPromptLen = 4000
+
+// stewardNamePattern keeps a Steward's name inside the rename-title charset, so
+// it is safe as an agent title and as a message address.
+var stewardNamePattern = regexp.MustCompile(`^[A-Za-z0-9]+([ _-][A-Za-z0-9]+)*$`)
+
+// MaxStewardNameLen caps steward.name.
+const MaxStewardNameLen = 32
+
+// StewardName returns the operator's name for their Steward, trimmed, or "".
+// Nil-safe.
+func (c *Config) StewardName() string {
+	if c == nil || c.Steward == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Steward.Name)
+}
+
+// StewardStartupPrompt returns the operator's instructions, trimmed. Nil-safe.
+func (c *Config) StewardStartupPrompt() string {
+	if c == nil || c.Steward == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Steward.StartupPrompt)
+}
 
 // StewardReads returns the configured read level, defaulted. Nil-safe.
 func (c *Config) StewardReads() string {
@@ -4276,6 +4311,14 @@ func Validate(c *Config) []string {
 	default:
 		errs = append(errs, fmt.Sprintf("steward.writes %q is not one of %s, %s, %s",
 			c.StewardWrites(), StewardWritesNone, StewardWritesMessaging, StewardWritesWorkers))
+	}
+	if name := c.StewardName(); name != "" && (len(name) > MaxStewardNameLen || !stewardNamePattern.MatchString(name)) {
+		errs = append(errs, fmt.Sprintf("steward.name: must be at most %d characters: letters and digits, with single spaces, - or _ between them", MaxStewardNameLen))
+	}
+	if prompt := c.StewardStartupPrompt(); utf8.RuneCountInString(prompt) > MaxStewardStartupPromptLen {
+		errs = append(errs, fmt.Sprintf("steward.startup_prompt: must be at most %d characters", MaxStewardStartupPromptLen))
+	} else if strings.ContainsFunc(prompt, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' && r != '\r' }) {
+		errs = append(errs, "steward.startup_prompt: must not contain control characters")
 	}
 
 	// An empty/absent scheme resolves to the default; only a non-empty value

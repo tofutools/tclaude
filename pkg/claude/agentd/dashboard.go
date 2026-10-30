@@ -1081,6 +1081,8 @@ type snapshotPayload struct {
 	// Collab switch. Re-read on every snapshot so a Config-tab change takes
 	// effect without restarting agentd, matching collabRoute.
 	CollabEnabled bool `json:"collab_enabled"`
+	// StewardName is what the operator calls their Steward, empty by default.
+	StewardName string `json:"steward_name,omitempty"`
 	// TriggersEnabled gates the experimental Automations subview and compact
 	// Groups projection. Re-read on every snapshot so Config changes take
 	// effect without restarting agentd, matching triggerRoute.
@@ -3468,6 +3470,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		UsageCollapseSubviews:         cfg.UsageCollapseSubviews(),
 		ProcessesEnabled:              cfg.ProcessesEnabled(),
 		CollabEnabled:                 cfg.CollabEnabled(),
+		StewardName:                   cfg.StewardName(),
 		TriggersEnabled:               triggersEnabled,
 		GroupsRouteMapEnabled:         groupsRouteMapEnabled,
 		GroupAttachmentsMode:          cfg.GroupAttachmentsMode(),

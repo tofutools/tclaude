@@ -66,6 +66,19 @@ func stewardAccessNote(cfg *config.Config) string {
 	return "Your access, set by the operator: you can read " + reads + ". You can write: " + writes + "."
 }
 
+// stewardBrief adds to the summon's brief what the daemon owns: the access
+// note and the operator's own startup prompt, last so it has the final word.
+func stewardBrief(brief string, cfg *config.Config) string {
+	brief = strings.TrimRight(brief, "\n") + "\n\n" + stewardAccessNote(cfg)
+	if name := cfg.StewardName(); name != "" {
+		brief += "\n\nThe operator calls you " + name + ". Use that name."
+	}
+	if prompt := cfg.StewardStartupPrompt(); prompt != "" {
+		brief += "\n\nStanding instructions from the operator:\n" + prompt
+	}
+	return brief
+}
+
 // liveStewardConvs lists the running Stewards' conversations, newest last.
 func liveStewardConvs() []string {
 	g, err := db.GetAgentGroupByName(stewardGroupName)
@@ -89,9 +102,18 @@ func liveStewardConvs() []string {
 	return convs
 }
 
-// isStewardAddress reports whether a message target means "the Steward".
+// isStewardAddress reports whether a message target means "the Steward": the
+// fixed address, or the name the operator gave it.
 func isStewardAddress(to string) bool {
-	return strings.EqualFold(strings.TrimSpace(to), stewardAddress) && collabRoutesEnabled()
+	to = strings.TrimSpace(to)
+	if to == "" || !collabRoutesEnabled() {
+		return false
+	}
+	if strings.EqualFold(to, stewardAddress) {
+		return true
+	}
+	cfg, err := config.LoadShared()
+	return err == nil && strings.EqualFold(to, cfg.StewardName())
 }
 
 // resolveStewardAddresses turns the address "steward" into the newest live

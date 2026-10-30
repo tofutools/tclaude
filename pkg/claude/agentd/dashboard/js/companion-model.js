@@ -54,6 +54,7 @@ export function isAgentId(value) {
 // over a stale one so the status reflects the running session.
 export function companionAgents(snapshot) {
   const out = new Map();
+  const customName = String(snapshot?.steward_name || '');
   const add = (member, steward, scribe) => {
     const agentId = member?.agent_id;
     if (!isAgentId(agentId)) return;
@@ -62,7 +63,7 @@ export function companionAgents(snapshot) {
     out.set(agentId, Object.freeze({
       agentId,
       convId: String(member.conv_id || ''),
-      name: String(member.title || member.name || agentId.slice(0, 12)),
+      name: (steward && customName) || String(member.title || member.name || agentId.slice(0, 12)),
       online: member.online === true,
       status: String(member.state?.status || ''),
       detail: String(member.state?.status_detail || ''),

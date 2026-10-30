@@ -625,6 +625,8 @@ function populateConfigForm(cfg) {
   void populateScribeProfileSelect((cfg.scribe || {}).profile);
   setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
   setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
+  $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
+  $('#cfg-steward-startup-prompt').value = (cfg.steward || {}).startup_prompt || '';
 
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
@@ -1004,6 +1006,10 @@ function assembleConfig() {
   const stewardWrites = controlValue($('#cfg-steward-writes'));
   if (stewardReads && stewardReads !== 'operator') steward.reads = stewardReads; else delete steward.reads;
   if (stewardWrites && stewardWrites !== 'messaging') steward.writes = stewardWrites; else delete steward.writes;
+  const stewardName = controlValue($('#cfg-steward-name')).trim();
+  if (stewardName) steward.name = stewardName; else delete steward.name;
+  const stewardPrompt = controlValue($('#cfg-steward-startup-prompt')).trim();
+  if (stewardPrompt) steward.startup_prompt = stewardPrompt; else delete steward.startup_prompt;
   if (Object.keys(steward).length) cfg.steward = steward; else delete cfg.steward;
 
   // focus is an optional block. Clone the existing one so a future

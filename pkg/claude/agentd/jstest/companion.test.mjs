@@ -755,3 +755,16 @@ test('an agent cue draws marks on the operator view and names the ones it cannot
   assert.equal(guide.findGuideTarget(doc, 'Merge').textContent, 'Merge now', 'strict finding stays on controls');
   await view.unmount();
 });
+
+test('the Steward goes by the name the operator gave it', async () => {
+  const { companionAgents } = await import('../dashboard/js/companion-model.js');
+  const agents = companionAgents({
+    steward_name: 'Jeeves',
+    groups: [
+      { name: 'steward', scribe: true, members: [{ agent_id: A, title: 'jeeves-1234', online: true }] },
+      { name: 'team', members: [{ agent_id: B, title: 'worker', online: true }] },
+    ],
+  });
+  assert.equal(agents.get(A).name, 'Jeeves');
+  assert.equal(agents.get(B).name, 'worker', 'only the Steward');
+});
