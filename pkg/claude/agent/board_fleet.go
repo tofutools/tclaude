@@ -54,7 +54,7 @@ func runBoardFromFleet(p *boardFromFleetParams, boardID string, stdout, stderr i
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	doc, err := fetchBoard(boardID, -1)
+	doc, err := fetchBoard(boardID, boardWithTombstones)
 	if err != nil {
 		var de *DaemonError
 		if !errors.As(err, &de) || de.Status != http.StatusNotFound {
@@ -189,37 +189,17 @@ func fleetBoardElements(fleet *fleetResp, doc *boardDoc, all bool) ([]map[string
 		c.Online, c.Working, c.Idle, c.NeedsYou, c.Errored, c.Offline, fleet.GeneratedAt.Local().Format("Jan 2 15:04"))
 	out = append(out, text("fg-title", title, 0, top, 24))
 
-	ids := newProcessIDs()
-	ids.taken["fg-title"], ids.taken["fg-title-label"] = true, true
 	col := 0
 	cards := 0
-	var groupOrder []string
-	members := map[string][]int{}
-	for i, a := range fleet.Agents {
-		if !a.Online && !all {
-			continue
-		}
-		// An agent in several groups has a card in each column.
-		groups := a.Groups
-		if len(groups) == 0 {
-			groups = []string{"(no group)"}
-		}
-		for _, g := range groups {
-			if _, ok := members[g]; !ok {
-				groupOrder = append(groupOrder, g)
-			}
-			members[g] = append(members[g], i)
-		}
-	}
-	for _, g := range groupOrder {
+	for _, column := range fleetColumns(fleet, all) {
 		x := float64(col) * (fleetCardW + fleetColGap)
 		y := top + 60
-		gid := ids.get("fg-", g)
-		out = append(out, text(gid+"-label", boardClip(g, 18), x, y, 22))
+		gid := column.id
+		out = append(out, text(gid+"-label", boardClip(column.group, 18), x, y, 22))
 		cy := y + fleetHeadGap
-		for _, i := range members[g] {
-			a := fleet.Agents[i]
-			aid := ids.get("fa-", a.AgentID, g)
+		for _, c := range column.cards {
+			a := fleet.Agents[c.agent]
+			aid := c.id
 			card := base(aid, "rectangle")
 			card["x"], card["y"], card["width"], card["height"] = x, cy, fleetCardW, fleetCardH
 			card["backgroundColor"] = fleetCardColor(a.Online, a.Status)
@@ -264,6 +244,54 @@ func fleetBoardElements(fleet *fleetResp, doc *boardDoc, all bool) ([]map[string
 		})
 	}
 	return out, cards
+}
+
+// fleetNoGroup heads the column of agents outside every group.
+const fleetNoGroup = "(no group)"
+
+// fleetColumn is one group on the fleet map and the ids of its elements.
+type fleetColumn struct {
+	group string
+	id    string
+	cards []fleetCard
+}
+
+type fleetCard struct {
+	id    string
+	agent int // index into the brief's Agents
+}
+
+// fleetColumns lays the brief out in columns, in the brief's order. An agent
+// in several groups has a card in each column.
+func fleetColumns(fleet *fleetResp, all bool) []fleetColumn {
+	ids := newProcessIDs()
+	ids.taken["fg-title"], ids.taken["fg-title-label"] = true, true
+	var groupOrder []string
+	members := map[string][]int{}
+	for i, a := range fleet.Agents {
+		if !a.Online && !all {
+			continue
+		}
+		groups := a.Groups
+		if len(groups) == 0 {
+			groups = []string{fleetNoGroup}
+		}
+		for _, g := range groups {
+			if _, ok := members[g]; !ok {
+				groupOrder = append(groupOrder, g)
+			}
+			members[g] = append(members[g], i)
+		}
+	}
+	columns := make([]fleetColumn, 0, len(groupOrder))
+	for _, g := range groupOrder {
+		column := fleetColumn{group: g, id: ids.get("fg-", g)}
+		for _, i := range members[g] {
+			column.cards = append(column.cards, fleetCard{id: ids.get("fa-", fleet.Agents[i].AgentID, g), agent: i})
+		}
+		columns = append(columns, column)
+	}
+	return columns
 }
 
 // fleetPRShort turns a GitHub PR URL into repo#n.

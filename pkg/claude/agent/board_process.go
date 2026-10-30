@@ -75,7 +75,7 @@ func runBoardFromProcess(p *boardFromProcessParams, boardID, templateID string, 
 		fmt.Fprintf(stderr, "Error: process template %s could not be read: %v\n", templateID, err)
 		return rcIOFailure
 	}
-	doc, err := fetchBoard(boardID, -1)
+	doc, err := fetchBoard(boardID, boardWithTombstones)
 	if err != nil {
 		var de *DaemonError
 		if !errors.As(err, &de) || de.Status != http.StatusNotFound {

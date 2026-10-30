@@ -118,6 +118,34 @@ When the operator brings an idea:
   task force (`tclaude agent task-force stand-down <g>`). Idle agents still
   cost attention in every brief.
 
+## Staffing on the map
+
+The operator can edit a fleet map instead of explaining: drag a card to
+another column, draw an arrow from a card to a column, delete a card, or
+write a note in a column. When they say they marked it up, run:
+
+```bash
+tclaude agent board fleet-changes fleet
+```
+
+It lists proposals and changes nothing. Read them back in a line each and
+confirm before acting. Then, in one `sudo request` for the whole list:
+
+- A **move** is `tclaude agent groups move <from> <agent> <to>`, which keeps
+  the agent's role (`groups.members.add`, `groups.members.remove`). With no
+  `from`, the agent is in no group: `groups add <to> <agent>`.
+- A **remove** means ask whether they want the agent out of that group or
+  retired. With no `from`, the agent is in no group, so only retiring applies.
+- An **add** is a new worker from the note, so run it through "From idea to
+  work".
+
+Finally draw the map again the way it was drawn (`board from-fleet`, with
+`--all` if the map showed offline agents), which puts cards back where the
+fleet now says they belong. Your redraw does not touch the operator's arrows
+and notes: delete the ones you acted on or turned down (`board rm`), or they
+come up again. Circles and other marks are not proposals: look at the board
+(`board show`) and ask.
+
 ## Daily summary
 
 When the operator wants a regular round-up, schedule one to yourself
