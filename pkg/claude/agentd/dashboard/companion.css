@@ -313,3 +313,17 @@ body.companion-annotating .companion-chips { visibility: hidden; }
   padding: 5px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: var(--cmp-bg);
   color: var(--cmp-text); font: inherit; font-size: 12.5px;
 }
+
+/* The fleet-wide "to decide" queue: a pill when minimized, a tab when open,
+   laid over the window body so the terminal underneath stays attached. */
+.companion-body { position: relative; }
+.companion-decide-queue {
+  position: absolute; inset: 0; z-index: 2; overflow: auto; padding-bottom: 8px;
+  background: var(--cmp-bg); display: flex; flex-direction: column;
+}
+.companion-decide-queue .companion-decision { max-height: none; }
+.companion-decision-from { margin-left: auto; color: var(--cmp-muted); font-weight: normal; font-size: 11.5px; }
+.companion-decide-mark { color: var(--cmp-blue); }
+.companion-chip-decide { border-color: var(--cmp-blue); }
+.companion-chip-decide .companion-decide-mark { width: 22px; height: 22px; display: inline-grid; place-items: center; }
+.companion-decide-tab button { color: var(--cmp-blue); }
