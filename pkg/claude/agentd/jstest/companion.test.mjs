@@ -928,3 +928,38 @@ test('the Steward goes by the name the operator gave it', async () => {
   assert.equal(agents.get(A).name, 'Jeeves');
   assert.equal(agents.get(B).name, 'worker', 'only the Steward');
 });
+
+test('elevated access shows on the agent and ends in one click', async (t) => {
+  const snapshot = snapshotWith({ steward: true });
+  const prefs = memoryPrefs();
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method, body: options.body });
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '' };
+  };
+  const { view, harness, snap, controller } = await setup(t, { snapshot, prefs, fetchImpl });
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  const steward = [...m.companionAgents(snapshot).values()].find((agent) => agent.steward);
+  assert.equal(m.elevatedAccess(snapshot, steward), null, 'nothing beyond the usual');
+  await harness.act(() => controller().open(steward.agentId));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => {
+    snap.value = {
+      ...snap.value,
+      sudo: [{ id: 7, agent_id: steward.agentId, slug: 'agent.spawn', remaining_seconds: 700 }, { id: 8, agent_id: 'agt_other', slug: 'node.exec', remaining_seconds: 5 }],
+      steward_elevated: { [steward.agentId]: { standing: ['host.read'], inherited: ['groups.admin'] } },
+    };
+  });
+  const band = view.container.querySelector('.companion-elevated');
+  assert.match(band.textContent, /agent\.spawn 12 min left/);
+  assert.match(band.textContent, /host\.read standing/);
+  assert.match(band.textContent, /groups\.admin from a group/);
+  assert.doesNotMatch(band.textContent, /node\.exec/, 'another agent\'s grant');
+  await harness.act(async () => {
+    band.querySelector('button').click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(calls.find((call) => call.method === 'DELETE').url, `/api/sudo?agent_id=${encodeURIComponent(steward.agentId)}`);
+  const cleared = calls.find((call) => call.url === '/api/permissions');
+  assert.deepEqual(JSON.parse(cleared.body), { conv: steward.convId, overrides: { 'host.read': 'default' } });
+});

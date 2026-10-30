@@ -637,6 +637,13 @@ change with `--ask-human`, so you approve it in the dashboard. The exceptions
 are what its Writes setting gives it at birth, which need no prompt:
 `message.direct` under `messaging`, and `message.direct`, `agent.spawn` and
 `agent.task` under `workers`.
+While an agent in the window holds elevated access, its tab and chip show 🔓
+and a band above its terminal lists it: sudo grants with their time left and,
+for a live Steward, anything else beyond what Config gives it. **End now**
+revokes what the agent holds itself, with no confirmation; it can ask again.
+Access from a group or from owning one is listed but stays, since other
+members share it: change that in Groups.
+
 While the Steward's tab is open and you have not typed anything, one-click
 starters sit above the message row: **Brief me**, **I have an idea**, **What can I do here?**, **Review my
 setup**, **Set up my repos**, **Create a dev flow** and **Sketch on a board**.

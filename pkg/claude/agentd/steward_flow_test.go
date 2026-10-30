@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -176,4 +177,39 @@ func TestSteward_AccessFromConfigAndReachableByAnyAgent(t *testing.T) {
 	assert.Contains(t, rows[0].Body, "The operator calls you Jeeves.")
 	assert.Less(t, send("jeeves"), 300)
 	assert.Less(t, send("steward"), 300)
+}
+
+// The companion's band reads what a Steward holds beyond Config from the snapshot.
+func TestSteward_SnapshotListsElevatedAccess(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	conv := decodeScribeResp(t, rec).ConvID
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+
+	elevated := func() map[string]struct {
+		Standing  []string `json:"standing"`
+		Inherited []string `json:"inherited"`
+	} {
+		rec := testharness.Serve(dashMessageMux(t), testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		var snap struct {
+			Elevated map[string]struct {
+				Standing  []string `json:"standing"`
+				Inherited []string `json:"inherited"`
+			} `json:"steward_elevated"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap))
+		return snap.Elevated
+	}
+	assert.Empty(t, elevated(), "a new Steward holds what Config gives it")
+
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermAgentSpawn, "test"))
+	assert.Equal(t, []string{agentd.PermAgentSpawn}, elevated()[agentID].Standing)
 }

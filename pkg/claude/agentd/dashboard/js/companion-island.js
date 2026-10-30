@@ -22,14 +22,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
-  clampPlacement, companionAgents, companionMessageFits, companionStatus, companionStatusLabel, composeCompanionMessage,
+  clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
   stewardSummonBody, STEWARD_STARTERS, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
-import { ApprovalCard, openAccessPanel } from './companion-approval.js';
+import { ApprovalCard, ElevatedBand, openAccessPanel } from './companion-approval.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 
@@ -1072,6 +1072,7 @@ export function CompanionApp({
         onClick=${(event) => onChipClick(agent.agentId, event)}>
         <${Avatar} agent=${agent} />
         <span class="companion-chip-name">${agent.name}</span>
+        ${elevatedAccess(snapshot.value, agent) && html`<span title="Elevated access">🔓</span>`}
         ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? '🔑 approval' : decisions(agent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
       </button>`;
     })}
@@ -1097,6 +1098,7 @@ export function CompanionApp({
   const style = `left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`;
   const status = activeAgent ? statusOf(activeAgent) : 'offline';
   const activeApprovals = activeAgent ? approvals(activeAgent) : [];
+  const activeElevated = elevatedAccess(snapshot.value, activeAgent);
   const activeDecisions = activeAgent ? decisions(activeAgent) : [];
   const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
   const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
@@ -1115,7 +1117,7 @@ export function CompanionApp({
             <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'}
               title=${`${agent.name}: ${companionStatusLabel(tabStatus)}`}
               onClick=${() => showAgent(agent.agentId)}>
-              <${Avatar} agent=${agent} /><span>${agent.name}</span><${StatusDot} status=${tabStatus} />
+              <${Avatar} agent=${agent} /><span>${agent.name}</span>${elevatedAccess(snapshot.value, agent) && html`<span class="companion-tab-elevated" title="Elevated access">🔓</span>`}<${StatusDot} status=${tabStatus} />
             </button>
             <button type="button" class="companion-tab-close" aria-label=${`Unpin ${agent.name}`} title="Unpin (the agent keeps running)"
               onClick=${() => closeTab(agent.agentId)}>×</button>
@@ -1162,6 +1164,7 @@ export function CompanionApp({
         <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
+      ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
       ${activeAgent && !activeAgent.online && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is offline.</p>
         <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>

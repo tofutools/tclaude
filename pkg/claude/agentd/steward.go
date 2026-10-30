@@ -102,6 +102,56 @@ func liveStewardConvs() []string {
 	return convs
 }
 
+// stewardElevation is what a Steward holds beyond Config and the defaults,
+// sudo aside: the snapshot lists sudo for every agent.
+type stewardElevation struct {
+	// Standing grants are its own, so they can be revoked.
+	Standing []string `json:"standing,omitempty"`
+	// Inherited ones come from a group, shared with other members, or from
+	// group ownership.
+	Inherited []string `json:"inherited,omitempty"`
+}
+
+// stewardElevations reads each live Steward's effective access through the
+// same routine the permission gate uses, so nothing it can do goes unseen.
+func stewardElevations(cfg *config.Config, state permissionsState) map[string]stewardElevation {
+	usual := map[string]bool{}
+	for _, slug := range append(stewardSlugs(cfg), state.Defaults...) {
+		usual[slug] = true
+	}
+	out := map[string]stewardElevation{}
+	for _, conv := range liveStewardConvs() {
+		agentID, err := db.AgentIDForConv(conv)
+		if err != nil || agentID == "" {
+			continue
+		}
+		effective, _, provenance, _ := effectivePermsFor(state, conv, ownerImpliedSlugsFor(conv))
+		var elevation stewardElevation
+		for _, slug := range effective {
+			switch source := provenance[slug]; {
+			case usual[slug], hasAnyPrefix(source, permSourceSudo, permSourceDefault, permSourceMember):
+			case hasAnyPrefix(source, permSourceOverride):
+				elevation.Standing = append(elevation.Standing, slug)
+			default:
+				elevation.Inherited = append(elevation.Inherited, slug)
+			}
+		}
+		if len(elevation.Standing)+len(elevation.Inherited) > 0 {
+			out[agentID] = elevation
+		}
+	}
+	return out
+}
+
+func hasAnyPrefix(source string, prefixes ...permSource) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(source, string(prefix)) {
+			return true
+		}
+	}
+	return false
+}
+
 // isStewardAddress reports whether a message target means "the Steward": the
 // fixed address, or the name the operator gave it.
 func isStewardAddress(to string) bool {
