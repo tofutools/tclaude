@@ -146,7 +146,7 @@
 }
 .companion-primary:disabled { opacity: .6; cursor: progress; }
 
-.companion-input { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--cmp-line); }
+.companion-input { flex: none; box-sizing: border-box; min-height: 40px; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--cmp-line); }
 .companion-context { display: inline-flex; align-items: center; gap: 4px; color: var(--cmp-muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
 .companion-context input { margin: 0; accent-color: var(--cmp-blue); }
 .companion-input-gap { flex: 1; }

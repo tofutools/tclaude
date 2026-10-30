@@ -12,6 +12,7 @@ export function createTerminalShellActions({
   documentRef = globalThis.document,
   notify = shellToast,
   onReattachPane = null,
+  onPaneDisconnected = null,
 } = {}) {
   if (!state) throw new TypeError('terminal shell actions require state');
   const widgets = new Map();
@@ -242,6 +243,11 @@ export function createTerminalShellActions({
     return true;
   }
 
+  function paneDisconnected(key) {
+    const pane = state.panes.value.find((candidate) => candidate.key === key);
+    if (pane) onPaneDisconnected?.(pane);
+  }
+
   function reattachPane(key) {
     if (disposed || typeof onReattachPane !== 'function') return Promise.resolve(false);
     const pane = state.panes.value.find((candidate) => candidate.key === key);
@@ -258,6 +264,7 @@ export function createTerminalShellActions({
 
   return Object.freeze({
     registerWidget,
+    paneDisconnected,
     waitForPaneSettled,
     widgetFor,
     openPane,

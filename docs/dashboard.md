@@ -626,8 +626,9 @@ comes back open when you reload the same browser tab.
   the left, right or bottom edge to snap it into a side panel or drawer. Each
   agent is a tab; **＋** pins another live agent, **×** unpins one (the agent
   keeps running), **⤢** moves it to the Terminals tab and **–** minimizes.
-- **Message row.** Text sent from the row below the terminal is queued to the
-  agent's inbox, with the view you are on attached when **view** is ticked.
+- **Message row.** The row below the terminal holds the mic and ✎. Dictated
+  text is queued to the agent's inbox, with the view you are on attached when
+  **view** is ticked.
 
 With nothing pinned, the companion offers the **Steward**: a helper for all
 of tclaude, summoned like a scribe (it lives in the `steward`
@@ -645,13 +646,17 @@ revokes what the agent holds itself, with no confirmation; it can ask again.
 Access from a group or from owning one is listed but stays, since other
 members share it: change that in Groups.
 
-You type to an agent in its terminal. The row under it holds **view** (attach
-the dashboard view to what you send), the mic and ✎. A text field appears only
-while you dictate.
+You type to an agent in its terminal. The row under it holds the mic, **view**
+(attach the dashboard view to dictated messages) and ✎. A text field appears
+while you dictate and stays while it holds text, including text kept from a
+send that failed; empty it to discard that text. Typing in the terminal stops
+speech. An agent parked in a chip or detached has no terminal here, so stop it
+with the voice toggle.
 
 In the window, ✉ or Ctrl/Cmd+M sends the active agent a queued message, as in
 the Terminals tab, and ⇄ morphs it onto another harness, model or profile. ⧉
-detaches it into its own browser window, and **Bring it back here** returns it.
+detaches it into its own browser window. It stays there until you press
+**Bring it back here** or close that window.
 
 Give the Steward an idea and it follows the bundled `tclaude-fleet`
 skill. It restates the idea and asks what it cannot find out itself, sketching

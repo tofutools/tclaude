@@ -21,7 +21,7 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
+  COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
   stewardSummonBody, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
@@ -137,6 +137,16 @@ function Peek({ agent, lines, anchor }) {
     <pre class="companion-peek-body">${lines === null ? 'reading…' : lines.length ? lines.join('\n') : agent.online ? '(empty screen)' : '(offline)'}</pre>
     <div class="companion-peek-foot">Read-only preview. The keyboard stays with the page until you click.</div>
   </div>`;
+}
+
+const RECLAIM_CLOSE_MS = 1000;
+const DETACHED_CHECK_MS = 1000;
+
+function without(set, value) {
+  if (!set.has(value)) return set;
+  const next = new Set(set);
+  next.delete(value);
+  return next;
 }
 
 // How recently a key in the terminal counts as still typing when a cue lands.
@@ -264,6 +274,10 @@ export function CompanionApp({
   const [guide, setGuide] = useState(null);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [detached, setDetached] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF))));
+  const detachedRef = useRef(detached);
+  detachedRef.current = detached;
+  const detachedWindows = useRef(new Map());
   const [parked, setParked] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF))));
   const [statuses, setStatuses] = useState({});
   const [reconnectable, setReconnectable] = useState({});
@@ -284,6 +298,9 @@ export function CompanionApp({
   const queueSize = pendingDecisions(snapshot.value).length;
   useEffect(() => { if (!queueSize) setDeciding(false); }, [queueSize]);
   const draftRef = useRef('');
+  // Emptying the field by hand must not take it away from under the caret.
+  const [fieldFocused, setFieldFocused] = useState(false);
+  const fieldRef = useCallback((element) => { if (!element) setFieldFocused(false); }, []);
   const [withContext, setWithContext] = useState(true);
   // The agent the operator is marking up the page for (tcl-8vjjko), or null.
   const [annotating, setAnnotating] = useState(null);
@@ -356,6 +373,7 @@ export function CompanionApp({
     writePref(prefs, COMPANION_ACTIVE_PREF, activeId);
     writePref(sessionPrefs, COMPANION_ACTIVE_PREF, activeId);
   }, [activeId, sessionPrefs]);
+  useEffect(() => writePref(sessionPrefs, COMPANION_DETACHED_PREF, JSON.stringify([...detached])), [detached, sessionPrefs]);
   useEffect(() => writePref(sessionPrefs, COMPANION_PARKED_PREF, JSON.stringify([...parked])), [parked, sessionPrefs]);
   useEffect(() => writePref(sessionPrefs, COMPANION_OPEN_PREF, open ? '1' : '0'), [open, sessionPrefs]);
 
@@ -396,7 +414,10 @@ export function CompanionApp({
     if (tabs.some((id) => !keep(id))) setTabs((current) => current.filter(keep));
   }, [agents]);
 
-  const showAgent = useCallback((agentId, { focus = true, starting = false } = {}) => {
+  // A detached agent stays in its own window: opening its tab only shows where
+  // it went. Attaching here would throw that window off the terminal, and the
+  // window has no idea why. Only Bring it back here reclaims it.
+  const showAgent = useCallback((agentId, { focus = true, starting = false, reclaim = false } = {}) => {
     if (!isAgentId(agentId)) return false;
     const agent = agents.get(agentId);
     // An id the snapshot does not know is only accepted for an agent this
@@ -405,13 +426,11 @@ export function CompanionApp({
     if (!agent && starting) pending.current.set(agentId, Date.now() + PENDING_MS);
     setHelperClosed(agentId, false);
     stopPeek();
-    closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
-    setParked((current) => {
-      if (!current.has(agentId)) return current;
-      const next = new Set(current);
-      next.delete(agentId);
-      return next;
-    });
+    if (reclaim || !detachedRef.current.has(agentId)) {
+      closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
+      setParked((current) => without(current, agentId));
+      setDetached((current) => without(current, agentId));
+    }
     setTabs((current) => withTab(current, agentId));
     setActive(agentId);
     setDeciding(false);
@@ -740,6 +759,14 @@ export function CompanionApp({
         const { [activeAgent.agentId]: _sent, ...rest } = current;
         return rest;
       });
+      // An open mic would bring the sent text back.
+      if (event) dictation.abort?.();
+      // Send and the field are about to go, and focus would fall to the page.
+      const focused = win?.document?.activeElement;
+      if (draftRef.current === text && focused?.matches?.('.companion-draft, .companion-input button[type="submit"]')) {
+        setFieldFocused(false);
+        setFocusToken((n) => n + 1);
+      }
       return true;
     } catch (error) {
       notify(`Message to ${activeAgent.name} failed: ${error?.message || error}`, true);
@@ -888,12 +915,38 @@ export function CompanionApp({
   function detachToWindow(agent) {
     const rect = windowRef.current?.getBoundingClientRect?.();
     const size = rect ? { width: rect.width, height: rect.height } : null;
-    if (!detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: { x: win?.screenX, y: win?.screenY } })) {
+    const opened = detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: { x: win?.screenX, y: win?.screenY } });
+    if (!opened) {
       notify('Could not detach: allow pop-ups for this dashboard.', true);
       return;
     }
+    detachedWindows.current.set(agent.agentId, opened);
     setParked((current) => new Set(current).add(agent.agentId));
+    setDetached((current) => new Set(current).add(agent.agentId));
   }
+
+  // Attach first: the window sees it lost the terminal, so closing it cannot
+  // hide the terminal from here.
+  function reclaim(agentId) {
+    const opened = detachedWindows.current.get(agentId);
+    detachedWindows.current.delete(agentId);
+    showAgent(agentId, { reclaim: true });
+    if (opened) setTimeout(() => opened.close?.(), RECLAIM_CLOSE_MS);
+  }
+
+  // A detached window the operator closed hands the agent back.
+  useEffect(() => {
+    if (!detached.size) return undefined;
+    const check = setInterval(() => {
+      for (const [agentId, opened] of detachedWindows.current) {
+        if (!opened.closed) continue;
+        detachedWindows.current.delete(agentId);
+        setParked((current) => without(current, agentId));
+        setDetached((current) => without(current, agentId));
+      }
+    }, DETACHED_CHECK_MS);
+    return () => clearInterval(check);
+  }, [detached.size]);
 
   function moveToTerminals(agent) {
     if (!openTerminalsPane) return;
@@ -1008,7 +1061,9 @@ export function CompanionApp({
     const onKey = (event) => {
       if (!event.target?.closest?.('.companion-term-host')) return;
       lastTerminalKey.current = Date.now();
-      speaker.cancel();
+      // Modifiers and window shortcuts are not typing.
+      const text = event.key?.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+      if (text || event.key === 'Enter' || event.key === 'Backspace') speaker.cancel();
     };
     doc.addEventListener('keydown', onKey, true);
     return () => doc.removeEventListener('keydown', onKey, true);
@@ -1024,7 +1079,8 @@ export function CompanionApp({
     const by = cue.agent_name || 'An agent';
     // Focus alone is no signal: it stays in the terminal long after the last key.
     const typing = Date.now() - lastTerminalKey.current < CUE_TYPING_WINDOW_MS;
-    if (draftRef.current.trim() || listeningRef.current || typing) {
+    const drafting = !showQueue && activeAgent?.online && draftRef.current.trim();
+    if (drafting || listeningRef.current || typing) {
       setTabs((current) => withTab(current, agent.agentId));
       notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
       return;
@@ -1127,6 +1183,7 @@ export function CompanionApp({
   const toApprove = pendingApprovals(snapshot.value);
   const elsewhere = toApprove.filter((request) => !chipAgents.some((agent) => approvalsFor({ access_requests: [request] }, agent).length));
   const showQueue = deciding && queue.length > 0;
+  const showField = draft || listening || fieldFocused;
   const askerName = (d) => agents.get(d.from_agent)?.name || d.from_title || 'an agent';
   const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
@@ -1249,8 +1306,8 @@ export function CompanionApp({
         <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
       </div>`}
       ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
-        <p><b>${activeAgent.name}</b> is open outside this window.</p>
-        <button type="button" class="companion-primary" onClick=${() => showAgent(activeAgent.agentId)}>Bring it back here</button>
+        <p><b>${activeAgent.name}</b> is open ${detached.has(activeAgent.agentId) ? 'in its own window' : 'in the Terminals tab'}.</p>
+        <button type="button" class="companion-primary" onClick=${() => reclaim(activeAgent.agentId)}>Bring it back here</button>
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
         ${status === 'needs' && !activeApprovals.length && !activeDecisions.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
@@ -1262,18 +1319,19 @@ export function CompanionApp({
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
     ${!showQueue && activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
-      <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
+      ${dictation.supported && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
-      </label>
-      ${!draft && !listening && html`<span class="companion-input-gap"></span>`}
-      ${(draft || listening) && html`<input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
-        placeholder="Listening…"
+      </label>`}
+      ${!showField && html`<span class="companion-input-gap"></span>`}
+      ${showField && html`<input type="text" class="companion-draft" ref=${fieldRef} maxLength=${COMPANION_MESSAGE_MAX}
+        placeholder=${listening ? 'Listening…' : ''}
+        onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)}
         aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />`}
       ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
         aria-label=${`Dictate a message to ${activeAgent.name}`}
         title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
         onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
-      ${(draft || listening) && html`<button type="submit" disabled=${sending || !draft.trim()}>Send</button>`}
+      ${showField && html`<button type="submit" disabled=${sending || !draft.trim()}>Send</button>`}
       <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
     </form>`}

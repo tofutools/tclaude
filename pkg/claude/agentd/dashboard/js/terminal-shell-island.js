@@ -401,7 +401,7 @@ function TerminalPane({
         onReconnectChange=${setReconnect}
         onSelectionChange=${setHasSelection}
         onRemoteChange=${setRemote}
-        onDisconnect=${(info) => { if (info?.closeTab) void actions.closePane(pane.key, { skipDetach: true }); }}
+        onDisconnect=${(info) => { actions.paneDisconnected?.(pane.key); if (info?.closeTab) void actions.closePane(pane.key, { skipDetach: true }); }}
         onComposeMessage=${composeMessage}
         disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} onReconnect=${reconnectPane} />` : null}
       />

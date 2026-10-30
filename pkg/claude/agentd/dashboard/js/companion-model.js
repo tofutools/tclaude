@@ -18,6 +18,7 @@ export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
 // window attaches its terminal, and that takes over from other views.
 export const COMPANION_OPEN_PREF = 'tclaude.dash.companion.open';
 export const COMPANION_PARKED_PREF = 'tclaude.dash.companion.parked';
+export const COMPANION_DETACHED_PREF = 'tclaude.dash.companion.detached';
 // The scribes and Stewards the operator closed, which stay closed.
 export const COMPANION_CLOSED_PREF = 'tclaude.dash.companion.closed';
 export const COMPANION_ACTIVE_PREF = 'tclaude.dash.companion.active';
@@ -291,8 +292,8 @@ export function composeCompanionMessage(text, context = '') {
 export function stewardBrief() {
   return [
     'You are the Steward: the operator\'s always-available helper for tclaude, shown in a floating',
-    'companion window on top of the tclaude dashboard. The operator talks to you in this terminal,',
-    'or through the window\'s message row, which arrives as operator mail ending with a',
+    'companion window on top of the tclaude dashboard. The operator talks to you in this terminal.',
+    'What they dictate or mark up in the window arrives as operator mail, usually ending with a',
     '"[dashboard view: ...]" line naming the dashboard view they are looking at.',
     '',
     'What you do:',

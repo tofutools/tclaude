@@ -380,6 +380,33 @@ test('a draft stays with its agent across tab switches and goes to that agent', 
   assert.equal(draft(), null);
 });
 
+test('sending from the field hands focus to the terminal, and emptying it keeps it', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = fakeDictation();
+  const { view, harness, controller, mounted } = await setup(t, { prefs, dictationImpl: dictated.impl });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const draft = () => view.container.querySelector('input.companion-draft');
+  await dictated.say(harness, view, 'for alpha');
+  await harness.act(async () => { draft().focus(); });
+  await harness.act(async () => {
+    draft().value = '';
+    draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  });
+  assert.ok(draft(), 'emptying the field by hand leaves it under the caret');
+  await harness.act(async () => {
+    draft().value = 'for alpha';
+    draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  });
+  const before = mounted.at(-1).focused;
+  await harness.act(async () => {
+    view.container.querySelector('form.companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(draft(), null);
+  assert.equal(mounted.at(-1).focused, before + 1, 'the keyboard is not left on the page');
+});
+
 test('a finished send leaves text typed after it started', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   let finish = null;
@@ -819,8 +846,13 @@ test('voice output speaks a reply when the turn ends and says when the agent nee
   assert.equal(spoken.at(-1), 'alpha needs you: Bash(rm -rf build)');
   const keys = h.window.document.createElement('textarea');
   view.container.querySelector('.companion-term-host').appendChild(keys);
-  keys.dispatchEvent(new h.window.Event('keydown', { bubbles: true }));
-  assert.ok(cancelled >= 1, 'typing in the terminal stops speech');
+  const press = (init) => keys.dispatchEvent(Object.assign(new h.window.Event('keydown', { bubbles: true }), init));
+  const before = cancelled;
+  press({ key: 'Shift' });
+  press({ key: 'Tab', altKey: true });
+  assert.equal(cancelled, before, 'a modifier or a window shortcut is not typing');
+  press({ key: 'a' });
+  assert.equal(cancelled, before + 1, 'typing in the terminal stops speech');
 });
 
 test('voice speaks a further decision from an agent already waiting on the operator', async (t) => {
@@ -1034,11 +1066,12 @@ test('Ctrl/Cmd+M and the title bar message the active agent; morph opens from th
   assert.equal(morphs[0].agent, A);
 });
 
-test('detaching hands the agent to its own window, and a blocked pop-up changes nothing', async (t) => {
-  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
-  let allowed = false;
+test('a detached agent keeps its window until the operator brings it back', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]) });
+  const opened = { closed: false, close() { this.closed = true; } };
+  let result = null;
   const calls = [];
-  const { view, harness, controller, mounted } = await setup(t, { prefs, detachWindow: (agent) => { calls.push(agent); return allowed; } });
+  const { view, harness, controller, mounted } = await setup(t, { prefs, detachWindow: (agent) => { calls.push(agent); return result; } });
   await harness.act(() => controller().open(A));
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   const detach = () => harness.act(async () => {
@@ -1047,9 +1080,20 @@ test('detaching hands the agent to its own window, and a blocked pop-up changes 
   });
   await detach();
   assert.equal(mounted[0].disposed, false, 'blocked: the terminal stays');
-  allowed = true;
+  result = opened;
   await detach();
   assert.deepEqual(calls, [A, A]);
   assert.equal(mounted[0].disposed, true, 'the window lets go of the terminal');
-  assert.match(view.container.textContent, /open outside this window/);
+  assert.match(view.container.textContent, /open in its own window/);
+
+  await harness.act(() => harness.getByRole(view.container, 'tab', { name: /bravo/ }).click());
+  await harness.act(() => harness.getByRole(view.container, 'tab', { name: /alpha/ }).click());
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.match(view.container.textContent, /open in its own window/, 'a tab click does not take it back');
+
+  await harness.act(async () => {
+    harness.getByRole(view.container, 'button', { name: 'Bring it back here' }).click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.doesNotMatch(view.container.textContent, /open in its own window/);
 });
