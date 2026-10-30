@@ -39,26 +39,9 @@ export const COMPANION_FOOTER_ROOM = 29;
 
 export const STEWARD_NAME = 'steward';
 export const STEWARD_SCOPE = Object.freeze({ kind: 'steward' });
-// The Steward is read-only by default: it inspects and explains through the
-// tclaude CLI's read surfaces. Anything that changes state goes through a
-// per-command `--ask-human` approval the operator decides in the dashboard.
-// The writes are boards.write and human.notify: drawing on a shared board
-// with the operator, and putting a decision to them, are conversation, not
-// configuration.
-export const STEWARD_SLUGS = Object.freeze([
-  'process.templates.read',
-  'process.runs.read',
-  'triggers.read',
-  'usage.read',
-  'host.read',
-  'costs.read',
-  'dashboard.view.read',
-  'dashboard.guide',
-  'boards.read',
-  'boards.write',
-  'fleet.read',
-  'human.notify',
-]);
+// A Steward's access is not named here: the daemon sets it from config
+// (steward.reads, steward.writes). Anything beyond that goes through an approval
+// the operator decides.
 
 const AGENT_ID = /^agt_[0-9a-f]{32}$/;
 
@@ -346,7 +329,7 @@ export function stewardBrief() {
     '  list of what they circled, underlined or pointed at, plus their note. Answer about those',
     '  controls, and point back with `tclaude agent guide show --target` when that helps.',
     '',
-    'You are read-only by default. Before changing anything, show a short concrete plan. For a',
+    'Your access is at the end of this brief. Before changing anything else, show a short concrete plan. For a',
     'multi-step setup, ask for exactly the permissions the plan needs, once, for a bounded time:',
     '`tclaude agent sudo request <slug>... --duration 30m --reason "<the plan, step by step>"`.',
     'The operator approves or denies it as a card in your companion window. For a single change,',
@@ -370,7 +353,6 @@ export function stewardBrief() {
 export function stewardSummonBody() {
   return {
     name: STEWARD_NAME,
-    slugs: [...STEWARD_SLUGS],
     scope: { ...STEWARD_SCOPE },
     background: true,
     brief: stewardBrief(),

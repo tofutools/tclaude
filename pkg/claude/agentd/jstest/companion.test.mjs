@@ -68,7 +68,7 @@ test('with nothing pinned a single Steward chip invites the operator in', async 
   assert.equal(view.container.querySelector('[role="menu"]'), null, 'the empty window explains itself; the add menu stays closed');
 });
 
-test('summoning the Steward posts a read-only scoped scribe summon and attaches its terminal', async (t) => {
+test('summoning the Steward posts a scoped scribe summon and attaches its terminal', async (t) => {
   const { view, harness, requests, mounted, closed } = await setup(t);
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /Open the companion/ }).click());
   const summon = [...view.container.querySelectorAll('button')].find((b) => /Summon the Steward/.test(b.textContent) && b.classList.contains('companion-primary'));
@@ -80,7 +80,7 @@ test('summoning the Steward posts a read-only scoped scribe summon and attaches 
   assert.deepEqual(post.body.scope, { kind: 'steward' });
   assert.equal(post.body.background, true);
   assert.ok(!post.body.exclusive, 'the Steward keeps per-command --ask-human approvals available');
-  assert.ok(post.body.slugs.every((slug) => /\.read$/.test(slug) || ['dashboard.guide', 'boards.write', 'human.notify'].includes(slug)), `only read slugs plus pointing, drawing and asking the operator: ${post.body.slugs}`);
+  assert.equal(post.body.slugs, undefined, 'the daemon decides a Steward\'s access');
   assert.match(post.body.brief, /tclaude agent board show/);
   assert.match(post.body.brief, /--ask-human/);
   assert.deepEqual(closed.at(-1), [S], 'any Terminals-tab pane of the agent is closed first');
