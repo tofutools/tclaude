@@ -42,6 +42,7 @@ tclaude agent board add plan rectangle --right-of api --link --text DB --id db  
 tclaude agent board move plan <elem> --x 300 --y 80   # its label and bound arrows follow
 tclaude agent board layout plan [--direction down]    # arrange the shapes along their arrows
 tclaude agent board from-process flow review          # draw process template "review" as a flowchart
+tclaude agent board from-fleet fleet                  # draw the fleet: a column per group, a card per agent
 tclaude agent board text plan <elem> --text "API v2"
 tclaude agent board rm plan <elem> [<elem>...]
 tclaude agent board patch plan --file elements.json   # - reads stdin
@@ -116,6 +117,20 @@ When the operator links a board to a group, the members who are online then
 receive the invitation mail. An agent can only create a board for a group it
 belongs to. Choosing "No group" unlinks the board. Archiving or deleting the
 group also unlinks it in effect: the board stays, without the group.
+
+## Mapping the fleet
+
+`board from-fleet <board>` draws the fleet as a map you can talk staffing over.
+Each group is a column with a dashed box, and each live agent is a card in it,
+coloured by what it is doing: green for working, grey for idle, yellow for
+waiting on you, red for a failed turn. A card names the agent, its status, and
+its open PR or task. `--all` adds offline agents as white, dashed cards, and
+`--group` draws one group. The title line carries the counts and the time it
+was drawn. The map goes below whatever the board already holds. Drawing it
+again refreshes it in place: its elements are `fg-…` and `fa-…`, a card whose
+agent is gone is removed, and your own notes and arrows stay. Circle an agent,
+or draw an arrow from it to another group, and the Steward reads that as you
+talking about staffing. The command needs `boards.write` and `fleet.read`.
 
 ## Sketching a process
 
