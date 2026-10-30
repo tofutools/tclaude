@@ -38,7 +38,7 @@ function fakeWidgetFactory(mounted) {
   };
 }
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {} } = {}) {
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {} } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -55,7 +55,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sess
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} sessionPrefs=${sessionPrefs} fetchImpl=${fetchFn} notify=${notify}
-    onComposeMessage=${onComposeMessage} openMorph=${openMorph} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    onComposeMessage=${onComposeMessage} openMorph=${openMorph} detachWindow=${detachWindow} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -1014,4 +1014,36 @@ test('Ctrl/Cmd+M and the title bar message the active agent; morph opens from th
   assert.equal(seeds.length, 2);
   await harness.act(async () => { view.container.querySelector('.companion-morph').click(); });
   assert.equal(morphs[0].agent, A);
+});
+
+test('a detached agent keeps its window until the operator brings it back', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]) });
+  const opened = { closed: false, close() { this.closed = true; } };
+  let result = null;
+  const calls = [];
+  const { view, harness, controller, mounted } = await setup(t, { prefs, detachWindow: (agent) => { calls.push(agent); return result; } });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const detach = () => harness.act(async () => {
+    view.container.querySelector('.companion-detach').click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await detach();
+  assert.equal(mounted[0].disposed, false, 'blocked: the terminal stays');
+  result = opened;
+  await detach();
+  assert.deepEqual(calls, [A, A]);
+  assert.equal(mounted[0].disposed, true, 'the window lets go of the terminal');
+  assert.match(view.container.textContent, /open in its own window/);
+
+  await harness.act(() => harness.getByRole(view.container, 'tab', { name: /bravo/ }).click());
+  await harness.act(() => harness.getByRole(view.container, 'tab', { name: /alpha/ }).click());
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.match(view.container.textContent, /open in its own window/, 'a tab click does not take it back');
+
+  await harness.act(async () => {
+    harness.getByRole(view.container, 'button', { name: 'Bring it back here' }).click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.doesNotMatch(view.container.textContent, /open in its own window/);
 });

@@ -645,7 +645,9 @@ Access from a group or from owning one is listed but stays, since other
 members share it: change that in Groups.
 
 In the window, ✉ or Ctrl/Cmd+M sends the active agent a queued message, as in
-the Terminals tab, and ⇄ morphs it onto another harness, model or profile.
+the Terminals tab, and ⇄ morphs it onto another harness, model or profile. ⧉
+detaches it into its own browser window. It stays there until you press
+**Bring it back here** or close that window.
 
 Give the Steward an idea and it follows the bundled `tclaude-fleet`
 skill. It restates the idea and asks what it cannot find out itself, sketching

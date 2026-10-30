@@ -293,7 +293,7 @@ const companionDescriptor = createIslandDescriptor({
     const terminalsTabModule = import('./terminals-tab.js');
     const [
       { mountCompanionIsland }, { dashboardState }, { dashPrefs },
-      { mountTerminalWidget }, { loadXtermRuntime }, { closeTerminalsForConvs, openWebWindowPane },
+      { mountTerminalWidget }, { loadXtermRuntime }, { closeTerminalsForConvs, detachWebWindow, openWebWindowPane },
     ] = await Promise.all([
       islandModule, snapshotStoreModule, prefsModule,
       terminalsCoreModule, xtermLoaderModule, terminalsTabModule,
@@ -304,6 +304,7 @@ const companionDescriptor = createIslandDescriptor({
         snapshot: dashboardState.snapshot, activeTab: dashboardState.activeTab, prefs: dashPrefs,
         notify: dependencies.notify, widgetFactory: mountTerminalWidget, loadRuntime: loadXtermRuntime,
         closeTerminalPanes: closeTerminalsForConvs, onComposeMessage: dependencies.onComposeMessage,
+        detachWindow: (agent, label, options) => detachWebWindow(agent, label, options),
         openMorph: async (data) => {
           const { openLaunchTargetDialog } = await import('./action-dialog-controller.js');
           const { launchAgent } = await import('./launch-target-dialog.js');

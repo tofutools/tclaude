@@ -18,6 +18,7 @@ export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
 // window attaches its terminal, and that takes over from other views.
 export const COMPANION_OPEN_PREF = 'tclaude.dash.companion.open';
 export const COMPANION_PARKED_PREF = 'tclaude.dash.companion.parked';
+export const COMPANION_DETACHED_PREF = 'tclaude.dash.companion.detached';
 // The scribes and Stewards the operator closed, which stay closed.
 export const COMPANION_CLOSED_PREF = 'tclaude.dash.companion.closed';
 export const COMPANION_ACTIVE_PREF = 'tclaude.dash.companion.active';
