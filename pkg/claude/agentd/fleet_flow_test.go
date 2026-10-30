@@ -71,6 +71,11 @@ func TestFleetBriefSeesWholeFleetAndRanksAttention(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.InsertHumanMessage(&db.HumanMessage{Body: "done"})
 	require.NoError(t, err)
+	// One access request waits on the operator; one was already decided and
+	// must not show up as waiting.
+	_, stop := agentd.SeedApprovalWithWaiterForTest("req-pending", "self.rename", "idler", false)
+	t.Cleanup(stop)
+	require.NoError(t, db.UpsertAccessRequest(&db.AccessRequest{ID: "req-done", Perm: "self.rename", ConvID: "asker", Status: "approved", CreatedAt: time.Now(), DecidedAt: time.Now()}))
 
 	require.Equal(t, http.StatusForbidden, accountQuery(t, f, "steward-conv", "/v1/fleet").Code)
 	require.NoError(t, db.GrantAgentPermission("steward-conv", agentd.PermFleetRead, "test"))
@@ -103,7 +108,14 @@ func TestFleetBriefSeesWholeFleetAndRanksAttention(t *testing.T) {
 	for _, a := range brief.Attention {
 		kinds = append(kinds, a.Kind+":"+a.Title)
 	}
-	require.Equal(t, []string{"prompt:asker", "pr:builder", "messages:", "idle:idler"}, kinds, "ranked most urgent first")
+	require.Equal(t, []string{"approval:idler", "prompt:asker", "pr:builder", "messages:", "idle:idler"}, kinds,
+		"ranked most urgent first; a handled request is not listed")
+	for _, a := range brief.Agents {
+		if a.Title == "solo" {
+			require.False(t, a.Online)
+			require.Equal(t, "offline", a.Status)
+		}
+	}
 
 	// A group filter narrows to that group and leaves out fleet-wide items.
 	rec = accountQuery(t, f, "steward-conv", "/v1/fleet?group=api")
@@ -112,5 +124,6 @@ func TestFleetBriefSeesWholeFleetAndRanksAttention(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &brief))
 	require.Equal(t, 3, brief.Counts.Agents)
 	require.Equal(t, 0, brief.UnreadMessages)
+	require.Equal(t, "approval", brief.Attention[0].Kind, "a member's pending request stays under a group filter")
 	require.Equal(t, http.StatusNotFound, accountQuery(t, f, "steward-conv", "/v1/fleet?group=nope").Code)
 }

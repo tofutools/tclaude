@@ -161,6 +161,7 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 
 	brief := &fleetBrief{GeneratedAt: now, Attention: []fleetItem{}, Agents: []fleetAgent{}}
 	titles := map[string]string{} // agent_id → title, for approvals
+	listed := map[string]bool{}   // conv → listed, for approvals under a group filter
 	for _, e := range active {
 		conv := e.CurrentConvID
 		if conv == "" || conv == self {
@@ -170,18 +171,27 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 		if group != "" && mb == nil {
 			continue
 		}
-		state, _ := shared.stateFor(conv)
+		// The whole roster is walked on every brief, so stay on the shared
+		// status snapshot and cached titles; only live agents pay for a
+		// location (branch) lookup.
+		state, rows := shared.stateFor(conv)
 		fa := fleetAgent{
-			AgentID:   e.AgentID,
-			Title:     agent.FreshTitle(conv),
-			Groups:    []string{},
-			Online:    isConvOnlineIn(conv, shared.alive),
-			Status:    state.Status,
-			Detail:    state.StatusDetail,
-			Harness:   state.Harness,
-			Model:     state.Model,
-			Branch:    locationView(conv).Branch,
-			Subagents: state.SubagentCount,
+			AgentID: e.AgentID,
+			Title:   agent.CachedTitle(conv),
+			Groups:  []string{},
+			Online:  isConvOnlineInSessions(rows, shared.alive),
+			Harness: state.Harness,
+			Model:   state.Model,
+		}
+		if presence, _ := db.ProjectedAgentFederationPresence(e.AgentID); presence != nil && presence.State == "away" {
+			fa.Online = false
+			fa.Status = "away"
+		}
+		if fa.Online {
+			fa.Status, fa.Detail, fa.Subagents = state.Status, state.StatusDetail, state.SubagentCount
+			fa.Branch = locationView(conv).Branch
+		} else if fa.Status == "" {
+			fa.Status = "offline"
 		}
 		if mb != nil {
 			fa.Groups, fa.Role = mb.groups, mb.role
@@ -201,26 +211,32 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 			fa.PRs = append(fa.PRs, fleetPR{URL: pr.PRURL, State: pr.State, Summary: pr.Summary})
 		}
 		titles[e.AgentID] = fa.Title
+		listed[conv] = true
 		brief.Agents = append(brief.Agents, fa)
 		countFleetAgent(&brief.Counts, fa)
 		brief.Attention = append(brief.Attention, fleetAgentAttention(fa, state, now)...)
 	}
 
-	if group == "" {
-		for _, req := range approvals.dashboardSnapshot() {
-			if req.Proposal != nil || (req.ConvID == self && self != "") || (req.CurrentConvID == self && self != "") {
-				continue
-			}
-			title := req.ConvTitle
-			if t, ok := titles[req.AgentID]; ok && title == "" {
-				title = t
-			}
-			item := fleetItem{Kind: fleetApproval, AgentID: req.AgentID, Title: title, Detail: "asks for " + approvalLine(req)}
-			if t, err := time.Parse(time.RFC3339, req.CreatedAt); err == nil {
-				item.Since = &t
-			}
-			brief.Attention = append(brief.Attention, item)
+	for _, req := range approvals.dashboardSnapshot() {
+		// The snapshot also carries recently handled requests and
+		// federation proposals; only a pending one waits on the operator.
+		if req.Status != "pending" || req.Proposal != nil || (self != "" && (req.ConvID == self || req.CurrentConvID == self)) {
+			continue
 		}
+		if group != "" && !listed[req.ConvID] && !listed[req.CurrentConvID] {
+			continue
+		}
+		title := req.ConvTitle
+		if t, ok := titles[req.AgentID]; ok && title == "" {
+			title = t
+		}
+		item := fleetItem{Kind: fleetApproval, AgentID: req.AgentID, Title: title, Detail: "asks for " + approvalLine(req)}
+		if t, err := time.Parse(time.RFC3339, req.CreatedAt); err == nil {
+			item.Since = &t
+		}
+		brief.Attention = append(brief.Attention, item)
+	}
+	if group == "" {
 		if n, err := db.CountUnreadHumanMessages(); err == nil && n > 0 {
 			brief.UnreadMessages = n
 			brief.Attention = append(brief.Attention, fleetItem{Kind: fleetMessages, Detail: plural(n, "unread message") + " in Messages"})
@@ -232,15 +248,19 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 		if fleetRank[a.Kind] != fleetRank[b.Kind] {
 			return fleetRank[a.Kind] < fleetRank[b.Kind]
 		}
-		// Oldest first: whoever has waited longest goes first.
-		if a.Since != nil && b.Since != nil && !a.Since.Equal(*b.Since) {
+		// Oldest first: whoever has waited longest goes first; an item with
+		// no time sorts after the timed ones.
+		if (a.Since == nil) != (b.Since == nil) {
+			return a.Since != nil
+		}
+		if a.Since != nil && !a.Since.Equal(*b.Since) {
 			return a.Since.Before(*b.Since)
 		}
 		return a.Title < b.Title
 	})
 	sort.SliceStable(brief.Agents, func(i, j int) bool {
 		a, b := brief.Agents[i], brief.Agents[j]
-		ga, gb := firstOr(a.Groups, "￿"), firstOr(b.Groups, "￿")
+		ga, gb := groupsKey(a.Groups), groupsKey(b.Groups)
 		if ga != gb {
 			return ga < gb
 		}
@@ -355,9 +375,11 @@ func plural(n int, noun string) string {
 	return strconv.Itoa(n) + " " + noun + "s"
 }
 
-func firstOr(xs []string, def string) string {
-	if len(xs) == 0 {
-		return def
+// groupsKey orders agents by their whole group list, which is also the CLI's
+// section heading; ungrouped agents go last.
+func groupsKey(groups []string) string {
+	if len(groups) == 0 {
+		return "\uffff"
 	}
-	return xs[0]
+	return strings.Join(groups, ", ")
 }
