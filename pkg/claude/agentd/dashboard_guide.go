@@ -304,7 +304,8 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 	note := guideText(req.Note, guideMaxNote)
 	open := ""
 	if sel := strings.TrimSpace(req.Open); sel != "" {
-		res, _, err := agent.ResolveSelector(sel)
+		// The cached resolver: no filesystem rescan on a miss.
+		res, _, err := agent.ResolveSelectorCached(sel)
 		if err != nil || res == nil || res.AgentID == "" {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "open names no agent: "+guideText(sel, 64))
 			return
