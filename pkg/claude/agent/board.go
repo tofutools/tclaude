@@ -43,7 +43,7 @@ func boardCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			boardLsCmd(), boardShowCmd(), boardSnapshotCmd(), boardCreateCmd(),
-			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardLayoutCmd(), boardFromProcessCmd(), boardFromFleetCmd(),
+			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardLayoutCmd(), boardFromProcessCmd(), boardFromFleetCmd(), boardFleetChangesCmd(),
 		},
 	}.ToCobra()
 }
@@ -119,6 +119,11 @@ func boardPath(id string, tail ...string) string {
 	}
 	return p
 }
+
+// boardWithTombstones as fetchBoard's since returns deleted elements too. A
+// redraw needs them: an element written back at or below its tombstone's
+// version loses the merge and stays deleted.
+const boardWithTombstones = 0
 
 func fetchBoard(id string, since int64) (*boardDoc, error) {
 	path := boardPath(id)
