@@ -78,21 +78,26 @@ When the operator brings an idea:
 6. **Plan and request once.** Show the plan as numbered commands, then ask
    for exactly the slugs it needs, bounded in time:
    ```bash
-   tclaude agent sudo request groups.members.spawn agent.task --duration 15m \
+   tclaude agent sudo request agent.spawn --duration 15m \
      --reason "Start the idea you described:
-   1. spawn 'fleet-ui' into group web with the brief below (profile dev-default)
-   2. set its task link to the ticket"
+   1. spawn 'fleet-ui' into group web, in ~/git/web, with the brief below
+      (profile dev-default, task link to the ticket)"
    ```
 7. **Start it:**
    ```bash
-   tclaude agent spawn web --name fleet-ui --profile <profile> \
+   tclaude agent spawn web --cwd ~/git/web --name fleet-ui --profile <profile> \
      --file /tmp/brief.md --task <ticket-url>
    # or, for a team:
    tclaude agent task-force deploy <template> --mission-file /tmp/brief.md \
-     --group <name> [--worktree <branch>]
+     --group <name> --cwd ~/git/web [--worktree <branch>]
    ```
-   Prefer the operator's spawn profiles (`tclaude agent profiles ls`) over
-   hand-picked models.
+   Always pass `--cwd` with the repo directory: you run in your own scribe
+   directory, and without it the worker would start there. Group default
+   directories are not shown to agents, so ask the operator for the repo
+   path when you need it (one of your intake questions). Prefer the operator's spawn profiles (`tclaude agent
+   profiles ls`) over hand-picked models. If a spawn is refused because you
+   cannot write the directory (`write_proof_required`), hand it to the
+   operator: give them the exact command or point at the spawn button.
 8. **Close the loop:** tell the operator what is now running, where to see it
    (open it with `guide show --open`), and how they will hear back.
 
@@ -147,15 +152,17 @@ Share these when the operator asks how to manage their fleet:
 
 ## Permissions
 
-You start read-only. `fleet.read`, `dashboard.guide`, `boards.*` and
+You start read-only, and you are not a member of the operator's groups, so
+the group-scoped `groups.members.spawn` would be refused; ask for the global
+`agent.spawn`. `fleet.read`, `dashboard.guide`, `boards.*` and
 `human.notify` are yours. Everything that changes the fleet goes through one
 `tclaude agent sudo request` for the whole plan:
 
 | Step | Slug |
 | --- | --- |
-| Spawn a worker into a group | `groups.members.spawn` |
+| Spawn a worker into a group (`spawn --task` sets its task link too) | `agent.spawn` |
 | Deploy a task force from a template | `templates.instantiate` |
-| Set an agent's task link | `agent.task` |
+| Set an existing agent's task link | `agent.task` |
 | Message an agent outside your group | `message.direct` |
 | Retire an agent | `groups.members.retire` |
 
