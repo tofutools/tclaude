@@ -45,6 +45,7 @@ func init() {
 		Convs:      claudeConvStore{},
 		History:    jsonlHistory{harness: DefaultName},
 		Transcript: claudeTranscript{},
+		Compaction: claudeCompactionProof{},
 		// Claude Code's OS sandbox lives in settings.json, not a launch flag;
 		// claudeSandbox models a small inherit/on/off tri-state that the
 		// spawner translates to a per-session `--settings` override (the

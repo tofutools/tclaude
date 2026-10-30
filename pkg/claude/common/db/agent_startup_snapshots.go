@@ -218,3 +218,58 @@ func InsertReinjectedContextMessage(m *AgentMessage, window time.Duration) (int6
 	}
 	return id, nil
 }
+
+// HeldContextReinjection is a compaction re-injection waiting on proof that
+// the main thread is the one that compacted. See migrateV286toV287.
+type HeldContextReinjection struct {
+	ConvID           string
+	TranscriptOffset int64
+}
+
+// HoldContextReinjection records a held re-injection. An existing hold wins:
+// its earlier offset still covers everything this one would look at, and one
+// compaction announces itself through several hooks.
+func HoldContextReinjection(sessionID string, held HeldContextReinjection) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO held_context_reinjections (session_id, conv_id, transcript_offset)
+		VALUES (?, ?, ?) ON CONFLICT(session_id) DO NOTHING`,
+		sessionID, held.ConvID, held.TranscriptOffset)
+	return err
+}
+
+// PeekHeldContextReinjection returns the session's hold, or nil. Every
+// main-thread hook asks, so it stays a read.
+func PeekHeldContextReinjection(sessionID string) (*HeldContextReinjection, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var held HeldContextReinjection
+	err = d.QueryRow(`SELECT conv_id, transcript_offset FROM held_context_reinjections WHERE session_id = ?`,
+		sessionID).Scan(&held.ConvID, &held.TranscriptOffset)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &held, nil
+}
+
+// ReleaseHeldContextReinjection deletes the session's hold and reports whether
+// this caller was the one that removed it, so concurrent hooks settle it once.
+func ReleaseHeldContextReinjection(sessionID string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`DELETE FROM held_context_reinjections WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
