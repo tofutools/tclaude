@@ -13,7 +13,7 @@ import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import {
-  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, MailFilters, MailFooterToggles, MailGutters,
+  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, DecisionChoices, MailFilters, MailFooterToggles, MailGutters,
   MailPager, MailRow, MessageBody, MessageHeaders, Progress, SectionToggle, SelectAll,
 } from './mail-parts.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
@@ -648,6 +648,7 @@ function MessageReader({ current, controller, model }) {
     <${MessageHeaders} message=${message} />
     <${MessageBody} message=${message} agentMail=${!human} />
     ${human ? html`<${MessageAttachments} message=${message} />` : html`<${AgentMailAttachments} message=${message} />`}
+    ${human && html`<${DecisionChoices} message=${message} toast=${shellToast} onDone=${controller.reloadMail} remote=${!!remote} />`}
     ${actions}
   </div>`;
 }

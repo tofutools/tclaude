@@ -32,7 +32,7 @@ import { enterFirstRow, focusRow, leaveFirstRow, movePaneFocus, moveRowSelection
 import { messageKind, msgPreview } from './mail-labels.js';
 import { messageDeleteEndpoint } from './mail-state.js';
 import {
-  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, MailFilters, MailFooterToggles, MailGutters,
+  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, DecisionChoices, MailFilters, MailFooterToggles, MailGutters,
   MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, SectionToggle, SelectAll,
 } from './mail-parts.js';
 import { withPeerAttachments } from './human-attachments.js';
@@ -366,6 +366,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
         onClick=${(e) => { if (!peer && e.target?.closest?.('[data-act]')) timers.setTimeout(onDone, 800); }}>
         ${headers}
         <${MessageAttachments} message=${item} />
+        <${DecisionChoices} message=${item} toast=${toast} onDone=${onDone} remote=${!!peer} />
         <${HumanActions} message=${item} senderLive=${peer ? undefined : senderOnline(item.from_agent, item.from_conv, snapshot.value)}
           harness=${peer ? '' : senderHarness(item, snapshot)} toast=${toast} peer=${peer} onDone=${onDone}>${open}</${HumanActions}>
       </div>`;
