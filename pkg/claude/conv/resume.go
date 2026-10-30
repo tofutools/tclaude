@@ -210,6 +210,10 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		return 1
 	}
 	defer release()
+	if err := session.ReinstateRetiredForResume(rc.ConvID, rc.ProjectPath); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
 
 	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", rc.ProjectPath))
 

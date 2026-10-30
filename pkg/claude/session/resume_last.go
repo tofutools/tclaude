@@ -19,7 +19,7 @@ import (
 //
 // A session that ended before its first message has no transcript, so it can't
 // be picked. Retired and archived conversations are skipped: the operator put
-// them away, and one running again stays hidden from the live dashboard lists.
+// them away, and nothing here named one. Naming one with --resume reinstates it.
 func resolveResumeLast(params *NewParams) error {
 	if !params.ResumeLast {
 		return nil
@@ -53,6 +53,31 @@ func resolveResumeLast(params *NewParams) error {
 	// The id is exact. Global keeps runNew from looking it up again through a
 	// directory that may be a symlink to the one the conversation ran in.
 	params.Global = true
+	return nil
+}
+
+// ReinstateRetiredForResume brings a retired agent back when it's resumed by
+// name: running while retired would hide it from the live lists. Where that
+// can't work it refuses and says why. Agents can't take this path, because
+// reinstating a peer is gated on agent.promote.
+func ReinstateRetiredForResume(convID, cwd string) error {
+	state, err := db.AgentState(convID)
+	if err != nil {
+		return fmt.Errorf("read agent state of conversation %s: %w", convID, err)
+	}
+	if state != db.AgentStateRetired {
+		return nil
+	}
+	if _, err := os.Stat(cwd); err != nil {
+		return fmt.Errorf("conversation %s is retired and its directory %s is gone, so it can't be resumed", convID, cwd)
+	}
+	if os.Getenv("TCLAUDE_SESSION_ID") != "" {
+		return fmt.Errorf("conversation %s is retired, and an agent can't reinstate it by resuming it; use tclaude agent reinstate %s, which needs agent.promote or ownership", convID, convID)
+	}
+	if _, err := db.ReinstateAgent(convID); err != nil {
+		return fmt.Errorf("conversation %s is retired and reinstating it failed: %w", convID, err)
+	}
+	fmt.Fprintf(os.Stderr, "Reinstated retired conversation %s. Its old groups and permissions don't come back.\n", convID)
 	return nil
 }
 

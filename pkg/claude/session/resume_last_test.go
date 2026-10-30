@@ -201,3 +201,46 @@ func TestResolveResumeLast(t *testing.T) {
 		})
 	}
 }
+
+func TestReinstateRetiredForResume(t *testing.T) {
+	setup := func(t *testing.T) (string, string) {
+		t.Helper()
+		cwd := setupResumeSelector(t, nil)
+		t.Setenv("TCLAUDE_SESSION_ID", "")
+		_, err := db.AllocateAgent(resumeSelectorConv, "test")
+		require.NoError(t, err)
+		_, err = db.RetireAgent(resumeSelectorConv, "test", "test")
+		require.NoError(t, err)
+		return resumeSelectorConv, cwd
+	}
+	stateOf := func(t *testing.T, convID string) string {
+		t.Helper()
+		state, err := db.AgentState(convID)
+		require.NoError(t, err)
+		return state
+	}
+
+	t.Run("reinstates", func(t *testing.T) {
+		convID, cwd := setup(t)
+		require.NoError(t, ReinstateRetiredForResume(convID, cwd))
+		assert.Equal(t, db.AgentStateActive, stateOf(t, convID))
+	})
+	t.Run("refuses when the directory is gone", func(t *testing.T) {
+		convID, cwd := setup(t)
+		err := ReinstateRetiredForResume(convID, filepath.Join(cwd, "deleted-worktree"))
+		require.ErrorContains(t, err, "is gone")
+		assert.Equal(t, db.AgentStateRetired, stateOf(t, convID))
+	})
+	t.Run("refuses for an agent", func(t *testing.T) {
+		convID, cwd := setup(t)
+		t.Setenv("TCLAUDE_SESSION_ID", "some-agent")
+		err := ReinstateRetiredForResume(convID, cwd)
+		require.ErrorContains(t, err, "agent.promote")
+		assert.Equal(t, db.AgentStateRetired, stateOf(t, convID))
+	})
+	t.Run("leaves other conversations alone", func(t *testing.T) {
+		_, cwd := setup(t)
+		require.NoError(t, ReinstateRetiredForResume(resumeSelectorOther, cwd))
+		assert.Equal(t, db.AgentStateNone, stateOf(t, resumeSelectorOther))
+	})
+}

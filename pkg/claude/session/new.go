@@ -1250,6 +1250,11 @@ func runNew(params *NewParams) error {
 			return reject
 		}
 		defer release()
+		if !params.ManagedLaunch {
+			if err := ReinstateRetiredForResume(fullConvID, cwd); err != nil {
+				return err
+			}
+		}
 	}
 
 	// The session PK is now final (priority above: label > resumed conv UUID >

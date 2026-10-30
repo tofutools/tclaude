@@ -67,6 +67,9 @@ flags beyond the basics:
   does the same, and `tclaude -- --resume <id>` is the same as `-r <id>`. A bare
   `tclaude -- --resume` opens Claude Code's own picker. These launches stay out
   of automatic group joins.
+- Resuming a retired conversation by name reinstates it, also from the picker.
+  Its old groups and permissions don't come back. It refuses when the directory
+  is gone, or when an agent runs it. `--resume-last` never picks one.
 - `-l/--label` names the tmux session; `-n/--name` sets the display name
   (for Claude Code it becomes the conversation title).
 

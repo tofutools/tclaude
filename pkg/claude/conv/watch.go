@@ -3411,6 +3411,9 @@ func createSessionForConv(conv *SessionEntry) error {
 		return reject
 	}
 	defer release()
+	if err := session.ReinstateRetiredForResume(sessionID, cwd); err != nil {
+		return err
+	}
 
 	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", cwd))
 
