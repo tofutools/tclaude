@@ -3,6 +3,9 @@
 // functions while the mounted feature owns descriptors, chrome and lifecycle.
 
 import { createAgentRosterReconciler, normalizeSeed } from './terminals-core.js';
+import { terminalAttachConfig } from './terminal-attach-config.js';
+import { detachWindowFeatures } from './terminal-drag-out.js';
+import { encodeTerminalOpenHash } from './terminal-handoff.js';
 
 let controller = null;
 let prepareRuntime = null;
@@ -53,6 +56,21 @@ export function openWebWindowPane(agent, label, options) {
     agent,
     harness,
   }, paneOptions);
+}
+
+// detachWebWindow opens an agent's terminal in a browser window of its own,
+// the page a detached Terminals tab lands on. False when pop-ups are blocked.
+export function detachWebWindow(agent, label, { harness = '', size = null, at = null } = {}) {
+  const features = size ? detachWindowFeatures({ size, at, screen: globalThis.screen }) : '';
+  let target = null;
+  try { target = globalThis.open('about:blank', '_blank', features || undefined); } catch { target = null; }
+  if (!target) return false;
+  const seed = {
+    ws: `/api/open-window-ws/${encodeURIComponent(agent)}`, label, key: `window:${agent}`, hideConv: agent, agent, harness,
+    initialRetry: true, wizard: document.body.classList.contains('wizard'), terminalAttach: terminalAttachConfig(),
+  };
+  try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); } catch { return false; }
+  return true;
 }
 
 export function openWebTermPane(agent, label, whichOrPromise, { group = '', ...paneOptions } = {}) {

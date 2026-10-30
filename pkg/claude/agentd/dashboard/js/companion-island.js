@@ -235,6 +235,7 @@ export function CompanionApp({
   win = globalThis.window,
   onComposeMessage = null,
   openMorph = null,
+  detachWindow = null,
   sessionPrefs: sessionPrefsImpl = null,
   registerController = registerCompanionController,
   navigate = null,
@@ -881,6 +882,18 @@ export function CompanionApp({
     }
   }
 
+  // The window has one attach to the terminal, so it lets go first. A blocked
+  // pop-up leaves everything where it was.
+  function detachToWindow(agent) {
+    const rect = windowRef.current?.getBoundingClientRect?.();
+    const size = rect ? { width: rect.width, height: rect.height } : null;
+    if (!detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: { x: win?.screenX, y: win?.screenY } })) {
+      notify('Could not detach: allow pop-ups for this dashboard.', true);
+      return;
+    }
+    setParked((current) => new Set(current).add(agent.agentId));
+  }
+
   function moveToTerminals(agent) {
     if (!openTerminalsPane) return;
     setParked((current) => new Set(current).add(agent.agentId));
@@ -1194,6 +1207,7 @@ export function CompanionApp({
           onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
         ${activeAgent?.online && !showQueue && html`
           ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${composeToActive}>✉</button>`}
+          ${detachWindow && !parked.has(activeAgent.agentId) && html`<button type="button" class="companion-detach" aria-label=${`Detach ${activeAgent.name} into its own window`} title="Detach into its own browser window" onClick=${() => detachToWindow(activeAgent)}>⧉</button>`}
           ${openMorph && html`<button type="button" class="companion-morph" aria-label=${`Morph ${activeAgent.name}`} title="Morph: relaunch on another harness, model or profile"
             onClick=${() => openMorph({ agent: activeAgent.agentId, conv: activeAgent.convId, label: activeAgent.name, harness: activeAgent.harness })}>⇄</button>`}
         `}
@@ -1226,7 +1240,7 @@ export function CompanionApp({
         <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
       </div>`}
       ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
-        <p><b>${activeAgent.name}</b> is open in the Terminals tab.</p>
+        <p><b>${activeAgent.name}</b> is open outside this window.</p>
         <button type="button" class="companion-primary" onClick=${() => showAgent(activeAgent.agentId)}>Bring it back here</button>
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
