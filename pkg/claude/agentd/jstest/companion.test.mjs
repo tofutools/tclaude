@@ -945,15 +945,16 @@ test('elevated access shows on the agent and ends in one click', async (t) => {
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   await harness.act(async () => {
     snap.value = {
-      ...snap.value, steward_slugs: ['fleet.read'],
+      ...snap.value,
       sudo: [{ id: 7, agent_id: steward.agentId, slug: 'agent.spawn', remaining_seconds: 700 }, { id: 8, agent_id: 'agt_other', slug: 'node.exec', remaining_seconds: 5 }],
-      permissions: { grants: { [steward.convId]: ['fleet.read', 'host.read'] } },
+      steward_elevated: { [steward.agentId]: { standing: ['host.read'], inherited: ['groups.admin'] } },
     };
   });
   const band = view.container.querySelector('.companion-elevated');
   assert.match(band.textContent, /agent\.spawn 12 min left/);
   assert.match(band.textContent, /host\.read standing/);
-  assert.doesNotMatch(band.textContent, /fleet\.read|node\.exec/, 'what Config gives it, or another agent holds, is not elevated');
+  assert.match(band.textContent, /groups\.admin from a group/);
+  assert.doesNotMatch(band.textContent, /node\.exec/, 'another agent\'s grant');
   await harness.act(async () => {
     band.querySelector('button').click();
     await new Promise((r) => setTimeout(r, 0));

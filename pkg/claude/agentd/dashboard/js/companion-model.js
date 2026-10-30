@@ -59,7 +59,13 @@ export function companionAgents(snapshot) {
     const agentId = member?.agent_id;
     if (!isAgentId(agentId)) return;
     const prev = out.get(agentId);
-    if (prev && (prev.online || member.online !== true)) return;
+    if (prev && (prev.online || member.online !== true)) {
+      // A Steward can sit in other groups too; keep what this listing knows.
+      if ((steward && !prev.steward) || (scribe && !prev.scribe)) {
+        out.set(agentId, Object.freeze({ ...prev, steward: steward || prev.steward, scribe: scribe || prev.scribe }));
+      }
+      return;
+    }
     out.set(agentId, Object.freeze({
       agentId,
       convId: String(member.conv_id || ''),
@@ -431,16 +437,15 @@ export function pendingApprovals(snapshot) {
 }
 
 // elevatedAccess is what an agent holds beyond its usual access right now: its
-// time-bounded sudo grants and, for a Steward, standing grants beyond what
-// Config gives it. Null when there is nothing.
+// time-bounded sudo grants and, for a Steward, what the daemon found beyond
+// Config. Standing grants are the agent's own, so End now can clear them;
+// inherited ones come from a group, which other members share. Null when there
+// is nothing.
 export function elevatedAccess(snapshot, agent) {
   if (!agent) return null;
   const sudo = (snapshot?.sudo || []).filter((grant) => grant.agent_id === agent.agentId);
-  const allowed = snapshot?.steward_slugs;
-  const standing = agent.steward && allowed
-    ? (snapshot?.permissions?.grants?.[agent.convId] || []).filter((slug) => !allowed.includes(slug))
-    : [];
-  return sudo.length || standing.length ? { sudo, standing } : null;
+  const { standing = [], inherited = [] } = snapshot?.steward_elevated?.[agent.agentId] || {};
+  return sudo.length || standing.length || inherited.length ? { sudo, standing, inherited } : null;
 }
 
 // timeLeft reads a sudo grant's remaining seconds.

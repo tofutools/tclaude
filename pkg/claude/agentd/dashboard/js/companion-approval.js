@@ -27,20 +27,22 @@ function secondsLeft(deadline, now) {
 // tab: a whole plan's temporary permissions (`tclaude agent sudo`) or one
 // --ask-human command. Approve and Deny decide it the same way the Messages
 // tab does. The request body is agent-supplied text and is rendered as text.
-// endElevatedAccess takes an agent back to its usual access. Its sudo grants go
-// first: they are what is live and most recently approved.
+// endElevatedAccess revokes what an agent holds itself. One failure must not
+// leave the other live, so both are tried.
 export async function endElevatedAccess(fetchImpl, agent, access) {
   const send = async (url, options) => {
     const response = await fetchImpl(url, { credentials: 'same-origin', ...options });
     if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
   };
-  if (access.sudo.length) await send(`/api/sudo?agent_id=${encodeURIComponent(agent.agentId)}`, { method: 'DELETE' });
-  if (access.standing.length) {
-    await send('/api/permissions', {
+  const results = await Promise.allSettled([
+    access.sudo.length && send(`/api/sudo?agent_id=${encodeURIComponent(agent.agentId)}`, { method: 'DELETE' }),
+    access.standing.length && send('/api/permissions', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conv: agent.convId, overrides: Object.fromEntries(access.standing.map((slug) => [slug, 'default'])) }),
-    });
-  }
+    }),
+  ]);
+  const failed = results.find((result) => result.status === 'rejected');
+  if (failed) throw failed.reason;
 }
 
 // ElevatedBand says an agent holds more than its usual access and ends it in
@@ -51,7 +53,9 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
     setBusy(true);
     try {
       await endElevatedAccess(fetchImpl, agent, access);
-      notify(`${agent.name} is back to its usual access.`);
+      notify(access.inherited.length
+        ? `Ended what ${agent.name} held itself. Group access remains: change it in Groups.`
+        : `${agent.name} is back to its usual access.`);
     } catch (error) {
       notify(`Could not end ${agent.name}'s elevated access: ${error?.message || error}`, true);
     } finally {
@@ -64,8 +68,9 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
       <b>Elevated access</b>
       ${access.sudo.map((grant) => html`<span key=${grant.id}><code>${grant.slug}</code> ${timeLeft(grant.remaining_seconds)} left</span>`)}
       ${access.standing.map((slug) => html`<span key=${slug}><code>${slug}</code> standing</span>`)}
+      ${access.inherited.map((slug) => html`<span key=${slug}><code>${slug}</code> from a group</span>`)}
     </div>
-    <button type="button" disabled=${busy} onClick=${end}>${busy ? 'Ending…' : 'End now'}</button>
+    ${(access.sudo.length > 0 || access.standing.length > 0) && html`<button type="button" disabled=${busy} onClick=${end}>${busy ? 'Ending…' : 'End now'}</button>`}
   </div>`;
 }
 

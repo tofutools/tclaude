@@ -1083,9 +1083,9 @@ type snapshotPayload struct {
 	CollabEnabled bool `json:"collab_enabled"`
 	// StewardName is what the operator calls their Steward, empty by default.
 	StewardName string `json:"steward_name,omitempty"`
-	// StewardSlugs is what Config gives a Steward, so the companion can tell a
-	// standing grant beyond it. Sent only with Collab on.
-	StewardSlugs []string `json:"steward_slugs,omitempty"`
+	// StewardElevated is what each live Steward holds beyond Config and the
+	// defaults, by agent id. Sent only with Collab on.
+	StewardElevated map[string]stewardElevation `json:"steward_elevated,omitempty"`
 	// TriggersEnabled gates the experimental Automations subview and compact
 	// Groups projection. Re-read on every snapshot so Config changes take
 	// effect without restarting agentd, matching triggerRoute.
@@ -3976,7 +3976,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.BrokerRefusalsTotal, out.BrokerRefusalsUnplaceable = brokerRefusals.counts()
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
 	if cfg.CollabEnabled() {
-		out.StewardSlugs = stewardSlugs(cfg)
+		out.StewardElevated = stewardElevations(cfg, permissionsState{
+			Defaults:  out.Permissions.Defaults,
+			Grants:    out.Permissions.Grants,
+			Overrides: out.Permissions.Overrides,
+		})
 		out.CompanionCues = activeCompanionCues()
 	}
 	out.Templates = templates
