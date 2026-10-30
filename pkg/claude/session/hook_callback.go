@@ -805,7 +805,7 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 		// A compaction that may be a subagent's says nothing about the main
 		// thread, so it passes the guard and paints no status, and its orders
 		// wait to learn whose it was.
-		if stateErr == nil && !amb.InTaskRunnerHook() && holdCompaction(state, input) {
+		if stateErr == nil && !amb.InTaskRunnerHook() && holdCompaction(input, envSessionID) {
 			return HookResponse{}, nil
 		}
 		resp, err := decidePreCompact(input, envSessionID, amb)

@@ -87,10 +87,16 @@ func QueueContextReinjection(input HookCallbackInput, envSessionID string) {
 		}
 		if input.Trigger == "manual" {
 			// Only the main thread takes a /compact, and an idle prompt may
-			// not produce a settling hook for a long time.
-			if _, err := db.ReleaseHeldContextReinjection(state.ID); err != nil {
+			// not produce a settling hook for a long time. This also covers
+			// the SessionStart(compact) held just before it, which cannot say
+			// it was manual, so that hook's orders are still owed.
+			released, err := db.ReleaseHeldContextReinjection(state.ID)
+			if err != nil {
 				slog.Warn("context re-injection: release failed",
 					"session_id", state.ID, "error", err, "module", "hooks")
+			}
+			if released {
+				replayStandingOrders(input, envSessionID, compactSessionStart)
 			}
 		}
 	}
@@ -104,30 +110,31 @@ func subagentsShareCompactionHooks(harnessName string) bool {
 	return err == nil && h.Compaction != nil
 }
 
-// holdCompaction holds the compaction a PreCompact announces if it may be a
-// subagent's, and reports whether it did. Holding this early, rather than at
-// the SessionStart(compact) or PostCompact that follows, lets every effect of
-// the compaction wait on the same answer: a compaction that is refused or fails
-// leaves no boundary, and settles as if it had been a subagent's.
-func holdCompaction(state *SessionState, input HookCallbackInput) bool {
-	if input.AgentID != "" || input.Trigger == "manual" {
+// holdCompaction holds a compaction hook's compaction if it may be a
+// subagent's, and reports whether it is held. Holding from PreCompact, rather
+// than from the hooks that follow, lets every effect of the compaction wait on
+// the same answer: a compaction that is refused or fails leaves no boundary,
+// and settles as if it had been a subagent's.
+//
+// A hold still standing covers this compaction too, so one replay accounts for
+// everything skipped. A /compact is only ever the main thread's.
+func holdCompaction(input HookCallbackInput, envSessionID string) bool {
+	if input.AgentID != "" || input.Trigger == "manual" || envSessionID == "" {
 		return false
 	}
-	target, convID := reinjectionTarget(input, state.ID)
-	return target != nil && holdReinjection(target, convID)
+	if held, err := db.PeekHeldContextReinjection(envSessionID); err == nil && held != nil {
+		return true
+	}
+	state, convID := reinjectionTarget(input, envSessionID)
+	return state != nil && holdReinjection(state, convID)
 }
 
-// compactionHeld reports whether a post-compaction hook belongs to a held
-// compaction. A /compact is only ever the main thread's, whatever is held.
+// compactionHeld reports whether a post-compaction hook's compaction is held.
+// It holds again if need be: a background subagent's compaction does not block
+// the main thread, whose hooks can settle the hold before these ones arrive.
 func compactionHeld(input HookCallbackInput, envSessionID string) bool {
-	if boundary, ok := reinjectionBoundary(input); !ok || boundary != startupctx.BoundaryCompact {
-		return false
-	}
-	if input.Trigger == "manual" || envSessionID == "" {
-		return false
-	}
-	held, err := db.PeekHeldContextReinjection(envSessionID)
-	return err == nil && held != nil
+	boundary, ok := reinjectionBoundary(input)
+	return ok && boundary == startupctx.BoundaryCompact && holdCompaction(input, envSessionID)
 }
 
 // holdReinjection defers an unattributed compaction and reports whether it
@@ -159,7 +166,8 @@ func holdReinjection(state *SessionState, convID string) bool {
 // settleHeldReinjection decides a held compaction once the main thread is
 // demonstrably past it. The main thread is blocked while it compacts and its
 // boundary lands as soon as the compaction hooks return, so at its next turn
-// event a missing boundary means the compaction was a subagent's.
+// event a missing boundary means the compaction was a subagent's. A subagent's
+// remaining compaction hooks may still follow; compactionHeld absorbs those.
 func settleHeldReinjection(input HookCallbackInput, envSessionID string) {
 	switch input.HookEventName {
 	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure":
@@ -203,7 +211,7 @@ func settleHeldReinjection(input HookCallbackInput, envSessionID string) {
 		slog.Warn("context re-injection: post-compact reset failed",
 			"session_id", state.ID, "error", err, "module", "hooks")
 	}
-	replayCompactionStandingOrders(input, envSessionID)
+	replayStandingOrders(input, envSessionID, compactPreCompact, compactSessionStart, compactPostCompact)
 }
 
 // queueReinjection composes and queues the message for one boundary.

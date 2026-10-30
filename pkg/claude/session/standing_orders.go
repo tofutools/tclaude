@@ -280,15 +280,18 @@ func observeStandingOrders(input HookCallbackInput, envSessionID string, message
 	return pending, locks.release
 }
 
-// replayCompactionStandingOrders runs the orders a held compaction's hooks
-// skipped, once input's hook has shown the compaction was the main thread's.
-// Those hooks are gone, so anything due is sent as a message.
-func replayCompactionStandingOrders(input HookCallbackInput, envSessionID string) {
-	for _, skipped := range []HookCallbackInput{
-		{HookEventName: "PreCompact", Trigger: "auto"},
-		{HookEventName: "SessionStart", Source: "compact"},
-		{HookEventName: "PostCompact", Trigger: "auto"},
-	} {
+// The hooks of a compaction, as replayStandingOrders takes them.
+var (
+	compactPreCompact   = HookCallbackInput{HookEventName: "PreCompact", Trigger: "auto"}
+	compactSessionStart = HookCallbackInput{HookEventName: "SessionStart", Source: "compact"}
+	compactPostCompact  = HookCallbackInput{HookEventName: "PostCompact", Trigger: "auto"}
+)
+
+// replayStandingOrders runs the orders a held compaction's hooks skipped, once
+// input's hook has shown the compaction was the main thread's. Those hooks are
+// gone, so anything due is sent as a message.
+func replayStandingOrders(input HookCallbackInput, envSessionID string, hooks ...HookCallbackInput) {
+	for _, skipped := range hooks {
 		skipped.ConvID, skipped.Cwd = input.ConvID, input.Cwd
 		skipped = applyStandingOrderTurnOrigin(skipped, envSessionID)
 		pending, release := observeStandingOrders(skipped, envSessionID, true)

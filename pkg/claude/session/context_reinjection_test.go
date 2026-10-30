@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 	"github.com/tofutools/tclaude/pkg/claude/startupctx"
 )
 
@@ -478,4 +479,66 @@ func TestMainCompactionBesideSubagent_ReplaysStandingOrdersAsMessages(t *testing
 	require.NotNil(t, latest)
 	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
 	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
+}
+
+func TestSubagentCompaction_StaysHeldAcrossMainThreadHooks(t *testing.T) {
+	_, groupID := reinjectionFixture(t)
+	claudeTranscriptFixture(t)
+	require.NoError(t, db.UpdateContextSnapshot("sess-1", 20, 1, 0, 1_000_000))
+	require.NoError(t, db.SetNudgedPct("sess-1", 15))
+	insertOrder(t, groupID)
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+
+	// A background subagent compacts while the main thread keeps working, so
+	// main hooks land between the compaction's own.
+	fireHook(t, HookCallbackInput{HookEventName: "PreCompact", Trigger: "auto"})
+	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+	fireHook(t, HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Read"})
+	fireHook(t, HookCallbackInput{HookEventName: "PostCompact", Trigger: "auto"})
+	fireHook(t, HookCallbackInput{HookEventName: "Stop"})
+
+	assert.Empty(t, reinjectedMessages(t))
+	assert.Empty(t, standingOrderMessages(t))
+	assertMainContext(t, 20, 15)
+}
+
+func TestManualCompactBesideSubagent_DeliversSessionStartOrders(t *testing.T) {
+	_, groupID := reinjectionFixture(t)
+	claudeTranscriptFixture(t)
+	id := insertOrder(t, groupID)
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+
+	fireHook(t, HookCallbackInput{HookEventName: "PreCompact", Trigger: "manual"})
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+	fireHook(t, HookCallbackInput{HookEventName: "PostCompact", Trigger: "manual"})
+
+	assert.Len(t, standingOrderMessages(t), 1)
+	assert.Len(t, reinjectedMessages(t), 1)
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+}
+
+func TestMainCompactionOverStaleHold_ReplaysPreCompactOrdersOnce(t *testing.T) {
+	_, groupID := reinjectionFixture(t)
+	transcript := claudeTranscriptFixture(t)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent, o.TriggerSources = db.StandingTriggerHookEvent, nil
+		o.Timing = db.StandingTimingNextTurn
+		o.HookSelectors = []hookevents.Selector{{Harness: hookevents.HarnessClaude, Event: "PreCompact"}}
+	})
+
+	// A subagent compacts during an idle prompt, leaving its hold unsettled,
+	// and ends before the main thread compacts.
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	autoCompactionHooks(t)
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStop", AgentID: "sub-1"})
+
+	autoCompactionHooks(t)
+	appendCompactBoundary(t, transcript)
+	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
+
+	assert.Len(t, standingOrderMessages(t), 1)
 }
