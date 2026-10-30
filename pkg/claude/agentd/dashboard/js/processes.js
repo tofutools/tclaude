@@ -4,6 +4,18 @@
 import { $, $$ } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
 
+// applyCollabVisibility shows or hides the Collab surfaces (features.collab).
+// The Terminals tab stays; the Boards view under it goes.
+export function applyCollabVisibility(data) {
+  const visible = data?.collab_enabled === true;
+  document.body.classList.toggle('hide-collab', !visible);
+  if (!visible && $('#tab-boards')?.classList.contains('active')) {
+    $$('nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === 'terminals'));
+    $$('main section').forEach((panel) => panel.classList.toggle('active', panel.id === 'tab-terminals'));
+    dashboardState.setActiveTab('terminals');
+  }
+}
+
 export function applyProcessesTabVisibility(data) {
   const visible = !!data?.processes_enabled;
   document.body.classList.toggle('hide-processes', !visible);

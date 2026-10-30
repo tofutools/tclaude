@@ -66,6 +66,7 @@ func rect(id string, version, nonce int64, x float64) map[string]any {
 
 func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 	_ = newFlow(t)
+	enableCollab(t)
 	dash := agentd.BuildDashboardHandlerForTest()
 	serve := func(method, path string, body any) *httptest.ResponseRecorder {
 		return testharness.Serve(dash, boardDashReq(t, method, path, body))
@@ -184,6 +185,7 @@ func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 // the tombstone's author, which a read with ?since= returns.
 func TestBoardsTombstoneKeepsItsAuthor(t *testing.T) {
 	_ = newFlow(t)
+	enableCollab(t)
 	dash := agentd.BuildDashboardHandlerForTest()
 	serve := func(method, path string, body any) *httptest.ResponseRecorder {
 		return testharness.Serve(dash, boardDashReq(t, method, path, body))
@@ -203,6 +205,7 @@ func TestBoardsTombstoneKeepsItsAuthor(t *testing.T) {
 
 func TestBoardsAgentRoutesNeedSlugsAndForceAuthor(t *testing.T) {
 	f := newFlow(t)
+	enableCollab(t)
 	const conv = "board-agent-conv"
 	f.HaveConvWithTitle(conv, "drawer")
 	agentID, _, err := db.EnsureAgentForConv(conv, "test")
@@ -234,6 +237,7 @@ func TestBoardsAgentRoutesNeedSlugsAndForceAuthor(t *testing.T) {
 
 func TestBoardsSnapshotPutGet(t *testing.T) {
 	f := newFlow(t)
+	enableCollab(t)
 	dash := agentd.BuildDashboardHandlerForTest()
 	serve := func(r *http.Request) *httptest.ResponseRecorder { return testharness.Serve(dash, r) }
 	require.Equal(t, http.StatusCreated, serve(boardDashReq(t, http.MethodPost, "/api/boards", map[string]any{"id": "snap", "title": "Snap"})).Code)
@@ -278,6 +282,7 @@ func TestBoardsSnapshotPutGet(t *testing.T) {
 
 func TestBoardsEventsMailOnlineParticipantsRateLimited(t *testing.T) {
 	f := newFlow(t)
+	enableCollab(t)
 	now := time.Unix(1_800_000_000, 0)
 	t.Cleanup(agentd.ResetBoardEventsForTest(func() time.Time { return now }))
 	const (
@@ -330,6 +335,7 @@ func TestBoardsEventsMailOnlineParticipantsRateLimited(t *testing.T) {
 
 func TestBoardsEventImageIsARegionAgentsCanFetch(t *testing.T) {
 	f := newFlow(t)
+	enableCollab(t)
 	now := time.Unix(1_800_000_000, 0)
 	t.Cleanup(agentd.ResetBoardEventsForTest(func() time.Time { return now }))
 	const conv = "board-region-3333"
@@ -397,6 +403,7 @@ func TestBoardsEventImageIsARegionAgentsCanFetch(t *testing.T) {
 
 func TestBoardsPresenceAgentsAndOperatorView(t *testing.T) {
 	f := newFlow(t)
+	enableCollab(t)
 	now := time.Unix(1_800_000_000, 0)
 	t.Cleanup(agentd.ResetBoardEventsForTest(func() time.Time { return now }))
 	const conv = "board-presence-conv"
@@ -473,6 +480,7 @@ func TestBoardsPresenceAgentsAndOperatorView(t *testing.T) {
 
 func TestBoardsBelongToAGroupWhoseMembersGetEvents(t *testing.T) {
 	f := newFlow(t)
+	enableCollab(t)
 	now := time.Unix(1_800_000_000, 0)
 	t.Cleanup(agentd.ResetBoardEventsForTest(func() time.Time { return now }))
 	const (

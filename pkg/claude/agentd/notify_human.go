@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -208,6 +208,10 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	if len(body.Options) > 0 && !collabRoutesEnabled() {
+		writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
+		return
+	}
 	if len(body.Options) > 0 && callerConv == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a decision needs an agent to send the pick back to; options are for agents")
 		return
@@ -259,6 +263,10 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	meta.Name = sanitizeExportFilename(meta.Name)
 	if err := meta.normalize(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if len(meta.Options) > 0 && !collabRoutesEnabled() {
+		writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
 		return
 	}
 	if len(meta.Options) > 0 && callerConv == "" {

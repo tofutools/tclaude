@@ -13,6 +13,7 @@ import (
 
 func TestDashboardGuideViewAndCues(t *testing.T) {
 	f := newFlow(t)
+	enableCollab(t)
 	agentd.ResetDashboardGuideForTest()
 	t.Cleanup(agentd.ResetDashboardGuideForTest)
 	f.HaveConvWithTitle("steward-conv", "steward")
