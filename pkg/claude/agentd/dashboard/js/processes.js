@@ -9,6 +9,9 @@ import { dashboardState } from './snapshot-store.js';
 export function applyCollabVisibility(data) {
   const visible = data?.collab_enabled === true;
   document.body.classList.toggle('hide-collab', !visible);
+  // The palette and the scope banner read this label as text.
+  const label = $('nav [data-tab="terminals"] .tab-label-regular');
+  if (label) label.textContent = visible ? 'Collab' : 'Terminals';
   if (!visible && $('#tab-boards')?.classList.contains('active')) {
     $$('nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === 'terminals'));
     $$('main section').forEach((panel) => panel.classList.toggle('active', panel.id === 'tab-terminals'));
