@@ -978,6 +978,23 @@ test('every corner of a floating window resizes it, and the opposite corner stay
   const corners = [...view.container.querySelectorAll('.companion-resize-corner')].map((node) => node.className.split(' ').pop());
   assert.deepEqual(corners.sort(), ['ne', 'nw', 'sw']);
   assert.ok(view.container.querySelector('.companion-resize'), 'and the south-east grip');
+  const frame = view.container.querySelector('.companion-window');
+  const box = () => ['left', 'top', 'width', 'height'].map((key) => parseFloat(frame.style[key]));
+  const drag = (corner, dx, dy) => harness.act(async () => {
+    const handle = view.container.querySelector(`.companion-resize-corner.${corner}`);
+    const event = (type, x, y) => Object.assign(new harness.window.Event(type, { bubbles: true }), { button: 0, pointerId: 1, clientX: x, clientY: y });
+    handle.dispatchEvent(event('pointerdown', 300, 300));
+    handle.dispatchEvent(event('pointermove', 300 + dx, 300 + dy));
+    handle.dispatchEvent(event('pointerup', 300 + dx, 300 + dy));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const [x0, y0, w0, h0] = box();
+  await drag('nw', -20, -10);
+  assert.deepEqual(box(), [x0 - 20, y0 - 10, w0 + 20, h0 + 10]);
+  await drag('nw', 0, -5000);
+  const [, top, , height] = box();
+  assert.equal(top, 0, 'the top edge stops at the viewport');
+  assert.equal(top + height, y0 + h0, 'and the bottom edge stays');
 });
 
 test('Ctrl/Cmd+M and the title bar message the active agent; morph opens from the window', async (t) => {

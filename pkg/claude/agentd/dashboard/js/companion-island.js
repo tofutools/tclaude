@@ -626,8 +626,10 @@ export function CompanionApp({
         // Clamp the size first: the corner opposite the drag stays put.
         const sized = clampPlacement(last, viewportOf(win));
         const x = corner.includes('w') ? start.x + start.w - sized.w : start.x;
-        const y = corner.includes('n') ? start.y + start.h - sized.h : start.y;
-        last = clampPlacement({ ...sized, x, y }, viewportOf(win));
+        // The top edge stops at the viewport, or the bottom edge would move.
+        const h = corner.includes('n') ? Math.min(sized.h, start.y + start.h) : sized.h;
+        const y = corner.includes('n') ? start.y + start.h - h : start.y;
+        last = clampPlacement({ ...sized, x, y, h }, viewportOf(win));
       }
       setPlacement(last);
     };
