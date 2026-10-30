@@ -65,7 +65,8 @@ flags beyond the basics:
 - `--resume-last` relaunches the newest conversation in the current directory,
   skipping retired and archived ones. Claude Code only. `tclaude -- --continue`
   does the same, and `tclaude -- --resume <id>` is the same as `-r <id>`. A bare
-  `tclaude -- --resume` opens Claude Code's own picker.
+  `tclaude -- --resume` opens Claude Code's own picker. These launches stay out
+  of automatic group joins.
 - `-l/--label` names the tmux session; `-n/--name` sets the display name
   (for Claude Code it becomes the conversation title).
 

@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -38,15 +39,7 @@ func resolveResumeLast(params *NewParams) error {
 	if h.Name != harness.DefaultName {
 		return fmt.Errorf("--resume-last only supports %s so far; use tclaude conv resume <id>", harness.DefaultName)
 	}
-	cwd, err := resolveSessionDir(params.Dir)
-	if err != nil {
-		return nil // likewise for an unusable --dir
-	}
-	index, err := convops.LoadSessionsIndex(convops.GetClaudeProjectPath(cwd))
-	if err != nil {
-		return fmt.Errorf("list conversations in %s: %w", cwd, err)
-	}
-	convID, skippedRetired, err := newestResumableConv(index.Entries)
+	convID, skippedRetired, err := newestConvInDir(params.Dir)
 	if err != nil {
 		return err
 	}
@@ -54,10 +47,30 @@ func resolveResumeLast(params *NewParams) error {
 		fmt.Fprintf(os.Stderr, "Skipping retired conversation %s; use --resume to open it\n", skippedRetired)
 	}
 	if convID == "" {
-		return fmt.Errorf("no conversation to resume in %s", cwd)
+		return fmt.Errorf("no conversation to resume in this directory")
 	}
 	params.Resume = convID
+	// The id is exact. Global keeps runNew from looking it up again through a
+	// directory that may be a symlink to the one the conversation ran in.
+	params.Global = true
 	return nil
+}
+
+// newestConvInDir applies newestResumableConv to the conversations of dir. Claude
+// Code keys its project directories by the physical path.
+func newestConvInDir(dir string) (convID, skippedRetired string, err error) {
+	cwd, err := resolveSessionDir(dir)
+	if err != nil {
+		return "", "", nil // runNew reports an unusable --dir with its own message
+	}
+	if physical, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = physical
+	}
+	index, err := convops.LoadSessionsIndex(convops.GetClaudeProjectPath(cwd))
+	if err != nil {
+		return "", "", fmt.Errorf("list conversations in %s: %w", cwd, err)
+	}
+	return newestResumableConv(index.Entries)
 }
 
 // newestResumableConv returns the newest entry worth resuming, plus the id of
@@ -91,6 +104,20 @@ type resumePassthrough struct {
 	convSelector string   // --resume <value>
 	last         bool     // --continue
 	rest         []string // the arguments that stay pass-through
+}
+
+// hasResumePassthroughArg reports whether args carry one of Claude Code's resume
+// flags, in any form. Such a launch must stay a direct one: a group spawn carries
+// no pass-through args, so it would silently start a fresh conversation instead.
+func hasResumePassthroughArg(args []string) bool {
+	for _, arg := range args {
+		switch {
+		case arg == "--continue", arg == "-c", arg == "--resume", arg == "-r",
+			strings.HasPrefix(arg, "--resume="):
+			return true
+		}
+	}
+	return false
 }
 
 // parseResumePassthrough finds Claude Code's own resume flags. It returns nil
@@ -127,8 +154,8 @@ func parseResumePassthrough(args []string) *resumePassthrough {
 // adoptResumePassthrough moves `tclaude -- --continue` and `tclaude -- --resume
 // <id>` onto tclaude's own resume path. Left as pass-through they start a new
 // session row and let Claude Code pick the conversation, which bypasses the
-// recorded posture and the live-conversation refusal. A selector tclaude can't
-// resolve stays with Claude Code, which also accepts search terms there.
+// recorded posture and the live-conversation refusal. Whatever tclaude can't
+// resolve stays with Claude Code, which also accepts search terms for --resume.
 func adoptResumePassthrough(params *NewParams) error {
 	if params.ManagedLaunch || params.Shell || params.ResumeLast || strings.TrimSpace(params.Resume) != "" {
 		return nil
@@ -148,6 +175,13 @@ func adoptResumePassthrough(params *NewParams) error {
 		return nil
 	}
 	if found.last {
+		convID, skippedRetired, err := newestConvInDir(params.Dir)
+		if err != nil {
+			return err
+		}
+		if convID == "" && skippedRetired == "" {
+			return nil // nothing tclaude knows of, so Claude Code decides
+		}
 		params.ResumeLast = true
 	} else {
 		probe := *params

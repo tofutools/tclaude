@@ -84,7 +84,8 @@ func recordLaunchFlagPresence(params *NewParams, explicit explicitLaunchFields) 
 func automaticGroupEligible(params *NewParams, explicit explicitLaunchFields) bool {
 	if params.ManagedLaunch || params.NoDaemon || strings.TrimSpace(params.Resume) != "" || params.Shell ||
 		strings.TrimSpace(params.Harness) == ShellHarnessName || params.HelpContextFeatures ||
-		clcommon.ShouldRunClaudeDirect(clcommon.ExtractClaudeExtraArgs()) {
+		clcommon.ShouldRunClaudeDirect(clcommon.ExtractClaudeExtraArgs()) ||
+		hasResumePassthroughArg(clcommon.ExtractClaudeExtraArgs()) {
 		return false
 	}
 	// These are deliberately solo/direct-session controls with no counterpart

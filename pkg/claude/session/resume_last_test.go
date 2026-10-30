@@ -1,7 +1,9 @@
 package session
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -43,6 +45,21 @@ func TestNewestResumableConv(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 	assert.Equal(t, "retired", skipped)
+}
+
+func TestResumePassthroughStaysOutOfAutoJoin(t *testing.T) {
+	for _, args := range [][]string{
+		{"tclaude", "--", "--resume"},
+		{"tclaude", "--", "--resume", "search terms"},
+		{"tclaude", "--", "--continue", "--fork-session"},
+		{"tclaude", "--", "-c"},
+		{"tclaude", "--", "--resume=abc"},
+	} {
+		previous := os.Args
+		os.Args = args
+		assert.False(t, automaticGroupEligible(&NewParams{}, explicitLaunchFields{}), args)
+		os.Args = previous
+	}
 }
 
 func TestParseResumePassthrough(t *testing.T) {
@@ -91,12 +108,23 @@ func TestAdoptResumePassthrough(t *testing.T) {
 
 	t.Run("continue becomes resume-last and leaves the pass-through", func(t *testing.T) {
 		cwd := setupResumeSelector(t, nil)
+		writeResumeLastTranscript(t, cwd)
 		setArgs(t, "--", "--continue", "--model", "opus")
 
 		params := &NewParams{Dir: cwd}
 		require.NoError(t, adoptResumePassthrough(params))
 		assert.True(t, params.ResumeLast)
 		assert.Equal(t, []string{"tclaude", "--", "--model", "opus"}, os.Args)
+	})
+
+	t.Run("continue stays with claude when tclaude knows of nothing", func(t *testing.T) {
+		cwd := setupResumeSelector(t, nil)
+		setArgs(t, "--", "--continue")
+
+		params := &NewParams{Dir: cwd}
+		require.NoError(t, adoptResumePassthrough(params))
+		assert.False(t, params.ResumeLast)
+		assert.Equal(t, []string{"tclaude", "--", "--continue"}, os.Args)
 	})
 
 	t.Run("a known id moves onto the resume path", func(t *testing.T) {
@@ -131,7 +159,32 @@ func TestAdoptResumePassthrough(t *testing.T) {
 	})
 }
 
+// writeResumeLastTranscript leaves a one-message Claude transcript for dir.
+func writeResumeLastTranscript(t *testing.T, dir string) {
+	t.Helper()
+	physical, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	projectDir := convops.GetClaudeProjectPath(physical)
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+	line := fmt.Sprintf(`{"type":"user","sessionId":%q,"cwd":%q,"message":{"role":"user","content":"hello"},"timestamp":"2026-01-01T00:00:00Z"}`+"\n",
+		resumeSelectorConv, physical)
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, resumeSelectorConv+".jsonl"), []byte(line), 0o600))
+}
+
 func TestResolveResumeLast(t *testing.T) {
+	t.Run("finds a conversation through a symlink and in a path with underscores", func(t *testing.T) {
+		base := setupResumeSelector(t, nil)
+		realDir := filepath.Join(base, "my_project")
+		require.NoError(t, os.Mkdir(realDir, 0o755))
+		link := filepath.Join(base, "link")
+		require.NoError(t, os.Symlink(realDir, link))
+		writeResumeLastTranscript(t, realDir)
+
+		params := &NewParams{ResumeLast: true, Dir: link}
+		require.NoError(t, resolveResumeLast(params))
+		assert.Equal(t, resumeSelectorConv, params.Resume)
+		assert.True(t, params.Global)
+	})
 	t.Run("no conversation is an error", func(t *testing.T) {
 		cwd := setupResumeSelector(t, nil)
 		err := resolveResumeLast(&NewParams{ResumeLast: true, Dir: cwd})
