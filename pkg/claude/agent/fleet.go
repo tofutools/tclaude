@@ -158,7 +158,7 @@ func renderFleet(w io.Writer, r *fleetResp, all bool) {
 			group = g
 		}
 		status := a.Status
-		if !a.Online {
+		if !a.Online && status != "away" {
 			status = "offline"
 		} else if status == "" {
 			status = "online"
