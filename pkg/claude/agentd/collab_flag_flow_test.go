@@ -76,6 +76,11 @@ func TestCollabSurfacesAreAbsentUntilOptedIn(t *testing.T) {
 	code, body = notify(map[string]any{"body": "fyi"})
 	require.Equal(t, http.StatusOK, code, body)
 
+	// The Steward is summoned through the scribe route, which others share.
+	steward := testharness.Serve(dash, boardDashReq(t, http.MethodPost, "/api/scribe",
+		map[string]any{"name": "steward", "scope": map[string]any{"kind": "steward"}}))
+	disabled(t, steward.Code, steward.Body.String(), "steward summon")
+
 	snapshot := func() bool {
 		rec := testharness.Serve(dashMessageMux(t), testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
 		require.Equal(t, http.StatusOK, rec.Code)

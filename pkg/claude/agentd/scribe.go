@@ -156,6 +156,12 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 		}
 	}
 
+	// The Steward is a Collab surface; other scribes are not.
+	if body.Scope != nil && body.Scope.Kind == "steward" && !collabRoutesEnabled() {
+		writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
+		return
+	}
+
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "name", "name is required")
