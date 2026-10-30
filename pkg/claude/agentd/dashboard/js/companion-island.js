@@ -302,6 +302,8 @@ export function CompanionApp({
   const [focusToken, setFocusToken] = useState(0);
   const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
   const [draft, setDraft] = useState('');
+  const draftRef = useRef('');
+  draftRef.current = draft;
   const [withContext, setWithContext] = useState(true);
   // The agent the operator is marking up the page for (tcl-8vjjko), or null.
   const [annotating, setAnnotating] = useState(null);
@@ -883,13 +885,28 @@ export function CompanionApp({
     return () => clearTimeout(timer);
   }, [guideCue]);
 
+  // openForCue opens the agent a cue hands over. While the operator is
+  // typing or dictating to the current tab it is only pinned, never switched
+  // to: a draft must go to the agent it was written for.
+  function openForCue(cue) {
+    const agent = agents.get(cue.open);
+    if (!agent) return;
+    const by = cue.agent_name || 'An agent';
+    if (draftRef.current.trim() || listeningRef.current) {
+      setTabs((current) => withTab(current, agent.agentId));
+      notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
+      return;
+    }
+    showAgent(agent.agentId, { focus: false });
+  }
+
   async function playCue(cue) {
     const run = ++cueRun.current;
     setGuideCue(null);
     // An agent the Steward hands over opens in the window, in the dashboard
     // tab the operator is looking at only: a terminal attach takes over
     // from any other view, so hidden tabs must not race for it.
-    if (cue.open && win?.document?.visibilityState !== 'hidden') showAgent(cue.open, { focus: false });
+    if (cue.open && win?.document?.visibilityState !== 'hidden') openForCue(cue);
     if (!cue.tab && !cue.path && !cue.target && !cue.note && !cue.marks?.length) return;
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const path = cuePath(cue);
