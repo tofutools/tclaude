@@ -147,7 +147,7 @@ func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
 		if v.EndBinding != nil {
 			to, okTo = s.view[v.EndBinding.ElementID]
 		}
-		if !(okFrom && changed[from.ID]) && !(okTo && changed[to.ID]) {
+		if (!okFrom || !changed[from.ID]) && (!okTo || !changed[to.ID]) {
 			continue
 		}
 		oldMidX, oldMidY := arrowMid(v)

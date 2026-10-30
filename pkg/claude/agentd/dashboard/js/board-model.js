@@ -484,15 +484,22 @@ export function changeBounds(map, changedIds, before, context = 80) {
   return { x: box.x - context, y: box.y - context, width: box.width + context * 2, height: box.height + context * 2 };
 }
 
+// agentWritten says an agent last wrote this element. Its text stays out of
+// the summary, which reaches the board's agents as the operator's own words.
+function agentWritten(el) {
+  const author = el.customData?.author;
+  return !!author && author !== 'operator';
+}
+
 function label(el, map) {
-  if (el.type === 'text') return `text “${String(el.text || '').slice(0, 40)}”`;
+  if (el.type === 'text') return agentWritten(el) ? 'text' : `text “${String(el.text || '').slice(0, 40)}”`;
   // A shape's label is the text inside it, when there is one.
   if (SHAPES.has(el.type) && map) {
     const inner = [...map.values()].find((t) => !t.isDeleted && t.type === 'text' && (() => {
       const c = center(t); const b = elementBounds(el);
       return c.x >= b.x && c.x <= b.x + b.width && c.y >= b.y && c.y <= b.y + b.height;
     })());
-    if (inner) return `${el.type} “${String(inner.text || '').slice(0, 40)}”`;
+    if (inner && !agentWritten(inner)) return `${el.type} “${String(inner.text || '').slice(0, 40)}”`;
   }
   return el.type;
 }
