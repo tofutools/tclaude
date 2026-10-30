@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_TAB, defaultLocation, normalizeLocation, locEquals,
   initialState, current, push, go, indexOf,
-  toPath, toQuery, fromPath, resolveStale, resolvePopstate,
+  toPath, toQuery, fromPath, isKnownPath, resolveStale, resolvePopstate,
   serializeStack, reviveState, NAV_STATE_VERSION, replaceCurrent,
 } from '../dashboard/js/nav-history-core.js';
 
@@ -109,6 +109,16 @@ test('replaceCurrent swaps the current entry in place without changing depth', (
   // Replacing with the same location is a no-op (same ref) — a reconcile with no
   // drift must not churn history.
   assert.equal(replaceCurrent(r, { tab: 'access', subtab: 'sudo' }), r);
+});
+
+test('isKnownPath tells real routes from the ones fromPath only defaults', () => {
+  for (const path of ['/', '/dashboard', '/groups', '/jobs', '/automations/processes', '/fleet', '/costs', '/activity/logs', '/config/nope', '/usage?period=7d']) {
+    assert.equal(isKnownPath(path), true, path);
+  }
+  for (const path of ['/not-a-tab', '/not-a-tab/groups', '/constructor', '/__proto__']) {
+    assert.equal(isKnownPath(path), false, path);
+    assert.equal(fromPath(path).tab, 'groups', 'fromPath alone cannot tell');
+  }
 });
 
 test('toPath / fromPath round-trip includes the terminals tab', () => {

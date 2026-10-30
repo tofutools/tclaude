@@ -22,12 +22,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
-  clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
+  clampPlacement, companionAgents, companionMessageFits, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
   stewardSummonBody, STEWARD_STARTERS, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
-import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenDue, cueOpenKey, cuePath, findGuideTarget, newCues } from './companion-guide.js';
+import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { ApprovalCard, openAccessPanel } from './companion-approval.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
@@ -254,7 +254,13 @@ export function CompanionApp({
   const [generation, setGeneration] = useState(0);
   const [focusToken, setFocusToken] = useState(0);
   const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
-  const [draft, setDraft] = useState('');
+  // Unsent text per agent id, so a draft stays with the agent it was written
+  // for however the active tab changes.
+  const [drafts, setDrafts] = useState({});
+  const setDraft = (agentId, text) => setDrafts((current) => {
+    const { [agentId]: _replaced, ...rest } = current;
+    return text ? { ...rest, [agentId]: text } : rest;
+  });
   // deciding shows the fleet-wide "to decide" queue over the window body.
   const [deciding, setDeciding] = useState(false);
   // Answering the last decision ends the queue: a later decision must not
@@ -262,7 +268,6 @@ export function CompanionApp({
   const queueSize = pendingDecisions(snapshot.value).length;
   useEffect(() => { if (!queueSize) setDeciding(false); }, [queueSize]);
   const draftRef = useRef('');
-  draftRef.current = draft;
   const [withContext, setWithContext] = useState(true);
   // The agent the operator is marking up the page for (tcl-8vjjko), or null.
   const [annotating, setAnnotating] = useState(null);
@@ -293,7 +298,7 @@ export function CompanionApp({
   const ownDictation = () => dictationAgent.current && dictationAgent.current === activeIdRef.current;
   const joinDraft = (base, heard) => [base.trim(), heard.trim()].filter(Boolean).join(' ');
   const dictation = useMemo(() => (dictationImpl || ((callbacks) => createDictation(win, callbacks)))({
-    onText: (heard) => { if (ownDictation()) setDraft(joinDraft(dictationBase.current, heard)); },
+    onText: (heard) => { if (ownDictation()) setDraft(dictationAgent.current, joinDraft(dictationBase.current, heard)); },
     onState: (on, error) => {
       listeningRef.current = on;
       setListening(on);
@@ -304,8 +309,11 @@ export function CompanionApp({
     onSend: (heard) => {
       if (!ownDictation()) return;
       const text = joinDraft(dictationBase.current, heard);
-      // The draft is cleared only when the message really went out.
-      if (text) Promise.resolve(sendRef.current?.(null, text)).then((sent) => { if (sent) setDraft(''); });
+      if (!text) return;
+      // The draft takes the final words first: a send clears the draft it
+      // sent, and only when the message really went out.
+      setDraft(dictationAgent.current, text);
+      void sendRef.current?.(null, text);
     },
   }), [dictationImpl, win]);
   const voiceStatuses = useRef(new Map());
@@ -323,6 +331,8 @@ export function CompanionApp({
 
   const activeId = tabs.includes(active) ? active : (tabs[0] || '');
   const activeAgent = activeId ? agents.get(activeId) || null : null;
+  const draft = drafts[activeId] || '';
+  draftRef.current = draft;
 
   useEffect(() => writePref(prefs, COMPANION_TABS_PREF, JSON.stringify(tabs)), [tabs]);
   useEffect(() => {
@@ -679,9 +689,14 @@ export function CompanionApp({
 
   async function send(event, text = draft) {
     event?.preventDefault?.();
-    const body = composeCompanionMessage(text, withContext
+    const context = withContext
       ? viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search })
-      : '');
+      : '';
+    if (!companionMessageFits(text, context)) {
+      notify('That message is too long to send. Shorten it and try again.', true);
+      return false;
+    }
+    const body = composeCompanionMessage(text, context);
     if (!body || !activeAgent || sending) return false;
     setSending(true);
     try {
@@ -691,7 +706,12 @@ export function CompanionApp({
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
-      if (text === draft) setDraft('');
+      // Whatever was typed while this went out stays.
+      setDrafts((current) => {
+        if (current[activeAgent.agentId] !== text) return current;
+        const { [activeAgent.agentId]: _sent, ...rest } = current;
+        return rest;
+      });
       return true;
     } catch (error) {
       notify(`Message to ${activeAgent.name} failed: ${error?.message || error}`, true);
@@ -802,7 +822,14 @@ export function CompanionApp({
     const target = annotating;
     if (!target) return;
     const view = viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search });
-    const body = composeCompanionMessage(composeAnnotation({ note, lines }), view);
+    const text = composeAnnotation({ note, lines });
+    // Clipped, the agent would miss marks while the operator is told it all
+    // went out. The overlay stays open with the strokes intact.
+    if (!companionMessageFits(text, view)) {
+      notify('That markup is too long to send. Undo some marks or shorten the note, then send again.', true);
+      return;
+    }
+    const body = composeCompanionMessage(text, view);
     try {
       const response = await fetchImpl('/api/operator-message', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -889,6 +916,8 @@ export function CompanionApp({
     if (!snapshot.value) return;
     const fresh = newCues(seenCues.current, snapshot.value.companion_cues, cuesPrimed.current);
     cuesPrimed.current = true;
+    // Every hand-over counts; only the newest cue's pointing is played.
+    for (const cue of fresh) if (cue.open) openCue(cue);
     if (fresh.length) void playCue(fresh[fresh.length - 1]);
   }, [snapshot.value]);
   useEffect(() => {
@@ -900,12 +929,14 @@ export function CompanionApp({
 
   // openForCue opens the agent a cue hands over. While the operator is
   // typing or dictating to the current tab it is only pinned, never switched
-  // to: a draft must go to the agent it was written for.
+  // to: a switch would take the terminal they are typing in, or the draft they
+  // are writing, away from under them.
   function openForCue(cue) {
     const agent = agents.get(cue.open);
     if (!agent) return;
     const by = cue.agent_name || 'An agent';
-    if (draftRef.current.trim() || listeningRef.current) {
+    const inTerminal = !!win?.document?.activeElement?.closest?.('.companion-term-host');
+    if (draftRef.current.trim() || listeningRef.current || inTerminal) {
       setTabs((current) => withTab(current, agent.agentId));
       notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
       return;
@@ -918,24 +949,32 @@ export function CompanionApp({
   // A hand-over that lands while this dashboard tab is hidden waits for the
   // operator to come back to it. One tab acts on each hand-over: the first
   // to claim it in shared prefs.
-  const heldOpen = useRef(null);
+  const heldOpen = useRef([]);
   const handOver = (cue) => {
     const take = () => {
-      if (!claimCueOpen(readPref(prefs, COMPANION_CUE_OPEN_PREF), cue)) return;
-      writePref(prefs, COMPANION_CUE_OPEN_PREF, cueOpenKey(cue));
+      const stored = readPref(prefs, COMPANION_CUE_OPEN_PREF);
+      if (!claimCueOpen(stored, cue)) return;
+      writePref(prefs, COMPANION_CUE_OPEN_PREF, cueOpenClaimed(stored, cue));
       openForCueRef.current(cue);
     };
     const focused = win?.document?.hasFocus?.() ?? true;
     if (focused) take();
     else setTimeout(take, CUE_OPEN_UNFOCUSED_DELAY_MS);
   };
+  // An agent the Steward hands over opens in the window, in the dashboard
+  // tab the operator is looking at only: a terminal attach takes over from
+  // any other view, so a hidden tab holds it until it is shown.
+  const openCue = (cue) => {
+    if (win?.document?.visibilityState === 'hidden') heldOpen.current.push(cue);
+    else handOver(cue);
+  };
   useEffect(() => {
     const doc = win?.document;
     const onVisible = () => {
-      const cue = heldOpen.current;
-      if (!cue || doc?.visibilityState === 'hidden') return;
-      heldOpen.current = null;
-      if (cueOpenDue(cue, Date.now())) handOver(cue);
+      const held = heldOpen.current;
+      if (!held.length || doc?.visibilityState === 'hidden') return;
+      heldOpen.current = [];
+      for (const cue of held) if (cueOpenDue(cue, Date.now())) handOver(cue);
     };
     doc?.addEventListener?.('visibilitychange', onVisible);
     return () => doc?.removeEventListener?.('visibilitychange', onVisible);
@@ -944,13 +983,6 @@ export function CompanionApp({
   async function playCue(cue) {
     const run = ++cueRun.current;
     setGuideCue(null);
-    // An agent the Steward hands over opens in the window, in the dashboard
-    // tab the operator is looking at only: a terminal attach takes over
-    // from any other view, so a hidden tab holds it until it is shown.
-    if (cue.open) {
-      if (win?.document?.visibilityState === 'hidden') heldOpen.current = cue;
-      else handOver(cue);
-    }
     if (!cue.tab && !cue.path && !cue.target && !cue.note && !cue.marks?.length) return;
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const path = cuePath(cue);
@@ -1142,7 +1174,7 @@ export function CompanionApp({
       </label>
       <input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
         placeholder=${`Message ${activeAgent.name} (queued to its inbox; or type in the terminal above)`}
-        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(event.currentTarget.value); }} />
+        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />
       ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
         aria-label=${`Dictate a message to ${activeAgent.name}`}
         title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}

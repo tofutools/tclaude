@@ -25,7 +25,7 @@ import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.
 import { withCostsPeriod } from './usage-hub-state.js';
 import {
   DEFAULT_TAB, OVERLAY_PARAMS, normalizeLocation, initialState, current, locEquals,
-  push, replaceCurrent, toPath, toQuery, fromPath, resolvePopstate,
+  push, replaceCurrent, toPath, toQuery, fromPath, isKnownPath, resolvePopstate,
   serializeStack, reviveState,
 } from './nav-history-core.js';
 
@@ -576,6 +576,8 @@ export function navigateToPath(path) {
   // Only a path that resolves to itself: dot segments would make the checks
   // made on the path as written (a cue's, say) say nothing about the result.
   if (url.origin !== window.location.origin || url.pathname !== path.split(/[?#]/, 1)[0]) return false;
+  // fromPath turns an unknown tab into the default one, which would pass below.
+  if (!isKnownPath(url.pathname)) return false;
   const loc = normalizeLocation(fromPath(url.pathname, url.search));
   if (!ROUTABLE_TABS.has(loc.tab) || !locationAvailable(loc)) return false;
   // Push first so the stack points at the new entry before activate() runs:

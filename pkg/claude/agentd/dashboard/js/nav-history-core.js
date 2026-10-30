@@ -465,6 +465,15 @@ export function fromPath(pathname, search) {
   return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third), item: decodeSelection(fourth), params });
 }
 
+// isKnownPath reports whether fromPath reads a pathname as a real route rather
+// than falling back to the default location for an unknown first segment. A
+// caller that must refuse a bad path asks this first: the two parse alike.
+export function isKnownPath(pathname) {
+  const [first] = String(pathname || '').split(/[?#]/, 1)[0].split('/').filter(Boolean);
+  return first === undefined || first === 'dashboard' || first === 'automations' || first === 'fleet'
+    || KNOWN_TABS.has(first) || Object.hasOwn(RENAMED_TABS, first) || Object.hasOwn(LEGACY_TAB_LOCATIONS, first);
+}
+
 // ---- Stale-target resolution --------------------------------------------
 
 // resolveStale returns the nearest still-valid location for `loc`, given an
