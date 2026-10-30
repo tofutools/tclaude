@@ -18,6 +18,7 @@ import (
 // (even after the agent went offline) and the pick comes back as mail.
 func TestHumanDecision_PickComesBackAsMail(t *testing.T) {
 	f := newFlow(t)
+	enableCollab(t)
 	const sender = "hdec-aaaa-bbbb-cccc-000000000001"
 	f.HaveGroup("design")
 	f.HaveMember("design", sender)
