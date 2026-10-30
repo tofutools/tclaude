@@ -314,6 +314,34 @@ const companionDescriptor = createIslandDescriptor({
   },
 });
 
+// The quick permissions panel: its own island, because a companion pill, a
+// Terminals tab and the access banner all raise it.
+const accessPanelDescriptor = createIslandDescriptor({
+  name: 'access-panel',
+  label: 'Permission requests',
+  hosts: { host: '#access-panel-root' },
+  failureClass: 'access-panel-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const [{ mountAccessPanelIsland }, { dashboardState }] = await Promise.all([
+      import('./access-panel-island.js'), import('./snapshot-store.js'),
+    ]);
+    return {
+      mount: (registerCleanup) => mountAccessPanelIsland({
+        host, registerCleanup, snapshot: dashboardState.snapshot,
+        fetchImpl: (...args) => globalThis.fetch(...args), notify: dependencies.notify,
+        openInMessages: async (id) => {
+          const { focusAccessRequest } = await import('./mail-bridge.js');
+          return focusAccessRequest(id);
+        },
+      }),
+    };
+  },
+});
+
+export function mountAccessPanelFeature(dependencies = {}) {
+  return mountIslandDescriptor(accessPanelDescriptor, dependencies);
+}
+
 export function mountCompanionFeature(dependencies = {}) {
   return mountIslandDescriptor(companionDescriptor, dependencies);
 }
