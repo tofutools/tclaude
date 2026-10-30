@@ -38,6 +38,19 @@ function fakeWidgetFactory(mounted) {
   };
 }
 
+// A dictation fake: the only way text reaches the draft field, which appears
+// while there is some.
+function fakeDictation() {
+  const fake = { callbacks: null };
+  fake.impl = (cb) => { fake.callbacks = cb; return { supported: true, start: () => cb.onState(true), stop: () => cb.onState(false), abort: () => cb.onState(false) }; };
+  fake.say = async (harness, view, text) => {
+    await harness.act(() => view.container.querySelector('.companion-mic').click());
+    await harness.act(() => fake.callbacks.onText(text));
+    await harness.act(() => view.container.querySelector('.companion-mic').click());
+  };
+  return fake;
+}
+
 async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {} } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
@@ -126,10 +139,11 @@ test('opening an agent attaches its native terminal stream and the window carrie
 
 test('the message row queues operator mail with the dashboard view attached', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
-  const { view, harness, requests, controller } = await setup(t, { prefs });
+  const dictated = fakeDictation();
+  const { view, harness, requests, controller } = await setup(t, { prefs, dictationImpl: dictated.impl });
   await harness.act(() => controller().open(A));
+  await dictated.say(harness, view, 'what can I do here?');
   const field = view.container.querySelector('input[aria-label="Message alpha"]');
-  await harness.input(field, 'what can I do here?');
   await harness.act(async () => {
     field.closest('form').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
     await new Promise((r) => setTimeout(r, 0));
@@ -332,9 +346,10 @@ test('a cue can open the agent that needs the operator in the companion window',
 
 test('an open cue only pins the agent while the operator is typing to another tab', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
-  const { view, harness, snap, controller } = await setup(t, { prefs });
+  const dictated = fakeDictation();
+  const { view, harness, snap, controller } = await setup(t, { prefs, dictationImpl: dictated.impl });
   await harness.act(() => controller().open(A));
-  await harness.input(view.container.querySelector('input.companion-draft'), 'half a thought');
+  await dictated.say(harness, view, 'half a thought');
   await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
   await harness.act(async () => {
     snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };
@@ -347,14 +362,14 @@ test('an open cue only pins the agent while the operator is typing to another ta
 
 test('a draft stays with its agent across tab switches and goes to that agent', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]) });
-  const { view, harness, requests, controller } = await setup(t, { prefs });
+  const dictated = fakeDictation();
+  const { view, harness, requests, controller } = await setup(t, { prefs, dictationImpl: dictated.impl });
   await harness.act(() => controller().open(A));
   const draft = () => view.container.querySelector('input.companion-draft');
-  const sendButton = () => view.container.querySelector('.companion-input button[type="submit"]');
-  await harness.input(draft(), 'for alpha');
+  assert.equal(draft(), null, 'there is no text field until there is text');
+  await dictated.say(harness, view, 'for alpha');
   await harness.act(() => harness.getByRole(view.container, 'tab', { name: /bravo/ }).click());
-  assert.equal(draft().value, '', 'bravo does not inherit the draft');
-  assert.equal(sendButton().disabled, true);
+  assert.equal(draft(), null, 'bravo does not inherit the draft');
   await harness.act(() => harness.getByRole(view.container, 'tab', { name: /alpha/ }).click());
   assert.equal(draft().value, 'for alpha');
   await harness.act(async () => {
@@ -362,7 +377,34 @@ test('a draft stays with its agent across tab switches and goes to that agent', 
     await new Promise((r) => setTimeout(r, 0));
   });
   assert.equal(requests.find((r) => r.url === '/api/operator-message').body.to, A);
-  assert.equal(draft().value, '');
+  assert.equal(draft(), null);
+});
+
+test('sending from the field hands focus to the terminal, and emptying it keeps it', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = fakeDictation();
+  const { view, harness, controller, mounted } = await setup(t, { prefs, dictationImpl: dictated.impl });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const draft = () => view.container.querySelector('input.companion-draft');
+  await dictated.say(harness, view, 'for alpha');
+  await harness.act(async () => { draft().focus(); });
+  await harness.act(async () => {
+    draft().value = '';
+    draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  });
+  assert.ok(draft(), 'emptying the field by hand leaves it under the caret');
+  await harness.act(async () => {
+    draft().value = 'for alpha';
+    draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  });
+  const before = mounted.at(-1).focused;
+  await harness.act(async () => {
+    view.container.querySelector('form.companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(draft(), null);
+  assert.equal(mounted.at(-1).focused, before + 1, 'the keyboard is not left on the page');
 });
 
 test('a finished send leaves text typed after it started', async (t) => {
@@ -371,10 +413,11 @@ test('a finished send leaves text typed after it started', async (t) => {
   const fetchImpl = (url) => (String(url) === '/api/operator-message'
     ? new Promise((resolve) => { finish = () => resolve({ ok: true, status: 202, json: async () => ({ id: 1 }) }); })
     : Promise.resolve({ ok: true, status: 200, json: async () => ({}) }));
-  const { view, harness, controller } = await setup(t, { prefs, fetchImpl });
+  const dictated = fakeDictation();
+  const { view, harness, controller } = await setup(t, { prefs, fetchImpl, dictationImpl: dictated.impl });
   await harness.act(() => controller().open(A));
   const draft = () => view.container.querySelector('input.companion-draft');
-  await harness.input(draft(), 'first');
+  await dictated.say(harness, view, 'first');
   await harness.act(async () => {
     view.container.querySelector('form.companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
     await new Promise((r) => setTimeout(r, 0));
@@ -801,8 +844,15 @@ test('voice output speaks a reply when the turn ends and says when the agent nee
   assert.equal(prefs.store.get('tclaude.dash.companion.voice.said.' + A), '2002', 'the reply is claimed, so other dashboard tabs stay quiet');
   await h.act(async () => { snap.value = snapshotWith({ aStatus: 'awaiting_permission' }); await new Promise((r) => setTimeout(r, 0)); });
   assert.equal(spoken.at(-1), 'alpha needs you: Bash(rm -rf build)');
-  await h.input(view.container.querySelector('input.companion-draft'), 'stop');
-  assert.ok(cancelled >= 1, 'typing stops speech');
+  const keys = h.window.document.createElement('textarea');
+  view.container.querySelector('.companion-term-host').appendChild(keys);
+  const press = (init) => keys.dispatchEvent(Object.assign(new h.window.Event('keydown', { bubbles: true }), init));
+  const before = cancelled;
+  press({ key: 'Shift' });
+  press({ key: 'Tab', altKey: true });
+  assert.equal(cancelled, before, 'a modifier or a window shortcut is not typing');
+  press({ key: 'a' });
+  assert.equal(cancelled, before + 1, 'typing in the terminal stops speech');
 });
 
 test('voice speaks a further decision from an agent already waiting on the operator', async (t) => {

@@ -625,8 +625,9 @@ comes back open when you reload the same browser tab.
   the left, right or bottom edge to snap it into a side panel or drawer. Each
   agent is a tab; **＋** pins another live agent, **×** unpins one (the agent
   keeps running), **⤢** moves it to the Terminals tab and **–** minimizes.
-- **Message row.** Text sent from the row below the terminal is queued to the
-  agent's inbox, with the view you are on attached when **view** is ticked.
+- **Message row.** The row below the terminal holds the mic and ✎. Dictated
+  text is queued to the agent's inbox, with the view you are on attached when
+  **view** is ticked.
 
 With nothing pinned, the companion offers the **Steward**: a helper for all
 of tclaude, summoned like a scribe (it lives in the `steward`
@@ -643,6 +644,13 @@ for a live Steward, anything else beyond what Config gives it. **End now**
 revokes what the agent holds itself, with no confirmation; it can ask again.
 Access from a group or from owning one is listed but stays, since other
 members share it: change that in Groups.
+
+You type to an agent in its terminal. The row under it holds the mic, **view**
+(attach the dashboard view to dictated messages) and ✎. A text field appears
+while you dictate and stays while it holds text, including text kept from a
+send that failed; empty it to discard that text. Typing in the terminal stops
+speech. An agent parked in a chip or detached has no terminal here, so stop it
+with the voice toggle.
 
 In the window, ✉ or Ctrl/Cmd+M sends the active agent a queued message, as in
 the Terminals tab, and ⇄ morphs it onto another harness, model or profile. ⧉
@@ -723,19 +731,19 @@ name is in the open window. Each card there names the agent that asked.
 the current tab (**🔊**). When its turn ends, its last message is read aloud;
 code blocks, tables and links are summarised, and a long reply is cut short
 with a pointer to the window. It also says when the agent needs you. Typing
-in the message row stops speech. Speech uses your browser's built-in voices and
+in the terminal stops speech. Speech uses your browser's built-in voices and
 prefers one that runs locally, so nothing is installed. The reply is read
 from the agent's own transcript, so it works for harnesses whose transcript
 tclaude can decode (Claude Code and Codex).
 
-**Dictation.** **🎤** in the message row dictates into the draft. Pause and
+**Dictation.** **🎤** under the terminal dictates into a draft. Pause and
 say "send" on its own to send it, or press the button again (or start
 typing) to stop and edit first. No reply is spoken while the mic is open. It uses
 the browser's speech recognition (in Chrome the audio is recognised by
 Google's service) and is hidden where the browser has none. Starting to
 dictate stops any reply being spoken.
 
-**Mark up a view.** **✎** in the message row, or **Ctrl+Shift+.**, lays a
+**Mark up a view.** **✎** under the terminal, or **Ctrl+Shift+.**, lays a
 drawing layer over the page you are on. Circle, underline or draw an arrow at
 what you mean, add a note, and **Send**. The agent cannot see your screen, so
 each mark is sent as words: what kind of mark it is and which control or text
