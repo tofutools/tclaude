@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -30,10 +31,10 @@ type fleetChange struct {
 	Kind    string `json:"kind"` // move, remove or add
 	AgentID string `json:"agent_id,omitempty"`
 	Title   string `json:"title,omitempty"`
-	From    string `json:"from,omitempty"`
+	From    string `json:"from,omitempty"` // empty for an agent in no group
 	To      string `json:"to,omitempty"`
 	Text    string `json:"text,omitempty"`
-	Via     string `json:"via"` // card, arrow or note
+	Via     string `json:"via"` // card, arrow, deleted card or note
 }
 
 func boardFleetChangesCmd() *cobra.Command {
@@ -81,9 +82,17 @@ func runBoardFleetChanges(p *boardFleetChangesParams, boardID string, stdout, st
 	for _, c := range changes {
 		switch c.Kind {
 		case "move":
+			if c.From == "" {
+				fmt.Fprintf(stdout, "  - add %s [%s] to %s (%s)\n", c.Title, shortAgentID(c.AgentID, ""), c.To, c.Via)
+				continue
+			}
 			fmt.Fprintf(stdout, "  - move %s [%s] from %s to %s (%s)\n", c.Title, shortAgentID(c.AgentID, ""), c.From, c.To, c.Via)
 		case "remove":
-			fmt.Fprintf(stdout, "  - remove %s [%s] from %s (deleted card)\n", c.Title, shortAgentID(c.AgentID, ""), c.From)
+			from := c.From
+			if from == "" {
+				from = fleetNoGroup
+			}
+			fmt.Fprintf(stdout, "  - remove %s [%s] from %s (%s)\n", c.Title, shortAgentID(c.AgentID, ""), from, c.Via)
 		case "add":
 			fmt.Fprintf(stdout, "  - add to %s: %q (note)\n", c.To, c.Text)
 		}
@@ -118,15 +127,17 @@ func fleetChanges(fleet *fleetResp, doc *boardDoc) (changes []fleetChange, ok bo
 	boxes := map[string]string{} // group box id → group
 	var bands []fleetBand
 	for _, column := range fleetColumns(fleet, true) {
+		// Cards count even when their column's box is gone: selecting a
+		// whole column and deleting it removes each card in it.
+		for _, c := range column.cards {
+			cards[c.id] = cardRef{agent: c.agent, group: column.group}
+		}
 		box, drawn := elements[column.id]
 		if !drawn || box.IsDeleted {
 			continue
 		}
 		boxes[column.id] = column.group
 		bands = append(bands, fleetBand{group: column.group, left: box.X, right: box.X + box.Width, top: box.Y - fleetHeadGap})
-		for _, c := range column.cards {
-			cards[c.id] = cardRef{agent: c.agent, group: column.group}
-		}
 	}
 	cardOf := func(id string) (cardRef, string, bool) {
 		id = strings.TrimSuffix(id, "-label")
@@ -145,9 +156,19 @@ func fleetChanges(fleet *fleetResp, doc *boardDoc) (changes []fleetChange, ok bo
 			changes = append(changes, c)
 		}
 	}
+	remove := func(ref cardRef, via string) {
+		a := fleet.Agents[ref.agent]
+		add(fleetChange{Kind: "remove", AgentID: a.AgentID, Title: a.Title, From: fleetRealGroup(ref.group), Via: via})
+	}
 	move := func(ref cardRef, to, via string) {
 		a := fleet.Agents[ref.agent]
-		add(fleetChange{Kind: "move", AgentID: a.AgentID, Title: a.Title, From: ref.group, To: to, Via: via})
+		// Dropped where the agent already is, or out of every group, the
+		// edit says leave this group.
+		if to == fleetNoGroup || slices.Contains(a.Groups, to) {
+			remove(ref, via)
+			return
+		}
+		add(fleetChange{Kind: "move", AgentID: a.AgentID, Title: a.Title, From: fleetRealGroup(ref.group), To: to, Via: via})
 	}
 
 	for _, id := range order {
@@ -160,8 +181,7 @@ func fleetChanges(fleet *fleetResp, doc *boardDoc) (changes []fleetChange, ok bo
 		case isCard && e.IsDeleted:
 			// A card is its rectangle; its label alone going says nothing.
 			if id == cardID {
-				a := fleet.Agents[ref.agent]
-				add(fleetChange{Kind: "remove", AgentID: a.AgentID, Title: a.Title, From: ref.group, Via: "card"})
+				remove(ref, "deleted card")
 			}
 		case e.IsDeleted:
 		case isCard:
@@ -177,9 +197,11 @@ func fleetChanges(fleet *fleetResp, doc *boardDoc) (changes []fleetChange, ok bo
 			var from cardRef
 			found := false
 			if e.StartBinding != nil {
+				// Bound to something else, or to a card a redraw replaced:
+				// whatever sits under the arrow's tail now is not what the
+				// operator pointed at.
 				from, _, found = cardOf(e.StartBinding.ElementID)
-			}
-			if !found {
+			} else {
 				sx, sy := e.X+first[0], e.Y+first[1]
 				for _, cid := range order {
 					c, isC := cards[cid]
@@ -209,7 +231,7 @@ func fleetChanges(fleet *fleetResp, doc *boardDoc) (changes []fleetChange, ok bo
 			}
 		case e.Type == "text" && !isFleetSketchID(id) && strings.TrimSpace(e.Text) != "":
 			box := elementBox(e)
-			if to := fleetBandAt(bands, box.X+box.W/2, box.Y+box.H/2); to != "" {
+			if to := fleetBandAt(bands, box.X+box.W/2, box.Y+box.H/2); to != "" && to != fleetNoGroup {
 				add(fleetChange{Kind: "add", To: to, Text: strings.TrimSpace(e.Text), Via: "note"})
 			}
 		}
@@ -217,6 +239,15 @@ func fleetChanges(fleet *fleetResp, doc *boardDoc) (changes []fleetChange, ok bo
 	rank := map[string]int{"move": 0, "remove": 1, "add": 2}
 	sort.SliceStable(changes, func(i, j int) bool { return rank[changes[i].Kind] < rank[changes[j].Kind] })
 	return changes, true
+}
+
+// fleetRealGroup is the group to name in a change: none for the map's column
+// of agents outside every group, which no command can address.
+func fleetRealGroup(group string) string {
+	if group == fleetNoGroup {
+		return ""
+	}
+	return group
 }
 
 // fleetBand is a column's horizontal extent; a column reads as everything
