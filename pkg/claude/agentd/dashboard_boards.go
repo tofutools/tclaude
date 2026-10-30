@@ -888,8 +888,10 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 		}
 		online = append(online, a)
 	}
-	body := fmt.Sprintf("%s\n\n(Board %q is at version %d. Read it with `tclaude agent board show %s`, or `--since <version>` for changes only.)",
-		text, b.Title, b.Version, b.ID)
+	// This mail is operator-authored, so it quotes nothing agents wrote: not
+	// the title, which any agent with boards.write can set.
+	body := fmt.Sprintf("%s\n\n(Board %s is at version %d. Read it with `tclaude agent board show %s`, or `--since <version>` for changes only.)",
+		text, b.ID, b.Version, b.ID)
 	region := 0
 	if len(image) > 0 && len(online) > 0 {
 		if n, err := storeBoardRegion(b.ID, image); err == nil {

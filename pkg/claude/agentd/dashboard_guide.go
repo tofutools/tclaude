@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -178,7 +180,23 @@ func guideCuePath(p string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if strings.HasPrefix(p, "/terminals/") {
+	if p == "" {
+		return "", true
+	}
+	// The browser resolves dot segments and the router decodes escapes, so the
+	// location is judged as they will read it, and a path that means something
+	// other than what it says is refused outright.
+	pathname, _, _ := strings.Cut(p, "?")
+	pathname, _, _ = strings.Cut(pathname, "#")
+	decoded, err := url.PathUnescape(pathname)
+	if err != nil {
+		return "", false
+	}
+	clean := path.Clean(decoded)
+	if clean != strings.TrimSuffix(decoded, "/") && decoded != "/" {
+		return "", false
+	}
+	if strings.HasPrefix(clean, "/terminals/") {
 		return "", false
 	}
 	return p, true
