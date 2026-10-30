@@ -475,6 +475,7 @@ test('a permission request opens in a right-hand panel from its pill, and the pa
       { id: 'r1', perm: 'sudo.groups.create', agent_id: A, status: 'pending', deadline },
       { id: 'r3', perm: 'x', agent_id: A, status: 'approved' },
       { id: 'r4', perm: 'y', agent_id: A, status: 'pending', proposal: {} },
+      { id: 'r5', perm: 'y', agent_id: B, status: 'pending', origin_peer: 'node-2' },
     ],
   };
   const { view, harness, snap, requests } = await setup(t, { prefs, snapshot });
@@ -489,7 +490,8 @@ test('a permission request opens in a right-hand panel from its pill, and the pa
   await harness.act(() => chip.click());
   assert.equal(view.container.querySelector('.companion-window'), null, 'the window stays minimized');
   const cards = panelHost.querySelectorAll('.companion-approval');
-  assert.equal(cards.length, 2, 'pending requests from every agent, without federation proposals');
+  assert.equal(cards.length, 2, 'what one card can answer, from every agent');
+  assert.match(panelHost.textContent, /2 requests need a closer look in Messages/, 'a peer\'s request or a proposal is sent on, never approved blind');
   assert.match(cards[0].textContent, /groups\.create/, 'the agent asked about comes first');
   assert.match(cards[1].textContent, /bravo/, 'each names its agent');
   assert.ok(harness.getByRole(view.container, 'button', { name: /1 permission request from other agents/ }), 'bravo has no pill, so a pill says it is waiting');
@@ -507,6 +509,7 @@ test('a Terminals tab knows its agent is asking for permission', async (t) => {
   const snapshot = { collab_enabled: true, access_requests: [{ id: 'r', perm: 'x', agent_id: A, status: 'pending' }, { id: 'c', perm: 'y', conv_id: 'conv-b', status: 'pending' }] };
   assert.equal(paneApprovals({ seed: { agent: A } }, snapshot).length, 1);
   assert.equal(paneApprovals({ seed: { agent: 'conv-b' } }, snapshot).length, 1, 'a pane seeded with a conv id');
+  assert.equal(paneApprovals({ seed: { agent: 'conv-a' } }, { collab_enabled: true, access_requests: [{ id: 'r', perm: 'x', agent_id: A, conv_id: 'conv-a', status: 'pending' }] }).length, 1, 'a conv-seeded pane finds a request naming its agent');
   assert.equal(paneApprovals({ seed: { agent: B } }, snapshot).length, 0);
   assert.equal(paneApprovals({ seed: { agent: A } }, { ...snapshot, collab_enabled: false }).length, 0, 'the panel is part of Collab');
 });

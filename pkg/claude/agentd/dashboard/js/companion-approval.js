@@ -12,9 +12,9 @@ const html = htm.bind(h);
 // any of them can raise it over whatever tab is showing.
 export const OPEN_ACCESS_PANEL_EVENT = 'tclaude:open-access-panel';
 
-export function openAccessPanel({ agentId = '', launcher = null, documentRef = globalThis.document } = {}) {
+export function openAccessPanel({ agentId = '', launcher = null, returnFocus = null, documentRef = globalThis.document } = {}) {
   if (!documentRef) return false;
-  documentRef.dispatchEvent(new CustomEvent(OPEN_ACCESS_PANEL_EVENT, { detail: { agentId, launcher } }));
+  documentRef.dispatchEvent(new CustomEvent(OPEN_ACCESS_PANEL_EVENT, { detail: { agentId, launcher, returnFocus } }));
   return true;
 }
 
@@ -27,7 +27,7 @@ function secondsLeft(deadline, now) {
 // tab: a whole plan's temporary permissions (`tclaude agent sudo`) or one
 // --ask-human command. Approve and Deny decide it the same way the Messages
 // tab does. The request body is agent-supplied text and is rendered as text.
-export function ApprovalCard({ request, fetchImpl, notify, from = '' }) {
+export function ApprovalCard({ request, fetchImpl, notify, from = '', onMore = null }) {
   const [busy, setBusy] = useState('');
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -65,6 +65,7 @@ export function ApprovalCard({ request, fetchImpl, notify, from = '' }) {
       ${request.path && !request.body && html`<dt>Endpoint</dt><dd><code>${request.method ? `${request.method} ` : ''}${request.path}</code></dd>`}
     </dl>
     ${request.body && html`<pre class="companion-approval-body">${request.body}</pre>`}
+    ${onMore && request.auto_grantable && html`<button type="button" class="access-panel-more" onClick=${onMore}>Always allow? Open in Messages</button>`}
     <div class="companion-approval-actions">
       ${expired ? html`<span class="companion-approval-expired">Timing out…</span>` : html`<button type="button" class="companion-approval-extend" disabled=${!!busy}
         title="Push the auto-decline back five minutes" onClick=${() => decide('extend')}>+5 min</button>`}

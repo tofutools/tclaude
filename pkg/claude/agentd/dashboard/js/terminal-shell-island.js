@@ -25,7 +25,7 @@ import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
 import { openAccessPanel } from './companion-approval.js';
-import { approvalsFor } from './companion-model.js';
+import { pendingApprovals } from './companion-model.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch } from './node-api.js';
 import { ViewersBadge } from './remote-viewers.js';
@@ -505,7 +505,7 @@ export function paneApprovals(pane, snapshotValue) {
   if (snapshotValue?.collab_enabled !== true || paneRemoteNode(pane)) return [];
   const selector = pane?.seed?.agent || '';
   if (!selector) return [];
-  return approvalsFor(snapshotValue, { agentId: selector, convId: selector });
+  return pendingApprovals(snapshotValue).filter((request) => [request.agent_id, request.conv_id, request.current_conv_id].includes(selector));
 }
 
 function TabApproval({ pane, snapshot }) {
@@ -516,7 +516,7 @@ function TabApproval({ pane, snapshot }) {
     onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
-      openAccessPanel({ agentId: requests[0].agent_id || '', launcher: event.currentTarget });
+      openAccessPanel({ agentId: requests[0].agent_id || '', launcher: event.currentTarget, returnFocus: event.currentTarget.closest('.mux-tab') });
     }}><span aria-hidden="true">🔑</span></button>`;
 }
 
