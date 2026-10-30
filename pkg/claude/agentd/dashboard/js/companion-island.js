@@ -30,6 +30,7 @@ import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { ApprovalCard, ElevatedBand, openAccessPanel } from './companion-approval.js';
+import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 
@@ -232,6 +233,8 @@ export function CompanionApp({
   closeTerminalPanes = () => {},
   openTerminalsPane = null,
   win = globalThis.window,
+  onComposeMessage = null,
+  openMorph = null,
   sessionPrefs: sessionPrefsImpl = null,
   registerController = registerCompanionController,
   navigate = null,
@@ -948,6 +951,34 @@ export function CompanionApp({
     return () => clearTimeout(timer);
   }, [guideCue]);
 
+  function composeToActive() {
+    if (!activeAgent?.online) return false;
+    onComposeMessage?.({
+      agent: activeAgent.agentId, label: activeAgent.name,
+      restoreFocus: () => setFocusToken((n) => n + 1),
+    });
+    return true;
+  }
+  const composeRef = useRef(composeToActive);
+  composeRef.current = composeToActive;
+  useEffect(() => {
+    if (!onComposeMessage) return undefined;
+    const doc = win?.document;
+    if (!doc) return undefined;
+    // Capture, like the Terminals tab: the shortcut works from the terminal,
+    // the tabs and the title bar, before xterm or the browser sees it.
+    const onKey = (event) => {
+      if (!isComposeMessageShortcut(event) || !event.target?.closest?.('.companion-window')) return;
+      if (doc.querySelector('.modal-overlay.show')) return;
+      if (composeRef.current()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    doc.addEventListener('keydown', onKey, true);
+    return () => doc.removeEventListener('keydown', onKey, true);
+  }, [win, onComposeMessage]);
+
   const lastTerminalKey = useRef(0);
   useEffect(() => {
     const doc = win?.document;
@@ -1159,6 +1190,11 @@ export function CompanionApp({
           aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
           title="Agents are asking for permission"
           onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
+        ${activeAgent?.online && !showQueue && html`
+          ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${composeToActive}>✉</button>`}
+          ${openMorph && html`<button type="button" class="companion-morph" aria-label=${`Morph ${activeAgent.name}`} title="Morph: relaunch on another harness, model or profile"
+            onClick=${() => openMorph({ agent: activeAgent.agentId, conv: activeAgent.convId, label: activeAgent.name, harness: activeAgent.harness })}>⇄</button>`}
+        `}
         <button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>
       </div>
     </header>

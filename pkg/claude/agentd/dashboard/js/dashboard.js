@@ -169,7 +169,7 @@ async function settleInitialLayout() {
     }),
     () => mountSpawnHarnessPolicyFeature({ confirmDiscard, notify: toast }),
     () => mountDockFeature(),
-    () => mountCompanionFeature({ notify: toast }),
+    () => mountCompanionFeature({ notify: toast, onComposeMessage: (seed) => openOperatorMessageDialog(seed) }),
     () => mountAccessPanelFeature({ notify: toast }),
     () => mountBoardsFeature({ notify: toast }),
     () => mountPluginsFeature({

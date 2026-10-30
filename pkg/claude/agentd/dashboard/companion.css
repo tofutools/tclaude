@@ -353,3 +353,6 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .access-panel-more { background: none; border: 0; padding: 0; color: #58a6ff; cursor: pointer; font-size: 12.5px; text-align: left; }
 .companion-approval-from { color: #8b949e; font-size: 12px; }
 .companion-access { background: none; border: 1px solid #d29922; border-radius: 6px; color: #e6c07b; cursor: pointer; font-size: 12px; padding: 1px 7px; }
+
+/* A dialog opened from the window must not land behind it. */
+body:has(.modal-overlay.show) .companion-window { z-index: 90; }

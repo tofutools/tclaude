@@ -38,7 +38,7 @@ function fakeWidgetFactory(mounted) {
   };
 }
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {} } = {}) {
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {} } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -55,7 +55,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sess
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} sessionPrefs=${sessionPrefs} fetchImpl=${fetchFn} notify=${notify}
-    widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    onComposeMessage=${onComposeMessage} openMorph=${openMorph} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -978,4 +978,23 @@ test('every corner of a floating window resizes it, and the opposite corner stay
   const corners = [...view.container.querySelectorAll('.companion-resize-corner')].map((node) => node.className.split(' ').pop());
   assert.deepEqual(corners.sort(), ['ne', 'nw', 'sw']);
   assert.ok(view.container.querySelector('.companion-resize'), 'and the south-east grip');
+});
+
+test('Ctrl/Cmd+M and the title bar message the active agent; morph opens from the window', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const seeds = [];
+  const morphs = [];
+  const { view, harness, controller } = await setup(t, { prefs, onComposeMessage: (seed) => seeds.push(seed), openMorph: (agent) => morphs.push(agent) });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const host = view.container.querySelector('.companion-term-host');
+  const press = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.assign(press, { key: 'm', code: 'KeyM', ctrlKey: true });
+  await harness.act(async () => { host.dispatchEvent(press); });
+  assert.equal(seeds[0]?.agent, A);
+  assert.equal(press.defaultPrevented, true);
+  await harness.act(async () => { view.container.querySelector('.companion-compose').click(); });
+  assert.equal(seeds.length, 2);
+  await harness.act(async () => { view.container.querySelector('.companion-morph').click(); });
+  assert.equal(morphs[0].agent, A);
 });

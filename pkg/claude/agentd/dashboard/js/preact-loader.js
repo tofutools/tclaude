@@ -303,7 +303,14 @@ const companionDescriptor = createIslandDescriptor({
         host, registerCleanup,
         snapshot: dashboardState.snapshot, activeTab: dashboardState.activeTab, prefs: dashPrefs,
         notify: dependencies.notify, widgetFactory: mountTerminalWidget, loadRuntime: loadXtermRuntime,
-        closeTerminalPanes: closeTerminalsForConvs,
+        closeTerminalPanes: closeTerminalsForConvs, onComposeMessage: dependencies.onComposeMessage,
+        openMorph: async (data) => {
+          const { openLaunchTargetDialog } = await import('./action-dialog-controller.js');
+          const { launchAgent } = await import('./launch-target-dialog.js');
+          const { fleetState } = await import('./fleet-state.js');
+          const node = fleetState.fleet.value?.self || { id: 'local', name: 'this node' };
+          return openLaunchTargetDialog({ mode: 'morph', agent: launchAgent(data, node) });
+        },
         openTerminalsPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
         navigate: async (path) => {
           const { navigateToPath } = await import('./nav-history.js');
