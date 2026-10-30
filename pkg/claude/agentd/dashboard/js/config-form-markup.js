@@ -901,6 +901,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           </${ConfigSelect}>
         </${Setting}>
       </${Group}>
+      <${Group} title="Launch">
+        <${Setting} title="Spawn profile" forId="cfg-steward-profile" k="steward.profile"
+          summary="The spawn profile a new Steward launches with. Unset, it uses the global default profile.">
+          <${ConfigSelect} id="cfg-steward-profile" aria-label="Steward spawn profile" style="min-width:160px"></${ConfigSelect}>
+        </${Setting}>
+      </${Group}>
       <${Group} title="Name and startup">
         <${Setting} title="Name" forId="cfg-steward-name" k="steward.name"
           summary="What you call your Steward. Shown in the companion, and agents can message it by this name as well as by steward.">

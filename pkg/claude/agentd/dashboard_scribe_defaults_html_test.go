@@ -22,8 +22,8 @@ func TestDashboardAssets_ScribeDefaultsWired(t *testing.T) {
 		`id="scribe-profile"`,
 		// JS: options come from the saved spawn profiles; the value populates
 		// and assembles into the cfg.scribe block the big form submits.
-		"function populateScribeProfileSelect(",
-		"populateScribeProfileSelect((cfg.scribe || {}).profile)",
+		"function populateProfileSelect(",
+		"populateProfileSelect('#scribe-profile', '(default — harness default)', (cfg.scribe || {}).profile)",
 		"$('#scribe-profile')",
 		"scribe.profile = scribeProfile;",
 		"cfg.scribe = scribe;",

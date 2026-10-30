@@ -288,19 +288,6 @@ export function composeCompanionMessage(text, context = '') {
   return clipUtf8(body, COMPANION_MESSAGE_MAX_BYTES - new TextEncoder().encode(suffix).length) + suffix;
 }
 
-// STEWARD_STARTERS are one-click prompts shown above the message row while
-// the Steward's tab is open and nothing is typed: the usual ways in to
-// guided setup (tcl-bifqbb).
-export const STEWARD_STARTERS = Object.freeze([
-  { label: 'Brief me', text: 'Brief me on the fleet: what needs me first, then what is moving. Keep it short.' },
-  { label: 'I have an idea', text: 'I have an idea I want built. Help me shape it into a brief and get the right agents working on it. Ask me about it first.' },
-  { label: 'What can I do here?', text: 'What can I do on this page? Point me at the important controls.' },
-  { label: 'Review my setup', text: 'Review my tclaude setup (groups, spawn profiles, sandbox profiles, schedules) and tell me what is missing or worth changing. Do not change anything yet.' },
-  { label: 'Set up my repos', text: 'Help me set up a group for each of my repos, with sensible defaults. Ask me which repos first.' },
-  { label: 'Create a dev flow', text: 'Help me create a development process (implement, review, rework, merge, with me approving the merge) as a process template.' },
-  { label: 'Sketch on a board', text: 'Open a shared board for us and sketch how my groups and processes fit together right now.' },
-]);
-
 export function stewardBrief() {
   return [
     'You are the Steward: the operator\'s always-available helper for tclaude, shown in a floating',

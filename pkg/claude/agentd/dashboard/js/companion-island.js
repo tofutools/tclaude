@@ -24,7 +24,7 @@ import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
-  stewardSummonBody, STEWARD_STARTERS, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
+  stewardSummonBody, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -152,8 +152,16 @@ function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, 
   }, [agents, tabs, steward, filter]);
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    // The + button toggles the menu itself.
+    const onPointer = (event) => {
+      if (!event.target?.closest?.('.companion-menu, .companion-add')) onClose();
+    };
     globalThis.addEventListener?.('keydown', onKey);
-    return () => globalThis.removeEventListener?.('keydown', onKey);
+    globalThis.document?.addEventListener('pointerdown', onPointer, true);
+    return () => {
+      globalThis.removeEventListener?.('keydown', onKey);
+      globalThis.document?.removeEventListener('pointerdown', onPointer, true);
+    };
   }, [onClose]);
   const stewardPinned = steward && tabs.includes(steward.agentId);
   return html`<div class="companion-menu" role="menu" aria-label="Add a companion">
@@ -579,7 +587,7 @@ export function CompanionApp({
     };
   }
 
-  function onResizePointerDown(event) {
+  function onResizePointerDown(event, corner = 'se') {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -596,7 +604,13 @@ export function CompanionApp({
       if (start.snap === 'right') last = { ...start, x: start.x + dx, w: start.w - dx };
       else if (start.snap === 'left') last = { ...start, w: start.w + dx };
       else if (start.snap === 'bottom') last = { ...start, y: start.y + dy, h: start.h - dy };
-      else last = { ...start, w: start.w + dx, h: start.h + dy };
+      else {
+        last = {
+          ...start,
+          w: start.w + (corner.includes('w') ? -dx : dx),
+          h: start.h + (corner.includes('n') ? -dy : dy),
+        };
+      }
       if (start.snap) {
         const vp = viewportOf(win);
         const w = Math.min(vp.width, Math.max(COMPANION_MIN_W, last.w));
@@ -606,7 +620,11 @@ export function CompanionApp({
         if (start.snap === 'right') last.x = vp.width - w;
         if (start.snap === 'bottom') last.y = start.y + start.h - h;
       } else {
-        last = clampPlacement(last, viewportOf(win));
+        // Clamp the size first: the corner opposite the drag stays put.
+        const sized = clampPlacement(last, viewportOf(win));
+        const x = corner.includes('w') ? start.x + start.w - sized.w : start.x;
+        const y = corner.includes('n') ? start.y + start.h - sized.h : start.y;
+        last = clampPlacement({ ...sized, x, y }, viewportOf(win));
       }
       setPlacement(last);
     };
@@ -1182,10 +1200,6 @@ export function CompanionApp({
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
-    ${!showQueue && activeAgent?.online && activeAgent.steward && !parked.has(activeAgent.agentId) && !draft && html`<div class="companion-starters" aria-label="Ask the Steward">
-      ${STEWARD_STARTERS.map((starter) => html`<button key=${starter.label} type="button" disabled=${sending} title=${starter.text}
-        onClick=${() => send(null, starter.text)}>${starter.label}</button>`)}
-    </div>`}
     ${!showQueue && activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
       <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
@@ -1201,7 +1215,9 @@ export function CompanionApp({
       <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
     </form>`}
-    <div class="companion-resize" aria-hidden="true" onPointerDown=${onResizePointerDown}></div>
+    <div class="companion-resize" aria-hidden="true" onPointerDown=${(event) => onResizePointerDown(event)}></div>
+    ${!placement.snap && ['nw', 'ne', 'sw'].map((corner) => html`<div key=${corner} class=${`companion-resize-corner ${corner}`} aria-hidden="true"
+      onPointerDown=${(event) => onResizePointerDown(event, corner)}></div>`)}
   </section>`;
 
   return html`

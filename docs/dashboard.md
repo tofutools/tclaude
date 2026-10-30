@@ -644,10 +644,7 @@ revokes what the agent holds itself, with no confirmation; it can ask again.
 Access from a group or from owning one is listed but stays, since other
 members share it: change that in Groups.
 
-While the Steward's tab is open and you have not typed anything, one-click
-starters sit above the message row: **Brief me**, **I have an idea**, **What can I do here?**, **Review my
-setup**, **Set up my repos**, **Create a dev flow** and **Sketch on a board**.
-With **I have an idea** the Steward follows the bundled `tclaude-fleet`
+Give the Steward an idea and it follows the bundled `tclaude-fleet`
 skill. It restates the idea and asks what it cannot find out itself, sketching
 on a board when the shape matters. It writes a brief, then starts one worker
 or deploys a task force once you approve the plan's permissions. It follows the work
@@ -666,6 +663,9 @@ and agents that have sat idle for ten minutes or more. **Brief me** asks the
 Steward for that, most urgent first. The listing needs `fleet.read`, which
 the Steward is granted when it is summoned and other agents are not;
 `--group <name>` narrows it to one group and `--json` gives the raw brief.
+
+**Config > Steward** appears while Collab is on. Its **Spawn profile** is what
+a new Steward launches with; unset, it uses the global default profile.
 
 What a new Steward may do is set under **Config > Steward**, and the daemon
 grants it: a summon cannot ask for more. **Reads** is `operator` by default

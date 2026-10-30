@@ -1330,6 +1330,9 @@ func (c *Config) ScribeProfileName() string {
 type StewardConfig struct {
 	// Reads is "operator" or "fleet"; see the StewardReads constants.
 	Reads string `json:"reads,omitempty"`
+	// Profile is the spawn profile a new Steward launches with. Empty means the
+	// global default spawn profile.
+	Profile string `json:"profile,omitempty"`
 	// Name is what the operator calls their Steward. Empty means "the Steward".
 	Name string `json:"name,omitempty"`
 	// StartupPrompt is the operator's own instructions, added to the brief of
@@ -1387,6 +1390,14 @@ func (c *Config) stewardNameSetting() string {
 
 func validStewardName(name string) bool {
 	return len(name) <= MaxStewardNameLen && stewardNamePattern.MatchString(name)
+}
+
+// StewardProfile returns the Steward's spawn profile, trimmed, or "". Nil-safe.
+func (c *Config) StewardProfile() string {
+	if c == nil || c.Steward == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Steward.Profile)
 }
 
 // StewardStartupPrompt returns the operator's instructions, trimmed. Nil-safe.
