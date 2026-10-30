@@ -304,6 +304,10 @@ export function CompanionApp({
   const [draft, setDraft] = useState('');
   // deciding shows the fleet-wide "to decide" queue over the window body.
   const [deciding, setDeciding] = useState(false);
+  // Answering the last decision ends the queue: a later decision must not
+  // cover the window again while the operator is typing in it.
+  const queueSize = pendingDecisions(snapshot.value).length;
+  useEffect(() => { if (!queueSize) setDeciding(false); }, [queueSize]);
   const draftRef = useRef('');
   draftRef.current = draft;
   const [withContext, setWithContext] = useState(true);
@@ -445,6 +449,7 @@ export function CompanionApp({
 
   const minimize = useCallback(() => {
     setMenu(false);
+    setDeciding(false);
     const node = windowRef.current;
     const chip = chipRects.current.get(activeId);
     if (!node || !chip || reducedMotion(win) || typeof node.animate !== 'function') {
@@ -1014,7 +1019,7 @@ export function CompanionApp({
       <div class="companion-tabs" role="tablist" aria-label="Companion agents">
         ${chipAgents.map((agent) => {
           const tabStatus = statusOf(agent);
-          const selected = agent.agentId === activeId;
+          const selected = agent.agentId === activeId && !showQueue;
           return html`<div key=${agent.agentId} class=${`companion-tab${selected ? ' selected' : ''}`}>
             <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'}
               title=${`${agent.name}: ${companionStatusLabel(tabStatus)}`}
@@ -1046,6 +1051,9 @@ export function CompanionApp({
       onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
     <div class="companion-body">
       ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
+        ${activeApprovals.length > 0 && html`<p class="companion-decide-note" role="status">${activeAgent.name} also has
+          ${activeApprovals.length === 1 ? ' an approval' : ` ${activeApprovals.length} approvals`} waiting:
+          <button type="button" onClick=${() => setDeciding(false)}>show</button></p>`}
         ${queue.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} from=${askerName(decision)} />`)}
       </div>`}
       ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
