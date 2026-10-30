@@ -165,6 +165,10 @@
   content: ''; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px;
   border-right: 2px solid #484f58; border-bottom: 2px solid #484f58;
 }
+.companion-resize-corner { position: absolute; width: 12px; height: 12px; touch-action: none; z-index: 2; }
+.companion-resize-corner.nw { left: 0; top: 0; cursor: nwse-resize; }
+.companion-resize-corner.ne { right: 0; top: 0; cursor: nesw-resize; }
+.companion-resize-corner.sw { left: 0; bottom: 0; cursor: nesw-resize; }
 .companion-window.snapped-right .companion-resize { left: 0; right: auto; top: 0; bottom: 0; width: 6px; height: auto; cursor: ew-resize; }
 .companion-window.snapped-left .companion-resize { right: 0; top: 0; bottom: 0; width: 6px; height: auto; cursor: ew-resize; }
 .companion-window.snapped-bottom .companion-resize { left: 0; right: 0; top: 0; width: auto; height: 6px; cursor: ns-resize; }
@@ -276,14 +280,6 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-input .companion-annotate:hover { border-color: var(--cmp-amber); }
 
 /* One-click starters for the Steward (guided setup, tcl-bifqbb). */
-.companion-starters { flex: none; display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 8px 0; border-top: 1px solid var(--cmp-line); }
-.companion-starters + .companion-input { border-top: 0; }
-.companion-starters button {
-  padding: 3px 10px; border-radius: 12px; border: 1px solid #6e40c9; background: #6e40c91f;
-  color: var(--cmp-text); font: inherit; font-size: 11px; cursor: pointer;
-}
-.companion-starters button:hover, .companion-starters button:focus-visible { background: #6e40c955; outline: none; }
-.companion-starters button:disabled { opacity: .5; cursor: default; }
 
 /* Voice output toggle (tcl-q3qcfw). */
 .companion-controls .companion-voice.on { color: var(--cmp-green); }

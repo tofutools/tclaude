@@ -768,20 +768,6 @@ test('Tab stays inside the annotation layer', async (t) => {
   assert.equal(doc.activeElement, first, 'focus that escaped comes back');
 });
 
-test('the Steward tab offers one-click setup starters that send with the view attached', async (t) => {
-  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([S]) });
-  const { view, harness, requests, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }) });
-  await harness.act(() => controller().open(S));
-  const starter = harness.getByRole(view.container, 'button', { name: 'Set up my repos' });
-  await harness.act(async () => { starter.click(); await new Promise((r) => setTimeout(r, 0)); });
-  const mail = requests.find((r) => r.url === '/api/operator-message');
-  assert.equal(mail.body.to, S);
-  assert.match(mail.body.body, /^Help me set up a group for each of my repos.*\n\n\[dashboard view: Processes \(/s);
-  // Typing hides the starters; other agents never show them.
-  await harness.input(view.container.querySelector('input.companion-draft'), 'x');
-  assert.equal(view.container.querySelector('.companion-starters'), null);
-});
-
 test('voice output speaks a reply when the turn ends and says when the agent needs you', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const spoken = [];
@@ -962,4 +948,51 @@ test('elevated access shows on the agent and ends in one click', async (t) => {
   assert.equal(calls.find((call) => call.method === 'DELETE').url, `/api/sudo?agent_id=${encodeURIComponent(steward.agentId)}`);
   const cleared = calls.find((call) => call.url === '/api/permissions');
   assert.deepEqual(JSON.parse(cleared.body), { conv: steward.convId, overrides: { 'host.read': 'default' } });
+});
+
+test('a click outside closes the add menu, and the + button still toggles it', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const plus = view.container.querySelector('.companion-add');
+  await harness.act(async () => { plus.click(); await new Promise((r) => setTimeout(r, 0)); });
+  const menu = view.container.querySelector('.companion-menu');
+  assert.ok(menu);
+  const press = (node) => harness.act(async () => {
+    node.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await press(menu);
+  await press(plus);
+  assert.ok(view.container.querySelector('.companion-menu'), 'the menu and its button do not count as outside');
+  await press(harness.window.document.body);
+  assert.equal(view.container.querySelector('.companion-menu'), null);
+});
+
+test('every corner of a floating window resizes it, and the opposite corner stays put', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const corners = [...view.container.querySelectorAll('.companion-resize-corner')].map((node) => node.className.split(' ').pop());
+  assert.deepEqual(corners.sort(), ['ne', 'nw', 'sw']);
+  assert.ok(view.container.querySelector('.companion-resize'), 'and the south-east grip');
+  const frame = view.container.querySelector('.companion-window');
+  const box = () => ['left', 'top', 'width', 'height'].map((key) => parseFloat(frame.style[key]));
+  const drag = (corner, dx, dy) => harness.act(async () => {
+    const handle = view.container.querySelector(`.companion-resize-corner.${corner}`);
+    const event = (type, x, y) => Object.assign(new harness.window.Event(type, { bubbles: true }), { button: 0, pointerId: 1, clientX: x, clientY: y });
+    handle.dispatchEvent(event('pointerdown', 300, 300));
+    handle.dispatchEvent(event('pointermove', 300 + dx, 300 + dy));
+    handle.dispatchEvent(event('pointerup', 300 + dx, 300 + dy));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const [x0, y0, w0, h0] = box();
+  await drag('nw', -20, -10);
+  assert.deepEqual(box(), [x0 - 20, y0 - 10, w0 + 20, h0 + 10]);
+  await drag('nw', 0, -5000);
+  const [, top, , height] = box();
+  assert.equal(top, 0, 'the top edge stops at the viewport');
+  assert.equal(top + height, y0 + h0, 'and the bottom edge stays');
 });

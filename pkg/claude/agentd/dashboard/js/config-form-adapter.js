@@ -244,7 +244,7 @@ function setAskSelectValue(sel, value) {
   setSelectValue(sel, value);
 }
 
-// populateScribeProfileSelect fills the Scribe-defaults Profile dropdown from
+// populateProfileSelect fills the Scribe and Steward Profile dropdowns from
 // the saved spawn profiles (the Groups-tab profiles), selecting `selected`. A
 // chosen profile is the launch shape a FRESHLY summoned scribe adopts
 // (JOH-371) — the harness-independent way to run scribes on Codex as well as
@@ -252,17 +252,17 @@ function setAskSelectValue(sel, value) {
 // those. The fetch is async + best-effort: an endpoint error leaves just the
 // "(default)" option. A hand-set profile that's since been deleted is kept as a
 // "(missing)" option so the form shows what's on disk, not a silent reset.
-async function populateScribeProfileSelect(selected) {
+async function populateProfileSelect(selector, defaultLabel, selected) {
   const bindingEpoch = configBindingEpoch;
-  const sel = $('#scribe-profile');
+  const sel = $(selector);
   if (!sel) return;
   const selectedName = (selected || '').trim();
 
   // Seed the selection SYNCHRONOUSLY before the async list load, so a Save that
   // races ahead of loadProfiles() still reads the real profile name off
-  // #scribe-profile rather than an empty value (which assembleConfig would
-  // persist as "delete scribe.profile", silently clearing a saved profile).
-  replaceOptions(sel, [['', '(default — harness default)']]);
+  // the select rather than an empty value (which assembleConfig would persist
+  // as a delete, silently clearing a saved profile).
+  replaceOptions(sel, [['', defaultLabel]]);
   if (selectedName) {
     const pending = document.createElement('option');
     pending.value = selectedName;
@@ -273,8 +273,8 @@ async function populateScribeProfileSelect(selected) {
 
   let profiles = [];
   try { profiles = await loadProfiles(); } catch { profiles = []; }
-  if (bindingEpoch !== configBindingEpoch || sel !== $('#scribe-profile')) return;
-  replaceOptions(sel, [['', '(default — harness default)'], ...profileChoices(profiles).map(choice => [choice.value, choice.label])]);
+  if (bindingEpoch !== configBindingEpoch || sel !== $(selector)) return;
+  replaceOptions(sel, [['', defaultLabel], ...profileChoices(profiles).map(choice => [choice.value, choice.label])]);
   if (selectedName && !findProfileByHandle(profiles, selectedName)) {
     const o = document.createElement('option');
     o.value = selectedName;
@@ -622,7 +622,8 @@ function populateConfigForm(cfg) {
   // with (JOH-371). Options are the saved spawn profiles; "(default)" (empty)
   // means the harness default. Async (fetches the profile list), like the ask
   // profile select above.
-  void populateScribeProfileSelect((cfg.scribe || {}).profile);
+  void populateProfileSelect('#scribe-profile', '(default — harness default)', (cfg.scribe || {}).profile);
+  void populateProfileSelect('#cfg-steward-profile', '(global default profile)', (cfg.steward || {}).profile);
   setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
   setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
   $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
@@ -1006,6 +1007,8 @@ function assembleConfig() {
   const stewardWrites = controlValue($('#cfg-steward-writes'));
   if (stewardReads && stewardReads !== 'operator') steward.reads = stewardReads; else delete steward.reads;
   if (stewardWrites && stewardWrites !== 'messaging') steward.writes = stewardWrites; else delete steward.writes;
+  const stewardProfile = controlValue($('#cfg-steward-profile')).trim();
+  if (stewardProfile) steward.profile = stewardProfile; else delete steward.profile;
   const stewardName = controlValue($('#cfg-steward-name')).trim();
   if (stewardName) steward.name = stewardName; else delete steward.name;
   const stewardPrompt = controlValue($('#cfg-steward-startup-prompt')).trim();

@@ -213,3 +213,26 @@ func TestSteward_SnapshotListsElevatedAccess(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermAgentSpawn, "test"))
 	assert.Equal(t, []string{agentd.PermAgentSpawn}, elevated()[agentID].Standing)
 }
+
+// Config picks the Steward's launch profile; unset, the group carries none, so
+// the global default applies.
+func TestSteward_ProfileFromConfig(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	summon := func() {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+			"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+		})))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	}
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Scribe = &config.ScribeConfig{Profile: "scribes"}
+	require.NoError(t, config.Save(cfg))
+	summon()
+	g, err := db.GetAgentGroupByName("steward")
+	require.NoError(t, err)
+	assert.Empty(t, g.DefaultProfile, "the scribe profile is not the Steward's")
+}
