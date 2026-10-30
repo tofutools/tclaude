@@ -690,6 +690,17 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     return changed;
   }
 
+  // arrangeBoardPanes puts board tabs in the given order, in the positions board
+  // tabs hold now: a board a deep link opened first must not take the lead for
+  // good after a reload. Other tabs, and tab groups, stay where they are.
+  function arrangeBoardPanes(ids) {
+    const rank = new Map(ids.map((id, index) => [id, index]));
+    const boards = panes.value.filter((pane) => pane.seed.board)
+      .sort((a, b) => (rank.get(a.seed.board) ?? ids.length) - (rank.get(b.seed.board) ?? ids.length));
+    let next = 0;
+    commitPaneOrder(panes.value.map((pane) => (pane.seed.board ? boards[next++] : pane)));
+  }
+
   // setPaneLabel follows a board's title, as syncAgentLabels follows an agent's.
   function setPaneLabel(key, label) {
     const pane = panes.peek().find((candidate) => candidate.key === key);
@@ -740,6 +751,7 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     findPaneKey,
     syncAgentLabels,
     setPaneLabel,
+    arrangeBoardPanes,
     requestReveal,
     boardMenuRequest,
     requestBoardMenu,

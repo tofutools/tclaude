@@ -1,0 +1,179 @@
+// board-overlay.js -- a board in a floating window of its own (tcl-h4y60w),
+// apart from the companion window, so the operator can work in both at once.
+// It floats over every dashboard view, and moves like the companion: drag by
+// the title bar, resize from any corner, stay reachable when the browser
+// shrinks, and keep its place. It does not snap to edges.
+//
+// The two share the companion's z-index layer: the one last clicked is on top
+// (board-overlay-front on the body, see board.css). Equal layers fall back to
+// DOM order, which leaves the companion in front until then.
+
+import { h, render } from 'preact';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import htm from 'htm';
+import { BoardEditor, BoardsGate } from './board-island.js';
+import { boardOverlay, boardOverlayRaise, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
+import { COMPANION_FOOTER_ROOM, clampPlacement, parsePlacement } from './companion-model.js';
+import { openInCompanion } from './companion-facade.js';
+import { isBoardId } from './board-model.js';
+
+const html = htm.bind(h);
+
+export const BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.board-overlay.placement';
+// In session storage, as the companion's open state is: a reload brings the
+// window back, another browser tab does not get a second one.
+export const BOARD_OVERLAY_OPEN_KEY = 'tclaude.dash.board-overlay.open';
+const DEFAULT_W = 760;
+const DEFAULT_H = 540;
+const CORNERS = ['se', 'nw', 'ne', 'sw'];
+
+// The bottom left, clear of the companion's default bottom right.
+export function defaultOverlayPlacement(viewport) {
+  const w = Math.min(DEFAULT_W, viewport.width - 48);
+  const h = Math.min(DEFAULT_H, viewport.height - 140);
+  return clampPlacement({ x: 24, y: viewport.height - h - COMPANION_FOOTER_ROOM - 56, w, h, snap: '' }, viewport);
+}
+
+// resizedPlacement is a corner drag: the corner opposite the drag stays put, as
+// it does for the companion, including where the size or the viewport stops it.
+export function resizedPlacement(start, corner, dx, dy, viewport) {
+  const sized = clampPlacement({
+    ...start,
+    w: start.w + (corner.includes('w') ? -dx : dx),
+    h: start.h + (corner.includes('n') ? -dy : dy),
+  }, viewport);
+  const x = corner.includes('w') ? start.x + start.w - sized.w : start.x;
+  // The top edge stops at the viewport, or the bottom edge would move.
+  const height = corner.includes('n') ? Math.min(sized.h, start.y + start.h) : sized.h;
+  const y = corner.includes('n') ? start.y + start.h - height : start.y;
+  return clampPlacement({ ...sized, x, y, h: height }, viewport);
+}
+
+function viewportOf(win) {
+  return { width: win?.innerWidth || 1280, height: win?.innerHeight || 800 };
+}
+
+function sessionStore(win) {
+  try { return win?.sessionStorage ?? null; } catch { return null; }
+}
+
+function readOpen(win) {
+  try {
+    const saved = JSON.parse(sessionStore(win)?.getItem?.(BOARD_OVERLAY_OPEN_KEY) || 'null');
+    return isBoardId(saved?.id) ? { id: saved.id, label: typeof saved.label === 'string' ? saved.label : saved.id } : null;
+  } catch {
+    return null;
+  }
+}
+
+function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) {
+  const [placement, setPlacement] = useState(() => {
+    const viewport = viewportOf(win);
+    const saved = parsePlacement(prefs?.getItem?.(BOARD_OVERLAY_PLACEMENT_PREF));
+    return saved ? clampPlacement({ ...saved, snap: '' }, viewport) : defaultOverlayPlacement(viewport);
+  });
+  const gesture = useRef(null);
+
+  useEffect(() => {
+    const onResize = () => setPlacement((p) => clampPlacement(p, viewportOf(win)));
+    win?.addEventListener?.('resize', onResize);
+    return () => {
+      win?.removeEventListener?.('resize', onResize);
+      gesture.current?.();
+    };
+  }, [win]);
+
+  function drag(event, next) {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    const sx = event.clientX;
+    const sy = event.clientY;
+    let last = placement;
+    const move = (m) => {
+      last = next(m.clientX - sx, m.clientY - sy, viewportOf(win));
+      setPlacement(last);
+    };
+    const stop = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      gesture.current = null;
+    };
+    const up = () => {
+      stop();
+      try { prefs?.setItem?.(BOARD_OVERLAY_PLACEMENT_PREF, JSON.stringify(last)); } catch { /* the window stays where it is */ }
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+    gesture.current = stop;
+  }
+
+  function onTitlePointerDown(event) {
+    if (event.button !== 0 || event.target.closest?.('button')) return;
+    const start = placement;
+    drag(event, (dx, dy, viewport) => clampPlacement({ ...start, x: start.x + dx, y: start.y + dy }, viewport));
+  }
+
+  function onCornerPointerDown(event, corner) {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    const start = placement;
+    drag(event, (dx, dy, viewport) => resizedPlacement(start, corner, dx, dy, viewport));
+  }
+
+  return html`<div class="board-overlay" role="dialog" aria-label=${`Board ${board.label}`}
+    style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`}>
+    <header class="board-overlay-titlebar" onPointerDown=${onTitlePointerDown}>
+      <span class="board-overlay-title">✎ ${board.label}</span>
+      <button type="button" class="board-overlay-action" title="Move this board back to a tab of the Collab view"
+        onClick=${() => void returnBoardToTab()}>Back to a tab</button>
+      <button type="button" class="board-overlay-close" title="Close this window" aria-label=${`Close ${board.label}`}
+        onClick=${() => { boardOverlay.value = null; }}>×</button>
+    </header>
+    <${BoardEditor} key=${board.id} boardId=${board.id} snapshot=${snapshot} win=${win} fetchImpl=${fetchImpl}
+      notify=${notify} onTitle=${(title) => setBoardOverlayLabel(board.id, title)} onOpenAgent=${(agent) => openInCompanion(agent)} />
+    ${CORNERS.map((corner) => html`<div key=${corner} class=${`board-overlay-corner ${corner}`} aria-hidden="true"
+      onPointerDown=${(event) => onCornerPointerDown(event, corner)}></div>`)}
+  </div>`;
+}
+
+export function BoardOverlay({ snapshot, ...props }) {
+  const board = boardOverlay.value;
+  if (!board) return null;
+  return html`<${BoardsGate} snapshot=${snapshot}>
+    <${BoardOverlayWindow} board=${board} snapshot=${snapshot} ...${props} />
+  <//>`;
+}
+
+export function mountBoardOverlayIsland({
+  host, registerCleanup, snapshot, notify = () => {}, prefs = null,
+  fetchImpl = (...args) => globalThis.fetch(...args), win = globalThis.window,
+}) {
+  const doc = win?.document;
+  if (!boardOverlay.peek()) boardOverlay.value = readOpen(win);
+  const front = (on) => doc?.body?.classList?.toggle('board-overlay-front', on);
+  // Clicking either window brings it forward; clicking the page changes nothing.
+  const onPointerDown = (event) => {
+    const target = event.target;
+    if (target?.closest?.('.board-overlay')) front(true);
+    else if (target?.closest?.('.companion-window')) front(false);
+  };
+  doc?.addEventListener?.('pointerdown', onPointerDown, true);
+  const stopRaise = boardOverlayRaise.subscribe((request) => { if (request) front(true); });
+  const stopSave = boardOverlay.subscribe((board) => {
+    try {
+      if (board) sessionStore(win)?.setItem?.(BOARD_OVERLAY_OPEN_KEY, JSON.stringify(board));
+      else sessionStore(win)?.removeItem?.(BOARD_OVERLAY_OPEN_KEY);
+    } catch { /* it just does not come back after a reload */ }
+  });
+  render(html`<${BoardOverlay} snapshot=${snapshot} fetchImpl=${fetchImpl} notify=${notify} prefs=${prefs} win=${win} />`, host);
+  registerCleanup(() => {
+    render(null, host);
+    stopSave();
+    stopRaise();
+    doc?.removeEventListener?.('pointerdown', onPointerDown, true);
+    doc?.body?.classList?.remove('board-overlay-front');
+  });
+}

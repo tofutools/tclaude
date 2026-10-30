@@ -5,7 +5,7 @@ import { effect } from '@preact/signals';
 import { mountTerminalWidget } from './terminals-core.js';
 import { arcanePaletteEnabled } from './terminal-theme.js';
 import { terminalComposeShortcutAction } from './terminal-compose-route.js';
-import { openBoardPane, openWebWindowPane, registerTerminalShellController } from './terminals-tab.js';
+import { openWebWindowPane, registerTerminalShellController } from './terminals-tab.js';
 import { bindTerminalNavRouting } from './terminal-nav-route.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
@@ -28,6 +28,7 @@ import { openAccessPanel } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
+import { boardOverlay, openBoardPane } from './board-overlay-state.js';
 import { bindBoardTabs } from './terminal-board-tabs.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
@@ -428,7 +429,9 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     onTitle=${(title) => actions.setPaneLabel(pane.key, title)}
     headActions=${solo
       ? html`<button type="button" class="mux-btn" title="Move this board back to its dashboard tab" onClick=${() => void actions.reattachPane(pane.key)}>↩ dashboard</button>`
-      : html`<button type="button" class="mux-btn" title="Move this board to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>`} />` : null;
+      : html`
+        <button type="button" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>
+        <button type="button" class="mux-btn" title="Move this board to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>`} />` : null;
   return html`<div
     class=${`mux-pane mux-pane-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
     id=${pane.id}
@@ -732,6 +735,7 @@ function PaneTab({
     openMenu({
       kind: 'pane',
       key: pane.key,
+      board,
       groupId,
       label: pane.label,
       trigger: event.currentTarget,
@@ -1107,6 +1111,7 @@ function PaneContextMenu({
       .map((group) => item(`Add to “${group.name}”`, () => actions.assignPaneToGroup(menu.key, group.id))),
     ...(menu.groupId ? [item('Remove from group', () => actions.assignPaneToGroup(menu.key, null))] : []),
     separator,
+    ...(menu.board ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
     item('Detach tab', () => actions.popOutPane(menu.key)),
     separator,
     item('Close tab', () => actions.closePane(menu.key)),
@@ -1670,7 +1675,8 @@ function TerminalTabs({
     hadPanesRef.current = hasPanes;
     if (solo || !had || hasPanes) return undefined;
     const timer = setTimeout(() => {
-      if (!state.panes.value.length) leaveTerminalsAfterLastClose();
+      // A board that moved to the overlay leaves the operator working here.
+      if (!state.panes.value.length && !boardOverlay.peek()) leaveTerminalsAfterLastClose();
     }, 0);
     return () => clearTimeout(timer);
   }, [hasPanes, solo]);

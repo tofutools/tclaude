@@ -6,7 +6,6 @@ import { createAgentRosterReconciler, normalizeSeed } from './terminals-core.js'
 import { terminalAttachConfig } from './terminal-attach-config.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
-import { boardPaneSeed } from './board-model.js';
 
 let controller = null;
 let prepareRuntime = null;
@@ -43,12 +42,6 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
       },
     );
   });
-}
-
-// openBoardPane opens a collab board as a tab beside the terminals, or brings
-// its tab forward.
-export function openBoardPane(id, label, options) {
-  return openTerminalPane(boardPaneSeed(id, label), options);
 }
 
 // Returns openTerminalPane's promise (the opened pane, or null). Every existing

@@ -70,9 +70,10 @@ async function mountShell(t, snapshotValue) {
   const harness = await createPreactHarness(t);
   const hosts = installHosts(harness);
   const fake = fakeWidgets(harness);
-  const [{ mountTerminalsFeature }, controller, { dashboardState }, { dashPrefs }, { terminalShellState }, tabs] = await Promise.all([
+  const [{ mountTerminalsFeature }, controller, { openBoardPane }, { dashboardState }, { dashPrefs }, { terminalShellState }, tabs] = await Promise.all([
     harness.importDashboardModule('js/preact-loader.js'),
     harness.importDashboardModule('js/terminals-tab.js'),
+    harness.importDashboardModule('js/board-overlay-state.js'),
     harness.importDashboardModule('js/snapshot-store.js'),
     harness.importDashboardModule('js/prefs.js'),
     harness.importDashboardModule('js/terminal-shell-state.js'),
@@ -81,7 +82,7 @@ async function mountShell(t, snapshotValue) {
   const setSnapshot = (value) => dashboardState.publishLocalEdit(value);
   setSnapshot(snapshotValue);
   dashPrefs.removeItem(tabs.BOARD_TABS_PREF);
-  return { t, harness, ...hosts, fake, mountTerminalsFeature, controller, dashboardState, dashPrefs, state: terminalShellState, tabs, setSnapshot };
+  return { t, harness, ...hosts, fake, mountTerminalsFeature, controller, openBoardPane, dashboardState, dashPrefs, state: terminalShellState, tabs, setSnapshot };
 }
 
 async function start(env) {
@@ -104,10 +105,10 @@ test('a board opens as a tab beside a terminal, with its editor and no terminal 
   const requests = fakeDaemon(t);
   const env = await mountShell(t, COLLAB_ON);
   const cleanup = await start(env);
-  const { harness, host, controller, fake, badgeHost } = env;
+  const { harness, host, controller, openBoardPane, fake, badgeHost } = env;
   await harness.act(async () => {
     await controller.openTerminalPane({ ws: '/one', key: 'one', label: 'one', agent: 'agt_one' });
-    await controller.openBoardPane('plan', 'Release plan');
+    await openBoardPane('plan', 'Release plan');
     await wait();
   });
   assert.deepEqual(tabLabels(host), ['one', 'Release plan']);
@@ -188,11 +189,24 @@ test('board tabs come back after a reload, minus boards deleted since', async (t
   assert.equal(JSON.parse(dashPrefs.getItem(tabs.BOARD_TABS_PREF)).length, 2, 'unmounting the page forgets nothing');
 });
 
+test('a reload keeps the saved tab order when a deep link opened one board first', async (t) => {
+  fakeDaemon(t);
+  const env = await mountShell(t, COLLAB_ON);
+  env.dashPrefs.setItem(env.tabs.BOARD_TABS_PREF, JSON.stringify([{ id: 'plan', label: 'Plan' }, { id: 'map', label: 'Map' }]));
+  env.state.openPane({ board: 'map', label: 'Team map' });
+  env.state.openPane({ ws: '/one', key: 'one', label: 'one' }, { activate: false });
+  const cleanup = await start(env);
+  await env.harness.act(() => wait());
+  assert.deepEqual(tabLabels(env.host), ['Release plan', 'one', 'Team map'], 'boards take the saved order, around the terminal');
+  assert.equal(env.state.activeKey.value, 'board:map', 'the deep link stays the active tab');
+  cleanup();
+});
+
 test('a tab title follows the board', async (t) => {
   fakeDaemon(t, [{ id: 'plan', title: 'Renamed plan' }]);
   const env = await mountShell(t, COLLAB_ON);
   const cleanup = await start(env);
-  await env.harness.act(async () => { await env.controller.openBoardPane('plan', 'Old'); await wait(); });
+  await env.harness.act(async () => { await env.openBoardPane('plan', 'Old'); await wait(); });
   await env.harness.act(() => wait());
   assert.deepEqual(tabLabels(env.host), ['Renamed plan']);
   cleanup();
@@ -222,7 +236,7 @@ test('/boards/<id> opens that tab; bare /boards offers the list and heals to wha
   assert.equal(state.panes.value.length, 1, 'an invalid id opens nothing');
 
   // A board tab the operator switches to is a navigation, under its own route.
-  await harness.act(async () => { await env.controller.openBoardPane('map'); await wait(); });
+  await harness.act(async () => { await env.openBoardPane('map'); await wait(); });
   harness.fireEvent(harness.document.querySelector('nav [data-tab="terminals"]'), 'click');
   await harness.act(async () => { state.activatePane('board:plan'); await wait(); });
   assert.deepEqual(announced.at(-1), { location: { tab: 'boards', selection: 'plan' }, correction: false });
@@ -247,7 +261,7 @@ test('with features.collab off there is no board menu, nothing restored, and no 
   assert.deepEqual(requests.filter((r) => r.includes('/api/boards')), [], 'the daemon is not asked for what it refuses');
 
   // A handoff can still carry a board seed in: it does not stay.
-  await harness.act(async () => { await env.controller.openBoardPane('map', 'Team map'); await wait(); });
+  await harness.act(async () => { await env.openBoardPane('map', 'Team map'); await wait(); });
   assertAbsent(host.querySelector('svg.board-canvas'), 'the editor stays out');
   await harness.act(async () => { setSnapshot({ collab_enabled: false, agents: [], generated_at: 'x' }); await wait(); });
   assert.deepEqual(tabLabels(host), []);

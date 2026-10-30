@@ -3,6 +3,7 @@ import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { shellToast } from './shell-state.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
+import { openBoardOverlay } from './board-overlay-state.js';
 
 export function createTerminalShellActions({
   state,
@@ -231,6 +232,16 @@ export function createTerminalShellActions({
     return true;
   }
 
+  // openPaneInOverlay moves a board from its tab into the floating overlay. The
+  // tab's editor saves what it holds as it goes.
+  async function openPaneInOverlay(key) {
+    const pane = state.panes.value.find((candidate) => candidate.key === key);
+    if (disposed || !pane?.seed.board) return false;
+    await closePane(key);
+    openBoardOverlay(pane.seed.board, pane.label);
+    return true;
+  }
+
   function reattachPane(key) {
     if (disposed || typeof onReattachPane !== 'function') return Promise.resolve(false);
     const pane = state.panes.value.find((candidate) => candidate.key === key);
@@ -273,6 +284,7 @@ export function createTerminalShellActions({
     closeForAgents,
     focusForSelectors,
     popOutPane,
+    openPaneInOverlay,
     reattachPane,
     setArcanePaletteEnabled,
     dispose,

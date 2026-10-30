@@ -73,6 +73,7 @@ export function bindBoardTabs({
       if (known && !known.has(id)) continue;
       state.openPane({ ...boardPaneSeed(id, known?.get(id) || label), restored: true }, { reveal: false, activate: false });
     }
+    state.arrangeBoardPanes(tabs.map((tab) => tab.id));
     saving = true;
     save(state.panes.peek());
   }

@@ -15,6 +15,7 @@
 .board-list.compact { padding: 10px; width: 300px; max-height: min(60vh, 460px); overflow: auto; }
 .board-list.compact .board-new { flex-wrap: nowrap; margin: 0 0 10px; }
 .board-list.compact .board-new input { flex: 1 1 auto; min-width: 0; }
+.board-list.compact .board-new button { flex: none; white-space: nowrap; }
 .board-list.compact .board-cards { grid-template-columns: 1fr; gap: 6px; }
 .board-list.compact .board-card { padding: 8px 10px; }
 .board-list.compact .board-muted { margin: 4px 0; font-size: 12px; }
@@ -134,3 +135,38 @@
   border: 1px solid var(--board-line); border-radius: 14px; background: var(--board-bar); color: var(--board-text);
   font: inherit; font-size: 12px; padding: 3px 8px; max-width: 180px;
 }
+
+/* The overlay (js/board-overlay.js, tcl-h4y60w): a board in its own window, on
+   the companion's layer. Whichever was clicked last is on top. */
+.board-overlay {
+  position: fixed; z-index: 950; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--board-bg); color: var(--board-text); border: 1px solid #3d4451; border-radius: 10px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .6);
+}
+body.board-overlay-front .board-overlay { z-index: 951; }
+.board-overlay:focus-within { border-color: var(--board-blue); }
+.board-overlay-titlebar {
+  display: flex; align-items: center; gap: 8px; flex: none; padding: 4px 6px 4px 12px; cursor: move;
+  background: var(--board-bar); border-bottom: 1px solid var(--board-line); touch-action: none; user-select: none;
+}
+.board-overlay-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.board-overlay-action {
+  flex: none; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--board-line);
+  background: #21262d; color: var(--board-text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.board-overlay-close {
+  flex: none; width: 26px; height: 26px; border: 0; border-radius: 6px; background: none;
+  color: var(--board-muted); font-size: 15px; cursor: pointer;
+}
+.board-overlay-action:hover, .board-overlay-close:hover { background: #2d333b; color: var(--board-text); }
+.board-overlay .board-title { display: none; }
+.board-overlay .board-canvas-wrap { min-height: 80px; margin: 0 8px 8px; }
+.board-overlay-corner { position: absolute; width: 12px; height: 12px; touch-action: none; z-index: 2; }
+.board-overlay-corner.nw { left: 0; top: 0; cursor: nwse-resize; }
+.board-overlay-corner.ne { right: 0; top: 0; cursor: nesw-resize; }
+.board-overlay-corner.sw { left: 0; bottom: 0; cursor: nesw-resize; }
+.board-overlay-corner.se { right: 0; bottom: 0; cursor: nwse-resize; }
+/* As for the companion: the dialogs it opens stay above it, and it steps aside
+   while the operator annotates the page. */
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show) .board-overlay { z-index: 90; }
+body.companion-annotating .board-overlay { visibility: hidden; }

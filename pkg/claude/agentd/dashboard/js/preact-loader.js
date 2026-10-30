@@ -354,6 +354,31 @@ export function mountCompanionFeature(dependencies = {}) {
   return mountIslandDescriptor(companionDescriptor, dependencies);
 }
 
+// A board in its own floating window (tcl-h4y60w). The boards themselves are
+// tabs of the terminal shell.
+const boardOverlayDescriptor = createIslandDescriptor({
+  name: 'board-overlay',
+  label: 'Board overlay',
+  hosts: { host: '#board-overlay-root' },
+  failureClass: 'board-overlay-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./board-overlay.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const prefsModule = import('./prefs.js');
+    const [{ mountBoardOverlayIsland }, { dashboardState }, { dashPrefs }] =
+      await Promise.all([islandModule, snapshotStoreModule, prefsModule]);
+    return {
+      mount: (registerCleanup) => mountBoardOverlayIsland({
+        host, registerCleanup, snapshot: dashboardState.snapshot, notify: dependencies.notify, prefs: dashPrefs,
+      }),
+    };
+  },
+});
+
+export function mountBoardOverlayFeature(dependencies = {}) {
+  return mountIslandDescriptor(boardOverlayDescriptor, dependencies);
+}
+
 // Terminal chrome and open state are one ownership unit across the nav badge,
 // dashboard pane stack. xterm itself remains behind
 // the opaque host adapter loaded by terminal-shell-island.js.

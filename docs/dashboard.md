@@ -752,7 +752,9 @@ cancels and **Ctrl+Z** undoes the last stroke.
 Boards are shared drawing boards. They open as tabs of the Collab view, beside
 the terminals: the **＋** at the right of the tab strip lists them and creates
 new ones, and `/boards/<id>` opens one directly. A board tab reorders, groups
-and detaches like a terminal tab, and comes back after a reload. You draw
+and detaches like a terminal tab, and comes back after a reload. **Open in
+overlay** floats a board in its own window beside the companion, and **Back to
+a tab** returns it. You draw
 shapes, arrows, text and freehand strokes, and invited agents read the board as shapes and as
 an image and draw back with `tclaude agent board` (see
 [boards.md](boards.md)). An agent's edits flash as they arrive. When your

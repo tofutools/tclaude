@@ -20,6 +20,13 @@ tab: it reorders, joins tab groups, and detaches into its own browser window
 (**⧉ tab**, or drag it off the strip), which **↩ dashboard** sends back. Board
 tabs come back after a reload, except for boards deleted since.
 
+**Open in overlay**, on the board or its tab's right-click menu, floats the
+board in its own window over every dashboard view, apart from the companion
+window, so you can work in both at once. Drag it by its title bar and resize it
+from any corner; it keeps its place. Clicking the overlay or the companion
+brings that one forward. **Back to a tab** returns the board to the strip. One
+board floats at a time: opening another sends the first back to a tab.
+
 ## Permissions
 
 Boards are global, not scoped to a group: `boards.read` and `boards.write` cover
