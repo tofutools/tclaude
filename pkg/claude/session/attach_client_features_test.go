@@ -77,14 +77,15 @@ func (r *versionedRecordingTmux) Command(args ...string) *exec.Cmd {
 
 // A native terminal gets OSC 8 from its own TERM, with no env var involved, so a
 // labelled link opens there as it does in the dashboard. tmux before 3.2 refuses
-// -T outright, so there the flag must stay away or every attach would fail.
+// -T outright and hyperlinks arrived in 3.4, so below that the flag must stay away.
 func TestNativeAttachEnablesHyperlinks(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		want    []string
 	}{
 		{"tmux 3.7b", []string{"-T", clcommon.TmuxHyperlinksFeature, "attach-session", "-t", "=spwn-abc123"}},
-		{"tmux 3.2a", []string{"-T", clcommon.TmuxHyperlinksFeature, "attach-session", "-t", "=spwn-abc123"}},
+		{"tmux 3.4", []string{"-T", clcommon.TmuxHyperlinksFeature, "attach-session", "-t", "=spwn-abc123"}},
+		{"tmux 3.3a", []string{"attach-session", "-t", "=spwn-abc123"}},
 		{"tmux 3.1c", []string{"attach-session", "-t", "=spwn-abc123"}},
 		{"tmux next-3.8", []string{"attach-session", "-t", "=spwn-abc123"}},
 	} {

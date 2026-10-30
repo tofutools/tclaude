@@ -165,8 +165,9 @@ var tmuxHyperlinkTerms = []string{"xterm*", "alacritty*", "foot*", "wezterm*", "
 // than running the harness outside tmux, where it reaches the same terminal.
 //
 // The version gate is load-bearing: tmux before 3.2 has no -T and refuses to
-// start the client, so an unguarded flag would break every attach. Anything that
-// does not parse as a version, like a `next-3.5` build, keeps the safe default.
+// start the client, so an unguarded flag would break every attach, and the
+// feature itself arrived in 3.4. Anything that does not parse as a version, like
+// a `next-3.5` build, keeps the safe default.
 func NativeTmuxClientFeatureArgs(term string) []string {
 	if !slices.ContainsFunc(tmuxHyperlinkTerms, func(pattern string) bool {
 		matched, err := path.Match(pattern, term)
@@ -175,7 +176,7 @@ func NativeTmuxClientFeatureArgs(term string) []string {
 		return nil
 	}
 	version, err := Default.Command("-V").Output()
-	if err != nil || !TmuxVersionAtLeast(string(version), 3, 2) {
+	if err != nil || !TmuxVersionAtLeast(string(version), 3, 4) {
 		return nil
 	}
 	return TmuxClientFeatureArgs(TmuxHyperlinksFeature)
