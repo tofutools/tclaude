@@ -1006,11 +1006,13 @@ export function CompanionApp({
     const doc = win?.document;
     if (!doc) return undefined;
     const onKey = (event) => {
-      if (event.target?.closest?.('.companion-term-host')) lastTerminalKey.current = Date.now();
+      if (!event.target?.closest?.('.companion-term-host')) return;
+      lastTerminalKey.current = Date.now();
+      speaker.cancel();
     };
     doc.addEventListener('keydown', onKey, true);
     return () => doc.removeEventListener('keydown', onKey, true);
-  }, [win]);
+  }, [win, speaker]);
 
   // openForCue opens the agent a cue hands over. While the operator is
   // typing or dictating to the current tab it is only pinned, never switched
@@ -1263,14 +1265,15 @@ export function CompanionApp({
       <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
       </label>
-      <input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
-        placeholder=${`Message ${activeAgent.name} (queued to its inbox; or type in the terminal above)`}
-        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />
+      ${!draft && !listening && html`<span class="companion-input-gap"></span>`}
+      ${(draft || listening) && html`<input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
+        placeholder="Listening…"
+        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />`}
       ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
         aria-label=${`Dictate a message to ${activeAgent.name}`}
         title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
         onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
-      <button type="submit" disabled=${sending || !draft.trim()}>Send</button>
+      ${(draft || listening) && html`<button type="submit" disabled=${sending || !draft.trim()}>Send</button>`}
       <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
     </form>`}
