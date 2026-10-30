@@ -208,6 +208,10 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	if len(body.Options) > 0 && callerConv == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a decision needs an agent to send the pick back to; options are for agents")
+		return
+	}
 	m, fromTitle, groupName := newHumanMessageRow(callerConv, body.Subject, body.Body, "", "", "")
 	m.Options, m.Recommended = body.Options, body.Recommended
 	id, err := db.InsertHumanMessage(m)
@@ -255,6 +259,10 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	meta.Name = sanitizeExportFilename(meta.Name)
 	if err := meta.normalize(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if len(meta.Options) > 0 && callerConv == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a decision needs an agent to send the pick back to; options are for agents")
 		return
 	}
 	// The body may be empty here — and only here. This route always carries at
@@ -1176,6 +1184,7 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 		// dashboard JS calls .map() on it directly.
 		return []dashboardHumanMessage{}, 0
 	}
+	loaded := len(rows)
 	// Decisions still waiting on the operator ride along even once read, so
 	// the companion window can keep offering their buttons.
 	if undecided, err := db.ListUndecidedHumanMessages(snapshotRecentHumanMessages); err == nil {
@@ -1191,7 +1200,7 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].ID > rows[j].ID })
 	}
 	out, unread := humanMessageViews(rows)
-	if len(rows) == snapshotMaxHumanMessages {
+	if loaded == snapshotMaxHumanMessages {
 		if _, all, _, err := db.HumanMessageStats(); err == nil {
 			unread = all
 		}
@@ -1664,6 +1673,22 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
 		return
 	}
+	// A decision is claimed before its mail is queued: only the first pick
+	// counts, so two clicks racing from two views cannot both reach the agent.
+	if decision != "" {
+		claimed, err := db.DecideHumanMessage(body.ID, decision)
+		if err != nil || !claimed {
+			if durableDir != "" {
+				_ = os.RemoveAll(durableDir)
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", "record decision: "+err.Error())
+			} else {
+				writeError(w, http.StatusConflict, "decided", "this decision has already been answered")
+			}
+			return
+		}
+	}
 	// Deliver as a sender-less operator message on the universal inbox.
 	// The async worker owns readiness/hold checks, retries, and consumption.
 	id, pending, err := queueRegularAgentMessageWithAttachments(&db.AgentMessage{
@@ -1679,6 +1704,11 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		if durableDir != "" {
 			_ = os.RemoveAll(durableDir)
 		}
+		if decision != "" {
+			if err := db.UndecideHumanMessage(body.ID); err != nil {
+				slog.Warn("reply: release decision after failed delivery", "id", body.ID, "error", err)
+			}
+		}
 		if full, ok := agentMessageQueueFull(err); ok {
 			writeQueueFull(w, target, full)
 			return
@@ -1690,11 +1720,6 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		_ = removeDaemonStagedAttachmentBatch(
 			filepath.Join(spawnAttachmentsBaseDir(), body.AttachmentToken),
 		)
-	}
-	if decision != "" {
-		if _, err := db.DecideHumanMessage(body.ID, decision); err != nil {
-			slog.Warn("reply: record decision failed", "id", body.ID, "error", err)
-		}
 	}
 	// Replying means the operator has handled this notification — mark the
 	// original read (idempotent). Merely opening the reader deliberately does

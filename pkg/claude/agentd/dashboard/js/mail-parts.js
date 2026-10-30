@@ -363,7 +363,9 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
   const [busy, setBusy] = useState(0);
   useEffect(() => { setBusy(0); }, [message.id]);
   const options = Array.isArray(message.options) ? message.options : [];
-  if (options.length < 2) return null;
+  // A decision is answered back to the agent that asked; without one there
+  // is nobody to send the pick to.
+  if (options.length < 2 || (!message.from_conv && !message.from_agent && !message.decision)) return null;
   if (message.decision) {
     return html`<div class="mail-decision decided" role="group" aria-label="Decision">
       <span class="mail-decision-label">Decided:</span> <b>${message.decision}</b>

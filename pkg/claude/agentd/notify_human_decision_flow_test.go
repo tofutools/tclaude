@@ -91,6 +91,28 @@ func TestHumanDecision_PickComesBackAsMail(t *testing.T) {
 	again := postDashReply(t, mux, map[string]any{"id": created.ID, "choice": 1})
 	require.Equal(t, http.StatusConflict, again.Code, again.Body.String())
 
+	// A pick racing another view's pick loses at the claim and sends nothing.
+	raced, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "race?", Options: []string{"a", "b"}})
+	require.NoError(t, err)
+	claimed, err := db.DecideHumanMessage(raced, "a")
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, db.UndecideHumanMessage(raced))
+	claimed, err = db.DecideHumanMessage(raced, "b")
+	require.NoError(t, err)
+	require.True(t, claimed, "a released decision can be answered again")
+	before, err := db.ListAgentMessagesForConv(sender, 100)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusConflict, postDashReply(t, mux, map[string]any{"id": raced, "choice": 1}).Code)
+	after, err := db.ListAgentMessagesForConv(sender, 100)
+	require.NoError(t, err)
+	require.Len(t, after, len(before), "the losing pick is not mailed")
+
+	// Only an agent can ask: nobody would get the human's own pick back.
+	human := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "x", "options": []string{"a", "b"}})))
+	require.Equal(t, http.StatusBadRequest, human.Code, human.Body.String())
+
 	// A plain notification is not a decision.
 	plain, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "fyi"})
 	require.NoError(t, err)

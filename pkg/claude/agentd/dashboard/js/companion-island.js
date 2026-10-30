@@ -733,7 +733,7 @@ export function CompanionApp({
       if (kind === 'needs') {
         const now = Date.now();
         if (!claim(`${VOICE_PREF}.needs.${agentId}`, String(now), (prev) => now - Number(prev) > 5000)) continue;
-        const decision = decisionsFor(snapshot.value, agent)[0];
+        const decision = decisionsFor(snapshot.value, agent).at(-1);
         if (!quiet()) speaker.speak(decision ? speakableText(decisionSpeech(agent, decision), 400)
           : `${agent.name} needs you${agent.detail ? `: ${speakableText(agent.detail, 120)}` : '.'}`);
         continue;
