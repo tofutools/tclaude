@@ -54,6 +54,7 @@ export function isAgentId(value) {
 // over a stale one so the status reflects the running session.
 export function companionAgents(snapshot) {
   const out = new Map();
+  const customName = String(snapshot?.steward_name || '');
   const add = (member, steward, scribe) => {
     const agentId = member?.agent_id;
     if (!isAgentId(agentId)) return;
@@ -62,7 +63,7 @@ export function companionAgents(snapshot) {
     out.set(agentId, Object.freeze({
       agentId,
       convId: String(member.conv_id || ''),
-      name: String(member.title || member.name || agentId.slice(0, 12)),
+      name: (steward && customName) || String(member.title || member.name || agentId.slice(0, 12)),
       online: member.online === true,
       status: String(member.state?.status || ''),
       detail: String(member.state?.status_detail || ''),
@@ -329,7 +330,7 @@ export function stewardBrief() {
     '  list of what they circled, underlined or pointed at, plus their note. Answer about those',
     '  controls, and point back with `tclaude agent guide show --target` when that helps.',
     '',
-    'Your access is at the end of this brief. Before changing anything else, show a short concrete plan. For a',
+    'Your access is near the end of this brief. Before changing anything else, show a short concrete plan. For a',
     'multi-step setup, ask for exactly the permissions the plan needs, once, for a bounded time:',
     '`tclaude agent sudo request <slug>... --duration 30m --reason "<the plan, step by step>"`.',
     'The operator approves or denies it as a card in your companion window. For a single change,',

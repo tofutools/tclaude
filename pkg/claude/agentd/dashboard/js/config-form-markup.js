@@ -901,6 +901,17 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           </${ConfigSelect}>
         </${Setting}>
       </${Group}>
+      <${Group} title="Name and startup">
+        <${Setting} title="Name" forId="cfg-steward-name" k="steward.name"
+          summary="What you call your Steward. Shown in the companion, and agents can message it by this name as well as by steward.">
+          <${ConfigInput} type="text" id="cfg-steward-name" maxlength="32" spellcheck="false" aria-label="Steward name" placeholder="Steward" />
+        </${Setting}>
+        <${Setting} title="Startup prompt" forId="cfg-steward-startup-prompt" wide k="steward.startup_prompt"
+          summary="Your own instructions, added to what every new Steward is told when it starts. A running Steward keeps the prompt it started with.">
+          <${ConfigTextarea} id="cfg-steward-startup-prompt" class="cfg-json" rows="6" maxlength="10000" aria-label="Steward startup prompt"
+            placeholder="Optional. For example: Reply in Swedish. Start every brief with open pull requests."></${ConfigTextarea}>
+        </${Setting}>
+      </${Group}>
     </${Panel}>
 
     <${Panel} id="experimental" active=${active}>

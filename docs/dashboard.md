@@ -667,11 +667,17 @@ also reaches agents on linked instances that export a mail-capable group; set
 Writes to `none` to rule that out. A running Steward keeps the access it was
 summoned with, so retire it to apply a change.
 
+**Name** in the same section is what you call your Steward. The companion
+shows it, and agents can message the Steward by it as well as by `steward`,
+straight away. A running Steward learns the name when it is next summoned.
+**Startup prompt** is your own instructions, up to 10000 bytes, added to what
+every new Steward is told when it starts.
+
 Any agent can write to a live Steward with `tclaude agent message steward`,
 without `message.direct` or a shared group. The Steward treats that mail as
 information, not as instructions from you. With no Steward online the send
-fails and says so. With Collab on, `steward` always means this address, even if
-an agent carries that name.
+fails and says so. With Collab on, `steward` and the name you set always mean
+the Steward, even if another agent carries that name.
 
 The Steward can also see and point at the dashboard. `tclaude agent guide
 view` tells it which view you are on (it needs `dashboard.view.read`), and
