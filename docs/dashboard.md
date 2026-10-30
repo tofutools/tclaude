@@ -644,6 +644,9 @@ revokes what the agent holds itself, with no confirmation; it can ask again.
 Access from a group or from owning one is listed but stays, since other
 members share it: change that in Groups.
 
+In the window, ✉ or Ctrl/Cmd+M sends the active agent a queued message, as in
+the Terminals tab, and ⇄ morphs it onto another harness, model or profile.
+
 Give the Steward an idea and it follows the bundled `tclaude-fleet`
 skill. It restates the idea and asks what it cannot find out itself, sketching
 on a board when the shape matters. It writes a brief, then starts one worker

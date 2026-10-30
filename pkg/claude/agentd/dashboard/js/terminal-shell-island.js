@@ -1611,6 +1611,8 @@ function TerminalTabs({
   useEffect(() => {
     if (!composeMessageAvailable) return undefined;
     const onComposeShortcut = (event) => {
+      // The companion window answers for its own terminal.
+      if (event.target?.closest?.('.companion-window')) return;
       const pane = current.panes.find((candidate) => candidate.key === current.activeKey);
       const dialogKind = composeMessageDialogKind();
       const action = terminalComposeShortcutAction(event, {
