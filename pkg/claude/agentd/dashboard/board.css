@@ -168,5 +168,5 @@ body.board-overlay-front .board-overlay { z-index: 951; }
 .board-overlay-corner.se { right: 0; bottom: 0; cursor: nwse-resize; }
 /* As for the companion: the dialogs it opens stay above it, and it steps aside
    while the operator annotates the page. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show) .board-overlay { z-index: 90; }
+body:has(.modal-overlay.show, .manage-overlay.show) .board-overlay { z-index: 90; }
 body.companion-annotating .board-overlay { visibility: hidden; }

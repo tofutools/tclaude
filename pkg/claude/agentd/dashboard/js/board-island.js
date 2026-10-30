@@ -752,6 +752,18 @@ export function BoardEditor({
 
   // -- keyboard ---------------------------------------------------------------
 
+  // A click anywhere else ends the board's claim on keys aimed at the page, or
+  // a floating board would take Delete and Ctrl+A from the view under it.
+  useEffect(() => {
+    const doc = win?.document;
+    if (!doc) return undefined;
+    const onPointerDown = (event) => {
+      if (lastEditor === editorToken && !rootRef.current?.contains?.(event.target)) lastEditor = null;
+    };
+    doc.addEventListener('pointerdown', onPointerDown, true);
+    return () => doc.removeEventListener('pointerdown', onPointerDown, true);
+  }, [win, editorToken]);
+
   useEffect(() => {
     const ours = (event) => {
       const target = event.target;

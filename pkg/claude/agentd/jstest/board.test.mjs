@@ -430,6 +430,14 @@ test('the editor rubber-band selects, aligns, labels a shape on double-click and
   assert.equal(patches[0].type, 'rectangle');
   assert.notEqual(patches[0].id, 'a');
   assert.deepEqual([patches[0].x, patches[0].y], [101, 210], 'placed at the last pointer position');
+
+  // The paste left its copy selected. A click elsewhere on the page ends the
+  // board's claim on page-level keys.
+  patches.length = 0;
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'pointerdown', {}));
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
+  await harness.act(() => wait(BOARD_FLUSH_MS + 20));
+  assert.deepEqual(patches.filter((el) => el.isDeleted), [], 'Delete was aimed at the page');
   await view.unmount();
 });
 

@@ -251,6 +251,9 @@ export function bindTerminalNavRouting({
     previousActiveKey = activeKey;
     if (!primed) { primed = true; seenSelection = selection; return; }
     if (selection === seenSelection) return;
+    // A board tab restored after a reload lands by itself into an empty strip:
+    // nobody navigated, even when the URL has to follow it.
+    const restored = !wasOn && state.panes.value.find((pane) => pane.key === activeKey)?.seed?.restored;
     // A restore drives this same signal. Track the new value as seen (the URL
     // already names it) but say nothing: reconcileAfterRestore has the last
     // word once the attach settles, and it is the only thing that can tell an
@@ -259,7 +262,7 @@ export function bindTerminalNavRouting({
       seenSelection = selection;
       // Anything that is NOT the restore arriving at its own target is the
       // operator moving underneath it — remember it so the landing can defer.
-      if (selection && selection !== restoreTarget && classifyChange(wasOn) === 'navigate') {
+      if (selection && selection !== restoreTarget && !restored && classifyChange(wasOn) === 'navigate') {
         interrupted = { selection, key: activeKey };
       }
       return;
@@ -271,9 +274,6 @@ export function bindTerminalNavRouting({
     if (!selection) return;
     const kind = classifyChange(wasOn);
     if (kind === 'silent') return;
-    // A board tab restored after a reload lands by itself into an empty strip:
-    // the URL follows it, but nobody navigated.
-    const restored = !wasOn && state.panes.value.find((pane) => pane.key === activeKey)?.seed?.restored;
     announce(location, kind === 'correct' || !!restored);
   });
 
