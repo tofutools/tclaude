@@ -647,6 +647,13 @@ only points: it never presses anything, and it plays once, then fades after a
 few seconds or when you dismiss it. Both slugs are granted to the Steward when
 it is summoned and are not default-granted to other agents.
 
+**Decisions.** When an agent asks you to choose (`notify-human --option`),
+its tab shows the question, any attached mock and one button per option,
+with the agent's recommendation highlighted. A pinned agent's pill reads
+**decide** until you answer. Your pick, and the optional note, go back to the
+agent as mail, even if it is offline. The same buttons are in the Messages
+reader.
+
 **Voice.** **🔈** in the window's title bar turns voice on for the agent in
 the current tab (**🔊**). When its turn ends, its last message is read aloud;
 code blocks, tables and links are summarised, and a long reply is cut short
