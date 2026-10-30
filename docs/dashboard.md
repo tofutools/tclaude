@@ -618,8 +618,13 @@ on a page, how your groups are configured, or to help set up groups,
 profiles, processes or your sandbox. It proposes a plan first and runs each
 change with `--ask-human`, so you approve every mutation in the dashboard.
 While the Steward's tab is open and you have not typed anything, one-click
-starters sit above the message row: **Brief me**, **What can I do here?**, **Review my
+starters sit above the message row: **Brief me**, **I have an idea**, **What can I do here?**, **Review my
 setup**, **Set up my repos**, **Create a dev flow** and **Sketch on a board**.
+With **I have an idea** the Steward follows the bundled `tclaude-fleet`
+skill. It restates the idea and asks what it cannot find out itself, sketching
+on a board when the shape matters. It writes a brief, then starts one worker
+or deploys a task force once you approve the plan's permissions. It follows the work
+through to presented PRs, and puts taste calls to you as decisions.
 For setup the Steward follows the bundled `tclaude-setup` skill: it inspects
 first, asks only what it cannot infer, shows a numbered plan, and requests the
 permissions for the whole plan once, for a bounded time. You approve that
