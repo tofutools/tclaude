@@ -660,7 +660,9 @@ its tab shows the question, any attached mock and one button per option,
 with the agent's recommendation highlighted. A pinned agent's pill reads
 **decide** until you answer. Your pick, and the optional note, go back to the
 agent as mail, even if it is offline. The same buttons are in the Messages
-reader.
+reader. Decisions from every agent, pinned or not, also wait in one queue:
+a **◆ N to decide** pill sits beside the companion pills, and a tab of the same
+name is in the open window. Each card there names the agent that asked.
 
 **Voice.** **🔈** in the window's title bar turns voice on for the agent in
 the current tab (**🔊**). When its turn ends, its last message is read aloud;
