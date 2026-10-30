@@ -1344,6 +1344,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/host/status", handleHostStatus)
 	mux.HandleFunc("GET /v1/dashboard/view", handleDashboardViewRead)
 	mux.HandleFunc("POST /v1/dashboard/cue", handleDashboardCue)
+	mux.HandleFunc("GET /v1/fleet", handleFleet)
 	mux.HandleFunc("GET /v1/boards", handleBoardList)
 	mux.HandleFunc("POST /v1/boards", handleBoardCreate)
 	mux.HandleFunc("GET /v1/boards/{id}", handleBoardRead)
