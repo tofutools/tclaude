@@ -149,8 +149,7 @@ func openFedPaneTerminal(pin *fedPanePin, cols, rows int) (*fedPaneTerminal, err
 	if err != nil {
 		return nil, err
 	}
-	var major, minor int
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(version)), "tmux %d.%d", &major, &minor); err != nil || major < 3 || major == 3 && minor < 2 {
+	if !clcommon.TmuxVersionAtLeast(string(version), 3, 2) {
 		return nil, errors.New("remote attach requires tmux 3.2 or newer (ignore-size client support)")
 	}
 	// The renderer's output crosses the hub in arbitrary chunks, so ask tmux

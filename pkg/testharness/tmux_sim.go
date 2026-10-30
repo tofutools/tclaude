@@ -340,6 +340,8 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		}
 		t.recordMutationTarget("kill-pane", args[2])
 		t.killSession(args[2])
+	case len(args) >= 1 && args[0] == "-V":
+		return exec.Command(echoBin, "tmux 3.7b")
 	case len(args) >= 1 && args[0] == "show-hooks":
 		return exec.Command(echoBin, "pane-died")
 	case len(args) >= 2 && args[0] == "display-message" && args[1] == "-p":

@@ -657,9 +657,9 @@ func webShellMouseScrollback(sessionName string) string {
 // own environment on purpose. A browser terminal is an interactive shell the
 // operator runs things in, and anything started there — a daemon restart, say —
 // would inherit a process-wide copy and hand it to native terminal attaches it
-// later opens, re-enabling hyperlinks on the very terminals whose renderer we
-// know nothing about. Scoping it to the exec'd command keeps the claim attached
-// to the client it is true of. `VAR=value exec cmd` exports VAR to cmd.
+// later opens, overriding the TERM check that decides hyperlinks for those.
+// Scoping it to the exec'd command keeps the claim attached to the client it is
+// true of. `VAR=value exec cmd` exports VAR to cmd.
 func webTerminalAttachCmd(attachCommand string) string {
 	return clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature + " " +
 		session.WebTerminalAttachEnv + "=1 " + attachCommand

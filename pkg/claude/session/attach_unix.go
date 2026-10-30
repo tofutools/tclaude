@@ -10,6 +10,17 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
+// attachClientFeatureArgs picks the tmux client flags for this attach. A caller
+// that knows what renders this client's output sets the env var (the dashboard's
+// PTY bridge does, for OSC 8), and that choice stands even when malformed drops
+// it. A native terminal attach leaves it unset and goes by its own TERM.
+func attachClientFeatureArgs() []string {
+	if features := os.Getenv(clcommon.TmuxClientFeaturesEnv); features != "" {
+		return clcommon.TmuxClientFeatureArgs(features)
+	}
+	return clcommon.NativeTmuxClientFeatureArgs(os.Getenv("TERM"))
+}
+
 // attachToSession attaches to a tmux session as a subprocess.
 func attachToSession(tmuxSession string) error {
 	return attachToSessionWithFlags(tmuxSession, false)
@@ -23,11 +34,8 @@ func attachToSessionWithFlags(tmuxSession string, force bool) error {
 	if force {
 		args = []string{"attach-session", "-d", "-t", clcommon.ExactTarget(tmuxSession)}
 	}
-	// Client feature flags belong before the command word. Only a caller that
-	// knows what renders this client's output sets the env var (the dashboard's
-	// PTY bridge does, for OSC 8); a native terminal attach leaves it unset and
-	// keeps tmux's own terminal detection untouched.
-	args = append(clcommon.TmuxClientFeatureArgs(os.Getenv(clcommon.TmuxClientFeaturesEnv)), args...)
+	// Client feature flags belong before the command word.
+	args = append(attachClientFeatureArgs(), args...)
 
 	cmd := clcommon.TmuxCommand(args...)
 	cmd.Stdin = os.Stdin

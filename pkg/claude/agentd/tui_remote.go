@@ -463,11 +463,16 @@ func remoteTUIInput(input []byte, pending bool) (output []byte, detach, stillPen
 	return output, false, pending
 }
 
+// tuiAttachTermParam carries the remote TUI's TERM on its attach websocket: the
+// daemon forks the tmux client, but the terminal it renders to is on the far end.
+const tuiAttachTermParam = "term"
+
 func (c *remoteTUIAttachCommand) dial() (*websocket.Conn, error) {
 	httpURL, err := url.Parse(c.api.baseURL + tuiHTTPPrefix + "/attach-ws/" + url.PathEscape(c.convID))
 	if err != nil {
 		return nil, fmt.Errorf("build remote terminal URL: %w", err)
 	}
+	httpURL.RawQuery = url.Values{tuiAttachTermParam: {os.Getenv("TERM")}}.Encode()
 	wsURL := *httpURL
 	if wsURL.Scheme == "https" {
 		wsURL.Scheme = "wss"
