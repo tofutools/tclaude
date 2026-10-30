@@ -60,7 +60,8 @@
 .companion-peek-foot { padding: 5px 10px; border-top: 1px solid var(--cmp-line); color: var(--cmp-muted); font-size: 11px; }
 
 /* The companion stays above page chrome (tooltips, pills, plain modals), and
-   under confirmations, the access banner and toasts (z-index 1000 and up). */
+   under toasts (960), confirmations (1000) and the access banner. A plain
+   modal's document-level keys (Esc, Tab) still reach it from the draft row. */
 .companion-window {
   position: fixed; z-index: 950; display: flex; flex-direction: column;
   background: var(--cmp-bg); color: var(--cmp-text);

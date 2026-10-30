@@ -612,7 +612,7 @@ comes back open when you reload the same browser tab.
   question turns its pill amber with **needs you**.
 - **Scribes and Stewards.** Every live scribe and Steward gets a tab and a pill
   by itself, whoever summoned it, and loses them when it ends. One you close
-  stays closed while it lives; **＋** brings it back.
+  stays closed; **＋** brings it back.
 - **Peek.** Hovering a pill shows the last lines of the agent's screen,
   read-only; the keyboard stays with the page until you click.
 - **Window.** Click a pill, or press **Ctrl+.** anywhere, to open the window.
