@@ -266,10 +266,6 @@ var peerViewLocalRoutes = []string{
 	"/api/sandbox-profiles/{name}",
 	"/api/scribe",
 	"GET /api/scribe/{agent}/chat",
-	// The companion's hover preview reads this node's own pane text.
-	"GET /api/companion/{agent}/peek",
-	// Voice output reads this node's own agents' transcripts.
-	"GET /api/companion/{agent}/speech",
 	"/api/shutdown",
 	"/api/snapshot",
 	"/api/spawn-attachments",
@@ -370,6 +366,8 @@ var peerViewLocalRoutes = []string{
 var peerViewOwnNodeRoutes = []string{
 	// The local operator's current dashboard view, read by this node's companion agents.
 	"POST /api/companion/view",
+	// The companion's hover preview and voice read this node's own panes and transcripts.
+	"GET /api/companion/{agent}/peek", "GET /api/companion/{agent}/speech",
 	// Collab boards are this node's operator workspace with its own agents.
 	"GET /api/boards", "POST /api/boards", "GET /api/boards/{id}", "PATCH /api/boards/{id}", "DELETE /api/boards/{id}",
 	"PUT /api/boards/{id}/snapshot", "GET /api/boards/{id}/snapshot",

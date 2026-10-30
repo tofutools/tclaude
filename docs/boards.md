@@ -1,8 +1,8 @@
 # Collab boards
 
 Boards are experimental and opt-in: turn on `features.collab` in the
-dashboard's Config tab (Experimental). Until then the Boards view, its API and
-the `tclaude agent board` commands are absent.
+dashboard's Config tab (Experimental). Until then the Boards view is hidden, and
+its API and the `tclaude agent board` commands answer with a disabled message.
 
 A collab board is a shared drawing board for the operator and agents. The
 operator draws in the dashboard's board editor; agents read and change the same
@@ -11,6 +11,9 @@ and their elements are a subset of Excalidraw's element JSON, so a board can be
 exported as an `.excalidraw` file.
 
 ## Permissions
+
+Boards are global, not scoped to a group: `boards.read` and `boards.write` cover
+every board, including a fleet map, whose cards show agents' tasks and PRs.
 
 | Slug | Allows |
 |---|---|

@@ -37,6 +37,13 @@ func migrateV285toV286(d *sql.DB) error {
 			}
 		}
 	}
+	if haveHumanMessages {
+		// Every snapshot asks for the open decisions, usually none.
+		if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_human_messages_undecided
+			ON human_messages(id) WHERE options != '' AND decision = ''`); err != nil {
+			return fmt.Errorf("migrate v285→v286 (index): %w", err)
+		}
+	}
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 286`); err != nil {
 		return fmt.Errorf("migrate v285→v286 (version): %w", err)
 	}
