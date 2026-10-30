@@ -111,6 +111,26 @@ export function newCues(seen, cues, primed) {
   return fresh.sort((a, b) => a.id - b.id);
 }
 
+// A cue that hands an agent over while every dashboard tab is hidden waits
+// for the operator to come back, but not forever: an old hand-over would
+// yank the window to an agent that no longer needs them.
+export const CUE_OPEN_PATIENCE_MS = 120000;
+
+// cueOpenDue reports whether a held hand-over cue should still open now.
+export function cueOpenDue(cue, now) {
+  const at = Date.parse(cue?.at || '');
+  return !Number.isFinite(at) || now - at <= CUE_OPEN_PATIENCE_MS;
+}
+
+// claimCueOpen lets one dashboard tab act on a hand-over: the newest cue id
+// any tab opened is kept in shared prefs, and a cue at or below it is taken.
+export function claimCueOpen(stored, cue) {
+  const id = Number(cue?.id);
+  if (!Number.isFinite(id)) return false;
+  const last = Number(stored);
+  return !(Number.isFinite(last) && stored !== null && stored !== '' && id <= last);
+}
+
 function rectKey(r) {
   return r ? `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}` : '-';
 }
