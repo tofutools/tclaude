@@ -197,6 +197,12 @@ type FeaturesConfig struct {
 	// are landing in bounded slices.
 	Triggers bool `json:"triggers,omitempty"`
 
+	// Collab enables the in-development collaboration surfaces: the floating
+	// companion window with the Steward, shared boards, the fleet brief,
+	// operator decisions and dashboard guidance. It defaults off; the flag
+	// gates their dashboard chrome, daemon routes and CLI commands.
+	Collab bool `json:"collab,omitempty"`
+
 	// GroupAttachments selects how the in-development persistent http(s)
 	// attachment control appears on group titles. It defaults off while the
 	// interaction design is being refined. Disabling it hides the dashboard
@@ -247,6 +253,16 @@ const ProcessesDisabledMessage = "process commands are disabled; set features.pr
 // TriggersDisabledMessage is the stable response returned by daemon trigger
 // routes while the experimental feature is disabled.
 const TriggersDisabledMessage = "trigger commands are disabled; set features.triggers=true in tclaude config to use this experimental surface"
+
+// CollabDisabledMessage is the stable response returned by daemon collab
+// routes (boards, fleet brief, dashboard guidance, the companion) while the
+// experimental feature is disabled.
+const CollabDisabledMessage = "this collab command is disabled; set features.collab=true in tclaude config to use this experimental surface"
+
+// CollabEnabled reports whether the opt-in Collab feature flag is set.
+func (c *Config) CollabEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.Collab
+}
 
 // ProcessesEnabled reports whether the opt-in Processes feature flag is set.
 // Nil-safe on both the config and the features block, so callers can gate on

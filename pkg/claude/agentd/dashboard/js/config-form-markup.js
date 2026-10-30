@@ -891,6 +891,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more="Repeatable process graphs run by agents, programs and you: a template editor with an AI scribe, runs scoped to a group or an agent, and run views in Groups and Terminals. Off by default while it is tested and iterated on; the tab, the Groups and Terminals process views, the process API and the run engine all stay absent until enabled.">
           <${Toggle} id="cfg-feature-processes" />
         </${Setting}>
+        <${Setting} title="Collab" forId="cfg-feature-collab" k="features.collab" badges=${['refresh']}
+          summary=${html`enable the in-development <strong>Collab</strong> surfaces: the companion window, the Steward and shared boards`}
+          more="The floating companion window for talking to agents from any view, with the Steward as your helper for all of tclaude; shared boards you draw on with agents; the fleet brief and map; decisions agents put to you with options; and agents pointing at the dashboard for you. Off by default while it is tested and iterated on; these views, their API and CLI commands stay absent until enabled.">
+          <${Toggle} id="cfg-feature-collab" />
+        </${Setting}>
         <${Setting} title="Triggers" forId="cfg-feature-triggers" k="features.triggers" badges=${['refresh']}
           summary=${html`enable the in-development <strong>Triggers</strong> automation feature`}
           more="PR-opened rules with bounded spawn and message actions. Off by default; the Automations subview, Groups projection, engine, and API stay absent until enabled.">

@@ -10697,6 +10697,13 @@ body.hide-plugins #tab-plugins { display: none; }
    feature flag, preventing a flash of experimental chrome while config loads. */
 body.hide-processes nav [data-tab="processes"],
 body.hide-processes #tab-processes { display: none; }
+
+/* Collab (companion, boards) is dark-launched the same way. */
+body.hide-collab nav [data-tab="boards"],
+body.hide-collab #tab-boards,
+body.hide-collab #collab-switch-root,
+body.hide-collab .collab-only { display: none; }
+body:not(.hide-collab) .collab-off { display: none; }
 /* Processes is presented as an Automations subtab (the shared sub-nav in
    automations-subnav.js), so its own nav anchor never shows; Automations
    carries the active underline while Processes is open. */

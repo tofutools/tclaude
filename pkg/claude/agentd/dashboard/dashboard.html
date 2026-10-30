@@ -168,7 +168,7 @@
 })();
 </script>
 </head>
-<body class="hide-processes dashboard-booting">
+<body class="hide-processes hide-collab dashboard-booting">
 <!-- Boot progress overlay. A direct child of <body> so it participates in the
      paint curtain (body.dashboard-booting > *), then dashboard.css re-exempts
      just this element so it stays visible while the rest of the shell is hidden.
@@ -299,7 +299,7 @@
   <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). Always shown,
        even with nothing open; the badge counts the live terminals plus
        background tmux sessions. -->
-  <a data-tab="terminals" href="/terminals" title="Collab: live in-browser terminals (plus tclaude sessions still running in the background) and shared boards you draw on with agents."><span class="tab-label-regular">Collab</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
+  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals, plus tclaude sessions still running in the background."><span class="tab-label-regular"><span class="collab-only">Collab</span><span class="collab-off">Terminals</span></span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
   <a data-tab="boards" href="/boards" title="Boards: shared canvases you draw on together with agents"><span class="tab-label-regular">Boards</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">✎</span> <span class="tab-title">Boards</span></span></a>
   <a data-tab="jobs" href="/automations" title="Automations — agent exports, recurring cron jobs, and trigger-driven standing orders"><span class="tab-label-regular">Automations</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
   <!-- Processes lives under Automations: its sub-nav entry there is the
