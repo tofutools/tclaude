@@ -73,7 +73,57 @@ func TestFleetChanges(t *testing.T) {
 	assert.Equal(t, []fleetChange{
 		{Kind: "move", AgentID: "agt_a", Title: "asker", From: "api", To: "web", Via: "card"},
 		{Kind: "move", AgentID: "agt_b", Title: "builder", From: "api", To: "web", Via: "arrow"},
-		{Kind: "remove", AgentID: "agt_c", Title: "idler", From: "web", Via: "card"},
+		{Kind: "remove", AgentID: "agt_c", Title: "idler", From: "web", Via: "deleted card"},
 		{Kind: "add", To: "web", Text: "docs writer", Via: "note"},
+	}, changes)
+
+	// An arrow bound to a card a redraw replaced does not fall to whichever
+	// card now sits under its tail.
+	bound := map[string]any{"id": "ar2", "type": "arrow", "x": 10.0, "y": apiY + 20, "points": [][]float64{{0, 0}, {webX, 0}},
+		"startBinding": map[string]any{"elementId": "fa-agt_old-api"}, "customData": operator}
+	byID["fa-agt_a-api"]["x"] = byID["fa-agt_b-api"]["x"]
+	changes, _ = fleetChanges(&fleet, docOf(bound))
+	assert.Equal(t, []fleetChange{{Kind: "remove", AgentID: "agt_c", Title: "idler", From: "web", Via: "deleted card"}}, changes)
+
+	// Deleting a whole column removes each card in it.
+	column := func(id string) map[string]any {
+		return map[string]any{"id": id, "type": "rectangle", "isDeleted": true, "customData": operator}
+	}
+	byID["fg-web"] = column("fg-web")
+	byID["fa-agt_d-web"] = column("fa-agt_d-web")
+	changes, _ = fleetChanges(&fleet, docOf())
+	assert.Equal(t, []fleetChange{
+		{Kind: "remove", AgentID: "agt_c", Title: "idler", From: "web", Via: "deleted card"},
+		{Kind: "remove", AgentID: "agt_d", Title: "gone", From: "web", Via: "deleted card"},
+	}, changes)
+}
+
+// A card dropped where the agent already has one means leave this group,
+// and the no-group column has no group to name.
+func TestFleetChangesOwnColumnAndNoGroup(t *testing.T) {
+	var fleet fleetResp
+	require.NoError(t, json.Unmarshal([]byte(`{"agents":[
+	  {"agent_id":"agt_a","title":"both","groups":["api","web"],"online":true},
+	  {"agent_id":"agt_b","title":"loose","online":true}
+	]}`), &fleet))
+	elems, _ := fleetBoardElements(&fleet, &boardDoc{ID: "fleet"}, true)
+	byID := map[string]map[string]any{}
+	var doc boardDoc
+	for _, e := range elems {
+		byID[e["id"].(string)] = e
+	}
+	operator := map[string]any{"author": "operator"}
+	byID["fa-agt_a-api"]["x"], byID["fa-agt_a-api"]["customData"] = byID["fa-agt_a-web"]["x"], operator
+	byID["fa-agt_b-_no_group_"]["x"], byID["fa-agt_b-_no_group_"]["customData"] = byID["fa-agt_a-web"]["x"], operator
+	for _, e := range byID {
+		raw, err := json.Marshal(e)
+		require.NoError(t, err)
+		doc.Elements = append(doc.Elements, raw)
+	}
+	changes, ok := fleetChanges(&fleet, &doc)
+	require.True(t, ok)
+	assert.ElementsMatch(t, []fleetChange{
+		{Kind: "remove", AgentID: "agt_a", Title: "both", From: "api", Via: "card"},
+		{Kind: "move", AgentID: "agt_b", Title: "loose", To: "web", Via: "card"},
 	}, changes)
 }

@@ -246,6 +246,9 @@ func fleetBoardElements(fleet *fleetResp, doc *boardDoc, all bool) ([]map[string
 	return out, cards
 }
 
+// fleetNoGroup heads the column of agents outside every group.
+const fleetNoGroup = "(no group)"
+
 // fleetColumn is one group on the fleet map and the ids of its elements.
 type fleetColumn struct {
 	group string
@@ -271,7 +274,7 @@ func fleetColumns(fleet *fleetResp, all bool) []fleetColumn {
 		}
 		groups := a.Groups
 		if len(groups) == 0 {
-			groups = []string{"(no group)"}
+			groups = []string{fleetNoGroup}
 		}
 		for _, g := range groups {
 			if _, ok := members[g]; !ok {
