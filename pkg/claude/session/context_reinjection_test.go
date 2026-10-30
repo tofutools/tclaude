@@ -542,3 +542,28 @@ func TestMainCompactionOverStaleHold_ReplaysPreCompactOrdersOnce(t *testing.T) {
 
 	assert.Len(t, standingOrderMessages(t), 1)
 }
+
+func TestMainCompactionThatRotatesTheConv_StillQueues(t *testing.T) {
+	reinjectionFixture(t)
+	transcript := claudeTranscriptFixture(t)
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	fireHook(t, HookCallbackInput{HookEventName: "PreCompact", Trigger: "auto"})
+
+	rotated := filepath.Join(filepath.Dir(transcript), "conv-2.jsonl")
+	require.NoError(t, os.WriteFile(rotated, []byte(`{"type":"user"}`+"\n"), 0o644))
+	dispatchAs := func(input HookCallbackInput) {
+		t.Helper()
+		input.ConvID = "conv-2"
+		var buf bytes.Buffer
+		require.NoError(t, DispatchHookEvent(context.Background(), input, "sess-1", LocalHookAmbient(), &buf))
+	}
+	dispatchAs(HookCallbackInput{HookEventName: "SessionStart", Source: "compact"})
+	dispatchAs(HookCallbackInput{HookEventName: "PostCompact", Trigger: "auto"})
+	appendCompactBoundary(t, rotated)
+	dispatchAs(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
+
+	msgs, err := db.ListAgentMessagesForConv("conv-2", 10)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, db.ReinjectedAfterCompactSubject, msgs[0].Subject)
+}

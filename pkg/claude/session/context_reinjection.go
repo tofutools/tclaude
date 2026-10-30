@@ -117,16 +117,27 @@ func subagentsShareCompactionHooks(harnessName string) bool {
 // and settles as if it had been a subagent's.
 //
 // A hold still standing covers this compaction too, so one replay accounts for
-// everything skipped. A /compact is only ever the main thread's.
+// everything skipped, unless the conversation rotated away from it: its
+// transcript can no longer show the boundary. A /compact is only ever the main
+// thread's.
 func holdCompaction(input HookCallbackInput, envSessionID string) bool {
 	if input.AgentID != "" || input.Trigger == "manual" || envSessionID == "" {
 		return false
 	}
-	if held, err := db.PeekHeldContextReinjection(envSessionID); err == nil && held != nil {
-		return true
-	}
 	state, convID := reinjectionTarget(input, envSessionID)
-	return state != nil && holdReinjection(state, convID)
+	if state == nil {
+		return false
+	}
+	if held, err := db.PeekHeldContextReinjection(state.ID); err == nil && held != nil {
+		if held.ConvID == convID {
+			return true
+		}
+		if _, err := db.ReleaseHeldContextReinjection(state.ID); err != nil {
+			slog.Warn("context re-injection: release failed",
+				"session_id", state.ID, "error", err, "module", "hooks")
+		}
+	}
+	return holdReinjection(state, convID)
 }
 
 // compactionHeld reports whether a post-compaction hook's compaction is held.
