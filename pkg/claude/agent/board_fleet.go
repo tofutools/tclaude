@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -155,6 +156,7 @@ func fleetBoardElements(fleet *fleetResp, doc *boardDoc, all bool) ([]map[string
 		}
 	}
 	text := func(id, s string, x, y, size float64) map[string]any {
+		s = boardPrintable(s)
 		tw, th := boardTextSize(s)
 		scale := size / boardFontSize
 		e := base(id, "text")
@@ -163,25 +165,32 @@ func fleetBoardElements(fleet *fleetResp, doc *boardDoc, all bool) ([]map[string
 		return e
 	}
 
-	// Below what the board already has.
+	// A redraw stays where the previous map is, so the operator's circles
+	// and arrows on it still point at the same cards; a first map goes below
+	// what the board already has.
 	top := 0.0
-	for _, id := range existing.order {
-		if isFleetSketchID(id) {
-			continue
-		}
-		box := elementBox(existing.view[id])
-		if bottom := box.Y + box.H + 2*boardDefaultGap; bottom > top {
-			top = bottom
+	if prev, ok := existing.view["fg-title"]; ok && !prev.IsDeleted {
+		top = prev.Y
+	} else {
+		for _, id := range existing.order {
+			if isFleetSketchID(id) {
+				continue
+			}
+			box := elementBox(existing.view[id])
+			if bottom := box.Y + box.H + 2*boardDefaultGap; bottom > top {
+				top = bottom
+			}
 		}
 	}
 
 	var out []map[string]any
 	c := fleet.Counts
-	title := fmt.Sprintf("Fleet: %d online (%d working, %d idle, %d need you), %d offline — %s",
-		c.Online, c.Working, c.Idle, c.NeedsYou, c.Offline, fleet.GeneratedAt.Local().Format("Jan 2 15:04"))
+	title := fmt.Sprintf("Fleet: %d online (%d working, %d idle, %d need you, %d failed), %d offline — %s",
+		c.Online, c.Working, c.Idle, c.NeedsYou, c.Errored, c.Offline, fleet.GeneratedAt.Local().Format("Jan 2 15:04"))
 	out = append(out, text("fg-title", title, 0, top, 24))
 
 	ids := newProcessIDs()
+	ids.taken["fg-title"], ids.taken["fg-title-label"] = true, true
 	col := 0
 	cards := 0
 	var groupOrder []string
@@ -190,24 +199,27 @@ func fleetBoardElements(fleet *fleetResp, doc *boardDoc, all bool) ([]map[string
 		if !a.Online && !all {
 			continue
 		}
-		g := "(no group)"
-		if len(a.Groups) > 0 {
-			g = a.Groups[0]
+		// An agent in several groups has a card in each column.
+		groups := a.Groups
+		if len(groups) == 0 {
+			groups = []string{"(no group)"}
 		}
-		if _, ok := members[g]; !ok {
-			groupOrder = append(groupOrder, g)
+		for _, g := range groups {
+			if _, ok := members[g]; !ok {
+				groupOrder = append(groupOrder, g)
+			}
+			members[g] = append(members[g], i)
 		}
-		members[g] = append(members[g], i)
 	}
 	for _, g := range groupOrder {
 		x := float64(col) * (fleetCardW + fleetColGap)
 		y := top + 60
 		gid := ids.get("fg-", g)
-		out = append(out, text(gid+"-label", g, x, y, 22))
+		out = append(out, text(gid+"-label", boardClip(g, 18), x, y, 22))
 		cy := y + fleetHeadGap
 		for _, i := range members[g] {
 			a := fleet.Agents[i]
-			aid := ids.get("fa-", a.AgentID)
+			aid := ids.get("fa-", a.AgentID, g)
 			card := base(aid, "rectangle")
 			card["x"], card["y"], card["width"], card["height"] = x, cy, fleetCardW, fleetCardH
 			card["backgroundColor"] = fleetCardColor(a.Online, a.Status)
@@ -261,6 +273,17 @@ func fleetPRShort(u string) string {
 		return parts[n-3] + "#" + parts[n-1]
 	}
 	return u
+}
+
+// boardPrintable drops what the board server refuses (control and format
+// characters such as a zero-width joiner), keeping line breaks.
+func boardPrintable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || unicode.IsPrint(r) {
+			return r
+		}
+		return -1
+	}, s)
 }
 
 func boardClip(s string, n int) string {
