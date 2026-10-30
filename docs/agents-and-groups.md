@@ -393,6 +393,20 @@ downloads; more than 20, or a directory, become a single zip (`--zip`,
 `--separate`, and `--name` control the shape). The body may be omitted
 when `--subject` and `--attach` are both present.
 
+Repeat `--option` to put a decision to the human instead of only telling
+them something:
+
+```bash
+tclaude agent notify-human -s "Which layout?" "Mock attached." \
+  --option Tabs --option Sidebar --recommend 2 --attach mock.png
+```
+
+A decision takes 2 to 6 single-line options, and `--recommend` marks the
+one the agent suggests. The human answers with a button in the companion
+window or the Messages reader, and the agent gets the pick as an inbox
+message starting `Decision: <option>`, queued for it if it is offline. Only
+the first answer counts.
+
 ## What a spawned agent receives
 
 A freshly spawned agent's first-turn welcome and inbox briefing are

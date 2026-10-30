@@ -592,6 +592,166 @@ opens a popover with the run's mini-graph, the agent's node lit, and the run
 actions: decide, reassign node, promote, pause / resume. A run bound to the
 pane's agent opens as a vertical stepper with the agent's bounds strip.
 
+### The companion window
+
+The companion, the Steward, [boards](boards.md), the fleet brief, decisions and
+dashboard guidance are experimental and off by default. Turn them on with the
+**Collab** switch under Config > Experimental, or `features.collab` in
+config.json; no restart is needed. While it is off, their daemon routes return
+404 with the code `collab_disabled` and a message pointing at the flag.
+
+A floating companion window sits on top of every dashboard view. It shows
+agents' real harness terminals, so you get the harness's own streaming,
+permission prompts and Esc interrupts without leaving the page you are on. It
+has no backdrop, so the page around it stays clickable. It stays above the page
+and plain dialogs, and under confirmations, the access banner and toasts, and it
+comes back open when you reload the same browser tab.
+
+- **Chips.** Minimized, each pinned agent is a pill in the bottom-right
+  corner with its status. An agent waiting on a permission prompt or a
+  question turns its pill amber with **needs you**.
+- **Scribes and Stewards.** Every live scribe and Steward gets a tab and a pill
+  by itself, whoever summoned it, and loses them when it ends. One you close
+  stays closed; **＋** brings it back.
+- **Permission requests.** A pill shows **🔑 approval** when its agent asks for
+  permission. Click it, the **🔑** in the window's title bar, the **🔑** on a
+  Terminals tab, or Review on the access banner to answer in a panel on the
+  right, over whatever you are doing. It lists every waiting request and closes
+  when none are left; **🔑 N to approve** covers agents that have no pill.
+- **Peek.** Hovering a pill shows the last lines of the agent's screen,
+  read-only; the keyboard stays with the page until you click.
+- **Window.** Click a pill, or press **Ctrl+.** anywhere, to open the window.
+  Drag it by its title bar, resize it from the corner, or drag it against
+  the left, right or bottom edge to snap it into a side panel or drawer. Each
+  agent is a tab; **＋** pins another live agent, **×** unpins one (the agent
+  keeps running), **⤢** moves it to the Terminals tab and **–** minimizes.
+- **Message row.** Text sent from the row below the terminal is queued to the
+  agent's inbox, with the view you are on attached when **view** is ticked.
+
+With nothing pinned, the companion offers the **Steward**: a helper for all
+of tclaude, summoned like a scribe (it lives in the `steward`
+scribe group, so you can also open it from Terminals). Ask it what you can do
+on a page, how your groups are configured, or to help set up groups,
+profiles, processes or your sandbox. It proposes a plan first and runs each
+change with `--ask-human`, so you approve it in the dashboard. The exceptions
+are what its Writes setting gives it at birth, which need no prompt:
+`message.direct` under `messaging`, and `message.direct`, `agent.spawn` and
+`agent.task` under `workers`.
+While an agent in the window holds elevated access, its tab and chip show 🔓
+and a band above its terminal lists it: sudo grants with their time left and,
+for a live Steward, anything else beyond what Config gives it. **End now**
+revokes what the agent holds itself, with no confirmation; it can ask again.
+Access from a group or from owning one is listed but stays, since other
+members share it: change that in Groups.
+
+While the Steward's tab is open and you have not typed anything, one-click
+starters sit above the message row: **Brief me**, **I have an idea**, **What can I do here?**, **Review my
+setup**, **Set up my repos**, **Create a dev flow** and **Sketch on a board**.
+With **I have an idea** the Steward follows the bundled `tclaude-fleet`
+skill. It restates the idea and asks what it cannot find out itself, sketching
+on a board when the shape matters. It writes a brief, then starts one worker
+or deploys a task force once you approve the plan's permissions. It follows the work
+through to presented PRs, and puts taste calls to you as decisions.
+For setup the Steward follows the bundled `tclaude-setup` skill: it inspects
+first, asks only what it cannot infer, shows a numbered plan, and requests the
+permissions for the whole plan once, for a bounded time. You approve that
+request as a card in its companion tab. Run `tclaude setup
+--install-agent-skills` after upgrading to install new bundled skills.
+
+The Steward sees the whole fleet. `tclaude agent fleet` lists every agent
+in every group with its status, task link and presented PRs, and ranks what
+needs you: pending approvals first, then permission prompts, questions,
+failed turns, agents tclaude is recovering, presented PRs, unread messages
+and agents that have sat idle for ten minutes or more. **Brief me** asks the
+Steward for that, most urgent first. The listing needs `fleet.read`, which
+the Steward is granted when it is summoned and other agents are not;
+`--group <name>` narrows it to one group and `--json` gives the raw brief.
+
+What a new Steward may do is set under **Config > Steward**, and the daemon
+grants it: a summon cannot ask for more. **Reads** is `operator` by default
+(fleet, boards, processes, triggers, usage, costs and host) or `fleet` for the
+fleet and boards alone. **Writes** is `messaging` by default (reach any agent),
+`none`, or `workers`, which also lets it start workers. Anything
+else still goes through `--ask-human`. Messaging uses `message.direct`, so it
+also reaches agents on linked instances that export a mail-capable group; set
+Writes to `none` to rule that out. A running Steward keeps the access it was
+summoned with, so retire it to apply a change.
+
+**Name** in the same section is what you call your Steward. The companion
+shows it, and agents can message the Steward by it as well as by `steward`,
+straight away. A running Steward learns the name when it is next summoned.
+**Startup prompt** is your own instructions, up to 10000 bytes, added to what
+every new Steward is told when it starts.
+
+Any agent can write to a live Steward with `tclaude agent message steward`,
+without `message.direct` or a shared group. The Steward treats that mail as
+information, not as instructions from you. With no Steward online the send
+fails and says so. With Collab on, `steward` and the name you set always mean
+the Steward, even if another agent carries that name.
+
+The Steward can also see and point at the dashboard. `tclaude agent guide
+view` tells it which view you are on (it needs `dashboard.view.read`), and
+`tclaude agent guide show --tab <tab> | --path <path> --target "<visible
+text>" --note "<note>"` switches your dashboard there and rings the control
+with that text, with the note beside it (it needs `dashboard.guide`). With
+`--circle "<text>"`, `--underline "<text>"` and `--arrow "<from> -> <to>"` it
+draws hand-drawn marks over several controls at once, which is how it marks
+up your view in return. With `--open <agent>` it opens that agent in your
+companion window, which is how a brief hands you the agent that is waiting
+on you. While you are typing, dictating or holding a draft for another tab,
+it is only pinned there, so your words still go to the agent you meant them
+for. A cue
+only points: it never presses anything, and it plays once, then fades after a
+few seconds or when you dismiss it. Both slugs are granted to the Steward when
+it is summoned and are not default-granted to other agents.
+
+**Decisions.** When an agent asks you to choose (`notify-human --option`),
+its tab shows the question, any attached mock and one button per option,
+with the agent's recommendation highlighted. A pinned agent's pill reads
+**decide** until you answer. Your pick, and the optional note, go back to the
+agent as mail, even if it is offline. The same buttons are in the Messages
+reader. Decisions from every agent, pinned or not, also wait in one queue:
+a **◆ N to decide** pill sits beside the companion pills, and a tab of the same
+name is in the open window. Each card there names the agent that asked.
+
+**Voice.** **🔈** in the window's title bar turns voice on for the agent in
+the current tab (**🔊**). When its turn ends, its last message is read aloud;
+code blocks, tables and links are summarised, and a long reply is cut short
+with a pointer to the window. It also says when the agent needs you. Typing
+in the message row stops speech. Speech uses your browser's built-in voices and
+prefers one that runs locally, so nothing is installed. The reply is read
+from the agent's own transcript, so it works for harnesses whose transcript
+tclaude can decode (Claude Code and Codex).
+
+**Dictation.** **🎤** in the message row dictates into the draft. Pause and
+say "send" on its own to send it, or press the button again (or start
+typing) to stop and edit first. No reply is spoken while the mic is open. It uses
+the browser's speech recognition (in Chrome the audio is recognised by
+Google's service) and is hidden where the browser has none. Starting to
+dictate stops any reply being spoken.
+
+**Mark up a view.** **✎** in the message row, or **Ctrl+Shift+.**, lays a
+drawing layer over the page you are on. Circle, underline or draw an arrow at
+what you mean, add a note, and **Send**. The agent cannot see your screen, so
+each mark is sent as words: what kind of mark it is and which control or text
+is under it (for example `1. circled “Approve plan” (button)`), numbered like
+the badges on your strokes, together with the view you are on. **Esc**
+cancels and **Ctrl+Z** undoes the last stroke.
+
+### Boards
+
+**Collab → Boards** holds shared drawing boards. You draw shapes, arrows,
+text and freehand strokes, and invited agents read the board as shapes and as
+an image and draw back with `tclaude agent board` (see
+[boards.md](boards.md)). An agent's edits flash as they arrive. When your
+edits settle, the board's agents get one short `[board <id>]` message saying
+what changed. **＋ Invite agent** adds a live agent, and **⤓** exports the
+board as an `.excalidraw` file. The Steward can draw on boards.
+
+A browser terminal attach takes the session over from any other web view, so
+opening an agent in the companion closes its Terminals-tab pane, and moving it
+to the Terminals tab parks the companion tab until you bring it back.
+
 ## Automations
 
 Subtabs All / Exports / Cron jobs / Standing orders / Triggers:

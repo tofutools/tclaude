@@ -189,14 +189,19 @@ func TestHumanMessages_MarkAllReadAndClear(t *testing.T) {
 	_, err = InsertHumanMessage(&HumanMessage{FromConv: "c", Body: "fresh"})
 	require.NoError(t, err)
 
+	// A decision read but not answered is still waiting on the operator.
+	undecided, err := InsertHumanMessage(&HumanMessage{FromConv: "c", Body: "which?", Options: []string{"a", "b"}})
+	require.NoError(t, err)
+	_, err = MarkHumanMessageRead(undecided)
+	require.NoError(t, err)
+
 	// Clear deletes only the read messages; the fresh unread survives.
 	deleted, err := DeleteReadHumanMessages()
 	require.NoError(t, err)
 	assert.Equal(t, 3, deleted)
 	msgs, _ := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
-	require.Len(t, msgs, 1)
-	assert.Equal(t, "fresh", msgs[0].Body)
-	assert.False(t, msgs[0].IsRead())
+	require.Len(t, msgs, 2)
+	assert.ElementsMatch(t, []string{"fresh", "which?"}, []string{msgs[0].Body, msgs[1].Body})
 }
 
 func TestHumanMessages_DeleteOne(t *testing.T) {
@@ -260,6 +265,26 @@ func TestHumanMessages_AttachmentInsertAndClearReturnExactPaths(t *testing.T) {
 	require.NotNil(t, left)
 	require.NotNil(t, left.Attachment())
 	assert.Equal(t, "/private/unread", left.Attachment().StoragePath)
+
+	// A decision read but not answered stays, with its attachment.
+	pendingID, err := InsertHumanMessageWithAttachments(
+		&HumanMessage{FromConv: "c", Body: "which?", Options: []string{"a", "b"}},
+		[]*HumanMessageAttachment{{Filename: "mock.png", SizeBytes: 1, StoragePath: "/private/mock"}})
+	require.NoError(t, err)
+	_, err = MarkHumanMessageRead(pendingID)
+	require.NoError(t, err)
+	n, paths, err = DeleteReadHumanMessagesWithAttachments()
+	require.NoError(t, err)
+	assert.Zero(t, n)
+	assert.Empty(t, paths)
+
+	claimed, err := DecideHumanMessage(pendingID, "a")
+	require.NoError(t, err)
+	require.True(t, claimed)
+	n, paths, err = DeleteReadHumanMessagesWithAttachments()
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "an answered decision clears like any read message")
+	assert.Equal(t, []string{"/private/mock"}, paths)
 	total, sender, totalCount, senderCount, err = HumanMessageAttachmentUsage("", "c")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)

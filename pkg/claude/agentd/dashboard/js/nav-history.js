@@ -25,7 +25,7 @@ import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.
 import { withCostsPeriod } from './usage-hub-state.js';
 import {
   DEFAULT_TAB, OVERLAY_PARAMS, normalizeLocation, initialState, current, locEquals,
-  push, replaceCurrent, toPath, toQuery, fromPath, resolvePopstate,
+  push, replaceCurrent, toPath, toQuery, fromPath, isKnownPath, resolvePopstate,
   serializeStack, reviveState,
 } from './nav-history-core.js';
 
@@ -39,7 +39,7 @@ import {
 // path has its own handler) — see KNOWN_TABS in nav-history-core.js for the full
 // set ordering.
 const ROUTABLE_TABS = new Set([
-  'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
+  'groups', 'terminals', 'boards', 'jobs', 'processes', 'plugins', 'access',
   'messages', 'usage', 'diagnostics', 'config', 'map', 'fleet-admin',
 ]);
 
@@ -70,6 +70,8 @@ let ready = false;
 // whether it is reachable.
 function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
+  // Boards is reached through the Collab switch; its nav anchor is hidden.
+  if (tab === 'boards') return !document.body.classList.contains('hide-collab');
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
 }
@@ -202,6 +204,10 @@ function activeLocationFromDOM() {
     // opened) degrades to the bare /terminals.
     const island = featureState('terminals');
     if (island) return normalizeLocation(island.location.value);
+  } else if (tab === 'boards') {
+    // The open board is island state, like the viewed terminal above.
+    const island = featureState('boards');
+    if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
     // Ask the island directly: an open template editor's id (the
     // /automations/processes/templates/<id> segment) is state the DOM never
@@ -227,6 +233,12 @@ function requestProcessesLocation(loc) {
 }
 
 function requestTerminalsLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
+function requestBoardsLocation(loc) {
   document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
     detail: { location: normalizeLocation(loc) },
   }));
@@ -289,6 +301,10 @@ function activate(loc, { traversal = false } = {}) {
       // than a click, and the island answers only to CORRECT the URL when the
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
+    } else if (loc.tab === 'boards') {
+      // Always sent, bare /boards included: Back from an open board must
+      // return the island to its list.
+      requestBoardsLocation(loc);
     } else if (loc.tab === 'diagnostics') {
       // A bare /diagnostics (hand-typed, or Back onto one) shows the default
       // view, so a later subtab never strands an entry on another one.
@@ -542,6 +558,34 @@ function onPopstate(e) {
   // rewrite the URL to carry the LIVE theme so navigating history never leaves
   // the URL and the DOM theme divergent. replaceState never fires popstate.
   history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
+}
+
+// navigateToPath moves the dashboard to a same-origin path the way a user
+// navigation would: it activates the location and pushes a history entry, so
+// Back returns to where the operator was. Companion guidance cues use it
+// (companion-guide.js). Returns false, changing nothing, for a path that is
+// not a routable, currently available dashboard location.
+export function navigateToPath(path) {
+  if (!ready || typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return false;
+  let url;
+  try {
+    url = new URL(path, window.location.origin);
+  } catch {
+    return false;
+  }
+  // Only a path that resolves to itself: dot segments would make the checks
+  // made on the path as written (a cue's, say) say nothing about the result.
+  if (url.origin !== window.location.origin || url.pathname !== path.split(/[?#]/, 1)[0]) return false;
+  // fromPath turns an unknown tab into the default one, which would pass below.
+  if (!isKnownPath(url.pathname)) return false;
+  const loc = normalizeLocation(fromPath(url.pathname, url.search));
+  if (!ROUTABLE_TABS.has(loc.tab) || !locationAvailable(loc)) return false;
+  // Push first so the stack points at the new entry before activate() runs:
+  // any in-place correction it makes (a bare /config, a peer-view fallback)
+  // then rewrites the new entry, never the one the operator came from.
+  record(loc);
+  activate(loc);
+  return true;
 }
 
 // initNavHistory boots the router. Call it LATE in dashboard.js boot — after

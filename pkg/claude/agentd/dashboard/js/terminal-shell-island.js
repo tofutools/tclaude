@@ -24,6 +24,8 @@ import { terminalCostsHidden, subscribeTerminalCosts, toggleTerminalCosts } from
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
+import { openAccessPanel } from './companion-approval.js';
+import { pendingApprovals } from './companion-model.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch } from './node-api.js';
 import { ViewersBadge } from './remote-viewers.js';
@@ -496,6 +498,28 @@ function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
   `;
 }
 
+// TabApproval marks a tab whose agent is asking for permission, and answers it
+// in the quick panel without leaving the terminal. It keeps to this node's panes
+// and to Collab, which the panel belongs to.
+export function paneApprovals(pane, snapshotValue) {
+  if (snapshotValue?.collab_enabled !== true || paneRemoteNode(pane)) return [];
+  const selector = pane?.seed?.agent || '';
+  if (!selector) return [];
+  return pendingApprovals(snapshotValue).filter((request) => [request.agent_id, request.conv_id, request.current_conv_id].includes(selector));
+}
+
+function TabApproval({ pane, snapshot }) {
+  const requests = paneApprovals(pane, snapshot?.value);
+  if (!requests.length) return null;
+  const title = `${pane.label || 'This agent'} is asking for permission. Open the request`;
+  return html`<button type="button" class="mux-tab-attention" draggable="false" title=${title} aria-label=${title}
+    onClick=${(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openAccessPanel({ agentId: requests[0].agent_id || '', launcher: event.currentTarget, returnFocus: event.currentTarget.closest('.mux-tab') });
+    }}><span aria-hidden="true">🔑</span></button>`;
+}
+
 function TerminalCostToggle() {
   const [hidden, setHidden] = useState(terminalCostsHidden);
   useLayoutEffect(() => subscribeTerminalCosts(setHidden), []);
@@ -692,6 +716,7 @@ function PaneTab({
       ><span class="mux-tab-status-symbol">${agentStatus.symbol}</span></span>
       ${gear ? html`<${TabGear} gear=${gear} snapshot=${snapshot} menuKey=${`tab:${pane.key}`} />` : null}
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
+      <${TabApproval} pane=${pane} snapshot=${snapshot} />
       <${NodePill} node=${scope?.node} compact />
       <span class="mux-tab-label">${paneTitle(pane)}</span>
       <${TerminalCosts} agent=${agentStatus.agent} />

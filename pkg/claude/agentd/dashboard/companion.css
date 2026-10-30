@@ -1,0 +1,359 @@
+/* The dashboard companion (js/companion-island.js, tcl-6i0283): chips, the
+   hover peek and the floating window hosting agents' native terminals. It sits
+   above page content and the dock (45) but below modal overlays (100), so a
+   confirmation dialog still covers it. */
+
+:root {
+  --cmp-bg: #0d1117; --cmp-bar: #161b22; --cmp-line: #30363d; --cmp-edge: #4b5a6e;
+  --cmp-text: #e6edf3; --cmp-muted: #8b949e; --cmp-blue: #58a6ff;
+  --cmp-amber: #d29922; --cmp-amber-text: #f2cc60; --cmp-green: #3fb950; --cmp-red: #f85149;
+  --cmp-steward: linear-gradient(135deg, #6e40c9, #a371f7);
+}
+
+.companion-chips {
+  position: fixed; right: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 950;
+  display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap-reverse; justify-content: flex-end;
+  max-width: calc(100vw - 32px); pointer-events: none;
+}
+.companion-chip {
+  pointer-events: auto; display: inline-flex; align-items: center; gap: 7px;
+  max-width: 240px; padding: 5px 12px 5px 6px; border-radius: 20px;
+  background: color-mix(in srgb, var(--cmp-bar) 94%, transparent); color: var(--cmp-text);
+  border: 1px solid var(--cmp-line); box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+  font: inherit; font-size: 12px; cursor: pointer; backdrop-filter: blur(3px);
+  transition: border-color .15s, transform .15s;
+}
+.companion-chip:hover, .companion-chip:focus-visible { border-color: var(--cmp-blue); transform: translateY(-1px); outline: none; }
+.companion-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.companion-chip.needs { border-color: var(--cmp-amber); animation: companion-pulse 2s ease-in-out infinite; }
+.companion-chip-needs { color: var(--cmp-amber-text); font-weight: 600; white-space: nowrap; }
+@keyframes companion-pulse {
+  50% { box-shadow: 0 0 0 5px rgba(210, 153, 34, .22), 0 6px 18px rgba(0, 0, 0, .45); }
+}
+
+.companion-avatar {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center;
+  background: #2d333b; color: #fff; font-size: 11px; font-weight: 700;
+}
+.companion-avatar.steward { background: var(--cmp-steward); font-size: 12px; }
+.companion-avatar.scribe { background: #2f4a6b; font-size: 11px; }
+.companion-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--cmp-muted); }
+.companion-dot.working { background: var(--cmp-blue); box-shadow: 0 0 0 3px rgba(88, 166, 255, .18); }
+.companion-dot.needs { background: var(--cmp-amber); }
+.companion-dot.error { background: var(--cmp-red); }
+.companion-dot.offline { background: transparent; border: 1px solid var(--cmp-muted); }
+
+.companion-peek {
+  position: fixed; z-index: 951; width: min(420px, calc(100vw - 32px));
+  background: var(--cmp-bg); color: var(--cmp-text); border: 1px solid var(--cmp-edge); border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .55); overflow: hidden; pointer-events: none;
+  animation: companion-peek-in .12s ease-out;
+}
+@keyframes companion-peek-in { from { opacity: 0; transform: translateY(6px); } }
+.companion-peek-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--cmp-line); font-size: 12px; }
+.companion-peek-head .companion-avatar { width: 18px; height: 18px; font-size: 10px; }
+.companion-peek-meta { margin-left: auto; color: var(--cmp-muted); font-size: 11px; }
+.companion-peek-body {
+  margin: 0; padding: 8px 11px; max-height: 260px; overflow: hidden;
+  font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; white-space: pre;
+}
+.companion-peek-foot { padding: 5px 10px; border-top: 1px solid var(--cmp-line); color: var(--cmp-muted); font-size: 11px; }
+
+/* The companion stays above page chrome (tooltips, pills, plain modals), and
+   under toasts (960), confirmations (1000) and the access banner. A plain
+   modal's document-level keys (Esc, Tab) still reach it from the draft row. */
+.companion-window {
+  position: fixed; z-index: 950; display: flex; flex-direction: column;
+  background: var(--cmp-bg); color: var(--cmp-text);
+  border: 1px solid var(--cmp-edge); border-radius: 10px; overflow: hidden;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .6); transform-origin: 0 0;
+}
+.companion-window:focus-within { border-color: var(--cmp-blue); }
+.companion-window.snapped { border-radius: 0; box-shadow: 0 0 24px rgba(0, 0, 0, .5); }
+.companion-titlebar {
+  flex: none; display: flex; align-items: center; gap: 4px; height: 34px; padding: 0 6px 0 8px;
+  background: var(--cmp-bar); border-bottom: 1px solid var(--cmp-line); cursor: move; user-select: none; touch-action: none;
+}
+.companion-grip { color: #484f58; letter-spacing: -2px; font-size: 12px; margin-right: 4px; }
+.companion-tabs { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
+.companion-tab { display: flex; align-items: center; border-radius: 6px; flex: none; }
+.companion-tab.selected { background: var(--cmp-bg); box-shadow: inset 0 0 0 1px var(--cmp-line); }
+.companion-tab > button[role="tab"] {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 4px 4px 7px; max-width: 200px;
+  background: none; border: 0; color: var(--cmp-muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.companion-tab.selected > button[role="tab"] { color: var(--cmp-text); }
+.companion-tab > button[role="tab"] span:not(.companion-avatar):not(.companion-dot) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.companion-tab .companion-avatar { width: 16px; height: 16px; font-size: 9px; }
+.companion-tab-close { background: none; border: 0; color: var(--cmp-muted); cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+.companion-tab-close:hover { color: var(--cmp-text); background: #21262d; }
+.companion-add, .companion-controls button {
+  flex: none; width: 26px; height: 26px; border-radius: 6px; background: none; border: 0;
+  color: var(--cmp-muted); cursor: pointer; font-size: 14px; display: inline-grid; place-items: center;
+}
+.companion-add:hover, .companion-controls button:hover { background: #21262d; color: var(--cmp-text); }
+.companion-controls { display: flex; gap: 2px; margin-left: 4px; }
+
+.companion-menu {
+  position: absolute; top: 36px; left: 8px; z-index: 2; width: min(340px, calc(100% - 16px));
+  background: var(--cmp-bar); border: 1px solid var(--cmp-edge); border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .55); padding: 6px; display: flex; flex-direction: column; gap: 6px;
+}
+.companion-menu button {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 8px;
+  background: none; border: 0; border-radius: 6px; color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.companion-menu button:hover, .companion-menu button:focus-visible { background: #21262d; outline: none; }
+.companion-menu-steward small { display: block; color: var(--cmp-muted); font-size: 11px; margin-top: 1px; }
+.companion-menu-filter {
+  background: var(--cmp-bg); border: 1px solid var(--cmp-line); border-radius: 6px; color: var(--cmp-text);
+  padding: 5px 8px; font: inherit; font-size: 12px;
+}
+.companion-menu-list { max-height: 240px; overflow-y: auto; }
+.companion-menu-empty { color: var(--cmp-muted); font-size: 12px; padding: 6px 8px; }
+
+.companion-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.companion-term-host { flex: 1; min-height: 0; padding: 6px 6px 0; overflow: hidden; }
+.companion-term-host .xterm { height: 100%; }
+.companion-term-host .xterm-viewport { scrollbar-width: none; }
+.companion-term-host .xterm-viewport::-webkit-scrollbar { display: none; }
+.companion-elevated {
+  display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; flex: none;
+  background: #3b2a0a; border-bottom: 1px solid #9e6a03; color: #f2cc60; font-size: 12.5px;
+}
+.companion-elevated-text { display: flex; flex-wrap: wrap; gap: 2px 10px; flex: 1; min-width: 0; max-height: 72px; overflow-y: auto; }
+.companion-elevated code { font-size: 11.5px; }
+.companion-elevated button {
+  flex: none; background: #da3633; border: 0; border-radius: 6px; color: #fff; cursor: pointer; font: inherit; padding: 3px 10px;
+}
+.companion-elevated button:disabled { opacity: 0.6; cursor: default; }
+.companion-tab-elevated { font-size: 11px; }
+.companion-needs-bar {
+  flex: none; padding: 4px 10px; font-size: 12px; color: #1b1300; background: var(--cmp-amber);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.companion-term-status {
+  position: absolute; top: 8px; right: 10px; z-index: 1; padding: 3px 8px; border-radius: 6px;
+  background: var(--cmp-bar); border: 1px solid var(--cmp-line); color: var(--cmp-muted); font-size: 11px;
+}
+.companion-term-status button { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+.companion-empty { margin: auto; max-width: 420px; padding: 20px; text-align: center; color: var(--cmp-text); font-size: 13px; line-height: 1.5; }
+.companion-empty-title { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 600; }
+.companion-empty-note { color: var(--cmp-muted); font-size: 12px; }
+.companion-primary {
+  margin: 6px 0; padding: 6px 14px; border-radius: 6px; border: 1px solid #2ea043; background: #238636;
+  color: #fff; font: inherit; font-size: 13px; cursor: pointer;
+}
+.companion-primary:disabled { opacity: .6; cursor: progress; }
+
+.companion-input { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--cmp-line); }
+.companion-context { display: inline-flex; align-items: center; gap: 4px; color: var(--cmp-muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
+.companion-context input { margin: 0; accent-color: var(--cmp-blue); }
+.companion-draft {
+  flex: 1; min-width: 0; background: #0f1419; border: 1px solid var(--cmp-line); border-radius: 6px;
+  color: var(--cmp-text); padding: 5px 8px; font: inherit; font-size: 12px;
+}
+.companion-draft:focus { outline: none; border-color: var(--cmp-blue); }
+.companion-input button[type="submit"] {
+  padding: 5px 10px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.companion-input button[type="submit"]:disabled { opacity: .5; cursor: default; }
+
+.companion-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; }
+.companion-resize::after {
+  content: ''; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px;
+  border-right: 2px solid #484f58; border-bottom: 2px solid #484f58;
+}
+.companion-window.snapped-right .companion-resize { left: 0; right: auto; top: 0; bottom: 0; width: 6px; height: auto; cursor: ew-resize; }
+.companion-window.snapped-left .companion-resize { right: 0; top: 0; bottom: 0; width: 6px; height: auto; cursor: ew-resize; }
+.companion-window.snapped-bottom .companion-resize { left: 0; right: 0; top: 0; width: auto; height: 6px; cursor: ns-resize; }
+.companion-window.snapped .companion-resize::after { display: none; }
+
+.companion-snap-guide {
+  position: fixed; z-index: 949; pointer-events: none; border-radius: 8px;
+  background: rgba(88, 166, 255, .10); border: 1px dashed var(--cmp-blue);
+}
+.companion-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-window { border-color: #7a5db0; }
+
+/* A companion agent's pending access request (a sudo plan or one
+   --ask-human command), decided in place. */
+.companion-approval {
+  flex: none; margin: 8px 8px 0; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--cmp-amber); background: #221a0c; font-size: 12.5px;
+  max-height: 45%; display: flex; flex-direction: column; gap: 6px; overflow: auto;
+}
+.companion-approval-head { display: flex; align-items: center; gap: 8px; color: var(--cmp-amber-text); }
+.companion-approval-timer { margin-left: auto; color: var(--cmp-muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.companion-approval-slugs { display: flex; flex-wrap: wrap; gap: 4px; }
+.companion-approval-slugs code {
+  font-size: 11px; padding: 1px 6px; border-radius: 4px; color: var(--cmp-amber-text);
+  background: #2b2111; border: 1px solid #5a4410;
+}
+.companion-approval-body {
+  margin: 0; padding: 6px 8px; min-height: 4.5em; overflow: auto; border-radius: 6px; background: var(--cmp-bg);
+  font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; white-space: pre-wrap; word-break: break-word;
+}
+.companion-approval-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.companion-approval-meta { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 12px; }
+.companion-approval-meta:empty { display: none; }
+.companion-approval-meta dt { color: var(--cmp-muted); }
+.companion-approval-meta dd { margin: 0; overflow-wrap: anywhere; }
+.companion-approval-extend { margin-right: auto; background: none; border: 0; color: var(--cmp-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.companion-approval-extend:hover { color: var(--cmp-text); }
+.companion-approval-expired { margin-right: auto; color: var(--cmp-muted); font-size: 12px; }
+.companion-approval-actions .companion-primary { margin: 0; }
+.companion-approval-deny {
+  padding: 6px 12px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-text); font: inherit; font-size: 13px; cursor: pointer;
+}
+.companion-approval-deny:hover { border-color: var(--cmp-red); }
+
+/* Guidance cues (js/companion-guide.js): a ring around the control an agent
+   points at, and its note. Above the companion, below modal overlays. */
+.companion-guide-ring {
+  position: fixed; z-index: 952; pointer-events: none; border-radius: 8px;
+  border: 2px dashed #a371f7; box-shadow: 0 0 0 6px rgba(163, 113, 247, .18), 0 0 24px rgba(163, 113, 247, .35);
+  animation: companion-guide-in .25s ease-out, companion-guide-pulse 1.6s ease-in-out .25s infinite;
+}
+@keyframes companion-guide-in { from { opacity: 0; transform: scale(1.15); } }
+@keyframes companion-guide-pulse { 50% { box-shadow: 0 0 0 10px rgba(163, 113, 247, .08), 0 0 24px rgba(163, 113, 247, .35); } }
+.companion-guide-anchor { position: fixed; z-index: 953; }
+.companion-guide-float { position: fixed; z-index: 953; right: 16px; bottom: calc(var(--footer-h, 29px) + 58px); }
+.companion-guide-note {
+  display: flex; align-items: flex-start; gap: 8px; max-width: 330px; padding: 8px 10px;
+  background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 9px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .5); font-size: 12.5px; line-height: 1.4;
+  animation: companion-peek-in .15s ease-out;
+}
+.companion-guide-note b { display: block; color: #d2a8ff; font-size: 11.5px; }
+.companion-guide-note small { display: block; color: #8b949e; margin-top: 2px; }
+.companion-guide-note button { margin-left: auto; background: none; border: 0; color: #8b949e; cursor: pointer; font-size: 14px; padding: 0 2px; }
+.companion-guide-note button:hover { color: #e6edf3; }
+@media (prefers-reduced-motion: reduce) {
+  .companion-guide-ring, .companion-guide-note { animation: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .companion-chip.needs, .companion-peek { animation: none; }
+  .companion-chip { transition: none; }
+}
+
+/* Annotation (js/companion-annotate.js, tcl-8vjjko): the operator draws over
+   the page; the window and chips step aside meanwhile. */
+body.companion-annotating .companion-window,
+body.companion-annotating .companion-chips { visibility: hidden; }
+.annotate-root { position: fixed; inset: 0; z-index: 955; }
+.annotate-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none;
+  background: rgba(13, 17, 23, .08); outline: 2px dashed var(--cmp-amber); outline-offset: -3px;
+}
+.annotate-canvas path { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 1px rgba(0, 0, 0, .6)); }
+.annotate-canvas text { fill: #0d1117; font: 700 11px ui-sans-serif, system-ui, sans-serif; text-anchor: middle; pointer-events: none; }
+.annotate-bar {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px;
+  max-width: calc(100vw - 24px); flex-wrap: wrap; padding: 6px 8px; border-radius: 10px;
+  background: var(--cmp-bar); border: 1px solid var(--cmp-edge); box-shadow: 0 8px 24px rgba(0, 0, 0, .5); color: var(--cmp-text); font-size: 12px;
+}
+.annotate-title { margin-right: 4px; white-space: nowrap; }
+.annotate-swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; }
+.annotate-swatch.on { border-color: #fff; }
+.annotate-note {
+  width: 260px; max-width: 50vw; resize: vertical; padding: 4px 8px; border-radius: 6px; font: inherit;
+  border: 1px solid var(--cmp-line); background: var(--cmp-bg); color: var(--cmp-text);
+}
+.annotate-btn, .annotate-send {
+  padding: 4px 10px; border-radius: 6px; border: 1px solid var(--cmp-line); background: transparent; color: var(--cmp-text); font: inherit; cursor: pointer;
+}
+.annotate-send:not(:disabled) { background: #238636; border-color: #2ea043; color: #fff; }
+.annotate-btn:disabled, .annotate-send:disabled { opacity: .5; cursor: default; }
+.companion-input .companion-annotate {
+  padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-amber-text); font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
+}
+.companion-input .companion-annotate:hover { border-color: var(--cmp-amber); }
+
+/* One-click starters for the Steward (guided setup, tcl-bifqbb). */
+.companion-starters { flex: none; display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 8px 0; border-top: 1px solid var(--cmp-line); }
+.companion-starters + .companion-input { border-top: 0; }
+.companion-starters button {
+  padding: 3px 10px; border-radius: 12px; border: 1px solid #6e40c9; background: #6e40c91f;
+  color: var(--cmp-text); font: inherit; font-size: 11px; cursor: pointer;
+}
+.companion-starters button:hover, .companion-starters button:focus-visible { background: #6e40c955; outline: none; }
+.companion-starters button:disabled { opacity: .5; cursor: default; }
+
+/* Voice output toggle (tcl-q3qcfw). */
+.companion-controls .companion-voice.on { color: var(--cmp-green); }
+
+/* Dictation (tcl-sqxkb0). */
+.companion-input .companion-mic {
+  padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-text); font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.companion-input .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .companion-input .companion-mic.on { animation: none; } }
+
+/* Agent marks on the operator's view (tcl-0waby5): hand-drawn circles,
+   underlines and arrows a cue draws over the page. */
+.companion-guide-marks { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 952; pointer-events: none; overflow: visible; }
+.companion-guide-marks path {
+  fill: none; stroke: #a371f7; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+  filter: drop-shadow(0 0 3px rgba(163, 113, 247, .55));
+  stroke-dasharray: 2000; stroke-dashoffset: 2000; animation: companion-mark-draw .7s ease-out forwards;
+}
+@keyframes companion-mark-draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) { .companion-guide-marks path { animation: none; stroke-dashoffset: 0; } }
+
+/* A decision an agent put to the operator (notify-human --option). */
+.companion-decision {
+  flex: none; margin: 8px 8px 0; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--cmp-blue); background: #0f1b2d; font-size: 12.5px;
+  max-height: 55%; display: flex; flex-direction: column; gap: 6px; overflow: auto;
+}
+.companion-decision .companion-approval-head { color: var(--cmp-blue); }
+.companion-decision-body { margin: 0; color: var(--cmp-text); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6.5em; overflow: auto; }
+.companion-decision-image img { display: block; max-width: 100%; max-height: 120px; border-radius: 6px; border: 1px solid var(--cmp-line); }
+.companion-decision-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.companion-decision-options button {
+  margin: 0; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-text); font: inherit; font-size: 13px; cursor: pointer; text-align: left;
+}
+.companion-decision-options button:hover:not(:disabled) { border-color: var(--cmp-blue); }
+.companion-decision > * { flex: none; }
+.companion-decision-options button.companion-primary { border-color: var(--cmp-blue); background: #1f6feb; color: #fff; }
+.companion-decision-rec { opacity: 0.85; }
+.companion-decision-note {
+  padding: 5px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: var(--cmp-bg);
+  color: var(--cmp-text); font: inherit; font-size: 12.5px;
+}
+
+/* The fleet-wide "to decide" queue: a pill when minimized, a tab when open,
+   laid over the window body so the terminal underneath stays attached. */
+.companion-body { position: relative; }
+.companion-decide-queue {
+  position: absolute; inset: 0; z-index: 2; overflow: auto; padding-bottom: 8px;
+  background: var(--cmp-bg); display: flex; flex-direction: column;
+}
+.companion-decide-queue .companion-decision { max-height: none; }
+.companion-decision-from { margin-left: auto; color: var(--cmp-muted); font-weight: normal; font-size: 11.5px; }
+.companion-decide-mark { color: var(--cmp-blue); }
+.companion-chip-decide { border-color: var(--cmp-blue); }
+.companion-chip-decide .companion-decide-mark { width: 22px; height: 22px; display: inline-grid; place-items: center; }
+.companion-decide-tab button { color: var(--cmp-blue); }
+.companion-decide-note { margin: 8px 10px 0; color: var(--cmp-amber-text); font-size: 12px; }
+.companion-decide-note button { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+
+/* The quick permissions panel takes the notification drawer's shape, above the
+   companion window it is usually raised from. */
+.access-panel { z-index: 956; outline: none; }
+.access-panel-header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #30363d; }
+.access-panel-count { color: var(--cmp-amber-text, #e6c07b); font-variant-numeric: tabular-nums; }
+.access-panel-header button { margin-left: auto; background: none; border: 0; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
+.access-panel-list { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+.access-panel-empty { color: #8b949e; }
+.access-panel-more { background: none; border: 0; padding: 0; color: #58a6ff; cursor: pointer; font-size: 12.5px; text-align: left; }
+.companion-approval-from { color: #8b949e; font-size: 12px; }
+.companion-access { background: none; border: 1px solid #d29922; border-radius: 6px; color: #e6c07b; cursor: pointer; font-size: 12px; padding: 1px 7px; }

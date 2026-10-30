@@ -220,7 +220,7 @@ func InsertReinjectedContextMessage(m *AgentMessage, window time.Duration) (int6
 }
 
 // HeldContextReinjection is a compaction re-injection waiting on proof that
-// the main thread is the one that compacted. See migrateV283toV284.
+// the main thread is the one that compacted. See migrateV286toV287.
 type HeldContextReinjection struct {
 	ConvID           string
 	TranscriptOffset int64

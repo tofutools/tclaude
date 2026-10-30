@@ -2,13 +2,13 @@ package db
 
 import "database/sql"
 
-// migrateV283toV284 adds held_context_reinjections: at most one per session,
+// migrateV286toV287 adds held_context_reinjections: at most one per session,
 // a compaction re-injection waiting to learn whose compaction it was. Claude
 // Code fires a subagent's compaction hooks on the main conversation with no
 // agent_id, so while a subagent runs the hook alone cannot tell. The row keeps
 // the main transcript's size at that moment; a boundary appended past it
 // proves the main thread compacted. See session.QueueContextReinjection.
-func migrateV283toV284(d *sql.DB) error {
+func migrateV286toV287(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -21,7 +21,7 @@ func migrateV283toV284(d *sql.DB) error {
 	)`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 284`); err != nil {
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 287`); err != nil {
 		return err
 	}
 	return tx.Commit()

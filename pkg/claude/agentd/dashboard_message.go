@@ -102,11 +102,15 @@ func handleDashboardMessageCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "resolve from: "+err.Error())
 		return
 	}
-	dispatchSend(w, res.ConvID, &sendReq{
+	req := &sendReq{
 		To:      body.To,
 		Subject: body.Subject,
 		Body:    body.Body,
 		Role:    body.Role,
 		Members: body.Members,
-	})
+	}
+	if !resolveStewardAddresses(w, req) {
+		return
+	}
+	dispatchSend(w, res.ConvID, req)
 }

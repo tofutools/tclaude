@@ -519,6 +519,7 @@ function populateConfigForm(cfg) {
   $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
   $('#cfg-feature-triggers').checked = !!(cfg.features && cfg.features.triggers);
   $('#cfg-feature-groups-route-map').checked = !!(cfg.features && cfg.features.groups_route_map);
+  $('#cfg-feature-collab').checked = !!(cfg.features && cfg.features.collab);
   setSelectValue(
     $('#cfg-feature-group-attachments'),
     (cfg.features && cfg.features.group_attachments) || 'off',
@@ -622,6 +623,10 @@ function populateConfigForm(cfg) {
   // means the harness default. Async (fetches the profile list), like the ask
   // profile select above.
   void populateScribeProfileSelect((cfg.scribe || {}).profile);
+  setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
+  setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
+  $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
+  $('#cfg-steward-startup-prompt').value = (cfg.steward || {}).startup_prompt || '';
 
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
@@ -844,6 +849,7 @@ function assembleConfig() {
   if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
   if ($('#cfg-feature-triggers').checked) feats.triggers = true; else delete feats.triggers;
   if ($('#cfg-feature-groups-route-map').checked) feats.groups_route_map = true; else delete feats.groups_route_map;
+  if ($('#cfg-feature-collab').checked) feats.collab = true; else delete feats.collab;
   const groupAttachments = controlValue($('#cfg-feature-group-attachments'));
   if (groupAttachments === 'float' || groupAttachments === 'fixed') {
     feats.group_attachments = groupAttachments;
@@ -994,6 +1000,17 @@ function assembleConfig() {
   const scribeProfile = controlValue($('#scribe-profile')).trim();
   if (scribeProfile) scribe.profile = scribeProfile; else delete scribe.profile;
   if (Object.keys(scribe).length) cfg.scribe = scribe; else delete cfg.scribe;
+  // Like scribe: the defaults are not written out.
+  const steward = (cfg.steward && typeof cfg.steward === 'object') ? cfg.steward : {};
+  const stewardReads = controlValue($('#cfg-steward-reads'));
+  const stewardWrites = controlValue($('#cfg-steward-writes'));
+  if (stewardReads && stewardReads !== 'operator') steward.reads = stewardReads; else delete steward.reads;
+  if (stewardWrites && stewardWrites !== 'messaging') steward.writes = stewardWrites; else delete steward.writes;
+  const stewardName = controlValue($('#cfg-steward-name')).trim();
+  if (stewardName) steward.name = stewardName; else delete steward.name;
+  const stewardPrompt = controlValue($('#cfg-steward-startup-prompt')).trim();
+  if (stewardPrompt) steward.startup_prompt = stewardPrompt; else delete steward.startup_prompt;
+  if (Object.keys(steward).length) cfg.steward = steward; else delete cfg.steward;
 
   // focus is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, set the one form-owned key, and

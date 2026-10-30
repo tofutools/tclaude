@@ -73,6 +73,7 @@
 // bulk bar as each batch lands, and mail.busy freezes the refresh +
 // handlers for the duration so nothing races the running op.
 
+import { openAccessPanel } from './companion-approval.js';
 import { $, $$, shortId, shortAgentId, idTooltip } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { initMailResize } from './mail-resize.js';
@@ -1853,7 +1854,11 @@ function initMail() {
   const controller = new AbortController();
   const { signal } = controller;
   const disposeResize = initMailResize();
-  $('#access-banner-review')?.addEventListener('click', () => { void focusAccessRequest(); }, { signal });
+  // With Collab on the quick panel answers it in place; otherwise Messages.
+  $('#access-banner-review')?.addEventListener('click', (event) => {
+    if (document.body.classList.contains('hide-collab')) void focusAccessRequest();
+    else openAccessPanel({ launcher: event.currentTarget });
+  }, { signal });
   document.addEventListener('tclaude:wizard', paintMail, { signal });
   // Every repaint brings the URL in line with the open folder and message.
   const stopUrlSync = effect(() => { void mailState.revision.value; syncMailUrl(); });

@@ -198,6 +198,9 @@ func TestMigrateV180toV181_ConvertsEveryTimestampAndPreservesSchemaGraph(t *test
 	require.NoError(t, migrateV281toV282(d))
 	require.NoError(t, migrateV282toV283(d))
 	require.NoError(t, migrateV283toV284(d))
+	require.NoError(t, migrateV284toV285(d))
+	require.NoError(t, migrateV285toV286(d))
+	require.NoError(t, migrateV286toV287(d))
 	upgradedSchema, err := SchemaSQL(d)
 	require.NoError(t, err)
 	freshSchema, err := SchemaSQL(fresh)
@@ -713,6 +716,7 @@ func TestMigrateV180toV181_RestoresAutoincrementHighWater(t *testing.T) {
 	var restored int64
 	require.NoError(t, d.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'human_messages'`).Scan(&restored))
 	assert.Equal(t, int64(100), restored, "migration restores the original sequence, not the copied max id")
+	require.NoError(t, migrateV285toV286(d), "today's insert writes the decision columns")
 	id, err := insertHumanMessage(d, &HumanMessage{FromConv: "next", Body: "next", CreatedAt: time.Unix(1704164647, 0)})
 	require.NoError(t, err)
 	assert.Equal(t, int64(101), id)

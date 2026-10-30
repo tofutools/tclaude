@@ -75,7 +75,11 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 		handleDashboardLiveAnnouncement(w, r, req.Subject, req.Body)
 		return
 	}
-	target, matches, err := agent.ResolveSelector(req.To)
+	addressed := sendReq{To: req.To}
+	if !resolveStewardAddresses(w, &addressed) {
+		return
+	}
+	target, matches, err := agent.ResolveSelector(addressed.To)
 	if errors.Is(err, agent.ErrAmbiguous) {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error": "target matches multiple conversations", "code": "ambiguous",

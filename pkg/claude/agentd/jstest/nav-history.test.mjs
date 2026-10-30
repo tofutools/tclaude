@@ -22,6 +22,7 @@ function installBrowsingContext(t, harness, startPath = '/') {
   const calls = [];
   let current = startPath;
   const location = {
+    origin: 'http://dashboard.test',
     get pathname() { return current.split('?')[0]; },
     get search() { const q = current.split('?')[1]; return q ? `?${q}` : ''; },
   };
@@ -119,6 +120,19 @@ test('a retired /logs deep link heals to /diagnostics/logs; subtabs push and Bac
   const modified = harness.fireEvent(harness.document.querySelector('[data-subtab="audit"]'), 'click', { ctrlKey: true });
   assert.equal(modified.defaultPrevented, false);
   assert.equal(activitySubtab.value, 'logs');
+});
+
+test('navigateToPath refuses an unknown tab instead of reporting Groups', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/processes');
+  const { initNavHistory, navigateToPath } = await harness.importDashboardModule('js/nav-history.js');
+  initNavHistory();
+  browsing.calls.length = 0;
+  assert.equal(navigateToPath('/not-a-tab'), false);
+  assert.deepEqual(browsing.calls, [], 'nothing moved');
+  assert.equal(navigateToPath('/groups'), true);
+  assert.equal(browsing.calls[0].kind, 'push');
 });
 
 test('a peer view keeps a Logs deep link until the peer answers (unrestricted trust serves it)', async (t) => {

@@ -1012,6 +1012,20 @@ button.tool:hover { border-color: #58a6ff; }
 .mail-attachment a:hover { text-decoration: underline; }
 .mail-attachment-size { color: #8b949e; font-size: 12px; margin-left: auto; }
 .mail-reader-actions { margin-top: 14px; display: flex; gap: 6px; }
+/* A decision an agent put to the operator (notify-human --option). */
+.mail-decision {
+  margin-top: 14px; padding: 8px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  border: 1px solid #1f6feb; border-radius: 6px; background: #0f1b2d;
+}
+.mail-decision.decided { border-color: #2a3340; background: #161b22; }
+.mail-decision-label { color: #8b949e; font-size: 12px; }
+.mail-decision button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #d4d4d4;
+  cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
+}
+.mail-decision button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.mail-decision button:hover:not(:disabled) { border-color: #58a6ff; }
+.mail-decision button:disabled { opacity: .5; cursor: default; }
 /* JOH-364: base chrome for the reading-pane action bar (reply / focus /
    mark read|unread / delete). These are plain <button>s with no .tool class, so
    nothing reached them in plain mode and they rendered white UA chrome. The
@@ -6490,7 +6504,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   position: fixed; bottom: calc(var(--footer-h) + 16px); left: 50%;
   background: #161b22; border: 1px solid #2a3340; border-left: 3px solid #3fb950;
   border-radius: 4px; padding: 10px 14px; color: #c9d1d9;
-  font-size: 13px; width: max-content; max-width: min(360px, calc(100vw - 48px)); z-index: 200;
+  font-size: 13px; width: max-content; max-width: min(360px, calc(100vw - 48px)); z-index: 960;
   opacity: 0; transform: translate(-50%, 8px); pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
@@ -10683,6 +10697,11 @@ body.hide-plugins #tab-plugins { display: none; }
    feature flag, preventing a flash of experimental chrome while config loads. */
 body.hide-processes nav [data-tab="processes"],
 body.hide-processes #tab-processes { display: none; }
+
+/* Collab (companion, boards) is dark-launched the same way. */
+body.hide-collab nav [data-tab="boards"],
+body.hide-collab #tab-boards,
+body.hide-collab #collab-switch-root { display: none; }
 /* Processes is presented as an Automations subtab (the shared sub-nav in
    automations-subnav.js), so its own nav anchor never shows; Automations
    carries the active underline while Processes is open. */

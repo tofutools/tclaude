@@ -69,6 +69,9 @@ func Cmd() *cobra.Command {
 			processCmd(),
 			processTemplatesCmd(),
 			dashboardCmd(),
+			guideCmd(),
+			fleetCmd(),
+			boardCmd(),
 		},
 	}.ToCobra()
 }

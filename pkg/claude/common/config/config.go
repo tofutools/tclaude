@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -100,6 +101,9 @@ type Config struct {
 	// ScribeConfig. Absent / blank = today's behaviour (the harness default:
 	// Claude Code at its default model/effort); see ScribeProfileName.
 	Scribe *ScribeConfig `json:"scribe,omitempty"`
+
+	// Steward sets what a freshly summoned Steward may do — see StewardConfig.
+	Steward *StewardConfig `json:"steward,omitempty"`
 
 	// Audit holds the audit-log retention policy (JOH-268). Absent block /
 	// absent keys fall back to the built-in default — see
@@ -197,6 +201,12 @@ type FeaturesConfig struct {
 	// are landing in bounded slices.
 	Triggers bool `json:"triggers,omitempty"`
 
+	// Collab enables the in-development collaboration surfaces: the floating
+	// companion window with the Steward, shared boards, the fleet brief,
+	// operator decisions and dashboard guidance. It defaults off; the flag
+	// gates their dashboard chrome, daemon routes and CLI commands.
+	Collab bool `json:"collab,omitempty"`
+
 	// GroupAttachments selects how the in-development persistent http(s)
 	// attachment control appears on group titles. It defaults off while the
 	// interaction design is being refined. Disabling it hides the dashboard
@@ -247,6 +257,16 @@ const ProcessesDisabledMessage = "process commands are disabled; set features.pr
 // TriggersDisabledMessage is the stable response returned by daemon trigger
 // routes while the experimental feature is disabled.
 const TriggersDisabledMessage = "trigger commands are disabled; set features.triggers=true in tclaude config to use this experimental surface"
+
+// CollabDisabledMessage is the stable response returned by daemon collab
+// routes (boards, fleet brief, dashboard guidance, the companion) while the
+// experimental feature is disabled.
+const CollabDisabledMessage = "this collab command is disabled; set features.collab=true in tclaude config to use this experimental surface"
+
+// CollabEnabled reports whether the opt-in Collab feature flag is set.
+func (c *Config) CollabEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.Collab
+}
 
 // ProcessesEnabled reports whether the opt-in Processes feature flag is set.
 // Nil-safe on both the config and the features block, so callers can gate on
@@ -1302,6 +1322,95 @@ func (c *Config) ScribeProfileName() string {
 		return ""
 	}
 	return strings.TrimSpace(c.Scribe.Profile)
+}
+
+// StewardConfig is the access a Steward (the companion's chief of staff) is
+// born with. Absent or blank fields take the defaults: operator-level reads and
+// messaging. Anything beyond that goes through an approval.
+type StewardConfig struct {
+	// Reads is "operator" or "fleet"; see the StewardReads constants.
+	Reads string `json:"reads,omitempty"`
+	// Name is what the operator calls their Steward. Empty means "the Steward".
+	Name string `json:"name,omitempty"`
+	// StartupPrompt is the operator's own instructions, added to the brief of
+	// every new Steward.
+	StartupPrompt string `json:"startup_prompt,omitempty"`
+	// Writes is "none", "messaging" or "workers"; see the StewardWrites
+	// constants.
+	Writes string `json:"writes,omitempty"`
+}
+
+const (
+	// StewardReadsOperator reads what the operator reads across tclaude.
+	StewardReadsOperator = "operator"
+	// StewardReadsFleet reads the fleet, the boards and the dashboard view.
+	StewardReadsFleet = "fleet"
+
+	// StewardWritesNone keeps only what talking to the operator needs.
+	StewardWritesNone = "none"
+	// StewardWritesMessaging adds messaging any agent.
+	StewardWritesMessaging = "messaging"
+	// StewardWritesWorkers adds starting workers and setting their task.
+	StewardWritesWorkers = "workers"
+)
+
+// MaxStewardStartupPromptLen caps steward.startup_prompt in bytes, leaving a
+// Steward's brief room for its built-in text within the 16 KiB initial-message
+// limit whatever the alphabet.
+const MaxStewardStartupPromptLen = 10000
+
+// stewardNamePattern keeps a Steward's name inside the rename-title charset, so
+// it is safe as an agent title and as a message address.
+var stewardNamePattern = regexp.MustCompile(`^[A-Za-z0-9]+([ _-][A-Za-z0-9]+)*$`)
+
+// MaxStewardNameLen caps steward.name.
+const MaxStewardNameLen = 32
+
+// StewardName returns the operator's name for their Steward, trimmed, or "".
+// Nil-safe.
+func (c *Config) StewardName() string {
+	// Only the dashboard's save validates; a hand edit must not turn a group
+	// or remote address into a Steward alias.
+	name := c.stewardNameSetting()
+	if !validStewardName(name) {
+		return ""
+	}
+	return name
+}
+
+func (c *Config) stewardNameSetting() string {
+	if c == nil || c.Steward == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Steward.Name)
+}
+
+func validStewardName(name string) bool {
+	return len(name) <= MaxStewardNameLen && stewardNamePattern.MatchString(name)
+}
+
+// StewardStartupPrompt returns the operator's instructions, trimmed. Nil-safe.
+func (c *Config) StewardStartupPrompt() string {
+	if c == nil || c.Steward == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Steward.StartupPrompt)
+}
+
+// StewardReads returns the configured read level, defaulted. Nil-safe.
+func (c *Config) StewardReads() string {
+	if c != nil && c.Steward != nil && c.Steward.Reads != "" {
+		return c.Steward.Reads
+	}
+	return StewardReadsOperator
+}
+
+// StewardWrites returns the configured write level, defaulted. Nil-safe.
+func (c *Config) StewardWrites() string {
+	if c != nil && c.Steward != nil && c.Steward.Writes != "" {
+		return c.Steward.Writes
+	}
+	return StewardWritesMessaging
 }
 
 // CostConfig holds cost display knobs and estimated API spend alert limits.
@@ -4203,6 +4312,27 @@ func Validate(c *Config) []string {
 					name, *value, MaxTerminalAttachDelayMS))
 			}
 		}
+	}
+
+	switch c.StewardReads() {
+	case StewardReadsOperator, StewardReadsFleet:
+	default:
+		errs = append(errs, fmt.Sprintf("steward.reads %q is not one of %s, %s",
+			c.StewardReads(), StewardReadsOperator, StewardReadsFleet))
+	}
+	switch c.StewardWrites() {
+	case StewardWritesNone, StewardWritesMessaging, StewardWritesWorkers:
+	default:
+		errs = append(errs, fmt.Sprintf("steward.writes %q is not one of %s, %s, %s",
+			c.StewardWrites(), StewardWritesNone, StewardWritesMessaging, StewardWritesWorkers))
+	}
+	if name := c.stewardNameSetting(); name != "" && !validStewardName(name) {
+		errs = append(errs, fmt.Sprintf("steward.name: must be at most %d characters: letters and digits, with single spaces, - or _ between them", MaxStewardNameLen))
+	}
+	if prompt := c.StewardStartupPrompt(); len(prompt) > MaxStewardStartupPromptLen {
+		errs = append(errs, fmt.Sprintf("steward.startup_prompt: must be at most %d bytes", MaxStewardStartupPromptLen))
+	} else if strings.ContainsFunc(prompt, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) {
+		errs = append(errs, "steward.startup_prompt: must not contain control characters")
 	}
 
 	// An empty/absent scheme resolves to the default; only a non-empty value

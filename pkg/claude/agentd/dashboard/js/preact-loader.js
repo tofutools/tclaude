@@ -277,6 +277,110 @@ export function mountDockFeature(dependencies = {}) {
   return mountIslandDescriptor(dockDescriptor, dependencies);
 }
 
+// The companion (tcl-6i0283): a floating window over every view that hosts
+// agents' native terminals, with the Steward as its default helper.
+const companionDescriptor = createIslandDescriptor({
+  name: 'companion',
+  label: 'Companion',
+  hosts: { host: '#companion-root' },
+  failureClass: 'companion-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./companion-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const prefsModule = import('./prefs.js');
+    const terminalsCoreModule = import('./terminals-core.js');
+    const xtermLoaderModule = import('./xterm-loader.js');
+    const terminalsTabModule = import('./terminals-tab.js');
+    const [
+      { mountCompanionIsland }, { dashboardState }, { dashPrefs },
+      { mountTerminalWidget }, { loadXtermRuntime }, { closeTerminalsForConvs, openWebWindowPane },
+    ] = await Promise.all([
+      islandModule, snapshotStoreModule, prefsModule,
+      terminalsCoreModule, xtermLoaderModule, terminalsTabModule,
+    ]);
+    return {
+      mount: (registerCleanup) => mountCompanionIsland({
+        host, registerCleanup,
+        snapshot: dashboardState.snapshot, activeTab: dashboardState.activeTab, prefs: dashPrefs,
+        notify: dependencies.notify, widgetFactory: mountTerminalWidget, loadRuntime: loadXtermRuntime,
+        closeTerminalPanes: closeTerminalsForConvs,
+        openTerminalsPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
+        navigate: async (path) => {
+          const { navigateToPath } = await import('./nav-history.js');
+          return navigateToPath(path);
+        },
+      }),
+    };
+  },
+});
+
+// The quick permissions panel: its own island, because a companion pill, a
+// Terminals tab and the access banner all raise it.
+const accessPanelDescriptor = createIslandDescriptor({
+  name: 'access-panel',
+  label: 'Permission requests',
+  hosts: { host: '#access-panel-root' },
+  failureClass: 'access-panel-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./access-panel-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [{ mountAccessPanelIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
+    return {
+      mount: (registerCleanup) => mountAccessPanelIsland({
+        host, registerCleanup, snapshot: dashboardState.snapshot,
+        fetchImpl: (...args) => globalThis.fetch(...args), notify: dependencies.notify,
+        openInMessages: async (id) => {
+          const { focusAccessRequest } = await import('./mail-bridge.js');
+          return focusAccessRequest(id);
+        },
+      }),
+    };
+  },
+});
+
+export function mountAccessPanelFeature(dependencies = {}) {
+  return mountIslandDescriptor(accessPanelDescriptor, dependencies);
+}
+
+export function mountCompanionFeature(dependencies = {}) {
+  return mountIslandDescriptor(companionDescriptor, dependencies);
+}
+
+// Boards (tcl-4f86kp): shared canvases under Collab. The island also renders
+// the Terminals | Boards switch at the top of the Terminals section.
+const boardsDescriptor = createIslandDescriptor({
+  name: 'boards',
+  label: 'Boards',
+  hosts: { host: '#boards-root', switchHost: '#collab-switch-root' },
+  failureClass: 'boards-error',
+  load: async ({ hosts: { host, switchHost }, dependencies }) => {
+    const islandModule = import('./board-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [{ mountBoardsIsland, createBoardsState }, { dashboardState }] =
+      await Promise.all([islandModule, snapshotStoreModule]);
+    const state = createBoardsState();
+    return {
+      state,
+      mount: (registerCleanup) => mountBoardsIsland({
+        host, switchHost, state, registerCleanup,
+        snapshot: dashboardState.snapshot, notify: dependencies.notify,
+        rasterize: async (svg, box) => {
+          const { svgToPng } = await import('./board-export.js');
+          return svgToPng(svg, box);
+        },
+        openAgent: async (agentId) => {
+          const { openInCompanion } = await import('./companion-facade.js');
+          return openInCompanion(agentId);
+        },
+      }),
+    };
+  },
+});
+
+export function mountBoardsFeature(dependencies = {}) {
+  return mountIslandDescriptor(boardsDescriptor, dependencies);
+}
+
 // Terminal chrome and open state are one ownership unit across the nav badge,
 // dashboard pane stack. xterm itself remains behind
 // the opaque host adapter loaded by terminal-shell-island.js.

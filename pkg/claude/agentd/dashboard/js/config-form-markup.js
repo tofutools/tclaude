@@ -131,6 +131,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'context', icon: '🧠', title: 'Context & sessions', lede: 'Compaction, context nudges, resume prompts and how long Claude Code keeps transcripts.' },
   { id: 'costs', icon: '💲', title: 'Usage & costs', lede: 'Cost display, WHAT-IF estimates, subscription usage bars and rate-limit gating.' },
   { id: 'assistants', icon: '💬', title: 'Ask & scribe', lede: 'Defaults for tclaude ask and for the scribe agents behind the 🤖 Edit with agent buttons.' },
+  { id: 'steward', icon: '✦', title: 'Steward', lede: 'What a Steward, your helper in the companion window, may do without asking. Part of the Collab experimental feature.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
@@ -880,6 +881,39 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
+    <${Panel} id="steward" active=${active}>
+      <${Group} title="Access" lede="Set when a Steward is summoned, so a running Steward keeps what it was born with: retire it to apply a change. Anything beyond this asks you first. Agents can always message a live Steward.">
+        <${Setting} title="Reads" forId="cfg-steward-reads" k="steward.reads"
+          summary="What a Steward can read."
+          more="Operator level covers the fleet, boards, the dashboard view, processes, triggers, usage, costs, host load and agents' context state. It never includes other agents' mail, private setup text, or GitHub, Linear and AWB through your credentials.">
+          <${ConfigSelect} id="cfg-steward-reads" aria-label="What a Steward can read">
+            <option value="operator">Operator level (default)</option>
+            <option value="fleet">Fleet and boards only</option>
+          </${ConfigSelect}>
+        </${Setting}>
+        <${Setting} title="Writes" forId="cfg-steward-writes" k="steward.writes"
+          summary="What a Steward can change without asking."
+          more="Every level can draw on boards, point at the dashboard and notify you. Messaging also lets it message any agent. Starting workers adds spawning agents and setting their task link, and the workers it starts run on your account.">
+          <${ConfigSelect} id="cfg-steward-writes" aria-label="What a Steward can change without asking">
+            <option value="messaging">Message agents (default)</option>
+            <option value="none">Boards and notifying you only</option>
+            <option value="workers">Message agents and start workers</option>
+          </${ConfigSelect}>
+        </${Setting}>
+      </${Group}>
+      <${Group} title="Name and startup">
+        <${Setting} title="Name" forId="cfg-steward-name" k="steward.name"
+          summary="What you call your Steward. Shown in the companion, and agents can message it by this name as well as by steward.">
+          <${ConfigInput} type="text" id="cfg-steward-name" maxlength="32" spellcheck="false" aria-label="Steward name" placeholder="Steward" />
+        </${Setting}>
+        <${Setting} title="Startup prompt" forId="cfg-steward-startup-prompt" wide k="steward.startup_prompt"
+          summary="Your own instructions, added to what every new Steward is told when it starts. A running Steward keeps the prompt it started with.">
+          <${ConfigTextarea} id="cfg-steward-startup-prompt" class="cfg-json" rows="6" maxlength="10000" aria-label="Steward startup prompt"
+            placeholder="Optional. For example: Reply in Swedish. Start every brief with open pull requests."></${ConfigTextarea}>
+        </${Setting}>
+      </${Group}>
+    </${Panel}>
+
     <${Panel} id="experimental" active=${active}>
       <${Group} title="Feature flags"
         lede=${html`Opt-in flags for features under active development. Such features ship dark on
@@ -890,6 +924,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary=${html`enable the in-development <strong>Processes</strong> feature`}
           more="Repeatable process graphs run by agents, programs and you: a template editor with an AI scribe, runs scoped to a group or an agent, and run views in Groups and Terminals. Off by default while it is tested and iterated on; the tab, the Groups and Terminals process views, the process API and the run engine all stay absent until enabled.">
           <${Toggle} id="cfg-feature-processes" />
+        </${Setting}>
+        <${Setting} title="Collab" forId="cfg-feature-collab" k="features.collab" badges=${['refresh']}
+          summary=${html`enable the in-development <strong>Collab</strong> surfaces: the companion window, the Steward and shared boards`}
+          more="The floating companion window for talking to agents from any view, with the Steward as your helper for all of tclaude; shared boards you draw on with agents; the fleet brief and map; decisions agents put to you with options; and agents pointing at the dashboard for you. Off by default while it is tested and iterated on; these views stay hidden and their API and CLI commands answer with a disabled message until enabled.">
+          <${Toggle} id="cfg-feature-collab" />
         </${Setting}>
         <${Setting} title="Triggers" forId="cfg-feature-triggers" k="features.triggers" badges=${['refresh']}
           summary=${html`enable the in-development <strong>Triggers</strong> automation feature`}

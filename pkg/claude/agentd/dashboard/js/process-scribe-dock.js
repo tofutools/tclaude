@@ -20,6 +20,7 @@
 // (or arrow keys step it), double-click resets it, and the chosen width is a
 // sticky dashboard pref like every other tclaude.dash.* setting.
 
+import { companionAvailable } from './companion-facade.js';
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -323,7 +324,7 @@ export function ScribeDock({ controller, view }) {
 
     ${live && dock.mode === 'chat' && html`<${ChatLog} messages=${chat.messages} live=${chat.live} loaded=${chat.loaded} error=${chat.error} pendingSend=${sending} />`}
     ${live && dock.mode === 'terminal' && html`<div class="psd-terminal">
-      <p>The scribe's terminal opens in the dashboard's terminal panes. Messages and context actions sent from here arrive there too.</p>
+      <p>${companionAvailable() ? 'The scribe\'s terminal opens in the floating companion window over the editor (Ctrl+. toggles it).' : 'The scribe\'s terminal opens in a browser window.'} Messages and context actions sent from here arrive there too.</p>
       <button type="button" class="process-action" data-scribe-open-terminal onClick=${() => api.openTerminal?.(scribe)}>Open terminal</button>
     </div>`}
 
