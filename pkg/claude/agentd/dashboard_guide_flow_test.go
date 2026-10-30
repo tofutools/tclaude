@@ -113,4 +113,23 @@ func TestDashboardGuideViewAndCues(t *testing.T) {
 	require.Len(t, marked.Cues[0].Marks, 2)
 	require.Equal(t, "circle", marked.Cues[0].Marks[0].Kind)
 	require.Equal(t, "Rework", marked.Cues[0].Marks[1].From)
+
+	// A cue can hand the operator an agent to open, by name or id.
+	f.HaveGroup("api")
+	f.HaveConvWithTitle("builder-conv", "builder")
+	f.HaveMember("api", "builder-conv")
+	builderID, err := db.AgentIDForConv("builder-conv")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"open": "nobody-by-that-name"}))
+	agentd.ResetDashboardGuideForTest()
+	require.Equal(t, http.StatusOK, cue(map[string]any{"open": "builder"}), "an agent to open alone makes a cue")
+	rec = testharness.Serve(dash, snapReq.Clone(snapReq.Context()))
+	var opened struct {
+		Cues []struct {
+			Open string `json:"open"`
+		} `json:"companion_cues"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &opened))
+	require.Len(t, opened.Cues, 1)
+	require.Equal(t, builderID, opened.Cues[0].Open, "resolved to the stable agent id")
 }

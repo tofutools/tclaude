@@ -82,6 +82,9 @@ type companionCue struct {
 	Target    string    `json:"target,omitempty"`
 	Note      string    `json:"note,omitempty"`
 	Marks     []cueMark `json:"marks,omitempty"`
+	// Open is an agent the operator's companion window should open: the
+	// Steward handing them the agent that needs them.
+	Open      string    `json:"open,omitempty"`
 	At        time.Time `json:"at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -261,6 +264,7 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 		Target string    `json:"target"`
 		Note   string    `json:"note"`
 		Marks  []cueMark `json:"marks"`
+		Open   string    `json:"open"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid cue: "+err.Error())
@@ -298,11 +302,20 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 	}
 	target := guideText(req.Target, guideMaxTarget)
 	note := guideText(req.Note, guideMaxNote)
-	if tab == "" && path == "" && target == "" && note == "" && len(marks) == 0 {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "a cue needs a tab, a path, a target, a note or a mark")
+	open := ""
+	if sel := strings.TrimSpace(req.Open); sel != "" {
+		res, _, err := agent.ResolveSelector(sel)
+		if err != nil || res == nil || res.AgentID == "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "open names no agent: "+guideText(sel, 64))
+			return
+		}
+		open = res.AgentID
+	}
+	if tab == "" && path == "" && target == "" && note == "" && len(marks) == 0 && open == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a cue needs a tab, a path, a target, a note, a mark or an agent to open")
 		return
 	}
-	cue := companionCue{Tab: tab, Path: path, Target: target, Note: note, Marks: marks}
+	cue := companionCue{Tab: tab, Path: path, Target: target, Note: note, Marks: marks, Open: open}
 	if convID != "" {
 		if res, _, err := agent.ResolveSelector(convID); err == nil {
 			cue.AgentID = res.AgentID
