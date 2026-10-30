@@ -121,13 +121,15 @@ group also unlinks it in effect: the board stays, without the group.
 ## Mapping the fleet
 
 `board from-fleet <board>` draws the fleet as a map you can talk staffing over.
-Each group is a column with a dashed box, and each live agent is a card in it,
+Each group is a column with a dashed box, and each live agent is a card in it
+(an agent in two groups has a card in both),
 coloured by what it is doing: green for working, grey for idle, yellow for
 waiting on you, red for a failed turn. A card names the agent, its status, and
 its open PR or task. `--all` adds offline agents as white, dashed cards, and
 `--group` draws one group. The title line carries the counts and the time it
-was drawn. The map goes below whatever the board already holds. Drawing it
-again refreshes it in place: its elements are `fg-…` and `fa-…`, a card whose
+was drawn. The first map goes below whatever the board already holds. Drawing it
+again refreshes it where it is, so your marks on it keep pointing at the same
+cards: its elements are `fg-…` and `fa-…`, a card whose
 agent is gone is removed, and your own notes and arrows stay. Circle an agent,
 or draw an arrow from it to another group, and the Steward reads that as you
 talking about staffing. The command needs `boards.write` and `fleet.read`.
