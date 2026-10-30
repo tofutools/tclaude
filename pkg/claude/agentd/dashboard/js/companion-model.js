@@ -253,6 +253,7 @@ export function composeCompanionMessage(text, context = '') {
 // guided setup (tcl-bifqbb).
 export const STEWARD_STARTERS = Object.freeze([
   { label: 'Brief me', text: 'Brief me on the fleet: what needs me first, then what is moving. Keep it short.' },
+  { label: 'I have an idea', text: 'I have an idea I want built. Help me shape it into a brief and get the right agents working on it. Ask me about it first.' },
   { label: 'What can I do here?', text: 'What can I do on this page? Point me at the important controls.' },
   { label: 'Review my setup', text: 'Review my tclaude setup (groups, spawn profiles, sandbox profiles, schedules) and tell me what is missing or worth changing. Do not change anything yet.' },
   { label: 'Set up my repos', text: 'Help me set up a group for each of my repos, with sensible defaults. Ask me which repos first.' },
@@ -313,6 +314,8 @@ export function stewardBrief() {
     'run that one command with `--ask-human 120s` instead. Never retry a denied request; ask the',
     'operator what to change.',
     '',
+    'For briefs, turning the operator\'s ideas into running work (one worker or a task force),',
+    'following it through to PRs, and advice on running a fleet, follow the tclaude-fleet skill.',
     'For setup work (groups for repos, spawn profiles, sandbox profiles, schedules) follow the',
     'tclaude-setup skill: inspect, ask only what you cannot infer, plan, request once, execute,',
     'verify, then point at the result. Process templates: the process-templates skill. Group',
