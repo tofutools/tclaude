@@ -137,7 +137,7 @@ function Peek({ agent, lines, anchor }) {
   </div>`;
 }
 
-function AddMenu({ agents, tabs, steward, onSummonSteward, onPin, onClose, busy }) {
+function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, onClose, busy }) {
   const [filter, setFilter] = useState('');
   const candidates = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -156,7 +156,7 @@ function AddMenu({ agents, tabs, steward, onSummonSteward, onPin, onClose, busy 
   return html`<div class="companion-menu" role="menu" aria-label="Add a companion">
     ${!stewardPinned && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
-      <span><b>${steward?.online ? 'Open the Steward' : 'Summon the Steward'}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
+      <span><b>${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
     </button>`}
     <input type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
       value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
@@ -226,6 +226,8 @@ export function CompanionApp({
   navigate = null,
 }) {
   const agents = useMemo(() => companionAgents(snapshot.value), [snapshot.value]);
+  const customName = snapshot.value?.steward_name || '';
+  const stewardLabel = customName || 'the Steward';
   const steward = useMemo(() => stewardAgent(agents), [agents]);
   const [tabs, setTabs] = useState(() => parseTabs(readPref(prefs, COMPANION_TABS_PREF)));
   const sessionPrefs = useMemo(() => {
@@ -409,14 +411,14 @@ export function CompanionApp({
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
       if (!isAgentId(result.agent_id)) throw new Error('the summon returned no agent id');
-      notify(`${result.reused ? 'Reopened' : 'Summoned'} the Steward.`);
+      notify(`${result.reused ? 'Reopened' : 'Summoned'} ${stewardLabel}.`);
       showAgent(result.agent_id, { starting: true });
     } catch (error) {
-      notify(`Could not summon the Steward: ${error?.message || error}`, true);
+      notify(`Could not summon ${stewardLabel}: ${error?.message || error}`, true);
     } finally {
       setBusy(false);
     }
-  }, [steward, fetchImpl, notify, showAgent]);
+  }, [steward, stewardLabel, fetchImpl, notify, showAgent]);
 
   const closeTab = useCallback((agentId) => {
     if (agents.get(agentId)?.scribe) setHelperClosed(agentId, true);
@@ -1039,9 +1041,9 @@ export function CompanionApp({
       <span aria-hidden="true">🔑</span><span class="companion-chip-name">${elsewhere.length} to approve</span>
     </button>`}
     ${!chipAgents.length && html`<button type="button" class="companion-chip companion-chip-steward"
-      aria-label="Open the companion (Ctrl+.)" title="Steward: your helper for all of tclaude (Ctrl+.)"
+      aria-label="Open the companion (Ctrl+.)" title=${`${customName || 'Steward'}: your helper for all of tclaude (Ctrl+.)`}
       onClick=${(event) => onChipClick('', event)}>
-      <span class="companion-avatar steward" aria-hidden="true">✦</span><span class="companion-chip-name">Steward</span>
+      <span class="companion-avatar steward" aria-hidden="true">✦</span><span class="companion-chip-name">${customName || 'Steward'}</span>
     </button>`}
   </div>`;
 
@@ -1077,7 +1079,7 @@ export function CompanionApp({
             onClick=${() => setDeciding((v) => !v)}><span class="companion-decide-mark" aria-hidden="true">◆</span><span>${queue.length} to decide</span></button>
         </div>`}
         <button type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${menu ? 'true' : 'false'}
-          title="Summon the Steward or pin a live agent" onClick=${() => setMenu((v) => !v)}>＋</button>
+          title=${`Summon ${stewardLabel} or pin a live agent`} onClick=${() => setMenu((v) => !v)}>＋</button>
       </div>
       <div class="companion-controls">
         ${activeAgent && speaker.supported && html`<button type="button" class=${`companion-voice${voiceAgents.has(activeAgent.agentId) ? ' on' : ''}`}
@@ -1094,7 +1096,7 @@ export function CompanionApp({
       </div>
     </header>
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
-      onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
+      stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
     <div class="companion-body">
       ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
         ${activeApprovals.length > 0 && html`<p class="companion-decide-note" role="status">${activeAgent.name} also has
@@ -1106,11 +1108,11 @@ export function CompanionApp({
       ${!showQueue && activeDecisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
-        <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> The Steward</p>
+        <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>
         <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
           groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
-        <p class="companion-empty-note">It starts read-only and asks you to approve each change.</p>
-        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : steward?.online ? 'Open the Steward' : 'Summon the Steward'}</button>
+        <p class="companion-empty-note">Config > Steward sets what it can do without asking.</p>
+        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
       ${activeAgent && !activeAgent.online && html`<div class="companion-empty">

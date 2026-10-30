@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -96,4 +97,30 @@ func TestSteward_AccessFromConfigAndReachableByAnyAgent(t *testing.T) {
 	setSteward(t, "", config.StewardWritesWorkers)
 	conv = summon()
 	assert.True(t, has(conv, agentd.PermAgentSpawn))
+
+	// The operator's own prompt reaches a new Steward's brief.
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Steward = &config.StewardConfig{Writes: config.StewardWritesNone, StartupPrompt: "Reply in Swedish."}
+	require.NoError(t, config.Save(cfg))
+	rows, err = db.ListAgentMessagesForConv(summon(), 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Contains(t, rows[0].Body, "Standing instructions from the operator:\nReply in Swedish.")
+
+	// A named Steward answers to that name as well, and keeps its address.
+	cfg.Steward = &config.StewardConfig{Name: "Jeeves"}
+	require.NoError(t, config.Save(cfg))
+	named := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equalf(t, http.StatusOK, named.Code, "summon body=%s", named.Body.String())
+	resp := decodeScribeResp(t, named)
+	assert.True(t, strings.HasPrefix(strings.ToLower(resp.Name), "jeeves-"), resp.Name)
+	rows, err = db.ListAgentMessagesForConv(resp.ConvID, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Contains(t, rows[0].Body, "The operator calls you Jeeves.")
+	assert.Less(t, send("jeeves"), 300)
+	assert.Less(t, send("steward"), 300)
 }
