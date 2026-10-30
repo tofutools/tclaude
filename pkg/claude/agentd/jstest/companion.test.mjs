@@ -373,30 +373,34 @@ test('live scribes and Stewards keep a tab by themselves, and a closed one stays
   await harness.act(async () => { snap.value = withHelpers({ second: true }); });
   assert.ok(chip(/steward-new/), 'both Stewards are tracked');
 
-  // Closing a helper sticks while it lives, across a reload's stored state.
+  // Closing a helper sticks, through a poll that sees it offline and a reload.
   await harness.act(() => controller().open(P));
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /Unpin process-scribe-a1/ }).click());
-  await harness.act(async () => { snap.value = withHelpers({ second: true }); });
-  assert.equal([...view.container.querySelectorAll('.companion-tab')].some((tab) => /process-scribe-a1/.test(tab.textContent)), false, 'closed stays closed');
-  assert.ok(JSON.parse(prefs.store.get('tclaude.dash.companion.helpers')).includes(P), 'remembered for the next load');
-  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Add a companion' }).click());
-  assert.ok(harness.getByRole(view.container, 'menuitem', { name: /process-scribe-a1/ }), 'still reachable from the add menu');
-  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Add a companion' }).click());
-
-  // One that ends loses its tab; a new life of it gets one again.
+  const hasTab = () => [...view.container.querySelectorAll('.companion-tab')].some((tab) => /process-scribe-a1/.test(tab.textContent));
   await harness.act(async () => { snap.value = withHelpers({ scribe: false, second: true }); });
-  await harness.act(async () => { snap.value = withHelpers({ scribe: true, second: true }); });
-  assert.equal([...view.container.querySelectorAll('.companion-tab')].some((tab) => /process-scribe-a1/.test(tab.textContent)), true);
+  await harness.act(async () => { snap.value = withHelpers({ second: true }); });
+  assert.equal(hasTab(), false, 'closed stays closed');
+  assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.closed')), [P], 'remembered for the next load');
+
+  // Reopening from the add menu makes it tracked again.
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Add a companion' }).click());
+  await harness.act(() => harness.getByRole(view.container, 'menuitem', { name: /process-scribe-a1/ }).click());
+  assert.equal(hasTab(), true);
+  assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.closed')), []);
 
   const m = await harness.importDashboardModule('js/companion-model.js');
+  const agent = (id, scribe, online) => [id, { agentId: id, scribe, online }];
   const X = `agt_${'1'.repeat(32)}`;
   const Y = `agt_${'2'.repeat(32)}`;
-  const synced = m.syncHelperTabs([A, X], [Y], new Set([X]), '');
-  assert.deepEqual(synced.tabs, [A, Y], 'a pinned tab stays, an ended helper goes, a new one comes');
-  assert.deepEqual([...synced.known], [Y]);
-  assert.deepEqual(m.syncHelperTabs([X], [], new Set([X]), X).tabs, [X], 'the tab on screen stays for the operator to read');
+  const Z = `agt_${'3'.repeat(32)}`;
+  const agents = new Map([agent(A, false, false), agent(X, true, false), agent(Y, true, true), agent(Z, true, true)]);
+  assert.deepEqual(m.syncHelperTabs([A, X], agents, new Set([Z]), new Set()), [A, Y], 'a pin stays, an ended helper goes, a new one comes, a closed one does not');
+  assert.deepEqual(m.syncHelperTabs([X], agents, new Set([Y, Z]), new Set([X])), [X], 'a tab being kept stays');
+  const same = [Y, Z];
+  assert.equal(m.syncHelperTabs(same, agents, new Set(), new Set()), same, 'nothing to do changes nothing');
   const full = Array.from({ length: m.COMPANION_MAX_TABS }, (_, i) => `agt_${String(i).repeat(32)}`);
-  assert.deepEqual(m.syncHelperTabs(full, [`agt_${'f'.repeat(32)}`], new Set(), '').tabs, full, 'a helper never pushes out a pin');
+  assert.deepEqual(m.syncHelperTabs(full, new Map([agent(Y, true, true)]), new Set(), new Set()), full, 'a helper never pushes out a pin');
+  assert.equal(m.parseClosedHelpers(JSON.stringify(full.concat(A, B, 'junk'))).size, m.COMPANION_MAX_TABS + 2, 'every closed helper is remembered');
 });
 
 test('the window comes back open after a reload of the same browser tab', async (t) => {
@@ -406,6 +410,21 @@ test('the window comes back open after a reload of the same browser tab', async 
   assert.ok(view.container.querySelector('.companion-window'), 'it was open before the reload');
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /Minimize/ }).click());
   assert.equal(sessionPrefs.store.get('tclaude.dash.companion.open'), '0', 'minimized stays minimized');
+});
+
+test('a reload shows this browser tab\'s own agent and takes it over from its Terminals pane', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]), 'tclaude.dash.companion.active': A });
+  const sessionPrefs = memoryPrefs({ 'tclaude.dash.companion.open': '1', 'tclaude.dash.companion.active': B });
+  const { view, harness, closed } = await setup(t, { prefs, sessionPrefs });
+  assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true', 'not what another browser tab showed last');
+  assert.ok(closed.some((selectors) => selectors.includes(B)), 'its Terminals pane closes');
+});
+
+test('an agent moved to Terminals before a reload stays there', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]) });
+  const sessionPrefs = memoryPrefs({ 'tclaude.dash.companion.open': '1', 'tclaude.dash.companion.active': B, 'tclaude.dash.companion.parked': JSON.stringify([B]) });
+  const { closed } = await setup(t, { prefs, sessionPrefs });
+  assert.equal(closed.some((selectors) => selectors.includes(B)), false);
 });
 
 test('the companion stays out of the page until features.collab is on', async (t) => {

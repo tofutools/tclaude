@@ -6504,7 +6504,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   position: fixed; bottom: calc(var(--footer-h) + 16px); left: 50%;
   background: #161b22; border: 1px solid #2a3340; border-left: 3px solid #3fb950;
   border-radius: 4px; padding: 10px 14px; color: #c9d1d9;
-  font-size: 13px; width: max-content; max-width: min(360px, calc(100vw - 48px)); z-index: 200;
+  font-size: 13px; width: max-content; max-width: min(360px, calc(100vw - 48px)); z-index: 960;
   opacity: 0; transform: translate(-50%, 8px); pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
