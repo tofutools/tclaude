@@ -122,14 +122,21 @@ export function cueOpenDue(cue, now) {
   return !Number.isFinite(at) || now - at <= CUE_OPEN_PATIENCE_MS;
 }
 
-// claimCueOpen lets one dashboard tab act on a hand-over: the newest cue id
-// any tab opened is kept in shared prefs, and a cue at or below it is taken.
-export function claimCueOpen(stored, cue) {
-  const id = Number(cue?.id);
-  if (!Number.isFinite(id)) return false;
-  const last = Number(stored);
-  return !(Number.isFinite(last) && stored !== null && stored !== '' && id <= last);
+// cueOpenKey names one hand-over for the cross-tab claim. Cue ids restart
+// with the daemon, so the time it was posted is part of the key.
+export function cueOpenKey(cue) {
+  return `${cue?.id}@${cue?.at || ''}`;
 }
+
+// claimCueOpen lets one dashboard tab act on a hand-over: the last one any
+// tab opened is kept in shared prefs, and a tab seeing it there leaves it.
+export function claimCueOpen(stored, cue) {
+  return stored !== cueOpenKey(cue);
+}
+
+// An unfocused but visible tab (a second monitor) gives the focused one
+// this long to take a hand-over first.
+export const CUE_OPEN_UNFOCUSED_DELAY_MS = 400;
 
 function rectKey(r) {
   return r ? `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}` : '-';
