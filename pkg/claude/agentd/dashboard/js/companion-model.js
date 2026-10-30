@@ -47,6 +47,7 @@ export const STEWARD_SLUGS = Object.freeze([
   'dashboard.guide',
   'boards.read',
   'boards.write',
+  'fleet.read',
 ]);
 
 const AGENT_ID = /^agt_[0-9a-f]{32}$/;
@@ -249,6 +250,7 @@ export function composeCompanionMessage(text, context = '') {
 // the Steward's tab is open and nothing is typed: the usual ways in to
 // guided setup (tcl-bifqbb).
 export const STEWARD_STARTERS = Object.freeze([
+  { label: 'Brief me', text: 'Brief me on the fleet: what needs me first, then what is moving. Keep it short.' },
   { label: 'What can I do here?', text: 'What can I do on this page? Point me at the important controls.' },
   { label: 'Review my setup', text: 'Review my tclaude setup (groups, spawn profiles, sandbox profiles, schedules) and tell me what is missing or worth changing. Do not change anything yet.' },
   { label: 'Set up my repos', text: 'Help me set up a group for each of my repos, with sensible defaults. Ask me which repos first.' },
@@ -264,6 +266,11 @@ export function stewardBrief() {
     '"[dashboard view: ...]" line naming the dashboard view they are looking at.',
     '',
     'What you do:',
+    '- Be the operator\'s chief of staff for the fleet. `tclaude agent fleet` lists every agent in',
+    '  every group with its status, task and presented PRs, and ranks what needs the operator now',
+    '  (approvals, permission prompts, questions, failed turns, PRs, unread messages, idle agents).',
+    '  When asked for a brief, lead with what needs them, oldest first, one line each, then what is',
+    '  moving. Do not paste the raw listing.',
     '- Explain tclaude and the dashboard view the operator is on ("what can I do here?").',
     '- Inspect their setup through the tclaude CLI read surfaces: `tclaude agent groups ls`,',
     '  `tclaude agent ls`, `tclaude agent profiles ls`, `tclaude agent templates ls`,',
