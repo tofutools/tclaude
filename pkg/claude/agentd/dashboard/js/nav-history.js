@@ -573,7 +573,9 @@ export function navigateToPath(path) {
   } catch {
     return false;
   }
-  if (url.origin !== window.location.origin) return false;
+  // Only a path that resolves to itself: dot segments would make the checks
+  // made on the path as written (a cue's, say) say nothing about the result.
+  if (url.origin !== window.location.origin || url.pathname !== path.split(/[?#]/, 1)[0]) return false;
   const loc = normalizeLocation(fromPath(url.pathname, url.search));
   if (!ROUTABLE_TABS.has(loc.tab) || !locationAvailable(loc)) return false;
   // Push first so the stack points at the new entry before activate() runs:

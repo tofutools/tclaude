@@ -893,7 +893,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
         <${Setting} title="Collab" forId="cfg-feature-collab" k="features.collab" badges=${['refresh']}
           summary=${html`enable the in-development <strong>Collab</strong> surfaces: the companion window, the Steward and shared boards`}
-          more="The floating companion window for talking to agents from any view, with the Steward as your helper for all of tclaude; shared boards you draw on with agents; the fleet brief and map; decisions agents put to you with options; and agents pointing at the dashboard for you. Off by default while it is tested and iterated on; these views, their API and CLI commands stay absent until enabled.">
+          more="The floating companion window for talking to agents from any view, with the Steward as your helper for all of tclaude; shared boards you draw on with agents; the fleet brief and map; decisions agents put to you with options; and agents pointing at the dashboard for you. Off by default while it is tested and iterated on; these views stay hidden and their API and CLI commands answer with a disabled message until enabled.">
           <${Toggle} id="cfg-feature-collab" />
         </${Setting}>
         <${Setting} title="Triggers" forId="cfg-feature-triggers" k="features.triggers" badges=${['refresh']}

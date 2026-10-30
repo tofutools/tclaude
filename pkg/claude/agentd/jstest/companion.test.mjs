@@ -222,6 +222,27 @@ test('the companion reports the operator view and plays a guidance cue once', as
   await view.unmount();
 });
 
+test('a cue cannot point at the operator\'s own consent', async (t) => {
+  const harness = await createPreactHarness(t);
+  const g = await harness.importDashboardModule('js/companion-guide.js');
+  const doc = harness.window.document;
+  const page = doc.createElement('div');
+  page.innerHTML = `<button id="keep">Approve the plan later</button>
+    <div class="mail-decision"><button>Sidebar</button></div>
+    <button class="access-btn approve">Grant it</button>
+    <button id="save">Save draft</button>`;
+  doc.body.append(page);
+  t.after(() => page.remove());
+  const keep = doc.getElementById('keep');
+  assert.equal(g.consentControl(keep), true, 'by its words');
+  assert.equal(g.consentControl(page.querySelector('.mail-decision button')), true, 'by where it is');
+  assert.equal(g.consentControl(page.querySelector('.access-btn')), true);
+  assert.equal(g.consentControl(doc.getElementById('save')), false);
+  for (const target of ['Approve the plan later', 'Sidebar', 'Grant it']) {
+    assert.equal(g.findGuideTarget(doc, target), null, target);
+  }
+});
+
 test('guide target matching prefers exact, then prefix, then shorter text', async (t) => {
   const harness = await createPreactHarness(t);
   const g = await harness.importDashboardModule('js/companion-guide.js');

@@ -61,6 +61,10 @@ func TestDashboardGuideViewAndCues(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"tab": "nope"}))
 	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"path": "//evil.example/x"}))
 	require.Equal(t, http.StatusBadRequest, cue(map[string]any{"path": "/terminals/agt_0123"}), "a cue may not attach a terminal")
+	for _, sneaky := range []string{"/x/../terminals/agt_0123", "/%74erminals/agt_0123", "/terminals/./agt_0123", "/x/%2e%2e/terminals/agt_0123"} {
+		require.Equal(t, http.StatusBadRequest, cue(map[string]any{"path": sneaky}), sneaky)
+	}
+	require.NotEqual(t, http.StatusBadRequest, cue(map[string]any{"path": "/terminals/"}), "the Terminals tab itself is fine")
 	require.Equal(t, http.StatusOK, cue(map[string]any{"path": "/terminals"}))
 	agentd.ResetDashboardGuideForTest()
 	require.Equal(t, http.StatusOK, cue(map[string]any{"tab": "Processes", "target": "Save draft", "note": "Save once\nthe diff\x07 looks right"}))

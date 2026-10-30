@@ -27,6 +27,19 @@ export const TARGET_SELECTOR = [
   'summary', 'label', 'h1', 'h2', 'h3', 'h4', 'th', 'legend', 'input[type="submit"]',
 ].join(',');
 
+// A cue never points at the operator's own consent: an agent could steer an
+// approval of its own request, or a decision, with a ring and a note. Those
+// controls cannot be a target or a mark.
+const CONSENT_AREAS = '.companion-approval, .companion-decision, .mail-decision, .access-btn';
+const CONSENT_WORDS = /^(approve|allow|deny|decline)\b/i;
+
+export function consentControl(el) {
+  if (el.closest?.(CONSENT_AREAS)) return true;
+  if (!el.matches?.('button, [role="button"], input[type="submit"]')) return false;
+  const { label, text } = textOf(el);
+  return CONSENT_WORDS.test(label) || CONSENT_WORDS.test(text);
+}
+
 export function textOf(el) {
   const label = el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '';
   const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
@@ -79,6 +92,7 @@ function findIn(elements, target, exclude) {
   let bestScore = 0;
   for (const el of elements) {
     if (exclude && el.closest?.(exclude)) continue;
+    if (consentControl(el)) continue;
     const score = guideMatchScore(textOf(el), target);
     // Elements come in document order, so a tie with an element inside the
     // current best is the tighter fit (the span, not its row).
