@@ -15,6 +15,8 @@
 
 export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
 export const COMPANION_ACTIVE_PREF = 'tclaude.dash.companion.active';
+// The newest hand-over cue (guide show --open) a dashboard tab acted on.
+export const COMPANION_CUE_OPEN_PREF = 'tclaude.dash.companion.cue-open';
 export const COMPANION_PLACEMENT_PREF = 'tclaude.dash.companion.placement';
 export const COMPANION_MAX_TABS = 8;
 
