@@ -26,6 +26,11 @@ import {
 } from './human-notification-attention.js';
 import { openAccessPanel } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
+import { openInCompanion } from './companion-facade.js';
+import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
+import { boardOverlay, openBoardPane } from './board-overlay-state.js';
+import { bindBoardTabs } from './terminal-board-tabs.js';
+import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch } from './node-api.js';
 import { ViewersBadge } from './remote-viewers.js';
@@ -404,6 +409,66 @@ function TerminalPane({
   `;
 }
 
+const fetchFromPage = (...args) => globalThis.fetch(...args);
+
+// BoardPane is a pane with a board in it rather than a terminal: no widget, and
+// none of the agent chrome. The editor mounts the first time the tab is looked
+// at, so tabs restored after a reload cost nothing until then, and then stays
+// mounted like a background terminal. A pop-out's page has no collab gate of
+// its own: the daemon answers there.
+function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope = null }) {
+  const seen = useRef(false);
+  if (active) seen.current = true;
+  useEffect(() => {
+    if (active && manageTitle) document.title = `${pane.label ? `${pane.label} — ` : ''}tclaude board`;
+  }, [active, manageTitle, pane.label]);
+  const editor = seen.current && snapshot ? html`<${BoardEditor}
+    boardId=${pane.seed.board} onScreen=${active} snapshot=${snapshot} win=${window}
+    visible=${() => solo || !!document.getElementById('tab-terminals')?.classList.contains('active')}
+    fetchImpl=${fetchFromPage} notify=${shellToast} onOpenAgent=${(agent) => openInCompanion(agent)}
+    onTitle=${(title) => actions.setPaneLabel(pane.key, title)}
+    headActions=${solo
+      ? html`<button type="button" class="mux-btn" title="Move this board back to its dashboard tab" onClick=${() => void actions.reattachPane(pane.key)}>↩ dashboard</button>`
+      : html`
+        <button type="button" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>
+        <button type="button" class="mux-btn" title="Move this board to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>`} />` : null;
+  return html`<div
+    class=${`mux-pane mux-pane-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
+    id=${pane.id}
+    role=${solo ? null : 'tabpanel'}
+  >${solo ? editor : html`<${BoardsGate} snapshot=${snapshot}>${editor}<//>`}</div>`;
+}
+
+// BoardMenu is the strip's + button: open a board as a tab, or make a new one.
+// It reads the snapshot itself so the strip does not re-render on each poll.
+function BoardMenu({ state, snapshot }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const request = state.boardMenuRequest.value;
+  useEffect(() => { if (request) setOpen(true); }, [request]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+    const onKeyDown = (event) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+  if (snapshot?.value?.collab_enabled !== true) return null;
+  return html`<div ref=${rootRef} class="mux-board-slot">
+    <button type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+      title="Open a board in a tab, or create one" aria-label="Open or create a board"
+      onClick=${() => setOpen((value) => !value)}>＋</button>
+    ${open ? html`<div class="mux-board-menu" role="dialog" aria-label="Boards">
+      <${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast}
+        onOpen=${(id, label) => { setOpen(false); void openBoardPane(id, label); }} />
+    </div>` : null}
+  </div>`;
+}
+
 // PaneProcessOverlay reads the snapshot signal itself so only this small
 // component, not the pane around the opaque xterm host, re-renders on each
 // snapshot; it shows nothing unless features.processes is on.
@@ -627,12 +692,19 @@ function NodePill({ node, compact = false }) {
   return html`<span class=${cls} style=${`--nc:${node.color}`} title=${`On ${node.name}`}>${compact ? [...node.name][0]?.toUpperCase() : node.name}</span>`;
 }
 
+// A board has no agent behind it, so its tab says what it is instead.
+function boardTabStatus(pane) {
+  const label = `Board ${paneTitle(pane)}`;
+  return { key: 'board', className: 'board', symbol: '✎', title: label, ariaLabel: label, agent: null };
+}
+
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
   peerNotifications = {},
 }) {
-  const agentStatus = terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
+  const board = !!pane.seed.board;
+  const agentStatus = board ? boardTabStatus(pane) : terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value, peerNotifications);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
@@ -663,6 +735,7 @@ function PaneTab({
     openMenu({
       kind: 'pane',
       key: pane.key,
+      board,
       groupId,
       label: pane.label,
       trigger: event.currentTarget,
@@ -726,7 +799,7 @@ function PaneTab({
         type="button"
         class="mux-tab-close"
         draggable="false"
-        title="Close this terminal"
+        title=${board ? 'Close this board' : 'Close this terminal'}
         aria-label=${`Close ${pane.label}`}
         onClick=${(event) => { event.stopPropagation(); void actions.closePane(pane.key); }}
       >×</button>
@@ -1038,6 +1111,7 @@ function PaneContextMenu({
       .map((group) => item(`Add to “${group.name}”`, () => actions.assignPaneToGroup(menu.key, group.id))),
     ...(menu.groupId ? [item('Remove from group', () => actions.assignPaneToGroup(menu.key, null))] : []),
     separator,
+    ...(menu.board ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
     item('Detach tab', () => actions.popOutPane(menu.key)),
     separator,
     item('Close tab', () => actions.closePane(menu.key)),
@@ -1118,6 +1192,8 @@ function TerminalTabs({
   const composeMessageAvailable = Boolean(onComposeMessage) &&
     (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
+  // A board keeps nothing in the page that a reload would lose.
+  const hasTerminals = current.panes.some((pane) => !pane.seed.board);
   // Sessions still running in tmux with no terminal attached. The dashboard
   // tab lists them; a pop-out window shows only its own panes.
   const backgroundRows = solo ? [] : visibleBackgroundTerminals(backgroundTerminals.value, current.panes);
@@ -1568,7 +1644,7 @@ function TerminalTabs({
   }, [current.revealRequest, solo]);
 
   useEffect(() => {
-    if (!hasPanes) return undefined;
+    if (!hasTerminals) return undefined;
     let armed = true;
     const confirmUnload = (event) => {
       event.preventDefault();
@@ -1585,7 +1661,7 @@ function TerminalTabs({
       window.removeEventListener('tclaude:auth-expired', disarmForAuth);
       window.removeEventListener('beforeunload', confirmUnload);
     };
-  }, [hasPanes]);
+  }, [hasTerminals]);
 
   // The last open terminal closing leaves an empty tab behind; move on to
   // Groups unless config says to stay (terminal-close-nav.js). Only the
@@ -1599,7 +1675,8 @@ function TerminalTabs({
     hadPanesRef.current = hasPanes;
     if (solo || !had || hasPanes) return undefined;
     const timer = setTimeout(() => {
-      if (!state.panes.value.length) leaveTerminalsAfterLastClose();
+      // A board that moved to the overlay leaves the operator working here.
+      if (!state.panes.value.length && !boardOverlay.peek()) leaveTerminalsAfterLastClose();
     }, 0);
     return () => clearTimeout(timer);
   }, [hasPanes, solo]);
@@ -1740,6 +1817,7 @@ function TerminalTabs({
               onDrop=${dropOnEnd}
             />` : null}
         </div><//>
+        <${BoardMenu} state=${state} snapshot=${snapshot} />
         ${hasBackground ? html`<div class="mux-bg-slot"><${BackgroundTerminalsChip} rows=${backgroundRows} snapshot=${snapshot} /></div>` : null}
         </div>
         ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
@@ -1753,11 +1831,23 @@ function TerminalTabs({
           ${hasBackground
             ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running in tmux without a terminal. Hover the counter at the top right to attach or review them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
+          ${snapshot ? html`<${BoardsGate} snapshot=${snapshot}><div>Or open a board from the ＋ above.</div><//>` : null}
         </div>
       ` : null}
       ${hasPanes || !empty ? html`
         <div ref=${panesRef} class="mux-panes">
-          ${current.panes.map((pane) => html`
+          ${current.panes.map((pane) => (pane.seed.board ? html`
+            <${BoardPane}
+              key=${pane.key}
+              pane=${pane}
+              active=${current.activeKey === pane.key}
+              solo=${solo}
+              manageTitle=${manageTitle}
+              actions=${actions}
+              snapshot=${snapshot}
+              scope=${scopeOf(pane)}
+            />
+          ` : html`
             <${TerminalPane}
               key=${pane.key}
               pane=${pane}
@@ -1772,7 +1862,7 @@ function TerminalTabs({
               processSnapshot=${snapshot}
               scope=${scopeOf(pane)}
             />
-          `)}
+          `))}
         </div>
       ` : null}
       ${hasPanes && !shownPanes.length ? html`
@@ -1794,7 +1884,7 @@ function hasRemotePane(state) {
 }
 
 function TerminalBadge({ state }) {
-  const count = state.view.value.count;
+  const count = state.view.value.panes.filter((pane) => !pane.seed.board).length;
   const background = visibleBackgroundTerminals(backgroundTerminals.value, state.panes.value).length;
   const title = background
     ? `${count} open, ${background} running in the background without a terminal`
@@ -1823,7 +1913,7 @@ export function mountTerminalShellIsland({
   const unregisterController = registerTerminalShellController(actions, runtimeLoader);
   const unbindHandoff = bindTerminalHandoffReceiver({
     openSeed: async (seed) => {
-      if (runtimeLoader) await runtimeLoader();
+      if (runtimeLoader && !seed.board) await runtimeLoader();
       return actions.receiveHandoffPane(seed);
     },
   });
@@ -1837,7 +1927,9 @@ export function mountTerminalShellIsland({
     state,
     snapshot,
     openAgentPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
+    openBoardPane: (id) => openBoardPane(id),
   });
+  const unbindBoardTabs = snapshot ? bindBoardTabs({ state, snapshot }) : () => {};
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
     snapshot=${snapshot} scope=${scope} />`, host);
@@ -1860,6 +1952,7 @@ export function mountTerminalShellIsland({
     stopRemoteStatusPoll();
     stopPeerWatch();
     stopBackgroundPoll();
+    unbindBoardTabs();
     unbindNavRouting();
     unbindHandoff();
     unregisterController();

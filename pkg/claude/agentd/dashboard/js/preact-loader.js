@@ -354,39 +354,29 @@ export function mountCompanionFeature(dependencies = {}) {
   return mountIslandDescriptor(companionDescriptor, dependencies);
 }
 
-// Boards (tcl-4f86kp): shared canvases under Collab. The island also renders
-// the Terminals | Boards switch at the top of the Terminals section.
-const boardsDescriptor = createIslandDescriptor({
-  name: 'boards',
-  label: 'Boards',
-  hosts: { host: '#boards-root', switchHost: '#collab-switch-root' },
-  failureClass: 'boards-error',
-  load: async ({ hosts: { host, switchHost }, dependencies }) => {
-    const islandModule = import('./board-island.js');
+// A board in its own floating window (tcl-h4y60w). The boards themselves are
+// tabs of the terminal shell.
+const boardOverlayDescriptor = createIslandDescriptor({
+  name: 'board-overlay',
+  label: 'Board overlay',
+  hosts: { host: '#board-overlay-root' },
+  failureClass: 'board-overlay-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./board-overlay.js');
     const snapshotStoreModule = import('./snapshot-store.js');
-    const [{ mountBoardsIsland, createBoardsState }, { dashboardState }] =
-      await Promise.all([islandModule, snapshotStoreModule]);
-    const state = createBoardsState();
+    const prefsModule = import('./prefs.js');
+    const [{ mountBoardOverlayIsland }, { dashboardState }, { dashPrefs }] =
+      await Promise.all([islandModule, snapshotStoreModule, prefsModule]);
     return {
-      state,
-      mount: (registerCleanup) => mountBoardsIsland({
-        host, switchHost, state, registerCleanup,
-        snapshot: dashboardState.snapshot, notify: dependencies.notify,
-        rasterize: async (svg, box) => {
-          const { svgToPng } = await import('./board-export.js');
-          return svgToPng(svg, box);
-        },
-        openAgent: async (agentId) => {
-          const { openInCompanion } = await import('./companion-facade.js');
-          return openInCompanion(agentId);
-        },
+      mount: (registerCleanup) => mountBoardOverlayIsland({
+        host, registerCleanup, snapshot: dashboardState.snapshot, notify: dependencies.notify, prefs: dashPrefs,
       }),
     };
   },
 });
 
-export function mountBoardsFeature(dependencies = {}) {
-  return mountIslandDescriptor(boardsDescriptor, dependencies);
+export function mountBoardOverlayFeature(dependencies = {}) {
+  return mountIslandDescriptor(boardOverlayDescriptor, dependencies);
 }
 
 // Terminal chrome and open state are one ownership unit across the nav badge,

@@ -104,6 +104,8 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   const panes = signal([]);
   const activeKey = signal(null);
   const revealRequest = signal(0);
+  // Bumped to open the strip's board menu: a bare /boards names no board.
+  const boardMenuRequest = signal(0);
   // Group descriptors and pane→group membership are two signals because they
   // change independently: renaming or collapsing a stack touches no pane, and
   // moving a tab between stacks touches no descriptor.
@@ -123,9 +125,13 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   // reattachable rather than a bookmark to nothing. Panes with no agent (group
   // terminals, raw hand-fed seeds) are deliberately not addressable, so the
   // location degrades to the bare tab rather than inventing a second id space.
+  //
+  // A board tab keeps its own route, /boards/<board-id>: the location names the
+  // boards tab, which the router shows in this section.
   const navLocation = computed(() => {
     const loc = { tab: 'terminals' };
     const active = panes.value.find((pane) => pane.key === activeKey.value);
+    if (active?.seed?.board) return { tab: 'boards', selection: active.seed.board };
     const agent = active?.seed?.agent;
     if (agent) loc.selection = String(agent);
     return loc;
@@ -263,6 +269,10 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
 
   function requestReveal() {
     revealRequest.value += 1;
+  }
+
+  function requestBoardMenu() {
+    boardMenuRequest.value += 1;
   }
 
   // activate=false opens the pane without taking focus from the active one
@@ -680,6 +690,26 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     return changed;
   }
 
+  // arrangeBoardPanes puts board tabs in the given order, in the positions board
+  // tabs hold now: a board a deep link opened first must not take the lead for
+  // good after a reload. Other tabs, and tab groups, stay where they are.
+  function arrangeBoardPanes(ids) {
+    const rank = new Map(ids.map((id, index) => [id, index]));
+    const boards = panes.value.filter((pane) => pane.seed.board)
+      .sort((a, b) => (rank.get(a.seed.board) ?? ids.length) - (rank.get(b.seed.board) ?? ids.length));
+    let next = 0;
+    commitPaneOrder(panes.value.map((pane) => (pane.seed.board ? boards[next++] : pane)));
+  }
+
+  // setPaneLabel follows a board's title, as syncAgentLabels follows an agent's.
+  function setPaneLabel(key, label) {
+    const pane = panes.peek().find((candidate) => candidate.key === key);
+    if (!pane || typeof label !== 'string' || !label.trim() || label === pane.label) return false;
+    panes.value = panes.peek().map((candidate) => (candidate !== pane ? candidate
+      : Object.freeze({ ...pane, label, seed: Object.freeze({ ...pane.seed, label }) })));
+    return true;
+  }
+
   function dispose() {
     panes.value = [];
     activeKey.value = null;
@@ -720,7 +750,11 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     groupMembers,
     findPaneKey,
     syncAgentLabels,
+    setPaneLabel,
+    arrangeBoardPanes,
     requestReveal,
+    boardMenuRequest,
+    requestBoardMenu,
     dispose,
   });
 }

@@ -79,6 +79,7 @@
 .mux-tab-status-working::before { animation: mux-tab-status-pulse 1.8s ease-in-out infinite; }
 .mux-tab-status-waking::before,
 .mux-tab-status-restarting::before { animation: mux-tab-status-pulse 1.2s ease-in-out infinite; }
+.mux-tab-status-board { color: #58a6ff; --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M2.5 12.5l.8-3 6.6-6.6 2.2 2.2-6.6 6.6z' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/></svg>"); }
 .mux-tab.active .mux-tab-status-working { color: #56d364; }
 .mux-pane-agent-status { margin-left: 2px; }
 @keyframes mux-tab-status-pulse {
@@ -599,6 +600,19 @@ body.wizard .mux-pane-xterm {
    reminder, not an alert. */
 .mux-tabbar { display: flex; flex: none; min-width: 0; }
 .mux-tabbar > .mux-tabs { flex: 1 1 auto; min-width: 0; }
+/* The strip's + menu of boards (features.collab). */
+.mux-board-slot { position: relative; flex: none; display: flex; background: #161b22; border-bottom: 1px solid #2a3340; }
+.mux-board-add {
+  align-self: center; margin: 0 6px; width: 26px; height: 24px; padding: 0; border-radius: 5px;
+  border: 1px solid #2a3340; background: #21262d; color: #c9d1d9; font-size: 13px; cursor: pointer;
+}
+.mux-board-add:hover, .mux-board-add[aria-expanded="true"] { background: #2d333b; border-color: #3d4451; }
+.mux-board-menu {
+  position: absolute; right: 4px; top: calc(100% + 4px); z-index: 60;
+  border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+}
+/* A board pane brings its own header: none of the terminal chrome. */
+.mux-pane-board { background: #0d1117; }
 .mux-bg-slot {
   position: relative; flex: none; display: flex; align-items: flex-end;
   padding: 5px 6px 3px; background: #161b22; border-bottom: 1px solid #2a3340;

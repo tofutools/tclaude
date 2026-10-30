@@ -15,14 +15,15 @@ function ok(body, status = 200) {
 
 const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
-// The editor polls and takes keys only while the Boards section is active.
+// The editor polls and takes keys only while its section is active.
 function boardsSection(harness, active = true) {
   const section = harness.window.document.createElement('section');
-  section.id = 'tab-boards';
+  section.id = 'tab-terminals';
   if (active) section.classList.add('active');
   harness.window.document.body.appendChild(section);
   return section;
 }
+const inSection = (harness) => () => !!harness.window.document.querySelector('#tab-terminals.active');
 
 test('board model merges by version, then by lower nonce, and keeps tombstones', async (t) => {
   const harness = await createPreactHarness(t);
@@ -71,17 +72,15 @@ test('board model binds arrows to shapes and describes the operator edits in wor
 
 test('the board list creates a board and opens it', async (t) => {
   const harness = await createPreactHarness(t);
-  const { BoardsApp, createBoardsState } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardList } = await harness.importDashboardModule('js/board-island.js');
   const requests = [];
   const fetchImpl = async (url, init = {}) => {
     requests.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
     if (url === '/api/boards' && !init.method) return ok({ boards: [{ id: 'old', title: 'Old board', element_count: 3, participants: [A] }] });
-    if (url === '/api/boards') return ok({ id: 'release-flow', title: 'Release flow' }, 201);
-    return ok({ id: 'release-flow', title: 'Release flow', version: 0, participants: [], elements: [] });
+    return ok({ id: 'release-flow', title: 'Release flow' }, 201);
   };
-  const state = createBoardsState();
-  const snapshot = harness.signals.signal({ groups: [] });
-  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  const opened = [];
+  const view = await harness.mount(harness.html`<${BoardList} fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${(id, label) => opened.push([id, label])} />`);
   await harness.act(() => wait());
   assert.match(view.container.textContent, /Old board/);
   assert.match(view.container.textContent, /3 elements · 1 agent/);
@@ -93,9 +92,7 @@ test('the board list creates a board and opens it', async (t) => {
   });
   const create = requests.find((r) => r.method === 'POST');
   assert.deepEqual(create.body, { title: 'Release flow', id: 'release-flow' });
-  assert.deepEqual(state.location.value, { tab: 'boards', selection: 'release-flow' });
-  await harness.act(() => wait());
-  assert.ok(view.container.querySelector('svg.board-canvas'), 'the editor opened');
+  assert.deepEqual(opened, [['release-flow', 'Release flow']]);
 });
 
 // Preact listens for the lowercase event only where the element has an
@@ -109,7 +106,7 @@ function pointer(harness, target, type, x, y) {
 
 test('drawing a rectangle PATCHes it as the operator and tells participating agents', async (t) => {
   const harness = await createPreactHarness(t);
-  const { BoardsApp, createBoardsState, BOARD_FLUSH_MS, BOARD_EVENT_IDLE_MS } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardEditor, BOARD_FLUSH_MS, BOARD_EVENT_IDLE_MS } = await harness.importDashboardModule('js/board-island.js');
   const requests = [];
   const fetchImpl = async (url, init = {}) => {
     requests.push({ url: String(url), method: init.method || 'GET', body: init.body && typeof init.body === 'string' ? JSON.parse(init.body) : null });
@@ -117,13 +114,11 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
     if (init.method === 'POST') return ok({ sent: 1 }, 202);
     return ok({ id: 'plan', title: 'Plan', version: 1, participants: [A], elements: [] });
   };
-  const state = createBoardsState();
-  state.location.value = { tab: 'boards', selection: 'plan' };
   const snapshot = harness.signals.signal({ groups: [{ name: 'team', members: [{ agent_id: A, conv_id: 'c', title: 'alpha', online: true, state: { status: 'idle' } }] }] });
   const section = boardsSection(harness);
   const boxes = [];
   const rasterize = async (_svg, box) => { boxes.push(box); return new Blob(['PNG-region']); };
-  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} rasterize=${rasterize} />`);
+  const view = await harness.mount(harness.html`<${BoardEditor} boardId="plan" visible=${inSection(harness)} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} rasterize=${rasterize} />`);
   await harness.act(() => wait());
   assert.match(view.container.querySelector('.board-people').textContent, /alpha/);
   await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Rectangle' }).click());
@@ -173,11 +168,9 @@ async function drawnBoard(t, { answer, board = {} } = {}) {
     if (init.method === 'POST') return ok({ sent: 1 }, 202);
     return ok({ id: 'plan', title: 'Plan', version: 1, participants: [A], elements: [], ...board });
   };
-  const state = island.createBoardsState();
-  state.location.value = { tab: 'boards', selection: 'plan' };
   const snapshot = harness.signals.signal({ groups: [] });
   boardsSection(harness);
-  const view = await harness.mount(harness.html`<${island.BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window}
+  const view = await harness.mount(harness.html`<${island.BoardEditor} boardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window}
     notify=${(text, error) => notes.push({ text, error })} />`);
   await harness.act(() => wait());
   await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Rectangle' }).click());
@@ -281,7 +274,7 @@ test('a retry that loses to its own unanswered first attempt is not reported', a
 
 test('an agent edit arriving on the poll is drawn and flashed', async (t) => {
   const harness = await createPreactHarness(t);
-  const { BoardsApp, createBoardsState, BOARD_POLL_MS } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardEditor, BOARD_POLL_MS } = await harness.importDashboardModule('js/board-island.js');
   const m = await harness.importDashboardModule('js/board-model.js');
   const agentText = { ...m.newElement('text', { id: 'idea', x: 10, y: 10, text: 'Ship it?' }), customData: { author: A } };
   let polls = 0;
@@ -292,11 +285,9 @@ test('an agent edit arriving on the poll is drawn and flashed', async (t) => {
     }
     return ok({ id: 'plan', title: 'Plan', version: 1, participants: [A], elements: [] });
   };
-  const state = createBoardsState();
-  state.location.value = { tab: 'boards', selection: 'plan' };
   const snapshot = harness.signals.signal({ groups: [] });
   const section = boardsSection(harness, false);
-  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  const view = await harness.mount(harness.html`<${BoardEditor} boardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
   await harness.act(() => wait(BOARD_POLL_MS + 50));
   assert.equal(polls, 0, 'no polling while another tab shows');
   section.classList.add('active');
@@ -369,7 +360,7 @@ test('board model: labels follow shapes, align and space evenly, copies rebind, 
 
 test('the editor rubber-band selects, aligns, labels a shape on double-click and deletes it with its label', async (t) => {
   const harness = await createPreactHarness(t);
-  const { BoardsApp, createBoardsState, BOARD_FLUSH_MS } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardEditor, BOARD_FLUSH_MS } = await harness.importDashboardModule('js/board-island.js');
   const m = await harness.importDashboardModule('js/board-model.js');
   const a = m.newElement('rectangle', { id: 'a', x: 100, y: 100, width: 100, height: 50 });
   const b = m.newElement('rectangle', { id: 'b', x: 300, y: 200, width: 80, height: 40 });
@@ -379,10 +370,8 @@ test('the editor rubber-band selects, aligns, labels a shape on double-click and
     if (init.method === 'POST') return ok({}, 202);
     return ok({ id: 'plan', title: 'Plan', version: 1, participants: [], elements: String(url).includes('since') ? [] : [a, m.newLabel(a, 'API'), b] });
   };
-  const state = createBoardsState();
-  state.location.value = { tab: 'boards', selection: 'plan' };
   boardsSection(harness);
-  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${harness.signals.signal({ groups: [] })} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  const view = await harness.mount(harness.html`<${BoardEditor} boardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${harness.signals.signal({ groups: [] })} fetchImpl=${fetchImpl} win=${harness.window} />`);
   await harness.act(() => wait());
   const svg = view.container.querySelector('svg.board-canvas');
   // The view starts at (-40, -40): client = board + 40.
@@ -441,23 +430,29 @@ test('the editor rubber-band selects, aligns, labels a shape on double-click and
   assert.equal(patches[0].type, 'rectangle');
   assert.notEqual(patches[0].id, 'a');
   assert.deepEqual([patches[0].x, patches[0].y], [101, 210], 'placed at the last pointer position');
+
+  // The paste left its copy selected. A click elsewhere on the page ends the
+  // board's claim on page-level keys.
+  patches.length = 0;
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'pointerdown', {}));
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
+  await harness.act(() => wait(BOARD_FLUSH_MS + 20));
+  assert.deepEqual(patches.filter((el) => el.isDeleted), [], 'Delete was aimed at the page');
   await view.unmount();
 });
 
 test('the editor shows who is drawing and reports the operator\'s view of the board', async (t) => {
   const harness = await createPreactHarness(t);
-  const { BoardsApp, createBoardsState, BOARD_POLL_MS } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardEditor, BOARD_POLL_MS } = await harness.importDashboardModule('js/board-island.js');
   const views = [];
   let presence = [];
   const fetchImpl = async (url, init = {}) => {
     if (String(url).endsWith('/view')) { views.push(JSON.parse(init.body)); return ok({}, 204); }
     return ok({ id: 'plan', title: 'Plan', version: 1, participants: [A], elements: [], presence: { agents: presence } });
   };
-  const state = createBoardsState();
-  state.location.value = { tab: 'boards', selection: 'plan' };
   const snapshot = harness.signals.signal({ groups: [{ name: 'team', members: [{ agent_id: A, conv_id: 'c', title: 'alpha', online: true, state: { status: 'idle' } }] }] });
   const section = boardsSection(harness);
-  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  const view = await harness.mount(harness.html`<${BoardEditor} boardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
   await harness.act(() => wait());
   view.container.querySelector('svg.board-canvas').getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 400 });
   presence = [{ agent_id: A, state: 'drawing' }];
@@ -481,7 +476,7 @@ test('the editor shows who is drawing and reports the operator\'s view of the bo
 
 test('making a board a group\'s board shows its members and tells the online ones', async (t) => {
   const harness = await createPreactHarness(t);
-  const { BoardsApp, createBoardsState } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardEditor } = await harness.importDashboardModule('js/board-island.js');
   const requests = [];
   const fetchImpl = async (url, init = {}) => {
     requests.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
@@ -489,11 +484,9 @@ test('making a board a group\'s board shows its members and tells the online one
     if (init.method === 'POST') return ok({}, 202);
     return ok({ id: 'plan', title: 'Plan', version: 1, participants: [], elements: [] });
   };
-  const state = createBoardsState();
-  state.location.value = { tab: 'boards', selection: 'plan' };
   const snapshot = harness.signals.signal({ groups: [{ name: 'team', members: [{ agent_id: A, conv_id: 'c', title: 'alpha', online: true, state: { status: 'idle' } }] }] });
   boardsSection(harness);
-  const view = await harness.mount(harness.html`<${BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  const view = await harness.mount(harness.html`<${BoardEditor} boardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
   await harness.act(() => wait());
   const select = view.container.querySelector('select.board-group');
   assert.deepEqual([...select.options].map((o) => o.value), ['', 'team']);
@@ -515,11 +508,11 @@ test('making a board a group\'s board shows its members and tells the online one
 
 test('boards stay out of the page until features.collab is on, then load fresh', async (t) => {
   const harness = await createPreactHarness(t);
-  const { BoardsGate, createBoardsState } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardList, BoardsGate } = await harness.importDashboardModule('js/board-island.js');
   const requests = [];
   const fetchImpl = async (url) => { requests.push(String(url)); return { ok: true, status: 200, json: async () => ({ boards: [] }) }; };
   const snapshot = harness.signals.signal({ collab_enabled: false });
-  await harness.mount(harness.html`<${BoardsGate} state=${createBoardsState()} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  await harness.mount(harness.html`<${BoardsGate} snapshot=${snapshot}><${BoardList} fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${() => {}} /><//>`);
   assert.deepEqual(requests, [], 'a disabled surface is not asked for');
   await harness.act(async () => { snapshot.value = { collab_enabled: true }; await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(requests.includes('/api/boards'), 'turning it on needs no reload');

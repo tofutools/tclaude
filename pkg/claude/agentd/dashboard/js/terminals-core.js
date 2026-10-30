@@ -14,6 +14,7 @@
 import { attachTerminalInteractions } from './terminal-interactions.js';
 import { restartWatcher as sharedRestartWatcher } from './instance-watch.js';
 import { terminalThemeFor } from './terminal-theme.js';
+import { boardPaneKey, isBoardId } from './board-model.js';
 
 // A newly-created browser terminal can briefly lose an attach race with the
 // client it is replacing (pop-out / reattach), or arrive while a freshly
@@ -160,7 +161,15 @@ export const TERMINAL_EXIT = Object.freeze({
   4004: { text: 'detached', closeTab: true },
 });
 
+// A board seed (seed.board) has no socket: it must name a valid board id, and
+// whatever else a crafted hash put in it cannot give it one, or a key that
+// collides with another pane.
 export function normalizeSeed(seed) {
+  if (seed?.board !== undefined) {
+    if (!isBoardId(seed.board)) return null;
+    const { ws: _ws, ...rest } = seed;
+    return { ...rest, key: boardPaneKey(seed.board) };
+  }
   return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
 }
 

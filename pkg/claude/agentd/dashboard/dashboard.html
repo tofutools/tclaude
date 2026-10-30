@@ -300,7 +300,6 @@
        even with nothing open; the badge counts the live terminals plus
        background tmux sessions. -->
   <a data-tab="terminals" href="/terminals" title="Live in-browser terminals, plus tclaude sessions still running in the background."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
-  <a data-tab="boards" href="/boards" title="Boards: shared canvases you draw on together with agents"><span class="tab-label-regular">Boards</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">✎</span> <span class="tab-title">Boards</span></span></a>
   <a data-tab="jobs" href="/automations" title="Automations — agent exports, recurring cron jobs, and trigger-driven standing orders"><span class="tab-label-regular">Automations</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
   <!-- Processes lives under Automations: its sub-nav entry there is the
        visible way in, so this anchor is permanently CSS-hidden. It stays the
@@ -401,13 +400,7 @@
   <!-- Preact owns the in-SPA terminal pane chrome and leaves each xterm host as
        an opaque imperative subtree. -->
   <section id="tab-terminals">
-    <div id="collab-switch-root"></div>
     <div id="terminals-root"></div>
-  </section>
-  <!-- Boards (tcl-4f86kp): shared canvases the operator and agents draw on.
-       Presented under Collab next to Terminals; its own nav anchor is hidden. -->
-  <section id="tab-boards">
-    <div id="boards-root"></div>
   </section>
   <!-- The Jobs tab: the old Cron tab, extended into one job workspace —
        per-agent export jobs (async "📋 summary…" work; the nav badge counts
@@ -800,6 +793,8 @@
      DOM-order topmost check must give the picker Escape/Tab ownership. -->
 <div id="directory-picker-root"></div>
 <!-- The floating companion: chips, peek and window over every view. -->
+<!-- Before the companion: on one z-index layer, the later host starts in front. -->
+<div id="board-overlay-root"></div>
 <div id="companion-root"></div>
 <!-- The quick permissions panel (js/access-panel-island.js), raised by event. -->
 <div id="access-panel-root"></div>

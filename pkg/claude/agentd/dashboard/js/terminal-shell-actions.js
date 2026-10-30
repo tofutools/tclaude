@@ -3,6 +3,7 @@ import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { shellToast } from './shell-state.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
+import { openBoardOverlay } from './board-overlay-state.js';
 
 export function createTerminalShellActions({
   state,
@@ -59,6 +60,8 @@ export function createTerminalShellActions({
     return new Promise((resolve) => {
       const poll = () => {
         const pane = state.panes.value.find((candidate) => candidate.key === key);
+        // A board has no attach to wait for.
+        if (pane?.seed.board) { resolve(true); return; }
         const widget = pane && widgets.get(pane.id);
         const remaining = timeoutMs - (Date.now() - started);
         if (widget?.settled) {
@@ -213,7 +216,7 @@ export function createTerminalShellActions({
       return false;
     }
     const seed = {
-      ws: pane.seed.ws,
+      ...(pane.seed.board ? { board: pane.seed.board } : { ws: pane.seed.ws }),
       label: pane.label,
       key: pane.seed.key,
       hideConv: pane.seed.hideConv,
@@ -227,6 +230,16 @@ export function createTerminalShellActions({
     await closePane(key);
     try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); }
     catch (_) { /* target closed while detach was landing */ }
+    return true;
+  }
+
+  // openPaneInOverlay moves a board from its tab into the floating overlay. The
+  // tab's editor saves what it holds as it goes.
+  async function openPaneInOverlay(key) {
+    const pane = state.panes.value.find((candidate) => candidate.key === key);
+    if (disposed || !pane?.seed.board) return false;
+    await closePane(key);
+    openBoardOverlay(pane.seed.board, pane.label);
     return true;
   }
 
@@ -255,6 +268,7 @@ export function createTerminalShellActions({
     waitForPaneSettled,
     widgetFor,
     openPane,
+    setPaneLabel: (key, label) => !disposed && state.setPaneLabel(key, label),
     receiveHandoffPane,
     activatePane,
     reorderPane,
@@ -277,6 +291,7 @@ export function createTerminalShellActions({
     closeForAgents,
     focusForSelectors,
     popOutPane,
+    openPaneInOverlay,
     reattachPane,
     setArcanePaletteEnabled,
     dispose,

@@ -123,7 +123,7 @@ export const SELECTABLE_SUBTABS = {
 // with no subtab in between — so the entity lives in the SECOND path segment:
 //   - terminals/<agent-id> — the Terminals tab is viewing that agent's terminal.
 //   - messages/<folder> — the Messages tab has that folder open.
-//   - boards/<board-id> — the Boards view has that board open.
+//   - boards/<board-id> — that board's tab is active in the Terminals section.
 // These tabs must not also appear in KNOWN_SUBTABS: a tab cannot have both a
 // subtab and a tab-level selection, because both would claim segment two.
 export const SELECTABLE_TABS = new Set(['terminals', 'boards', 'messages']);

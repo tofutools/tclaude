@@ -32,7 +32,8 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     if (!seed) return null;
     const current = controller;
     if (!current) return null;
-    if (!prepareRuntime) return current.openPane(seed, paneOptions);
+    // A board pane has no xterm to load.
+    if (!prepareRuntime || seed.board) return current.openPane(seed, paneOptions);
     return prepareRuntime().then(
       () => controller === current ? current.openPane(seed, paneOptions) : null,
       (error) => {

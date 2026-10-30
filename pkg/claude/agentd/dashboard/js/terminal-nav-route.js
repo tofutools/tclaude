@@ -26,6 +26,8 @@
 // would rewrite the address bar to a terminal the operator is not looking at,
 // so the next hard refresh lands somewhere they never were. See classifyChange.
 
+import { boardPaneKey, isBoardId } from './board-model.js';
+
 const RESTORE_EVENT = 'tclaude:restore-location';
 const NAVIGATED_EVENT = 'tclaude:navigated';
 
@@ -74,12 +76,20 @@ function knownAgent(snapshotValue, agent) {
 // openWebWindowPane the "focus this agent" row action uses, which is what makes
 // a deep link land on exactly the pane a click would have produced.
 //
+// Board tabs live in the same strip under their own route (/boards/<id>), so a
+// location here is either kind. selectionOf keeps the two id spaces apart.
+function selectionOf(location) {
+  const selection = location?.selection ? String(location.selection) : '';
+  return selection && location.tab === 'boards' ? boardPaneKey(selection) : selection;
+}
+
 // `isTabActive()` reports whether the Terminals section is the one on screen.
 // A pane change while the operator is looking at another tab is never their
 // navigation — that is exactly the background-open case.
 export function bindTerminalNavRouting({
   state,
   openAgentPane,
+  openBoardPane = () => null,
   snapshot = null,
   documentRef = globalThis.document,
   isTabActive = () => !!documentRef?.getElementById('tab-terminals')?.classList?.contains('active'),
@@ -117,6 +127,15 @@ export function bindTerminalNavRouting({
   }
 
   async function applyLocation(loc) {
+    if (loc.tab === 'boards') {
+      // A bare /boards names no tab to show, so it offers the list; answering
+      // false corrects the URL to what is on screen.
+      if (!loc.selection) { state.requestBoardMenu(); return false; }
+      if (!isBoardId(loc.selection)) return false;
+      const key = boardPaneKey(loc.selection);
+      if (state.panes.value.some((pane) => pane.key === key)) return state.activatePane(key);
+      return !!(await openBoardPane(loc.selection));
+    }
     const agent = loc?.selection ? String(loc.selection) : '';
     // A bare /terminals is honoured by any open pane; there is no single
     // terminal it names, so whatever is active stays active.
@@ -136,11 +155,11 @@ export function bindTerminalNavRouting({
 
   const onRestore = (event) => {
     const loc = event?.detail?.location;
-    if (loc?.tab !== 'terminals') return;
+    if (loc?.tab !== 'terminals' && loc?.tab !== 'boards') return;
     restoring += 1;
     restoreGeneration += 1;
     const generation = restoreGeneration;
-    restoreTarget = loc.selection ? String(loc.selection) : '';
+    restoreTarget = selectionOf(loc);
     interrupted = null;
     void Promise.resolve(applyLocation(loc))
       .catch((error) => {
@@ -188,12 +207,12 @@ export function bindTerminalNavRouting({
       state.activatePane(claim.key);
     }
     const location = state.location.value;
-    const selection = location?.selection || '';
+    const selection = selectionOf(location);
     seenSelection = selection;
     // A bare /terminals restore names no terminal and moves nothing, so there
     // is never anything to reconcile against it.
     if (!requested?.selection) return;
-    if (!selection || selection === String(requested.selection)) return;
+    if (!selection || selection === selectionOf(requested)) return;
     if (!isTabActive()) return;
     announce(location);
   }
@@ -226,12 +245,15 @@ export function bindTerminalNavRouting({
   let seenSelection = null;
   let previousActiveKey = null;
   const unsubscribe = state.location.subscribe((location) => {
-    const selection = location?.selection || '';
+    const selection = selectionOf(location);
     const activeKey = state.view.value.activeKey || null;
     const wasOn = previousActiveKey;
     previousActiveKey = activeKey;
     if (!primed) { primed = true; seenSelection = selection; return; }
     if (selection === seenSelection) return;
+    // A board tab restored after a reload lands by itself into an empty strip:
+    // nobody navigated, even when the URL has to follow it.
+    const restored = !wasOn && state.panes.value.find((pane) => pane.key === activeKey)?.seed?.restored;
     // A restore drives this same signal. Track the new value as seen (the URL
     // already names it) but say nothing: reconcileAfterRestore has the last
     // word once the attach settles, and it is the only thing that can tell an
@@ -240,7 +262,7 @@ export function bindTerminalNavRouting({
       seenSelection = selection;
       // Anything that is NOT the restore arriving at its own target is the
       // operator moving underneath it — remember it so the landing can defer.
-      if (selection && selection !== restoreTarget && classifyChange(wasOn) === 'navigate') {
+      if (selection && selection !== restoreTarget && !restored && classifyChange(wasOn) === 'navigate') {
         interrupted = { selection, key: activeKey };
       }
       return;
@@ -252,7 +274,7 @@ export function bindTerminalNavRouting({
     if (!selection) return;
     const kind = classifyChange(wasOn);
     if (kind === 'silent') return;
-    announce(location, kind === 'correct');
+    announce(location, kind === 'correct' || !!restored);
   });
 
   const unbind = () => {
