@@ -1012,13 +1012,19 @@ export function BoardsApp({ state, snapshot, fetchImpl = globalThis.fetch, notif
   </div>`;
 }
 
+// BoardsGate leaves the boards out while features.collab is off, and mounts
+// them fresh when it turns on, so nothing asks the daemon for what it refuses.
+export function BoardsGate(props) {
+  return props.snapshot.value?.collab_enabled === true ? html`<${BoardsApp} ...${props} />` : null;
+}
+
 export function mountBoardsIsland({ host, switchHost, registerCleanup, ...props }) {
   // Listen before the first render so a boot-time restore is never missed.
   const doc = (props.win || globalThis.window)?.document;
   const onRestore = (event) => restoreBoardsLocation(props.state, event);
   doc?.addEventListener?.('tclaude:restore-location', onRestore);
   registerCleanup(() => doc?.removeEventListener?.('tclaude:restore-location', onRestore));
-  render(html`<${BoardsApp} ...${props} />`, host);
+  render(html`<${BoardsGate} ...${props} />`, host);
   registerCleanup(() => render(null, host));
   if (switchHost) {
     render(html`<${CollabSwitch} current="terminals" win=${props.win} />`, switchHost);
