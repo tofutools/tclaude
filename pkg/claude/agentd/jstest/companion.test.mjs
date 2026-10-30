@@ -322,6 +322,36 @@ test('an open cue only pins the agent while the operator is typing to another ta
   assert.equal(view.container.querySelector('input.companion-draft').value, 'half a thought');
 });
 
+test('a hand-over cue on a hidden dashboard tab waits until the tab is shown', async (t) => {
+  const prefs = memoryPrefs();
+  const { view, harness, snap } = await setup(t, { prefs });
+  const doc = harness.window.document;
+  let visibility = 'hidden';
+  Object.defineProperty(doc, 'visibilityState', { configurable: true, get: () => visibility });
+  const show = async () => {
+    visibility = 'visible';
+    await harness.act(async () => { doc.dispatchEvent(new harness.window.Event('visibilitychange')); await new Promise((r) => setTimeout(r, 0)); });
+  };
+  await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
+  await harness.act(async () => {
+    snap.value = { ...snap.value, companion_cues: [{ id: 5, agent_name: 'steward', open: B, at: new Date().toISOString() }] };
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(view.container.querySelector('.companion-window'), null, 'nothing opens while hidden');
+  await show();
+  assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true', 'bravo opens on return');
+  assert.match(prefs.store.get('tclaude.dash.companion.cue-open'), /^5@/, 'the hand-over is claimed for the other dashboard tabs');
+
+  // A hand-over another tab already took, or one that went stale, is dropped.
+  const g = await harness.importDashboardModule('js/companion-guide.js');
+  assert.equal(g.claimCueOpen('5@t1', { id: 5, at: 't1' }), false);
+  assert.equal(g.claimCueOpen('5@t1', { id: 6, at: 't2' }), true);
+  assert.equal(g.claimCueOpen('5@t1', { id: 1, at: 't3' }), true, 'ids restart with the daemon');
+  assert.equal(g.claimCueOpen(null, { id: 1 }), true);
+  assert.equal(g.cueOpenDue({ at: new Date(1000).toISOString() }, 1000 + g.CUE_OPEN_PATIENCE_MS + 1), false);
+  assert.equal(g.cueOpenDue({ at: new Date(1000).toISOString() }, 2000), true);
+});
+
 test('decisions from every agent wait in one "to decide" queue', async (t) => {
   const C = `agt_${'c'.repeat(32)}`;
   const snapshot = snapshotWith();
@@ -465,6 +495,24 @@ test('voice output speaks a reply when the turn ends and says when the agent nee
   assert.equal(spoken.at(-1), 'alpha needs you: Bash(rm -rf build)');
   await h.input(view.container.querySelector('input.companion-draft'), 'stop');
   assert.ok(cancelled >= 1, 'typing stops speech');
+});
+
+test('voice speaks a further decision from an agent already waiting on the operator', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), 'tclaude.dash.companion.voice': JSON.stringify([A]) });
+  const spoken = [];
+  const speakerImpl = { supported: true, speak: (text) => spoken.push(text), cancel() {} };
+  const first = { id: 7, from_agent: A, subject: 'Which layout?', options: ['Tabs', 'Sidebar'] };
+  const withMessages = (messages) => ({ ...snapshotWith({ aStatus: 'awaiting_permission' }), messages });
+  const { harness, snap } = await setup(t, { prefs, speakerImpl, snapshot: withMessages([first]) });
+  assert.deepEqual(spoken, [], 'the first sight is silent');
+  await harness.act(async () => { snap.value = withMessages([first, { id: 9, from_agent: A, subject: 'Ship today?', options: ['Yes', 'No'], recommended: 1 }]); });
+  assert.deepEqual(spoken, ['alpha asks you to decide: Ship today? 2 options: Yes, which it recommends; No.']);
+  assert.equal(prefs.store.get('tclaude.dash.companion.voice.decision.' + A), '9', 'claimed, so other dashboard tabs stay quiet');
+  await harness.act(async () => { snap.value = withMessages([first, { id: 9, from_agent: A, subject: 'Ship today?', options: ['Yes', 'No'] }]); });
+  assert.equal(spoken.length, 1, 'said once');
+
+  const voice = await harness.importDashboardModule('js/companion-voice.js');
+  assert.deepEqual(voice.decisionArrivals(new Map([[A, 7], [B, 0]]), new Map([[A, 9], [B, 0], ['new', 4]])), [A]);
 });
 
 test('dictation fills the draft and sends when the operator ends with "send"', async (t) => {

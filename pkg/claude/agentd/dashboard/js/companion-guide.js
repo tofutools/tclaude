@@ -111,6 +111,33 @@ export function newCues(seen, cues, primed) {
   return fresh.sort((a, b) => a.id - b.id);
 }
 
+// A cue that hands an agent over while every dashboard tab is hidden waits
+// for the operator to come back, but not forever: an old hand-over would
+// yank the window to an agent that no longer needs them.
+export const CUE_OPEN_PATIENCE_MS = 120000;
+
+// cueOpenDue reports whether a held hand-over cue should still open now.
+export function cueOpenDue(cue, now) {
+  const at = Date.parse(cue?.at || '');
+  return !Number.isFinite(at) || now - at <= CUE_OPEN_PATIENCE_MS;
+}
+
+// cueOpenKey names one hand-over for the cross-tab claim. Cue ids restart
+// with the daemon, so the time it was posted is part of the key.
+export function cueOpenKey(cue) {
+  return `${cue?.id}@${cue?.at || ''}`;
+}
+
+// claimCueOpen lets one dashboard tab act on a hand-over: the last one any
+// tab opened is kept in shared prefs, and a tab seeing it there leaves it.
+export function claimCueOpen(stored, cue) {
+  return stored !== cueOpenKey(cue);
+}
+
+// An unfocused but visible tab (a second monitor) gives the focused one
+// this long to take a hand-over first.
+export const CUE_OPEN_UNFOCUSED_DELAY_MS = 400;
+
 function rectKey(r) {
   return r ? `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}` : '-';
 }
