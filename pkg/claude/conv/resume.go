@@ -123,6 +123,25 @@ func resolveConvForResume(convID string, global bool, cwd string) (*resolvedConv
 	return nil, nil
 }
 
+// resolveAgentForResume is the fallback for a selector that matched no
+// conversation: the name or agent_id `tclaude agent ls` shows. Agents are
+// global, so the project scope doesn't apply. Returns (nil, nil) when the
+// selector names no agent.
+func resolveAgentForResume(selector, cwd string) (*resolvedConv, error) {
+	convID, err := session.ResolveAgentResumeSelector(selector)
+	if err != nil || convID == "" {
+		return nil, err
+	}
+	rc, err := resolveConvForResume(convID, true, cwd)
+	if err != nil {
+		return nil, err
+	}
+	if rc == nil {
+		return nil, fmt.Errorf("no conversation to resume (conversation %s): it may have ended before its first message", convID)
+	}
+	return rc, nil
+}
+
 func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
@@ -139,6 +158,13 @@ func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "Error resolving conversation %s: %v\n", convID, err)
 		return 1
+	}
+	if rc == nil {
+		rc, err = resolveAgentForResume(params.ConvID, cwd)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error resolving agent %s: %v\n", params.ConvID, err)
+			return 1
+		}
 	}
 	if rc == nil {
 		fmt.Fprintf(stderr, "Conversation %s not found\n", convID)

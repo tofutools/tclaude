@@ -43,6 +43,9 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 		}
 		params.Dir = params.Cwd
 	}
+	if err := expandAgentResumeSelector(params); err != nil {
+		return err
+	}
 	if params.NoDaemon && strings.TrimSpace(params.JoinGroup) != "" {
 		return fmt.Errorf("--no-daemon cannot be combined with --join-group")
 	}

@@ -17,6 +17,7 @@ import (
 
 func init() {
 	session.JoinGroupHandler = RunJoinGroup
+	session.AgentResumeResolver = resolveAgentForResume
 }
 
 // RunJoinGroup implements explicit --join-group and the directory-discovery

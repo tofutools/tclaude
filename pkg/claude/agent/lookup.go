@@ -359,6 +359,27 @@ func ResolveSelectorCached(selector string) (*Resolved, []*Resolved, error) {
 	return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
 }
 
+// resolveAgentForResume implements session.AgentResumeResolver. Only a selector
+// that lands on an agent counts: a plain conversation stays subject to the
+// project scope of --resume, so its title or id is not a match here.
+func resolveAgentForResume(selector string) (string, error) {
+	res, matches, err := ResolveSelectorCached(selector)
+	switch {
+	case errors.Is(err, errNoAgentMatch):
+		return "", err
+	case errors.Is(err, errAmbiguous):
+		for _, m := range matches {
+			if m.AgentID != "" {
+				return "", fmt.Errorf("%q matches more than one agent or conversation; use the agent ID from `tclaude agent ls`", selector)
+			}
+		}
+		return "", nil
+	case err != nil || res == nil || res.AgentID == "":
+		return "", nil
+	}
+	return res.ConvID, nil
+}
+
 // CurrentConvID returns the conv-id of the conversation invoking the
 // caller, expanded to a full UUID via the DB if necessary. Exported for
 // callers outside this package.

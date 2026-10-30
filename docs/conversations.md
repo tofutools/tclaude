@@ -72,6 +72,8 @@ tclaude conv resume <conv-id>
 tclaude conv resume -d <conv-id>   # detached
 ```
 
+The argument can also be the name or agent ID from `tclaude agent ls`.
+
 `conv resume` finds the conversation in any harness's store, changes to its
 project directory, and relaunches it through its **recorded harness** in a
 new tmux session — you never tell it which CLI to use. The relaunch also

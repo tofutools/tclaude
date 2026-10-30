@@ -60,7 +60,8 @@ flags beyond the basics:
   windows to reset before starting — handy for queueing a session to launch
   when quota returns.
 - `-r/--resume <conv-id>` relaunches an existing conversation (see
-  [resume posture](#a-resume-keeps-its-recorded-posture) below).
+  [resume posture](#a-resume-keeps-its-recorded-posture) below). It also takes
+  the name or agent ID from `tclaude agent ls`.
 - `-l/--label` names the tmux session; `-n/--name` sets the display name
   (for Claude Code it becomes the conversation title).
 
