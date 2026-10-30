@@ -14,11 +14,12 @@
 // Everything here is DOM-free so it can be tested directly.
 
 export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
-// Whether the window is open: per browser tab (sessionStorage), since an open
+// What this window is showing is per browser tab (sessionStorage): an open
 // window attaches its terminal, and that takes over from other views.
 export const COMPANION_OPEN_PREF = 'tclaude.dash.companion.open';
-// The live helpers already seen, so one the operator closed stays closed.
-export const COMPANION_HELPERS_PREF = 'tclaude.dash.companion.helpers';
+export const COMPANION_PARKED_PREF = 'tclaude.dash.companion.parked';
+// The scribes and Stewards the operator closed, which stay closed.
+export const COMPANION_CLOSED_PREF = 'tclaude.dash.companion.closed';
 export const COMPANION_ACTIVE_PREF = 'tclaude.dash.companion.active';
 // The newest hand-over cue (guide show --open) a dashboard tab acted on.
 export const COMPANION_CUE_OPEN_PREF = 'tclaude.dash.companion.cue-open';
@@ -108,35 +109,32 @@ export function stewardAgent(agents) {
   return fallback;
 }
 
-// liveHelpers lists the live scribes and Stewards, whichever summoned them:
-// the agents the companion keeps track of by itself.
-export function liveHelpers(agents) {
-  const out = [];
-  for (const agent of agents.values()) {
-    if (agent.scribe && agent.online) out.push(agent.agentId);
+// syncHelperTabs follows the live scribes and Stewards, whichever summoned
+// them: a live one gets a tab unless the operator closed it, an ended one
+// loses its tab. keep lists tabs to leave alone: the one on screen, and agents
+// still starting. Tabs the operator pinned are never pushed out by a helper.
+export function syncHelperTabs(tabs, agents, closed, keep) {
+  let next = tabs;
+  for (const id of tabs) {
+    const agent = agents.get(id);
+    if (agent?.scribe && !agent.online && !keep.has(id)) next = withoutTab(next, id);
   }
-  return out;
+  for (const agent of agents.values()) {
+    if (!agent.scribe || !agent.online || closed.has(agent.agentId) || next.includes(agent.agentId)) continue;
+    if (next.length < COMPANION_MAX_TABS) next = withTab(next, agent.agentId);
+  }
+  return next;
 }
 
-// syncHelperTabs follows the live helpers: one newly seen gets a tab, one
-// that went away loses it, and one the operator closed stays closed while it
-// lives (it is known, so it is not added again). The tab on screen is kept
-// even when its helper ends, for the operator to read and close. Tabs the
-// operator pinned are never pushed out by a helper.
-export function syncHelperTabs(tabs, live, known, keep) {
-  const alive = new Set(live);
-  let next = tabs;
-  const nextKnown = new Set();
-  for (const id of known) {
-    if (alive.has(id)) nextKnown.add(id);
-    else if (id !== keep) next = withoutTab(next, id);
+// parseClosedHelpers reads the helpers the operator closed. Unlike tabs this
+// list has no cap: every one of them must stay closed.
+export function parseClosedHelpers(raw) {
+  try {
+    const list = JSON.parse(raw || '[]');
+    return new Set(Array.isArray(list) ? list.filter(isAgentId) : []);
+  } catch {
+    return new Set();
   }
-  for (const id of live) {
-    if (known.has(id)) continue;
-    nextKnown.add(id);
-    if (next.length < COMPANION_MAX_TABS) next = withTab(next, id);
-  }
-  return { tabs: next, known: nextKnown };
 }
 
 // companionStatus folds an agent's runtime state into the four states a chip
