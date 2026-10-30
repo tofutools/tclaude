@@ -602,11 +602,17 @@ config.json; no restart is needed. While it is off, their daemon routes return
 
 A floating companion window sits on top of every dashboard view. It shows
 agents' real harness terminals, so you get the harness's own streaming,
-permission prompts and Esc interrupts without leaving the page you are on.
+permission prompts and Esc interrupts without leaving the page you are on. It
+has no backdrop, so the page around it stays clickable. It stays above the page
+and plain dialogs, and under confirmations, the access banner and toasts, and it
+comes back open when you reload the same browser tab.
 
 - **Chips.** Minimized, each pinned agent is a pill in the bottom-right
   corner with its status. An agent waiting on a permission prompt or a
   question turns its pill amber with **needs you**.
+- **Scribes and Stewards.** Every live scribe and Steward gets a tab and a pill
+  by itself, whoever summoned it, and loses them when it ends. One you close
+  stays closed; **＋** brings it back.
 - **Peek.** Hovering a pill shows the last lines of the agent's screen,
   read-only; the keyboard stays with the page until you click.
 - **Window.** Click a pill, or press **Ctrl+.** anywhere, to open the window.
