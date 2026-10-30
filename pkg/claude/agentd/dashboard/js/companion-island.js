@@ -1162,7 +1162,14 @@ export function CompanionApp({
     ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
 }
 
+// CompanionGate keeps the whole companion out of the page while
+// features.collab is off: no chips, no Ctrl+., and no registered controller,
+// so callers of openInCompanion take their usual path.
+export function CompanionGate(props) {
+  return props.snapshot.value?.collab_enabled === true ? html`<${CompanionApp} ...${props} />` : null;
+}
+
 export function mountCompanionIsland({ host, registerCleanup, ...props }) {
-  render(html`<${CompanionApp} ...${props} />`, host);
+  render(html`<${CompanionGate} ...${props} />`, host);
   registerCleanup(() => render(null, host));
 }
