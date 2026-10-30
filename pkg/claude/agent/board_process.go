@@ -231,9 +231,10 @@ func processBoardElements(t *model.Template, edges []model.Edge, doc *boardDoc, 
 		e["x"], e["y"], e["width"], e["height"] = 0.0, 0.0, w, h
 		e["backgroundColor"] = processStepColor(n)
 		put(e)
-		text := n.Name
+		// The server refuses the whole sketch over one unprintable character.
+		text := strings.TrimSpace(boardPrintable(n.Name))
 		if text == "" {
-			text = name
+			text = boardPrintable(name)
 		}
 		if len([]rune(text)) > 40 {
 			text = string([]rune(text)[:39]) + "…"
@@ -321,14 +322,15 @@ func processBoardElements(t *model.Template, edges []model.Edge, doc *boardDoc, 
 
 	// Outcome names only where a step has a choice.
 	for _, edge := range arrows {
-		if outgoing[edge.From] < 2 || edge.Outcome == "" {
+		outcome := strings.TrimSpace(boardPrintable(edge.Outcome))
+		if outgoing[edge.From] < 2 || outcome == "" {
 			continue
 		}
 		arrowID := ids.get("pa-", edge.From, edge.Outcome, edge.To)
 		mx, my := mid[arrowID][0], mid[arrowID][1]
-		tw, th := boardTextSize(edge.Outcome)
+		tw, th := boardTextSize(outcome)
 		label := base(arrowID+"-label", "text")
-		label["text"], label["fontSize"], label["textAlign"] = edge.Outcome, 16.0, "center"
+		label["text"], label["fontSize"], label["textAlign"] = outcome, 16.0, "center"
 		label["x"], label["y"], label["width"], label["height"] = mx-tw/2, my-th/2-12, tw, th
 		put(label)
 	}

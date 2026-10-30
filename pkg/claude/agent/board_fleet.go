@@ -195,7 +195,7 @@ func fleetBoardElements(fleet *fleetResp, doc *boardDoc, all bool) ([]map[string
 		x := float64(col) * (fleetCardW + fleetColGap)
 		y := top + 60
 		gid := column.id
-		out = append(out, text(gid+"-label", boardClip(column.group, 18), x, y, 22))
+		out = append(out, text(gid+"-label", boardClip(fleetColumnHeading(column.group), 18), x, y, 22))
 		cy := y + fleetHeadGap
 		for _, c := range column.cards {
 			a := fleet.Agents[c.agent]
@@ -246,8 +246,21 @@ func fleetBoardElements(fleet *fleetResp, doc *boardDoc, all bool) ([]map[string
 	return out, cards
 }
 
-// fleetNoGroup heads the column of agents outside every group.
-const fleetNoGroup = "(no group)"
+// fleetNoGroup keys the column of agents outside every group. Group names
+// cannot hold control characters, so it cannot be a real group, not even one
+// named "(no group)". It reads the same as the heading to the id sanitiser, so
+// the column keeps the element ids of maps already drawn.
+const fleetNoGroup = "\x00no group\x00"
+
+// fleetNoGroupHeading is what that column is called on the map and in output.
+const fleetNoGroupHeading = "(no group)"
+
+func fleetColumnHeading(group string) string {
+	if group == fleetNoGroup {
+		return fleetNoGroupHeading
+	}
+	return group
+}
 
 // fleetColumn is one group on the fleet map and the ids of its elements.
 type fleetColumn struct {

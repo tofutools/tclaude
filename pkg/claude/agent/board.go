@@ -835,7 +835,8 @@ func runBoardPatch(p *boardPatchParams, id string, stdin io.Reader, stdout, stde
 
 func parseBoardElements(data []byte) ([]json.RawMessage, error) {
 	var list []json.RawMessage
-	if err := json.Unmarshal(data, &list); err == nil {
+	// A bare `null` decodes without error into a nil list; it holds no elements.
+	if err := json.Unmarshal(data, &list); err == nil && list != nil {
 		return list, nil
 	}
 	var doc struct {
@@ -955,11 +956,35 @@ type boardTextParams struct {
 func boardTextCmd() *cobra.Command {
 	return boa.CmdT[boardTextParams]{
 		Use:         "text <board> <element> --text <text>",
-		Short:       "Change an element's text",
+		Short:       "Change a text element, or the label of a shape or arrow",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardTextParams, _ *cobra.Command, args []string) {
-			os.Exit(editBoardElements(args[0], []string{args[1]}, func(m map[string]any) { m["text"] = p.Text }, os.Stdout, os.Stderr))
+			os.Exit(runBoardText(p, args[0], args[1], os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
+}
+
+// runBoardText writes the element the board shows the text of: only text
+// elements draw theirs, so a shape's text lives on its label element.
+func runBoardText(p *boardTextParams, id, elemID string, stdout, stderr io.Writer) int {
+	doc, err := fetchBoard(id, -1)
+	if err != nil {
+		return boardErr(stderr, err)
+	}
+	s := loadBoardScene(doc)
+	v, ok := s.view[elemID]
+	if !ok {
+		fmt.Fprintf(stderr, "Error: board %s has no live element %s\n", id, elemID)
+		return rcNotFound
+	}
+	target := elemID
+	if v.Type != "text" {
+		if target, ok = s.labelOf(elemID); !ok {
+			fmt.Fprintf(stderr, "Error: %s %s on board %s has no label to change; add one with `tclaude agent board add %s text`\n", v.Type, elemID, id, id)
+			return rcNotFound
+		}
+	}
+	s.raw[target]["text"] = p.Text
+	return patchScene(id, s, []string{target}, stdout, stderr)
 }

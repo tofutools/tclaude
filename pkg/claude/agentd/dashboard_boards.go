@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -182,6 +183,9 @@ func normalizeBoardElement(raw json.RawMessage, author string) (db.CollabBoardEl
 		if len(p) != 2 || !boardFinite(p[0], boardMaxCoordinate) || !boardFinite(p[1], boardMaxCoordinate) {
 			return fail("points must be [x, y] pairs of finite numbers with |v| <= 1e6")
 		}
+	}
+	if boardLinearTypes[e.Type] && !e.IsDeleted && len(e.Points) < 2 {
+		return fail("%s needs at least 2 points", e.Type)
 	}
 	if e.Text != nil {
 		if len(*e.Text) > boardMaxTextBytes {
@@ -441,6 +445,10 @@ func serveBoardCreate(w http.ResponseWriter, r *http.Request, by, agentID string
 	}
 	if groupID > 0 {
 		if err := db.SetCollabBoardGroup(id, groupID); err != nil {
+			// Leave no half-made board for the retry to collide with.
+			if delErr := deleteBoardAndSnapshot(id); delErr != nil {
+				slog.Warn("boards: remove board after failed group link", "board", id, "error", delErr)
+			}
 			writeBoardStoreError(w, err)
 			return
 		}
@@ -642,12 +650,8 @@ func handleDashboardBoardDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := db.DeleteCollabBoard(id); err != nil {
+	if err := deleteBoardAndSnapshot(id); err != nil {
 		writeBoardStoreError(w, err)
-		return
-	}
-	if err := os.Remove(boardSnapshotPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		writeError(w, http.StatusInternalServerError, "io", "remove snapshot: "+err.Error())
 		return
 	}
 	if err := removeBoardRegions(id); err != nil {
@@ -717,6 +721,20 @@ func handleDashboardBoardSnapshotPut(w http.ResponseWriter, r *http.Request) {
 }
 
 var boardSnapshotMu sync.Mutex
+
+// deleteBoardAndSnapshot removes the board and its PNG together, so a snapshot
+// upload that found the board cannot write its file after this removal.
+func deleteBoardAndSnapshot(id string) error {
+	boardSnapshotMu.Lock()
+	defer boardSnapshotMu.Unlock()
+	if err := db.DeleteCollabBoard(id); err != nil {
+		return err
+	}
+	if err := os.Remove(boardSnapshotPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove snapshot: %w", err)
+	}
+	return nil
+}
 
 func writeBoardSnapshotFile(path string, data []byte) error {
 	dir := filepath.Dir(path)

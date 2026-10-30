@@ -19,13 +19,18 @@ const boardFixture = `{"id":"plan","title":"Plan","version":4,"updated_by":"oper
 // fakeBoardDaemon serves the fixture on GET and records each PATCH body.
 func fakeBoardDaemon(t *testing.T) *[]map[string]any {
 	t.Helper()
+	return fakeBoardDaemonWith(t, boardFixture)
+}
+
+func fakeBoardDaemonWith(t *testing.T, fixture string) *[]map[string]any {
+	t.Helper()
 	var patched []map[string]any
 	prev := DaemonRequestImpl
 	t.Cleanup(func() { DaemonRequestImpl = prev })
 	DaemonRequestImpl = func(method, path string, in, out any, _ DaemonOpts) error {
 		switch method {
 		case http.MethodGet:
-			return json.Unmarshal([]byte(boardFixture), out)
+			return json.Unmarshal([]byte(fixture), out)
 		case http.MethodPatch:
 			assert.Equal(t, "/v1/boards/plan", path)
 			raw, err := json.Marshal(in)
@@ -219,4 +224,43 @@ func TestBoardViewOverlap(t *testing.T) {
 	arrow := boardElementView{X: 200, Y: 50, Points: [][]float64{{0, 0}, {-150, 0}}}
 	assert.Equal(t, boardBox{X: 50, Y: 50, W: 150, H: 0}, elementBox(arrow))
 	assert.True(t, view.overlaps(elementBox(arrow)))
+}
+
+// The board draws text elements only, so a shape's text goes on its label.
+func TestBoardTextWritesTheLabelTheBoardDraws(t *testing.T) {
+	patched := fakeBoardDaemonWith(t, `{"id":"plan","version":4,"elements":[
+	 {"id":"a","type":"rectangle","x":0,"y":0,"width":100,"height":50,"version":2},
+	 {"id":"a-label","type":"text","x":10,"y":10,"width":40,"height":20,"text":"old","version":5},
+	 {"id":"b","type":"rectangle","x":300,"y":0,"width":100,"height":50,"version":1},
+	 {"id":"inner","type":"text","x":320,"y":10,"width":40,"height":20,"text":"old","version":1},
+	 {"id":"c","type":"rectangle","x":600,"y":0,"width":100,"height":50,"version":1}]}`)
+	var out, errb bytes.Buffer
+	text := &boardTextParams{Text: "new"}
+
+	require.Equal(t, rcOK, runBoardText(text, "plan", "a", &out, &errb), errb.String())
+	byID := patchedByID(*patched)
+	assert.NotContains(t, byID, "a", "the shape itself draws no text")
+	assert.Equal(t, "new", byID["a-label"]["text"])
+	assert.EqualValues(t, 6, byID["a-label"]["version"])
+
+	require.Equal(t, rcOK, runBoardText(text, "plan", "b", &out, &errb), errb.String())
+	assert.Equal(t, "new", patchedByID(*patched)["inner"]["text"], "text inside a shape is its label")
+
+	require.Equal(t, rcOK, runBoardText(text, "plan", "a-label", &out, &errb), errb.String())
+
+	before := len(*patched)
+	assert.Equal(t, rcNotFound, runBoardText(text, "plan", "c", &out, &errb), "no label to change")
+	assert.Contains(t, errb.String(), "no label")
+	assert.Equal(t, rcNotFound, runBoardText(text, "plan", "nope", &out, &errb))
+	assert.Len(t, *patched, before, "a failed text change writes nothing")
+}
+
+func TestBoardPatchRejectsAFileWithoutElements(t *testing.T) {
+	for _, data := range []string{`null`, `{}`, `{"elements":null}`} {
+		_, err := parseBoardElements([]byte(data))
+		assert.ErrorContains(t, err, "no \"elements\"", data)
+	}
+	list, err := parseBoardElements([]byte(`[{"id":"a"}]`))
+	require.NoError(t, err)
+	assert.Len(t, list, 1)
 }

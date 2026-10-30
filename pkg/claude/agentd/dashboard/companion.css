@@ -172,7 +172,7 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 .companion-approval {
   flex: none; margin: 8px 8px 0; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--cmp-amber); background: #221a0c; font-size: 12.5px;
-  max-height: 45%; display: flex; flex-direction: column; gap: 6px; overflow: hidden;
+  max-height: 45%; display: flex; flex-direction: column; gap: 6px; overflow: auto;
 }
 .companion-approval-head { display: flex; align-items: center; gap: 8px; color: var(--cmp-amber-text); }
 .companion-approval-timer { margin-left: auto; color: var(--cmp-muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
@@ -182,7 +182,7 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
   background: #2b2111; border: 1px solid #5a4410;
 }
 .companion-approval-body {
-  margin: 0; padding: 6px 8px; min-height: 0; overflow: auto; border-radius: 6px; background: var(--cmp-bg);
+  margin: 0; padding: 6px 8px; min-height: 4.5em; overflow: auto; border-radius: 6px; background: var(--cmp-bg);
   font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; white-space: pre-wrap; word-break: break-word;
 }
 .companion-approval-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
@@ -283,6 +283,7 @@ body.companion-annotating .companion-chips { visibility: hidden; }
   color: var(--cmp-text); font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
 }
 .companion-input .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .companion-input .companion-mic.on { animation: none; } }
 
 /* Agent marks on the operator's view (tcl-0waby5): hand-drawn circles,
    underlines and arrows a cue draws over the page. */

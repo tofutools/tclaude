@@ -98,6 +98,21 @@ func (s *boardScene) labelOwners() map[string]string {
 	return owners
 }
 
+// labelOf finds the text element the board shows as id's label, the way the
+// dashboard does: its `<id>-label`, or else a text element it owns.
+func (s *boardScene) labelOf(id string) (string, bool) {
+	if s.view[id+"-label"].Type == "text" {
+		return id + "-label", true
+	}
+	owners := s.labelOwners()
+	for _, textID := range s.order {
+		if owners[textID] == id {
+			return textID, true
+		}
+	}
+	return "", false
+}
+
 // moveBy shifts elements (and the labels they own) by their deltas, then
 // re-runs every arrow bound to a moved element: between both ends when both
 // are bound, else from the bound end with the free tip kept where it was. It

@@ -98,6 +98,47 @@ func TestFleetChanges(t *testing.T) {
 	}, changes)
 }
 
+// A real group named like the map's no-group column stays a group: a card
+// dropped in it joins it.
+func TestFleetChangesGroupNamedLikeTheNoGroupColumn(t *testing.T) {
+	var fleet fleetResp
+	require.NoError(t, json.Unmarshal([]byte(`{"agents":[
+	  {"agent_id":"agt_a","title":"worker","groups":["api"],"online":true},
+	  {"agent_id":"agt_b","title":"odd","groups":["(no group)"],"online":true},
+	  {"agent_id":"agt_c","title":"loose","online":true}
+	]}`), &fleet))
+	columns := fleetColumns(&fleet, true)
+	require.Len(t, columns, 3)
+	assert.NotEqual(t, columns[1].id, columns[2].id, "each column keeps its own elements")
+
+	elems, _ := fleetBoardElements(&fleet, &boardDoc{ID: "fleet"}, true)
+	byID := map[string]map[string]any{}
+	for _, e := range elems {
+		byID[e["id"].(string)] = e
+	}
+	assert.Equal(t, "(no group)", byID[columns[1].id+"-label"]["text"])
+	assert.Equal(t, "(no group)", byID[columns[2].id+"-label"]["text"])
+	assert.Equal(t, "fg-_no_group_", columns[1].id, "the first of the two keeps the plain id")
+
+	move := func(cardX any) []fleetChange {
+		card := columns[0].cards[0].id
+		byID[card]["x"], byID[card]["customData"] = cardX, map[string]any{"author": "operator"}
+		var doc boardDoc
+		for _, e := range byID {
+			raw, err := json.Marshal(e)
+			require.NoError(t, err)
+			doc.Elements = append(doc.Elements, raw)
+		}
+		changes, ok := fleetChanges(&fleet, &doc)
+		require.True(t, ok)
+		return changes
+	}
+	assert.Equal(t, []fleetChange{{Kind: "move", AgentID: "agt_a", Title: "worker", From: "api", To: "(no group)", Via: "card"}},
+		move(byID[columns[1].cards[0].id]["x"]))
+	assert.Equal(t, []fleetChange{{Kind: "remove", AgentID: "agt_a", Title: "worker", From: "api", Via: "card"}},
+		move(byID[columns[2].cards[0].id]["x"]))
+}
+
 // A card dropped where the agent already has one means leave this group,
 // and the no-group column has no group to name.
 func TestFleetChangesOwnColumnAndNoGroup(t *testing.T) {

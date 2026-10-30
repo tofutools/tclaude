@@ -148,6 +148,10 @@ func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 		{"id": "z", "type": "rectangle", "version": 1, "opacity": 101},
 		{"id": "z", "type": "text", "version": 1, "text": "bell\x07"},
 		{"id": "z", "type": "arrow", "version": 1, "points": [][]float64{{0, 0, 0}}},
+		{"id": "z", "type": "arrow", "version": 1, "points": [][]float64{{0, 0}}},
+		{"id": "z", "type": "arrow", "version": 1},
+		{"id": "z", "type": "line", "version": 1, "points": [][]float64{{0, 0}}},
+		{"id": "z", "type": "freedraw", "version": 1, "points": [][]float64{}},
 		{"id": "z", "type": "rectangle", "version": int64(1) << 53},
 		{"id": "z", "type": "rectangle", "version": 1, "versionNonce": int64(1) << 40},
 	} {

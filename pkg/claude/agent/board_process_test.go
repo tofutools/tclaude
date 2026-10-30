@@ -80,7 +80,6 @@ func TestBoardFromProcessDrawsTheFlowOnANewBoard(t *testing.T) {
 	assert.Less(t, els["p-implement"]["x"].(float64), els["p-choose"]["x"].(float64))
 }
 
-
 func TestBoardFromProcessRedrawReplacesTheSketch(t *testing.T) {
 	doc := &boardDoc{ID: "flow", Elements: []json.RawMessage{
 		// A step deleted on the board: the redraw must outrank the tombstone.
@@ -101,6 +100,21 @@ func TestBoardFromProcessRedrawReplacesTheSketch(t *testing.T) {
 	assert.Equal(t, int64(3), els["pa-choose-rework-design"]["version"])
 	assert.NotContains(t, els, "note", "the operator's elements are left alone")
 	assert.Greater(t, els["p-begin"]["y"].(float64), 20.0, "the sketch goes below existing content")
+}
+
+// One unprintable character would make the server refuse the whole sketch.
+func TestBoardProcessLabelsAreFiltered(t *testing.T) {
+	tmpl := &model.Template{Nodes: map[string]model.Node{
+		"ship": {Name: "Sh\u200dip"},
+		"bare": {Name: "\u200d"},
+	}}
+	elems := processBoardElements(tmpl, nil, &boardDoc{}, "right", boardDefaultGap)
+	els := map[string]map[string]any{}
+	for _, e := range elems {
+		els[e["id"].(string)] = e
+	}
+	assert.Equal(t, "Ship", els["p-ship-label"]["text"])
+	assert.Equal(t, "bare", els["p-bare-label"]["text"], "nothing printable left: the node id")
 }
 
 func TestProcessIDsNeverCollide(t *testing.T) {

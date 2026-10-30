@@ -90,7 +90,7 @@ func runBoardFleetChanges(p *boardFleetChangesParams, boardID string, stdout, st
 		case "remove":
 			from := c.From
 			if from == "" {
-				from = fleetNoGroup
+				from = fleetNoGroupHeading
 			}
 			fmt.Fprintf(stdout, "  - remove %s [%s] from %s (%s)\n", c.Title, shortAgentID(c.AgentID, ""), from, c.Via)
 		case "add":

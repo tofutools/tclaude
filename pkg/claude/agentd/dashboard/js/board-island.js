@@ -149,6 +149,11 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const [invite, setInvite] = useState(false);
   const svgRef = useRef(null);
   const pending = useRef(new Map()); // id -> element awaiting PATCH
+  const saving = useRef(0); // PATCHes in flight
+  const refused = useRef(false); // pending edits the daemon refused as a batch
+  // Elements sent by a PATCH with no answer: it may have landed, so a retry
+  // that loses the merge to them says nothing.
+  const resent = useRef(new WeakSet());
   const active = useRef(new Set()); // ids being manipulated right now
   const history = useRef({ undo: [], redo: [] });
   const eventBatch = useRef({ ids: [], before: new Map() });
@@ -251,6 +256,8 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     if (!pending.current.size) return;
     const batch = [...pending.current.values()];
     pending.current.clear();
+    const keep = () => { for (const el of batch) if (!pending.current.has(el.id)) pending.current.set(el.id, el); };
+    saving.current += 1;
     try {
       const result = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}`, {
         method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -258,26 +265,61 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       }));
       // The poll cursor is not advanced from here: agent edits that landed
       // before this PATCH have versions below result.version.
-      void result;
+      refused.current = false;
+      const lost = Number.isFinite(result.accepted) ? batch.length - result.accepted : 0;
+      if (lost > 0 && !batch.some((el) => resent.current.has(el))) {
+        if (!result.accepted) forgetEdits(batch.map((el) => el.id));
+        if (!disposed.current) notify(`The board kept a newer version of ${lost === 1 ? 'a shape' : `${lost} shapes`}: your ${lost === 1 ? 'edit was' : 'edits were'} not saved.`, true);
+      }
     } catch (error) {
-      // A refused element (400) is dropped, with the rest retried at once:
-      // retrying it would hold every later edit back for good.
       if (error?.status === 400 || error?.status === 413) {
         const bad = /^elements\[(\d+)\]/.exec(error.message || '');
-        const drop = bad ? new Set([batch[Number(bad[1])]?.id]) : new Set(batch.map((el) => el.id));
-        if (!disposed.current) notify(`The board refused ${drop.size === 1 ? 'an edit' : `${drop.size} edits`}: ${error.message}`, true);
-        for (const el of batch) if (!drop.has(el.id) && !pending.current.has(el.id)) pending.current.set(el.id, el);
+        // A batch over the size limit only grows as edits merge into it, so
+        // it would hold back every later save.
+        if (error.status === 413) {
+          forgetEdits(batch.map((el) => el.id));
+          if (!disposed.current) notify(`The board refused your latest edits as too large, so they were not saved: ${error.message}`, true);
+          return;
+        }
+        if (!bad) {
+          // Refused as a whole for too many elements, so no one edit is at
+          // fault and deleting shapes can make room. Keep them all; the next
+          // change retries them, and until then the status says so.
+          keep();
+          refused.current = true;
+          if (!disposed.current) {
+            notify(`The board refused your latest edits, so they are not saved yet: ${error.message}`, true);
+            redraw();
+          }
+          return;
+        }
+        // A refused element is dropped, with the rest retried at once:
+        // retrying it would hold every later edit back for good.
+        const dropped = batch[Number(bad[1])]?.id;
+        forgetEdits([dropped]);
+        if (!disposed.current) notify(`The board refused an edit: ${error.message}`, true);
+        for (const el of batch) if (el.id !== dropped && !pending.current.has(el.id)) pending.current.set(el.id, el);
         if (pending.current.size) void flush();
         return;
       }
       // Keep the edits; the next change or flush retries them.
-      for (const el of batch) if (!pending.current.has(el.id)) pending.current.set(el.id, el);
+      for (const el of batch) resent.current.add(el);
+      keep();
       if (!disposed.current) {
         setStatus('offline');
         clearTimeout(timers.current.flush);
         timers.current.flush = setTimeout(() => void flush(), 2000);
       }
+    } finally {
+      saving.current -= 1;
     }
+  }
+
+  // forgetEdits takes edits the board did not keep out of the agents' event.
+  function forgetEdits(ids) {
+    const { ids: batched, before } = eventBatch.current;
+    for (const id of ids) before.delete(id);
+    eventBatch.current.ids = batched.filter((id) => !ids.includes(id));
   }
 
   function scheduleSnapshot() {
@@ -302,9 +344,16 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
 
   async function sendEvent() {
     timers.current.event = null;
+    // An event only announces saved edits. A closed editor retries nothing, so
+    // what it could not save goes unannounced.
+    if (saving.current || pending.current.size) {
+      if (!disposed.current || saving.current) timers.current.event = setTimeout(sendEvent, BOARD_FLUSH_MS);
+      return;
+    }
     const { ids, before } = eventBatch.current;
     eventBatch.current = { ids: [], before: new Map() };
-    if (!metaRef.current.participants.length) return;
+    const { participants, groupMembers } = metaRef.current;
+    if (!participants.length && !groupMembers.length) return;
     const text = describeChanges(elements.current, ids, before);
     if (!text) return;
     const event = { text: `The operator ${text}.` };
@@ -829,7 +878,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     <header class="board-head">
       <button type="button" class="board-back" onClick=${onBack} aria-label="All boards">‹ Boards</button>
       <h2 class="board-title">${meta.title}</h2>
-      <span class=${`board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? 'saving…' : 'synced') : status}</span>
+      <span class=${`board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>
       <div class="board-people" aria-label="Agents on this board">
         ${meta.participants.map((id) => {
           const agent = agents.get(id);

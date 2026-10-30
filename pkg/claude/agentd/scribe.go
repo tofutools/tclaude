@@ -164,6 +164,12 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
 			return
 		}
+		// Everything that recognises a Steward looks in this one group, and
+		// the name is the group.
+		if strings.TrimSpace(body.Name) != stewardGroupName {
+			writeError(w, http.StatusBadRequest, "name", "a Steward's name must be "+stewardGroupName)
+			return
+		}
 		// A Steward's access is the operator's setting, not the caller's.
 		cfg, err := config.LoadShared()
 		if err != nil {

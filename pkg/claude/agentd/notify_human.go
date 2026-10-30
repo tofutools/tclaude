@@ -87,7 +87,7 @@ func (d *notifyHumanDecision) normalize() error {
 			return fmt.Errorf("option %d is empty", i+1)
 		case len(o) > maxDecisionOptionLen:
 			return fmt.Errorf("option %d is too long: %d bytes, max %d", i+1, len(o), maxDecisionOptionLen)
-		case strings.ContainsFunc(o, unicode.IsControl):
+		case strings.ContainsFunc(o, decisionOptionBreaks):
 			return fmt.Errorf("option %d must be a single line without control characters", i+1)
 		case seen[o]:
 			return fmt.Errorf("option %d repeats %q", i+1, o)
@@ -99,6 +99,12 @@ func (d *notifyHumanDecision) normalize() error {
 		return fmt.Errorf("recommended must be between 1 and %d", len(d.Options))
 	}
 	return nil
+}
+
+// decisionOptionBreaks reports what would break an option's single line. The
+// Unicode line and paragraph separators are not control characters.
+func decisionOptionBreaks(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
 }
 
 // Size caps for a human notification. A notification is a short
@@ -1194,8 +1200,9 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 	}
 	loaded := len(rows)
 	// Decisions still waiting on the operator ride along even once read, so
-	// the companion window can keep offering their buttons.
-	if undecided, err := db.ListUndecidedHumanMessages(snapshotRecentHumanMessages); err == nil {
+	// the companion window can keep offering their buttons. With Collab off
+	// there are no buttons to offer.
+	if undecided, err := db.ListUndecidedHumanMessages(snapshotRecentHumanMessages); err == nil && collabRoutesEnabled() {
 		have := make(map[int64]bool, len(rows))
 		for _, m := range rows {
 			have[m.ID] = true
@@ -1256,6 +1263,9 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 		pendingNames = map[string]string{}
 	}
 
+	// Decisions are a Collab surface: with it off a stored one reads as a
+	// plain notification, with no options to answer.
+	decisions := collabRoutesEnabled()
 	out := make([]dashboardHumanMessage, 0, len(rows))
 	unread := 0
 	for _, m := range rows {
@@ -1280,11 +1290,10 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 			Body:      m.Body,
 			CreatedAt: m.CreatedAt.Format(time.RFC3339),
 			Read:      m.IsRead(),
-			Options:   m.Options,
 			Decision:  m.Decision,
 		}
-		if len(m.Options) > 0 {
-			view.Recommended = m.Recommended
+		if decisions && len(m.Options) > 0 {
+			view.Options, view.Recommended = m.Options, m.Recommended
 		}
 		if !m.DecidedAt.IsZero() {
 			view.DecidedAt = m.DecidedAt.Format(time.RFC3339)
@@ -1602,6 +1611,10 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	}
 	decision := ""
 	if body.Choice != 0 {
+		if !collabRoutesEnabled() {
+			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
+			return
+		}
 		switch {
 		case len(orig.Options) == 0:
 			writeError(w, http.StatusBadRequest, "invalid_arg", "this notification is not a decision")
@@ -1715,6 +1728,12 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		if decision != "" {
 			if err := db.UndecideHumanMessage(body.ID); err != nil {
 				slog.Warn("reply: release decision after failed delivery", "id", body.ID, "error", err)
+			}
+			// The claim marked it read; orig was loaded before that.
+			if !orig.IsRead() {
+				if _, err := db.MarkHumanMessageUnread(body.ID); err != nil {
+					slog.Warn("reply: restore unread after failed delivery", "id", body.ID, "error", err)
+				}
 			}
 		}
 		if full, ok := agentMessageQueueFull(err); ok {

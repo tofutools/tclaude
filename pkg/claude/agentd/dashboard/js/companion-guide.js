@@ -113,13 +113,14 @@ export function cuePath(cue) {
 
 // newCues returns the cues not seen before, oldest first, and records them.
 // The first call only records: cues already live when the page loads were
-// meant for an earlier page and are not replayed.
+// meant for an earlier page and are not replayed. Cue ids restart with the
+// daemon, so a cue is known by its id and the time it was posted.
 export function newCues(seen, cues, primed) {
   const fresh = [];
   for (const cue of Array.isArray(cues) ? cues : []) {
-    const id = Number(cue?.id);
-    if (!Number.isFinite(id) || seen.has(id)) continue;
-    seen.add(id);
+    const key = cueOpenKey(cue);
+    if (!Number.isFinite(Number(cue?.id)) || seen.has(key)) continue;
+    seen.add(key);
     if (primed) fresh.push(cue);
   }
   return fresh.sort((a, b) => a.id - b.id);
@@ -142,10 +143,20 @@ export function cueOpenKey(cue) {
   return `${cue?.id}@${cue?.at || ''}`;
 }
 
-// claimCueOpen lets one dashboard tab act on a hand-over: the last one any
-// tab opened is kept in shared prefs, and a tab seeing it there leaves it.
+// claimCueOpen lets one dashboard tab act on a hand-over: the last few any
+// tab opened are kept in shared prefs, newest first, and a tab seeing it there
+// leaves it. Several can land in one snapshot, so the newest alone would not
+// stop a second tab from taking the earlier ones.
 export function claimCueOpen(stored, cue) {
-  return stored !== cueOpenKey(cue);
+  return !String(stored || '').split('\n').includes(cueOpenKey(cue));
+}
+
+const CUE_OPEN_CLAIMS_KEPT = 8;
+
+// cueOpenClaimed is the shared pref's value once this tab took the hand-over.
+export function cueOpenClaimed(stored, cue) {
+  const earlier = String(stored || '').split('\n').filter(Boolean);
+  return [cueOpenKey(cue), ...earlier].slice(0, CUE_OPEN_CLAIMS_KEPT).join('\n');
 }
 
 // An unfocused but visible tab (a second monitor) gives the focused one
