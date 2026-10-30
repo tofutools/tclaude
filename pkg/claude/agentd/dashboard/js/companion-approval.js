@@ -4,7 +4,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { approvalSummary } from './companion-model.js';
+import { approvalSummary, timeLeft } from './companion-model.js';
 
 const html = htm.bind(h);
 
@@ -27,6 +27,48 @@ function secondsLeft(deadline, now) {
 // tab: a whole plan's temporary permissions (`tclaude agent sudo`) or one
 // --ask-human command. Approve and Deny decide it the same way the Messages
 // tab does. The request body is agent-supplied text and is rendered as text.
+// endElevatedAccess takes an agent back to its usual access. Its sudo grants go
+// first: they are what is live and most recently approved.
+export async function endElevatedAccess(fetchImpl, agent, access) {
+  const send = async (url, options) => {
+    const response = await fetchImpl(url, { credentials: 'same-origin', ...options });
+    if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+  };
+  if (access.sudo.length) await send(`/api/sudo?agent_id=${encodeURIComponent(agent.agentId)}`, { method: 'DELETE' });
+  if (access.standing.length) {
+    await send('/api/permissions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conv: agent.convId, overrides: Object.fromEntries(access.standing.map((slug) => [slug, 'default'])) }),
+    });
+  }
+}
+
+// ElevatedBand says an agent holds more than its usual access and ends it in
+// one click. No confirmation: taking access away is safe, and it can ask again.
+export function ElevatedBand({ agent, access, fetchImpl, notify }) {
+  const [busy, setBusy] = useState(false);
+  async function end() {
+    setBusy(true);
+    try {
+      await endElevatedAccess(fetchImpl, agent, access);
+      notify(`${agent.name} is back to its usual access.`);
+    } catch (error) {
+      notify(`Could not end ${agent.name}'s elevated access: ${error?.message || error}`, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return html`<div class="companion-elevated" role="status">
+    <span aria-hidden="true">🔓</span>
+    <div class="companion-elevated-text">
+      <b>Elevated access</b>
+      ${access.sudo.map((grant) => html`<span key=${grant.id}><code>${grant.slug}</code> ${timeLeft(grant.remaining_seconds)} left</span>`)}
+      ${access.standing.map((slug) => html`<span key=${slug}><code>${slug}</code> standing</span>`)}
+    </div>
+    <button type="button" disabled=${busy} onClick=${end}>${busy ? 'Ending…' : 'End now'}</button>
+  </div>`;
+}
+
 export function ApprovalCard({ request, fetchImpl, notify, from = '', onMore = null }) {
   const [busy, setBusy] = useState('');
   const [now, setNow] = useState(() => Date.now());

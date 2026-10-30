@@ -430,6 +430,24 @@ export function pendingApprovals(snapshot) {
   return pendingAccess(snapshot).filter(quickApproval);
 }
 
+// elevatedAccess is what an agent holds beyond its usual access right now: its
+// time-bounded sudo grants and, for a Steward, standing grants beyond what
+// Config gives it. Null when there is nothing.
+export function elevatedAccess(snapshot, agent) {
+  if (!agent) return null;
+  const sudo = (snapshot?.sudo || []).filter((grant) => grant.agent_id === agent.agentId);
+  const allowed = snapshot?.steward_slugs;
+  const standing = agent.steward && allowed
+    ? (snapshot?.permissions?.grants?.[agent.convId] || []).filter((slug) => !allowed.includes(slug))
+    : [];
+  return sudo.length || standing.length ? { sudo, standing } : null;
+}
+
+// timeLeft reads a sudo grant's remaining seconds.
+export function timeLeft(seconds) {
+  return seconds < 60 ? 'under a minute' : `${Math.ceil(seconds / 60)} min`;
+}
+
 // approvalSummary describes what approving a request grants, in one line.
 export function approvalSummary(request) {
   const perm = String(request?.perm || '');
