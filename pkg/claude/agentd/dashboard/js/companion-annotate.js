@@ -172,10 +172,24 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
         event.preventDefault();
         setStrokes((list) => list.slice(0, -1));
       }
+      if (event.key === 'Tab') keepFocusInside(event);
     };
     win?.addEventListener?.('keydown', onKey, true);
     return () => win?.removeEventListener?.('keydown', onKey, true);
   }, [onCancel, win]);
+
+  // The layer is modal: Tab wraps around its controls and never reaches the
+  // page underneath, or a terminal there.
+  function keepFocusInside(event) {
+    const stops = [...(rootRef.current?.querySelectorAll?.('button:not([disabled]), textarea') || [])];
+    if (!stops.length) return;
+    const first = stops[0];
+    const last = stops[stops.length - 1];
+    const at = win?.document?.activeElement;
+    if (stops.includes(at) && at !== (event.shiftKey ? first : last)) return;
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus?.();
+  }
 
   function down(event) {
     if (event.button !== 0 || drawing.current) return;

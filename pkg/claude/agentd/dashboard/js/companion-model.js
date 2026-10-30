@@ -217,7 +217,7 @@ export function snapZone(pointer, viewport) {
 export function zoneRect(zone, viewport, top = 0) {
   const bottom = viewport.height - COMPANION_FOOTER_ROOM;
   if (zone === 'right' || zone === 'left') {
-    const w = Math.max(COMPANION_MIN_W, Math.round(viewport.width * COMPANION_SNAP_SHARE));
+    const w = Math.min(viewport.width, Math.max(COMPANION_MIN_W, Math.round(viewport.width * COMPANION_SNAP_SHARE)));
     return { x: zone === 'right' ? viewport.width - w : 0, y: top, w, h: Math.max(COMPANION_MIN_H, bottom - top), snap: zone };
   }
   if (zone === 'bottom') {
@@ -262,11 +262,23 @@ export function clipUtf8(s, maxBytes) {
   return out;
 }
 
+const viewSuffix = (context) => (context ? `\n\n[dashboard view: ${context}]` : '');
+
+// companionMessageFits reports whether composeCompanionMessage keeps all of
+// text. A caller checks this first and tells the operator, rather than send
+// a clipped message as if it had gone out whole.
+export function companionMessageFits(text, context = '') {
+  const body = String(text || '').trim();
+  const encoder = new TextEncoder();
+  return body.length <= COMPANION_MESSAGE_MAX
+    && encoder.encode(body).length + encoder.encode(viewSuffix(context)).length <= COMPANION_MESSAGE_MAX_BYTES;
+}
+
 // composeCompanionMessage builds the operator-mail body for the input row.
 export function composeCompanionMessage(text, context = '') {
   const body = String(text || '').trim().slice(0, COMPANION_MESSAGE_MAX);
   if (!body) return '';
-  const suffix = context ? `\n\n[dashboard view: ${context}]` : '';
+  const suffix = viewSuffix(context);
   return clipUtf8(body, COMPANION_MESSAGE_MAX_BYTES - new TextEncoder().encode(suffix).length) + suffix;
 }
 

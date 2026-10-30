@@ -158,6 +158,127 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
   assert.equal(svg.querySelectorAll('rect.board-el').length, 0, 'Ctrl+Z undoes the drawing');
 });
 
+// drawnBoard mounts the editor on a board and draws one rectangle. `answer` may
+// answer a request; anything it leaves gets the plain success.
+async function drawnBoard(t, { answer, board = {} } = {}) {
+  const harness = await createPreactHarness(t);
+  const island = await harness.importDashboardModule('js/board-island.js');
+  const requests = [];
+  const notes = [];
+  const fetchImpl = async (url, init = {}) => {
+    requests.push({ url: String(url), method: init.method || 'GET', body: init.body && typeof init.body === 'string' ? JSON.parse(init.body) : null });
+    const answered = await answer?.(String(url), init);
+    if (answered) return answered;
+    if (init.method === 'PATCH') return ok({ version: 2, accepted: 1 });
+    if (init.method === 'POST') return ok({ sent: 1 }, 202);
+    return ok({ id: 'plan', title: 'Plan', version: 1, participants: [A], elements: [], ...board });
+  };
+  const state = island.createBoardsState();
+  state.location.value = { tab: 'boards', selection: 'plan' };
+  const snapshot = harness.signals.signal({ groups: [] });
+  boardsSection(harness);
+  const view = await harness.mount(harness.html`<${island.BoardsApp} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window}
+    notify=${(text, error) => notes.push({ text, error })} />`);
+  await harness.act(() => wait());
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Rectangle' }).click());
+  const svg = view.container.querySelector('svg.board-canvas');
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 100, 100));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 220, 160));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 220, 160));
+  const settle = () => harness.act(() => wait(island.BOARD_FLUSH_MS + island.BOARD_EVENT_IDLE_MS + 60));
+  const patches = () => requests.filter((r) => r.method === 'PATCH');
+  const events = () => requests.filter((r) => r.url === '/api/boards/plan/events');
+  return { harness, view, requests, notes, settle, patches, events, svg, island };
+}
+
+test('a linked-group board with no invited agents still gets events', async (t) => {
+  const { settle, events } = await drawnBoard(t, { board: { participants: [], group: 'team', group_members: [A] } });
+  await settle();
+  assert.equal(events().length, 1);
+});
+
+test('a PATCH the board kept nothing of is reported and never announced', async (t) => {
+  const { settle, events, notes } = await drawnBoard(t, {
+    answer: async (_url, init) => (init.method === 'PATCH' ? ok({ version: 5, accepted: 0 }) : null),
+  });
+  await settle();
+  assert.match(notes.at(-1).text, /newer version of a shape/);
+  assert.equal(notes.at(-1).error, true);
+  assert.equal(events().length, 0, 'no event describes an edit the board did not keep');
+});
+
+test('a batch refused as a whole stays pending and the next change retries it', async (t) => {
+  let refuse = true;
+  const board = await drawnBoard(t, {
+    answer: async (_url, init) => {
+      if (init.method !== 'PATCH' || !refuse) return null;
+      return { ok: false, status: 400, statusText: 'Bad Request', json: async () => ({ message: 'board has too many elements' }) };
+    },
+  });
+  const { harness, settle, patches, events, notes, view, svg } = board;
+  await settle();
+  assert.equal(patches().length, 1);
+  assert.match(notes.at(-1).text, /too many elements/);
+  assert.equal(view.container.querySelector('.board-sync').textContent, 'not saved');
+  assert.equal(events().length, 0, 'an unsaved edit is not announced');
+  refuse = false;
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 300, 300));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 340, 340));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 340, 340));
+  await settle();
+  const retried = patches().at(-1).body.elements;
+  assert.equal(retried.length, 2, 'the kept edit goes out with the new one');
+  assert.equal(events().length, 1);
+});
+
+test('an element refused by index is left out of the event', async (t) => {
+  let refuse = true;
+  const { settle, events, notes } = await drawnBoard(t, {
+    answer: async (_url, init) => {
+      if (init.method !== 'PATCH' || !refuse) return null;
+      refuse = false;
+      return { ok: false, status: 400, statusText: 'Bad Request', json: async () => ({ message: 'elements[0]: bad shape' }) };
+    },
+  });
+  await settle();
+  assert.match(notes.at(-1).text, /refused an edit: elements\[0\]/);
+  assert.equal(events().length, 0);
+});
+
+test('an event waits for the PATCH behind it', async (t) => {
+  let release = null;
+  const { harness, island, settle, events } = await drawnBoard(t, {
+    answer: async (_url, init) => {
+      if (init.method === 'PATCH' && !release) await new Promise((resolve) => { release = resolve; });
+      return null;
+    },
+  });
+  await settle();
+  assert.ok(release, 'the PATCH is in flight');
+  assert.equal(events().length, 0, 'nothing is announced before it is saved');
+  release();
+  await harness.act(() => wait(island.BOARD_FLUSH_MS + 60));
+  assert.equal(events().length, 1);
+});
+
+test('a retry that loses to its own unanswered first attempt is not reported', async (t) => {
+  let attempts = 0;
+  const { harness, notes, events, settle, patches } = await drawnBoard(t, {
+    answer: async (_url, init) => {
+      if (init.method !== 'PATCH') return null;
+      attempts += 1;
+      if (attempts === 1) throw new TypeError('connection lost');
+      return ok({ version: 2, accepted: 0 });
+    },
+  });
+  await settle();
+  await harness.act(() => wait(2100));
+  assert.equal(patches().length, 2);
+  assert.deepEqual(notes, []);
+  await settle();
+  assert.equal(events().length, 1);
+});
+
 test('an agent edit arriving on the poll is drawn and flashed', async (t) => {
   const harness = await createPreactHarness(t);
   const { BoardsApp, createBoardsState, BOARD_POLL_MS } = await harness.importDashboardModule('js/board-island.js');

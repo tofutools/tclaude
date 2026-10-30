@@ -896,7 +896,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more="Every level can draw on boards, point at the dashboard and notify you. Messaging also lets it message any agent. Starting workers adds spawning agents and setting their task link, and the workers it starts run on your account.">
           <${ConfigSelect} id="cfg-steward-writes" aria-label="What a Steward can change without asking">
             <option value="messaging">Message agents (default)</option>
-            <option value="none">Nothing</option>
+            <option value="none">Boards and notifying you only</option>
             <option value="workers">Message agents and start workers</option>
           </${ConfigSelect}>
         </${Setting}>

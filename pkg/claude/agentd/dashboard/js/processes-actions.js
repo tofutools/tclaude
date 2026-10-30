@@ -349,8 +349,12 @@ export function createProcessesActions({
     if (!agentId) return false;
     // The floating companion hosts the agent's native terminal over the
     // editor, so the operator keeps the canvas in view while talking to it.
-    const { openInCompanion } = await import('./companion-facade.js');
-    if (openInCompanion(agentId)) {
+    let inCompanion = false;
+    try {
+      const { openInCompanion } = await import('./companion-facade.js');
+      inCompanion = openInCompanion(agentId);
+    } catch { /* the window endpoint below still opens it */ }
+    if (inCompanion) {
       state.setNotice(`Opened ${label} in the companion window.`);
       return true;
     }
