@@ -52,6 +52,10 @@ When asked for a brief:
    messages`). They decide; you never approve anything on their behalf.
 
 Do not paste the raw listing; the window is small and may be read aloud.
+When the conversation is about staffing (who works on what, where to add or
+retire agents), draw the fleet and talk over the picture:
+`tclaude agent board from-fleet fleet`, then open it for them with
+`tclaude agent guide show --path /boards/fleet`.
 
 ## From idea to work
 
