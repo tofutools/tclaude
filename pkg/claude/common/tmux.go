@@ -1,7 +1,10 @@
 package common
 
 import (
+	"fmt"
 	"os/exec"
+	"path"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/perfstats"
@@ -100,7 +103,7 @@ func TmuxArgs(args ...string) []string {
 // advertises the `Hls` capability. Neither the terminfo entry for the web
 // terminal's TERM nor tmux's own terminal auto-detection (xterm.js answers no
 // XTVERSION query) supplies it, so without an explicit opt-in every OSC 8 link
-// a harness draws reaches the browser as plain, unclickable label text.
+// a harness draws reaches the client as plain, unclickable label text.
 const TmuxHyperlinksFeature = "hyperlinks"
 
 // TmuxSyncFeature is the tmux terminal-feature name for synchronized output
@@ -111,12 +114,12 @@ const TmuxHyperlinksFeature = "hyperlinks"
 const TmuxSyncFeature = "sync"
 
 // TmuxClientFeaturesEnv asks a `tclaude session attach` child process to pass
-// tmux `-T <features>` for the client it forks. The dashboard's web terminals
-// reach tmux through that wrapper rather than by spawning tmux themselves, so
-// the "this client renders OSC 8" fact has to survive one process hop. It is
-// deliberately an env var and not a CLI flag: the native-terminal attach path
-// shares the same command builder and must keep tmux's default (detected)
-// feature set, since an arbitrary local terminal may not handle OSC 8.
+// tmux `-T <features>` for the client it forks, overriding the TERM-based choice
+// NativeTmuxClientFeatureArgs makes. The dashboard's web terminals reach tmux
+// through that wrapper rather than by spawning tmux themselves, so the "this
+// client renders OSC 8" fact has to survive one process hop. It is deliberately
+// an env var and not a CLI flag: the native-terminal attach path shares the same
+// command builder, and only the caller that knows the renderer may override it.
 const TmuxClientFeaturesEnv = "TCLAUDE_TMUX_CLIENT_FEATURES"
 
 // TmuxClientFeatureArgs turns a requested feature list into the tmux client
@@ -141,6 +144,52 @@ func TmuxClientFeatureArgs(features string) []string {
 		return nil
 	}
 	return []string{"-T", features}
+}
+
+// tmuxHyperlinkTerms are the TERM patterns of a native terminal that gets OSC 8
+// from tmux. The opt-in is per client rather than a server-wide terminal-features
+// entry on purpose: that entry would also match the federation pane renderer,
+// which runs as TERM=xterm-256color, and start sending peers the link targets of
+// a shared pane, which are not on its screen.
+//
+// It is an allowlist because the failure modes differ. A terminal that merely
+// ignores OSC 8 loses nothing, but one that prints unknown sequences, like an old
+// Linux console, would show the URLs as garbage. tmux*/screen* cover a nested
+// client, whose outer multiplexer applies its own policy.
+var tmuxHyperlinkTerms = []string{"xterm*", "alacritty*", "foot*", "wezterm*", "ghostty*", "tmux*", "screen*"}
+
+// NativeTmuxClientFeatureArgs returns the tmux client flags for attaching from a
+// real terminal identified by term, or nil when it gets tmux's default feature
+// set. It is what makes a labelled link a harness draws openable there: without
+// the feature tmux drops the target and leaves dead label text, which is worse
+// than running the harness outside tmux, where it reaches the same terminal.
+//
+// The version gate is load-bearing: tmux before 3.2 has no -T and refuses to
+// start the client, so an unguarded flag would break every attach, and the
+// feature itself arrived in 3.4. Anything that does not parse as a version, like
+// a `next-3.5` build, keeps the safe default.
+func NativeTmuxClientFeatureArgs(term string) []string {
+	if !slices.ContainsFunc(tmuxHyperlinkTerms, func(pattern string) bool {
+		matched, err := path.Match(pattern, term)
+		return err == nil && matched
+	}) {
+		return nil
+	}
+	version, err := Default.Command("-V").Output()
+	if err != nil || !TmuxVersionAtLeast(string(version), 3, 4) {
+		return nil
+	}
+	return TmuxClientFeatureArgs(TmuxHyperlinksFeature)
+}
+
+// TmuxVersionAtLeast reports whether version, the output of `tmux -V`, names at
+// least major.minor. Output it cannot parse reports false.
+func TmuxVersionAtLeast(version string, major, minor int) bool {
+	var gotMajor, gotMinor int
+	if _, err := fmt.Sscanf(strings.TrimSpace(version), "tmux %d.%d", &gotMajor, &gotMinor); err != nil {
+		return false
+	}
+	return gotMajor > major || gotMajor == major && gotMinor >= minor
 }
 
 // ExactTarget returns a tmux -t target that resolves the session name

@@ -260,3 +260,13 @@ For scrollback, either enable tmux mouse mode (`set -g mouse on`) or disable
 the alternate screen to keep your terminal's native scrollbar
 (`set -ga terminal-overrides ',*256color*:smcup@:rmcup@'`) — one or the
 other, not both.
+
+## Labelled links
+
+Attaching from a terminal makes the labelled links a harness prints (visible
+text with a hidden address, OSC 8) open with the terminal's own link gesture,
+usually Ctrl-click. tclaude asks tmux for this per client on tmux 3.4 or newer
+when `TERM` matches `xterm*`, `alacritty*`, `foot*`, `wezterm*`, `ghostty*`,
+`tmux*`, or `screen*`. A client that is already attached keeps what it had, so
+detach and attach again after upgrading. A plain `tmux -L tclaude attach` does
+not go through tclaude; add `-T hyperlinks` before `attach` to get the same.

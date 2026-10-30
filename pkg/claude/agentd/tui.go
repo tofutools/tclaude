@@ -1936,7 +1936,8 @@ func realTUIAttachToPane(agentName, tmuxSession string, inTmux bool) tea.Cmd {
 			return tuiAttachedMsg{agent: agentName, session: tmuxSession, err: err}
 		}
 	}
-	cmd := clcommon.TmuxCommand("attach-session", "-t", target)
+	args := append(clcommon.NativeTmuxClientFeatureArgs(os.Getenv("TERM")), "attach-session", "-t", target)
+	cmd := clcommon.TmuxCommand(args...)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		// tmux exits 1 on a plain detach, which is not a failure — the same
 		// reading session.attachToSessionWithFlags applies.

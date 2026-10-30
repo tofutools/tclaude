@@ -3,6 +3,7 @@
 package session
 
 import (
+	"os/exec"
 	"slices"
 	"testing"
 
@@ -37,10 +38,12 @@ func TestAttachPassesClientFeaturesFromEnv(t *testing.T) {
 
 // A native terminal attach shares this code path, and an arbitrary local
 // terminal may not handle OSC 8. With no request in the environment the attach
-// must stay byte-identical to what it was, leaving tmux's own detection alone.
+// on a terminal outside the allowlist must stay byte-identical to what it was,
+// leaving tmux's own detection alone.
 func TestAttachWithoutClientFeaturesEnvIsUnchanged(t *testing.T) {
 	rec := withRecordingTmux(t)
 	t.Setenv(clcommon.TmuxClientFeaturesEnv, "")
+	t.Setenv("TERM", "linux")
 
 	_ = attachToSessionWithFlags("spwn-abc123", true)
 
@@ -58,6 +61,51 @@ func TestAttachWithoutClientFeaturesEnvIsUnchanged(t *testing.T) {
 	}
 }
 
+// versionedRecordingTmux is a recordingTmux whose `tmux -V` answers version, so
+// the native attach's version gate can be driven both ways.
+type versionedRecordingTmux struct {
+	recordingTmux
+	version string
+}
+
+func (r *versionedRecordingTmux) Command(args ...string) *exec.Cmd {
+	if len(args) == 1 && args[0] == "-V" {
+		return exec.Command("echo", r.version)
+	}
+	return r.recordingTmux.Command(args...)
+}
+
+// A native terminal gets OSC 8 from its own TERM, with no env var involved, so a
+// labelled link opens there as it does in the dashboard. tmux before 3.2 refuses
+// -T outright and hyperlinks arrived in 3.4, so below that the flag must stay away.
+func TestNativeAttachEnablesHyperlinks(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    []string
+	}{
+		{"tmux 3.7b", []string{"-T", clcommon.TmuxHyperlinksFeature, "attach-session", "-t", "=spwn-abc123"}},
+		{"tmux 3.4", []string{"-T", clcommon.TmuxHyperlinksFeature, "attach-session", "-t", "=spwn-abc123"}},
+		{"tmux 3.3a", []string{"attach-session", "-t", "=spwn-abc123"}},
+		{"tmux 3.1c", []string{"attach-session", "-t", "=spwn-abc123"}},
+		{"tmux next-3.8", []string{"attach-session", "-t", "=spwn-abc123"}},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			rec := &versionedRecordingTmux{version: tc.version}
+			prev := clcommon.Default
+			clcommon.Default = rec
+			t.Cleanup(func() { clcommon.Default = prev })
+			t.Setenv(clcommon.TmuxClientFeaturesEnv, "")
+			t.Setenv("TERM", "xterm-256color")
+
+			_ = attachToSessionWithFlags("spwn-abc123", false)
+
+			if len(rec.calls) != 1 || !slices.Equal(rec.calls[0], tc.want) {
+				t.Fatalf("got %v, want one call %v", rec.calls, tc.want)
+			}
+		})
+	}
+}
+
 // A malformed environment value degrades to "no hyperlinks" rather than being
 // forwarded. tmux would tolerate the junk, but nothing legitimate produces it,
 // and an attach is not the place to widen what an environment writer can put in
@@ -65,6 +113,7 @@ func TestAttachWithoutClientFeaturesEnvIsUnchanged(t *testing.T) {
 func TestAttachIgnoresMalformedClientFeatures(t *testing.T) {
 	rec := withRecordingTmux(t)
 	t.Setenv(clcommon.TmuxClientFeaturesEnv, "hyperlinks; rm -rf /")
+	t.Setenv("TERM", "xterm-256color")
 
 	_ = attachToSessionWithFlags("spwn-abc123", false)
 

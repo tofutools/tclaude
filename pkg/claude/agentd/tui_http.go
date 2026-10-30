@@ -75,14 +75,19 @@ func handleTUIAttachWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no live tmux session for "+short8(resolved.ConvID), http.StatusNotFound)
 		return
 	}
-	// Deliberately NO hyperlink opt-in here, unlike the browser terminals. This
-	// stream ends up on the operator's real terminal: the remote TUI writes the
-	// bytes straight to its own stdout under a raw-mode tty. That terminal is
-	// whatever the operator happens to be running, so asking tmux to emit OSC 8
-	// would push the sequence at an emulator that may not render it.
+	// This stream ends up on the operator's real terminal: the remote TUI writes
+	// the bytes straight to its own stdout under a raw-mode tty. So it takes the
+	// native attach's hyperlink decision, not the browser terminals' opt-in, and
+	// the TERM it goes by has to come from the far end. That value is only ever
+	// matched against the allowlist; it never reaches the command string.
+	clientFlags := ""
+	if args := clcommon.NativeTmuxClientFeatureArgs(r.URL.Query().Get(tuiAttachTermParam)); len(args) > 0 {
+		clientFlags = strings.Join(args, " ") + " "
+	}
 	command := fmt.Sprintf(
-		"exec tmux -L %s attach-session -t %s",
+		"exec tmux -L %s %sattach-session -t %s",
 		shellSingleQuote(clcommon.TmuxSocketName),
+		clientFlags,
 		shellSingleQuote(clcommon.ExactTarget(sess.TmuxSession)),
 	)
 	h, _ := harness.Get(sess.Harness)
