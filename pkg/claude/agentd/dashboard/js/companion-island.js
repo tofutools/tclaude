@@ -156,7 +156,7 @@ function AddMenu({ agents, tabs, steward, onSummonSteward, onPin, onClose, busy 
   return html`<div class="companion-menu" role="menu" aria-label="Add a companion">
     ${!stewardPinned && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
-      <span><b>${steward?.online ? 'Open the Steward' : 'Summon the Steward'}</b><small>Read-only helper for all of tclaude. Asks you before changing anything.</small></span>
+      <span><b>${steward?.online ? 'Open the Steward' : 'Summon the Steward'}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
     </button>`}
     <input type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
       value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />

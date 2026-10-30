@@ -157,9 +157,19 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	}
 
 	// The Steward is a Collab surface; other scribes are not.
-	if body.Scope != nil && body.Scope.Kind == "steward" && !collabRoutesEnabled() {
-		writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
-		return
+	if body.Scope != nil && strings.TrimSpace(body.Scope.Kind) == stewardScopeKind {
+		if !collabRoutesEnabled() {
+			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
+			return
+		}
+		// A Steward's access is the operator's setting, not the caller's.
+		cfg, err := config.LoadShared()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "config", err.Error())
+			return
+		}
+		body.Slugs = stewardSlugs(cfg)
+		body.Brief = strings.TrimRight(body.Brief, "\n") + "\n\n" + stewardAccessNote(cfg)
 	}
 
 	name := strings.TrimSpace(body.Name)

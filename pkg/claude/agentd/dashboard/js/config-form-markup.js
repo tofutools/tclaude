@@ -131,6 +131,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'context', icon: '🧠', title: 'Context & sessions', lede: 'Compaction, context nudges, resume prompts and how long Claude Code keeps transcripts.' },
   { id: 'costs', icon: '💲', title: 'Usage & costs', lede: 'Cost display, WHAT-IF estimates, subscription usage bars and rate-limit gating.' },
   { id: 'assistants', icon: '💬', title: 'Ask & scribe', lede: 'Defaults for tclaude ask and for the scribe agents behind the 🤖 Edit with agent buttons.' },
+  { id: 'steward', icon: '✦', title: 'Steward', lede: 'What a Steward, your helper in the companion window, may do without asking. Part of the Collab experimental feature.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
@@ -876,6 +877,28 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-retired-cleanup-enabled" /> delete agents retired longer than</label>
           <${ConfigInput} type="number" id="cfg-agent-retired-cleanup-days" min="1" max="36525" placeholder="365" aria-label="Days retired before deletion" style="min-width:80px" />
           <span>days</span>
+        </${Setting}>
+      </${Group}>
+    </${Panel}>
+
+    <${Panel} id="steward" active=${active}>
+      <${Group} title="Access" lede="Set when a Steward is summoned, so a running Steward keeps what it was born with: retire it to apply a change. Anything beyond this asks you first. Agents can always message a live Steward.">
+        <${Setting} title="Reads" forId="cfg-steward-reads" k="steward.reads"
+          summary="What a Steward can read."
+          more="Operator level covers the fleet, boards, the dashboard view, processes, triggers, usage, costs, host load and agents' context state. It never includes other agents' mail, private setup text, or GitHub, Linear and AWB through your credentials.">
+          <${ConfigSelect} id="cfg-steward-reads" aria-label="What a Steward can read">
+            <option value="operator">Operator level (default)</option>
+            <option value="fleet">Fleet and boards only</option>
+          </${ConfigSelect}>
+        </${Setting}>
+        <${Setting} title="Writes" forId="cfg-steward-writes" k="steward.writes"
+          summary="What a Steward can change without asking."
+          more="Every level can draw on boards, point at the dashboard and notify you. Messaging also lets it message any agent. Starting workers adds spawning agents and setting their task link, and the workers it starts run on your account.">
+          <${ConfigSelect} id="cfg-steward-writes" aria-label="What a Steward can change without asking">
+            <option value="messaging">Message agents (default)</option>
+            <option value="none">Nothing</option>
+            <option value="workers">Message agents and start workers</option>
+          </${ConfigSelect}>
         </${Setting}>
       </${Group}>
     </${Panel}>
