@@ -322,9 +322,9 @@ const accessPanelDescriptor = createIslandDescriptor({
   hosts: { host: '#access-panel-root' },
   failureClass: 'access-panel-error',
   load: async ({ hosts: { host }, dependencies }) => {
-    const [{ mountAccessPanelIsland }, { dashboardState }] = await Promise.all([
-      import('./access-panel-island.js'), import('./snapshot-store.js'),
-    ]);
+    const islandModule = import('./access-panel-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [{ mountAccessPanelIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
     return {
       mount: (registerCleanup) => mountAccessPanelIsland({
         host, registerCleanup, snapshot: dashboardState.snapshot,

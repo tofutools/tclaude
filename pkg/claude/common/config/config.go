@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -1355,9 +1354,10 @@ const (
 	StewardWritesWorkers = "workers"
 )
 
-// MaxStewardStartupPromptLen caps steward.startup_prompt, leaving a Steward's
-// brief room for its built-in text within the initial-message limit.
-const MaxStewardStartupPromptLen = 4000
+// MaxStewardStartupPromptLen caps steward.startup_prompt in bytes, leaving a
+// Steward's brief room for its built-in text within the 16 KiB initial-message
+// limit whatever the alphabet.
+const MaxStewardStartupPromptLen = 10000
 
 // stewardNamePattern keeps a Steward's name inside the rename-title charset, so
 // it is safe as an agent title and as a message address.
@@ -1369,10 +1369,24 @@ const MaxStewardNameLen = 32
 // StewardName returns the operator's name for their Steward, trimmed, or "".
 // Nil-safe.
 func (c *Config) StewardName() string {
+	// Only the dashboard's save validates; a hand edit must not turn a group
+	// or remote address into a Steward alias.
+	name := c.stewardNameSetting()
+	if !validStewardName(name) {
+		return ""
+	}
+	return name
+}
+
+func (c *Config) stewardNameSetting() string {
 	if c == nil || c.Steward == nil {
 		return ""
 	}
 	return strings.TrimSpace(c.Steward.Name)
+}
+
+func validStewardName(name string) bool {
+	return len(name) <= MaxStewardNameLen && stewardNamePattern.MatchString(name)
 }
 
 // StewardStartupPrompt returns the operator's instructions, trimmed. Nil-safe.
@@ -4312,12 +4326,12 @@ func Validate(c *Config) []string {
 		errs = append(errs, fmt.Sprintf("steward.writes %q is not one of %s, %s, %s",
 			c.StewardWrites(), StewardWritesNone, StewardWritesMessaging, StewardWritesWorkers))
 	}
-	if name := c.StewardName(); name != "" && (len(name) > MaxStewardNameLen || !stewardNamePattern.MatchString(name)) {
+	if name := c.stewardNameSetting(); name != "" && !validStewardName(name) {
 		errs = append(errs, fmt.Sprintf("steward.name: must be at most %d characters: letters and digits, with single spaces, - or _ between them", MaxStewardNameLen))
 	}
-	if prompt := c.StewardStartupPrompt(); utf8.RuneCountInString(prompt) > MaxStewardStartupPromptLen {
-		errs = append(errs, fmt.Sprintf("steward.startup_prompt: must be at most %d characters", MaxStewardStartupPromptLen))
-	} else if strings.ContainsFunc(prompt, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' && r != '\r' }) {
+	if prompt := c.StewardStartupPrompt(); len(prompt) > MaxStewardStartupPromptLen {
+		errs = append(errs, fmt.Sprintf("steward.startup_prompt: must be at most %d bytes", MaxStewardStartupPromptLen))
+	} else if strings.ContainsFunc(prompt, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) {
 		errs = append(errs, "steward.startup_prompt: must not contain control characters")
 	}
 

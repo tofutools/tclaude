@@ -330,7 +330,7 @@ export function stewardBrief() {
     '  list of what they circled, underlined or pointed at, plus their note. Answer about those',
     '  controls, and point back with `tclaude agent guide show --target` when that helps.',
     '',
-    'Your access is at the end of this brief. Before changing anything else, show a short concrete plan. For a',
+    'Your access is near the end of this brief. Before changing anything else, show a short concrete plan. For a',
     'multi-step setup, ask for exactly the permissions the plan needs, once, for a bounded time:',
     '`tclaude agent sudo request <slug>... --duration 30m --reason "<the plan, step by step>"`.',
     'The operator approves or denies it as a card in your companion window. For a single change,',

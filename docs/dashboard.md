@@ -668,9 +668,10 @@ Writes to `none` to rule that out. A running Steward keeps the access it was
 summoned with, so retire it to apply a change.
 
 **Name** in the same section is what you call your Steward. The companion
-shows it, and agents can message the Steward by it as well as by `steward`.
-**Startup prompt** is your own instructions, up to 4000 characters, added to
-what every new Steward is told when it starts.
+shows it, and agents can message the Steward by it as well as by `steward`,
+straight away. A running Steward learns the name when it is next summoned.
+**Startup prompt** is your own instructions, up to 10000 bytes, added to what
+every new Steward is told when it starts.
 
 Any agent can write to a live Steward with `tclaude agent message steward`,
 without `message.direct` or a shared group. The Steward treats that mail as
