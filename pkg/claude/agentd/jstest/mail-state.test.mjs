@@ -104,7 +104,7 @@ test('a decision notification offers its options and posts the pick through the 
   const toasts = [];
   let done = 0;
   const fetchImpl = async (url, init) => { requests.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 200, json: async () => ({}) }; };
-  const message = { id: 4, from_title: 'designer', options: ['Tabs', 'Sidebar'], recommended: 1 };
+  const message = { id: 4, from_agent: 'agt_x', from_title: 'designer', options: ['Tabs', 'Sidebar'], recommended: 1 };
   const view = await harness.mount(harness.html`<${DecisionChoices} message=${message} fetchImpl=${fetchImpl}
     toast=${(text, bad) => toasts.push([text, bad])} onDone=${() => { done += 1; }} />`);
   assert.ok(harness.getByRole(view.container, 'button', { name: 'Tabs ★' }).classList.contains('primary'));

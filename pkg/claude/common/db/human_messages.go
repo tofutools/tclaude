@@ -499,6 +499,17 @@ func DecideHumanMessage(id int64, decision string) (bool, error) {
 	return n > 0, err
 }
 
+// UndecideHumanMessage releases a decision whose pick could not be
+// delivered, so the operator can answer again.
+func UndecideHumanMessage(id int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE human_messages SET decision = '', decided_at = NULL WHERE id = ?`, id)
+	return err
+}
+
 // ListUndecidedHumanMessages returns the newest decisions still waiting on
 // the operator, at most limit.
 func ListUndecidedHumanMessages(limit int) ([]*HumanMessage, error) {
