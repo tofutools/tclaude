@@ -327,3 +327,5 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-chip-decide { border-color: var(--cmp-blue); }
 .companion-chip-decide .companion-decide-mark { width: 22px; height: 22px; display: inline-grid; place-items: center; }
 .companion-decide-tab button { color: var(--cmp-blue); }
+.companion-decide-note { margin: 8px 10px 0; color: var(--cmp-amber-text); font-size: 12px; }
+.companion-decide-note button { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }

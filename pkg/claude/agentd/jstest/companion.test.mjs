@@ -330,7 +330,7 @@ test('decisions from every agent wait in one "to decide" queue', async (t) => {
     { id: 10, from_agent: A, subject: 'Loop back?', options: ['Yes', 'No'], recommended: 1 },
     { id: 12, from_agent: B, subject: 'Done', options: ['a', 'b'], decision: 'a' },
   ];
-  const { view, harness, requests } = await setup(t, { snapshot });
+  const { view, harness, requests, snap } = await setup(t, { snapshot });
   const pill = harness.getByRole(view.container, 'button', { name: /2 decisions to make/ });
   await harness.act(() => pill.click());
   const queue = view.container.querySelector('.companion-decide-queue');
@@ -342,6 +342,11 @@ test('decisions from every agent wait in one "to decide" queue', async (t) => {
   assert.equal(view.container.querySelector('form.companion-input'), null, 'no message row while deciding');
   await harness.act(async () => { harness.getByRole(cards[1], 'button', { name: 'Sidebar' }).click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(requests.find((r) => r.url === '/api/human-messages/reply').body, { id: 11, choice: 2, body: '' });
+  // Once everything is answered the queue ends, and a later decision only
+  // brings the pill back instead of covering the window.
+  await harness.act(async () => { snap.value = { ...snap.value, messages: [] }; });
+  await harness.act(async () => { snap.value = { ...snap.value, messages: [{ id: 13, from_agent: C, subject: 'Again?', options: ['x', 'y'] }] }; });
+  assert.equal(view.container.querySelector('.companion-decide-queue'), null);
 });
 
 test('decision speech names the question and the options', async (t) => {
