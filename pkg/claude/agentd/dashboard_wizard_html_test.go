@@ -152,7 +152,7 @@ func TestDashboardHTML_WizardTabNames(t *testing.T) {
 	// staying honest and the arcane name being present.
 	pairs := []struct{ tab, regular, icon, title string }{
 		{"groups", "Groups", "⚔", "Parties"},
-		{"terminals", "Collab", "🔮", "Scrying"},
+		{"terminals", "Terminals", "🔮", "Scrying"},
 		{"jobs", "Automations", "⚒", "Labours"},
 		{"processes", "Processes", "🕸", "Rites"},
 		{"plugins", "Plugins", "🔧", "Contraptions"},

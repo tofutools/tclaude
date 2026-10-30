@@ -333,3 +333,15 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-decide-tab button { color: var(--cmp-blue); }
 .companion-decide-note { margin: 8px 10px 0; color: var(--cmp-amber-text); font-size: 12px; }
 .companion-decide-note button { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+
+/* The quick permissions panel takes the notification drawer's shape, above the
+   companion window it is usually raised from. */
+.access-panel { z-index: 956; outline: none; }
+.access-panel-header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #30363d; }
+.access-panel-count { color: var(--cmp-amber-text, #e6c07b); font-variant-numeric: tabular-nums; }
+.access-panel-header button { margin-left: auto; background: none; border: 0; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
+.access-panel-list { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+.access-panel-empty { color: #8b949e; }
+.access-panel-more { background: none; border: 0; padding: 0; color: #58a6ff; cursor: pointer; font-size: 12.5px; text-align: left; }
+.companion-approval-from { color: #8b949e; font-size: 12px; }
+.companion-access { background: none; border: 1px solid #d29922; border-radius: 6px; color: #e6c07b; cursor: pointer; font-size: 12px; padding: 1px 7px; }

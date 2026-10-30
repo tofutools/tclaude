@@ -410,12 +410,29 @@ export function decisionSpeech(agent, decision) {
 export function approvalsFor(snapshot, agent) {
   if (!agent) return [];
   const convs = new Set([agent.convId].filter(Boolean));
-  return (snapshot?.access_requests || []).filter((request) => {
-    if (request?.status && request.status !== 'pending') return false;
-    if (request?.proposal) return false; // federation proposals have their own flow
+  return pendingApprovals(snapshot).filter((request) => {
     if (request?.agent_id) return request.agent_id === agent.agentId;
     return convs.has(request?.conv_id) || convs.has(request?.current_conv_id);
   });
+}
+
+// pendingAccess lists every request waiting on the operator, in the daemon's
+// order. A list on screen must not reorder under the pointer.
+export function pendingAccess(snapshot) {
+  return (snapshot?.access_requests || []).filter((request) => !request?.status || request.status === 'pending');
+}
+
+// quickApproval says one card can answer this request. A peer's request, a link
+// or proposal and a model gateway grant each need what only the Messages tab
+// shows: who asks, for how long, and narrowing the grant.
+function quickApproval(request) {
+  return !request.proposal && !request.link && !request.origin_peer && !request.usage_gateways?.length
+    && !request.http_proxy && !request.max_usd && request.perm !== 'models.proxy';
+}
+
+// pendingApprovals are the requests a card answers: the quick panel's list.
+export function pendingApprovals(snapshot) {
+  return pendingAccess(snapshot).filter(quickApproval);
 }
 
 // approvalSummary describes what approving a request grants, in one line.
