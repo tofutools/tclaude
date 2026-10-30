@@ -391,3 +391,15 @@ test('making a board a group\'s board shows its members and tells the online one
   assert.match(invite.body.body, /Your group "team" now has the shared board/);
   await view.unmount();
 });
+
+test('boards stay out of the page until features.collab is on, then load fresh', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardsGate, createBoardsState } = await harness.importDashboardModule('js/board-island.js');
+  const requests = [];
+  const fetchImpl = async (url) => { requests.push(String(url)); return { ok: true, status: 200, json: async () => ({ boards: [] }) }; };
+  const snapshot = harness.signals.signal({ collab_enabled: false });
+  await harness.mount(harness.html`<${BoardsGate} state=${createBoardsState()} snapshot=${snapshot} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  assert.deepEqual(requests, [], 'a disabled surface is not asked for');
+  await harness.act(async () => { snapshot.value = { collab_enabled: true }; await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(requests.includes('/api/boards'), 'turning it on needs no reload');
+});
