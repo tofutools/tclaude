@@ -96,3 +96,26 @@ test('a peer page names a peer\'s human-messages routes through its proxy', asyn
   assert.equal(pageHumanRoute('/api/human-messages/clear', 'inst_forge'), '/api/peer/inst_forge/human-messages/clear');
   assert.equal(pageHumanRoute('/api/mailbox/delete', 'inst_forge'), '/api/mailbox/delete', 'the page\'s fetch already sends the rest there');
 });
+
+test('a decision notification offers its options and posts the pick through the reply route', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { DecisionChoices } = await harness.importDashboardModule('js/mail-parts.js');
+  const requests = [];
+  const toasts = [];
+  let done = 0;
+  const fetchImpl = async (url, init) => { requests.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 200, json: async () => ({}) }; };
+  const message = { id: 4, from_agent: 'agt_x', from_title: 'designer', options: ['Tabs', 'Sidebar'], recommended: 1 };
+  const view = await harness.mount(harness.html`<${DecisionChoices} message=${message} fetchImpl=${fetchImpl}
+    toast=${(text, bad) => toasts.push([text, bad])} onDone=${() => { done += 1; }} />`);
+  assert.ok(harness.getByRole(view.container, 'button', { name: 'Tabs ★' }).classList.contains('primary'));
+  await harness.act(async () => { harness.getByRole(view.container, 'button', { name: 'Sidebar' }).click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(requests, [{ url: '/api/human-messages/reply', body: { id: 4, choice: 2 } }]);
+  assert.deepEqual(toasts, [['Sent “Sidebar” to designer', false]]);
+  assert.equal(done, 1);
+
+  const decided = await harness.mount(harness.html`<${DecisionChoices} message=${{ ...message, decision: 'Tabs' }} />`);
+  assert.match(decided.container.textContent, /Decided:\s*Tabs/);
+  assert.equal(decided.container.querySelectorAll('button').length, 0);
+  const plain = await harness.mount(harness.html`<${DecisionChoices} message=${{ id: 5 }} />`);
+  assert.equal(plain.container.textContent, '');
+});

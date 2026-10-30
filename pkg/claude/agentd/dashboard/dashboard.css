@@ -1012,6 +1012,20 @@ button.tool:hover { border-color: #58a6ff; }
 .mail-attachment a:hover { text-decoration: underline; }
 .mail-attachment-size { color: #8b949e; font-size: 12px; margin-left: auto; }
 .mail-reader-actions { margin-top: 14px; display: flex; gap: 6px; }
+/* A decision an agent put to the operator (notify-human --option). */
+.mail-decision {
+  margin-top: 14px; padding: 8px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  border: 1px solid #1f6feb; border-radius: 6px; background: #0f1b2d;
+}
+.mail-decision.decided { border-color: #2a3340; background: #161b22; }
+.mail-decision-label { color: #8b949e; font-size: 12px; }
+.mail-decision button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #d4d4d4;
+  cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
+}
+.mail-decision button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.mail-decision button:hover:not(:disabled) { border-color: #58a6ff; }
+.mail-decision button:disabled { opacity: .5; cursor: default; }
 /* JOH-364: base chrome for the reading-pane action bar (reply / focus /
    mark read|unread / delete). These are plain <button>s with no .tool class, so
    nothing reached them in plain mode and they rendered white UA chrome. The
