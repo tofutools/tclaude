@@ -5,11 +5,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -345,4 +347,135 @@ func TestContextReinjection_OtherHarnessesStillResetTheLedgerOnCompact(t *testin
 	state, err := LoadSessionState("sess-1")
 	require.NoError(t, err)
 	assert.False(t, state.Subagents.Has("sub-1"))
+}
+
+// subagentCompactionFixture is a Claude agent with a subagent running, a main
+// context well below the pre-compact guard's floor, and a nudge already sent.
+func subagentCompactionFixture(t *testing.T) (transcript string) {
+	t.Helper()
+	reinjectionFixture(t)
+	transcript = claudeTranscriptFixture(t)
+	cfg := config.DefaultConfig()
+	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: true}
+	require.NoError(t, config.Save(cfg))
+	require.NoError(t, db.UpdateContextSnapshot("sess-1", 20, 1, 0, 1_000_000))
+	require.NoError(t, db.SetNudgedPct("sess-1", 15))
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	return transcript
+}
+
+func assertMainContext(t *testing.T, wantPct, wantNudged float64) {
+	t.Helper()
+	snap, err := db.GetContextSnapshot("sess-1")
+	require.NoError(t, err)
+	assert.Equal(t, wantPct, snap.ContextPct)
+	nudged, err := db.GetNudgedPct("sess-1")
+	require.NoError(t, err)
+	assert.Equal(t, wantNudged, nudged)
+}
+
+func TestPreCompactGuard_RefusesTheMainThreadAlone(t *testing.T) {
+	subagentCompactionFixture(t)
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStop", AgentID: "sub-1"})
+
+	out := dispatch(t, HookCallbackInput{HookEventName: "PreCompact", ConvID: "conv-1", Trigger: "auto"})
+
+	assert.Contains(t, out, `"decision":"block"`)
+}
+
+func TestPreCompactGuard_DoesNotJudgeASubagentByTheMainContext(t *testing.T) {
+	subagentCompactionFixture(t)
+
+	out := dispatch(t, HookCallbackInput{HookEventName: "PreCompact", ConvID: "conv-1", Trigger: "auto"})
+
+	assert.NotContains(t, out, "block")
+}
+
+func TestSubagentCompaction_LeavesTheMainSessionAlone(t *testing.T) {
+	subagentCompactionFixture(t)
+
+	fireHook(t, HookCallbackInput{HookEventName: "PreCompact", Trigger: "auto"})
+	state, err := LoadSessionState("sess-1")
+	require.NoError(t, err)
+	assert.NotEqual(t, "compacting", state.StatusDetail)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SessionStart", Source: "compact"})
+	fireHook(t, HookCallbackInput{HookEventName: "PostCompact", Trigger: "auto"})
+	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
+
+	assertMainContext(t, 20, 15)
+}
+
+func TestMainCompactionBesideSubagent_ResetsOnceProven(t *testing.T) {
+	transcript := subagentCompactionFixture(t)
+
+	autoCompactionHooks(t)
+	assertMainContext(t, 20, 15)
+
+	appendCompactBoundary(t, transcript)
+	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
+
+	assertMainContext(t, 0, 0)
+}
+
+func TestManualCompactBesideSubagent_ResetsAtOnce(t *testing.T) {
+	subagentCompactionFixture(t)
+
+	fireHook(t, HookCallbackInput{HookEventName: "PreCompact", Trigger: "manual"})
+	fireHook(t, HookCallbackInput{HookEventName: "SessionStart", Source: "compact"})
+	fireHook(t, HookCallbackInput{HookEventName: "PostCompact", Trigger: "manual"})
+
+	assertMainContext(t, 0, 0)
+}
+
+func standingOrderMessages(t *testing.T) []*db.AgentMessage {
+	t.Helper()
+	msgs, err := db.ListAgentMessagesForConv("conv-1", 50)
+	require.NoError(t, err)
+	var out []*db.AgentMessage
+	for _, m := range msgs {
+		if strings.HasPrefix(m.Subject, "[standing-order:") {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func TestSubagentCompaction_FiresNoCompactStandingOrder(t *testing.T) {
+	_, groupID := reinjectionFixture(t)
+	claudeTranscriptFixture(t)
+	id := insertOrder(t, groupID)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	fireHook(t, HookCallbackInput{HookEventName: "PreCompact", Trigger: "auto"})
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+	fireHook(t, HookCallbackInput{HookEventName: "PostCompact", Trigger: "auto"})
+	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
+
+	assert.Empty(t, standingOrderMessages(t))
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest)
+}
+
+func TestMainCompactionBesideSubagent_ReplaysStandingOrdersAsMessages(t *testing.T) {
+	_, groupID := reinjectionFixture(t)
+	transcript := claudeTranscriptFixture(t)
+	id := insertOrder(t, groupID)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	fireHook(t, HookCallbackInput{HookEventName: "PreCompact", Trigger: "auto"})
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+	fireHook(t, HookCallbackInput{HookEventName: "PostCompact", Trigger: "auto"})
+	appendCompactBoundary(t, transcript)
+	fireHook(t, HookCallbackInput{HookEventName: "Stop"})
+
+	msgs := standingOrderMessages(t)
+	require.Len(t, msgs, 1)
+	assert.Contains(t, msgs[0].Body, "Push the PR early")
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
 }

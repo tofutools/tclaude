@@ -183,6 +183,13 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 // supposed to prevent: the operator would see an order that looked healthy and
 // had never reached anyone.
 func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]PendingStandingMessage, func()) {
+	return observeStandingOrders(input, envSessionID, false)
+}
+
+// observeStandingOrders is ObserveStandingOrders with one option: messagesOnly
+// moves hook-context deliveries onto the message transport, for an event whose
+// hook has already returned.
+func observeStandingOrders(input HookCallbackInput, envSessionID string, messagesOnly bool) ([]PendingStandingMessage, func()) {
 	noop := func() {}
 	if input.StandingOrderOrigin {
 		return nil, noop
@@ -218,7 +225,7 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 
 	var pending []PendingStandingMessage
 	for _, d := range decisions {
-		if d.Deliver && d.Capability.Transport == db.StandingTransportMessage {
+		if d.Deliver && (messagesOnly || d.Capability.Transport == db.StandingTransportMessage) {
 			// The one case this path can actually satisfy. Recording is
 			// deferred to the caller, which knows whether the send succeeded.
 			pending = append(pending, PendingStandingMessage{
@@ -271,6 +278,30 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 		return nil, noop
 	}
 	return pending, locks.release
+}
+
+// replayCompactionStandingOrders runs the orders a held compaction's hooks
+// skipped, once input's hook has shown the compaction was the main thread's.
+// Those hooks are gone, so anything due is sent as a message.
+func replayCompactionStandingOrders(input HookCallbackInput, envSessionID string) {
+	for _, skipped := range []HookCallbackInput{
+		{HookEventName: "PreCompact", Trigger: "auto"},
+		{HookEventName: "SessionStart", Source: "compact"},
+		{HookEventName: "PostCompact", Trigger: "auto"},
+	} {
+		skipped.ConvID, skipped.Cwd = input.ConvID, input.Cwd
+		skipped = applyStandingOrderTurnOrigin(skipped, envSessionID)
+		pending, release := observeStandingOrders(skipped, envSessionID, true)
+		for _, m := range pending {
+			_, err := db.InsertStandingOrderAgentMessage(&db.AgentMessage{
+				ToConv: m.TargetConv, ToRecipients: []string{m.TargetConv},
+				Subject: "[standing-order:" + m.Name + "]", Body: m.Body,
+				FromConv: m.OwnerConv, OperatorAuthored: m.OperatorAuthored,
+			}, m.OrderID, m.OrderRevision)
+			RecordStandingMessageDelivery(m, err)
+		}
+		release()
+	}
 }
 
 // trustedStandingOrderPrompt recognizes the server-authored nudge shape used
