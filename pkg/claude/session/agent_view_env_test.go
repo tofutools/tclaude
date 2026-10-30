@@ -55,3 +55,23 @@ func TestApplyAgentViewEnvNoOpForOtherHarnesses(t *testing.T) {
 	assert.NotPanics(t, func() { ApplyAgentViewEnv(nil, map[string]string{}) })
 	assert.NotPanics(t, func() { ApplyAgentViewEnv(codex, nil) })
 }
+
+// runNew needs tmux and a session row, so the fresh-launch wiring is guarded
+// structurally. The order against ApplyContextFeaturesEnv is the opt-in, and the
+// order against BuildEnvExports is what gets the value into the launch script.
+func TestRunNewAppliesTheAgentViewDefault(t *testing.T) {
+	fn := guardFunc(guardParse(t, "new.go", ""), "runNew")
+	require.NotNil(t, fn, "runNew must exist for this guard to mean anything")
+
+	order := callOrder(fn, "ApplyAgentViewEnv", "ApplyContextFeaturesEnv", "BuildEnvExports")
+	require.Contains(t, order, "ApplyAgentViewEnv")
+	require.Contains(t, order, "ApplyContextFeaturesEnv")
+	require.Contains(t, order, "BuildEnvExports")
+
+	assert.Less(t, order["ApplyAgentViewEnv"], order["ApplyContextFeaturesEnv"],
+		"the default must come first, or agent-view=on can no longer clear it")
+	assert.Less(t, order["ApplyContextFeaturesEnv"], order["BuildEnvExports"],
+		"both must run before the env exports are built, or neither reaches the launch script")
+	assert.True(t, callIsUnconditional(fn, "ApplyAgentViewEnv"),
+		"every fresh launch must get the default, not only those down one branch")
+}
