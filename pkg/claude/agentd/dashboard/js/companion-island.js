@@ -27,7 +27,7 @@ import {
   stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary, decisionsFor, decisionSpeech, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
-import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, claimCueOpen, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
+import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenDue, cueOpenKey, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
@@ -929,9 +929,14 @@ export function CompanionApp({
   // to claim it in shared prefs.
   const heldOpen = useRef(null);
   const handOver = (cue) => {
-    if (!claimCueOpen(readPref(prefs, COMPANION_CUE_OPEN_PREF), cue)) return;
-    writePref(prefs, COMPANION_CUE_OPEN_PREF, String(cue.id));
-    openForCueRef.current(cue);
+    const take = () => {
+      if (!claimCueOpen(readPref(prefs, COMPANION_CUE_OPEN_PREF), cue)) return;
+      writePref(prefs, COMPANION_CUE_OPEN_PREF, cueOpenKey(cue));
+      openForCueRef.current(cue);
+    };
+    const focused = win?.document?.hasFocus?.() ?? true;
+    if (focused) take();
+    else setTimeout(take, CUE_OPEN_UNFOCUSED_DELAY_MS);
   };
   useEffect(() => {
     const doc = win?.document;
