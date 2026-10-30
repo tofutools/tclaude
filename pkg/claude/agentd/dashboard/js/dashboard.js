@@ -71,7 +71,7 @@ import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import { bindActivityTab } from './activity-tab.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountBoardsFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -171,7 +171,6 @@ async function settleInitialLayout() {
     () => mountDockFeature(),
     () => mountCompanionFeature({ notify: toast, onComposeMessage: (seed) => openOperatorMessageDialog(seed) }),
     () => mountAccessPanelFeature({ notify: toast }),
-    () => mountBoardsFeature({ notify: toast }),
     () => mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
       refresh: dashboardActions.refresh,

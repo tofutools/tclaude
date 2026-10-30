@@ -354,41 +354,6 @@ export function mountCompanionFeature(dependencies = {}) {
   return mountIslandDescriptor(companionDescriptor, dependencies);
 }
 
-// Boards (tcl-4f86kp): shared canvases under Collab. The island also renders
-// the Terminals | Boards switch at the top of the Terminals section.
-const boardsDescriptor = createIslandDescriptor({
-  name: 'boards',
-  label: 'Boards',
-  hosts: { host: '#boards-root', switchHost: '#collab-switch-root' },
-  failureClass: 'boards-error',
-  load: async ({ hosts: { host, switchHost }, dependencies }) => {
-    const islandModule = import('./board-island.js');
-    const snapshotStoreModule = import('./snapshot-store.js');
-    const [{ mountBoardsIsland, createBoardsState }, { dashboardState }] =
-      await Promise.all([islandModule, snapshotStoreModule]);
-    const state = createBoardsState();
-    return {
-      state,
-      mount: (registerCleanup) => mountBoardsIsland({
-        host, switchHost, state, registerCleanup,
-        snapshot: dashboardState.snapshot, notify: dependencies.notify,
-        rasterize: async (svg, box) => {
-          const { svgToPng } = await import('./board-export.js');
-          return svgToPng(svg, box);
-        },
-        openAgent: async (agentId) => {
-          const { openInCompanion } = await import('./companion-facade.js');
-          return openInCompanion(agentId);
-        },
-      }),
-    };
-  },
-});
-
-export function mountBoardsFeature(dependencies = {}) {
-  return mountIslandDescriptor(boardsDescriptor, dependencies);
-}
-
 // Terminal chrome and open state are one ownership unit across the nav badge,
 // dashboard pane stack. xterm itself remains behind
 // the opaque host adapter loaded by terminal-shell-island.js.

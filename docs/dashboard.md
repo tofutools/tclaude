@@ -547,8 +547,9 @@ this node, then shows the hop to the node without a percentage.
 
 
 The Terminals tab is the in-dashboard terminal multiplexer. It is always
-shown, even with nothing open; its badge counts live panes, plus `+N`
-background sessions. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
+shown, even with nothing open; its badge counts live terminals, plus `+N`
+background sessions. With [Collab](#the-companion-window) on it is called Collab, and
+[boards](#boards) open as tabs in the same strip. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
 drag onto each other to form named, collapsible tab groups. Drag a tab off
 the strip to detach it into its own browser window; drag the pop-out's header
 back to reattach — `⧉ tab` / `↩ dashboard` buttons are the explicit path.
@@ -748,8 +749,11 @@ cancels and **Ctrl+Z** undoes the last stroke.
 
 ### Boards
 
-**Collab → Boards** holds shared drawing boards. You draw shapes, arrows,
-text and freehand strokes, and invited agents read the board as shapes and as
+Boards are shared drawing boards. They open as tabs of the Collab view, beside
+the terminals: the **＋** at the right of the tab strip lists them and creates
+new ones, and `/boards/<id>` opens one directly. A board tab reorders, groups
+and detaches like a terminal tab, and comes back after a reload. You draw
+shapes, arrows, text and freehand strokes, and invited agents read the board as shapes and as
 an image and draw back with `tclaude agent board` (see
 [boards.md](boards.md)). An agent's edits flash as they arrive. When your
 edits settle, the board's agents get one short `[board <id>]` message saying

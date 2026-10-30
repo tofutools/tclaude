@@ -19,6 +19,9 @@ import { SNAPSHOT_HIDDEN_POLL_MS, SNAPSHOT_POLL_MS } from './snapshot-poll.js';
 export { decodeTerminalOpenHash };
 
 export const STANDALONE_STATUS_TIMEOUT_MS = 20000;
+// A board pop-out has no agent to watch, but names agents: it reads the full
+// roster, a far heavier read, this often.
+export const STANDALONE_ROSTER_POLL_MS = 30000;
 
 // The solo page is not the dashboard SPA, so it cannot subscribe to the
 // dashboard snapshot signal. Keep its one-agent title current through the
@@ -29,6 +32,9 @@ export const STANDALONE_STATUS_TIMEOUT_MS = 20000;
 export function startStandaloneStatusPoll({
   selector,
   snapshot,
+  path = `/api/agents/${encodeURIComponent(selector)}/status`,
+  adopt = (value) => ({ agents: [value] }),
+  pollMs = null,
   fetchImpl = globalThis.fetch,
   documentRef = globalThis.document,
   setTimeoutImpl = globalThis.setTimeout,
@@ -59,7 +65,7 @@ export function startStandaloneStatusPoll({
     timer = setTimeoutImpl(() => {
       timer = null;
       void run();
-    }, documentRef?.hidden ? SNAPSHOT_HIDDEN_POLL_MS : SNAPSHOT_POLL_MS);
+    }, pollMs || (documentRef?.hidden ? SNAPSHOT_HIDDEN_POLL_MS : SNAPSHOT_POLL_MS));
   };
   const run = async () => {
     if (stopped || inFlight) return;
@@ -71,13 +77,13 @@ export function startStandaloneStatusPoll({
       timeoutTimer = setTimeoutImpl(() => requestController.abort(), STANDALONE_STATUS_TIMEOUT_MS);
     }
     try {
-      const response = await fetchImpl(`/api/agents/${encodeURIComponent(selector)}/status`, {
+      const response = await fetchImpl(path, {
         credentials: 'same-origin', cache: 'no-store',
         ...(requestController ? { signal: requestController.signal } : {}),
       });
       if (stopped || !response?.ok) return;
       const value = await response.json();
-      if (!stopped && value && typeof value === 'object') snapshot.value = { agents: [value] };
+      if (!stopped && value && typeof value === 'object') snapshot.value = adopt(value);
     } catch (_) {
       // Auth-session.js owns the visible redirect. A stopped/aborted request or
       // a transient network miss should leave the last title alone quietly.
@@ -147,12 +153,13 @@ export function createStandaloneTerminalsPage({
   let statusPollSelector = null;
 
   function ensureStatusPoll() {
-    const selector = soloSeed?.agent || soloSeed?.hideConv;
+    const selector = soloSeed?.board ? 'board' : soloSeed?.agent || soloSeed?.hideConv;
     if (disposed || authExpired || !selector || statusPollSelector === selector) return;
     stopStatusPolling();
     statusPollSelector = selector;
     stopStatusPoll = startStandaloneStatusPoll({
       selector, snapshot, fetchImpl, documentRef,
+      ...(soloSeed.board ? { path: '/api/snapshot', adopt: (value) => value, pollMs: STANDALONE_ROSTER_POLL_MS } : {}),
     });
   }
 

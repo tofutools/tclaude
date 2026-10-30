@@ -58,6 +58,8 @@ export function createTerminalShellActions({
     return new Promise((resolve) => {
       const poll = () => {
         const pane = state.panes.value.find((candidate) => candidate.key === key);
+        // A board has no attach to wait for.
+        if (pane?.seed.board) { resolve(true); return; }
         const widget = pane && widgets.get(pane.id);
         const remaining = timeoutMs - (Date.now() - started);
         if (widget?.settled) {
@@ -212,7 +214,7 @@ export function createTerminalShellActions({
       return false;
     }
     const seed = {
-      ws: pane.seed.ws,
+      ...(pane.seed.board ? { board: pane.seed.board } : { ws: pane.seed.ws }),
       label: pane.label,
       key: pane.seed.key,
       hideConv: pane.seed.hideConv,
@@ -248,6 +250,7 @@ export function createTerminalShellActions({
     waitForPaneSettled,
     widgetFor,
     openPane,
+    setPaneLabel: (key, label) => !disposed && state.setPaneLabel(key, label),
     receiveHandoffPane,
     activatePane,
     reorderPane,

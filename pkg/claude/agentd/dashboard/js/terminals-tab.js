@@ -6,6 +6,7 @@ import { createAgentRosterReconciler, normalizeSeed } from './terminals-core.js'
 import { terminalAttachConfig } from './terminal-attach-config.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
+import { boardPaneSeed } from './board-model.js';
 
 let controller = null;
 let prepareRuntime = null;
@@ -32,7 +33,8 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     if (!seed) return null;
     const current = controller;
     if (!current) return null;
-    if (!prepareRuntime) return current.openPane(seed, paneOptions);
+    // A board pane has no xterm to load.
+    if (!prepareRuntime || seed.board) return current.openPane(seed, paneOptions);
     return prepareRuntime().then(
       () => controller === current ? current.openPane(seed, paneOptions) : null,
       (error) => {
@@ -41,6 +43,12 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
       },
     );
   });
+}
+
+// openBoardPane opens a collab board as a tab beside the terminals, or brings
+// its tab forward.
+export function openBoardPane(id, label, options) {
+  return openTerminalPane(boardPaneSeed(id, label), options);
 }
 
 // Returns openTerminalPane's promise (the opened pane, or null). Every existing

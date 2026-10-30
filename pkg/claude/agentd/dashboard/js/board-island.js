@@ -1,6 +1,7 @@
 // board-island.js -- the collab board (tcl-4f86kp): a shared drawing board the
-// operator and agents edit together, under the Collab nav entry next to
-// Terminals. See board-model.js for the element model and merge rules.
+// operator and agents edit together. A board opens as a tab of the terminal
+// shell (terminal-shell-island.js), beside the terminals. See board-model.js
+// for the element model and merge rules.
 //
 // The editor keeps every element in a Map, renders it as SVG, and syncs with
 // the daemon: local edits are batched into PATCH /api/boards/{id}, and a poll
@@ -12,13 +13,12 @@
 //
 // Element text is agent- or operator-supplied and is rendered as SVG text.
 
-import { h, render } from 'preact';
+import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { signal } from '@preact/signals';
 import {
   ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, alignMoves, boardIdFromTitle, bump, center, changeBounds,
-  cleanText, clipboardText, cloneElements, connectArrow, contentBounds, describeChanges, elementBounds, elementsInBox, isBoardId,
+  cleanText, clipboardText, cloneElements, connectArrow, contentBounds, describeChanges, elementBounds, elementsInBox,
   labelOf, labelOwners, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
   reboundArrows, shapeAt, simplifyStroke, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
@@ -34,6 +34,17 @@ export const BOARD_VIEW_REFRESH_MS = 30000;
 // The daemon's limit for an event image (boardMaxRegionBytes).
 const BOARD_EVENT_IMAGE_MAX = 2 << 20;
 const HISTORY_MAX = 100;
+
+// Keys aimed at nothing in particular (focus on the body, as after clicking the
+// canvas) go to the editor last used, so two open editors never both act.
+let lastEditor = null;
+
+// rasterizeBoard draws the board for its agents; board-export.js loads on the
+// first use.
+export async function rasterizeBoard(svg, box) {
+  const { svgToPng } = await import('./board-export.js');
+  return svgToPng(svg, box);
+}
 
 async function jsonOrThrow(response) {
   const body = await response.json().catch(() => ({}));
@@ -121,7 +132,13 @@ export function BoardElement({ el, flash = false }) {
 
 // -- the editor ---------------------------------------------------------------
 
-function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, rasterize, onOpenAgent }) {
+// BoardEditor is one board's editor. A tab keeps it mounted while another tab
+// or view shows: `onScreen` says it is the tab showing, and `visible` whether
+// its surroundings are. headActions are the host's own controls.
+export function BoardEditor({
+  boardId, fetchImpl, notify = () => {}, snapshot, win, rasterize = rasterizeBoard, onOpenAgent,
+  onScreen = true, visible = null, headActions = null, onTitle = null,
+}) {
   const elements = useRef(new Map());
   const version = useRef(0);
   const [tick, setTick] = useState(0);
@@ -164,9 +181,22 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const metaRef = useRef(meta);
   metaRef.current = meta;
 
-  // The island stays mounted while other tabs show: input and polling only
-  // apply while the Boards view is the active one.
-  const shown = () => !!win?.document?.querySelector?.('#tab-boards.active');
+  const rootRef = useRef(null);
+  const editorToken = useRef({}).current;
+  // Timer and listener callbacks read the latest props, not their render's.
+  const shownRef = useRef(null);
+  shownRef.current = () => onScreen && (!visible || visible());
+  const onTitleRef = useRef(onTitle);
+  onTitleRef.current = onTitle;
+  // Input and polling only apply while this editor is on screen.
+  const shown = () => shownRef.current();
+
+  useEffect(() => {
+    if (onScreen) lastEditor = editorToken;
+  }, [onScreen]);
+  useEffect(() => () => {
+    if (lastEditor === editorToken) lastEditor = null;
+  }, []);
 
   const agents = useMemo(() => companionAgents(snapshot.value), [snapshot.value]);
 
@@ -183,6 +213,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
           title: board.title || boardId, participants: Array.isArray(board.participants) ? board.participants : [],
           group: board.group || '', groupMembers: Array.isArray(board.group_members) ? board.group_members : [],
         });
+        if (board.title) onTitleRef.current?.(board.title);
         setPresence(new Map((board.presence?.agents || []).map((a) => [a.agent_id, a.state])));
         const skip = new Set([...active.current, ...pending.current.keys()]);
         const incoming = board.elements || [];
@@ -725,7 +756,8 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
     const ours = (event) => {
       const target = event.target;
       if (editingText || target?.closest?.('input, textarea, [contenteditable="true"], .companion-window')) return false;
-      return shown() && (!!target?.closest?.('#tab-boards') || target === win?.document?.body);
+      if (!shown()) return false;
+      return !!rootRef.current?.contains?.(target) || (target === win?.document?.body && lastEditor === editorToken);
     };
     const onKey = (event) => {
       if (!ours(event)) return;
@@ -874,9 +906,8 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
   const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId) && !meta.groupMembers.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
   void tick;
 
-  return html`<div class="board-editor">
+  return html`<div ref=${rootRef} class="board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }}>
     <header class="board-head">
-      <button type="button" class="board-back" onClick=${onBack} aria-label="All boards">‹ Boards</button>
       <h2 class="board-title">${meta.title}</h2>
       <span class=${`board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>
       <div class="board-people" aria-label="Agents on this board">
@@ -911,6 +942,7 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
       </div>
       <button type="button" class="board-export" title="Download as .excalidraw"
         onClick=${() => import('./board-export.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(liveElements(elements.current))))}>⤓</button>
+      ${headActions}
     </header>
     <div class="board-toolbar" role="toolbar" aria-label="Board tools">
       ${BOARD_TOOLS.map((t) => html`<button key=${t.id} type="button" class=${`board-tool${tool === t.id ? ' on' : ''}`}
@@ -966,7 +998,8 @@ function BoardEditor({ boardId, fetchImpl, notify, snapshot, onBack, win, raster
 
 // -- the board list ---------------------------------------------------------------
 
-function BoardList({ fetchImpl, notify, onOpen }) {
+// BoardList offers every board, and a new one; `compact` is the strip's + menu.
+export function BoardList({ fetchImpl, notify, onOpen, compact = false }) {
   const [boards, setBoards] = useState(null);
   const [title, setTitle] = useState('');
   const [error, setError] = useState('');
@@ -990,12 +1023,12 @@ function BoardList({ fetchImpl, notify, onOpen }) {
         body: JSON.stringify({ title: clean, id: boardIdFromTitle(clean) || undefined }),
       }));
       setTitle('');
-      onOpen(board.id);
+      onOpen(board.id, board.title || clean);
     } catch (err) {
       notify(`Could not create the board: ${err?.message || err}`, true);
     }
   }
-  return html`<div class="board-list">
+  return html`<div class=${`board-list${compact ? ' compact' : ''}`}>
     <form class="board-new" onSubmit=${create}>
       <input type="text" placeholder="New board title, e.g. Release flow" aria-label="New board title" maxLength="120"
         value=${title} onInput=${(event) => setTitle(event.currentTarget.value)} />
@@ -1005,7 +1038,7 @@ function BoardList({ fetchImpl, notify, onOpen }) {
     ${boards === null && !error && html`<p class="board-muted">Loading boards…</p>`}
     ${boards && !boards.length && html`<p class="board-muted">No boards yet. A board is a shared canvas: you draw, agents read it as shapes and as an image, and draw back.</p>`}
     <div class="board-cards">
-      ${(boards || []).map((b) => html`<button key=${b.id} type="button" class="board-card" onClick=${() => onOpen(b.id)}>
+      ${(boards || []).map((b) => html`<button key=${b.id} type="button" class="board-card" onClick=${() => onOpen(b.id, b.title || b.id)}>
         <b>${b.title || b.id}</b>
         <span>${b.element_count ?? 0} element${b.element_count === 1 ? '' : 's'}${b.participants?.length ? ` · ${b.participants.length} agent${b.participants.length === 1 ? '' : 's'}` : ''}${b.group ? ` · group ${b.group}` : ''}</span>
         <small>${b.updated_at ? new Date(b.updated_at).toLocaleString() : ''}</small>
@@ -1014,69 +1047,8 @@ function BoardList({ fetchImpl, notify, onOpen }) {
   </div>`;
 }
 
-// -- the Collab switch --------------------------------------------------------------
-
-// CollabSwitch is the Terminals | Boards control at the top of both Collab
-// sections. It clicks the real nav anchors, so routing and lazy loading stay
-// with the nav.
-export function CollabSwitch({ current, win = globalThis.window }) {
-  const go = (tab) => {
-    if (tab === current) return;
-    win?.document?.querySelector?.(`nav [data-tab="${tab}"]`)?.click();
-  };
-  return html`<div class="collab-switch" role="tablist" aria-label="Collab views">
-    ${[['terminals', '⌨ Terminals'], ['boards', '✎ Boards']].map(([tab, label]) => html`<button key=${tab} type="button" role="tab"
-      aria-selected=${tab === current ? 'true' : 'false'} class=${tab === current ? 'on' : ''} onClick=${() => go(tab)}>${label}</button>`)}
-  </div>`;
-}
-
-// -- the island ---------------------------------------------------------------------
-
-export function createBoardsState() {
-  return { location: signal({ tab: 'boards' }) };
-}
-
-// restoreBoardsLocation applies a router location (Back/Forward, a deep link,
-// a guide cue) to the island state.
-function restoreBoardsLocation(state, event) {
-  const location = event.detail?.location;
-  if (location?.tab !== 'boards') return;
-  state.location.value = isBoardId(location.selection) ? { tab: 'boards', selection: location.selection } : { tab: 'boards' };
-}
-
-export function BoardsApp({ state, snapshot, fetchImpl = globalThis.fetch, notify = () => {}, win = globalThis.window, rasterize = null, openAgent = null }) {
-  const selection = state.location.value.selection;
-  const boardId = isBoardId(selection) ? selection : '';
-  const open = (id) => {
-    const location = isBoardId(id) ? { tab: 'boards', selection: id } : { tab: 'boards' };
-    state.location.value = location;
-    win?.document?.dispatchEvent?.(new win.CustomEvent('tclaude:navigated', { detail: { location } }));
-  };
-  return html`<div class="boards-app">
-    <${CollabSwitch} current="boards" win=${win} />
-    ${boardId
-      ? html`<${BoardEditor} key=${boardId} boardId=${boardId} fetchImpl=${fetchImpl} notify=${notify} snapshot=${snapshot}
-          win=${win} rasterize=${rasterize} onBack=${() => open('')} onOpenAgent=${openAgent} />`
-      : html`<${BoardList} fetchImpl=${fetchImpl} notify=${notify} onOpen=${open} />`}
-  </div>`;
-}
-
-// BoardsGate leaves the boards out while features.collab is off, and mounts
-// them fresh when it turns on, so nothing asks the daemon for what it refuses.
-export function BoardsGate(props) {
-  return props.snapshot.value?.collab_enabled === true ? html`<${BoardsApp} ...${props} />` : null;
-}
-
-export function mountBoardsIsland({ host, switchHost, registerCleanup, ...props }) {
-  // Listen before the first render so a boot-time restore is never missed.
-  const doc = (props.win || globalThis.window)?.document;
-  const onRestore = (event) => restoreBoardsLocation(props.state, event);
-  doc?.addEventListener?.('tclaude:restore-location', onRestore);
-  registerCleanup(() => doc?.removeEventListener?.('tclaude:restore-location', onRestore));
-  render(html`<${BoardsGate} ...${props} />`, host);
-  registerCleanup(() => render(null, host));
-  if (switchHost) {
-    render(html`<${CollabSwitch} current="terminals" win=${props.win} />`, switchHost);
-    registerCleanup(() => render(null, switchHost));
-  }
+// BoardsGate leaves a board out while features.collab is off, and mounts it
+// fresh when it turns on, so nothing asks the daemon for what it refuses.
+export function BoardsGate({ snapshot, children }) {
+  return snapshot.value?.collab_enabled === true ? children : null;
 }

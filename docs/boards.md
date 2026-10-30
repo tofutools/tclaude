@@ -1,14 +1,24 @@
 # Collab boards
 
 Boards are experimental and opt-in: turn on `features.collab` in the
-dashboard's Config tab (Experimental). Until then the Boards view is hidden, and
-its API and the `tclaude agent board` commands answer with a disabled message.
+dashboard's Config tab (Experimental). Until then boards do not show in the
+dashboard, and their API and the `tclaude agent board` commands answer with a disabled message.
 
 A collab board is a shared drawing board for the operator and agents. The
-operator draws in the dashboard's board editor; agents read and change the same
+operator draws in the dashboard, where a board opens as a tab of the Collab
+view beside the terminals; agents read and change the same
 board with `tclaude agent board`. Boards live in the daemon's SQLite database,
 and their elements are a subset of Excalidraw's element JSON, so a board can be
 exported as an `.excalidraw` file.
+
+## In the dashboard
+
+The **＋** at the right of the Collab tab strip lists the boards: pick one to
+open it in a tab, or give a title to create one. `/boards/<id>` opens that
+board's tab, and `/boards` opens the list. A board tab behaves like a terminal
+tab: it reorders, joins tab groups, and detaches into its own browser window
+(**⧉ tab**, or drag it off the strip), which **↩ dashboard** sends back. Board
+tabs come back after a reload, except for boards deleted since.
 
 ## Permissions
 
