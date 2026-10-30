@@ -307,6 +307,21 @@ test('a cue can open the agent that needs the operator in the companion window',
   assert.equal(harness.window.document.querySelector('.companion-guide-note'), null, 'an open-only cue draws nothing');
 });
 
+test('an open cue only pins the agent while the operator is typing to another tab', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, snap, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.input(view.container.querySelector('input.companion-draft'), 'half a thought');
+  await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
+  await harness.act(async () => {
+    snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(harness.getByRole(view.container, 'tab', { name: /alpha/ }).getAttribute('aria-selected'), 'true', 'the draft keeps its agent');
+  assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'false', 'bravo is pinned beside it');
+  assert.equal(view.container.querySelector('input.companion-draft').value, 'half a thought');
+});
+
 test('decision speech names the question and the options', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/companion-model.js');
