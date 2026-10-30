@@ -359,6 +359,43 @@ func ResolveSelectorCached(selector string) (*Resolved, []*Resolved, error) {
 	return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
 }
 
+// resolveAgentForResume implements session.AgentResumeResolver. Only a name or
+// agent id counts. A conversation id or prefix stays subject to the project
+// scope of --resume and names that exact conversation, so it's never a match
+// here, and neither is the title of an old generation: forwarding either to the
+// agent's latest generation would resume something the operator didn't name.
+func resolveAgentForResume(selector string) (string, error) {
+	if !strings.HasPrefix(selector, db.AgentIDPrefix) {
+		if row, err := db.GetConvIndex(selector); err == nil && row != nil {
+			return "", nil
+		}
+		if row, err := db.FindConvIndexByPrefix(selector); err == nil && row != nil {
+			return "", nil
+		}
+	}
+	res, matches, err := tryResolve(selector)
+	switch {
+	case errors.Is(err, errNoAgentMatch):
+		return "", err
+	case errors.Is(err, errAmbiguous):
+		for _, m := range matches {
+			if isAgentHead(m.ConvID) {
+				return "", fmt.Errorf("%q matches more than one agent or conversation; use the agent ID from `tclaude agent ls`", selector)
+			}
+		}
+		return "", nil
+	case err != nil || res == nil || !isAgentHead(res.ConvID):
+		return "", nil
+	}
+	return res.ConvID, nil
+}
+
+// isAgentHead reports whether convID is the current generation of an agent.
+func isAgentHead(convID string) bool {
+	agentID, err := db.AgentIDForConv(convID)
+	return err == nil && agentID != "" && db.ResolveLatestConv(convID) == convID
+}
+
 // CurrentConvID returns the conv-id of the conversation invoking the
 // caller, expanded to a full UUID via the DB if necessary. Exported for
 // callers outside this package.

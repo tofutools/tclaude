@@ -60,7 +60,16 @@ flags beyond the basics:
   windows to reset before starting — handy for queueing a session to launch
   when quota returns.
 - `-r/--resume <conv-id>` relaunches an existing conversation (see
-  [resume posture](#a-resume-keeps-its-recorded-posture) below).
+  [resume posture](#a-resume-keeps-its-recorded-posture) below). It also takes
+  the name or agent ID from `tclaude agent ls`.
+- `--resume-last` relaunches the newest conversation in the current directory,
+  skipping retired and archived ones. Claude Code only. `tclaude -- --continue`
+  does the same, and `tclaude -- --resume <id>` is the same as `-r <id>`. A bare
+  `tclaude -- --resume` opens Claude Code's own picker. These launches stay out
+  of automatic group joins.
+- Resuming a retired conversation by name reinstates it, also from the picker.
+  Its old groups and permissions don't come back. It refuses when the directory
+  is gone, or when an agent runs it. `--resume-last` never picks one.
 - `-l/--label` names the tmux session; `-n/--name` sets the display name
   (for Claude Code it becomes the conversation title).
 

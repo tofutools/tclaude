@@ -178,16 +178,27 @@ func ClaudeProjectsDir() string {
 	return filepath.Join(home, ".claude", "projects")
 }
 
-// PathToProjectDir converts a real path to the Claude project directory name
+// PathToProjectDir converts a real path to the Claude project directory name.
+// Claude Code replaces every UTF-16 code unit outside [a-zA-Z0-9] with a dash,
+// so a rune outside the BMP becomes two. Paths long enough for Claude Code to
+// shorten (over 200 characters) don't round-trip.
 func PathToProjectDir(realPath string) string {
 	absPath, err := filepath.Abs(realPath)
 	if err != nil {
 		absPath = realPath
 	}
-	projectDir := strings.ReplaceAll(absPath, string(filepath.Separator), "-")
-	projectDir = strings.ReplaceAll(projectDir, ".", "-")
-	projectDir = strings.ReplaceAll(projectDir, ":", "")
-	return projectDir
+	var projectDir strings.Builder
+	for _, r := range absPath {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			projectDir.WriteRune(r)
+		case r > 0xFFFF:
+			projectDir.WriteString("--")
+		default:
+			projectDir.WriteByte('-')
+		}
+	}
+	return projectDir.String()
 }
 
 // GetClaudeProjectPath returns the full path to a Claude project directory

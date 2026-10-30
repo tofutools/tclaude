@@ -75,7 +75,8 @@ type NewParams struct {
 	// avoids re-deriving permission roots from a mutable path in the child.
 	GitWorktreeWriteDirs       []string `short:"X" long:"git-worktree-write-dir" optional:"true" help:"Internal: proof-pinned repository sandbox write root"`
 	GitWorktreeWriteDirsPinned bool     `short:"Y" long:"git-worktree-write-dirs-pinned" help:"Internal: use the daemon-pinned repository write roots, including an empty set"`
-	Resume                     string   `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
+	Resume                     string   `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID, or an agent by name or agent ID"`
+	ResumeLast                 bool     `long:"resume-last" help:"Resume the newest conversation in the current directory, skipping retired ones (Claude Code only)"`
 	Global                     bool     `short:"g" help:"Search for conversation across all projects (with --resume)"`
 	Label                      string   `long:"label" optional:"true" help:"Custom label for the session"`
 	Detached                   bool     `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
@@ -1249,6 +1250,11 @@ func runNew(params *NewParams) error {
 			return reject
 		}
 		defer release()
+		if !params.ManagedLaunch {
+			if err := ReinstateRetiredForResume(fullConvID, cwd); err != nil {
+				return err
+			}
+		}
 	}
 
 	// The session PK is now final (priority above: label > resumed conv UUID >
@@ -3993,9 +3999,13 @@ func resumeIDFromParam(h *harness.Harness, value string) string {
 	return clcommon.ExtractIDFromCompletion(value)
 }
 
+// errResumeNotFound marks a selector that matched nothing, as opposed to an
+// ambiguous one or an unreadable store.
+var errResumeNotFound = errors.New("not found")
+
 func resumeNotFoundErr(shortID string, global bool) error {
 	if global {
-		return fmt.Errorf("conversation %s not found", shortID)
+		return fmt.Errorf("conversation %s %w", shortID, errResumeNotFound)
 	}
-	return fmt.Errorf("conversation %s not found in current project (use -g to search all projects)", shortID)
+	return fmt.Errorf("conversation %s %w in current project (use -g to search all projects)", shortID, errResumeNotFound)
 }

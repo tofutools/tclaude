@@ -2171,8 +2171,7 @@ func RunConvWatchMode(global bool, since, before string) error {
 		}
 
 		if result.FocusOnly {
-			_ = os.Setenv("TCLAUDE_SESSION_ID", result.FocusSessionID)
-			session.TryFocusAttachedSession(result.TmuxSession)
+			session.TryFocusAttachedSessionWithID(result.TmuxSession, result.FocusSessionID)
 			continue
 		}
 
@@ -3411,6 +3410,9 @@ func createSessionForConv(conv *SessionEntry) error {
 		return reject
 	}
 	defer release()
+	if err := session.ReinstateRetiredForResume(sessionID, cwd); err != nil {
+		return err
+	}
 
 	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", cwd))
 

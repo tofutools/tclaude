@@ -43,6 +43,15 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 		}
 		params.Dir = params.Cwd
 	}
+	if err := adoptResumePassthrough(params); err != nil {
+		return err
+	}
+	if err := resolveResumeLast(params); err != nil {
+		return err
+	}
+	if err := expandAgentResumeSelector(params); err != nil {
+		return err
+	}
 	if params.NoDaemon && strings.TrimSpace(params.JoinGroup) != "" {
 		return fmt.Errorf("--no-daemon cannot be combined with --join-group")
 	}
@@ -75,7 +84,8 @@ func recordLaunchFlagPresence(params *NewParams, explicit explicitLaunchFields) 
 func automaticGroupEligible(params *NewParams, explicit explicitLaunchFields) bool {
 	if params.ManagedLaunch || params.NoDaemon || strings.TrimSpace(params.Resume) != "" || params.Shell ||
 		strings.TrimSpace(params.Harness) == ShellHarnessName || params.HelpContextFeatures ||
-		clcommon.ShouldRunClaudeDirect(clcommon.ExtractClaudeExtraArgs()) {
+		clcommon.ShouldRunClaudeDirect(clcommon.ExtractClaudeExtraArgs()) ||
+		hasResumePassthroughArg(clcommon.ExtractClaudeExtraArgs()) {
 		return false
 	}
 	// These are deliberately solo/direct-session controls with no counterpart

@@ -839,3 +839,68 @@ func TestRenderRemotePeersStatusOnly(t *testing.T) {
 	assert.Contains(t, out.String(), "(stale)")
 	assert.False(t, remotePeerOnline(row))
 }
+
+func TestResolveAgentForResume(t *testing.T) {
+	setupTestDB(t)
+	agentConv := "aaaaaaaa-1111-2222-3333-444444444444"
+	plainConv := "bbbbbbbb-1111-2222-3333-444444444444"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: agentConv, CustomTitle: "kivra-agent"}))
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: plainConv, CustomTitle: "plain-conv"}))
+	agentID, err := db.AllocateAgent(agentConv, "test")
+	require.NoError(t, err)
+
+	t.Run("by name", func(t *testing.T) {
+		got, err := resolveAgentForResume("kivra-agent")
+		require.NoError(t, err)
+		assert.Equal(t, agentConv, got)
+	})
+	t.Run("by agent id", func(t *testing.T) {
+		got, err := resolveAgentForResume(agentID)
+		require.NoError(t, err)
+		assert.Equal(t, agentConv, got)
+	})
+	t.Run("retired agents stay resumable", func(t *testing.T) {
+		_, err := db.RetireAgent(agentConv, "test", "test")
+		require.NoError(t, err)
+		t.Cleanup(func() { _, _ = db.ReinstateAgent(agentConv) })
+		got, err := resolveAgentForResume(agentID)
+		require.NoError(t, err)
+		assert.Equal(t, agentConv, got)
+	})
+	t.Run("a plain conversation is not an agent", func(t *testing.T) {
+		got, err := resolveAgentForResume("plain-conv")
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+	t.Run("an unknown agent id is an error", func(t *testing.T) {
+		_, err := resolveAgentForResume("agt_00000000")
+		require.ErrorIs(t, err, errNoAgentMatch)
+	})
+	t.Run("a conversation id is never forwarded to an agent", func(t *testing.T) {
+		for _, selector := range []string{agentConv, agentConv[:8]} {
+			got, err := resolveAgentForResume(selector)
+			require.NoError(t, err)
+			assert.Empty(t, got, selector)
+		}
+	})
+	t.Run("an old generation does not resolve to its successor", func(t *testing.T) {
+		head := "cccccccc-1111-2222-3333-444444444444"
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: head, CustomTitle: "bob"}))
+		_, err := db.RotateAgentConv(agentConv, head, "test")
+		require.NoError(t, err)
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: agentConv, CustomTitle: "bob-r-1"}))
+
+		got, err := resolveAgentForResume("bob-r-1")
+		require.NoError(t, err)
+		assert.Empty(t, got)
+
+		got, err = resolveAgentForResume("bob")
+		require.NoError(t, err)
+		assert.Equal(t, head, got)
+	})
+	t.Run("an unknown name is a miss", func(t *testing.T) {
+		got, err := resolveAgentForResume("nobody")
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+}

@@ -1002,7 +1002,8 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// event-specific early returns (unknown events, PostCompact, etc.) can skip
 	// the normal SaveSessionState tail. This is also the exact signal the
 	// pending-spawn sweeper waits on.
-	if envSessionID != "" && state.ConvID == "" && input.ConvID != "" {
+	adoptingConv := envSessionID != "" && state.ConvID == "" && input.ConvID != ""
+	if adoptingConv {
 		if err := db.SetSessionConvID(state.ID, input.ConvID); err != nil {
 			slog.Warn("failed to backfill session conv-id from hook",
 				"session_id", state.ID, "conv_id", input.ConvID, "error", err, "module", "hooks")
@@ -1713,6 +1714,23 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// a later modeled hook from a non-pending spawned session still proves the
 	// conv is alive and should be enrolled. Pending dashboard spawns are skipped
 	// here because agentd's sweeper owns their group/name/briefing intent.
+	// A session that started with no conversation and then reports a resumed one
+	// is `tclaude -- --resume`: Claude Code's picker chose it, after the launch
+	// could have refused. See ReinstateRetiredForResume for the --resume path.
+	if adoptingConv && input.HookEventName == "SessionStart" && input.Source == "resume" && !amb.InTaskRunnerHook() {
+		if retiredHead, err := isRetiredAgentHead(input.ConvID); err != nil {
+			slog.Warn("failed to read agent state of resumed conversation",
+				"conv_id", input.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
+		} else if retiredHead {
+			if _, err := db.ReinstateAgent(input.ConvID); err != nil {
+				slog.Warn("failed to reinstate resumed conversation",
+					"conv_id", input.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
+			} else {
+				slog.Info("reinstated retired conversation opened from the picker",
+					"conv_id", input.ConvID, "session_id", state.ID, "module", "hooks")
+			}
+		}
+	}
 	if shouldEnrollLaunchedSessionFromHook(state, input, envSessionID, amb) {
 		agentID, created, err := db.EnsureAgentForConv(state.ConvID, "session-start")
 		if err != nil {

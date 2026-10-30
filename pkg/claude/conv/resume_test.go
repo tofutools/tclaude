@@ -1,11 +1,16 @@
 package conv
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // JOH-218 — `tclaude conv resume <id>` used to resolve only through CC's
@@ -98,4 +103,41 @@ func TestResolveConvForResume_CodexExactIDBeatsAmbiguity(t *testing.T) {
 	require.NotNil(t, rc)
 	assert.Equal(t, exact, rc.ConvID)
 	assert.Equal(t, "codex", rc.Harness)
+}
+
+func TestResolveAgentForResume(t *testing.T) {
+	const convID = "abcdef01-2345-6789-abcd-ef0123456789"
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	previous := session.AgentResumeResolver
+	session.AgentResumeResolver = func(selector string) (string, error) {
+		if selector == "agt_85bdf803" {
+			return convID, nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { session.AgentResumeResolver = previous })
+
+	rc, err := resolveAgentForResume("nobody", t.TempDir())
+	require.NoError(t, err)
+	assert.Nil(t, rc)
+
+	_, err = resolveAgentForResume("agt_85bdf803", t.TempDir())
+	require.ErrorContains(t, err, "before its first message", "an agent without a transcript must not read as unknown")
+
+	project := "/home/u/proj"
+	projectDir := convops.GetClaudeProjectPath(project)
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      convID,
+		ProjectDir:  projectDir,
+		ProjectPath: project,
+		Created:     "2026-01-01T00:00:00Z",
+	}))
+	rc, err = resolveAgentForResume("agt_85bdf803", t.TempDir())
+	require.NoError(t, err)
+	require.NotNil(t, rc)
+	assert.Equal(t, convID, rc.ConvID)
+	assert.Equal(t, project, rc.ProjectPath)
 }
