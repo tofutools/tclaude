@@ -1718,12 +1718,17 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// is `tclaude -- --resume`: Claude Code's picker chose it, after the launch
 	// could have refused. See ReinstateRetiredForResume for the --resume path.
 	if adoptingConv && input.HookEventName == "SessionStart" && input.Source == "resume" && !amb.InTaskRunnerHook() {
-		if reinstated, err := db.ReinstateAgent(input.ConvID); err != nil {
-			slog.Warn("failed to reinstate resumed conversation",
+		if retiredHead, err := isRetiredAgentHead(input.ConvID); err != nil {
+			slog.Warn("failed to read agent state of resumed conversation",
 				"conv_id", input.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
-		} else if reinstated {
-			slog.Info("reinstated retired conversation opened from the picker",
-				"conv_id", input.ConvID, "session_id", state.ID, "module", "hooks")
+		} else if retiredHead {
+			if _, err := db.ReinstateAgent(input.ConvID); err != nil {
+				slog.Warn("failed to reinstate resumed conversation",
+					"conv_id", input.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
+			} else {
+				slog.Info("reinstated retired conversation opened from the picker",
+					"conv_id", input.ConvID, "session_id", state.ID, "module", "hooks")
+			}
 		}
 	}
 	if shouldEnrollLaunchedSessionFromHook(state, input, envSessionID, amb) {

@@ -60,18 +60,24 @@ func resolveResumeLast(params *NewParams) error {
 // name: running while retired would hide it from the live lists. Where that
 // can't work it refuses and says why. Agents can't take this path, because
 // reinstating a peer is gated on agent.promote.
+//
+// Only the agent's current generation counts. Reinstating from an older one
+// would bring back an offline agent while this pane stays off the live lists.
 func ReinstateRetiredForResume(convID, cwd string) error {
-	state, err := db.AgentState(convID)
+	retiredHead, err := isRetiredAgentHead(convID)
 	if err != nil {
 		return fmt.Errorf("read agent state of conversation %s: %w", convID, err)
 	}
-	if state != db.AgentStateRetired {
+	if !retiredHead {
+		if state, err := db.AgentState(convID); err == nil && state == db.AgentStateRetired {
+			fmt.Fprintf(os.Stderr, "Conversation %s is an old generation of a retired agent; the agent stays retired.\n", convID)
+		}
 		return nil
 	}
 	if _, err := os.Stat(cwd); err != nil {
 		return fmt.Errorf("conversation %s is retired and its directory %s is gone, so it can't be resumed", convID, cwd)
 	}
-	if os.Getenv("TCLAUDE_SESSION_ID") != "" {
+	if callerIsAgent() {
 		return fmt.Errorf("conversation %s is retired, and an agent can't reinstate it by resuming it; use tclaude agent reinstate %s, which needs agent.promote or ownership", convID, convID)
 	}
 	if _, err := db.ReinstateAgent(convID); err != nil {
@@ -79,6 +85,33 @@ func ReinstateRetiredForResume(convID, cwd string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Reinstated retired conversation %s. Its old groups and permissions don't come back.\n", convID)
 	return nil
+}
+
+// isRetiredAgentHead reports whether convID is the current generation of a
+// retired agent. db.AgentState alone also answers for older generations.
+func isRetiredAgentHead(convID string) (bool, error) {
+	actor, err := db.GetAgentByConv(convID)
+	if err != nil || actor == nil {
+		return false, err
+	}
+	state, err := db.AgentState(convID)
+	if err != nil {
+		return false, err
+	}
+	return state == db.AgentStateRetired && actor.CurrentConvID == convID, nil
+}
+
+// callerIsAgent reports whether this process runs inside a harness pane. A
+// plain tclaude shell pane carries the variable too, but a human is typing
+// there. This keeps honest callers on the right path; the variable proves nothing
+// about identity.
+func callerIsAgent() bool {
+	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
+	if sessionID == "" {
+		return false
+	}
+	state, err := LoadSessionState(sessionID)
+	return err != nil || state == nil || state.Harness != ShellHarnessName
 }
 
 // newestConvInDir applies newestResumableConv to the conversations of dir. Claude

@@ -238,6 +238,25 @@ func TestReinstateRetiredForResume(t *testing.T) {
 		require.ErrorContains(t, err, "agent.promote")
 		assert.Equal(t, db.AgentStateRetired, stateOf(t, convID))
 	})
+	t.Run("a shell pane is a human", func(t *testing.T) {
+		convID, cwd := setup(t)
+		require.NoError(t, SaveSessionState(&SessionState{ID: "shell-sess", Harness: ShellHarnessName, Status: StatusIdle, Created: time.Now()}))
+		t.Setenv("TCLAUDE_SESSION_ID", "shell-sess")
+		require.NoError(t, ReinstateRetiredForResume(convID, cwd))
+		assert.Equal(t, db.AgentStateActive, stateOf(t, convID))
+	})
+	t.Run("an old generation leaves the agent retired", func(t *testing.T) {
+		convID, cwd := setup(t)
+		_, err := db.ReinstateAgent(convID)
+		require.NoError(t, err)
+		_, err = db.RotateAgentConv(convID, resumeSelectorOther, "test")
+		require.NoError(t, err)
+		_, err = db.RetireAgent(resumeSelectorOther, "test", "test")
+		require.NoError(t, err)
+
+		require.NoError(t, ReinstateRetiredForResume(convID, cwd))
+		assert.Equal(t, db.AgentStateRetired, stateOf(t, resumeSelectorOther))
+	})
 	t.Run("leaves other conversations alone", func(t *testing.T) {
 		_, cwd := setup(t)
 		require.NoError(t, ReinstateRetiredForResume(resumeSelectorOther, cwd))
