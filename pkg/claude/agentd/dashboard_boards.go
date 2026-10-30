@@ -554,17 +554,17 @@ func serveBoardSnapshot(w http.ResponseWriter, r *http.Request, id string) {
 // ---- dashboard surface (/api/boards) ----
 
 func registerDashboardBoardRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/boards", handleDashboardBoardList)
-	mux.HandleFunc("POST /api/boards", handleDashboardBoardCreate)
-	mux.HandleFunc("GET /api/boards/{id}", handleDashboardBoardRead)
-	mux.HandleFunc("PATCH /api/boards/{id}", handleDashboardBoardPatch)
-	mux.HandleFunc("DELETE /api/boards/{id}", handleDashboardBoardDelete)
-	mux.HandleFunc("PUT /api/boards/{id}/snapshot", handleDashboardBoardSnapshotPut)
-	mux.HandleFunc("GET /api/boards/{id}/snapshot", handleDashboardBoardSnapshotGet)
-	mux.HandleFunc("POST /api/boards/{id}/participants", handleDashboardBoardParticipants)
-	mux.HandleFunc("POST /api/boards/{id}/events", handleDashboardBoardEvent)
-	mux.HandleFunc("POST /api/boards/{id}/view", handleDashboardBoardView)
-	mux.HandleFunc("POST /api/boards/{id}/group", handleDashboardBoardGroup)
+	mux.HandleFunc("GET /api/boards", collabRoute(handleDashboardBoardList))
+	mux.HandleFunc("POST /api/boards", collabRoute(handleDashboardBoardCreate))
+	mux.HandleFunc("GET /api/boards/{id}", collabRoute(handleDashboardBoardRead))
+	mux.HandleFunc("PATCH /api/boards/{id}", collabRoute(handleDashboardBoardPatch))
+	mux.HandleFunc("DELETE /api/boards/{id}", collabRoute(handleDashboardBoardDelete))
+	mux.HandleFunc("PUT /api/boards/{id}/snapshot", collabRoute(handleDashboardBoardSnapshotPut))
+	mux.HandleFunc("GET /api/boards/{id}/snapshot", collabRoute(handleDashboardBoardSnapshotGet))
+	mux.HandleFunc("POST /api/boards/{id}/participants", collabRoute(handleDashboardBoardParticipants))
+	mux.HandleFunc("POST /api/boards/{id}/events", collabRoute(handleDashboardBoardEvent))
+	mux.HandleFunc("POST /api/boards/{id}/view", collabRoute(handleDashboardBoardView))
+	mux.HandleFunc("POST /api/boards/{id}/group", collabRoute(handleDashboardBoardGroup))
 }
 
 // POST /api/boards/{id}/group {group} — link the board to a group ("" unlinks).

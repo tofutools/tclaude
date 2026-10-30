@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -342,4 +343,16 @@ func restoreAfterBackgroundDrain(restore func()) {
 func cleanupAfterBackgroundDrain(t *testing.T, restore func()) {
 	t.Helper()
 	t.Cleanup(func() { restoreAfterBackgroundDrain(restore) })
+}
+
+// enableCollab turns on features.collab, keeping the rest of the test's config.
+func enableCollab(t *testing.T) {
+	t.Helper()
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	if cfg.Features == nil {
+		cfg.Features = &config.FeaturesConfig{}
+	}
+	cfg.Features.Collab = true
+	require.NoError(t, config.Save(cfg))
 }
