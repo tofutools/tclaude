@@ -24,7 +24,7 @@ import {
   COMPANION_ACTIVE_PREF, COMPANION_MESSAGE_MAX, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
-  stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary,
+  stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary, decisionsFor, decisionSpeech,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -219,6 +219,46 @@ function ApprovalCard({ request, fetchImpl, notify }) {
       <button type="button" class="companion-approval-deny" disabled=${!!busy || expired} onClick=${() => decide('deny')}>${busy === 'deny' ? 'Denying…' : 'Deny'}</button>
       <button type="button" class="companion-primary" disabled=${!!busy || expired} onClick=${() => decide('approve')}>${busy === 'approve' ? 'Approving…' : summary.kind === 'plan' ? 'Approve plan' : 'Approve'}</button>
     </div>
+  </div>`;
+}
+
+// DecisionCard is a decision the agent put to the operator with
+// `notify-human --option ...`: its question, any attached image, and one
+// button per option. The pick (plus an optional note) goes back to the agent
+// as mail, even if it is offline. All of it is agent text, rendered as text.
+function DecisionCard({ decision, fetchImpl, notify }) {
+  const [busy, setBusy] = useState(0);
+  const [note, setNote] = useState('');
+  const image = (decision.attachments || []).find((a) => a.previewable);
+  async function choose(choice) {
+    setBusy(choice);
+    try {
+      const response = await fetchImpl('/api/human-messages/reply', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: decision.id, choice, body: note.trim() }),
+      });
+      if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+    } catch (error) {
+      notify(`That decision could not be sent: ${error?.message || error}`, true);
+      setBusy(0);
+    }
+  }
+  const question = decision.subject || 'Decision';
+  return html`<div class="companion-decision" role="group" aria-label=${`Decision: ${question}`}>
+    <div class="companion-approval-head"><b>${question}</b></div>
+    ${decision.body && decision.body !== decision.subject && html`<p class="companion-decision-body">${decision.body}</p>`}
+    <div class="companion-decision-options">
+      ${decision.options.map((option, i) => {
+        const recommended = i + 1 === decision.recommended;
+        return html`<button key=${option} type="button" class=${recommended ? 'companion-primary' : ''} disabled=${!!busy}
+          title=${recommended ? 'The agent recommends this one' : ''} onClick=${() => choose(i + 1)}>
+          ${busy === i + 1 ? 'Sending…' : option}${recommended && busy !== i + 1 ? html` <span class="companion-decision-rec">★</span>` : ''}
+        </button>`;
+      })}
+    </div>
+    <input class="companion-decision-note" type="text" placeholder="Add a note (optional)" value=${note} disabled=${!!busy}
+      aria-label="Note to send with your choice" onInput=${(event) => setNote(event.currentTarget.value)} />
+    ${image && html`<a class="companion-decision-image" href=${image.url} target="_blank" rel="noopener"><img src=${image.url} alt=${image.filename || 'attached image'} /></a>`}
   </div>`;
 }
 
@@ -693,7 +733,9 @@ export function CompanionApp({
       if (kind === 'needs') {
         const now = Date.now();
         if (!claim(`${VOICE_PREF}.needs.${agentId}`, String(now), (prev) => now - Number(prev) > 5000)) continue;
-        if (!quiet()) speaker.speak(`${agent.name} needs you${agent.detail ? `: ${speakableText(agent.detail, 120)}` : '.'}`);
+        const decision = decisionsFor(snapshot.value, agent)[0];
+        if (!quiet()) speaker.speak(decision ? speakableText(decisionSpeech(agent, decision), 400)
+          : `${agent.name} needs you${agent.detail ? `: ${speakableText(agent.detail, 120)}` : '.'}`);
         continue;
       }
       const speakReply = (retry) => voiceReader.latest(agentId).then((reply) => {
@@ -891,8 +933,9 @@ export function CompanionApp({
   // -- render -----------------------------------------------------------------
 
   const approvals = (agent) => approvalsFor(snapshot.value, agent);
-  // A pending approval is the clearest "needs you" there is.
-  const statusOf = (agent) => (approvals(agent).length ? 'needs' : companionStatus(agent));
+  const decisions = (agent) => decisionsFor(snapshot.value, agent);
+  // A pending approval or decision is the clearest "needs you" there is.
+  const statusOf = (agent) => (approvals(agent).length || decisions(agent).length ? 'needs' : companionStatus(agent));
   const chipAgents = tabs.map((id) => agents.get(id)).filter(Boolean);
   const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
@@ -911,7 +954,7 @@ export function CompanionApp({
         onClick=${(event) => onChipClick(agent.agentId, event)}>
         <${Avatar} agent=${agent} />
         <span class="companion-chip-name">${agent.name}</span>
-        ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? 'approval' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
+        ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? 'approval' : decisions(agent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
       </button>`;
     })}
     ${!chipAgents.length && html`<button type="button" class="companion-chip companion-chip-steward"
@@ -924,6 +967,7 @@ export function CompanionApp({
   const style = `left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`;
   const status = activeAgent ? statusOf(activeAgent) : 'offline';
   const activeApprovals = activeAgent ? approvals(activeAgent) : [];
+  const activeDecisions = activeAgent ? decisions(activeAgent) : [];
   const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
   const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
   const starting = !activeAgent && activeId && pending.current.has(activeId);
@@ -964,6 +1008,7 @@ export function CompanionApp({
       onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
     <div class="companion-body">
       ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
+      ${activeDecisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> The Steward</p>
@@ -982,7 +1027,7 @@ export function CompanionApp({
         <button type="button" class="companion-primary" onClick=${() => showAgent(activeAgent.agentId)}>Bring it back here</button>
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
-        ${status === 'needs' && !activeApprovals.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
+        ${status === 'needs' && !activeApprovals.length && !activeDecisions.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
         ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
           ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
           : termStatus}</div>`}

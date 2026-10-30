@@ -80,7 +80,7 @@ test('summoning the Steward posts a read-only scoped scribe summon and attaches 
   assert.deepEqual(post.body.scope, { kind: 'steward' });
   assert.equal(post.body.background, true);
   assert.ok(!post.body.exclusive, 'the Steward keeps per-command --ask-human approvals available');
-  assert.ok(post.body.slugs.every((slug) => /\.read$/.test(slug) || ['dashboard.guide', 'boards.write'].includes(slug)), `only read slugs plus pointing and drawing: ${post.body.slugs}`);
+  assert.ok(post.body.slugs.every((slug) => /\.read$/.test(slug) || ['dashboard.guide', 'boards.write', 'human.notify'].includes(slug)), `only read slugs plus pointing, drawing and asking the operator: ${post.body.slugs}`);
   assert.match(post.body.brief, /tclaude agent board show/);
   assert.match(post.body.brief, /--ask-human/);
   assert.deepEqual(closed.at(-1), [S], 'any Terminals-tab pane of the agent is closed first');
@@ -265,6 +265,39 @@ test('a pending sudo plan from a pinned agent is decided in its companion tab', 
   const decision = requests.find((r) => r.url === '/api/access-requests/req-1/decision');
   assert.ok(decision, 'the decision was posted');
   assert.deepEqual(decision.body, { decision: 'approve' });
+});
+
+test('a decision from a pinned agent is answered with a button in its companion tab', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const snapshot = snapshotWith();
+  snapshot.messages = [
+    { id: 7, from_agent: A, subject: 'Which layout?', body: 'Tabs are compact; a sidebar shows more.', options: ['Tabs', 'Sidebar'], recommended: 2,
+      attachments: [{ id: 1, filename: 'mock.png', url: '/api/human-messages/7/attachments/1', previewable: true }] },
+    { id: 8, from_agent: A, subject: 'Answered', options: ['x', 'y'], decision: 'x' },
+    { id: 9, from_agent: B, subject: 'Not alpha', options: ['x', 'y'] },
+    { id: 10, from_agent: A, subject: 'Just news' },
+  ];
+  const { view, harness, requests, controller } = await setup(t, { prefs, snapshot });
+  assert.ok(harness.getByRole(view.container, 'button', { name: /alpha: needs you/ }), 'a waiting decision marks the chip');
+  await harness.act(() => controller().open(A));
+  const cards = view.container.querySelectorAll('.companion-decision');
+  assert.equal(cards.length, 1, 'only this agent\'s unanswered decisions');
+  assert.match(cards[0].textContent, /Which layout\?/);
+  assert.match(cards[0].textContent, /a sidebar shows more/);
+  assert.ok(cards[0].querySelector('img[src="/api/human-messages/7/attachments/1"]'), 'an attached mock is shown');
+  const sidebar = harness.getByRole(cards[0], 'button', { name: /Sidebar/ });
+  assert.ok(sidebar.classList.contains('companion-primary'), 'the recommended option stands out');
+  await harness.input(cards[0].querySelector('input.companion-decision-note'), 'keep it narrow');
+  await harness.act(async () => { sidebar.click(); await new Promise((r) => setTimeout(r, 0)); });
+  const reply = requests.find((r) => r.url === '/api/human-messages/reply');
+  assert.deepEqual(reply.body, { id: 7, choice: 2, body: 'keep it narrow' });
+});
+
+test('decision speech names the question and the options', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  assert.equal(m.decisionSpeech({ name: 'alpha' }, { subject: 'Which layout?', options: ['Tabs', 'Sidebar'], recommended: 2 }),
+    'alpha asks you to decide: Which layout? 2 options: Tabs; Sidebar, which it recommends.');
 });
 
 test('annotation strokes are classified and named by what is under them', async (t) => {

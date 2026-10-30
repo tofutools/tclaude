@@ -355,6 +355,50 @@ export function MessageBody({ message, agentMail = false }) {
 // SAFE_AGENT admits only a plain agent ID into a terminal request.
 const SAFE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
 
+// DecisionChoices shows a decision an agent put to the operator (notify-human
+// --option): one button per option, the agent's recommendation marked, or
+// the pick once made. Answering posts the choice through the reply route, so
+// the agent gets it as mail. A peer's decision is answered on that node.
+export function DecisionChoices({ message, toast, onDone, remote = false, fetchImpl = (...a) => globalThis.fetch(...a) }) {
+  const [busy, setBusy] = useState(0);
+  useEffect(() => { setBusy(0); }, [message.id]);
+  const options = Array.isArray(message.options) ? message.options : [];
+  if (options.length < 2) return null;
+  if (message.decision) {
+    return html`<div class="mail-decision decided" role="group" aria-label="Decision">
+      <span class="mail-decision-label">Decided:</span> <b>${message.decision}</b>
+    </div>`;
+  }
+  const choose = async (choice) => {
+    setBusy(choice);
+    try {
+      const res = await fetchImpl('/api/human-messages/reply', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: message.id, choice }),
+      });
+      if (!res.ok) {
+        let reason = `HTTP ${res.status}`;
+        try { reason = (await res.json())?.error || reason; } catch (_) { /* keep the status */ }
+        throw new Error(reason);
+      }
+      toast?.(`Sent “${options[choice - 1]}” to ${message.from_title || 'the agent'}`, false);
+      onDone?.();
+    } catch (e) {
+      setBusy(0);
+      toast?.(`Decision failed: ${e?.message || e}`, true);
+    }
+  };
+  return html`<div class="mail-decision" role="group" aria-label="Decide">
+    <span class="mail-decision-label">Decide:</span>
+    ${options.map((option, i) => {
+      const recommended = i + 1 === message.recommended;
+      return html`<button key=${option} type="button" class=${recommended ? 'primary' : ''} disabled=${!!busy || remote}
+        title=${remote ? 'Answer this decision on the node it came from' : recommended ? 'The agent recommends this one' : 'Send this choice to the agent'}
+        onClick=${() => choose(i + 1)}>${busy === i + 1 ? 'Sending…' : option}${recommended ? ' ★' : ''}</button>`;
+    })}
+  </div>`;
+}
+
 // HumanActions are the reader's buttons for a human notification, one row
 // wherever a notification is read (this node's Messages, a peer's page, the
 // fused view): reply, focus, mark read/unread, ⤓ download and delete, then
