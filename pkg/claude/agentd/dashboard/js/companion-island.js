@@ -298,6 +298,9 @@ export function CompanionApp({
   const queueSize = pendingDecisions(snapshot.value).length;
   useEffect(() => { if (!queueSize) setDeciding(false); }, [queueSize]);
   const draftRef = useRef('');
+  // Emptying the field by hand must not take it away from under the caret.
+  const [fieldFocused, setFieldFocused] = useState(false);
+  const fieldRef = useCallback((element) => { if (!element) setFieldFocused(false); }, []);
   const [withContext, setWithContext] = useState(true);
   // The agent the operator is marking up the page for (tcl-8vjjko), or null.
   const [annotating, setAnnotating] = useState(null);
@@ -756,6 +759,14 @@ export function CompanionApp({
         const { [activeAgent.agentId]: _sent, ...rest } = current;
         return rest;
       });
+      // An open mic would bring the sent text back.
+      if (event) dictation.abort?.();
+      // Send and the field are about to go, and focus would fall to the page.
+      const focused = win?.document?.activeElement;
+      if (draftRef.current === text && focused?.matches?.('.companion-draft, .companion-input button[type="submit"]')) {
+        setFieldFocused(false);
+        setFocusToken((n) => n + 1);
+      }
       return true;
     } catch (error) {
       notify(`Message to ${activeAgent.name} failed: ${error?.message || error}`, true);
@@ -1050,7 +1061,9 @@ export function CompanionApp({
     const onKey = (event) => {
       if (!event.target?.closest?.('.companion-term-host')) return;
       lastTerminalKey.current = Date.now();
-      speaker.cancel();
+      // Modifiers and window shortcuts are not typing.
+      const text = event.key?.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+      if (text || event.key === 'Enter' || event.key === 'Backspace') speaker.cancel();
     };
     doc.addEventListener('keydown', onKey, true);
     return () => doc.removeEventListener('keydown', onKey, true);
@@ -1066,7 +1079,8 @@ export function CompanionApp({
     const by = cue.agent_name || 'An agent';
     // Focus alone is no signal: it stays in the terminal long after the last key.
     const typing = Date.now() - lastTerminalKey.current < CUE_TYPING_WINDOW_MS;
-    if (draftRef.current.trim() || listeningRef.current || typing) {
+    const drafting = !showQueue && activeAgent?.online && draftRef.current.trim();
+    if (drafting || listeningRef.current || typing) {
       setTabs((current) => withTab(current, agent.agentId));
       notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
       return;
@@ -1169,6 +1183,7 @@ export function CompanionApp({
   const toApprove = pendingApprovals(snapshot.value);
   const elsewhere = toApprove.filter((request) => !chipAgents.some((agent) => approvalsFor({ access_requests: [request] }, agent).length));
   const showQueue = deciding && queue.length > 0;
+  const showField = draft || listening || fieldFocused;
   const askerName = (d) => agents.get(d.from_agent)?.name || d.from_title || 'an agent';
   const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
@@ -1304,18 +1319,19 @@ export function CompanionApp({
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
     ${!showQueue && activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
-      <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
+      ${dictation.supported && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
-      </label>
-      ${!draft && !listening && html`<span class="companion-input-gap"></span>`}
-      ${(draft || listening) && html`<input type="text" class="companion-draft" maxLength=${COMPANION_MESSAGE_MAX}
-        placeholder="Listening…"
+      </label>`}
+      ${!showField && html`<span class="companion-input-gap"></span>`}
+      ${showField && html`<input type="text" class="companion-draft" ref=${fieldRef} maxLength=${COMPANION_MESSAGE_MAX}
+        placeholder=${listening ? 'Listening…' : ''}
+        onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)}
         aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />`}
       ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
         aria-label=${`Dictate a message to ${activeAgent.name}`}
         title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
         onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
-      ${(draft || listening) && html`<button type="submit" disabled=${sending || !draft.trim()}>Send</button>`}
+      ${showField && html`<button type="submit" disabled=${sending || !draft.trim()}>Send</button>`}
       <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
     </form>`}

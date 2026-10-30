@@ -380,6 +380,33 @@ test('a draft stays with its agent across tab switches and goes to that agent', 
   assert.equal(draft(), null);
 });
 
+test('sending from the field hands focus to the terminal, and emptying it keeps it', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = fakeDictation();
+  const { view, harness, controller, mounted } = await setup(t, { prefs, dictationImpl: dictated.impl });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const draft = () => view.container.querySelector('input.companion-draft');
+  await dictated.say(harness, view, 'for alpha');
+  await harness.act(async () => { draft().focus(); });
+  await harness.act(async () => {
+    draft().value = '';
+    draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  });
+  assert.ok(draft(), 'emptying the field by hand leaves it under the caret');
+  await harness.act(async () => {
+    draft().value = 'for alpha';
+    draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  });
+  const before = mounted.at(-1).focused;
+  await harness.act(async () => {
+    view.container.querySelector('form.companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(draft(), null);
+  assert.equal(mounted.at(-1).focused, before + 1, 'the keyboard is not left on the page');
+});
+
 test('a finished send leaves text typed after it started', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   let finish = null;
@@ -819,8 +846,13 @@ test('voice output speaks a reply when the turn ends and says when the agent nee
   assert.equal(spoken.at(-1), 'alpha needs you: Bash(rm -rf build)');
   const keys = h.window.document.createElement('textarea');
   view.container.querySelector('.companion-term-host').appendChild(keys);
-  keys.dispatchEvent(new h.window.Event('keydown', { bubbles: true }));
-  assert.ok(cancelled >= 1, 'typing in the terminal stops speech');
+  const press = (init) => keys.dispatchEvent(Object.assign(new h.window.Event('keydown', { bubbles: true }), init));
+  const before = cancelled;
+  press({ key: 'Shift' });
+  press({ key: 'Tab', altKey: true });
+  assert.equal(cancelled, before, 'a modifier or a window shortcut is not typing');
+  press({ key: 'a' });
+  assert.equal(cancelled, before + 1, 'typing in the terminal stops speech');
 });
 
 test('voice speaks a further decision from an agent already waiting on the operator', async (t) => {

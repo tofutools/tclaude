@@ -292,8 +292,8 @@ export function composeCompanionMessage(text, context = '') {
 export function stewardBrief() {
   return [
     'You are the Steward: the operator\'s always-available helper for tclaude, shown in a floating',
-    'companion window on top of the tclaude dashboard. The operator talks to you in this terminal,',
-    'or through the window\'s message row, which arrives as operator mail ending with a',
+    'companion window on top of the tclaude dashboard. The operator talks to you in this terminal.',
+    'What they dictate or mark up in the window arrives as operator mail, usually ending with a',
     '"[dashboard view: ...]" line naming the dashboard view they are looking at.',
     '',
     'What you do:',
