@@ -24,7 +24,7 @@ import {
   COMPANION_ACTIVE_PREF, COMPANION_MESSAGE_MAX, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
-  stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary, decisionsFor, decisionSpeech,
+  stewardSummonBody, STEWARD_STARTERS, viewContext, withTab, withoutTab, zoneRect, approvalsFor, approvalSummary, decisionsFor, decisionSpeech, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, GuideOverlay, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -226,7 +226,7 @@ function ApprovalCard({ request, fetchImpl, notify }) {
 // `notify-human --option ...`: its question, any attached image, and one
 // button per option. The pick (plus an optional note) goes back to the agent
 // as mail, even if it is offline. All of it is agent text, rendered as text.
-function DecisionCard({ decision, fetchImpl, notify }) {
+function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
   const [busy, setBusy] = useState(0);
   const [note, setNote] = useState('');
   const image = (decision.attachments || []).find((a) => a.previewable);
@@ -245,7 +245,7 @@ function DecisionCard({ decision, fetchImpl, notify }) {
   }
   const question = decision.subject || 'Decision';
   return html`<div class="companion-decision" role="group" aria-label=${`Decision: ${question}`}>
-    <div class="companion-approval-head"><b>${question}</b></div>
+    <div class="companion-approval-head"><b>${question}</b>${from && html`<span class="companion-decision-from">${from}</span>`}</div>
     ${decision.body && decision.body !== decision.subject && html`<p class="companion-decision-body">${decision.body}</p>`}
     <div class="companion-decision-options">
       ${decision.options.map((option, i) => {
@@ -302,6 +302,8 @@ export function CompanionApp({
   const [focusToken, setFocusToken] = useState(0);
   const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
   const [draft, setDraft] = useState('');
+  // deciding shows the fleet-wide "to decide" queue over the window body.
+  const [deciding, setDeciding] = useState(false);
   const draftRef = useRef('');
   draftRef.current = draft;
   const [withContext, setWithContext] = useState(true);
@@ -396,6 +398,7 @@ export function CompanionApp({
     });
     setTabs((current) => withTab(current, agentId));
     setActive(agentId);
+    setDeciding(false);
     setMenu(false);
     setOpen(true);
     if (focus) setFocusToken((n) => n + 1);
@@ -959,6 +962,9 @@ export function CompanionApp({
   // A pending approval or decision is the clearest "needs you" there is.
   const statusOf = (agent) => (approvals(agent).length || decisions(agent).length ? 'needs' : companionStatus(agent));
   const chipAgents = tabs.map((id) => agents.get(id)).filter(Boolean);
+  const queue = pendingDecisions(snapshot.value);
+  const showQueue = deciding && queue.length > 0;
+  const askerName = (d) => agents.get(d.from_agent)?.name || d.from_title || 'an agent';
   const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
 
@@ -979,6 +985,12 @@ export function CompanionApp({
         ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? 'approval' : decisions(agent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
       </button>`;
     })}
+    ${queue.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
+      aria-label=${`${queue.length} ${queue.length === 1 ? 'decision' : 'decisions'} to make. Open them`}
+      title="Agents are waiting for you to choose"
+      onClick=${(event) => { stopPeek(); openFrom.current = event.currentTarget.getBoundingClientRect(); setDeciding(true); setOpen(true); }}>
+      <span class="companion-decide-mark" aria-hidden="true">◆</span><span class="companion-chip-name">${queue.length} to decide</span>
+    </button>`}
     ${!chipAgents.length && html`<button type="button" class="companion-chip companion-chip-steward"
       aria-label="Open the companion (Ctrl+.)" title="Steward: your helper for all of tclaude (Ctrl+.)"
       onClick=${(event) => onChipClick('', event)}>
@@ -1013,6 +1025,10 @@ export function CompanionApp({
               onClick=${() => closeTab(agent.agentId)}>×</button>
           </div>`;
         })}
+        ${queue.length > 0 && html`<div class=${`companion-tab companion-decide-tab${showQueue ? ' selected' : ''}`}>
+          <button type="button" role="tab" aria-selected=${showQueue ? 'true' : 'false'} title="Decisions agents are waiting on"
+            onClick=${() => setDeciding((v) => !v)}><span class="companion-decide-mark" aria-hidden="true">◆</span><span>${queue.length} to decide</span></button>
+        </div>`}
         <button type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${menu ? 'true' : 'false'}
           title="Summon the Steward or pin a live agent" onClick=${() => setMenu((v) => !v)}>＋</button>
       </div>
@@ -1029,8 +1045,11 @@ export function CompanionApp({
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
     <div class="companion-body">
+      ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
+        ${queue.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} from=${askerName(decision)} />`)}
+      </div>`}
       ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
-      ${activeDecisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
+      ${!showQueue && activeDecisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> The Steward</p>
@@ -1057,11 +1076,11 @@ export function CompanionApp({
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
-    ${activeAgent?.online && activeAgent.steward && !parked.has(activeAgent.agentId) && !draft && html`<div class="companion-starters" aria-label="Ask the Steward">
+    ${!showQueue && activeAgent?.online && activeAgent.steward && !parked.has(activeAgent.agentId) && !draft && html`<div class="companion-starters" aria-label="Ask the Steward">
       ${STEWARD_STARTERS.map((starter) => html`<button key=${starter.label} type="button" disabled=${sending} title=${starter.text}
         onClick=${() => send(null, starter.text)}>${starter.label}</button>`)}
     </div>`}
-    ${activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
+    ${!showQueue && activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
       <label class="companion-context" title="Attach the dashboard view you are on, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
       </label>
