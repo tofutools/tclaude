@@ -206,6 +206,10 @@ func newTmuxSim() *TmuxSim {
 // appropriate status; for verbs that mutate state (send-keys,
 // kill-session), the mutation happens here before the cmd is returned.
 func (t *TmuxSim) Command(args ...string) *exec.Cmd {
+	// -V is a client flag to the parser below, but it is the whole invocation.
+	if len(args) == 1 && args[0] == "-V" {
+		return exec.Command(echoBin, "tmux 3.7b")
+	}
 	// Client-level options precede the command word. The real tmux client
 	// consumes them before dispatching (external mode currently adds -N), so
 	// consume those options positionally instead of searching argv for a known
@@ -340,8 +344,6 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		}
 		t.recordMutationTarget("kill-pane", args[2])
 		t.killSession(args[2])
-	case len(args) >= 1 && args[0] == "-V":
-		return exec.Command(echoBin, "tmux 3.7b")
 	case len(args) >= 1 && args[0] == "show-hooks":
 		return exec.Command(echoBin, "pane-died")
 	case len(args) >= 2 && args[0] == "display-message" && args[1] == "-p":
