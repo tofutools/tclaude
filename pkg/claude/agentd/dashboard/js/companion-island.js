@@ -886,6 +886,11 @@ export function CompanionApp({
   async function playCue(cue) {
     const run = ++cueRun.current;
     setGuideCue(null);
+    // An agent the Steward hands over opens in the window, in the dashboard
+    // tab the operator is looking at only: a terminal attach takes over
+    // from any other view, so hidden tabs must not race for it.
+    if (cue.open && win?.document?.visibilityState !== 'hidden') showAgent(cue.open, { focus: false });
+    if (!cue.tab && !cue.path && !cue.target && !cue.note && !cue.marks?.length) return;
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const path = cuePath(cue);
     if (path && navigate) {

@@ -89,6 +89,8 @@ type guideShowParams struct {
 	Circle    []string `long:"circle" optional:"true" help:"Draw a circle around the control or text with this visible text (repeatable)"`
 	Underline []string `long:"underline" optional:"true" help:"Underline the control or text with this visible text (repeatable)"`
 	Arrow     []string `long:"arrow" optional:"true" help:"Draw an arrow between two controls by visible text, as 'From text -> To text' (repeatable)"`
+
+	Open string `long:"open" optional:"true" help:"Open this agent (agent_id or name) in the operator's companion window, e.g. the one that needs them"`
 }
 
 // guideMarks turns the mark flags into the cue's marks.
@@ -117,9 +119,11 @@ func guideShowCmd() *cobra.Command {
 		Long: "Posts a short-lived cue the operator's dashboard plays once: it switches to --tab or --path, then " +
 			"highlights the control or heading whose visible text matches --target, with --note beside it. " +
 			"--circle, --underline and --arrow draw hand-drawn marks on that view, by visible text like --target, to " +
-			"point at several things at once. Give at least one of the flags. The cue cannot press anything; the operator acts.\n\n" +
+			"point at several things at once. --open opens an agent in the operator's companion window (for example the one " +
+			"that is waiting on them), pinning it there. Give at least one of the flags. The cue cannot press anything; the operator acts.\n\n" +
 			"Example: tclaude agent guide show --tab processes --target 'Save draft' --note 'Save once the diff looks right'\n" +
-			"         tclaude agent guide show --circle 'Review' --arrow 'Rework -> Review' --note 'Rework never loops back'",
+			"         tclaude agent guide show --circle 'Review' --arrow 'Rework -> Review' --note 'Rework never loops back'\n" +
+			"         tclaude agent guide show --open agt_0123abcd --note 'builder is waiting on a permission prompt'",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideShowParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGuideShow(p, os.Stdout, os.Stderr))
@@ -133,8 +137,8 @@ func runGuideShow(p *guideShowParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
-	if p.Tab == "" && p.Path == "" && p.Target == "" && p.Note == "" && len(marks) == 0 {
-		fmt.Fprintln(stderr, "Error: give at least one of --tab, --path, --target, --note, --circle, --underline or --arrow")
+	if p.Tab == "" && p.Path == "" && p.Target == "" && p.Note == "" && len(marks) == 0 && strings.TrimSpace(p.Open) == "" {
+		fmt.Fprintln(stderr, "Error: give at least one of --tab, --path, --target, --note, --circle, --underline, --arrow or --open")
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
@@ -143,7 +147,7 @@ func runGuideShow(p *guideShowParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		ID int64 `json:"id"`
 	}
-	body := map[string]any{"tab": p.Tab, "path": p.Path, "target": p.Target, "note": p.Note, "marks": marks}
+	body := map[string]any{"tab": p.Tab, "path": p.Path, "target": p.Target, "note": p.Note, "marks": marks, "open": strings.TrimSpace(p.Open)}
 	if err := DaemonPost("/v1/dashboard/cue", body, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
