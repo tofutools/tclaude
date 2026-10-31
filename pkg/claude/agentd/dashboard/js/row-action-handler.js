@@ -11,7 +11,7 @@ import { openCronCreateModal } from './jobs-controller.js';
 import { openGroupCreateModal } from './group-create-controller.js';
 import {
   openGroupPermEditor, openHumanReplyModal, openMessageCreateModal,
-  openPermEditModal, openSudoGrantModal,
+  openPermEditModal, openSudoEditModal,
 } from './message-access-dialog-controller.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal, openAgentExport, openGroupExport, openSnapshots } from './modal-templates.js';
 import {
@@ -553,11 +553,11 @@ export async function handleRowAction(action) {
         return;
       }
       case 'sudo-grant': {
-        // Per-row affordance: open the same modal the Sudo tab's
-        // "+ Grant sudo" button uses, pre-filled with this stable agent id.
+        // Per-row affordance: the sudo variant of the permission editor,
+        // the one the Sudo tab's "+ Grant sudo" button opens, on this agent.
         // Modal handles the rest (validation, POST /api/sudo,
         // refresh).
-        openSudoGrantModal(agent, node);
+        openSudoEditModal(agent, label, node);
         return;
       }
       case 'perm-edit': {

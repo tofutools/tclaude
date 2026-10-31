@@ -57,7 +57,8 @@ back here**.
 | ⤢ | Move it to the Collab tab |
 | 🔑 N | Open the [approval panel](#answering-permission-requests) |
 | 🛡 | Edit permissions (Steward only) |
-| sudo | Grant sudo (Steward only) |
+| sudo | Open the [sudo editor](dashboard-access.md) (Steward only) |
+| ⏻ | Shut the Steward down, after asking (Steward only) |
 | ✉ | Send a queued message (Ctrl/Cmd+M) |
 | ⧉ | Detach it into its own browser window |
 | ⇄ | Morph it, with Move, Teleport, Clone and Recall home a pick away |
@@ -170,6 +171,14 @@ While an agent in the window holds elevated access, its tab and pill show **🔓
 a band above its terminal lists what it holds. **End now** revokes what the agent
 holds itself, with no confirmation; it can ask again. Access from a group or from
 owning one is listed but stays, since other members share it. Change that in Groups.
+
+### Shutting it down
+
+⏻ shuts the Steward down, after asking: it ends the conversation and retires the
+agent, so its grants and sudo end with it, and the window then offers **Start a new
+Steward**. A new one is a fresh agent; the old conversation stays in history. A
+detached Steward window has the same ⏻ in its header; its **Start a new Steward**
+closes the window and the new one opens in the companion.
 
 ### Other Steward settings
 
