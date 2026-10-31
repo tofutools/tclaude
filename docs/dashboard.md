@@ -46,7 +46,7 @@ Across the top, from left to right:
 | Control | What it does |
 |---|---|
 | Activity bots | One face per agent, with corner tags: ❓ asking, 💥 error, 💀 crashed, 💤 offline. Hover to group them by state. A `!` opens your newest notification. |
-| Usage | One line per provider with a bar, percentage and what's left. Claude shows 5-hour and 7-day windows, Codex 5-hour and weekly, Copilot its monthly allowance, plus API cost. Click for [Usage](dashboard-usage.md). |
+| Usage | One line per provider with a bar, percentage and what's left. Claude shows 5-hour and 7-day windows, Codex 5-hour and weekly, Copilot its monthly allowance, plus API cost. A selector switches units where they apply (`% / ≈$ / AIC`). Click for [Usage](dashboard-usage.md). |
 | Bell | Browser notifications: an on/off switch, per-type rows and delivery. Groups have their own mute. See [Notifications](notifications.md). |
 | `live` | The connection to the daemon. |
 | 🔍 | The [command palette](#command-palette) |
