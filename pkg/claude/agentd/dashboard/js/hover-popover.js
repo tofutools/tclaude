@@ -10,6 +10,10 @@ import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 // (dashboard.css); keep the two in step.
 export const HOVER_CLOSE_MS = 200;
 
+// A popover opened by a click is one the operator asked for, so it waits longer
+// for a slipped pointer to come back (watchPopover).
+export const CLICK_CLOSE_MS = 600;
+
 // openPopovers holds every open popover registered via useExclusivePopover.
 // Without it, sliding from one trigger to the next showed both panels
 // overlapping until the first one's grace ran out. Only an opening dismisses
@@ -84,9 +88,11 @@ const watched = [];
 
 // watchPopover is the one close rule for popovers opened by a click: a press
 // outside closes at once, Escape closes, and the pointer staying away for
-// HOVER_CLOSE_MS closes. Text in the popover, a field the operator is using, or
+// CLICK_CLOSE_MS closes. Text in the popover, a field the operator is using, or
 // hold() keeps it through hover-away, and the check repeats while the pointer
 // is away, so it closes once the reason ends. A press or Escape still closes.
+// A popover that hover can open too passes hoverOpened(), and takes the hover
+// delay for as long as that says so.
 //
 // A cog menu focuses its filter as it opens, which is why focus alone does not
 // count: the field counts once the operator pressed it or used the keyboard.
@@ -98,7 +104,7 @@ const watched = [];
 // waits behind it. A popover inside that dialog carries on as usual. escape:
 // false is for a menu whose Escape does something first, like clearing its
 // filter. The returned function stops watching.
-export function watchPopover({ roots, close, hold = null, escape = true, doc = null }) {
+export function watchPopover({ roots, close, hold = null, hoverOpened = null, escape = true, doc = null }) {
   const parts = () => [roots()].flat().filter(Boolean);
   const within = (target) => parts().some((root) => root.contains?.(target));
   const owner = doc || parts()[0]?.ownerDocument || globalThis.document;
@@ -125,7 +131,7 @@ export function watchPopover({ roots, close, hold = null, escape = true, doc = n
       if (!away) return;
       if (held()) schedule();
       else close('away');
-    }, HOVER_CLOSE_MS);
+    }, hoverOpened?.() ? HOVER_CLOSE_MS : CLICK_CLOSE_MS);
   };
   const onLeave = () => { away = true; schedule(); };
   const onEnter = () => { away = false; cancel(); };
@@ -188,6 +194,7 @@ export function useDismissablePopover(roots, open, close, options = {}) {
       roots: resolve,
       close: (why) => latest.current.close(why),
       hold: () => !!latest.current.options.hold?.(),
+      hoverOpened: () => !!latest.current.options.hoverOpened?.(),
     });
   }, [open]);
 }
