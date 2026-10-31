@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { BoardEditor, BoardsGate } from './board-island.js';
 import { boardOverlay, boardOverlayRaise, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
-import { COMPANION_FOOTER_ROOM, clampPlacement, parsePlacement } from './companion-model.js';
+import { COMPANION_FOOTER_ROOM, clampPlacement, fitPlacement, parsePlacement } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { isBoardId } from './board-model.js';
 import { ResizeFrame, resizedPlacement } from './window-resize.js';
@@ -52,15 +52,16 @@ function readOpen(win) {
 }
 
 function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) {
-  const [placement, setPlacement] = useState(() => {
+  const savedPlacement = () => {
     const viewport = viewportOf(win);
     const saved = parsePlacement(prefs?.getItem?.(BOARD_OVERLAY_PLACEMENT_PREF));
-    return saved ? clampPlacement({ ...saved, snap: '' }, viewport) : defaultOverlayPlacement(viewport);
-  });
+    return saved ? fitPlacement({ ...saved, snap: '' }, viewport) : defaultOverlayPlacement(viewport);
+  };
+  const [placement, setPlacement] = useState(savedPlacement);
   const gesture = useRef(null);
 
   useEffect(() => {
-    const onResize = () => setPlacement((p) => clampPlacement(p, viewportOf(win)));
+    const onResize = () => setPlacement(savedPlacement);
     win?.addEventListener?.('resize', onResize);
     return () => {
       win?.removeEventListener?.('resize', onResize);
@@ -68,7 +69,7 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
     };
   }, [win]);
 
-  function drag(event, next) {
+  function drag(event, next, saved = (p) => p) {
     event.preventDefault();
     const handle = event.currentTarget;
     handle.setPointerCapture?.(event.pointerId);
@@ -87,7 +88,7 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
     };
     const up = () => {
       stop();
-      try { prefs?.setItem?.(BOARD_OVERLAY_PLACEMENT_PREF, JSON.stringify(last)); } catch { /* the window stays where it is */ }
+      try { prefs?.setItem?.(BOARD_OVERLAY_PLACEMENT_PREF, JSON.stringify(saved(last))); } catch { /* the window stays where it is */ }
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
@@ -98,7 +99,10 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
   function onTitlePointerDown(event) {
     if (event.button !== 0 || event.target.closest?.('button')) return;
     const start = placement;
-    drag(event, (dx, dy, viewport) => clampPlacement({ ...start, x: start.x + dx, y: start.y + dy }, viewport));
+    // A move keeps the saved size: the window may only be small for this viewport.
+    const size = parsePlacement(prefs?.getItem?.(BOARD_OVERLAY_PLACEMENT_PREF));
+    drag(event, (dx, dy, viewport) => clampPlacement({ ...start, x: start.x + dx, y: start.y + dy }, viewport),
+      (p) => (size ? { ...p, w: size.w, h: size.h } : p));
   }
 
   function onResizePointerDown(event, zone) {

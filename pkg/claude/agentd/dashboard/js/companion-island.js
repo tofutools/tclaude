@@ -22,7 +22,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
-  clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
+  clampPlacement, fitPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent, viewportOf,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
@@ -270,7 +270,7 @@ export function CompanionApp({
     const vp = viewportOf(win);
     const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
     if (saved?.snap) return zoneRect(saved.snap, vp, snapTopOf(win));
-    return clampPlacement(saved || defaultPlacement(vp), vp);
+    return fitPlacement(saved || defaultPlacement(vp), vp);
   });
   const [guide, setGuide] = useState(null);
   const [menu, setMenu] = useState(false);
@@ -560,6 +560,11 @@ export function CompanionApp({
   }, [open]);
   useEffect(() => () => clearTimeout(warmTimer.current), []);
 
+  // Reopen where the operator left it, if that still fits.
+  useLayoutEffect(() => {
+    if (open) setPlacement((p) => (p.snap ? p : floatingPlacement()));
+  }, [open]);
+
   // Grow the window out of the chip it was opened from.
   useLayoutEffect(() => {
     if (!open) return;
@@ -575,18 +580,29 @@ export function CompanionApp({
     ], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
   }, [open]);
 
-  // Keep a floating window on screen when the browser resizes.
+  // Keep a floating window on screen when the browser resizes, working from the
+  // saved placement so a larger browser restores what a smaller one shrank.
   useEffect(() => {
-    const onResize = () => setPlacement((p) => {
-      const vp = viewportOf(win);
-      return p.snap ? zoneRect(p.snap, vp, snapTop()) : clampPlacement(p, vp);
-    });
+    const onResize = () => setPlacement((p) => (
+      p.snap ? zoneRect(p.snap, viewportOf(win), snapTop()) : floatingPlacement()
+    ));
     win?.addEventListener?.('resize', onResize);
     return () => win?.removeEventListener?.('resize', onResize);
   }, [win]);
 
   function snapTop() {
     return snapTopOf(win);
+  }
+
+  function floatingPlacement() {
+    const vp = viewportOf(win);
+    return fitPlacement({ ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || defaultPlacement(vp)), snap: '' }, vp);
+  }
+
+  // A move keeps the saved size: the window may only be small for this viewport.
+  function withSavedSize(p) {
+    const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
+    return saved ? { ...p, w: saved.w, h: saved.h } : p;
   }
 
   function savePlacement(p) {
@@ -635,11 +651,10 @@ export function CompanionApp({
       handle.removeEventListener('pointercancel', up);
       setGuide(null);
       if (zone) {
-        savePlacement({ ...last, snap: '' });
         setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
-        writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify({ ...last, snap: zone }));
+        savePlacement({ ...withSavedSize(last), snap: zone });
       } else {
-        savePlacement(last);
+        savePlacement(withSavedSize(last));
       }
     };
     handle.addEventListener('pointermove', move);

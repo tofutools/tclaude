@@ -1248,6 +1248,42 @@ test('a click outside closes the add menu, and the + button still toggles it', a
   assert.equal(view.container.querySelector('.companion-menu'), null);
 });
 
+test('a reopened window fits the viewport and a larger browser restores its saved size', async (t) => {
+  const saved = { x: 900, y: 500, w: 700, h: 400, snap: '' };
+  const prefs = memoryPrefs({
+    'tclaude.dash.companion.tabs': JSON.stringify([A]),
+    'tclaude.dash.companion.placement': JSON.stringify(saved),
+  });
+  const { view, harness, controller } = await setup(t, { prefs });
+  const root = harness.window.document.documentElement;
+  const viewport = (width, height) => {
+    Object.defineProperty(root, 'clientWidth', { configurable: true, value: width });
+    Object.defineProperty(root, 'clientHeight', { configurable: true, value: height });
+  };
+  viewport(1000, 600);
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const frame = () => view.container.querySelector('.companion-window');
+  const box = () => ['left', 'top', 'width', 'height'].map((key) => parseFloat(frame().style[key]));
+  let [x, y, w, h] = box();
+  assert.deepEqual([w, h], [700, 400], 'moved in at full size');
+  assert.ok(x + w <= 1000 && y + h <= 600 && x >= 0 && y >= 0);
+  viewport(800, 400);
+  await harness.act(async () => {
+    harness.window.dispatchEvent(new harness.window.Event('resize'));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  [x, y, w, h] = box();
+  assert.ok(w <= 700 && x + w <= 800 && h < 400 && y >= 0, 'shrunk only as far as it must be');
+  assert.deepEqual(JSON.parse(prefs.getItem('tclaude.dash.companion.placement')), saved, 'and the saved place is untouched');
+  viewport(1800, 1000);
+  await harness.act(async () => {
+    harness.window.dispatchEvent(new harness.window.Event('resize'));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.deepEqual(box(), [900, 500, 700, 400], 'a larger browser brings it all back');
+});
+
 test('every edge and corner of a floating window resizes it, and the opposite side stays put', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, controller } = await setup(t, { prefs });
