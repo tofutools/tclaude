@@ -575,6 +575,12 @@ through the peer). Only a
 shell from before shells were filed under their group keeps a locked
 `Attach`.
 
+With Collab on, the counter also has a **Boards** section: boards that agents
+hold a [board session](boards.md#board-sessions) on, each with its title and agents, so
+work done with no tab open is not lost sight of. `Open` opens the board as a
+tab, and `End` removes the sessions and leaves the board. These rows are this
+node's and do not show in a peer's per-node view.
+
 A peer's tclaude shells open here too: on a peer's Groups rows (its own view,
 or a fused view), clicking a member's directory path opens that agent's
 directory shell, and Ctrl/Cmd-clicking the group's default directory (or its
@@ -656,8 +662,10 @@ speech. An agent parked in a chip or detached has no terminal here, so stop it
 with the voice toggle.
 
 In the window, ✉ or Ctrl/Cmd+M sends the active agent a queued message, as in
-the Terminals tab, and ⇄ morphs it onto another harness, model or profile. ⧉
-detaches it into its own browser window. It stays there until you press
+the Terminals tab, and ⇄ opens the send-elsewhere dialog on Morph, with Move,
+Teleport, Clone and Recall home a pick away, as from its ⚙ menu. ⧉ detaches it
+into its own browser window, opening where the companion window is. It stays
+there until you press
 **Bring it back here** or close that window.
 
 Give the Steward an idea and it follows the bundled `tclaude-fleet`
@@ -717,9 +725,11 @@ with that text, with the note beside it (it needs `dashboard.guide`). With
 draws hand-drawn marks over several controls at once, which is how it marks
 up your view in return. With `--open <agent>` it opens that agent in your
 companion window, which is how a brief hands you the agent that is waiting
-on you. While you are typing, dictating or holding a draft for another tab,
-it is only pinned there, so your words still go to the agent you meant them
-for. A cue
+on you. With several dashboard tabs open, one opens it: the focused tab
+first, else one that is visible; a hidden tab waits until you return to it.
+While you are typing, dictating or holding a draft for another tab, it is
+only pinned there, so your words still go to the agent you meant them for. A
+cue
 only points: it never presses anything, and it plays once, then fades after a
 few seconds or when you dismiss it. Both slugs are granted to the Steward when
 it is summoned and are not default-granted to other agents.

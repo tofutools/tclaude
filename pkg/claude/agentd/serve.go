@@ -1350,6 +1350,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/boards/{id}", collabRoute(handleBoardRead))
 	mux.HandleFunc("PATCH /v1/boards/{id}", collabRoute(handleBoardPatch))
 	mux.HandleFunc("GET /v1/boards/{id}/snapshot", collabRoute(handleBoardSnapshot))
+	mux.HandleFunc("POST /v1/boards/{id}/session", collabRoute(handleBoardSessionOpen))
+	mux.HandleFunc("DELETE /v1/boards/{id}/session", collabRoute(handleBoardSessionClose))
 	mux.HandleFunc("GET /v1/costs", handleAccountCosts)
 	registerUsageRuleRoutes(mux)
 	mux.HandleFunc("/v1/peers", handlePeers)

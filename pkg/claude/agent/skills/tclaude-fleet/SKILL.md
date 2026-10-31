@@ -67,7 +67,9 @@ When the operator brings an idea:
    it is allowed to get. Read the code and the tracker first.
 3. **Sketch** when the shape matters (a flow, an architecture, a UI): draw it
    on a board with them (`tclaude agent board create`, see `board --help`)
-   and agree on it there.
+   and agree on it there. Your edits keep the board in their Background
+   terminals menu with no tab open; `board open` comes back to a board later
+   and `board close` ends your session on it.
 4. **Choose the vehicle:**
    - *One worker* for a focused change in one repo: spawn into that repo's
      group.

@@ -50,6 +50,17 @@ type backgroundTerminal struct {
 	Killable     bool  `json:"killable,omitempty"`
 	LastActivity int64 `json:"last_activity,omitempty"`
 	Created      int64 `json:"created,omitempty"`
+	// Board and Agents are a board row's (kind board): one row per board with
+	// at least one board session. It has no tmux session. Key is its pane key,
+	// and DELETE /api/boards/{id}/sessions is what ends it.
+	Board  string                 `json:"board,omitempty"`
+	Agents []backgroundBoardAgent `json:"agents,omitempty"`
+}
+
+// backgroundBoardAgent is one agent with a session on a board row's board.
+type backgroundBoardAgent struct {
+	AgentID string `json:"agent_id"`
+	Title   string `json:"title"`
 }
 
 type backgroundTerminalsResponse struct {
@@ -83,7 +94,42 @@ func handleDashboardBackgroundTerminals(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "tmux", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: classifyBackgroundTerminals(sessions)})
+	rows := classifyBackgroundTerminals(sessions)
+	if collabRoutesEnabled() {
+		rows = append(rows, backgroundBoardRows()...)
+	}
+	writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: rows})
+}
+
+// backgroundBoardRows lists the boards with at least one board session, longest
+// idle first like the terminals. Boards stay with their own node, so this is
+// only for the node's own dashboard. A read error costs the rows, not the
+// terminals around them.
+func backgroundBoardRows() []backgroundTerminal {
+	sessions, err := db.ListCollabBoardSessions()
+	if err != nil {
+		slog.Warn("background terminals: list board sessions failed", "error", err)
+		return nil
+	}
+	var out []backgroundTerminal
+	index := map[string]int{}
+	for _, s := range sessions {
+		i, seen := index[s.BoardID]
+		if !seen {
+			i = len(out)
+			index[s.BoardID] = i
+			out = append(out, backgroundTerminal{
+				Kind: "board", Board: s.BoardID, Key: "board:" + s.BoardID, Label: s.BoardTitle, Killable: true,
+				Created: s.StartedAt.Unix(),
+			})
+		}
+		row := &out[i]
+		row.Agents = append(row.Agents, backgroundBoardAgent{AgentID: s.AgentID, Title: backgroundConvTitle(s.ConvID)})
+		row.LastActivity = max(row.LastActivity, s.LastActiveAt.Unix())
+		row.Created = min(row.Created, s.StartedAt.Unix())
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].LastActivity < out[j].LastActivity })
+	return out
 }
 
 // listBackgroundTmuxSessions returns the sessions no client is attached to. A
