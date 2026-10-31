@@ -96,11 +96,13 @@ log "seeding a native session in the source node's OpenCode"
 SOURCE_ID=ses_0123456789abfSmokeSession01
 MESSAGE_ID=msg_0123456789abfSmokeMessage1
 PART_ID=prt_0123456789abfSmokeMessPart
-jq -n --arg id "$SOURCE_ID" --arg msg "$MESSAGE_ID" --arg part "$PART_ID" --arg cwd "$SRC_CWD" --arg secret "$SECRET" '{
+NOW_MS=$(($(date +%s) * 1000))
+jq -n --arg id "$SOURCE_ID" --arg msg "$MESSAGE_ID" --arg part "$PART_ID" --arg cwd "$SRC_CWD" --arg secret "$SECRET" \
+	--argjson now "$NOW_MS" '{
 	info: {id: $id, slug: "smoke", projectID: "global", directory: $cwd, title: "Smoke history",
-		version: "1.18.6", time: {created: 1, updated: 1}},
+		version: "1.18.6", time: {created: $now, updated: $now}},
 	messages: [{
-		info: {id: $msg, sessionID: $id, role: "user", time: {created: 1}, agent: "build",
+		info: {id: $msg, sessionID: $id, role: "user", time: {created: $now}, agent: "build",
 			model: {providerID: "test", modelID: "fixture"}},
 		parts: [{id: $part, sessionID: $id, messageID: $msg, type: "text", text: $secret}]
 	}]
