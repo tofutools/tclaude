@@ -4236,7 +4236,55 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 	}
+	// Every field is validated before the first write, so a rejected save leaves
+	// nothing behind.
+	var cwd, ctx, profile string
+	if body.DefaultCwd != nil {
+		// Normalise + validate: expand "~", require an absolute path (a
+		// relative default would resolve against the daemon's cwd at
+		// spawn time, which is meaningless). Empty stays empty — clears it.
+		var err error
+		if cwd, err = resolveGroupDefaultCwd(*body.DefaultCwd); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+			return
+		}
+	}
+	if body.DefaultContext != nil {
+		// Fold CRLF → LF and enforce the size cap. Empty stays empty —
+		// that clears the group context.
+		var err error
+		if ctx, err = normalizeGroupContext(*body.DefaultContext); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+	}
+	if body.DefaultProfile != nil {
+		// Validate only that the referenced profile exists (its launch fields
+		// were validated against their own harness at save) — the harness-correct
+		// replacement for the retired Claude-only default_model gate (#343).
+		// Empty stays empty — that clears the group default.
+		var err error
+		if profile, err = resolveGroupDefaultProfileName(*body.DefaultProfile); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
+			return
+		}
+	}
+	var policy *bool
+	if body.RemoteControlPolicy != nil {
+		var err error
+		if policy, err = parseRemoteControlPolicy(*body.RemoteControlPolicy); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_remote_control_policy", err.Error())
+			return
+		}
+	}
 	resp := map[string]any{"group": g.Name}
+	// The writes are not one transaction, so a failure part way through has
+	// changed something, and a sudo use spent on it stays spent.
+	defer func() {
+		if len(resp) > 1 {
+			keepSudoUses(r)
+		}
+	}()
 
 	if body.Descr != nil {
 		// The group descr is a one-line label. Fold any embedded
@@ -4261,14 +4309,6 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 
 	if body.DefaultCwd != nil {
-		// Normalise + validate: expand "~", require an absolute path (a
-		// relative default would resolve against the daemon's cwd at
-		// spawn time, which is meaningless). Empty stays empty — clears it.
-		cwd, err := resolveGroupDefaultCwd(*body.DefaultCwd)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
-			return
-		}
 		n, err := db.SetAgentGroupDefaultCwd(g.Name, cwd)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -4298,13 +4338,6 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 
 	if body.DefaultContext != nil {
-		// Fold CRLF → LF and enforce the size cap. Empty stays empty —
-		// that clears the group context.
-		ctx, err := normalizeGroupContext(*body.DefaultContext)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return
-		}
 		n, err := db.SetAgentGroupDefaultContext(g.Name, ctx)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -4331,15 +4364,6 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 
 	if body.DefaultProfile != nil {
-		// Validate only that the referenced profile exists (its launch fields
-		// were validated against their own harness at save) — the harness-correct
-		// replacement for the retired Claude-only default_model gate (#343).
-		// Empty stays empty — that clears the group default.
-		profile, err := resolveGroupDefaultProfileName(*body.DefaultProfile)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
-			return
-		}
 		n, err := db.SetAgentGroupDefaultProfile(g.Name, profile)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -4399,11 +4423,6 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 
 	if body.RemoteControlPolicy != nil {
-		policy, err := parseRemoteControlPolicy(*body.RemoteControlPolicy)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_remote_control_policy", err.Error())
-			return
-		}
 		n, err := db.SetAgentGroupRemoteControl(g.Name, policy)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())

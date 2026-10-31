@@ -294,18 +294,28 @@ function osSandboxBadge(mode, state, unverified, implementation) {
   return null;
 }
 
+// sandboxEnforcementGap names the worst gap the launch recorded between the
+// configured rules and what is enforced, or '' when there is none. Any reason
+// counts, so a rule the launch dropped or loosened can never earn the padlock,
+// and neither can a reason added later. Resource limits are not confinement;
+// they have their own line in the tooltip.
+function sandboxEnforcementGap(member) {
+  const effects = (member.state?.sandbox_access_notices || [])
+    .filter((notice) => notice?.class === 'degradation' && notice?.axis !== 'resource_limits')
+    .map((notice) => notice?.effect);
+  if (effects.includes('not_enforced')) return 'NOT ENFORCED';
+  return effects.includes('enforced_wider') ? 'PARTLY ENFORCED' : '';
+}
+
 // sandboxIndicator resolves an agent's sandbox posture to the glyph that trails
-// its harness line, or null when there is nothing to say.
+// its harness line, or null when there is nothing to say. `confined` separates
+// a partly enforced sandbox, which shares the warning glyph but is still on,
+// from the warnings whose agent has no working boundary to take down.
 function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
-  // Any reason counts, so a rule the launch dropped can never earn the padlock,
-  // and neither can a reason added later. Resource limits are not confinement;
-  // they have their own line in the tooltip.
-  const unenforced = (member.state?.sandbox_access_notices || []).some((notice) =>
-    notice?.class === 'degradation'
-      && notice?.axis !== 'resource_limits'
-      && notice?.effect === 'not_enforced');
+  const gap = sandboxEnforcementGap(member);
+  const confined = gap === 'PARTLY ENFORCED';
   // A recorded verdict wins: it is the resolved outcome, where the mode is only
   // the request. Absent one (a pre-column row, or Codex — whose --sandbox mode
   // IS its posture) the mode-driven branch below is unchanged.
@@ -314,10 +324,8 @@ function sandboxIndicator(member) {
     const badge = osSandboxBadge(mode, state,
       !!member.state?.os_sandbox_unverified, member.state?.sandbox_implementation || '');
     if (!badge) return null;
-    if (unenforced && !badge.danger) {
-      return { status: 'NOT ENFORCED', danger: true, offline };
-    }
-    return { status: badge.status, danger: badge.danger, offline };
+    if (gap && !badge.danger) return { status: gap, danger: true, confined, offline };
+    return { status: badge.status, danger: badge.danger, confined: !badge.danger, offline };
   }
   if (!mode || mode === 'inherit') return null;
   // These modes explicitly do not provide OS confinement. OpenCode's
@@ -326,11 +334,9 @@ function sandboxIndicator(member) {
   // this pre-verdict fallback.
   const danger = mode === 'danger-full-access' || mode === 'off'
     || mode === 'access-control';
-  return {
-    status: danger ? 'OFF' : unenforced ? 'NOT ENFORCED' : 'ON',
-    danger: danger || unenforced,
-    offline,
-  };
+  if (danger) return { status: 'OFF', danger: true, confined: false, offline };
+  if (gap) return { status: gap, danger: true, confined, offline };
+  return { status: 'ON', danger: false, confined: true, offline };
 }
 
 function sandboxImplementationLabel(member, badge) {
@@ -390,13 +396,16 @@ function codexOwnSandboxUnlockUnsupported(member, unlocked) {
 }
 
 function sandboxTooltip(member, badge, actionable, unlocked) {
-  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
+  const unlockUnsupported = badge.confined && codexOwnSandboxUnlockUnsupported(member, unlocked);
   const lines = [
     `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
     `Profile: ${sandboxProfileLabel(member)}`,
     ...resourceLimitLines(member),
   ];
+  if (badge.status === 'PARTLY ENFORCED') {
+    lines.push('The sandbox is on, but some rules are enforced more loosely than configured.');
+  }
   for (const notice of member.state?.sandbox_access_notices || []) {
     if (notice?.detail) lines.push(`Warning: ${notice.detail}`);
   }
@@ -483,9 +492,10 @@ export function SandboxBadge({ member, showDetails = false }) {
   // A warning can also mean a normally unconfined launch or an unverified
   // verdict. Only the warning produced by this temporary override is a
   // restore shortcut; otherwise clicking a warning would misleadingly offer
-  // to "unlock" an agent that is already unconfined.
-  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
-  const actionable = !!member.online && !unlockUnsupported && (unlocked || !badge.danger);
+  // to "unlock" an agent that is already unconfined. A partly enforced
+  // sandbox is still on, so its warning keeps the padlock's click.
+  const unlockUnsupported = badge.confined && codexOwnSandboxUnlockUnsupported(member, unlocked);
+  const actionable = !!member.online && !unlockUnsupported && (unlocked || badge.confined);
   const action = unlocked ? 'restore' : 'unlock';
   const title = sandboxTooltip(member, badge, actionable, unlocked);
   const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;

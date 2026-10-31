@@ -1268,16 +1268,21 @@ func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionCon
 // standingPermissionAllows reports whether the action is allowed with every
 // sudo grant left out.
 func standingPermissionAllows(convID, perm string, actx ActionContext) bool {
-	cfg, _ := config.Load()
 	withoutSudo := loadPermSources(convID)
 	withoutSudo.sudo = map[string]sudoPermSource{}
-	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
+	return permissionAllowedFrom(withoutSudo, convID, perm, actx)
+}
+
+// permissionAllowedFrom reports whether the given sources allow the action.
+func permissionAllowedFrom(src permSources, convID, perm string, actx ActionContext) bool {
+	cfg, _ := config.Load()
+	verdict := resolveEffectivePermissionVerdictFrom(src, perm,
 		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
 	if actx.bulkGroupMemberCoverage {
-		allowed, _, err := permissionVerdictAllowsBulkGroupAction(standing, convID, perm, actx)
+		allowed, _, err := permissionVerdictAllowsBulkGroupAction(verdict, convID, perm, actx)
 		return err == nil && allowed
 	}
-	allowed, _ := permissionVerdictAllowsAction(standing, convID, perm, actx)
+	allowed, _ := permissionVerdictAllowsAction(verdict, convID, perm, actx)
 	return allowed
 }
 

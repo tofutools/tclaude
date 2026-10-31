@@ -728,7 +728,7 @@ function SudoActive({ grants, duration, maxSeconds, busy, act, steward }) {
   };
   return html`<section class="sudo-active" id="sudo-active" aria-label="Active sudo grants">
     <div class="sudo-active-head"><b>Active now (${grants.length})</b><span class="spacer"></span>
-      <button type="button" id="sudo-revoke-all" disabled=${busy} title="End every sudo grant this agent holds"
+      <button type="button" id="sudo-revoke-all" disabled=${busy} title=${grants.some((grant) => grant.carried) ? 'End every sudo grant this agent holds, including what is stored for future Stewards' : 'End every sudo grant this agent holds'}
         onClick=${() => act.revokeAll()}>Revoke all</button></div>
     ${grants.map((grant) => {
     const blocked = refusal(grant);
@@ -736,12 +736,12 @@ function SudoActive({ grants, duration, maxSeconds, busy, act, steward }) {
     return html`<div key=${grant.id} class="sudo-active-row" data-grant=${grant.id} title=${[grant.reason, grant.granted_by].filter(Boolean).join(' · ')}>
       <span class="sudo-active-slug">${grant.slug}</span>
       ${chips.length ? html`<span class="perm-scope-chips">${chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)}</span>` : null}
-      ${steward && html`<span class="perm-source">${grant.carried ? 'all future Stewards' : 'this Steward only'}</span>`}
+      ${steward && html`<span class="perm-source">${grant.carried ? 'all future Stewards: revoking ends it for them too' : 'this Steward only'}</span>`}
       <span class="sudo-active-left">${sudoDurationText(sudoSecondsLeft(grant, now))} left</span>
       ${grant.uses_limit > 0 && html`<span class="sudo-active-left sudo-uses-left" title="Ends at whichever limit comes first">${grant.uses_left} of ${grant.uses_limit} uses left</span>`}
       <button type="button" class="sudo-extend" disabled=${busy || !!blocked} title=${blocked || `Add ${duration} to this grant`}
         aria-label=${`Add ${duration} to ${grant.slug}`} onClick=${() => act.extend([grant.id])}>+${adds ? duration : '…'}</button>
-      <button type="button" class="sudo-revoke" disabled=${busy} aria-label=${`Revoke ${grant.slug}`} onClick=${() => act.revoke([grant.id])}>Revoke</button>
+      <button type="button" class="sudo-revoke" disabled=${busy} title=${grant.carried ? 'Also ends it for all future Stewards' : ''} aria-label=${`Revoke ${grant.slug}`} onClick=${() => act.revoke([grant.id])}>Revoke</button>
     </div>`;
   })}
   </section>`;

@@ -178,19 +178,14 @@
 }
 .companion-input button[type="submit"]:disabled { opacity: .5; cursor: default; }
 
-.companion-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; }
-.companion-resize::after {
-  content: ''; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px;
+.companion-resize-frame .window-resize-zone.se::after {
+  content: ''; position: absolute; right: 6px; bottom: 6px; width: 7px; height: 7px;
   border-right: 2px solid #484f58; border-bottom: 2px solid #484f58;
 }
-.companion-resize-corner { position: absolute; width: 12px; height: 12px; touch-action: none; z-index: 2; }
-.companion-resize-corner.nw { left: 0; top: 0; cursor: nwse-resize; }
-.companion-resize-corner.ne { right: 0; top: 0; cursor: nesw-resize; }
-.companion-resize-corner.sw { left: 0; bottom: 0; cursor: nesw-resize; }
-.companion-window.snapped-right .companion-resize { left: 0; right: auto; top: 0; bottom: 0; width: 6px; height: auto; cursor: ew-resize; }
-.companion-window.snapped-left .companion-resize { right: 0; top: 0; bottom: 0; width: 6px; height: auto; cursor: ew-resize; }
-.companion-window.snapped-bottom .companion-resize { left: 0; right: 0; top: 0; width: auto; height: 6px; cursor: ns-resize; }
-.companion-window.snapped .companion-resize::after { display: none; }
+.companion-resize { position: absolute; touch-action: none; }
+.companion-window.snapped-right .companion-resize { left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.companion-window.snapped-left .companion-resize { right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.companion-window.snapped-bottom .companion-resize { left: 0; right: 0; top: 0; height: 6px; cursor: ns-resize; }
 
 .companion-snap-guide {
   position: fixed; z-index: 949; pointer-events: none; border-radius: 8px;
@@ -302,6 +297,7 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 /* Annotation (js/companion-annotate.js, tcl-8vjjko): the operator draws over
    the page; the window and chips step aside meanwhile. */
 body.companion-annotating .companion-window,
+body.companion-annotating .companion-resize-frame,
 body.companion-annotating .companion-chips { visibility: hidden; }
 .annotate-root { position: fixed; inset: 0; z-index: 955; }
 .annotate-canvas {
@@ -410,7 +406,7 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 
 /* The dialogs the window opens must not land behind it. Other plain modals
    stay under it, so an agent can be used beside the editor it is helping with. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show) .companion-window { z-index: 90; }
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show) :is(.companion-window, .companion-resize-frame) { z-index: 90; }
 
 /* The title bar sizes its buttons as icons; the shut-down confirmation hanging
    off it holds ordinary ones. */

@@ -43,6 +43,12 @@ var countableSudoSlugs = []string{
 	PermGroupsCreate, PermGroupsDelete, PermGroupsRename, PermGroupsClone, PermGroupsArchive, PermGroupsNest,
 	PermGroupsAttachment, PermGroupsImport, PermGroupsOwnersManage, PermGroupsLinkAdd, PermGroupsLinkRemove,
 
+	// One save spends one use of each slug it changes: each is its own grant.
+	PermGroupsSettingsDescription, PermGroupsSettingsDefaultDir, PermGroupsSettingsDefaultContext,
+	PermGroupsSettingsEnvironment, PermGroupsSettingsDefaultSpawnTarget, PermGroupsSettingsDefaultProfile,
+	PermGroupsSettingsMaxMembers, PermGroupsSettingsNotifications, PermGroupsSettingsRemoteControlPolicy,
+	PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes,
+
 	PermMessageDirect, PermHumanNotify, PermHumanClipboard,
 
 	PermTemplatesManage, PermTemplatesUse, PermProfilesManage, PermRolesManage, PermPromptsManage,
@@ -65,7 +71,7 @@ var chattySudoSlugs = []string{PermBoardsWrite, PermDashboardMark, PermDashboard
 	PermRoutesConsume, PermRoutesPublish, PermRoutesPublishHost}
 
 // peerSudoSlugs are spent across a peer link, where this node's count does not reach.
-var peerSudoSlugs = []string{PermAgentMove, PermSelfTeleport, PermSelfTeleportPermissions, PermJobsRun}
+var peerSudoSlugs = []string{PermGroupsSettings, PermAgentMove, PermSelfTeleport, PermSelfTeleportPermissions, PermJobsRun}
 
 // sudoUseLimitRefusal says why a slug takes no use limit, and is empty when it
 // can have one. The editor shows it on the row.
@@ -101,6 +107,8 @@ type sudoUseMeter struct {
 	mu   sync.Mutex
 	held map[string]sudoPermSource
 	seen map[string]sudoPermSource
+	// kept holds the uses even if the request fails: see keepSudoUses.
+	kept bool
 }
 
 type sudoUseMeterKey struct{}
@@ -131,7 +139,7 @@ func countSudoUses(h http.Handler) http.Handler {
 func (m *sudoUseMeter) settle(keep bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if keep {
+	if keep || m.kept {
 		return
 	}
 	for slug, grant := range m.held {
@@ -166,6 +174,16 @@ func (m *sudoUseMeter) giveBack() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	clear(m.held)
+}
+
+// keepSudoUses is for a handler that has changed something and may still fail:
+// a failure then must not hand back the uses that paid for the change.
+func keepSudoUses(r *http.Request) {
+	if meter := sudoUseMeterFrom(r); meter != nil {
+		meter.mu.Lock()
+		defer meter.mu.Unlock()
+		meter.kept = true
+	}
 }
 
 func giveBackSudoUses(r *http.Request) {
@@ -221,7 +239,8 @@ func withoutLimitedSudo(src permSources) permSources {
 }
 
 // limitedSudoSource returns the limited grant this allowed action rests on, if
-// any. Standing authority that covers the action leaves the grant unspent.
+// any. A grant whose scope misses the action did not allow it, and anything else
+// that covers the action, an unlimited sudo grant included, leaves it unspent.
 func limitedSudoSource(r *http.Request, convID, perm string, actx ActionContext) (sudoPermSource, bool) {
 	meter := sudoUseMeterFrom(r)
 	if meter == nil {
@@ -231,7 +250,17 @@ func limitedSudoSource(r *http.Request, convID, perm string, actx ActionContext)
 		meter.mu.Lock()
 		grant, ok := meter.seen[slug]
 		meter.mu.Unlock()
-		if ok && !standingPermissionAllows(convID, slug, actx) {
+		if !ok {
+			continue
+		}
+		verdict := permVerdict{Resolution: permAllow, Source: permSourceSudo, SudoGrantID: grant.ID, ScopeJSON: []string{grant.ScopeJSON}}
+		if !actx.bulkGroupMemberCoverage {
+			if allowed, _ := permissionVerdictAllowsAction(verdict, convID, slug, actx); !allowed {
+				continue
+			}
+		}
+		src := withoutLimitedSudo(loadPermSources(convID))
+		if !permissionAllowedFrom(src, convID, slug, actx) {
 			return grant, true
 		}
 	}

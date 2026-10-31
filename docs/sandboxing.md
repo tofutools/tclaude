@@ -30,7 +30,8 @@ tells you why.
 1. Create a sandbox profile in the [library](dashboard-library.md), or use
    `tclaude agent sandbox-profiles`.
 2. Pick it under **Sandbox profile** in the spawn dialog, or set it for a group with 🛡.
-3. Check the result: the row shows 🔒, its tooltip lists what applies, and
+3. Check the result: the row shows 🔒, or ⚠ if some rules are enforced more
+   loosely than configured. Its tooltip lists what applies, and
    `tclaude agent sandbox-profiles plan` shows the plan for a profile.
 
 **When something is blocked**, one of three things happens: the launch is refused
@@ -850,7 +851,7 @@ exact socket deny, and the overlay is skipped in mode `off`.
   badge is a launch-time verdict — resume re-resolves it.
 
 The dashboard badges the posture per agent: `🔒` sandbox on,
-`⚠` off or unknown, nothing for plain inherit. An unsandboxed-autonomy warning
+`⚠` off, unknown or not fully enforced, nothing for plain inherit. An unsandboxed-autonomy warning
 fires wherever auto-approval pairs with an unprovable sandbox. The
 [credential proxies](proxies.md) are what make denying `~/.ssh` and
 `~/.config/gh` survivable for agents that still need to push branches.
@@ -1060,6 +1061,12 @@ renders a warning badge and the exact notice rather than claiming a sandbox
 lock or changing the recorded OS-sandbox verdict. The same goes for any other
 degradation notice with that effect, such as `operator_reduced_network_deny_override`
 for omitted deny entries; only a `resource_limits` notice leaves the lock.
+
+A sandbox that is on but enforces a rule more loosely than configured, recorded
+as a notice with effect `enforced_wider`, gets the same warning badge. Its hover
+says `PARTLY ENFORCED`, confirms the sandbox is on and names what is loose. This
+is display only: the launch and its enforcement are unchanged, and the badge
+keeps the click that temporarily disables the sandbox.
 
 ### An untrusted `bwrap`
 
