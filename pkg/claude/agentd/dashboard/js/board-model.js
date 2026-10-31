@@ -30,6 +30,9 @@ export function boardToolDigit(index) {
 export const BOARD_COLORS = Object.freeze(['#1e1e1e', '#e03131', '#2f9e44', '#1971c2', '#f08c00', '#9c36b5']);
 export const BOARD_FILLS = Object.freeze(['transparent', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99', '#eebefa']);
 
+const BOARD_GRID = 20; // board units between the paper's dots
+const BOARD_GRID_MIN_PX = 12; // closer than this they turn into a texture
+
 const SHAPES = new Set(['rectangle', 'ellipse', 'diamond']);
 const LINEAR = new Set(['arrow', 'line', 'freedraw']);
 const BOARD_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -115,6 +118,16 @@ export function liveElements(map) {
 // normalizeBox turns a drag from (x0,y0) to (x1,y1) into a positive box.
 export function normalizeBox(x0, y0, x1, y1) {
   return { x: Math.min(x0, x1), y: Math.min(y0, y1), width: Math.abs(x1 - x0), height: Math.abs(y1 - y0) };
+}
+
+// boardGrid places the paper's grid in a view: the screen distance between dots
+// and where the dot at the board's origin lands. Zoomed out, every second dot
+// goes, as often as it takes to keep them apart; the rest stay on the board's
+// multiples of BOARD_GRID, so the grid never shifts under the drawing.
+export function boardGrid({ x, y, zoom }) {
+  let size = BOARD_GRID * zoom;
+  while (size < BOARD_GRID_MIN_PX) size *= 2;
+  return { size, x: -x * zoom, y: -y * zoom };
 }
 
 // elementBounds is the axis-aligned box an element covers, in board units.
