@@ -32,12 +32,11 @@ import { ResizeFrame, resizedPlacement, savedAfterResize } from './window-resize
 import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js';
 import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
-import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
-import { dictationBlock } from './insecure-origin.js';
 import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
-import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
+import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
+import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
 
@@ -311,7 +310,6 @@ export function CompanionApp({
   const fieldRef = useCallback((element) => { if (!element) setFieldFocused(false); }, []);
   const [withContext, setWithContext] = useState(true);
   // The agent the operator is marking up the page for (tcl-8vjjko), or null.
-  const [annotating, setAnnotating] = useState(null);
   // Voice output (tcl-q3qcfw): agents whose replies are spoken aloud.
   const [voiceAgents, setVoiceAgents] = useState(() => new Set(parseVoiceAgents(readPref(prefs, VOICE_PREF))));
   const voiceAgentsRef = useRef(voiceAgents);
@@ -325,38 +323,6 @@ export function CompanionApp({
     },
   }), [speakerImpl, win]);
   const voiceReader = useMemo(() => createVoiceReader(fetchImpl), [fetchImpl]);
-  // Voice input (tcl-sqxkb0): dictation fills the draft; ending with "send"
-  // sends it. The callbacks read the latest send through a ref.
-  const [listening, setListening] = useState(false);
-  const dictationBase = useRef('');
-  const sendRef = useRef(null);
-  // A dictation belongs to the agent it started for; results that land after
-  // a switch are dropped. listeningRef keeps replies from being spoken into
-  // the open mic.
-  const dictationAgent = useRef('');
-  const activeIdRef = useRef('');
-  const listeningRef = useRef(false);
-  const ownDictation = () => dictationAgent.current && dictationAgent.current === activeIdRef.current;
-  const joinDraft = (base, heard) => [base.trim(), heard.trim()].filter(Boolean).join(' ');
-  const dictation = useMemo(() => (dictationImpl || ((callbacks) => createDictation(win, callbacks)))({
-    onText: (heard) => { if (ownDictation()) setDraft(dictationAgent.current, joinDraft(dictationBase.current, heard)); },
-    onState: (on, error) => {
-      listeningRef.current = on;
-      setListening(on);
-      if (error && error !== 'no-speech' && error !== 'aborted') {
-        notify(error === 'not-allowed' ? 'The browser blocked the microphone for this page.' : `Dictation stopped: ${error}`, true);
-      }
-    },
-    onSend: (heard) => {
-      if (!ownDictation()) return;
-      const text = joinDraft(dictationBase.current, heard);
-      if (!text) return;
-      // The draft takes the final words first: a send clears the draft it
-      // sent, and only when the message really went out.
-      setDraft(dictationAgent.current, text);
-      void sendRef.current?.(null, text);
-    },
-  }), [dictationImpl, win]);
   const voiceStatuses = useRef(new Map());
   const voiceDecisions = useRef(new Map());
   const [sending, setSending] = useState(false);
@@ -374,6 +340,16 @@ export function CompanionApp({
   const activeAgent = activeId ? agents.get(activeId) || null : null;
   const draft = drafts[activeId] || '';
   draftRef.current = draft;
+  // Voice input (tcl-sqxkb0): dictation fills the draft; ending with "send"
+  // sends it. listeningRef keeps replies from being spoken into the open mic.
+  const sendPhrase = dictationSendPhrase(snapshot.value);
+  const dictation = useDictation({
+    win, targetId: activeId, draft, setDraft, notify, dictationImpl, sendPhrase,
+    send: (text) => send(null, text),
+    onStart: () => speaker.cancel(),
+    onRelease: () => { setFieldFocused(false); setFocusToken((n) => n + 1); },
+  });
+  const { listening, listeningRef } = dictation;
 
   useEffect(() => writePref(prefs, COMPANION_TABS_PREF, JSON.stringify(tabs)), [tabs]);
   useEffect(() => {
@@ -767,22 +743,6 @@ export function CompanionApp({
     else toggle();
   }
 
-  sendRef.current = send;
-  activeIdRef.current = activeId || '';
-  // Switching agents (or closing) drops a dictation outright.
-  useEffect(() => () => dictation.abort?.(), [activeId, dictation]);
-
-  function toggleDictation() {
-    if (listening) {
-      dictation.stop();
-      return;
-    }
-    speaker.cancel();
-    dictationBase.current = draft;
-    dictationAgent.current = activeId || '';
-    dictation.start();
-  }
-
   async function send(event, text = draft) {
     event?.preventDefault?.();
     const context = withContext
@@ -794,22 +754,18 @@ export function CompanionApp({
     }
     const body = composeCompanionMessage(text, context);
     if (!body || !activeAgent || sending) return false;
+    // An open mic would bring the sent text back. Enter or Send with the mic
+    // on sends what the draft holds; a failed send leaves it there.
+    if (event) dictation.abort?.();
     setSending(true);
     try {
-      const response = await fetchImpl('/api/operator-message', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: activeAgent.agentId, subject: '', body }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      await postOperatorMessage(fetchImpl, { to: activeAgent.agentId, body });
       // Whatever was typed while this went out stays.
       setDrafts((current) => {
         if (current[activeAgent.agentId] !== text) return current;
         const { [activeAgent.agentId]: _sent, ...rest } = current;
         return rest;
       });
-      // An open mic would bring the sent text back.
-      if (event) dictation.abort?.();
       // Send and the field are about to go, and focus would fall to the page.
       const focused = win?.document?.activeElement;
       if (draftRef.current === text && focused?.matches?.('.companion-draft, .companion-input button[type="submit"]')) {
@@ -839,7 +795,7 @@ export function CompanionApp({
   useEffect(() => {
     if (!speaker.supported) return;
     const next = new Map();
-    const quiet = () => listeningRef.current; // never speak into an open mic
+    const quiet = () => dictationOpen() || listeningRef.current; // never speak into an open mic
     for (const id of voiceAgents) {
       const agent = agents.get(id);
       if (agent && tabs.includes(id)) next.set(id, statusOf(agent));
@@ -909,43 +865,17 @@ export function CompanionApp({
 
   // The window and chips stay mounted (the terminal keeps its stream) but
   // step out of the way while the operator draws.
-  useEffect(() => {
-    win?.document?.body?.classList?.toggle?.('companion-annotating', !!annotating);
-    return () => win?.document?.body?.classList?.remove?.('companion-annotating');
-  }, [annotating, win]);
+  const annotation = useAnnotation({
+    win, notify,
+    viewNow: () => viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search }),
+  });
 
   function startAnnotating() {
     if (!activeAgent?.online) {
       notify('Open a live agent in the companion first, then mark up the page for it.', true);
       return;
     }
-    setAnnotating({ agentId: activeAgent.agentId, name: activeAgent.name });
-  }
-
-  async function sendAnnotation({ note, lines }) {
-    const target = annotating;
-    if (!target) return;
-    const view = viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search });
-    const text = composeAnnotation({ note, lines });
-    // Clipped, the agent would miss marks while the operator is told it all
-    // went out. The overlay stays open with the strokes intact.
-    if (!companionMessageFits(text, view)) {
-      notify('That markup is too long to send. Undo some marks or shorten the note, then send again.', true);
-      return;
-    }
-    const body = composeCompanionMessage(text, view);
-    try {
-      const response = await fetchImpl('/api/operator-message', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: target.agentId, subject: '[annotation]', body }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
-      setAnnotating(null);
-      notify(`Sent your markup to ${target.name}.`);
-    } catch (error) {
-      notify(`Markup to ${target.name} failed: ${error?.message || error}`, true);
-    }
+    annotation.start({ agentId: activeAgent.agentId, name: activeAgent.name, fetchImpl });
   }
 
   async function resume(agent) {
@@ -1354,22 +1284,11 @@ export function CompanionApp({
   }, [open, warmId, warm]);
 
   const showComposer = !showQueue && activeAgent && activeAgent.online;
-  // Over the terminal, taking no room: the anchor has no height, and only the
-  // cluster itself takes the pointer. Before the terminal in the DOM, because
-  // Tab typed into a terminal stays there.
-  const micBlock = dictationBlock(dictation.supported, win);
-  const floatingTools = showComposer && html`<div class=${`companion-floating${listening ? ' listening' : ''}`} role="group" aria-label="Message tools">
-      ${!micBlock && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
-        <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
-      </label>`}
-      <button type="button" class=${`companion-tool companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
-        aria-label=${`Dictate a message to ${activeAgent.name}`} disabled=${!!micBlock}
-        title=${micBlock?.why || 'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
-        onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>
-      ${micBlock && html`<span class="companion-mic-note" title=${micBlock.why}>${micBlock.note}</span>`}
-      <button type="button" class="companion-tool companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
-        title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
-  </div>`;
+  const floatingTools = showComposer && html`<${FloatingTools} dictation=${dictation}
+    micLabel=${`Dictate a message to ${activeAgent.name}`}
+    micTitle=${micTitle(sendPhrase)}
+    withContext=${withContext} onContext=${setWithContext}
+    annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${startAnnotating} />`;
 
   const windowView = (open || warm) && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${open ? '' : ' companion-window-warm'}`}
@@ -1462,13 +1381,10 @@ export function CompanionApp({
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
-    ${showComposer && showField && html`<form class=${`companion-input${listening ? ' listening' : ''}`} onSubmit=${send}>
-      ${showField && html`<input type="text" class="companion-draft" ref=${fieldRef} maxLength=${COMPANION_MESSAGE_MAX}
-        placeholder=${listening ? 'Listening…' : ''}
-        onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)}
-        aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />`}
-      ${showField && html`<button type="submit" disabled=${sending || !draft.trim()}>Send</button>`}
-    </form>`}
+    ${showComposer && showField && html`<${DraftField} dictation=${dictation} draft=${draft} sending=${sending}
+      label=${`Message ${activeAgent.name}`} fieldRef=${fieldRef} onSubmit=${send}
+      onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)}
+      onEdit=${(text) => { speaker.cancel(); setDraft(activeAgent.agentId, text); }} />`}
     ${placement.snap && html`<div class="companion-resize" aria-hidden="true" onPointerDown=${(event) => onResizePointerDown(event)}></div>`}
   </section>`;
 
@@ -1477,8 +1393,7 @@ export function CompanionApp({
     ${windowView}
     ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} className="companion-resize-frame" onResizeStart=${onResizePointerDown} />`}
     ${chips}
-    ${annotating && html`<${AnnotateOverlay} agentName=${annotating.name} win=${win}
-      onSend=${sendAnnotation} onCancel=${() => setAnnotating(null)} />`}
+    ${annotation.overlay}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
     ${marks.length > 0 && win && html`<${MarksLayer} marks=${marks} win=${win} onEnd=${endMark} onDismissAll=${dismissAllMarks}
       onReply=${replyToMark} onReport=${(report) => { markReport.current = report; }} />`}

@@ -1,4 +1,5 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
+import { DEFAULT_SEND_PHRASE } from './companion-voice.js';
 import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS, closeTabsChecked, closeTabsStored } from './terminal-close-tabs.js';
@@ -561,6 +562,8 @@ function populateConfigForm(cfg) {
   // actions to in-browser web terminals. Default web (checked); only an
   // explicit dashboard.default_terminal:"native" unchecks it.
   $('#cfg-dashboard-default-web-terminal').checked = cfg.dashboard?.default_terminal !== 'native';
+  // dictation_send_phrase: absent is the default, an explicit "" is off.
+  $('#cfg-dashboard-dictation-send-phrase').value = cfg.dashboard?.dictation_send_phrase ?? DEFAULT_SEND_PHRASE;
 
   const terminalAttach = (cfg.dashboard && cfg.dashboard.terminal_attach) || {};
   setSelectValue($('#cfg-terminal-attach-mode'), terminalAttach.mode || 'repair');
@@ -928,6 +931,8 @@ function assembleConfig() {
   // default_terminal: web is the default, so store only the NON-default
   // "native" and drop the key otherwise — mirrors the Go resolver.
   if (!$('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'native'; else delete dashboard.default_terminal;
+  const sendPhrase = $('#cfg-dashboard-dictation-send-phrase').value.trim();
+  if (sendPhrase === DEFAULT_SEND_PHRASE) delete dashboard.dictation_send_phrase; else dashboard.dictation_send_phrase = sendPhrase;
   const terminalAttach = (dashboard.terminal_attach && typeof dashboard.terminal_attach === 'object')
     ? dashboard.terminal_attach : {};
   const terminalAttachMode = controlValue($('#cfg-terminal-attach-mode'));

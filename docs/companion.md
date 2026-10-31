@@ -110,16 +110,29 @@ and reads decisions with their options. Typing in the terminal stops speech. It 
 your browser's built-in voices. It reads the agent's transcript, so it doesn't work
 on OpenCode.
 
-**Dictation.** **🎤** dictates into a draft. Pause and say "send" on its own to send
-it, or press the button again to stop and edit. Typing in the draft also stops it.
-No reply is read while the mic is open. It uses your browser's speech recognition,
+**Dictation.** **🎤** dictates into a draft, and the draft takes the keyboard. End
+with "send now" to send it; no pause is needed, and the phrase stays out of the
+message. It only counts at the very end of a finished phrase, so a sentence that
+merely contains it, or the word "send", is plain text. **Enter** or **Send** sends
+what's in the draft, also while the mic is on. Press the button again to stop, and
+the keyboard goes back to the terminal with the draft kept. Typing in the draft stops
+the mic so you can edit. If the browser ends listening by itself, the keyboard stays
+on the draft.
+
+Change the phrase, or empty it to turn spoken send off, under **Spoken send phrase**
+in [Config](dashboard-config.md). Dictation listens in your browser's language, so
+pick a phrase in that language.
+
+The same tools float over agent terminals in the
+[Terminals tab](dashboard-terminals.md#dictation). No reply is read while any mic is
+open, and starting one mic stops another. It uses your browser's speech recognition,
 and in Chrome the audio is recognized by Google's service.
 
 Where dictation can't work, the mic is disabled and a note beside it says why. That
 covers browsers without speech recognition, and plain HTTP pages away from localhost.
 Browsers refuse the microphone on those pages, so no site permission helps. To
 dictate, open the dashboard on `localhost` or over HTTPS, for example with
-[`tailscale serve`](remote.md#what-is-and-isnt-exposed). **🔈** voice doesn't need the
+[`tailscale serve`](remote.md#where-to-run-it). **🔈** voice doesn't need the
 microphone and still works on plain HTTP.
 
 ## Marking up a page

@@ -119,3 +119,17 @@ With `features.processes` on, a pane whose agent is in a process run shows run
 icons at its top right and on its tab. An icon opens the run's mini-graph, with
 actions to decide, reassign, promote, pause and resume. See
 [Processes](processes.md#in-the-dashboard).
+
+## Dictation
+
+The [companion's](companion.md#voice-and-dictation) **view**, **🎤** and **✎** float at
+a terminal's top right, dimmed until the pointer is on them. Switching terminals,
+leaving the tab or losing the connection stops the mic; the draft stays with its
+terminal.
+
+- **Agent terminals** work like an overlay window: the draft goes to the agent as a
+  message, and you can say "send now".
+- **Plain shells** and shell sessions show only the mic. Enter or **Paste** puts the
+  draft at the prompt as one line with no newline, so nothing runs until you press
+  Enter in the terminal. Spoken send is off.
+- With Collab off, every terminal works like a plain shell.

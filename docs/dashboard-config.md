@@ -44,6 +44,7 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 |---|---|---|---|
 | Terminal | Terminal | `terminal` | auto-detect |
 | Terminal | Default terminal | `dashboard.default_terminal` | `web` |
+| Terminal | Spoken send phrase | `dashboard.dictation_send_phrase` | `send now` (empty is off) |
 | Terminal | Directory picker | `dashboard.default_directory_picker` | `web` (remote dashboards always use it) |
 | Terminal | TUI color scheme | `tui.color_scheme` | `default` |
 | Window focus | Window title | `focus.window_title` | on |

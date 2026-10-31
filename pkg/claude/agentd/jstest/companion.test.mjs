@@ -544,7 +544,7 @@ test('sending from the field hands focus to the terminal, and emptying it keeps 
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   const draft = () => view.container.querySelector('input.companion-draft');
   await dictated.say(harness, view, 'for alpha');
-  await harness.act(async () => { draft().focus(); });
+  await harness.act(async () => { draft().blur(); draft().focus(); });
   await harness.act(async () => {
     draft().value = '';
     draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
@@ -1110,10 +1110,15 @@ test('dictation fills the draft and sends when the operator ends with "send"', a
   const mail = requests.find((r) => r.url === '/api/operator-message');
   assert.match(mail.body.body, /^what can I do here\n\n\[dashboard view:/);
   const voice = await harness.importDashboardModule('js/companion-voice.js');
-  assert.equal(voice.isSendCommand('send'), true);
-  assert.equal(voice.isSendCommand(' Send it. '), true);
-  assert.equal(voice.isSendCommand('I want to send'), false, 'a pause after the verb is not the command');
-  assert.equal(voice.isSendCommand("don't send"), false);
+  assert.equal(voice.sendPhraseRest('fix the bug send now', 'send now'), 'fix the bug');
+  assert.equal(voice.sendPhraseRest('Fix the bug, Send Now.', 'send now'), 'Fix the bug');
+  assert.equal(voice.sendPhraseRest('send, now!', 'send now'), '');
+  assert.equal(voice.sendPhraseRest('send now and then stop', 'send now'), null, 'mid-sentence is plain text');
+  assert.equal(voice.sendPhraseRest('send', 'send now'), null, 'the bare word no longer sends');
+  assert.equal(voice.sendPhraseRest('resend now', 'send now'), null, 'whole words only');
+  assert.equal(voice.sendPhraseRest('skicka nu', ' Skicka  nu! '), '');
+  assert.equal(voice.sendPhraseRest('a.b', 'a+b'), null, 'the phrase is text, not a pattern');
+  assert.equal(voice.sendPhraseRest('send now', ''), null, 'an empty phrase is off');
   // A failed send keeps the dictated draft.
   failNext = true;
   await harness.act(() => mic.click());
