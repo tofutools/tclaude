@@ -727,11 +727,7 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 			if err = json.Unmarshal(raw, &updated); err != nil {
 				return err
 			}
-			if err = config.Save(&updated); err != nil {
-				return err
-			}
-			tellStewardsNewName(cfg, &updated)
-			return nil
+			return config.Save(&updated)
 		}, nil
 	}
 	return nil, errors.New("unsupported section")

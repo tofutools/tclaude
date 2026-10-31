@@ -661,7 +661,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   // folded (or there is no table), so they never go out of reach.
   const table = !!view.visible.length || !!queued.length;
   const hiddenNote = !view.visible.length && (view.members.length || view.away)
-    ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
+    ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — ${groupOfflineOverride(group.name) === 'hide' ? 'this group\'s ⚙ menu hides offline members' : `toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'}`})</div>`
     : null;
   const members = table
     ? html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} queued=${queued}

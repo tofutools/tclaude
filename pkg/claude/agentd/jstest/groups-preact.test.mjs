@@ -639,6 +639,11 @@ test('a group menu cycles its offline override and the member list follows', asy
   assert.equal(dashPrefs.getItem('tclaude.dash.group.offline.alpha'), 'hide');
   assert.equal(offlineRow(), null, 'hidden for this group whatever the tab default says');
 
+  await harness.act(() => state.publish(snapshot([{ ...group, members: [group.members[1]] }])));
+  assert.match(host.querySelector('details[data-group-key="alpha"]').textContent, /⚙ menu hides offline/,
+    'with nobody left to show, the note names the control that hid them');
+  await harness.act(() => state.publish(snapshot([group])));
+
   await harness.act(() => harness.fireEvent(item(), 'click'));
   assert.equal(item().dataset.offlineOverride, 'inherit');
   assert.equal(dashPrefs.getItem('tclaude.dash.group.offline.alpha'), null);
