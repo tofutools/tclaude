@@ -16,6 +16,7 @@
 set -euo pipefail
 
 ROOT=${1:-$(mktemp -d "${TMPDIR:-/tmp}/tclaude-oc-import.XXXXXX")}
+mkdir -p "$ROOT"
 ROOT=$(cd "$ROOT" && pwd)
 BIN=$ROOT/bin
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
