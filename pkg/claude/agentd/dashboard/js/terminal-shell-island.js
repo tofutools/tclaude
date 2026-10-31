@@ -9,7 +9,7 @@ import { openWebWindowPane, registerTerminalShellController } from './terminals-
 import { bindTerminalNavRouting } from './terminal-nav-route.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
-import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
+import { bindTerminalHandoffReceiver, encodeTerminalOpenHash } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
@@ -24,7 +24,7 @@ import { terminalCostsHidden, subscribeTerminalCosts, toggleTerminalCosts } from
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
-import { openAccessPanel } from './companion-approval.js';
+import { StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
@@ -293,11 +293,14 @@ function TerminalPane({
   const [files, setFiles] = useState(false);
   const filesOK = !!(pane.seed.remote && remote?.files && remote?.viewer && !remote?.closed);
   const [dragging, setDragging] = useState(false);
+  const [stewardDown, setStewardDown] = useState(false);
   // Dashboard panes get their status from PaneTab. Only the solo title needs
   // to subscribe to the standalone snapshot signal; keeping this null in the
   // dashboard avoids an extra signal subscriber per opaque xterm host.
   const agentStatus = manageTitle ? terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value) : null;
   const headerRef = useRef(null);
+  // Only a detached window asks: in the dashboard the companion owns this.
+  const liveSteward = solo && snapshot?.value?.agents?.[0]?.steward === true;
   // A solo pop-out has no tab strip to drag out of, so its header is the home
   // region: pull the title off the header and the terminal goes back to the
   // dashboard — the mirror image of dragging a dashboard tab out of the strip.
@@ -356,6 +359,8 @@ function TerminalPane({
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${reconnectPane}>Reconnect</button>` : null}
         ${filesOK ? html`<button type="button" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files</button>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />
+        ${liveSteward && !stewardDown ? html`<${StewardShutdown} agent=${{ agentId: pane.seed.agent, name: pane.label || 'the Steward' }}
+          fetchImpl=${fetchFromPage} onDown=${() => setStewardDown(true)} />` : null}
         ${composeMessage ? html`
           <button type="button" class="mux-btn" title="Send a queued message to this agent (Ctrl/Cmd+M)" onClick=${composeMessage}>✉ Message</button>
         ` : null}
@@ -378,6 +383,7 @@ function TerminalPane({
           <button type="button" class="mux-btn" title="Move this terminal to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>
         `}
       </div>
+      ${stewardDown ? html`<${StewardDownNotice} pane=${pane} actions=${actions} />` : null}
       ${!pane.seed.remote && pane.seed.agent ? html`<${PaneProcessOverlay} agentId=${pane.seed.agent}
         snapshot=${processSnapshot} onComposeMessage=${onComposeMessage
           ? (seed) => onComposeMessage({ ...seed, restoreFocus: () => actions.activatePane(pane.key) })
@@ -409,6 +415,36 @@ function TerminalPane({
 }
 
 const fetchFromPage = (...args) => globalThis.fetch(...args);
+
+// StewardDownNotice is a detached Steward window after its shut down: the
+// terminal has ended, so it offers the new one here. Loading the page anew, not
+// swapping the hash, is what gives the new agent a clean terminal.
+function StewardDownNotice({ pane, actions }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function start() {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await requestStewardSummon(fetchFromPage);
+      const agent = String(result.agent_id || '');
+      if (!agent) throw new Error('the summon returned no agent id');
+      await actions.closePane(pane.key, { skipDetach: true });
+      globalThis.location.replace(`/terminals?solo=1&steward=${encodeURIComponent(agent)}${encodeTerminalOpenHash({
+        ...pane.seed, ws: `/api/open-window-ws/${encodeURIComponent(agent)}`, key: `window:${agent}`,
+        hideConv: agent, agent, label: result.name || 'steward', harness: '', initialRetry: true,
+      })}`);
+    } catch (cause) {
+      setError(`Could not start a new Steward: ${cause?.message || cause}`);
+      setBusy(false);
+    }
+  }
+  return html`<div class="steward-down-notice" role="status">
+    <span><b>${pane.label || 'The Steward'}</b> is shut down. Its conversation stays in history.</span>
+    <button type="button" class="mux-btn" disabled=${busy} onClick=${start}>${busy ? 'Starting…' : 'Start a new Steward'}</button>
+    ${error ? html`<span class="steward-shutdown-error" role="alert">${error}</span>` : null}
+  </div>`;
+}
 
 // BoardPane is a pane with a board in it rather than a terminal: no widget, and
 // none of the agent chrome. The editor mounts the first time the tab is looked

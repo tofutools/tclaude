@@ -396,4 +396,4 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 
 /* The dialogs the window opens must not land behind it. Other plain modals
    stay under it, so an agent can be used beside the editor it is helping with. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show, #sudo-grant-modal.show) .companion-window { z-index: 90; }
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show) .companion-window { z-index: 90; }

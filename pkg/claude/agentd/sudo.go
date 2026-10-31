@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -347,7 +348,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	// Re-snapshot the timestamps post-popup so the window is measured
 	// from approval time, not request time — fairer to the agent if
 	// the human took 30 seconds to click.
-	out, status := insertSudoBundle(agentID, p.ConvID, title, body.Slugs, dur, reason,
+	out, status := insertSudoBundle(agentID, p.ConvID, title, body.Slugs, nil, dur, reason,
 		"human:popup-id="+req.id)
 	writeJSON(w, status, out)
 }
@@ -400,8 +401,51 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 	if !ok {
 		return
 	}
-	out, status := insertSudoBundle(targetAgentID, targetConv, title, body.Slugs, dur, strings.TrimSpace(body.Reason), granter)
+	out, status := insertSudoBundle(targetAgentID, targetConv, title, body.Slugs, nil, dur, strings.TrimSpace(body.Reason), granter)
 	writeJSON(w, status, out)
+}
+
+// sudoPolicyJSON is what the sudo editor shows before anything is submitted:
+// the limits the server will hold it to for this agent, so a config override
+// of the blocklist or the cap reads correctly in the dialog. The server still
+// decides on every grant and extension.
+type sudoPolicyJSON struct {
+	MaxSeconds     int64 `json:"max_seconds"`
+	DefaultSeconds int64 `json:"default_seconds"`
+	// Refused maps each slug that cannot be elevated to why.
+	Refused map[string]string `json:"refused"`
+}
+
+func sudoPolicyWire(policy resolvedSudo) sudoPolicyJSON {
+	out := sudoPolicyJSON{
+		MaxSeconds:     int64(policy.MaxDuration.Seconds()),
+		DefaultSeconds: int64(policy.DefaultDuration.Seconds()),
+		Refused:        map[string]string{},
+	}
+	for _, slug := range policy.Blocklist {
+		out.Refused[slug] = sudoRefusalReason(slug)
+	}
+	return out
+}
+
+func sudoRefusalReason(slug string) string {
+	if slices.Contains(sudoDefaultBlocklist, slug) {
+		return "Refused: it hands out permissions itself, so a grant made during the window would outlive it."
+	}
+	return "Refused by agent.sudo.blocklist in your config."
+}
+
+// extendedSudoExpiry works out a grant's new expiry and holds it to the same
+// cap as a fresh grant, measured from now: repeated extensions cannot turn a
+// bounded elevation into a standing one. On failure it returns a non-empty
+// error message.
+func extendedSudoExpiry(current, now time.Time, by time.Duration, policy resolvedSudo) (time.Time, string) {
+	next := current.Add(by)
+	if left := next.Sub(now); left > policy.MaxDuration {
+		return time.Time{}, fmt.Sprintf("that would leave %s on the grant, over the max %s",
+			left.Round(time.Second), policy.MaxDuration)
+	}
+	return next, ""
 }
 
 // blockedSlugs returns every entry of want that's also in blocklist,
@@ -465,7 +509,10 @@ type sudoBundleResponse struct {
 // in audit views. Returns the response payload + HTTP status; per-row
 // insert failures are surfaced in the response (non-fatal — sibling
 // rows that landed are still valid).
-func insertSudoBundle(agentID, convID, title string, slugs []string, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
+//
+// scopes narrows individual slugs (slug → canonical scope JSON); a slug it does
+// not name is unscoped, the path every caller but the dashboard takes.
+func insertSudoBundle(agentID, convID, title string, slugs []string, scopes map[string]string, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
 	now := time.Now()
 	expires := now.Add(dur)
 	out := sudoBundleResponse{
@@ -477,6 +524,7 @@ func insertSudoBundle(agentID, convID, title string, slugs []string, dur time.Du
 		id, err := db.InsertSudoGrantForAgent(&db.SudoGrant{
 			AgentID:   agentID,
 			Slug:      slug,
+			ScopeJSON: scopes[slug],
 			GrantedAt: now,
 			ExpiresAt: expires,
 			GrantedBy: granter,

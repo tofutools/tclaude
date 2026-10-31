@@ -24,7 +24,7 @@ import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent, viewportOf,
-  stewardSummonBody, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
+  parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
@@ -32,7 +32,7 @@ import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js'
 import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
-import { ApprovalCard, ElevatedBand, StewardAccessControls, openAccessPanel } from './companion-approval.js';
+import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
@@ -276,6 +276,7 @@ export function CompanionApp({
   const [guide, setGuide] = useState(null);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [shutDown, setShutDown] = useState('');
   const [detached, setDetached] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF))));
   const detachedRef = useRef(detached);
   detachedRef.current = detached;
@@ -451,13 +452,9 @@ export function CompanionApp({
     }
     setBusy(true);
     try {
-      const response = await fetchImpl('/api/scribe', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(stewardSummonBody()),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      const result = await requestStewardSummon(fetchImpl);
       if (!isAgentId(result.agent_id)) throw new Error('the summon returned no agent id');
+      setShutDown('');
       notify(`${result.reused ? 'Reopened' : 'Summoned'} ${stewardLabel}.`);
       showAgent(result.agent_id, { starting: true });
     } catch (error) {
@@ -467,7 +464,7 @@ export function CompanionApp({
     }
   }, [steward, stewardLabel, fetchImpl, notify, showAgent]);
 
-  const closeTab = useCallback((agentId) => {
+  const closeTab = useCallback((agentId, { keepOpen = false } = {}) => {
     if (agents.get(agentId)?.scribe) setHelperClosed(agentId, true);
     setVoiceAgents((current) => {
       if (!current.has(agentId)) return current;
@@ -477,9 +474,21 @@ export function CompanionApp({
     });
     const next = withoutTab(tabs, agentId);
     if (agentId === activeId) setActive(nextActive(tabs, agentId));
-    if (!next.length) setOpen(false);
+    if (!next.length && !keepOpen) setOpen(false);
     setTabs(next);
   }, [tabs, activeId, agents]);
+
+  // The window stays open on the shut-down state, with the way to start again.
+  // A detached window of it goes too: it has nothing left to show.
+  function stewardShutDown(agent) {
+    detachedWindows.current.get(agent.agentId)?.close?.();
+    detachedWindows.current.delete(agent.agentId);
+    setParked((current) => without(current, agent.agentId));
+    setDetached((current) => without(current, agent.agentId));
+    closeTab(agent.agentId, { keepOpen: true });
+    setShutDown(agent.name);
+    notify(`${agent.name} is shut down.`);
+  }
 
   const minimize = useCallback(() => {
     setMenu(false);
@@ -1340,7 +1349,8 @@ export function CompanionApp({
           aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
           title="Agents are asking for permission"
           onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
-        ${activeAgent?.steward && !showQueue && html`<${StewardAccessControls} agent=${activeAgent} openPermissions=${openPermissions} openSudo=${openSudo} />`}
+        ${activeAgent?.steward && !showQueue && html`<${StewardAccessControls} agent=${activeAgent} openPermissions=${openPermissions} openSudo=${openSudo} />
+          <${StewardShutdown} agent=${activeAgent} fetchImpl=${fetchImpl} onDown=${stewardShutDown} />`}
         ${activeAgent?.online && !showQueue && html`
           ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${composeToActive}>✉</button>`}
           ${detachWindow && !parked.has(activeAgent.agentId) && html`<button type="button" class="companion-detach" aria-label=${`Detach ${activeAgent.name} into its own window`} title="Detach into its own browser window" onClick=${() => detachToWindow(activeAgent)}>⧉</button>`}
@@ -1364,10 +1374,11 @@ export function CompanionApp({
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>
+        ${shutDown && html`<p class="companion-shutdown-note" role="status"><b>${shutDown}</b> is shut down. Its conversation stays in history.</p>`}
         <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
           groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
         <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, 🛡 and sudo in the title bar change its access.</p>
-        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
+        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : shutDown && !steward?.online ? `Start a new ${customName || 'Steward'}` : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
       ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
