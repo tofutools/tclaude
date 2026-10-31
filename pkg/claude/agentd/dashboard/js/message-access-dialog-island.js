@@ -856,8 +856,9 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   const sudoPicked = sudoMode ? rows.filter((row) => currentEffect(row.slug) === 'grant') : [];
   const sudoSeconds = sudoDurationSeconds(duration);
   // Why a row takes no use limit, or nothing when it can have one.
-  const noLimitWhy = (row) => (!row.countable ? row.not_countable_why || 'It has no single action to count.'
-    : scopeOf(row.slug).peer?.length ? 'A use limit covers local actions only, and this grant is scoped to a peer.' : '');
+  const noLimitWhy = (row, scope = scopeOf(row.slug)) => (!row.countable ? row.not_countable_why || 'It has no single action to count.'
+    : scope.peer?.length ? 'A use limit covers local actions only, and this grant is scoped to a peer.'
+      : row.granted ? 'It already holds this, and what it already holds does not use a count.' : '');
   // A row's own value wins, and blank there falls back to the whole bundle's.
   const usesFor = (slug) => String(sudoUses[slug] ?? '').trim() || sudoBundleUses.trim();
   const usesValid = (value) => !value || /^[1-9]\d{0,2}$|^1000$/.test(value);
@@ -926,7 +927,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const slugs = sudoPicked.map((row) => row.slug);
     const scoped = Object.fromEntries(slugs.filter((slug) => Object.keys(effectiveScopes[slug] || {}).length)
       .map((slug) => [slug, effectiveScopes[slug]]));
-    const uses = Object.fromEntries(sudoPicked.filter((row) => !noLimitWhy(row) && usesFor(row.slug))
+    const uses = Object.fromEntries(sudoPicked.filter((row) => !noLimitWhy(row, effectiveScopes[row.slug] || {}) && usesFor(row.slug))
       .map((row) => [row.slug, Number(usesFor(row.slug))]));
     try {
       await actions.grantSudo({

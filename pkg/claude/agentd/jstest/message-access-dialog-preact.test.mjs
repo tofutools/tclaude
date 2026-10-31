@@ -633,6 +633,15 @@ test('the bundle limit reaches every countable pick, and a row can differ from i
   await mounted.unmount();
 });
 
+test('a held slug takes no use limit: what it holds is never counted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const current = { ...sudoSnapshot(), permissions: { defaults: ['groups.members.spawn'], overrides: {} } };
+  const { host, mounted } = await mountSudo(harness, sudoActions(), current);
+  await pickSudo(harness, host, 'groups.members.spawn');
+  assert.match(sudoRow(host, 'groups.members.spawn').querySelector('.perm-uses.none').title, /does not use a count/);
+  await mounted.unmount();
+});
+
 test('an older node without the policy route leaves the editor on its defaults', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, mounted } = await mountSudo(harness, sudoActions({ sudoPolicy: async () => { throw new Error('405'); } }));

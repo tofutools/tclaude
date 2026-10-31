@@ -1252,6 +1252,9 @@ func permissionVerdictAllowsAction(v permVerdict, convID, perm string, actx Acti
 // (including owner/member-derived grants). This decision-time check retains
 // scoped sudo provenance that a context-free audit re-resolution cannot see.
 func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionContext) int64 {
+	if grant, ok := limitedSudoSource(r, convID, perm, actx); ok {
+		return grant.ID
+	}
 	if standingPermissionAllows(convID, perm, actx) {
 		return 0
 	}
@@ -1270,6 +1273,10 @@ func standingPermissionAllows(convID, perm string, actx ActionContext) bool {
 	withoutSudo.sudo = map[string]sudoPermSource{}
 	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
 		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+	if actx.bulkGroupMemberCoverage {
+		allowed, _, err := permissionVerdictAllowsBulkGroupAction(standing, convID, perm, actx)
+		return err == nil && allowed
+	}
 	allowed, _ := permissionVerdictAllowsAction(standing, convID, perm, actx)
 	return allowed
 }

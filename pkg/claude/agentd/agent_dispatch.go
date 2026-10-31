@@ -190,7 +190,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		}
 	}
 	if allowed, matched, _ := permissionAllowsAction(r, p.ConvID, perm, scopeContext); allowed {
-		if !spendSudoUse(w, r, p.ConvID, perm, scopeContext) {
+		if !standingSiblingCovers(p.ConvID, perm, scopeContext) && !spendSudoUse(w, r, p.ConvID, perm, scopeContext) {
 			return "", false
 		}
 		recordAuditPermissionScope(r, perm, matched)

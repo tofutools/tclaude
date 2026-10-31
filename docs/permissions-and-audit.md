@@ -254,8 +254,9 @@ time or the count, and the daemon enforces both.
 
 One permitted action is one use. The daemon takes the use atomically before the
 action, so parallel requests cannot exceed the limit, and gives it back when the
-request is refused or fails. Reading (`GET`) is free, and uses are only spent where
-sudo is what allowed the action: standing access leaves the grant untouched.
+request is refused or fails. Reading (`GET`), dry runs, import previews and a remote
+control status check are free, and uses are only spent where sudo is what allowed the
+action: standing access leaves the grant untouched.
 
 These count:
 
@@ -266,7 +267,7 @@ These count:
   `self.task` and `self.tags`.
 - actions on other agents, as `agent.*` and `groups.members.*`: stop, resume, retire,
   delete, rename, compact, interrupt, clone, morph, promote, reincarnate, remote
-  control, task, tags, PR, process, and `agent.standdown`.
+  control, task, tags, PR and process.
 - group changes: `groups.create`, `groups.delete`, `groups.rename`, `groups.clone`,
   `groups.archive`, `groups.nest`, `groups.attachment`, `groups.import`,
   `groups.owners.manage`, `groups.link.add`, `groups.link.remove`,
@@ -286,8 +287,9 @@ Everything else takes no limit, and the editor says why on the row:
   routes.
 - slugs that act across a peer link, such as moves, teleports and remote jobs.
 
-A limited grant only works where a use can be counted. Triggers, schedules and other
-checks made outside a request refuse it, and a grant scoped to a peer takes no limit.
+A limited grant only works where a use can be counted. Triggers, schedules, moves and
+other checks made outside a request refuse it, and a grant scoped to a peer takes no
+limit.
 
 ## Asking the human at the moment of denial
 

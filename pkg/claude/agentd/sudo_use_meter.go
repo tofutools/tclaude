@@ -31,7 +31,7 @@ var countableSudoSlugs = []string{
 
 	PermAgentStop, PermAgentResume, PermAgentRetire, PermAgentDelete, PermAgentRename, PermAgentCompact,
 	PermAgentInterrupt, PermAgentClone, PermAgentMorph, PermAgentPromote, PermAgentReincarnate,
-	PermAgentRemoteControl, PermAgentTask, PermAgentTags, PermAgentPR, PermAgentProcess, PermAgentStanddown,
+	PermAgentRemoteControl, PermAgentTask, PermAgentTags, PermAgentPR, PermAgentProcess,
 	PermAgentSandboxImplementation,
 
 	PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersDelete,
@@ -159,6 +159,33 @@ func (m *sudoUseMeter) take(w http.ResponseWriter, slug string, grant sudoPermSo
 	return true
 }
 
+// giveBack returns what the request reserved so far. A handler calls it through
+// giveBackSudoUses on a branch that turns out only to look, such as a dry run.
+func (m *sudoUseMeter) giveBack() {
+	m.settle(false)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.held)
+}
+
+func giveBackSudoUses(r *http.Request) {
+	if meter := sudoUseMeterFrom(r); meter != nil {
+		meter.giveBack()
+	}
+}
+
+// spentSudoUse reports whether the request has reserved a use, for an action
+// that continues somewhere it cannot be counted.
+func spentSudoUse(r *http.Request) bool {
+	meter := sudoUseMeterFrom(r)
+	if meter == nil {
+		return false
+	}
+	meter.mu.Lock()
+	defer meter.mu.Unlock()
+	return len(meter.held) > 0
+}
+
 // sudoSourcesForRequest applies the rule that a limited grant needs a meter:
 // without one it is removed, and with one it is noted and the grants already
 // reserved are put back.
@@ -209,6 +236,31 @@ func limitedSudoSource(r *http.Request, convID, perm string, actx ActionContext)
 		}
 	}
 	return sudoPermSource{}, false
+}
+
+// standingSiblingCovers reports whether the group sibling of a cross-agent slug
+// already covers every group of the target, so a grant of the global slug is not
+// what allowed the action.
+func standingSiblingCovers(convID, perm string, actx ActionContext) bool {
+	sibling := GroupSiblingForSlug(perm)
+	if sibling == "" {
+		return false
+	}
+	groups := actx.affectedGroups
+	if groups == nil {
+		var err error
+		if groups, err = activeGroupNamesForConvs(actx.targetConv); err != nil {
+			return false
+		}
+	}
+	for _, group := range groups {
+		candidate := actx
+		candidate.Group, candidate.structuralGroup = group, group
+		if !standingPermissionAllows(convID, sibling, candidate) {
+			return false
+		}
+	}
+	return len(groups) > 0
 }
 
 // spendSudoUse is what a gate calls once it has allowed an action: it reserves

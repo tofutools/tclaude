@@ -98,6 +98,12 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireCrossAgentPermission(w, r, PermAgentRetire, source); !ok {
 			return
 		}
+		// The source is retired after the peer confirms, with no request left
+		// to count against, so the move would stop halfway.
+		if spentSudoUse(r) {
+			writeError(w, http.StatusForbidden, "sudo_uses_uncounted", "a move cannot use a use-limited sudo grant")
+			return
+		}
 	}
 	if in.CarryPermissions && !human {
 		if _, ok := requirePermission(w, r, PermSelfTeleportPermissions, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: in.Group}); !ok {

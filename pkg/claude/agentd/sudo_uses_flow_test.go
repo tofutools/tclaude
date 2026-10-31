@@ -305,3 +305,45 @@ func TestSudoUses_EverySlugCountsOrSaysWhyNot(t *testing.T) {
 	assert.Equal(t, "It only reads, so there is no action to count.", slugs[agentd.PermUsageRead])
 	assert.Contains(t, slugs[agentd.PermGroupsMembersSpawnCwd], "groups.members.spawn")
 }
+
+func stopGroup(t *testing.T, f *testharness.Flow, conv, group string) int {
+	t.Helper()
+	return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/"+group+"/stop", map[string]any{}), conv)).Code
+}
+
+// An owner's own coverage stops at its group: a member also in another group
+// makes the sudo grant what allowed the stop, so it has to be counted.
+func TestSudoUses_BulkActionCountsWhenOwnershipIsNotEnough(t *testing.T) {
+	f := newFlow(t)
+	const lead = "sudouses-aaaa-bbbb-cccc-000000000005"
+	const shared = "sudouses-aaaa-bbbb-cccc-000000000006"
+	f.HaveGroup("gamma")
+	f.HaveGroup("delta")
+	f.HaveMember("gamma", lead)
+	f.HaveConvWithTitle(shared, "shared")
+	f.HaveAliveSession(shared, "lbl-shared", "tmux-shared", f.TestCwd("shared"))
+	f.HaveMember("gamma", shared)
+	f.HaveMember("delta", shared)
+	g, err := db.GetAgentGroupByName("gamma")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"))
+	id := haveLimitedSudo(t, lead, agentd.PermGroupsMembersStop, 1)
+	require.Less(t, stopGroup(t, f, lead, "gamma"), 400)
+	assert.Equal(t, int64(0), sudoUsesLeft(t, id))
+}
+
+func TestSudoUses_StandingSiblingLeavesTheGlobalGrantUnspent(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	const lead = "sudouses-aaaa-bbbb-cccc-000000000007"
+	f.HaveConvWithTitle(lead, "lead")
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"))
+	id := haveLimitedSudo(t, lead, agentd.PermAgentTags, 1)
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPut,
+		"/v1/agent/"+worker+"/tags", map[string]any{"tags": []string{"one"}}), lead))
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id))
+}
