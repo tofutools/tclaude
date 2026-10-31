@@ -275,11 +275,20 @@ func loadUsageRulesState(now time.Time) (*usageRulesState, error) {
 			st.members[groupID] = append(st.members[groupID], agentID)
 		}
 	}
-	rows, err := st.spendRows()
+	rows, olderSpend, err := st.spendRows()
 	if err != nil {
 		return nil, err
 	}
 	st.spend = newUsageSpend(mixedCostDeltasFromRows(rows), agentByConv)
+	// An agent reports its reading once it has ever spent, so one idle since
+	// before the rows read keeps its row at zero.
+	for _, convID := range olderSpend {
+		if agentID := agentByConv[convID]; agentID != "" {
+			if _, seen := st.spend.byAgent[agentID]; !seen {
+				st.spend.byAgent[agentID] = nil
+			}
+		}
+	}
 	// Liveness gates every agent-directed action. Without it a firing could
 	// be recorded (and so used up) without reaching anyone, so a failed
 	// listing skips the whole tick rather than evaluating blind.
@@ -289,10 +298,12 @@ func loadUsageRulesState(now time.Time) (*usageRulesState, error) {
 	return st, nil
 }
 
-// spendRows reads the ledger the loaded rules measure. A day, week or month
-// rule stays inside db.CostReadLimitDays; only a lifetime rule, the one period
-// that reaches further, needs the whole history.
-func (st *usageRulesState) spendRows() ([]db.CostDailyRow, error) {
+// spendRows reads the ledger the loaded rules measure, with the conversations
+// that spent in rows left out of it. A day, week or month rule stays inside
+// db.CostReadLimitDays; only a lifetime rule, the one period that reaches
+// further, needs the whole history. So does a stored opening that cannot serve
+// the read, because what it saves here also decides which agents report.
+func (st *usageRulesState) spendRows() (rows []db.CostDailyRow, olderSpend []string, err error) {
 	earliest := st.now.Format(costDayKey)
 	lifetime := false
 	measure := func(rules []usagerules.Rule) {
@@ -313,12 +324,20 @@ func (st *usageRulesState) spendRows() ([]db.CostDailyRow, error) {
 	for _, p := range st.profiles {
 		measure(p.Rules)
 	}
-	if lifetime {
-		rows, _, _, err := countedCostDailyRows()
-		return rows, err
+	if !lifetime {
+		read, err := countedCostRowsForWindow(earliest, "", false)
+		if err != nil {
+			return nil, nil, err
+		}
+		if read.fromOpening {
+			if olderSpend, err = db.CostOpeningSpentConvs(); err == nil {
+				return read.counted, olderSpend, nil
+			}
+			slog.Warn("cost opening balance unusable; reading the full cost history", "error", err)
+		}
 	}
-	read, err := countedCostRowsForWindow(earliest, "", false)
-	return read.counted, err
+	rows, _, _, err = countedCostDailyRows()
+	return rows, nil, err
 }
 
 // usageLinkedLayer is the layer of an agent's profiles copied from a spawn

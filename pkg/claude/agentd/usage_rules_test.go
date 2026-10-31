@@ -384,7 +384,7 @@ func TestUsageRules_SpendReadStaysInsideTheLimitUnlessLifetime(t *testing.T) {
 
 	spent := func(period usagerules.Period) float64 {
 		st := &usageRulesState{now: now, limits: []*db.UsageLimit{{Rule: usagerules.Rule{Metric: usagerules.MetricTotalUSD, Period: period}}}}
-		rows, err := st.spendRows()
+		rows, _, err := st.spendRows()
 		require.NoError(t, err)
 		return sumUsageSlices(newUsageSpend(mixedCostDeltasFromRows(rows), nil).all, usagerules.MetricTotalUSD, usagerules.PeriodStartDay(period, now))
 	}
@@ -402,4 +402,36 @@ func TestUsageRules_SpendReadStaysInsideTheLimitUnlessLifetime(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, wantMonth, spent(usagerules.PeriodMonth), 1e-9, "a month rule reads no older row")
 	require.Greater(t, spent(usagerules.PeriodLifetime), lifetime, "a lifetime rule does")
+}
+
+// An agent that last spent before the rows read keeps its reading at zero, with
+// the stored opening and on the full read that replaces it.
+func TestUsageRules_IdleAgentKeepsItsReading(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 0)
+	rule := ladderRule()
+	rule.Period = usagerules.PeriodMonth
+	p := profileWith(t, "default", rule)
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{p.ID}, ""))
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES ('s-conv-a', ?, 'conv-a', 6)`, now.AddDate(0, -3, 0).Format(costDayKey))
+	require.NoError(t, err)
+
+	readings := func() []usageRuleStatus {
+		pollUsageRules(now)
+		statuses, _ := latestUsageRuleStatus()
+		return statuses
+	}
+	full := readings()
+	require.Len(t, full, 1, "the full read reports the agent")
+	require.Zero(t, full[0].Value)
+
+	require.NoError(t, db.RefreshCostOpening(now))
+	require.Equal(t, full, readings(), "from the stored opening")
+
+	_, err = d.Exec(`UPDATE cost_opening_meta SET stale = 1`)
+	require.NoError(t, err)
+	require.Equal(t, full, readings(), "while it is stale")
 }

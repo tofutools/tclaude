@@ -106,6 +106,7 @@ type costWindowRead struct {
 	counted, ignored []db.CostDailyRow
 	ignoredConvs     map[string]time.Time
 	labels           map[string]db.CostOpening
+	fromOpening      bool // older rows were left out, see db.CostLedger
 }
 
 // countedCostRowsForWindow is countedCostDailyRows for surfaces that only read
@@ -129,7 +130,7 @@ func countedCostRowsForWindow(fromDay, toDay string, withIgnored bool) (costWind
 	if err != nil {
 		return costWindowRead{}, err
 	}
-	return costWindowRead{counted: counted, ignored: ignored, ignoredConvs: ignoredConvs, labels: ledger.Labels}, nil
+	return costWindowRead{counted: counted, ignored: ignored, ignoredConvs: ignoredConvs, labels: ledger.Labels, fromOpening: ledger.OpeningDay != ""}, nil
 }
 
 func splitCountedCostRows(rows []db.CostDailyRow) (counted, ignored []db.CostDailyRow, ignoredConvs map[string]time.Time, err error) {

@@ -418,7 +418,7 @@ func CostLedgerWindow(fromDay, toDay string, withIgnored bool) (CostLedger, erro
 		markCostOpeningStale()
 	}
 	if !older {
-		slog.Debug("cost opening balance missing or stale; reading the full cost history", "from", fromDay)
+		slog.Info("cost opening balance missing or stale; reading the full cost history", "from", fromDay)
 	}
 	rows, err := costDailyRowsForWalk(fromDay, toDay, withIgnored)
 	if err != nil {
@@ -503,6 +503,29 @@ func costLedgerFromOpening(fromDay, toDay string, withIgnored bool) (ledger *Cos
 	return out, false, nil
 }
 
+// CostOpeningSpentConvs lists the conversations with spend before the opening
+// day, ignored or not.
+func CostOpeningSpentConvs() ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT conv_id FROM cost_opening_spend WHERE conv_id <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var convID string
+		if err := rows.Scan(&convID); err != nil {
+			return nil, err
+		}
+		out = append(out, convID)
+	}
+	return out, rows.Err()
+}
+
 // FirstCountedCostDay returns the earliest day with recorded spend outside the
 // ignored conversations, or "" when there is none. withWhatIf also counts
 // subscription estimates.
@@ -583,7 +606,7 @@ type costOpeningGuard struct {
 func costOlderRowsFingerprint(tx *sql.Tx, convID, sessionID string) (string, error) {
 	var fingerprint string
 	err := tx.QueryRow(`SELECT COALESCE(group_concat(line, char(10)), '') FROM (
-		SELECT session_id || '|' || conv_id || '|' || day || '|' || cost_usd || '|' || virtual_cost_usd
+		SELECT session_id || '|' || conv_id || '|' || day || '|' || printf('%.17g', cost_usd) || '|' || printf('%.17g', virtual_cost_usd)
 			|| '|' || COALESCE(updated_at, '') || '|' || model || '|' || harness AS line
 		FROM session_cost_daily
 		WHERE ((conv_id = ? AND conv_id <> '') OR session_id = ?)
