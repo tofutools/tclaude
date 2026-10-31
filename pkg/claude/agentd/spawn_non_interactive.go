@@ -145,6 +145,9 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if err := prepared.MarkLaunchAttempt(); err != nil {
 		return hostFailure("sandbox_init", err.Error())
 	}
+	if p.onLaunchAttempt != nil {
+		p.onLaunchAttempt()
+	}
 	if runtime.GOOS == "linux" || p.RemoteJob != nil {
 		return finish(runNonInteractiveTmuxCommand(ctx, command))
 	}

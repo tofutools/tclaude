@@ -143,10 +143,10 @@ export function createMessageAccessDialogActions({
   const on = (node) => nodeFetch(node || '', { fetchImpl });
   const changedOn = (node) => { if (node) announceNodeChanged(node); return refresh(); };
 
-  async function grantSudo({ agentID, slugs, duration, reason, scopes = {}, node = '' }) {
+  async function grantSudo({ agentID, slugs, duration, reason, scopes = {}, carry = [], uses = {}, node = '' }) {
     const response = await requestJSON(on(node), '/api/sudo', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_id: agentID, slugs, duration, reason, ...(Object.keys(scopes).length ? { scopes } : {}) }),
+      body: JSON.stringify({ agent_id: agentID, slugs, duration, reason, ...(Object.keys(scopes).length ? { scopes } : {}), ...(carry.length ? { carry } : {}), ...(Object.keys(uses).length ? { uses } : {}) }),
     });
     const ok = (response.grants || []).filter((grant) => grant.id > 0).length;
     const failed = (response.grants || []).length - ok;
@@ -184,11 +184,11 @@ export function createMessageAccessDialogActions({
   // Per-slug grant scopes use the same union wire shape in every mode. The
   // fourth argument is group-only owner-bypass narrowing, a distinct concept
   // from the scopes attached to the group's explicit grants.
-  async function savePermissions(descriptor, selection, scopes = {}, ownerScopes = null) {
+  async function savePermissions(descriptor, selection, scopes = {}, ownerScopes = null, carry = {}) {
     if (descriptor.mode === 'agent') {
       const response = await requestJSON(on(descriptor.node), '/api/permissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conv: descriptor.conv, overrides: selection, scopes }),
+        body: JSON.stringify({ conv: descriptor.conv, overrides: selection, scopes, ...(Object.keys(carry).length ? { carry } : {}) }),
       });
       const changed = response.changed || 0;
       notify(`Permissions saved — ${changed} change${changed === 1 ? '' : 's'}`);
