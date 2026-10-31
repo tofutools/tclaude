@@ -802,6 +802,12 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 		if stateErr == nil {
 			persistCodexHookModel(state, input)
 		}
+		// A compaction that may be a subagent's says nothing about the main
+		// thread, so it passes the guard and paints no status, and its orders
+		// wait to learn whose it was.
+		if stateErr == nil && !amb.InTaskRunnerHook() && holdCompaction(input, envSessionID) {
+			return HookResponse{}, nil
+		}
 		resp, err := decidePreCompact(input, envSessionID, amb)
 		if err != nil || stateErr != nil ||
 			!hookBelongsToTrackedMainConversation(state, input) {
@@ -830,6 +836,9 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 	}
 	if !amb.InTaskRunnerHook() {
 		QueueContextReinjection(input, envSessionID)
+	}
+	if !amb.InTaskRunnerHook() && compactionHeld(input, envSessionID) {
+		return HookResponse{}, nil
 	}
 	input = applyStandingOrderTurnOrigin(input, envSessionID)
 	return standingOrderResponse(ctx, input, envSessionID), nil
@@ -1491,8 +1500,9 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		// A compaction just happened — zero the pre-compaction context_pct
 		// (the statusline hook will report the new, smaller figure) and the
 		// nudged_pct ladder so the context nudge re-arms from scratch on the
-		// next climb.
-		if envSessionID != "" {
+		// next climb. A held compaction may be a subagent's, so the main
+		// session keeps its figures until the hold settles.
+		if envSessionID != "" && (amb.InTaskRunnerHook() || !compactionHeld(input, envSessionID)) {
 			if err := db.ResetCompact(envSessionID); err != nil {
 				slog.Warn("failed to reset compact state", "error", err, "module", "hooks")
 			} else {
