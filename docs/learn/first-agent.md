@@ -114,7 +114,7 @@ Everything above has a CLI equivalent, for scripts:
 ```bash
 tclaude agent groups create hello --descr "my first team"
 tclaude agent groups set-default-dir hello ~/code/my-project
-tclaude agent spawn hello --name alice \
+tclaude agent spawn hello --name alice --cwd ~/code/my-project \
   --initial-message "Read this project and tell me in three sentences what it does."
 ```
 
