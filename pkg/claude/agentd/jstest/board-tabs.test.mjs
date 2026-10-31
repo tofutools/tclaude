@@ -333,7 +333,7 @@ test('detaching a board carries it to the solo page, which renders it and sends 
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { createTerminalShellActions } = await harness.importDashboardModule('js/terminal-shell-actions.js');
   const { decodeTerminalOpenHash, createStandaloneTerminalsPage } = await harness.importDashboardModule('js/terminal-standalone.js');
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   let opened = null;
   const target = { location: { replace(url) { opened = url; } } };
   const windowRef = { open: () => target, screen: {} };
