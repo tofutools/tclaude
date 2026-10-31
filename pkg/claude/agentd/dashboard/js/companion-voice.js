@@ -9,7 +9,6 @@
 // nothing from before voice was switched on is spoken at all.
 
 export const VOICE_PREF = 'tclaude.dash.companion.voice';
-export const VOICE_RATE_PREF = 'tclaude.dash.companion.voice-rate';
 export const VOICE_SPOKEN_MAX = 900;
 // A far-future cursor: the first read returns no items, only the server's now.
 const PRIME_CURSOR = '9000000000000000000';

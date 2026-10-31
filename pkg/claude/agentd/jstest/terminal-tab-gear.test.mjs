@@ -18,7 +18,7 @@ async function mountTabs(t, nodeFleet = fleet) {
     harness.importDashboardModule('js/fleet-state.js'),
   ]);
   fleetState.fleet.value = nodeFleet;
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const actions = createTerminalShellActions({
     state, fetchImpl: async () => ({ ok: true }), windowRef: harness.window, documentRef: harness.document,
   });

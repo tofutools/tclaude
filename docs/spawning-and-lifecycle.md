@@ -61,8 +61,14 @@ The flags that matter most:
   Values may contain `=` and commas. These are ordinary configuration, not a
   secret store: they are visible in the dashboard and persisted with the
   agent's launch record.
+- **Directory**: `--cwd <dir>` sets the launch directory, and a relative path
+  means relative to where you ran the command. Without it the agent starts in
+  the group's default directory, then your current directory. A sandboxed agent
+  must be able to write the directory, so one that cannot reach the group's
+  default is refused; it can pass `--cwd .` to stay where it is.
 - **Worktree**: `--worktree <branch>` creates or reuses a git worktree on
-  that branch and spawns the agent into it; `--worktree-base` picks the
+  that branch and spawns the agent into it, in the repository of that same
+  directory; `--worktree-base` picks the
   branch it is cut from; `--worktree-repo` covers the monorepo case — the
   agent launches in `--cwd` and the worktree's path and branch ride into
   its welcome instead. The checkout runs in the daemon, and a rejected
@@ -457,7 +463,8 @@ predecessor's launch directory to still exist.
 `stop <selector>` soft-exits the target's session, escalating after about
 ten seconds through pane kill, SIGTERM, and finally SIGKILL of the frozen
 pane's process group, re-checking identity at each step. Idempotent;
-`--force` skips the soft phase.
+`--force` skips the soft phase and kills the pane at once, with no SIGTERM or
+SIGKILL after it.
 
 `resume <selector>` relaunches an offline agent into its recorded working
 directory. If that directory has vanished, resume fails with

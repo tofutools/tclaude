@@ -592,6 +592,7 @@ function populateConfigForm(cfg) {
   // Hidden by default (unchecked); only an explicit
   // dashboard.show_group_description true checks it.
   $('#cfg-dashboard-show-group-description').checked = !!(cfg.dashboard && cfg.dashboard.show_group_description);
+  setSelectValue($('#cfg-dashboard-overlay-backdrop'), cfg.dashboard?.overlay_backdrop || 'dim');
 
   // CI pill on merged/closed PRs — hidden unless failing by default
   // (unchecked); only an explicit dashboard.show_final_pr_checks true checks it.
@@ -961,6 +962,8 @@ function assembleConfig() {
   // show_group_description: false (hidden) is the default, so store only the
   // NON-default true and drop the key otherwise — mirrors the Go omitempty.
   if ($('#cfg-dashboard-show-group-description').checked) dashboard.show_group_description = true; else delete dashboard.show_group_description;
+  const backdrop = $('#cfg-dashboard-overlay-backdrop').value;
+  if (backdrop && backdrop !== 'dim') dashboard.overlay_backdrop = backdrop; else delete dashboard.overlay_backdrop;
   // show_final_pr_checks: false is the default — same store-only-true rule.
   if ($('#cfg-dashboard-show-final-pr-checks').checked) dashboard.show_final_pr_checks = true; else delete dashboard.show_final_pr_checks;
   // stay_on_terminals_after_last_close: false is the default; store only true.

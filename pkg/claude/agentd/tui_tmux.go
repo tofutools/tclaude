@@ -276,8 +276,8 @@ func startTUITmuxServer(notify io.Writer) (stop func(), owned bool) {
 		case tuiTmuxProbeUnknown:
 			// Same rule as at startup, for the same reason: without an answer there
 			// is no way to tell our server from a stranger's, and kill-server does
-			// not ask. Leaving it costs an idle server (see the exit-empty note in
-			// docs/dashboard.md); killing it could cost an operator's agents.
+			// not ask. Leaving it costs an idle server; killing it could cost an
+			// operator's agents.
 			slog.Warn("tui: could not confirm the tclaude tmux server is still ours; leaving it running",
 				"server_pid", ownerPID, "module", "agentd")
 			fmt.Fprintln(notify,

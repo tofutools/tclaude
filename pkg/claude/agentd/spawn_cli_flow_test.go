@@ -287,14 +287,15 @@ func TestSpawnCLI_InitialMessageFromStdin(t *testing.T) {
 }
 
 // Scenario: a human runs `tclaude agent spawn alpha worker` from a
-// project tree, no -C / --cwd given. The CLI must capture os.Getwd()
-// and pass it through the daemon, so the new CC instance starts where
-// the human was — not wherever agentd was launched from.
+// project tree, no -C / --cwd given, into a group with no default
+// directory. The CLI must capture os.Getwd() and pass it through the
+// daemon, so the new CC instance starts where the human was — not
+// wherever agentd was launched from.
 //
 // Real surface assertion: the SessionRow handleGroupSpawn caused
 // (via simSpawner.SpawnNew) records the cwd that flowed through the
-// HTTP body. If the CLI defaulting regresses, body.Cwd is "" and the
-// row's Cwd reflects the daemon's cwd instead of the caller's.
+// HTTP body. If the CLI defaulting regresses, the row's Cwd reflects
+// the daemon's cwd instead of the caller's.
 //
 // Pins the bug class fixed by commit d7b13e6.
 func TestSpawnCLI_DefaultsCwdToCallersCwd(t *testing.T) {
@@ -441,4 +442,56 @@ func TestSpawnCLI_NonInteractiveAppliesSandboxSetup(t *testing.T) {
 	rr := httptest.NewRecorder()
 	f.Mux.ServeHTTP(rr, agentd.AsHumanPeer(httptest.NewRequest(http.MethodGet, "/v1/groups/alpha/members", nil)))
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+}
+
+// Scenario: `tclaude agent spawn <group>` without --cwd lands in the group's
+// default directory, as `groups set-default-dir --help` promises, not in the
+// directory the command happened to be run from.
+func TestSpawnCLI_GroupDefaultDirBeatsCallersCwd(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+
+	groupDir := resolveSym(t, t.TempDir())
+	_, err := db.SetAgentGroupDefaultCwd("alpha", groupDir)
+	require.NoError(t, err)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker"},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equalf(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
+
+	rows, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+	assert.Equal(t, groupDir, resolveSym(t, rows[0].Cwd), "SessionRow.Cwd (group default)")
+}
+
+// Scenario: a relative --cwd means relative to the caller. It is the way to
+// stay put in a group with a default directory, so it must not resolve against
+// the daemon's own cwd.
+func TestSpawnCLI_RelativeCwdIsTheCallers(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+
+	_, err := db.SetAgentGroupDefaultCwd("alpha", resolveSym(t, t.TempDir()))
+	require.NoError(t, err)
+	callerCwd := resolveSym(t, t.TempDir())
+	chdirTo(t, callerCwd)
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", Cwd: "."},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equalf(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
+
+	rows, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+	assert.Equal(t, callerCwd, resolveSym(t, rows[0].Cwd), "SessionRow.Cwd (caller's)")
 }

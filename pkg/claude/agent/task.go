@@ -30,7 +30,7 @@ func taskCmd() *cobra.Command {
 			"(a Linear issue, GitHub issue/PR, ticket, …) rendered as a clickable label in the " +
 			"dashboard's Task column. By default operates on the calling agent (requires `self.task`); " +
 			"use --target <selector> to act on ANOTHER agent — requires `agent.task`, or being an owner " +
-			"of a group containing the target.",
+			"of every active group containing the target.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			taskSetCmd(),
@@ -45,7 +45,7 @@ func taskCmd() *cobra.Command {
 type taskSetParams struct {
 	URL      string `pos:"true" help:"Task URL (http(s) only) — e.g. a Linear issue or GitHub issue/PR link"`
 	Label    string `long:"label" short:"l" optional:"true" help:"Optional display label overriding the auto-derived one (Linear/AWB->issue id, GitHub->repo/#nnn, else host)"`
-	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning every active group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -78,7 +78,7 @@ func runTaskSet(p *taskSetParams, stdout, stderr io.Writer) int {
 // --- task clear ---
 
 type taskClearParams struct {
-	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning every active group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -137,7 +137,7 @@ func taskWrite(target, askHuman string, body map[string]any, stdout, stderr io.W
 // --- task show ---
 
 type taskShowParams struct {
-	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's link instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning a group containing the target."`
+	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's link instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning every active group containing the target."`
 }
 
 func taskShowCmd() *cobra.Command {

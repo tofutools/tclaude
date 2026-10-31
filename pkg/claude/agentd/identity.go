@@ -595,7 +595,7 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 // gates use. They need the whole verdict, not just the resolution, because a
 // scoped allow can only be answered against the request's ActionContext.
 func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) permVerdict {
-	src := localPermissionSources(loadPermSources(convID))
+	src := sudoSourcesForRequest(r, localPermissionSources(loadPermSources(convID)))
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
 		return resolveEffectivePermissionVerdictFrom(src, slug, defaults[slug], defaults[PermGroupsAdmin])
 	}
@@ -609,8 +609,10 @@ func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) pe
 // particular, a dedicated deny suppresses an umbrella grant. An umbrella deny
 // does not suppress a separately granted dedicated capability; it only removes
 // the umbrella source.
+//
+// It has no request to count against, so a use-limited grant does not speak here.
 func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
-	src := localPermissionSources(loadPermSources(convID))
+	src := withoutLimitedSudo(localPermissionSources(loadPermSources(convID)))
 	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, adminDefaultAllowed)
 }
 
@@ -699,7 +701,10 @@ type permVerdict struct {
 
 type sudoPermSource struct {
 	ID        int64
+	Slug      string
 	ScopeJSON string
+	// Limited marks a grant with a use limit: see sudoSourcesForRequest.
+	Limited bool
 }
 
 type overridePermSource struct {
@@ -781,7 +786,7 @@ func loadPermSourcesForState(convID string, failOnTierReadError, allowAway bool)
 				continue
 			}
 			if _, seen := out.sudo[g.Slug]; !seen {
-				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, ScopeJSON: g.ScopeJSON}
+				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, Slug: g.Slug, ScopeJSON: g.ScopeJSON, Limited: g.UsesLimit > 0}
 			}
 		}
 	}
@@ -1247,6 +1252,9 @@ func permissionVerdictAllowsAction(v permVerdict, convID, perm string, actx Acti
 // (including owner/member-derived grants). This decision-time check retains
 // scoped sudo provenance that a context-free audit re-resolution cannot see.
 func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionContext) int64 {
+	if grant, ok := limitedSudoSource(r, convID, perm, actx); ok {
+		return grant.ID
+	}
 	if standingPermissionAllows(convID, perm, actx) {
 		return 0
 	}
@@ -1265,6 +1273,10 @@ func standingPermissionAllows(convID, perm string, actx ActionContext) bool {
 	withoutSudo.sudo = map[string]sudoPermSource{}
 	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
 		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+	if actx.bulkGroupMemberCoverage {
+		allowed, _, err := permissionVerdictAllowsBulkGroupAction(standing, convID, perm, actx)
+		return err == nil && allowed
+	}
 	allowed, _ := permissionVerdictAllowsAction(standing, convID, perm, actx)
 	return allowed
 }
@@ -1361,6 +1373,9 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 			writeError(w, http.StatusInternalServerError, "io", evalErr.Error())
 			return "", false
 		}
+		if allowed && !spendSudoUse(w, r, p.ConvID, perm, actionCtx) {
+			return "", false
+		}
 		recordAuditPermissionScope(r, perm, matched)
 	}
 	if !allowed {
@@ -1434,7 +1449,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 			return "", false
 		}
 		writeError(w, http.StatusForbidden, "permission",
-			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json; or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)", perm))
+			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json; or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)", perm))
 		return "", false
 	}
 	return p.ConvID, true

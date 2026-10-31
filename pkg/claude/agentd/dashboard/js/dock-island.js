@@ -14,7 +14,7 @@ import {
 } from './dock-nodes.js';
 import { LockReason } from './lock-reason.js';
 import { NodeSelect } from './node-select.js';
-import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
+import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -644,30 +644,13 @@ export function Dock({
     setMatches((current) => (current[key] === count ? current : { ...current, [key]: count }));
   }, []);
 
-  useEffect(() => {
-    const close = (restoreFocus = false) => {
-      const menu = host.querySelector('.dock-card-menu.open');
-      if (!menu) return;
-      const focusInside = menu.contains(document.activeElement);
-      const cog = menu.parentElement?.querySelector('.dock-card-manage, .dock-section-manage[data-dock-act="section-menu"]');
-      setOpenMenu(null);
-      if (restoreFocus && focusInside) queueMicrotask(() => cog?.focus());
-    };
-    const onClick = (event) => {
-      if (!event.target.closest('.dock-card-actions')) close(true);
-    };
-    const onKeyDown = (event) => {
-      if (event.key !== 'Escape' || !host.querySelector('.dock-card-menu.open')) return;
-      event.preventDefault();
-      close(true);
-    };
-    document.addEventListener('click', onClick);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('click', onClick);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [host]);
+  useDismissablePopover(() => host.querySelector('.dock-card-menu.open')?.closest('.dock-card-actions'), openMenu, () => {
+    const menu = host.querySelector('.dock-card-menu.open');
+    const focusInside = menu?.contains(document.activeElement);
+    const cog = menu?.parentElement?.querySelector('.dock-card-manage, .dock-section-manage[data-dock-act="section-menu"]');
+    setOpenMenu(null);
+    if (focusInside) queueMicrotask(() => cog?.focus());
+  });
 
   // The process library follows the snapshot sections (only while Processes
   // is enabled); a section marked afterProcesses comes after it.

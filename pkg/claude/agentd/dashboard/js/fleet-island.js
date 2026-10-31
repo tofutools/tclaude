@@ -18,6 +18,7 @@ import { isModifiedClick } from './helpers.js';
 import { toPath } from './nav-history-core.js';
 import { LockReason } from './lock-reason.js';
 import { nodeSnapshot } from './node-api.js';
+import { holdsText, useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -127,8 +128,16 @@ function usePopover(rootRef, { timers = globalThis } = {}) {
       if (!open) return;
       timers.clearTimeout(leaveTimer.current);
       leaveTimer.current = timers.setTimeout(() => {
+        leaveTimer.current = 0;
+        if (holdsText(rootRef.current)) return;
         setClosing(true);
-        leaveTimer.current = timers.setTimeout(() => { leaveTimer.current = 0; setClosing(false); setOpenRaw(false); }, POPOVER_FADE_MS);
+        leaveTimer.current = timers.setTimeout(() => {
+          leaveTimer.current = 0;
+          setClosing(false);
+          const focused = rootRef.current?.contains?.(globalThis.document?.activeElement);
+          setOpenRaw(false);
+          if (focused) rootRef.current.querySelector('button')?.focus();
+        }, POPOVER_FADE_MS);
       }, POPOVER_LEAVE_MS);
     },
   };
@@ -209,6 +218,7 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
   const rootRef = useRef(null);
   const [open, setOpen, popStyle, hover] = usePopover(rootRef);
   const [query, setQuery] = useState('');
+  useEffect(() => { if (open) rootRef.current?.querySelector('.node-pop-filter input')?.focus(); }, [open]);
   const nodes = fleetNodes(fleet);
   const ticked = fused ? tickedNodes(fleet, fused) : nodes;
   const list = selectorKind(fleet) === 'dropdown' ? filterNodes(fleet, query) : nodes;
@@ -879,17 +889,9 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
     return () => { off = true; };
   }, [current.mapActive, fleet?.hub.state, showHub, remote]);
 
-  // A link popover closes on Escape or a press anywhere outside it.
-  useEffect(() => {
-    if (!linkOpen) return undefined;
-    const onDown = (event) => { if (!event.target?.closest?.('.fleet-edge-link')) setLinkOpen(''); };
-    const onKey = (event) => { if (event.key === 'Escape') setLinkOpen(''); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [linkOpen]);
+  useDismissablePopover(() => mapRef.current?.querySelector('.fleet-edge-link.open'), linkOpen, () => setLinkOpen(''));
 
-  if (!fleet) return html`<div class="empty">Not connected to a federation hub. Set it up in ⚙ Fleet or with <code>tclaude federation</code> (see docs/federation.md).</div>`;
+  if (!fleet) return html`<div class="empty">Not connected to a federation hub. Set it up in ⚙ Fleet config or with <code>tclaude federation</code> (see docs/federation.md).</div>`;
   const t = now();
   const peerById = new Map(fleet.peers.map((p) => [p.id, p]));
   const card = (node) => cardView(node, current.summaries[node.id], t);
@@ -1036,14 +1038,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
     // peer-view-limits.js names the node in its hints.
     document.documentElement.dataset.remoteNodeName = peer?.name || remote.slice(0, 13);
   }, [remote, color, peer?.name]);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
-    const onKey = (event) => { if (event.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [open]);
+  useDismissablePopover(rootRef, open, () => setOpen(false));
   if (!remote) return null;
   const name = peer?.name || remote.slice(0, 13);
   const hv = remoteHealthView(health, now());

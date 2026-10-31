@@ -119,3 +119,15 @@ test('tips never cover each other', async (t) => {
     for (const b of boxes.slice(i + 1)) assert.equal(overlap(a, b), false);
   }
 });
+
+test('a tip stays off the companion\'s floating controls', async (t) => {
+  const { placeTips, rectsOverlap: overlap, tipHeight, toolRects } = await load(t);
+  const tools = { left: 900, right: 1100, top: 300, bottom: 330, width: 200, height: 30 };
+  const doc = { querySelectorAll: (selector) => (/companion-floating/.test(selector) ? [{ getBoundingClientRect: () => tools }] : []) };
+  const mark = { id: 'm1', tip: 'look here' };
+  const rect = { left: 980, right: 1000, top: 250, bottom: 290, width: 20, height: 40 };
+  const [place] = placeTips([{ mark, rect }], 1400, 850, toolRects(doc));
+  const box = { left: place.left, right: place.left + 300, top: place.top, bottom: place.top + tipHeight(mark) };
+  assert.equal(overlap(box, tools), false);
+});
+

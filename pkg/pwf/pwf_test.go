@@ -4,6 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -320,4 +323,103 @@ func TestSummaryListsBoundedLoops(t *testing.T) {
 	plain, err := open(t, writeBundle(t))
 	require.NoError(t, err)
 	assert.Nil(t, plain.Workflow.Loops, "a workflow without loops carries no loops field")
+}
+
+const roleSelectorSource = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: triage
+name: Triage
+start: s
+nodes:
+  s:
+    type: start
+    next:
+      pass: sort
+  sort:
+    type: task
+    performer:
+      kind: agent
+      role: triager
+      prompt: Sort the queue
+    next:
+      pass: fix
+  fix:
+    type: task
+    performer:
+      kind: agent
+      profile: fixer
+      role: fixer
+      prompt: Fix the top item
+    next:
+      pass: done
+  done:
+    type: end
+`
+
+func writeRoleSelectorBundle(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	err := pwf.Write(&buf, pwf.Bundle{
+		Root:      refOf(t, roleSelectorSource),
+		Templates: []pwf.Template{{Source: []byte(roleSelectorSource), Head: true}},
+	}, pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: "test"}, CreatedAt: time.Unix(1_700_000_000, 0)})
+	require.NoError(t, err)
+	return buf.Bytes()
+}
+
+func TestSummaryListsRoleSelectors(t *testing.T) {
+	a, err := open(t, writeRoleSelectorBundle(t))
+	require.NoError(t, err)
+	assert.Equal(t, []pwf.Use{{Name: "fixer", Steps: []string{"triage:fix"}}, {Name: "triager", Steps: []string{"triage:sort"}}}, a.Workflow.Roles)
+}
+
+// rewriteWorkflow changes workflow.json and re-lists it in the manifest, as a
+// file really written that way would be.
+func rewriteWorkflow(t *testing.T, data []byte, edit func(w map[string]any)) []byte {
+	t.Helper()
+	var workflow []byte
+	data = rezip(t, data, func(name string, body []byte) ([]byte, bool) {
+		if name == pwf.WorkflowPath {
+			var w map[string]any
+			require.NoError(t, json.Unmarshal(body, &w))
+			edit(w)
+			var err error
+			workflow, err = json.Marshal(w)
+			require.NoError(t, err)
+			return workflow, true
+		}
+		return body, true
+	})
+	return rezip(t, data, func(name string, body []byte) ([]byte, bool) {
+		if name != pwf.ManifestPath {
+			return body, true
+		}
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(body, &m))
+		for _, entry := range m["entries"].([]any) {
+			if e := entry.(map[string]any); e["path"] == pwf.WorkflowPath {
+				sum := sha256.Sum256(workflow)
+				e["bytes"], e["sha256"] = len(workflow), hex.EncodeToString(sum[:])
+			}
+		}
+		out, err := json.Marshal(m)
+		require.NoError(t, err)
+		return out, true
+	})
+}
+
+func TestFilesWrittenBeforeRoleSelectorsWereListedStillOpen(t *testing.T) {
+	old := rewriteWorkflow(t, writeRoleSelectorBundle(t), func(w map[string]any) {
+		w["roles"] = []any{map[string]any{"name": "fixer", "steps": []any{"triage:fix"}}}
+	})
+	a, err := open(t, old)
+	require.NoError(t, err)
+	assert.Equal(t, []pwf.Use{{Name: "fixer", Steps: []string{"triage:fix"}}, {Name: "triager", Steps: []string{"triage:sort"}}}, a.Workflow.Roles,
+		"the review shows every role whichever way the file was written")
+
+	forged := rewriteWorkflow(t, writeRoleSelectorBundle(t), func(w map[string]any) {
+		w["roles"] = []any{}
+	})
+	_, err = open(t, forged)
+	require.ErrorContains(t, err, "workflow.json does not match its templates")
 }

@@ -1174,6 +1174,10 @@ type snapshotPayload struct {
 	// default; "expanded" always shows them). refresh.js toggles
 	// body.group-quick-fold off this each poll. See Config.GroupQuickOptions.
 	GroupQuickOptions string `json:"group_quick_options"`
+	// OverlayBackdrop mirrors config dashboard.overlay_backdrop: what
+	// full-screen previews do to the page behind them. refresh.js applies it
+	// to the root element each poll. See Config.OverlayBackdrop.
+	OverlayBackdrop string `json:"overlay_backdrop"`
 	// DefaultTerminal mirrors config dashboard.default_terminal — how spawn
 	// auto-focus, per-agent focus / open-window / open-terminal actions and bulk
 	// windows-modal focus open a console: "native" (pop a native OS window) or
@@ -3463,6 +3467,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		},
 		HScrollFollow:     cfg.HScrollFollow(),
 		GroupQuickOptions: cfg.GroupQuickOptions(),
+		OverlayBackdrop:   cfg.OverlayBackdrop(),
 		DefaultTerminal:   cfg.DefaultTerminal(),
 		TerminalAttach: dashboardTerminalAttach{
 			Mode:                 terminalAttachMode,

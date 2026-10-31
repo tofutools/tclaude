@@ -18,7 +18,7 @@ type AddParams struct {
 func AddCmd() *cobra.Command {
 	params := &AddParams{}
 	cmd := &cobra.Command{
-		Use:   "add <prompt> | add <title> <prompt>",
+		Use:   "add [title] <prompt>",
 		Short: "Add a task to TODO.md",
 		Long:  "Add a new task to the TODO.md file in the current project.\nWith one arg, the title is auto-generated via Claude Code.\nWith two args, the first is the title and the second is the prompt.",
 		Args:  cobra.RangeArgs(1, 2),

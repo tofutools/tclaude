@@ -11,6 +11,7 @@
 
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { ProcessMiniGraph } from './process-kit.js';
 import { ProcessEditModel } from './process-edit-model.js';
@@ -122,6 +123,8 @@ function Inspector({ view, id, roster, roles, onApply, onKind, onClose, onFullEd
 
 // StructureMenu is the right-click menu of one node.
 function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
+  const rootRef = useRef(null);
+  useDismissablePopover(rootRef, true, onClose);
   const { id } = menu;
   const node = view.template.nodes[id];
   if (!node) return null;
@@ -131,8 +134,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
     disabled=${!!why} title=${why} onClick=${onClick}>${text}</button>`;
   const kinds = (key, text, why, op) => html`<div class="gm-menu-kinds" data-mini-menu=${key}><span class=${why ? 'gm-off' : ''} title=${why}>${text}</span>
     <${KindChips} label=${text} disabled=${why} onPick=${(kind) => onRun(() => op(view, id, kind))} /></div>`;
-  return html`<div class="gm-menu" role="menu" aria-label=${`Structure of ${node.name || id}`} style=${floating(menu, 400, 330)}
-    onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+  return html`<div ref=${rootRef} class="gm-menu" role="menu" aria-label=${`Structure of ${node.name || id}`} style=${floating(menu, 400, 330)}>
     ${kinds('before', 'Insert step before', canInsertBefore(view, id), insertBefore)}
     ${kinds('after', 'Insert step after', canInsertAfter(view, id), insertAfter)}
     ${kinds('branch', 'Branch on outcome', step ? canBranch(view, id) : 'only a step branches', branch)}

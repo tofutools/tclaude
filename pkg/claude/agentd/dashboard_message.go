@@ -112,5 +112,5 @@ func handleDashboardMessageCreate(w http.ResponseWriter, r *http.Request) {
 	if !resolveStewardAddresses(w, req) {
 		return
 	}
-	dispatchSend(w, res.ConvID, req)
+	dispatchSend(w, r, res.ConvID, req)
 }

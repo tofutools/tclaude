@@ -31,7 +31,7 @@ import { UsageNodePill, peerUsageState, usagePeak, useUsageNode } from './usage-
 import { fleetState } from './fleet-state.js';
 import { tickedNodes } from './fleet-scope.js';
 import { fusedDock } from './dock-nodes.js';
-import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
+import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 const OPEN_PRS_INCLUDE_DRAFTS_PREF = 'tclaude.dash.open-prs.include-drafts-attention';
@@ -507,18 +507,12 @@ function OpenPRs({ state }) {
     else rootRef.current?.querySelector('.open-prs-trigger')?.focus();
   }, [focusBack]);
 
-  useEffect(() => {
-    if (!pinned && !confirmIgnore) return undefined;
-    const outside = (event) => {
-      if (rootRef.current?.contains(event.target)) return;
-      cancelHoverClose();
-      setPinned(false);
-      setHovered(false);
-      setConfirmIgnore(null);
-    };
-    document.addEventListener('pointerdown', outside);
-    return () => document.removeEventListener('pointerdown', outside);
-  }, [pinned, confirmIgnore]);
+  useDismissablePopover(rootRef, pinned || !!confirmIgnore, () => {
+    cancelHoverClose();
+    setPinned(false);
+    setHovered(false);
+    setConfirmIgnore(null);
+  }, { escape: false, hold: () => !!confirmIgnore });
   useEffect(() => {
     if (!open) return undefined;
     const escape = (event) => {

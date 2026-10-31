@@ -420,8 +420,6 @@ body.hide-costs .mux-cost-toggle { display: none; }
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
   background: rgba(13, 17, 23, 0.78);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
 }
 .mux-terminal-disconnect-card {
   width: min(440px, calc(100% - 48px));
@@ -680,3 +678,8 @@ body.wizard .mux-bg-pop { background: #1b1329; border-color: #4a3a6b; }
    row's right edge of a scrolling box: open it leftward and upward so it
    stays inside the popover instead of widening or scrolling it. */
 .mux-bg-pop .lock-why::after { left: auto; right: -6px; top: auto; bottom: calc(100% + 6px); max-width: 240px; }
+
+:root[data-overlay-backdrop="blur"] .mux-terminal-disconnect-overlay,
+:root[data-overlay-backdrop="both"] .mux-terminal-disconnect-overlay {
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}

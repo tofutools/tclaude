@@ -6,6 +6,7 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { QueuedSpawnRow, queuedSpawns } from './queued-spawns.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -25,21 +26,7 @@ export function QueuedSpawnsChip({ snapshot }) {
     setAnchor({ top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) });
     setOpen(true);
   };
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = (event) => {
-      if (!root.current?.contains(event.target)) setOpen(false);
-    };
-    const escape = (event) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('keydown', escape);
-    return () => {
-      document.removeEventListener('pointerdown', outside);
-      document.removeEventListener('keydown', escape);
-    };
-  }, [open]);
+  useDismissablePopover(root, open, () => setOpen(false));
   useEffect(() => {
     if (!rows.length) setOpen(false);
   }, [rows.length]);

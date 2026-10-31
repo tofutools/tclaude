@@ -1658,3 +1658,12 @@ func TestStewardAccessDefaultsAndValidates(t *testing.T) {
 	assert.True(t, canonicalizePermissionNames(c))
 	assert.Equal(t, []string{"groups.owners.manage"}, c.Steward.DefaultPermissions)
 }
+
+func TestOverlayBackdrop(t *testing.T) {
+	var unset *Config
+	assert.Equal(t, "dim", unset.OverlayBackdrop())
+	for _, tc := range []struct{ in, want string }{{"", "dim"}, {"dim", "dim"}, {"blur", "blur"}, {"both", "both"}, {"none", "none"}, {"bogus", "dim"}} {
+		c := &Config{Dashboard: &DashboardConfig{OverlayBackdrop: tc.in}}
+		assert.Equal(t, tc.want, c.OverlayBackdrop(), tc.in)
+	}
+}

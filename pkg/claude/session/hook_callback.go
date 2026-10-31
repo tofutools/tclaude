@@ -2353,7 +2353,7 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbi
 	}
 
 	reason := fmt.Sprintf(
-		"tclaude pre-compact guard: refused %s compaction — context is ~%.0f%% (~%d of %d tokens), below the %d-token floor for this window. Let context grow (or reincarnate) before compacting; adjust pre_compact_guard in ~/.tclaude/config.json to change or disable this.",
+		"tclaude pre-compact guard: refused %s compaction — context is ~%.0f%% (~%d of %d tokens), below the %d-token floor for this window. Let context grow (or reincarnate) before compacting; adjust pre_compact_guard in ~/.tclaude/data/config.json to change or disable this.",
 		input.Trigger, snap.ContextPct, usedTokens, window, minTokens,
 	)
 	slog.Info("pre-compact guard: blocked compaction",

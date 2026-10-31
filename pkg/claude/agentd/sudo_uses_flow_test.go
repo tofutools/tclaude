@@ -3,6 +3,9 @@ package agentd_test
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,7 +95,7 @@ func TestSudoUses_DashboardGrantValidatesTheLimit(t *testing.T) {
 		return c.post("/api/sudo", map[string]any{"agent_id": c.agentID(steward), "slugs": []string{slug},
 			"duration": "5m", "uses": map[string]int{slug: uses}}).Code
 	}
-	assert.Equal(t, http.StatusBadRequest, grant(agentd.PermAgentStop, 3), "nothing to count")
+	assert.Equal(t, http.StatusBadRequest, grant(agentd.PermSelfSchedule, 3), "nothing to count")
 	assert.Equal(t, http.StatusBadRequest, grant(agentd.PermGroupsMembersSpawn, 0))
 	assert.Equal(t, http.StatusBadRequest, grant(agentd.PermGroupsMembersSpawn, 1001))
 	require.Equal(t, http.StatusOK, grant(agentd.PermGroupsMembersSpawn, 4))
@@ -185,5 +188,183 @@ func TestSudoUses_PeerScopeTakesNoLimit(t *testing.T) {
 		"scopes": map[string]any{agentd.PermGroupsMembersSpawn: map[string]any{"peer": []string{fh.peer.id.ID() + "/builders"}}},
 	}))
 	assert.Equalf(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "local spawns only")
+	assert.Contains(t, rec.Body.String(), "local actions only")
+}
+
+func haveLimitedSudo(t *testing.T, conv, slug string, uses int64) int64 {
+	t.Helper()
+	now := time.Now()
+	id, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: slug,
+		GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test", UsesLimit: uses, UsesLeft: uses})
+	require.NoError(t, err)
+	return id
+}
+
+func sudoUsesWorker(t *testing.T, f *testharness.Flow) string {
+	t.Helper()
+	const worker = "sudouses-aaaa-bbbb-cccc-000000000002"
+	f.HaveGroup("alpha")
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-uses", "tmux-uses", f.TestCwd("uses"))
+	f.HaveMember("alpha", worker)
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfTags, db.PermEffectDeny, "test"))
+	return worker
+}
+
+func setOwnTags(t *testing.T, f *testharness.Flow, conv, method string, tags ...string) int {
+	t.Helper()
+	return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, "/v1/whoami/tags",
+		map[string]any{"tags": tags}), conv)).Code
+}
+
+// One allowed action is one use, for a slug no handler knows is counted: a read
+// is free, a failed attempt gives its use back, and the last use still works.
+func TestSudoUses_GateCountsAnyActionSlug(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	id := haveLimitedSudo(t, worker, agentd.PermSelfTags, 2)
+
+	require.Equal(t, http.StatusOK, setOwnTags(t, f, worker, http.MethodPut, "one"))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id))
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/whoami/tags", nil), worker))
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id), "reading is not an action")
+
+	assert.Equal(t, http.StatusBadRequest, setOwnTags(t, f, worker, http.MethodPut, strings.Repeat("x", 200)))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id), "a failed attempt gives its use back")
+
+	require.Equal(t, http.StatusOK, setOwnTags(t, f, worker, http.MethodPut, "two"))
+	assert.Equal(t, int64(0), sudoUsesLeft(t, id))
+	assert.Equal(t, http.StatusForbidden, setOwnTags(t, f, worker, http.MethodPut, "three"))
+}
+
+func TestSudoUses_ParallelActionsStopAtTheLimit(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	id := haveLimitedSudo(t, worker, agentd.PermSelfTags, 3)
+	var wg sync.WaitGroup
+	var ok atomic.Int64
+	for i := range 12 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if setOwnTags(t, f, worker, http.MethodPut, "t"+strconv.Itoa(i)) == http.StatusOK {
+				ok.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, int64(3), ok.Load())
+	assert.Equal(t, int64(0), sudoUsesLeft(t, id))
+}
+
+func TestSudoUses_StandingAccessLeavesAnActionGrantUnspent(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	id := haveLimitedSudo(t, worker, agentd.PermSelfTags, 1)
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfTags, db.PermEffectGrant, "test"))
+	require.Equal(t, http.StatusOK, setOwnTags(t, f, worker, http.MethodPut, "one"))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id))
+}
+
+// A direct message is checked outside the gates, and still costs one use however
+// many times one request checks it.
+func TestSudoUses_DirectMessageCounts(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	const stranger = "sudouses-aaaa-bbbb-cccc-000000000003"
+	f.HaveConvWithTitle(stranger, "stranger")
+	f.HaveAliveSession(stranger, "lbl-str", "tmux-str", f.TestCwd("str"))
+	f.HaveGroup("beta")
+	f.HaveMember("beta", stranger)
+	id := haveLimitedSudo(t, worker, agentd.PermMessageDirect, 1)
+	send := func() int {
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages",
+			map[string]any{"to": stranger, "body": "hello"}), worker)).Code
+	}
+	require.Equal(t, http.StatusOK, send())
+	assert.Equal(t, int64(0), sudoUsesLeft(t, id))
+	assert.Equal(t, http.StatusForbidden, send())
+}
+
+// With nothing to count against, a limited grant does not speak at all.
+func TestSudoUses_ACheckWithoutARequestGetsNoAuthority(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	haveLimitedSudo(t, worker, agentd.PermMessageDirect, 2)
+	assert.False(t, agentd.HoldsPermissionForTest(worker, agentd.PermMessageDirect))
+}
+
+func TestSudoUses_EverySlugCountsOrSaysWhyNot(t *testing.T) {
+	slugs := agentd.SudoCountabilityForTest()
+	assert.Greater(t, len(slugs), 100)
+	for slug, why := range slugs {
+		assert.Equal(t, agentd.IsCountableForTest(slug), why == "", slug)
+	}
+	assert.Equal(t, "It only reads, so there is no action to count.", slugs[agentd.PermUsageRead])
+	assert.Contains(t, slugs[agentd.PermGroupsMembersSpawnCwd], "groups.members.spawn")
+}
+
+func stopGroup(t *testing.T, f *testharness.Flow, conv, group string) int {
+	t.Helper()
+	return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/"+group+"/stop", map[string]any{}), conv)).Code
+}
+
+// An owner's own coverage stops at its group: a member also in another group
+// makes the sudo grant what allowed the stop, so it has to be counted.
+func TestSudoUses_BulkActionCountsWhenOwnershipIsNotEnough(t *testing.T) {
+	f := newFlow(t)
+	const lead = "sudouses-aaaa-bbbb-cccc-000000000005"
+	const shared = "sudouses-aaaa-bbbb-cccc-000000000006"
+	f.HaveGroup("gamma")
+	f.HaveGroup("delta")
+	f.HaveMember("gamma", lead)
+	f.HaveConvWithTitle(shared, "shared")
+	f.HaveAliveSession(shared, "lbl-shared", "tmux-shared", f.TestCwd("shared"))
+	f.HaveMember("gamma", shared)
+	f.HaveMember("delta", shared)
+	g, err := db.GetAgentGroupByName("gamma")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"))
+	id := haveLimitedSudo(t, lead, agentd.PermGroupsMembersStop, 1)
+	require.Less(t, stopGroup(t, f, lead, "gamma"), 400)
+	assert.Equal(t, int64(0), sudoUsesLeft(t, id))
+}
+
+func TestSudoUses_StandingSiblingLeavesTheGlobalGrantUnspent(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	const lead = "sudouses-aaaa-bbbb-cccc-000000000007"
+	f.HaveConvWithTitle(lead, "lead")
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"))
+	id := haveLimitedSudo(t, lead, agentd.PermAgentTags, 1)
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPut,
+		"/v1/agent/"+worker+"/tags", map[string]any{"tags": []string{"one"}}), lead))
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id))
+}
+
+// Scope, time and a use limit sit on one grant and survive being stored for
+// future Stewards, so the next Steward's copy keeps all three.
+func TestSudoUses_ScopeTimeAndLimitCombine(t *testing.T) {
+	f := newFlow(t)
+	const conv = "sudouses-aaaa-bbbb-cccc-000000000004"
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveAliveSession(conv, "lbl-sc", "tmux-sc", f.TestCwd("sc"))
+	now := time.Now()
+	scope := `{"group":["alpha"]}`
+	id, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: agentd.PermGroupsMembersSpawn, ScopeJSON: scope,
+		GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute), GrantedBy: "test", UsesLimit: 5, UsesLeft: 5})
+	require.NoError(t, err)
+	require.NoError(t, db.CarrySudoGrant(id))
+	stored, err := db.ListActiveStewardCarriedSudo()
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.JSONEq(t, scope, stored[0].ScopeJSON)
+	assert.Equal(t, int64(5), stored[0].UsesLimit)
+	assert.WithinDuration(t, now.Add(10*time.Minute), stored[0].ExpiresAt, time.Second)
 }

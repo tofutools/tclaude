@@ -77,7 +77,7 @@ type aliasSetParams struct {
 
 func aliasSetCmd() *cobra.Command {
 	return boa.CmdT[aliasSetParams]{
-		Use:         "set <handle> <conv>",
+		Use:         "set",
 		Short:       "Anchor a handle to a conv (re-pointable)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasSetParams, _ *cobra.Command, _ []string) {
@@ -118,7 +118,7 @@ type aliasRmParams struct {
 
 func aliasRmCmd() *cobra.Command {
 	return boa.CmdT[aliasRmParams]{
-		Use:         "rm <handle>",
+		Use:         "rm",
 		Short:       "Remove a head alias",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasRmParams, _ *cobra.Command, _ []string) {
@@ -197,7 +197,7 @@ type aliasGetParams struct {
 
 func aliasGetCmd() *cobra.Command {
 	return boa.CmdT[aliasGetParams]{
-		Use:         "get <handle>",
+		Use:         "get",
 		Short:       "Resolve one head alias to its current head conv-id",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasGetParams, _ *cobra.Command, _ []string) {

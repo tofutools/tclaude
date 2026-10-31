@@ -329,7 +329,7 @@ func SendAccessRequest(senderSessionID, fromTitle, group, perm, path string) {
 	if who == "" {
 		who = "An agent"
 	}
-	title := truncate("Claude: access request", notifyTitleMaxLen)
+	title := truncate("tclaude: access request", notifyTitleMaxLen)
 	var b strings.Builder
 	b.WriteString(who)
 	if p := strings.TrimSpace(perm); p != "" {
@@ -388,7 +388,7 @@ func formatPresentedPR(agentTitle, group, prURL, summary string) (title, notifBo
 	if who == "" {
 		who = "An agent"
 	}
-	title = truncate("Claude: pull request", notifyTitleMaxLen)
+	title = truncate("tclaude: pull request", notifyTitleMaxLen)
 
 	// The URL is reserved its room FIRST. An agent title is free text (a
 	// /rename can make it arbitrarily long), and letting the attribution
@@ -440,9 +440,9 @@ func formatHumanMessage(fromTitle, group, subject, body string) (title, notifBod
 	}
 
 	if s := strings.TrimSpace(subject); s != "" {
-		title = truncate("Claude: "+s, notifyTitleMaxLen)
+		title = truncate("tclaude: "+s, notifyTitleMaxLen)
 	} else {
-		title = truncate(fmt.Sprintf("Claude: %s messaged you", who), notifyTitleMaxLen)
+		title = truncate(fmt.Sprintf("tclaude: %s messaged you", who), notifyTitleMaxLen)
 	}
 
 	var b strings.Builder

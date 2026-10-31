@@ -255,7 +255,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     <div class="cfg-main">
 
     <p class="cfg-intro">
-      Editing <code id="cfg-path">~/.tclaude/config.json</code>. Edits stay in this form until you
+      Editing <code id="cfg-path">~/.tclaude/data/config.json</code>. Edits stay in this form until you
       press <strong>Save changes</strong>, which shows a diff before anything is written. Most
       settings apply on next use; ones marked <${Badge} kind="restart" /> apply after an agentd restart.
     </p>
@@ -294,6 +294,19 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
       </${Group}>
 
+      <${Group} title="Overlays">
+        <${Setting} title="Preview background" forId="cfg-dashboard-overlay-backdrop" k="dashboard.overlay_backdrop"
+          summary="What image and markdown previews do to the page behind them."
+          more=${html`Blur is slow in a browser running without hardware acceleration, so it is off by default. Dim keeps the page dark behind the preview. Disconnect screens always stay dim so their message stays readable; blur adds to that when chosen.`}>
+          <${ConfigSelect} id="cfg-dashboard-overlay-backdrop" aria-label="Preview background">
+            <option value="dim">Dim</option>
+            <option value="blur">Blur</option>
+            <option value="both">Both</option>
+            <option value="none">Nothing</option>
+          </${ConfigSelect}>
+        </${Setting}>
+      </${Group}>
+
       <${Group} title="Tabs">
         <${Setting} title="Plugins tab" forId="cfg-dashboard-always-show-plugins" k="dashboard.always_show_plugins_tab"
           summary="always show the Plugins tab, even with no plugins installed"
@@ -315,7 +328,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
         <${Setting} title="Group quick options" forId="cfg-dashboard-group-quick-fold" k="dashboard.group_quick_options"
           summary="auto-fold quick options to icons, expand on hover"
-          more=${html`Each group header carries a row of editable "quick option" chips — 📝 description, 📁 default dir, 🧠 default profile, 🔗 links. They can grow the header wide. <strong>Checked</strong> (default) folds them to <em>icon-only</em> at rest and slides the text open when you hover the group header — a horizontal accordion that reclaims the space. The group name, activity bots and 👥 member count always stay visible. <strong>Unchecked</strong> keeps the full chips always shown (the original look). Touch devices (which can't hover) always see the full chips regardless. You can also <em>pin</em> a single group's chips open from its ⚙ menu (📌 pin quick options) so it stays expanded even with auto-fold on. Stored as <code>dashboard.group_quick_options</code> (the default <code>hover</code> is omitted; unchecked writes <code>expanded</code>).`}>
+          more=${html`Each group header carries a row of editable "quick option" chips — 📝 description, 📁 default dir, 🧠 default profile, 🛡 sandbox profile, 💰 usage profile, 🔗 links. They can grow the header wide. <strong>Checked</strong> (default) folds them to <em>icon-only</em> at rest and slides the text open when you hover the group header — a horizontal accordion that reclaims the space. The group name, activity bots and 👥 member count always stay visible. <strong>Unchecked</strong> keeps the full chips always shown (the original look). Touch devices (which can't hover) always see the full chips regardless. You can also <em>pin</em> a single group's chips open from its ⚙ menu (📌 pin quick options) so it stays expanded even with auto-fold on. Stored as <code>dashboard.group_quick_options</code> (the default <code>hover</code> is omitted; unchecked writes <code>expanded</code>).`}>
           <${Toggle} id="cfg-dashboard-group-quick-fold" />
         </${Setting}>
         <${Setting} title="Group descriptions" forId="cfg-dashboard-show-group-description" k="dashboard.show_group_description" badges=${['deprecated']}
@@ -855,7 +868,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
       <${Group} title="Log rotation">
         <${Setting} title="Max log size" forId="cfg-logrot-maxsize" k="log_rotation.max_size" badges=${['restart']}
-          summary=${html`Size cap for <code>~/.tclaude/output.log</code> before <code>agentd</code> rotates it (<code>10MiB</code>, <code>50m</code>, <code>500k</code>). Empty = built-in default (10 MiB). <code>0</code> disables rotation.`}>
+          summary=${html`Size cap for <code>~/.tclaude/data/output.log</code> before <code>agentd</code> rotates it (<code>10MiB</code>, <code>50m</code>, <code>500k</code>). Empty = built-in default (10 MiB). <code>0</code> disables rotation.`}>
           <${ConfigInput} type="text" id="cfg-logrot-maxsize" placeholder="10MiB" aria-label="Log rotation max size" autocomplete="off" spellcheck="false" style="min-width:110px" />
         </${Setting}>
         <${Setting} title="Keep" k="log_rotation.keep" badges=${['restart']}
@@ -913,7 +926,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
       <${Group} title="Name and startup">
         <${Setting} title="Name" forId="cfg-steward-name" k="steward.name"
-          summary="What you call your Steward. Shown in the companion, and agents can address it by this name as well as by steward.">
+          summary="What you call your Steward. Shown in the companion, and agents can address it by this name as well as by steward. A running Steward is told when it changes.">
           <${ConfigInput} type="text" id="cfg-steward-name" maxlength="32" spellcheck="false" aria-label="Steward name" placeholder="Steward" />
         </${Setting}>
         <${Setting} title="Startup prompt" forId="cfg-steward-startup-prompt" wide k="steward.startup_prompt"
@@ -926,9 +939,9 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
     <${Panel} id="experimental" active=${active}>
       <${Group} title="Feature flags"
-        lede=${html`Opt-in flags for features under active development. Such features ship dark on
+        lede=${html`Opt-in flags for features under active development. Most ship dark on
           <code>main</code> — off by default and invisible in normal use — so they can land in
-          small increments without a long-lived feature branch. Expect rough edges while a
+          small increments without a long-lived feature branch, and a few stay listed while on by default. Expect rough edges while a
           flag is listed here; when a feature graduates, its flag disappears.`}>
         <${Setting} title="Processes" forId="cfg-feature-processes" k="features.processes"
           summary=${html`enable the in-development <strong>Processes</strong> feature`}

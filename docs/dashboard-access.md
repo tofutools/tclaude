@@ -32,11 +32,17 @@ Active time-limited grants, with a countdown, reason, who granted it, and revoke
 **+ sudo** on an agent row and **sudo** on a Steward. It groups permissions by area,
 keeps its search above the list and the duration and Grant button below it, marks
 risky permissions, and says why a slug is refused. Picked permissions can be narrowed
-with scopes like any grant, except one the agent already holds: a scoped sudo would
-replace what it has for the whole window. A permission with a countable action, today
-`agent.spawn` and `groups.members.spawn`, also takes a **max** number of uses: the
-grant ends at whichever comes first, the time or the count, and a scope works as usual.
-**Active now** lists what the agent already holds, with time and uses left,
+with scopes like any grant. On one the agent already holds, a scoped sudo replaces its
+own, group and default access until the grant ends, while ownership, membership and
+`groups.admin` still apply. The row says so. **Max uses** under the list limits every
+picked permission that names a countable action, per permission, and a row's own **max**
+overrides it: the grant ends at whichever comes first, the time or the count, and a
+scope works as usual. A row that cannot have a limit says **no limit**, with the reason
+on hover. That includes a grant scoped to a peer, because the count stops at this node,
+and a permission the agent already holds, because that access is never counted. See
+[what counts](permissions-and-audit.md#use-limits). A grant stored for all future
+Stewards keeps its scope.
+**Active now** lists what the agent already holds, with scope, time and uses left,
 **+duration** to extend and **Revoke**.
 
 Limits are the server's: the default is 5 minutes, the maximum 1 hour counted from now

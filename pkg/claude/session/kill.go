@@ -19,7 +19,7 @@ type KillParams struct {
 
 func KillCmd() *cobra.Command {
 	return boa.CmdT[KillParams]{
-		Use:         "kill [id]",
+		Use:         "kill",
 		Short:       "Kill coding session(s)",
 		Long:        "Kill one or more coding sessions. Use --all to kill all sessions, or --idle to kill only idle sessions.",
 		ParamEnrich: common.DefaultParamEnricher(),

@@ -14,7 +14,8 @@
 // says features.processes is on.
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import {
   ProcessMiniGraph, ProcessPauseControl, ProcessPausedChip, ProcessRunIcon, ProcessScopeChip, ProcessStateChip,
@@ -196,16 +197,12 @@ export function ProcessPaneOverlay({ agentId, enabled, actions = {}, bounds = nu
   const [collapsed, setCollapsed] = useState(false);
   const [openID, setOpenID] = useState('');
   const open = collapsed ? null : runs.find((run) => run.runId === openID) || null;
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (event) => { if (event.key === 'Escape') setOpenID(''); };
-    globalThis.addEventListener?.('keydown', onKey);
-    return () => globalThis.removeEventListener?.('keydown', onKey);
-  }, [open]);
+  const rootRef = useRef(null);
+  useDismissablePopover(rootRef, open?.runId, () => setOpenID(''));
   if (!runs.length) return null;
   const toggleTitle = collapsed ? `Show ${runs.length} process icon${runs.length === 1 ? '' : 's'}` : 'Hide process icons';
   return html`
-    <div class=${`pk-pane-overlay${collapsed ? ' collapsed' : ''}${open ? ' open' : ''}`} data-process-overlay=${agentId}>
+    <div ref=${rootRef} class=${`pk-pane-overlay${collapsed ? ' collapsed' : ''}${open ? ' open' : ''}`} data-process-overlay=${agentId}>
       <div class="pk-pane-overlay-bar" role="toolbar" aria-label="Processes this agent takes part in">
         ${collapsed
           ? html`<span class="pk-pane-overlay-count" aria-hidden="true">◈ ${runs.length}</span>`

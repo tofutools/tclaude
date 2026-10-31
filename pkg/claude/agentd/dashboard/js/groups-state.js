@@ -30,8 +30,8 @@ export const GROUP_VIEW_OPTIONS = Object.freeze([
     key: 'offline', defaultValue: true, pref: 'tclaude.dash.offline.groups',
     label: 'show offline',
     wizardLabel: 'show slumbering',
-    title: 'Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override.',
-    wizardTitle: 'Show slumbering heroes. This is the tab-wide default — each party banner has a per-party override.',
+    title: 'Show members whose tmux pane is offline. This is the tab-wide default — the ⚙ menu on each group has a per-group override.',
+    wizardTitle: 'Show slumbering heroes. This is the tab-wide default — the ⚙ menu on each party has a per-party override.',
   },
   {
     key: 'ungrouped', defaultValue: true, pref: 'tclaude.dash.ungrouped.groups',

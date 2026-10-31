@@ -6,6 +6,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -58,18 +59,14 @@ export function NodeSelect({
   // A pick the caller ignores (All while already all) still re-renders, so
   // the boxes show the value again rather than the browser's toggle.
   const [, repaint] = useState(0);
+  useDismissablePopover(root, open, (why) => {
+    setOpen(false);
+    if (why !== 'outside') root.current?.querySelector('.node-select-button')?.focus();
+  });
   useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => { if (!root.current?.contains(event.target)) setOpen(false); };
-    const key = (event) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } };
-    globalThis.document?.addEventListener('pointerdown', close, true);
-    globalThis.document?.addEventListener('keydown', key, true);
-    return () => {
-      globalThis.document?.removeEventListener('pointerdown', close, true);
-      globalThis.document?.removeEventListener('keydown', key, true);
-    };
+    if (open) root.current?.querySelector('.node-pop-filter input')?.focus();
+    else setQuery('');
   }, [open]);
-  useEffect(() => { if (!open) setQuery(''); }, [open]);
   const picked = new Set(pickedNodes(nodes, value, { multiple }).map((n) => n.id));
   const all = multiple ? !value?.length : !value;
   const q = query.trim().toLowerCase();

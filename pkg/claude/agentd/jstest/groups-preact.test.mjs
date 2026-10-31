@@ -588,6 +588,70 @@ test('Groups list owns sort and virtual-list pager event routing', async (t) => 
   host.remove();
 });
 
+test('a member on a harness that cannot rename keeps its subscription badge', async (t) => {
+  const harness = await createPreactHarness(t);
+  const group = {
+    name: 'alpha',
+    members: [{
+      conv_id: 'fixed', agent_id: 'agt-fixed', title: 'Fixed', online: true,
+      state: { harness: 'codex' }, claude_subscription: { peer: 'peer-1', label: 'Sam', held: true },
+    }],
+  };
+  const { state, host, mounted } = await mountGroups(t, harness, [group], { sort: () => {}, page: () => {}, setPageSize: () => {} });
+  await harness.act(() => state.publish({
+    ...snapshot([group]), harnesses: [{ name: 'codex', can_rename: false }],
+  }));
+  assert.ok(host.querySelector('tr[data-key="fixed"] .rowname-fixed'), 'the name is not an editor');
+  assert.ok(host.querySelector('tr[data-key="fixed"] .rowname [data-subscription="held"]'));
+  await mounted.unmount();
+});
+
+test('a group menu cycles its offline override and the member list follows', async (t) => {
+  const harness = await createPreactHarness(t);
+  const group = {
+    name: 'alpha',
+    members: [
+      { conv_id: 'live', agent_id: 'agt-live', title: 'Live', online: true, state: { status: 'idle' } },
+      { conv_id: 'gone', agent_id: 'agt-gone', title: 'Gone', online: false, state: {} },
+    ],
+  };
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  const { createGroupsActions } = await harness.importDashboardModule('js/groups-actions.js');
+  const { state, host, mounted } = await mountGroups(t, harness, [group], {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    cycleGroupOffline: (target) => createGroupsActions({ state, refresh: async () => {} }).cycleGroupOffline(target),
+  });
+  const item = () => host.querySelector('[data-offline-override]');
+  const offlineRow = () => host.querySelector('tr[data-key="gone"]');
+  assert.equal(item().dataset.offlineOverride, 'inherit');
+  assert.ok(offlineRow(), 'the tab default shows offline members');
+
+  await harness.act(() => harness.fireEvent(item(), 'click'));
+  assert.equal(item().dataset.offlineOverride, 'show');
+  assert.ok(offlineRow());
+
+  await harness.act(() => harness.fireEvent(item(), 'click'));
+  assert.equal(item().dataset.offlineOverride, 'hide');
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.offline.alpha'), 'hide');
+  assert.equal(offlineRow(), null, 'hidden for this group whatever the tab default says');
+
+  await harness.act(() => state.publish(snapshot([{ ...group, members: [group.members[1]] }])));
+  assert.match(host.querySelector('details[data-group-key="alpha"]').textContent, /⚙ menu hides offline/,
+    'with nobody left to show, the note names the control that hid them');
+  await harness.act(() => state.publish(snapshot([group])));
+
+  await harness.act(() => harness.fireEvent(item(), 'click'));
+  assert.equal(item().dataset.offlineOverride, 'inherit');
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.offline.alpha'), null);
+  assert.ok(offlineRow());
+
+  await mounted.unmount();
+});
+
 test('native group and member menus share dismissal, focus, flip and publish state', async (t) => {
   const harness = await createPreactHarness(t);
   const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
@@ -631,7 +695,7 @@ test('native group and member menus share dismissal, focus, flip and publish sta
   assert.equal(memberMenu.classList.contains('open'), false, 'a menu item dismisses its menu');
 
   await harness.act(() => harness.fireEvent(memberCog, 'click'));
-  await harness.act(() => harness.fireEvent(harness.document.body, 'click'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
   assert.equal(memberMenu.classList.contains('open'), false, 'outside click dismisses the menu');
 
   await harness.act(() => harness.fireEvent(groupCog, 'click'));

@@ -196,7 +196,7 @@ test('a click outside closes the toolbar cog and clears its filter', async (t) =
 
   const outside = view.harness.document.body.appendChild(
     view.harness.document.createElement('div'));
-  outside.click();
+  view.harness.fireEvent(outside, 'pointerdown');
 
   assert.equal(view.isOpen(), false);
   assert.equal(view.filter.value, '');

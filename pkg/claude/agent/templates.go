@@ -229,7 +229,7 @@ type templatesShowParams struct {
 
 func templatesShowCmd() *cobra.Command {
 	return boa.CmdT[templatesShowParams]{
-		Use:         "show <name>",
+		Use:         "show",
 		Short:       "Show one group template in detail",
 		Long:        "Prints a template's context and per-agent specs. With --json, emits the raw wire JSON — the same shape 'create' / 'edit' accept via --file, so `templates show X --json` is the start of an edit loop.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -515,7 +515,7 @@ type templatesEditParams struct {
 
 func templatesEditCmd() *cobra.Command {
 	return boa.CmdT[templatesEditParams]{
-		Use:   "edit <name> --file <path>",
+		Use:   "edit --file <path>",
 		Short: "Replace a group template from a JSON file",
 		Long: "Replaces the named template wholesale with the JSON in --file (or --file - for stdin) — it is a " +
 			"full replace, not a field merge, so post the template's complete desired state. The body's `name` " +
@@ -585,7 +585,7 @@ type templatesRmParams struct {
 
 func templatesRmCmd() *cobra.Command {
 	return boa.CmdT[templatesRmParams]{
-		Use:         "rm <name>",
+		Use:         "rm",
 		Short:       "Delete a group template",
 		Long:        "Removes a template blueprint. Groups already instantiated from it are left untouched — only the blueprint is deleted.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -625,7 +625,7 @@ type templatesInstantiateParams struct {
 
 func templatesInstantiateCmd() *cobra.Command {
 	return boa.CmdT[templatesInstantiateParams]{
-		Use:   "instantiate <name> --group <group>",
+		Use:   "instantiate --group <group>",
 		Short: "Create a group from a template and spawn its team",
 		Long: "Creates a fresh group named --group and spawns one agent per template spec, named '<group>-<agent>'. " +
 			"The --task text is folded into the group's shared context, so every spawned agent's startup briefing " +
@@ -841,7 +841,7 @@ type templatesReinforceParams struct {
 
 func templatesReinforceCmd() *cobra.Command {
 	return boa.CmdT[templatesReinforceParams]{
-		Use:   "reinforce <name> --group <group>",
+		Use:   "reinforce --group <group>",
 		Short: "Deploy a template's roster INTO an existing group",
 		Long: "Spawns a template's agents into an ALREADY-EXISTING group (the reinforcements verb), instead of " +
 			"creating a fresh one the way 'instantiate' / 'task-force deploy' do. The group's own settings — its " +
@@ -947,7 +947,7 @@ type templatesFromGroupParams struct {
 
 func templatesFromGroupCmd() *cobra.Command {
 	return boa.CmdT[templatesFromGroupParams]{
-		Use:   "from-group <group> <template-name>",
+		Use:   "from-group",
 		Short: "Snapshot an existing group into a new (or existing, --update) template",
 		Long: "Captures a live group's structure — its context plus one agent per member (role, descr, owner flag, " +
 			"per-agent permission grants) — into a new template. Per-agent task briefs come through blank: a live " +
@@ -1049,12 +1049,12 @@ type templatesExportParams struct {
 
 func templatesExportCmd() *cobra.Command {
 	return boa.CmdT[templatesExportParams]{
-		Use:   "export <name>",
+		Use:   "export",
 		Short: "Export a template as a portable task-force JSON file",
 		Long: "Emits the named template wrapped in a small versioned envelope — a portable blueprint you can share " +
 			"with a friend, a coworker, or your own other machine and re-import with 'templates import'. Writes to " +
 			"stdout by default, or to --file. The file carries no machine-local identity (no DB ids, no conv links); " +
-			"spawn-profile references and permission slugs travel by name and are validated on import.",
+			"the roles, spawn profiles and saved prompts it references are embedded, and import creates the missing ones without overwriting. Permission slugs travel by name and are validated on import.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *templatesExportParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeTemplateNames)
@@ -1295,7 +1295,7 @@ type templatesStartersShowParams struct {
 
 func templatesStartersShowCmd() *cobra.Command {
 	return boa.CmdT[templatesStartersShowParams]{
-		Use:         "show <name>",
+		Use:         "show",
 		Short:       "Show one bundled starter in detail",
 		Long:        "Prints a starter's full blueprint — context, per-agent specs, work pattern, process phases, and rhythms — rendered exactly like 'templates show'. With --json, emits the raw template JSON.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -1339,7 +1339,7 @@ type templatesStartersInstallParams struct {
 
 func templatesStartersInstallCmd() *cobra.Command {
 	return boa.CmdT[templatesStartersInstallParams]{
-		Use:   "install <name>",
+		Use:   "install",
 		Short: "Install a bundled starter as a local template",
 		Long: "Installs a starter as a local group template you can then deploy, instantiate, or edit. Idempotent and " +
 			"never clobbers: if a template of the target name already exists, the install is SKIPPED (your edited copy " +

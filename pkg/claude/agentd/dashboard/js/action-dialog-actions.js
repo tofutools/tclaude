@@ -160,7 +160,7 @@ export function createActionDialogActions({
         return payload;
       } catch (error) {
         if (error?.name === 'AbortError') {
-          throw new Error(`clone timed out after ${CLONE_TIMEOUT_MS / 1000}s — the new agent may still come online; check ~/.tclaude/output.log and refresh in a moment.`);
+          throw new Error(`clone timed out after ${CLONE_TIMEOUT_MS / 1000}s — the new agent may still come online; check ~/.tclaude/data/output.log and refresh in a moment.`);
         }
         throw error;
       } finally { clearTimeout(timer); }
