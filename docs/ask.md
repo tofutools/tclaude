@@ -86,7 +86,7 @@ under another harness; explicit ask values are still validated.
 ## Sandbox policy
 
 `ask.sandbox` controls sandbox-profile resolution for both captured asks and
-`-i` foreground TUIs. Configure it beside **Ask — agent profile** in the
+`-i` foreground TUIs. Configure it beside **Ask — profile** in the
 dashboard's **Config › Ask & scribe**, or in the config file:
 
 ```json

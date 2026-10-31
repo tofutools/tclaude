@@ -159,9 +159,15 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 
 	titleBase := "" // the group's name, unless the operator named this agent
 	// The Steward is a Collab surface; other scribes are not.
-	if body.Scope != nil && strings.TrimSpace(body.Scope.Kind) == stewardScopeKind {
+	isSteward := body.Scope != nil && strings.TrimSpace(body.Scope.Kind) == stewardScopeKind
+	if isSteward {
 		if !collabRoutesEnabled() {
 			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
+			return
+		}
+		// Grants stored for future Stewards reach only the one real Steward.
+		if strings.TrimSpace(body.Scope.ID) != "" {
+			writeError(w, http.StatusBadRequest, "scope", "a Steward's scope takes no id")
 			return
 		}
 		// Everything that recognises a Steward looks in this one group, and
@@ -207,6 +213,9 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 		if s = strings.TrimSpace(s); s != "" {
 			in[s] = db.Grant()
 		}
+	}
+	if isSteward {
+		mergeStewardCarried(in)
 	}
 	for _, s := range body.DenySlugs {
 		if s = strings.TrimSpace(s); s != "" {
@@ -293,10 +302,23 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	if body.Background {
 		focus = scribeFocusNone
 	}
+	// requirePermission records no decision on the request, so ask directly.
+	var spawnSudoGrant int64
+	if spawnerConvID != "" {
+		spawnSudoGrant = loadBearingSudoGrantID(r, spawnerConvID, PermGroupsMembersSpawn, ActionContext{})
+	}
+	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
+	if !ok {
+		return
+	}
+	defer spawnUse.release()
 	out, reused, fail := summonScribe(name, titleBase, overrides, brief, body.Exclusive, focus, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
+	}
+	if !reused {
+		spawnUse.keep()
 	}
 
 	resp := map[string]any{
@@ -446,6 +468,12 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 			return nil, false, &spawnFailure{http.StatusInternalServerError, "permission",
 				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
 		}
+	}
+	// Sudo stands on the operator's approval, so only the operator's own summon
+	// passes it on: an agent could otherwise write a brief for a Steward holding
+	// what it does not hold itself.
+	if scopeKey == stewardScopeKind+"/" && spawnerConvID == "" {
+		inheritStewardCarriedSudo(outcome.ConvID)
 	}
 	out := &scribeOutcome{Name: p.Name, ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}
 	if outcome.FocusMode == "browser" {

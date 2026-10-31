@@ -146,6 +146,7 @@ Top-level fields:
 | `params` | Map of parameter ids to `{type, name?, description?, doc?, required?, default?}`. |
 | `start` | Entry node id. A separate start-typed node is optional. |
 | `nodes` | Map keyed by stable node id. |
+| `fallback` | Default for agent steps nobody can take; see Performers. |
 | `layout` | Optional editor-owned node positions; follow the preservation rule below. |
 
 Parameter references use `{{ params.issue }}` and must name a declared param.
@@ -159,6 +160,9 @@ warns when placed in inert fields such as profile, timeout, or backoff.
 - `decision`: require a decider `performer`; each possible verdict needs an
   exact outcome key in `next`.
 - `wait`: require `wait.duration`, `wait.until`, or `wait.signal`, plus `next`.
+- `parallel`: fan out to concurrent branches, then reduce them at a node with
+  `join: all` or `join: any`.
+- `subprocess`: run a nested graph as one node, inline or by `templateRef`.
 - `start`: optional explicit entry marker; require `next`.
 - `end`: no `next`; optional `result` such as `success`, `failed`, or
   `canceled`.
@@ -189,7 +193,7 @@ decide:
   rounds are used up. Without it, the outcome that goes back is refused after
   the last round and the decider has to pick another one.
 - Every cycle needs a bounded outcome; an unbounded one is a `graph_cycle`
-  error. The body is entered only at the target, left only through decisions,
+  error. A poison-escalation `retry` edge is exempt. The body is entered only at the target, left only through decisions,
   holds no `join: any`, and two loops nest or are disjoint.
 - Only decisions take `loops`. Rename or delete the outcome together with its
   `loops` entry.

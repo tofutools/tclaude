@@ -151,9 +151,8 @@ or tick "Start with remote control" in the dashboard's spawn dialog. The
 default is resolved once at spawn: explicit per-spawn value, then group
 policy, then spawn-profile default, then off. Group policy is set with
 `tclaude agent groups set-remote-control <group> optin|deny|inherit` (omit to
-clear; gated on `groups.settings.remote-control-policy` or `groups.admin`,
-human-only by default), and the dashboard shows a click-to-cycle policy chip
-per group. These are defaults, not locks — the agent's toggle still works
+clear; gated on `groups.settings.remote-control-policy` or `groups.admin`; a group owner
+has it for owned groups), or use `📱 remote policy` in the group's ⚙ menu. These are defaults, not locks — the agent's toggle still works
 afterwards.
 
 ### Tracking

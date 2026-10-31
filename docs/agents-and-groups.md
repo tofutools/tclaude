@@ -63,7 +63,8 @@ pieces relate — see [Architecture](architecture.md).
 The daemon authenticates every request without tokens for agents. It reads
 the connecting process's PID from the kernel (Unix socket peer
 credentials), then walks the host process tree looking for a recognized
-harness runtime — `claude`, `codex`, `copilot`, or Claude Code's `node`.
+harness runtime — any registered harness binary (`claude`, `codex`, `opencode`,
+`copilot`, `gemini`, `pi`) or Claude Code's `node`.
 Recognition uses the process name or the kernel-reported executable path
 (`/proc/<pid>/exe`), because `argv[0]` and the comm name are spoofable.
 
@@ -146,7 +147,7 @@ of settings verbs — `set-context`, `set-default-dir`,
 `set-default-profile`, `set-environment`, `set-descr`, `set-max-members`,
 `set-notifications`, `set-owner-scopes`, `set-remote-control` — plus
 `archive`/`unarchive`, `clone`, bulk `stop`/`resume`/`retire`, `rebrief`,
-`export`/`import` (human-only), persistent `attachment` reference links,
+`export`/`import` (human-only by default; `groups.export` and `groups.import`), persistent `attachment` reference links,
 and `nest` (dashboard tree cosmetics only — nesting inherits nothing).
 Membership transfers are recorded in the [audit
 trail](permissions-and-audit.md).
@@ -393,8 +394,8 @@ tclaude agent notify-human "PR is ready for review" \
   --attach out.png --attach report.md
 ```
 
-`--attach` (repeatable, files or directories) is unique to notify-human —
-agent-to-agent messages carry text only. Up to 20 files arrive as separate
+`--attach` (repeatable, files or directories) works on notify-human. Agent-to-agent
+messages carry text only, except `agent message --attach` to a remote `member@peer`. Up to 20 files arrive as separate
 downloads; more than 20, or a directory, become a single zip (`--zip`,
 `--separate`, and `--name` control the shape). The body may be omitted
 when `--subject` and `--attach` are both present.

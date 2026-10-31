@@ -1247,13 +1247,7 @@ func permissionVerdictAllowsAction(v permVerdict, convID, perm string, actx Acti
 // (including owner/member-derived grants). This decision-time check retains
 // scoped sudo provenance that a context-free audit re-resolution cannot see.
 func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionContext) int64 {
-	cfg, _ := config.Load()
-	src := loadPermSources(convID)
-	withoutSudo := src
-	withoutSudo.sudo = map[string]sudoPermSource{}
-	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
-		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
-	if allowed, _ := permissionVerdictAllowsAction(standing, convID, perm, actx); allowed {
+	if standingPermissionAllows(convID, perm, actx) {
 		return 0
 	}
 	effective := resolvePermissionVerdictForRequest(r, convID, perm)
@@ -1261,6 +1255,18 @@ func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionCon
 		return effective.SudoGrantID
 	}
 	return 0
+}
+
+// standingPermissionAllows reports whether the action is allowed with every
+// sudo grant left out.
+func standingPermissionAllows(convID, perm string, actx ActionContext) bool {
+	cfg, _ := config.Load()
+	withoutSudo := loadPermSources(convID)
+	withoutSudo.sudo = map[string]sudoPermSource{}
+	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+	allowed, _ := permissionVerdictAllowsAction(standing, convID, perm, actx)
+	return allowed
 }
 
 // requirePermissionEx is the shared core of requirePermission and

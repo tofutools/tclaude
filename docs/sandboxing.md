@@ -19,6 +19,37 @@ Egress filtering has its own page ([Network filtering](network-filtering.md)),
 and credential-less workflows that make strict profiles livable have theirs
 ([Credential proxies](proxies.md)).
 
+## Start here
+
+**By default**, a new install runs agents inside tclaude's own sandbox. If that can't
+run on your host, agents won't start, and [Doctor](dashboard-diagnostics.md#doctor)
+tells you why.
+
+**To confine an agent:**
+
+1. Create a sandbox profile in the [library](dashboard-library.md), or use
+   `tclaude agent sandbox-profiles`.
+2. Pick it under **Sandbox profile** in the spawn dialog, or set it for a group with 🛡.
+3. Check the result: the row shows 🔒, its tooltip lists what applies, and
+   `tclaude agent sandbox-profiles plan` shows the plan for a profile.
+
+**When something is blocked**, one of three things happens: the launch is refused
+with a reason, it launches with a notice, or a path is simply masked inside the
+sandbox. See [Symptom → cause](#symptom-cause).
+
+**To get unstuck:**
+
+- Give the profile a rule for just that path.
+- If the refusal is about network rules or resource limits, tick **Allow launch with
+  unenforced rules** in the spawn dialog, for one fresh launch. It doesn't help with
+  masked or protected paths.
+- On a running agent, use **⚠ restart without sandbox** in its ⚙ menu, or click the
+  sandbox badge. **🔒 restore sandbox + restart** puts it back.
+- `tclaude agent debug-export <agent>` shows what really ran, as does
+  **export debug info** in the agent's ⚙ menu.
+
+The rest of this page is reference.
+
 ## Who enforces: `--sandbox-impl`
 
 The sandbox implementation is selected at spawn and recorded with the
@@ -42,7 +73,7 @@ same layer. The values:
   CLI `off` via `GEMINI_SANDBOX=false`; Copilot has no off-flag tclaude can
   set, so its configuration is verified instead and an unverifiable posture
   refuses; pi has no sandbox to turn off). Supported for Claude Code, Codex,
-  OpenCode, Copilot, Gemini CLI and pi, on Linux and macOS. For OpenCode the wrapped process is the
+  OpenCode, Copilot, Gemini CLI, pi and shell, on Linux and macOS. For OpenCode the wrapped process is the
   agentd-owned `opencode serve` executor; the attach pane stays outside.
   Requires `bwrap` and working unprivileged user namespaces on Linux; a missing
   capability refuses the launch — never a silent fallback — from whichever tier
@@ -274,8 +305,8 @@ The axes:
   Linux (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
   hosts without delegated controllers refuse by default every cgroup a launch
   cannot proceed without — an authored ceiling under any implementation, and
-  `resource-only` even with no ceiling; the dashboard's "allow launch without
-  enforcement" checkbox is the one operator escape hatch and records a visible
+  `resource-only` even with no ceiling; the dashboard's "Allow launch with
+  unenforced rules" checkbox is the one operator escape hatch and records a visible
   degradation notice. Only the opportunistic layer boundary degrades instead.
 - **`darwin_allow_mach_register`** — a Seatbelt `(allow mach-register)` opt-in
   for browser/XPC workloads on macOS.
@@ -350,7 +381,7 @@ history, account/onboarding data. The same tree also holds the harness's
   friends) runs in the human's **next, unsandboxed** session.
 
 So tclaude binds a closed per-harness catalog of those paths read-only by
-default, materializing missing ones first — an absent `~/.claude/hooks` under a
+default, creating missing directories first — an absent `~/.claude/hooks` under a
 writable state root is just a directory the agent can create. The floor is
 enforced by the ordinary read-grant path, so it appears in
 `sandbox-profiles plan` as `launch-contract / harness-config-floor` on both
@@ -369,11 +400,11 @@ Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;
 without the floor tclaude’s sandbox was *weaker* than the harness's own
 default.
 
-Materialization writes only what is indistinguishable from absent: an empty
-directory, or `{}` for a JSON entry. An empty JSON file is **not** equivalent
-to a missing one — tclaude's own readers and Claude Code alike treat a missing
-file as `{}` but report an existing empty one as unparseable — so the seed
-matters. Existing content is never touched.
+Only directories are created. A file the host doesn't have is left out of the
+floor and never written, so **an absent file stays writable**: an agent can create
+it, and it takes effect in your next unsandboxed session. The table lists
+candidates, not a guarantee. To close the gap, create the file yourself, since a
+file that exists is bound read-only. Existing content is never touched.
 
 **Symlinked entries are skipped**, with a warning naming the path. Dotfile
 managers commonly point `~/.claude/skills` at a repo, and there is no faithful
@@ -390,7 +421,7 @@ user-scope `/permissions`, Codex's `/model` persistence, Copilot's
 trust-folder record. `/model` and directory trust for Claude Code land in
 `.claude.json`, which stays writable.
 
-**Two escape hatches**, least blunt first:
+**Three escape hatches**, least blunt first:
 
 1. An explicit profile write row **at exactly one floored path** drops that
    single entry — `{"path": "~/.claude/plugins", "access": "write"}` reopens
@@ -768,11 +799,16 @@ in-code spec identical):
 Re-run the installer after upgrades — older installs lack newer keys such as
 `failIfUnavailable`. Conflicting scalars are preserved and reported. On shared
 machines, use managed settings with `forbidUnsandboxedCommands: true`. tclaude
-also applies a per-launch overlay denying the exact tmux socket path, so agents
-cannot `send-keys` at tclaude's tmux server.
+also applies a per-launch overlay denying the exact tmux socket path on Linux, so
+agents cannot `send-keys` at tclaude's tmux server. macOS's built-in sandbox has no
+exact socket deny, and the overlay is skipped in mode `off`.
 
 ### Honestly residual holes
 
+- **Settings files you don't have aren't floored.** An agent can create an absent
+  `settings.json`, `CLAUDE.md`, `AGENTS.md` or similar file in the harness config
+  directory, and your next unsandboxed session reads it. See
+  [the harness-config floor](#the-harness-config-floor).
 - **`~/.claude/.claude.json` stays writable, and it carries `mcpServers`.**
   Under tclaude’s sandbox the harness-config floor cannot cover it: Claude Code
   writes that file continuously (project records, directory trust, history),
@@ -875,7 +911,7 @@ Two consequences worth knowing:
   all; see the best-effort note above. With no `resource_limits` authored that
   degrades with a diagnosis. With a ceiling authored it fails closed, exactly
   as an undelegated host does — there is no flag to wave it through; the
-  dashboard's "Allow launch without enforcement" fresh-spawn control is the
+  dashboard's "Allow launch with unenforced rules" fresh-spawn control is the
   only thing that widens it.
 
 UTS is deliberately not unshared. The sandbox already cannot change a hostname
@@ -914,7 +950,7 @@ A sandbox profile can select the filesystem root explicitly with
 read-only host root, or use `separate` to request the minimal constructed root
 even when network and Unix sockets remain open. Explicit separation is
 supported by tclaude’s sandbox on Linux for Claude Code, Codex, OpenCode,
-Copilot, and Gemini CLI; other targets refuse it during preview/spawn rather than ignoring it.
+Copilot, Gemini CLI and shell; pi and other targets refuse it during preview/spawn rather than ignoring it.
 
 The setting composes monotonically. `separate` in any included, global, group,
 or explicit profile wins. `inherit` cannot weaken a private/restricted network
@@ -924,7 +960,8 @@ automatic derivation they had before the control existed.
 
 A profile that leaves network access open but authors the `unix_sockets` axis
 as `closed` or an allow `list` gets a **host-network constructed root** on
-Linux for Claude Code, Codex, OpenCode, Copilot, and Gemini CLI: bubblewrap builds the same fresh
+Linux for Claude Code, Codex, OpenCode, Copilot, Gemini CLI and shell, but not pi:
+bubblewrap builds the same fresh
 root and PID namespace as the isolated posture, binds the agentd socket and any
 listed sockets back, and does NOT create a network namespace, so host IP
 networking, host loopback services, and the IDE bridge keep working. For
@@ -998,20 +1035,25 @@ If a fresh dashboard spawn requests closed network access on an implementation
 that cannot enforce it, the launch normally refuses with:
 
 ```text
-<harness> (<scope> scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch without enforcement” in the dashboard spawn dialog
+<harness> (<scope> scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch with unenforced rules” in the dashboard spawn dialog
 ```
 
 The human operator may explicitly check that named dashboard escape hatch for
-one fresh launch. Only this exact closed-network capability gap is widened:
-network access becomes open, while enforceable filesystem and Unix-socket rules
+one fresh launch. This also drops network deny rows the target can't enforce and
+waives resource limits the host can't apply, each with a recorded notice. It admits
+pi `auto` outside the wall too, which shows up only in the spawn audit. For a
+closed-network gap, network
+access becomes open, while enforceable filesystem and Unix-socket rules
 keep their planned posture. Protected-root checks, filtered model-transport
-gates, implementation availability, and every other launch refusal remain
+gates, implementation availability, and other launch refusals remain
 non-overridable. Raw API callers, including agents and human-class credentials,
-cannot set the override.
+cannot set the override; an authorized federated spawn can.
 
-The authorization is deliberately neither saved nor inherited. Resume,
+The network authorization is deliberately neither saved nor inherited. Resume,
 reincarnate, and clone of an overridden agent do not carry it forward and refuse
-again unless a future fresh spawn is explicitly authorized in the dashboard.
+again unless a future fresh spawn is explicitly authorized in the dashboard. Two
+things differ: a pi `auto` agent's resume, reincarnation or no-copy clone keeps its
+posture, and a waived resource limit's notice stays on the launch record.
 The launch snapshot records a degradation notice with network reason
 `operator_unenforced_launch_override` and effect `not_enforced`; the dashboard
 renders a warning badge and the exact notice rather than claiming a sandbox

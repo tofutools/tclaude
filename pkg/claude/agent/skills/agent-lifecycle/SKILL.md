@@ -21,7 +21,7 @@ skill is the imperative sibling — the checkpoint-then-hand-off
 procedure a `/reincarnate` invocation triggers. Keep the two consistent
 when editing either.
 
-You have three commands for managing your own context window:
+You have these commands for managing your own context window:
 
 | Command                                            | What it does                                                                                                                              |
 |----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
@@ -29,7 +29,7 @@ You have three commands for managing your own context window:
 | `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued. |
 | `tclaude agent reincarnate <follow-up>`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership). Follow-up is REQUIRED.              |
 | `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. `--cwd <dir>` starts it elsewhere (e.g. a worktree), `--group <name>` adds one more group, `--copy-ownership` also copies group ownerships (off by default). |
-| `tclaude agent morph --model M [--effort E]`       | Relaunch yourself in place with another same-harness model/effort/approval (needs `self.morph`; applies when your turn ends). History and identity are kept. |
+| `tclaude agent morph --model M [--effort E]`       | Relaunch yourself in place with another model/effort/approval (needs `self.morph`, which is not default-granted; applies when your turn ends). An agent changes harness with `--profile`. History and identity are kept. See `--dry-run`, `--back` and `--cancel`. |
 
 `context-info` on **yourself** is read-only and needs no slug. Reading
 **another** agent's context (`--target`) or a whole group's (`--group`) needs
@@ -37,8 +37,8 @@ global `agent.context-info`, or `groups.members.context-info` covering every
 current active group containing each target. Ownership contributes the latter
 for owned groups (see "Manager pattern" below).
 `compact` and `clone` are gated on `self.compact` and `self.clone`.
-Self-reincarnation is intrinsic to every active agent and needs no slug. The
-gated self-lifecycle slugs are default-granted by
+Self-reincarnation is intrinsic to every active agent and needs no slug.
+`self.compact` and `self.clone` are default-granted by
 `tclaude setup --install-default-agent-permissions` — see "Permission setup"
 below.
 
@@ -86,7 +86,7 @@ recommendation* — lighter or heavier both work, and because
 below) you can comfortably do it early and often rather than nursing a
 fat, rotting window.
 
-Two steady defaults:
+Steady defaults:
 
 - **Claude Code:** don't `/compact` on a timer. It's lossy and slow (see
   below), and an unprompted `/compact` appearing in a pane is surprising to a
@@ -265,19 +265,18 @@ The daemon migrates onto the new conv-id:
 - Per-conv permission grants (the rows in `agent_permissions`)
 - Group ownerships
 
+The successor takes the agent's name automatically.
+
 What is **not** migrated:
 
-- The harness conversation title. The new agent can self-rename in its
-  follow-up if the human-readable name matters.
 - The harness's actual message history (that's the whole point — fresh
   context).
 - Task state — the agent must persist that to disk, see above.
 
 The response from `reincarnate` includes the new conv-id, label, and
-attach command. The human's terminal does *not* automatically follow
-to the new tmux session; they may need to detach and
-`tclaude session attach <new-label>` manually. (Auto-reattach is on
-the roadmap.)
+attach command. Attached tmux clients are switched to the new session
+before the old pane exits. The attach command is the fallback, for when
+nobody was attached or the switch failed.
 
 ## Prerequisite: daemon must be running
 
@@ -293,9 +292,11 @@ tclaude agentd serve   # in a non-sandboxed terminal
 `compact` and `clone` are opt-in; self-reincarnation is always available to an
 active agent. The fastest path for the gated commands is
 `tclaude setup --install-default-agent-permissions`, which grants the
-self-lifecycle default slugs — currently `self.rename`, `self.compact`,
-`self.clone`, `self.schedule`, and
-`self.remote-control` — as defaults in one shot. (Kept separate from
+self-lifecycle default slugs — `self.rename`, `self.compact`, `self.clone`,
+`self.schedule`, `self.remote-control`, `self.interrupt`, `self.task`, `self.pr`,
+`self.tags`, `self.dir-repair` and `self.process`, plus the reads
+`process.templates.read`, `usage.read` and `costs.read` — as defaults in one
+shot. (Kept separate from
 `--install-agent-skills` so upgrading the on-disk skills doesn't re-add
 slugs you deliberately revoked.)
 
@@ -367,15 +368,12 @@ way.
   or been treated as paste-mode (Enter becomes newline, no submit).
   If you depend on tight ordering, omit the follow-up and run a
   separate `tclaude agent` command on the next turn.
-- **Reincarnate: human's terminal stays attached to the old session.**
-  The old tmux session goes away when the harness processes its soft-exit
-  command, so the human's terminal will see the pane close. They need to
-  attach to the new session to follow you. The reincarnate response
-  includes the attach command.
+- **Reincarnate: the human's terminal did not follow.** Attached clients
+  are switched to the new session. If that failed, the old pane closes on
+  them and they need the attach command from the response.
 - **Reincarnate: spawn timeout.** If the new agent session doesn't
-  produce a conv-id within ~30s, you get a 504. The spawned pane may
-  still come up — the human can `tclaude session attach <label>` to
-  inspect.
+  produce a conv-id within ~30s, you get a 504. The timed-out successor is
+  stopped and the policy restored, so you are still running and can retry.
 - **Mid-conversation typing is lost.** As with `compact` and `rename`,
   any text you'd typed but not submitted in the old pane is lost when
   it gets the `/exit` injection.

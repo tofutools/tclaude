@@ -79,7 +79,7 @@ network; `private` gives the launch its own Linux network namespace routed
 through `pasta` with default-accept — it separates abstract Unix sockets and
 host loopback from the agent without making IP traffic deny-by-default. It is
 supported with tclaude’s sandbox alone on Linux for Claude Code, Codex,
-OpenCode, Copilot, Gemini CLI and pi launches, and refuses elsewhere rather than falling back. A private
+OpenCode, Copilot, Gemini CLI, pi and shell launches, and refuses elsewhere rather than falling back. A private
 namespace in a global or included profile cannot be widened by a child.
 
 The `unix_sockets` axis (`mode: open|closed|list` plus `path`/`path_glob`
@@ -114,8 +114,8 @@ composition was overridden.
   only with the explicit `TCLAUDE_OFFLINE_MODEL=1` operator assertion. On
   macOS, Seatbelt denies outbound and bind (agentd socket excepted) but
   provides no PID isolation, no constructed root, and — deliberately — no
-  loopback exception. The dashboard spawn dialog's "Allow launch without
-  enforcement" checkbox can widen exactly this closed-network gap for one
+  loopback exception. The dashboard spawn dialog's "Allow launch with
+  unenforced rules" checkbox can widen this closed-network gap for one
   fresh launch, never saved or inherited, recorded as
   `operator_unenforced_launch_override`.
 - **List** → **filtered**, through whichever engine the profile deploys.
@@ -167,7 +167,7 @@ reserved from CIDR or DNS-derived rules, so either kind of rule can also reach
 host loopback on its authored ports — a DNS-rebinding route to host services.
 
 The packet engine is enforced with tclaude’s sandbox alone for **Claude Code,
-Codex, and OpenCode** launches on Linux. When OpenCode supplies a strict explicit-
+Codex, OpenCode, Gemini CLI, pi and shell** launches on Linux. When OpenCode supplies a strict explicit-
 provider configuration, tclaude checks that provider endpoint against the
 authored rules. An OpenCode route tclaude cannot inspect is left to those rules:
 the launch proceeds, and the packet floor allows or blocks the actual request.
@@ -285,7 +285,7 @@ mind: they document intent, they do not yet enforce it.
 ## Gemini CLI
 
 Gemini CLI launches are enforced by the Linux packet gateway, the same as
-Claude Code and Codex. On Linux the proxy engine works for Gemini too; it is
+Claude Code, Codex, OpenCode, pi and shell. On Linux the proxy engine works for Gemini too; it is
 not yet activated on macOS. Gemini is a Node program, and on current Node its
 model client honours the proxy variables only when `NODE_USE_ENV_PROXY=1` is
 set, so every Gemini launch under tclaude's sandbox exports it. The agent's

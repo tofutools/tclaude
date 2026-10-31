@@ -1,4 +1,12 @@
-# Querying usage and costs
+# Usage and costs
+
+Use this page to read spend and quota from the command line and to set limits. For the
+charts, see the [Usage tab](dashboard-usage.md).
+
+- **To see where you stand:** `tclaude usage` and `tclaude costs`.
+- **To cap spending:** see [Usage limits and budgets](#usage-limits-and-budgets), or
+  **Open usage limits & budgets…** in
+  [Config › Usage & costs](dashboard-config.md#usage-costs).
 
 Operators and agents can query account quotas and recorded costs through the
 agentd daemon. The commands do not access the private database or provider

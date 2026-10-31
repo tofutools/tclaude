@@ -20,7 +20,7 @@ spawns the whole team.
 ```bash
 tclaude agent templates ls
 tclaude agent templates show review-team
-tclaude agent templates instantiate review-team
+tclaude agent templates instantiate review-team --group reviews
 ```
 
 Templates are JSON-authored. The safe edit loop is round-trip:
@@ -45,7 +45,9 @@ Other verbs:
   of creating a new one.
 
 Template writes need `templates.manage` and `instantiate` needs
-`templates.instantiate`; both are effectively human-only by default. You can
+`templates.instantiate`. `templates.manage` is human-only by default, while
+`templates.instantiate` comes with owning a group, for that group, so owners can
+reinforce and rebrief it. You can
 grant `templates.manage` to a trusted "scribe" agent and author templates
 conversationally — describe the team you want, let the scribe drive the JSON
 round-trip. The scribe's launch profile is configurable via `scribe.profile`
