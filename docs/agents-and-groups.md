@@ -204,6 +204,10 @@ running tclaude holds the message until the agent's next turn event and sends
 it only if the main transcript recorded a compaction. If the transcript can't
 be read it sends the message anyway.
 
+Claude Code, Codex, OpenCode, pi and Copilot all report compactions. Gemini CLI
+does not, so a Gemini agent gets nothing after one; see
+[Startup-context re-injection](harnesses.md#startup-context-re-injection).
+
 The rest of tclaude waits for the same answer. A compaction that might be a
 subagent's skips the pre-compact guard and the "compacting" status. The agent's
 context figures and nudge state are reset only once the compaction is proven to

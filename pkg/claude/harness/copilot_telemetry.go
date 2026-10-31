@@ -180,6 +180,11 @@ type CopilotRuntimeSnapshot struct {
 	// times this one log has been appended to by a fresh CLI process.
 	Lifetimes int
 
+	// Compactions counts the main thread's successful compactions in the whole
+	// log. A failed one leaves the conversation intact, and a subagent's
+	// leaves the main thread's context alone, so neither counts.
+	Compactions int
+
 	Context    CopilotContextTelemetry
 	HasContext bool
 
@@ -318,6 +323,7 @@ type copilotRuntimeScanState struct {
 	assistantMessages     int
 	assistantOutputTokens int64
 	lifetimes             int
+	compactions int
 
 	context    CopilotContextTelemetry
 	hasContext bool
@@ -361,6 +367,7 @@ func (s copilotRuntimeScanState) snapshot() CopilotRuntimeSnapshot {
 		AssistantMessages:     s.assistantMessages,
 		AssistantOutputTokens: s.assistantOutputTokens,
 		Lifetimes:             s.lifetimes,
+		Compactions:           s.compactions,
 		Context:               s.context,
 		HasContext:            s.hasContext,
 		NanoAIU:               s.nanoAIU,
@@ -448,6 +455,9 @@ func (s *copilotRuntimeScanState) consumeLine(line []byte) bool {
 		// post-compaction figures describe nothing and are ignored.
 		if event.Data.Success != nil && !*event.Data.Success {
 			return true
+		}
+		if event.AgentID == "" {
+			s.compactions++
 		}
 		s.setContext(CopilotContextTelemetry{
 			CurrentTokens:         event.Data.PostCompactionTokens,

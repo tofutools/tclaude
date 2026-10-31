@@ -2316,3 +2316,6 @@ func SetUsageRulesLiveSessionsForTest(fn func() (map[string]struct{}, error)) fu
 	usageRulesLiveSessions = fn
 	return func() { usageRulesLiveSessions = prev }
 }
+
+// SweepCopilotUsageForTest runs one tick of the daemon's Copilot poller.
+func SweepCopilotUsageForTest() { sweepCopilotUsage(context.Background()) }

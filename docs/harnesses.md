@@ -114,6 +114,7 @@ warning. Model and effort are remembered by the harness itself.
 | Account quota spawn gate | ✅ cached quota windows | ✅ cached quota windows | ❌ no single account quota | ✅ cached quota windows | ❌ account quota is not captured in session logs | ❌ no single account quota | ❌ no model |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ✅ in-pane `/name` | ❌ |
 | Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ✅ in-pane `/compact`; pinned auto-compact window | ❌ |
+| [Startup-context re-injection](agents-and-groups.md) after compaction | ✅ hooks | ✅ hooks | ✅ server events | ✅ session event log | ❌ no post-compaction event | ✅ extension events | ❌ |
 | Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ✅ continues a copy | ❌ |
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ⚠️ extension footer segment: tclaude's pinned-window context meter | ❌ |
@@ -988,6 +989,20 @@ that cannot fall back to saved Google OAuth, Vertex settings or `.env` inputs.
 See [Gemini configuration](https://geminicli.com/docs/reference/configuration/).
 Both harnesses refuse a gateway request with the reason before launching.
 Non-interactive one-shot runs also refuse a proxy choice.
+
+### Startup-context re-injection
+
+Every harness that reports a compaction gets the same queued message; see
+[Agents and groups](agents-and-groups.md). Copilot has no post-compaction hook,
+so the daemon notices a compaction from `session.compaction_complete` in the
+session event log, within a few seconds. A failed compaction, or a subagent's,
+queues nothing. Compactions already in a resumed conversation's log are not
+answered again.
+
+Gemini CLI is the gap: `PreCompress` is advisory and fires before the
+compression, and no event follows it, so tclaude cannot tell whether a
+compression happened and queues nothing. A Gemini agent keeps only what the
+compression summary kept.
 
 ### tclaude-managed instructions
 

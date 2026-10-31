@@ -103,6 +103,13 @@ func QueueContextReinjection(input HookCallbackInput, envSessionID string) {
 	queueReinjection(convID, boundary)
 }
 
+// QueueCompactionReinjection queues the startup context after a compaction
+// tclaude learned of outside a hook. Copilot announces its compactions only in
+// the session event log, which the daemon follows.
+func QueueCompactionReinjection(convID string) {
+	queueReinjection(convID, startupctx.BoundaryCompact)
+}
+
 // subagentsShareCompactionHooks reports whether a harness announces a
 // subagent's compaction through the main thread's hooks.
 func subagentsShareCompactionHooks(harnessName string) bool {
