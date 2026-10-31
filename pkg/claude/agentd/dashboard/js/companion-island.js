@@ -23,7 +23,7 @@ import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
-  defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
+  defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent, viewportOf,
   stewardSummonBody, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
@@ -51,10 +51,6 @@ function snapTopOf(win) {
   }
 }
 const PEEK_REFRESH_MS = 1500;
-
-function viewportOf(win) {
-  return { width: win?.innerWidth || 1280, height: win?.innerHeight || 800 };
-}
 
 function reducedMotion(win) {
   try {
@@ -556,7 +552,14 @@ export function CompanionApp({
       return p.snap ? zoneRect(p.snap, vp, snapTop()) : clampPlacement(p, vp);
     });
     win?.addEventListener?.('resize', onResize);
-    return () => win?.removeEventListener?.('resize', onResize);
+    // A page scrollbar appearing changes the usable width without a resize event.
+    const root = win?.document?.documentElement;
+    const observer = root && win?.ResizeObserver ? new win.ResizeObserver(onResize) : null;
+    observer?.observe(root);
+    return () => {
+      win?.removeEventListener?.('resize', onResize);
+      observer?.disconnect();
+    };
   }, [win]);
 
   function snapTop() {

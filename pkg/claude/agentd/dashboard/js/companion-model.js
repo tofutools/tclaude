@@ -238,6 +238,16 @@ export function snapZone(pointer, viewport) {
 
 // zoneRect is the rectangle a snapped window occupies: a full-height side
 // panel below the top bar, or a full-width bottom drawer above the footer.
+// viewportOf is the area a fixed window can use. innerWidth and innerHeight
+// include page scrollbars, which would cover a window snapped to that edge.
+export function viewportOf(win) {
+  const root = win?.document?.documentElement;
+  return {
+    width: root?.clientWidth || win?.innerWidth || 1280,
+    height: root?.clientHeight || win?.innerHeight || 800,
+  };
+}
+
 export function zoneRect(zone, viewport, top = 0) {
   const bottom = viewport.height - COMPANION_FOOTER_ROOM;
   if (zone === 'right' || zone === 'left') {
