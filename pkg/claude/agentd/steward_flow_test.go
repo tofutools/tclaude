@@ -288,15 +288,19 @@ func TestSteward_DefaultPermissions(t *testing.T) {
 	assert.False(t, has(conv, agentd.PermAgentTask), "a running Steward keeps what it was summoned with")
 	assert.Equal(t, []string{agentd.PermAgentSpawn}, standing(conv), "what config no longer gives shows as beyond it")
 
+	// Standing grant authority is refused on save, and ignored from a hand edit.
+	assert.NotEqual(t, http.StatusOK, save("/api/config", agentd.PermPermissionsGrant).Code)
+
 	// A hand edit can leave an unknown slug. It grants nothing and must not
 	// stop the Steward from starting.
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Steward = &config.StewardConfig{DefaultPermissions: []string{"no.such.slug", agentd.PermAgentTask}}
+	cfg.Steward = &config.StewardConfig{DefaultPermissions: []string{"no.such.slug", agentd.PermPermissionsGrant, agentd.PermAgentTask}}
 	require.NoError(t, config.Save(cfg))
 	next := summon()
 	assert.True(t, has(next, agentd.PermAgentTask))
 	assert.False(t, has(next, "no.such.slug"))
+	assert.False(t, has(next, agentd.PermPermissionsGrant))
 	rows, err = db.ListAgentMessagesForConv(next, 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)

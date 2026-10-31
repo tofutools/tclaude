@@ -692,8 +692,9 @@ fleet and boards alone. **Writes** is `messaging` by default (reach any agent),
 `none`, or `workers`, which also lets it start workers. **Default permissions**
 (`steward.default_permissions`, empty by default) lists extra slugs a new
 Steward is born with on top of those levels, with the same list editor as the
-agent defaults. Saving refuses a slug the daemon does not know, the Steward's
-brief names the extras, and they do not count as elevated access. Anything
+agent defaults. Saving refuses a slug the daemon does not know and `permissions.grant` or
+`permissions.revoke`, which you can still give a running Steward from its
+permissions editor. The Steward's brief names the extras, and they do not count as elevated access. Anything
 else still goes through `--ask-human`. Messaging uses `message.direct`, so it
 also reaches agents on linked instances that export a mail-capable group; set
 Writes to `none` to rule that out. A running Steward keeps the access it was

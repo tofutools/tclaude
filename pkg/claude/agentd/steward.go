@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -63,7 +64,21 @@ func stewardLevelSlugs(cfg *config.Config) []string {
 func stewardDefaultSlugs(cfg *config.Config) []string {
 	var slugs []string
 	for _, slug := range cfg.StewardDefaultPermissions() {
-		if IsKnownPermSlug(slug) {
+		if IsKnownPermSlug(slug) && !slices.Contains(sudoDefaultBlocklist, slug) {
+			slugs = append(slugs, slug)
+		}
+	}
+	return slugs
+}
+
+// recursiveStewardSlugs are the entries of steward.default_permissions that
+// hand out permissions themselves. The Steward reads agent mail, so standing
+// grant authority on it is refused, as it is for sudo. The operator can still
+// grant one to a running Steward from its permissions editor.
+func recursiveStewardSlugs(cfg *config.Config) []string {
+	var slugs []string
+	for _, slug := range cfg.StewardDefaultPermissions() {
+		if slices.Contains(sudoDefaultBlocklist, slug) {
 			slugs = append(slugs, slug)
 		}
 	}

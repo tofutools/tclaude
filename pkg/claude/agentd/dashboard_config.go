@@ -176,6 +176,14 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 		configErrors(w, msgs...)
 		return
 	}
+	if recursive := recursiveStewardSlugs(cfg); len(recursive) > 0 {
+		msgs := make([]string, 0, len(recursive))
+		for _, slug := range recursive {
+			msgs = append(msgs, fmt.Sprintf("steward.default_permissions: %q cannot be a default; grant it to a running Steward instead", slug))
+		}
+		configErrors(w, msgs...)
+		return
+	}
 	// The form shows every per-type checkbox, so an unchecked one is a
 	// choice `tclaude setup` must not undo.
 	cfg.Notifications.MarkNotifyTypesKnown()
