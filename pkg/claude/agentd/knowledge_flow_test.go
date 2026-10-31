@@ -1,3 +1,5 @@
+//ci:reads none
+
 package agentd_test
 
 import (
