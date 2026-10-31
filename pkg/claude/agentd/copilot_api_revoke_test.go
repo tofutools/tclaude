@@ -44,9 +44,11 @@ var copilotAPIPostureWriters = []struct {
 	// Enrollment composes and writes the agent profile. This is the primary
 	// posture write for every spawned agent.
 	{"lifecycle.go", "enrollSpawnedConv", "SetAgentRelaunchProfile"},
-	// Legacy backfill for a conversation whose resume profile went missing.
-	{"lifecycle.go", "recoverMissingConversationResumeProfile", "SetAgentRelaunchProfile"},
-	{"lifecycle.go", "recoverMissingConversationResumeProfile", "SetConversationResumeProfile"},
+	// The baseline for a conversation with no recorded posture: legacy backfill
+	// when its resume profile went missing, and a group import's OpenCode
+	// landing, neither of which has a Copilot posture to demote.
+	{"lifecycle.go", "recordBaselineResumeProfile", "SetAgentRelaunchProfile"},
+	{"lifecycle.go", "recordBaselineResumeProfile", "SetConversationResumeProfile"},
 }
 
 // TestNoAutomaticRevokeOfTheCopilotAPIPosture is the mechanical statement that
