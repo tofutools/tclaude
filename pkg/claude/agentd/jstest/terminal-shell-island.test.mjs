@@ -936,7 +936,7 @@ test('closing the last terminal moves to Groups unless configured to stay', asyn
   await harness.act(() => harness.fireEvent(closeButton('four'), 'click'));
   await settle();
   assert.equal(terminals.classList.contains('active'), true, 'the opt-out keeps the empty Terminals tab');
-  assert.equal(corrections.length, 1);
+  assert.deepEqual(corrections, [{ tab: 'terminals' }, { tab: 'terminals' }], 'and the URL stops naming the terminal that closed');
   cleanup();
 });
 

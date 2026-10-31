@@ -32,6 +32,17 @@ export function openBoardPane(id, label, options) {
   return openTerminalPane(boardPaneSeed(id, label), options);
 }
 
+// openLinkedBoard opens the board a URL names. Like a retired agent's deep link,
+// a deleted board's opens nothing, and the router corrects the URL. Any other
+// failure leaves the answer open: the tab opens and says what is wrong.
+export async function openLinkedBoard(id, fetchImpl = (...args) => globalThis.fetch(...args)) {
+  try {
+    const response = await fetchImpl(`/api/boards/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+    if (response?.status === 404) return null;
+  } catch { /* see above */ }
+  return openBoardPane(id);
+}
+
 // openBoardOverlay floats a board in the overlay window. The board it displaces
 // goes back to a tab, quietly: nothing is closed by opening something else.
 export function openBoardOverlay(id, label) {

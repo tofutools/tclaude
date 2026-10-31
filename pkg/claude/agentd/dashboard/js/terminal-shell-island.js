@@ -28,8 +28,7 @@ import { openAccessPanel } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
-import { boardOverlay, openBoardPane } from './board-overlay-state.js';
-import { bindBoardTabs } from './terminal-board-tabs.js';
+import { boardOverlay, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch } from './node-api.js';
@@ -413,7 +412,7 @@ const fetchFromPage = (...args) => globalThis.fetch(...args);
 
 // BoardPane is a pane with a board in it rather than a terminal: no widget, and
 // none of the agent chrome. The editor mounts the first time the tab is looked
-// at, so tabs restored after a reload cost nothing until then, and then stays
+// at, so a tab opened in the background costs nothing until then, and then stays
 // mounted like a background terminal. A pop-out's page has no collab gate of
 // its own: the daemon answers there.
 function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope = null }) {
@@ -1663,7 +1662,7 @@ function TerminalTabs({
     };
   }, [hasTerminals]);
 
-  // The last open terminal closing leaves an empty tab behind; move on to
+  // The last open tab closing leaves an empty section behind; move on to
   // Groups unless config says to stay (terminal-close-nav.js). Only the
   // has-panes -> no-panes edge counts, so loading with no terminals or
   // unticking a node in a fused scope never switches tabs. It waits a task and
@@ -1676,7 +1675,7 @@ function TerminalTabs({
     if (solo || !had || hasPanes) return undefined;
     const timer = setTimeout(() => {
       // A board that moved to the overlay leaves the operator working here.
-      if (!state.panes.value.length && !boardOverlay.peek()) leaveTerminalsAfterLastClose();
+      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: !!boardOverlay.peek() });
     }, 0);
     return () => clearTimeout(timer);
   }, [hasPanes, solo]);
@@ -1927,9 +1926,14 @@ export function mountTerminalShellIsland({
     state,
     snapshot,
     openAgentPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
-    openBoardPane: (id) => openBoardPane(id),
+    openBoardPane: (id) => openLinkedBoard(id),
   });
-  const unbindBoardTabs = snapshot ? bindBoardTabs({ state, snapshot }) : () => {};
+  // A board has no tab while features.collab is off. The router keeps /boards
+  // URLs from opening one; this takes away what was open, or came by handoff.
+  const stopCollabGate = snapshot ? snapshot.subscribe((value) => {
+    if (!value || value.collab_enabled === true) return;
+    state.removePanes(state.panes.peek().filter((pane) => pane.seed.board).map((pane) => pane.key));
+  }) : () => {};
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
     snapshot=${snapshot} scope=${scope} />`, host);
@@ -1952,7 +1956,7 @@ export function mountTerminalShellIsland({
     stopRemoteStatusPoll();
     stopPeerWatch();
     stopBackgroundPoll();
-    unbindBoardTabs();
+    stopCollabGate();
     unbindNavRouting();
     unbindHandoff();
     unregisterController();

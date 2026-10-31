@@ -43,10 +43,35 @@ export const BOARD_VIEW_REFRESH_MS = 30000;
 const BOARD_EVENT_IMAGE_MAX = 2 << 20;
 // Past this a batch goes without its undo steps rather than be refused.
 const BOARD_MAX_STEPS_BODY = 12 * 1024 * 1024 - 1024;
+// A request only outlives its page with keepalive, and a browser allows a page
+// 64 KiB of such bodies in flight. Part of that stays free for prefs.js.
+export const BOARD_KEEPALIVE_MAX = 60 * 1024;
+// How long a page about to go waits for its editors' saves.
+export const BOARD_SETTLE_MS = 3000;
 
 // Keys aimed at nothing in particular (focus on the body, as after clicking the
 // canvas) go to the editor last used, so two open editors never both act.
 let lastEditor = null;
+
+// Keepalive body bytes in flight, shared by every editor in the page: the
+// browser's allowance is the page's.
+let keepaliveBytes = 0;
+
+// The editors mounted in this page, for settleBoardEdits.
+const openEditors = new Set();
+
+// settleBoardEdits saves what the page's editors hold of a board, an open text
+// edit included, and says whether all of it is saved. For a caller about to
+// close the page: pagehide cannot wait, so a large edit would be lost.
+export async function settleBoardEdits(boardId, timeoutMs = BOARD_SETTLE_MS) {
+  const settling = [...openEditors].filter((editor) => editor.boardId === boardId).map((editor) => editor.settle());
+  if (!settling.length) return true;
+  let timer = null;
+  const expired = new Promise((resolve) => { timer = setTimeout(() => resolve([false]), timeoutMs); });
+  const results = await Promise.race([Promise.all(settling), expired]);
+  clearTimeout(timer);
+  return results.every(Boolean);
+}
 
 // rasterizeBoard draws the board for its agents; board-export.js loads on the
 // first use.
@@ -322,6 +347,9 @@ export function BoardEditor({
       };
     };
     connect();
+    const editor = { boardId, settle };
+    openEditors.add(editor);
+    win?.addEventListener?.('pagehide', saveBeforeLeaving);
     void load(0).then(() => {
       lastLoad = Date.now();
       started = true;
@@ -329,10 +357,15 @@ export function BoardEditor({
     });
     return () => {
       disposed.current = true;
+      openEditors.delete(editor);
+      win?.removeEventListener?.('pagehide', saveBeforeLeaving);
       clearTimeout(pollTimer);
       clearTimeout(liveRetry);
       liveSocket?.close();
       void reportView(false);
+      // Text still being typed is an edit, and an editor going away gets no blur
+      // to finish it.
+      finishText();
       const eventPending = !!timers.current.event;
       for (const timer of Object.values(timers.current)) clearTimeout(timer);
       void flush();
@@ -365,11 +398,36 @@ export function BoardEditor({
   // One PATCH at a time, so steps reach the history in the order they were made.
   function flush() {
     clearTimeout(timers.current.flush);
-    saved.current = saved.current.then(saveBatch, saveBatch);
+    const next = () => saveBatch();
+    saved.current = saved.current.then(next, next);
     return saved.current;
   }
 
-  async function saveBatch() {
+  // settle saves everything held here, retries included, and says whether all
+  // of it was saved.
+  async function settle() {
+    finishText();
+    void flush();
+    let waited = null;
+    do {
+      waited = saved.current;
+      await waited;
+    } while (waited !== saved.current);
+    return !pending.current.size;
+  }
+
+  // saveBeforeLeaving is the last chance on a page going away. It sends now, not
+  // behind `saved`, which would only move on after the page had gone; a PATCH
+  // already in flight is keepalive too, so the daemon may get the two in either
+  // order. Should the page come back from the back/forward cache, a failed save
+  // is kept and retried as usual.
+  function saveBeforeLeaving() {
+    finishText();
+    clearTimeout(timers.current.flush);
+    saved.current = Promise.all([saved.current, saveBatch(true)]).then(() => {});
+  }
+
+  async function saveBatch(leaving = false) {
     if (!pending.current.size) return;
     const batch = [...pending.current.values()];
     pending.current.clear();
@@ -380,15 +438,24 @@ export function BoardEditor({
       pendingSteps.current = [...steps, ...pendingSteps.current];
     };
     let body = JSON.stringify({ elements: batch, steps });
-    if (new Blob([body]).size > BOARD_MAX_STEPS_BODY) {
+    let size = new Blob([body]).size;
+    const room = BOARD_KEEPALIVE_MAX - keepaliveBytes;
+    // On a page going away a save that fits matters more than its undo steps.
+    if (size > BOARD_MAX_STEPS_BODY || (leaving && size > room)) {
       body = JSON.stringify({ elements: batch });
-      if (!disposed.current) notify('That edit is too large to undo.', false);
+      size = new Blob([body]).size;
+      if (!leaving && !disposed.current) notify('That edit is too large to undo.', false);
     }
+    // Every save that fits goes keepalive, or one in flight when the page goes
+    // would be cut off, and resending it could save it twice. Past the limit it
+    // goes as a plain request, which may not outlive the page.
+    const keepalive = size <= room;
+    if (keepalive) keepaliveBytes += size;
     saving.current += 1;
     try {
       const result = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}`, {
         method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Board-Client': viewClient.current },
-        body,
+        body, keepalive,
       }));
       // The poll cursor is not advanced from here: agent edits that landed
       // before this PATCH have versions below result.version.
@@ -443,6 +510,7 @@ export function BoardEditor({
       }
     } finally {
       saving.current -= 1;
+      if (keepalive) keepaliveBytes -= size;
     }
   }
 
