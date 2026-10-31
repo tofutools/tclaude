@@ -185,7 +185,7 @@ export const MAX_IN_FLIGHT = 4;
 // node's own route for this node (read only from a peer's page), with the
 // static_version of the copy already held.
 function snapshotURL(node, staticVersion = '') {
-  const query = staticVersion ? `?static_version=${encodeURIComponent(staticVersion)}` : '';
+  const query = staticVersion ? `?static_version=${encodeURIComponent(staticVersion)}&static_catalogs=1` : '';
   return (node.local ? '/api/snapshot' : `/api/peer/${encodeURIComponent(node.id)}/snapshot`) + query;
 }
 

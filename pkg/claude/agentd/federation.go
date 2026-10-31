@@ -1164,10 +1164,14 @@ func (rt *fedRuntime) outboxLoop(ctx context.Context) {
 func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 	rt.outboxMu.Lock()
 	defer rt.outboxMu.Unlock()
+	now := time.Now()
+	// Expiry needs no peer, so a hub outage must not hold it back.
+	if err := db.ExpireFederationProposals(now); err != nil {
+		slog.Warn("federation: proposal expiry failed", "error", err)
+	}
 	if rt.cl.Status().State != client.StateConnected {
 		return
 	}
-	now := time.Now()
 	rt.flushProposalEvents(now)
 	rt.flushHomeMail(now)
 	rows, err := db.DueFederationOutbox(now, 50)

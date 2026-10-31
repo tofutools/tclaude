@@ -152,7 +152,7 @@ export async function refresh(options) {
     if (inboxPeers.length) void readRemoteInboxes(inboxPeers);
     const [snapR, retiredR, convR, replacedR, jobsR, viewersR] = await Promise.all([
       fetch('/api/snapshot' + (staticVersion
-        ? '?static_version=' + encodeURIComponent(staticVersion)
+        ? '?static_version=' + encodeURIComponent(staticVersion) + '&static_catalogs=1'
         : ''), { credentials: 'same-origin', cache: 'no-store', signal: abort.signal }),
       retiredRequest,
       convRequest,

@@ -29,7 +29,7 @@ func TestDashboardSnapshotTransportWiring(t *testing.T) {
 	store := string(storeBytes)
 	for _, needle := range []string{
 		"!next?.static_unchanged || !prev || prev.static_version !== next.static_version",
-		"next[key] = prev[key]",
+		"next[key] = next[key] ?? prev[key]",
 	} {
 		if !strings.Contains(store, needle) {
 			t.Errorf("snapshot-store.js missing transport optimization %q", needle)
