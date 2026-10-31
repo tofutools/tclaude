@@ -3,10 +3,10 @@
 //
 // The docs are embedded, so they are always there and always the ones this
 // build shipped with. The source is too large to embed, and `go install` has no
-// step that could generate it, so it is fetched once by commit into the
-// daemon's private store under ~/.tclaude/data, which no sandbox reopens. The
-// only way to it is the read-only daemon API, so a reader cannot change it and
-// reaching it needs no new filesystem access.
+// step that could generate it. It is an optional download by commit, only at the
+// operator's word, into the daemon's private store under ~/.tclaude/data, which
+// no sandbox reopens. The only way to it is the read-only daemon API, so a
+// reader cannot change it and reaching it needs no new filesystem access.
 package knowledge
 
 import (

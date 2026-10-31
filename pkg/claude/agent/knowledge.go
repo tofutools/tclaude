@@ -22,7 +22,7 @@ func knowledgeCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "knowledge",
 		Short:       "Read the docs and source of the running build",
-		Long:        "A read-only knowledge base pinned to the build the daemon is running. The docs ship in the binary; the source is fetched once by commit. Each answer says how exact it is.\n\n" + knowledgeNeeds,
+		Long:        "A read-only knowledge base pinned to the build the daemon is running. The docs ship in the binary; the source is an optional download the operator chooses. Each answer says how exact it is.\n\n" + knowledgeNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			knowledgeStatusCmd(), knowledgeLsCmd(), knowledgeReadCmd(), knowledgeSearchCmd(),
@@ -81,7 +81,7 @@ func knowledgeStatusCmd() *cobra.Command {
 	return boa.CmdT[knowledgeStatusParams]{
 		Use:         "status",
 		Short:       "Show which build the knowledge base is pinned to and how exact it is",
-		Long:        "Prints the running version and commit, whether the build is exact, dirty or unknown, and how the source stands. A fetch that has not happened is started.\n\n" + knowledgeNeeds,
+		Long:        "Prints the running version and commit, whether the build is exact, dirty or unknown, and how the source stands. It never starts a download.\n\n" + knowledgeNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *knowledgeStatusParams, _ *cobra.Command, _ []string) {
 			os.Exit(runKnowledgeStatus(p, os.Stdout, os.Stderr))

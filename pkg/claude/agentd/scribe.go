@@ -471,7 +471,6 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	}
 	if scopeKey == stewardScopeKind+"/" {
 		recordStewardOffer(outcome.ConvID, overrides)
-		knowledgeBase().Prefetch()
 	}
 	// Sudo stands on the operator's approval, so only the operator's own summon
 	// passes it on: an agent could otherwise write a brief for a Steward holding

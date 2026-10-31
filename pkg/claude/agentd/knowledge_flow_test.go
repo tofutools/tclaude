@@ -5,7 +5,9 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -105,6 +107,42 @@ func TestKnowledge_StewardReadsPinnedDocs(t *testing.T) {
 		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, "/v1/knowledge/read?path=index.md", map[string]any{}), steward))
 		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, method)
 	}
+}
+
+// A download is the operator's call: summoning a Steward, a daemon start and every
+// read leave the network alone, and the Steward is told the source is not there.
+func TestKnowledge_NothingDownloadsSourceOnItsOwn(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	t.Cleanup(server.Close)
+	build := knowledge.Build{Version: "v1", State: knowledge.StateExact, Commit: knowledgeTestCommit, Ref: knowledgeTestCommit}
+	base := knowledge.New(build, knowledgeTestDocs(), t.TempDir()).WithSourceURL(server.URL + "/")
+	t.Cleanup(agentd.SetKnowledgeBaseForTest(base))
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	summon := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "slugs": []string{agentd.PermNodeExec}, "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equalf(t, http.StatusOK, summon.Code, "summon body=%s", summon.Body.String())
+	steward := decodeScribeResp(t, summon).ConvID
+
+	agentd.ReconcileStewardAccessForTest()
+
+	for _, path := range []string{"/v1/knowledge/status", "/v1/knowledge/ls", "/v1/knowledge/read?path=index.md", "/v1/knowledge/search?q=home"} {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, path, nil), steward))
+		require.Equalf(t, http.StatusOK, rec.Code, "%s body=%s", path, rec.Body.String())
+		var body struct {
+			Source knowledge.SourceStatus `json:"source"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, knowledge.SourceUnavailable, body.Source.State, path)
+		assert.Equal(t, knowledge.SourceNotDownloaded, body.Source.Detail, path)
+	}
+	base.WaitForFetch(t.Context())
+	assert.Zero(t, requests.Load(), "nothing went to the network")
 }
 
 // A dirty or unknown build reads as that, on every answer.

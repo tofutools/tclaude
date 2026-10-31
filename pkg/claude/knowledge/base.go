@@ -170,7 +170,7 @@ func (b *Base) readFile(name string, source fs.FS) (string, []byte, error) {
 		}
 	}
 	if source == nil && !strings.HasPrefix(name, docsPrefix) {
-		return "", nil, fmt.Errorf("%w: %s (source is not available yet, see `tclaude agent knowledge status`)", ErrNotFound, name)
+		return "", nil, fmt.Errorf("%w: %s (source is not available, see `tclaude agent knowledge status`)", ErrNotFound, name)
 	}
 	return "", nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
@@ -206,7 +206,7 @@ func (b *Base) List(dir string) ([]Entry, error) {
 	}
 	from, inner, ok := b.locate(dir, source)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s (source is not available yet, see `tclaude agent knowledge status`)", ErrNotFound, dir)
+		return nil, fmt.Errorf("%w: %s (source is not available, see `tclaude agent knowledge status`)", ErrNotFound, dir)
 	}
 	return listDir(from, inner, dir)
 }
