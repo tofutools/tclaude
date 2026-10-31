@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"os"
@@ -193,7 +192,7 @@ func decodeScribeLive(h *harness.Harness, convID, path string) (*transcript.Tran
 		return nil, err
 	}
 	defer func() { _ = r.Close() }()
-	return h.Transcript.Decode(&completeLinesReader{r: bufio.NewReader(r)}, convID)
+	return h.Transcript.Decode(newCompleteLinesReader(r), convID)
 }
 
 // scribeLiveCandidates lists the agent's text and tool calls in t, newest

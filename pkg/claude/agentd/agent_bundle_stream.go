@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"bufio"
 	"fmt"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -99,7 +98,7 @@ func snapshotAgentHistory(b *agentbundle.Bundle, h *harness.Harness, conv, cwd s
 	if !h.UsesAuthoritativeServer() {
 		// A live agent is appending to its transcript file: stop at the last
 		// complete record rather than failing on a half-written one.
-		records = &completeLinesReader{r: bufio.NewReader(r), limit: agentRecordLimit()}
+		records = newCompleteLinesReader(r)
 	}
 	n, err := io.Copy(f, io.LimitReader(records, b.Limit()+1))
 	ce := f.Close()

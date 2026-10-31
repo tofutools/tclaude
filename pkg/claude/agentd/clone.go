@@ -2215,7 +2215,7 @@ func cloneHistory(sourceConv, cwd string, relaunch *durableRelaunchConfig, gitWr
 			// The source is usually live and appending to its transcript file:
 			// stop at the last complete record rather than failing on a
 			// half-written one. OpenCode's export is a finished document.
-			records = &completeLinesReader{r: bufio.NewReader(reader), limit: agentRecordLimit()}
+			records = newCompleteLinesReader(reader)
 		}
 		newConv, cleanup, err = dst.ImportReader(boundedHistoryReader{records, agentRecordLimit()}, sourceConv, cwd)
 	} else {
@@ -2243,6 +2243,10 @@ type completeLinesReader struct {
 	limit   int
 	pending []byte
 	err     error
+}
+
+func newCompleteLinesReader(r io.Reader) *completeLinesReader {
+	return &completeLinesReader{r: bufio.NewReader(r), limit: agentRecordLimit()}
 }
 
 func (c *completeLinesReader) Read(p []byte) (int, error) {
