@@ -913,7 +913,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
       <${Group} title="Name and startup">
         <${Setting} title="Name" forId="cfg-steward-name" k="steward.name"
-          summary="What you call your Steward. Shown in the companion, and agents can message it by this name as well as by steward.">
+          summary="What you call your Steward. Shown in the companion, and agents can address it by this name as well as by steward.">
           <${ConfigInput} type="text" id="cfg-steward-name" maxlength="32" spellcheck="false" aria-label="Steward name" placeholder="Steward" />
         </${Setting}>
         <${Setting} title="Startup prompt" forId="cfg-steward-startup-prompt" wide k="steward.startup_prompt"
