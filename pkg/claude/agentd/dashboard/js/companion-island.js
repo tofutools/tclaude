@@ -1348,6 +1348,24 @@ export function CompanionApp({
     if (!open && warmId && !warm) setWarmId('');
   }, [open, warmId, warm]);
 
+  const showComposer = !showQueue && activeAgent && activeAgent.online;
+  // Over the terminal, taking no room: the anchor has no height, and only the
+  // cluster itself takes the pointer. Before the terminal in the DOM, because
+  // Tab typed into a terminal stays there.
+  const floatingTools = showComposer && html`<div class="companion-floating-anchor">
+    <div class=${`companion-floating${listening ? ' listening' : ''}`} role="group" aria-label="Message tools">
+      ${dictation.supported && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
+        <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
+      </label>`}
+      ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
+        aria-label=${`Dictate a message to ${activeAgent.name}`}
+        title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
+        onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
+      <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
+        title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
+    </div>
+  </div>`;
+
   const windowView = (open || warm) && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${open ? '' : ' companion-window-warm'}`}
     style=${style} role="dialog" aria-label="Companion" aria-modal="false" aria-hidden=${open ? undefined : 'true'} onClick=${onWindowClick}>
@@ -1417,6 +1435,7 @@ export function CompanionApp({
         <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : shutDown ? `Start a new ${customName || 'Steward'}` : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
+      ${activeAgent && parked.has(activeAgent.agentId) && floatingTools}
       ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
       ${activeAgent && !activeAgent.online && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is offline.</p>
@@ -1431,26 +1450,17 @@ export function CompanionApp({
         ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
           ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
           : termStatus}</div>`}
+        ${floatingTools}
         <${CompanionTerminal} key=${activeAgent.agentId} agent=${activeAgent} generation=${generation}
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
-    ${!showQueue && activeAgent && activeAgent.online && html`<form class="companion-input" onSubmit=${send}>
-      ${dictation.supported && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
-        <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
-      </label>`}
-      ${!showField && html`<span class="companion-input-gap"></span>`}
+    ${showComposer && showField && html`<form class=${`companion-input${listening ? ' listening' : ''}`} onSubmit=${send}>
       ${showField && html`<input type="text" class="companion-draft" ref=${fieldRef} maxLength=${COMPANION_MESSAGE_MAX}
         placeholder=${listening ? 'Listening…' : ''}
         onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)}
         aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />`}
-      ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
-        aria-label=${`Dictate a message to ${activeAgent.name}`}
-        title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
-        onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
       ${showField && html`<button type="submit" disabled=${sending || !draft.trim()}>Send</button>`}
-      <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
-        title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
     </form>`}
     <div class="companion-resize" aria-hidden="true" onPointerDown=${(event) => onResizePointerDown(event)}></div>
     ${!placement.snap && ['nw', 'ne', 'sw'].map((corner) => html`<div key=${corner} class=${`companion-resize-corner ${corner}`} aria-hidden="true"
