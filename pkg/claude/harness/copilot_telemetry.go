@@ -180,6 +180,13 @@ type CopilotRuntimeSnapshot struct {
 	// times this one log has been appended to by a fresh CLI process.
 	Lifetimes int
 
+	// Compactions counts the main thread's successful compactions in the whole
+	// log. A failed one leaves the conversation intact, and a subagent's
+	// leaves the main thread's context alone, so neither counts.
+	Compactions int
+	// ContextClears counts the main thread's /clear resets in the whole log.
+	ContextClears int
+
 	Context    CopilotContextTelemetry
 	HasContext bool
 
@@ -223,6 +230,7 @@ var copilotTelemetryPrefilters = [][]byte{
 	[]byte("session.usage_checkpoint"),
 	[]byte("session.compaction_start"),
 	[]byte("session.compaction_complete"),
+	[]byte("session.context_cleared"),
 	[]byte("session.truncation"),
 	[]byte("session.shutdown"),
 	[]byte("session.error"),
@@ -318,6 +326,8 @@ type copilotRuntimeScanState struct {
 	assistantMessages     int
 	assistantOutputTokens int64
 	lifetimes             int
+	compactions           int
+	contextClears         int
 
 	context    CopilotContextTelemetry
 	hasContext bool
@@ -361,6 +371,8 @@ func (s copilotRuntimeScanState) snapshot() CopilotRuntimeSnapshot {
 		AssistantMessages:     s.assistantMessages,
 		AssistantOutputTokens: s.assistantOutputTokens,
 		Lifetimes:             s.lifetimes,
+		Compactions:           s.compactions,
+		ContextClears:         s.contextClears,
 		Context:               s.context,
 		HasContext:            s.hasContext,
 		NanoAIU:               s.nanoAIU,
@@ -449,6 +461,9 @@ func (s *copilotRuntimeScanState) consumeLine(line []byte) bool {
 		if event.Data.Success != nil && !*event.Data.Success {
 			return true
 		}
+		if event.AgentID == "" {
+			s.compactions++
+		}
 		s.setContext(CopilotContextTelemetry{
 			CurrentTokens:         event.Data.PostCompactionTokens,
 			SystemTokens:          event.Data.SystemTokens,
@@ -457,6 +472,10 @@ func (s *copilotRuntimeScanState) consumeLine(line []byte) bool {
 			TokenLimit:            event.Data.TokenLimit,
 			Source:                "compaction_complete",
 		})
+	case "session.context_cleared":
+		if event.AgentID == "" {
+			s.contextClears++
+		}
 	case "session.truncation":
 		// Truncation reports only the conversation half of the window, so it
 		// contributes a limit and a conversation figure and deliberately does
