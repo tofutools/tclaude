@@ -324,6 +324,26 @@ func ChainLosses(earlier *Losses, next Losses) Losses {
 	return next
 }
 
+// CountsOnly returns l as it may cross a node: harnesses, kinds, severities and
+// numbers, and none of the free text of its reports or their prior.
+func CountsOnly(l Losses) Losses {
+	l.ContextWindowSource, l.Extensions = "", nil
+	items := make([]LossItem, len(l.Items))
+	for i, it := range l.Items {
+		it.Detail = ""
+		items[i] = it
+	}
+	l.Items = items
+	if l.Prior != nil {
+		prior := make([]Losses, len(l.Prior))
+		for i, p := range l.Prior {
+			prior[i] = CountsOnly(p)
+		}
+		l.Prior = prior
+	}
+	return l
+}
+
 // ReportFromLosses converts losses.json back to a loss report.
 func ReportFromLosses(l *Losses) *transcript.LossReport {
 	r := &transcript.LossReport{}

@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -41,6 +42,9 @@ type boundedHistoryReader struct {
 func (r boundedHistoryReader) HistoryRecordLimit() int { return r.limit }
 
 type agentBundleDataContextKey struct{}
+
+// agentBundleLossesContextKey carries the loss report of the decoded bundle.
+type agentBundleLossesContextKey struct{}
 
 func snapshotAgentHistory(b *agentbundle.Bundle, h *harness.Harness, conv, cwd string) error {
 	if h.Name == harness.OpenCodeName {
@@ -87,7 +91,13 @@ func snapshotAgentHistory(b *agentbundle.Bundle, h *harness.Harness, conv, cwd s
 			_ = os.Remove(f.Name())
 		}
 	}()
-	n, err := io.Copy(f, io.LimitReader(r, b.Limit()+1))
+	var records io.Reader = r
+	if !h.UsesAuthoritativeServer() {
+		// A live agent is appending to its transcript file: stop at the last
+		// complete record rather than failing on a half-written one.
+		records = &completeLinesReader{r: bufio.NewReader(r)}
+	}
+	n, err := io.Copy(f, io.LimitReader(records, b.Limit()+1))
 	ce := f.Close()
 	if err != nil {
 		return err

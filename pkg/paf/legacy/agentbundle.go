@@ -135,6 +135,16 @@ type WriteOptions struct {
 	// into the new report's prior, and stands as losses.json when there is no
 	// Context to report on.
 	EarlierLosses *paf.Losses
+	// LossCountsOnly writes losses.json without free text, for an archive
+	// leaving this node.
+	LossCountsOnly bool
+}
+
+func writeLosses(w *paf.Writer, key string, l paf.Losses, opts WriteOptions) error {
+	if opts.LossCountsOnly {
+		l = paf.CountsOnly(l)
+	}
+	return w.WriteJSON(paf.AgentPath(key, "context/losses.json"), l)
 }
 
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
@@ -256,12 +266,11 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 		if err := paf.WriteTranscript(w, key, paf.ScopeEffective, opts.Context); err != nil {
 			return err
 		}
-		losses := paf.ChainLosses(opts.EarlierLosses, paf.LossesFromReport(opts.Context.Losses))
-		if err := w.WriteJSON(paf.AgentPath(key, "context/losses.json"), losses); err != nil {
+		if err := writeLosses(w, key, paf.ChainLosses(opts.EarlierLosses, paf.LossesFromReport(opts.Context.Losses)), opts); err != nil {
 			return err
 		}
 	} else if opts.EarlierLosses != nil {
-		if err := w.WriteJSON(paf.AgentPath(key, "context/losses.json"), opts.EarlierLosses); err != nil {
+		if err := writeLosses(w, key, *opts.EarlierLosses, opts); err != nil {
 			return err
 		}
 	}

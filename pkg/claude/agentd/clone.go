@@ -1809,6 +1809,10 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		return
 	}
 	newConv, newTmux, label, warn := spawned.NewConv, spawned.NewTmux, spawned.Label, spawned.Warn
+	if !noCopyConv {
+		// The copy is a native one, so the source's conversions are its own.
+		recordConvLosses(newConv, storedConvLosses(target), nil)
+	}
 	// Take over the launch claim rather than re-claiming: releasing in
 	// cloneSpawnOnce and claiming again here would leave the new row briefly
 	// indistinguishable from a plain session, which is the window the claim
@@ -2231,7 +2235,8 @@ func cloneHistory(sourceConv, cwd string, relaunch *durableRelaunchConfig, gitWr
 }
 
 // completeLinesReader yields only newline-terminated records, dropping a
-// trailing fragment a concurrent writer has not finished yet.
+// trailing fragment a concurrent writer has not finished yet. Clone and agent
+// export both read transcripts that may still be growing.
 type completeLinesReader struct {
 	r       *bufio.Reader
 	pending []byte

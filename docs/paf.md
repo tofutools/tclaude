@@ -1320,7 +1320,12 @@ loss report of whatever produced the context. It records:
   translation moves the old report into `prior`.
 
 tclaude stores the report of the conversion that produced a conversation: a
-cross-harness morph, or a file import that lands it. The next morph,
+cross-harness morph, or an import that lands it. A clone with its history
+keeps the source's report, and so does a group clone. A federation offer, move
+or teleport carries the report in the PAF, with only harnesses, kinds,
+severities and numbers: `detail`, `context_window_source` and extensions stay
+on the sending node, and the receiver drops them too. A peer on bundle v1 has
+no `losses.json`, so the record stops there. The next morph,
 import landing or export then puts that report and its `prior` into the new
 report's `prior`, keeping the latest 32. A conversation that lands unchanged
 keeps the report it came with. An export with no neutral context, which
