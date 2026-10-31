@@ -303,6 +303,25 @@ func stewardBrief(brief string, cfg *config.Config) string {
 	return brief
 }
 
+// tellStewardsNewName passes a changed steward.name to the running Stewards:
+// the summon's brief is the only other place one hears it, and the companion
+// does not summon a Steward that is already live.
+func tellStewardsNewName(before, after *config.Config) {
+	name := after.StewardName()
+	if name == before.StewardName() || !collabRoutesEnabled() {
+		return
+	}
+	body := "The operator now calls you " + name + ". Use that name."
+	if name == "" {
+		body = "The operator no longer has a name of their own for you. Go by Steward."
+	}
+	for _, conv := range liveStewardConvs() {
+		if _, err := queueAgentMessage(&db.AgentMessage{ToConv: conv, Subject: "Your name changed", Body: body}); err != nil {
+			slog.Warn("steward: name change message failed", "conv", conv, "error", err)
+		}
+	}
+}
+
 // liveStewardConvs lists the running Stewards' conversations, newest last.
 func liveStewardConvs() []string {
 	g, err := db.GetAgentGroupByName(stewardGroupName)

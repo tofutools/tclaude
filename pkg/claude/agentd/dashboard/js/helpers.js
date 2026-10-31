@@ -450,6 +450,12 @@ function groupOfflineOverride(name) {
   return (v === 'show' || v === 'hide') ? v : 'inherit';
 }
 
+function setGroupOfflineOverride(name, value) {
+  const key = 'tclaude.dash.group.offline.' + name;
+  if (value === 'show' || value === 'hide') dashPrefs.setItem(key, value);
+  else dashPrefs.removeItem(key);
+}
+
 // groupShowOffline: effective decision for one group — the override
 // when set, else the tab-wide Groups default.
 function groupShowOffline(name) {
@@ -597,7 +603,7 @@ export {
   $, $$, isModifiedClick, isMacChromeZeroReleaseLeave, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
   makeModalResizable, bindModalSubmitHotkey,
   harnessCanRename, harnessCanRemoteControl,
-  relTime, shortCwd, displayModel, offlineDefault, groupOfflineOverride, groupShowOffline,
+  relTime, shortCwd, displayModel, offlineDefault, groupOfflineOverride, setGroupOfflineOverride, groupShowOffline,
   // slop-fx.js and the native member reels share one symbol sequence.
   SLOP_SYMBOLS,
   // Shared native/web directory-picker boundary. The Preact island registers
