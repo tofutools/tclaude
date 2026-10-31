@@ -160,6 +160,19 @@ export function sudoByAgent(snapshot) {
   return out;
 }
 
+// stewardAccessFor is where a live Steward's access comes from, for its
+// editors, or null for every other agent. The daemon names the live Stewards,
+// so an agent that merely has the name gets the ordinary editor.
+export function stewardAccessFor(snapshot, conv) {
+  const access = snapshot?.steward_access;
+  if (!conv || !access?.convs?.includes(conv)) return null;
+  return {
+    config: new Set(access.config || []),
+    carried: access.carried || {},
+    notCarryable: new Set(access.not_carryable || []),
+  };
+}
+
 export function permissionSeed(snapshot, descriptor) {
   if (descriptor.mode === 'sudo') return {};
   if (descriptor.mode === 'agent') {

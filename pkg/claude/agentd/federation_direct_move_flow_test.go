@@ -119,7 +119,8 @@ func TestFederation_DirectMoveReceiverDecidesAndReportsDirectory(t *testing.T) {
 
 				return
 			}
-			fedEventually(t, "direct target running", func() bool {
+			// A full landing, which timed out at the 10s default on macOS CI.
+			fedEventuallyWithin(t, "direct target running", 30*time.Second, func() bool {
 				m, _ := db.GetFederationAgentMove("in", fh.peer.id.ID(), d.ID)
 				return m != nil && m.State == "running"
 			})
@@ -170,7 +171,7 @@ func TestFederation_DirectMoveReceiverDecidesAndReportsDirectory(t *testing.T) {
 				require.NotNil(t, ses)
 				fh.f.World.Tmux.KillBySignalForTest(ses.TmuxSession)
 				third := fedIncomingDirectMove(t, fh)
-				fedEventually(t, "stopped worker releases policy slot", func() bool {
+				fedEventuallyWithin(t, "stopped worker releases policy slot", 30*time.Second, func() bool {
 					m, _ := db.GetFederationAgentMove("in", fh.peer.id.ID(), third.ID)
 					return m != nil && m.State == "running"
 				})

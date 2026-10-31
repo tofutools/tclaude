@@ -167,6 +167,15 @@ and notifying you only** to rule that out.
 To change a running Steward's access, use **🛡** (permissions) and **sudo** in its
 title bar. They need it to be running.
 
+In both, each grant on a live Steward is for **This Steward only**, the default,
+or **All future Stewards**, which stores it and gives it to every new Steward,
+denies and scopes included. Stored sudo keeps its original expiry: a new Steward
+never restarts the clock. The editors show which of the three sources each grant
+comes from: this Steward, all future Stewards, or Config defaults, which are
+changed only in **Config > Steward**. Changing or revoking a stored grant applies
+to later Stewards too, while revoking an instance-only grant affects that
+instance alone. `permissions.grant` and `permissions.revoke` cannot be stored.
+
 While an agent in the window holds elevated access, its tab and pill show **🔓**, and
 a band above its terminal lists what it holds. **End now** revokes what the agent
 holds itself, with no confirmation; it can ask again. Access from a group or from
@@ -175,8 +184,8 @@ owning one is listed but stays, since other members share it. Change that in Gro
 ### Shutting it down
 
 ⏻ shuts the Steward down, after asking: it ends the conversation and retires the
-agent, so its grants and sudo end with it, and the window then offers **Start a new
-Steward**. A new one is a fresh agent; the old conversation stays in history. A
+agent, so what was given to this Steward only ends with it, and the window then
+offers **Start a new Steward**. A new one is a fresh agent; the old conversation stays in history. A
 detached Steward window has the same ⏻ in its header; its **Start a new Steward**
 closes the window and the new one opens in the companion.
 

@@ -370,6 +370,7 @@ func closeIdentityCapabilitiesTx(tx *sql.Tx, old string, now time.Time) error {
 		{`UPDATE federation_enrollments SET retired=1 WHERE peer=?`, []any{old}},
 		// Sudo is temporary approval and is intentionally never inherited.
 		{`UPDATE agent_sudo_grants SET revoked_at=? WHERE revoked_at IS NULL AND scope_json<>'' AND EXISTS (SELECT 1 FROM json_each(scope_json,'$.peer') WHERE value=? OR value LIKE ?)`, []any{dbTime(now), old, old + "/%"}},
+		{`UPDATE steward_carried_sudo SET revoked_at=? WHERE revoked_at IS NULL AND scope_json<>'' AND EXISTS (SELECT 1 FROM json_each(scope_json,'$.peer') WHERE value=? OR value LIKE ?)`, []any{dbTime(now), old, old + "/%"}},
 	}
 	for _, q := range queries {
 		if _, err := tx.Exec(q.q, q.args...); err != nil {

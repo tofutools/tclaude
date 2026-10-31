@@ -33,8 +33,11 @@ Active time-limited grants, with a countdown, reason, who granted it, and revoke
 keeps its search above the list and the duration and Grant button below it, marks
 risky permissions, and says why a slug is refused. Picked permissions can be narrowed
 with scopes like any grant, except one the agent already holds: a scoped sudo would
-replace what it has for the whole window. **Active now** lists what the agent already
-holds, with time left, **+duration** to extend and **Revoke**.
+replace what it has for the whole window. A permission with a countable action, today
+`agent.spawn` and `groups.members.spawn`, also takes a **max** number of uses: the
+grant ends at whichever comes first, the time or the count, and a scope works as usual.
+**Active now** lists what the agent already holds, with time and uses left,
+**+duration** to extend and **Revoke**.
 
 Limits are the server's: the default is 5 minutes, the maximum 1 hour counted from now
 (extensions included), and `permissions.grant` and `permissions.revoke` can't be given
