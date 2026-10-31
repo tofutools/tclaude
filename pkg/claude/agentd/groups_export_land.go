@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -113,7 +115,11 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		c := &exp.Convs[i]
 		src := c.Harness
 		if src == "" {
+			// A zip names no harness; only OpenCode's ids say so themselves.
 			src = harness.DefaultName
+			if harness.ValidOpenCodeConvID(c.ConvID) {
+				src = harness.OpenCodeName
+			}
 		}
 		format := c.HistoryFormat
 		if format == "" && src == harness.DefaultName && c.Content != nil {
@@ -163,10 +169,12 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		}
 		l.dst, l.Harness = dst, dst.Name
 		if dst.Name == harness.OpenCodeName {
-			// OpenCode keeps history in per-agent state that only a spawn
-			// prepares; installing into the shared store would strand it.
-			l.Warnings = append(l.Warnings, "group import cannot install OpenCode history yet; importing config only")
-			continue
+			// The history installs through the opencode CLI, so unlike a
+			// file landing it needs the binary on this host.
+			if _, err := harness.OpenCodeExecutable(); err != nil {
+				l.Warnings = append(l.Warnings, "OpenCode is not installed here, so its history cannot be installed; importing config only")
+				continue
+			}
 		}
 		b := &agentbundle.Bundle{}
 		b.Manifest.Agent.Harness = src
@@ -248,8 +256,48 @@ func memberNeutralContext(a *paf.Archive, key string) func(paf.ReadOptions) (*tr
 
 // installGroupLanding installs a planned non-file landing through the
 // landing harness's history import, returning the minted conversation id.
+//
+// An OpenCode member installs into the ambient store, not per-agent state. An
+// import carries no launch posture, so the member resumes at the baseline one
+// (recordOpenCodeLandings): no tclaude sandbox and a managed server on the
+// ambient XDG directories. That is the store this conversation has to be in.
+// Private state only exists for a launch under tclaude's sandbox.
 func installGroupLanding(l *groupMemberLanding, cwd string) (string, func(), error) {
+	if l.dst.Name == harness.OpenCodeName {
+		// The opencode CLI runs in the landing directory, which --into may
+		// only have named so far, and a resume launches in its physical path.
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			return "", nil, err
+		}
+		resolved, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return "", nil, err
+		}
+		cwd = resolved
+	}
 	return importBundleHistory(l.dst, l.history, cwd)
+}
+
+// recordOpenCodeLandings records the resume profile of every member whose
+// conversation landed on OpenCode. A resume cannot recover it from the harness
+// store as it does elsewhere: `opencode session list` shows only the project of
+// its working directory, so the daemon would not find a member landed in a
+// repository. It returns a warning for each member it could not record.
+func recordOpenCodeLandings(ls []*groupMemberLanding, exp *groupexport.Export, convRemap map[string]string, cwd string) []string {
+	var warnings []string
+	for i, l := range ls {
+		if l.history == nil || l.dst == nil || l.dst.Name != harness.OpenCodeName {
+			continue
+		}
+		physical, err := filepath.EvalSymlinks(cwd)
+		if err == nil {
+			_, err = recordBaselineResumeProfile(convRemap[exp.Convs[i].ConvID], harness.OpenCodeName, physical)
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: could not record its resume profile, so it may not resume: %v", l.Title, err))
+		}
+	}
+	return warnings
 }
 
 // landingWarnings flattens the plans' warnings, member by member.

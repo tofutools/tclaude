@@ -1086,6 +1086,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		recordConvLosses(convRemap[c.ConvID], earlier, l.Losses)
 	}
 	saveCutMemberHistories(landings, exp, convRemap, result.GroupName)
+	fileWarnings = append(fileWarnings, recordOpenCodeLandings(landings, exp, convRemap, targetCwd)...)
 	slog.Info("group import complete",
 		"group", result.GroupName, "agents", result.AgentCount,
 		"messages", result.MessageCount, "remapped", len(collidedOnly),
@@ -1122,9 +1123,12 @@ func groupImportPromptWarnings(result *db.GroupImportResult) []string {
 
 func validateImportedConvIDs(exp *groupexport.Export) error {
 	for _, convID := range importedIdentityConvIDs(exp) {
+		if harness.ValidOpenCodeConvID(convID) {
+			continue
+		}
 		parsed, err := uuid.Parse(convID)
 		if err != nil || parsed == uuid.Nil || parsed.String() != convID {
-			return fmt.Errorf("conversation id %q is not a canonical UUID", convID)
+			return fmt.Errorf("conversation id %q is not a canonical UUID or OpenCode session id", convID)
 		}
 	}
 	return nil
