@@ -708,6 +708,9 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		if authErr != nil {
 			return nil, "io", authErr.Error()
 		}
+		if allowed && spawnAuthorityIsCounted(req, ownerConv, authorizedSlug, ctx) {
+			return nil, "permission_denied", "a trigger cannot spend a use-limited sudo grant"
+		}
 		if !allowed {
 			return nil, "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name)
 		}

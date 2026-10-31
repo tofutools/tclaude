@@ -233,6 +233,15 @@ The dashboard grants through the sudo variant of the permission editor (see
 one that is running. An extension keeps to the same maximum, measured from now,
 and is recorded as `sudo.extend`.
 
+A dashboard grant of `agent.spawn` or `groups.members.spawn` can also carry a use
+limit, for example any group for 10 minutes, at most 5 agents. The daemon takes
+one use atomically just before the launch, so parallel spawns cannot exceed the
+limit, and gives it back if the launch fails. A spawn that started and later died
+has used its count, and so has one whose pane was not seen to come up in time. Uses
+are only spent where sudo is what allowed the spawn. Triggers and schedules cannot
+count, so they refuse a use-limited grant, and a grant scoped to a peer takes no
+limit because remote spawns cannot count either.
+
 ## Asking the human at the moment of denial
 
 Most mutating commands accept `--ask-human <timeout>` (capped at 300s;

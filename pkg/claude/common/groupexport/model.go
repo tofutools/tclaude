@@ -208,6 +208,8 @@ type SudoGrant struct {
 	GrantedBy string `json:"granted_by"`
 	Reason    string `json:"reason"`
 	RevokedAt string `json:"revoked_at"`
+	UsesLimit int64  `json:"uses_limit,omitempty"`
+	UsesLeft  int64  `json:"uses_left,omitempty"`
 }
 
 // HeadAlias is an agent_head_aliases row — a stable handle pointing at a

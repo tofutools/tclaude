@@ -738,6 +738,7 @@ function SudoActive({ grants, duration, maxSeconds, busy, act, steward }) {
       ${chips.length ? html`<span class="perm-scope-chips">${chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)}</span>` : null}
       ${steward && html`<span class="perm-source">${grant.carried ? 'all future Stewards' : 'this Steward only'}</span>`}
       <span class="sudo-active-left">${sudoDurationText(sudoSecondsLeft(grant, now))} left</span>
+      ${grant.uses_limit > 0 && html`<span class="sudo-active-left sudo-uses-left" title="Ends at whichever limit comes first">${grant.uses_left} of ${grant.uses_limit} uses left</span>`}
       <button type="button" class="sudo-extend" disabled=${busy || !!blocked} title=${blocked || `Add ${duration} to this grant`}
         aria-label=${`Add ${duration} to ${grant.slug}`} onClick=${() => act.extend([grant.id])}>+${adds ? duration : '…'}</button>
       <button type="button" class="sudo-revoke" disabled=${busy} aria-label=${`Revoke ${grant.slug}`} onClick=${() => act.revoke([grant.id])}>Revoke</button>
@@ -787,6 +788,8 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   const durationTouched = useRef(false);
   const chooseDuration = (value) => { durationTouched.current = true; setDuration(value); };
   const [reason, setReason] = useState('');
+  // slug → the text in its use limit box; empty means no limit.
+  const [sudoUses, setSudoUses] = useState({});
   useEffect(() => {
     if (!sudoMode) return undefined;
     let live = true;
@@ -846,7 +849,9 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   const dirty = rowsDirty || scopesDirty || ownerScopesDirty || carryDirty || !!reason.trim();
   const sudoPicked = sudoMode ? rows.filter((row) => currentEffect(row.slug) === 'grant') : [];
   const sudoSeconds = sudoDurationSeconds(duration);
-  const sudoReady = sudoPicked.length > 0 && !!sudoSeconds && sudoSeconds <= policy.max_seconds;
+  const usesFor = (slug) => String(sudoUses[slug] ?? '').trim();
+  const usesBad = sudoPicked.some((row) => row.countable && usesFor(row.slug) && !/^[1-9]\d{0,2}$|^1000$/.test(usesFor(row.slug)));
+  const sudoReady = sudoPicked.length > 0 && !!sudoSeconds && sudoSeconds <= policy.max_seconds && !usesBad;
   const sudoLabel = sudoReady ? `Grant ${sudoPicked.length} for ${duration.trim()}` : 'Grant';
   const sudoRisky = sudoPicked.filter((row) => row.risky).length;
   const sudoAct = async (work) => {
@@ -909,9 +914,12 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const slugs = sudoPicked.map((row) => row.slug);
     const scoped = Object.fromEntries(slugs.filter((slug) => Object.keys(effectiveScopes[slug] || {}).length)
       .map((slug) => [slug, effectiveScopes[slug]]));
+    const uses = Object.fromEntries(sudoPicked.filter((row) => row.countable && usesFor(row.slug))
+      .map((row) => [row.slug, Number(usesFor(row.slug))]));
     try {
       await actions.grantSudo({
         agentID: descriptor.agentID, slugs, duration: duration.trim(), reason: reason.trim(), scopes: scoped,
+        ...(Object.keys(uses).length ? { uses } : {}),
         ...(stewardAccess ? { carry: slugs.filter(carriedNow) } : {}), node: descriptor.node,
       });
       state.close();
@@ -1071,6 +1079,9 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
       ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
         title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
+      ${sudoMode && row.countable && picked && html`<label class="perm-uses" title="Ends at whichever comes first, this or the time. Blank means no limit. A failed spawn does not use one.">
+        max <input type="text" inputmode="numeric" aria-label=${`Maximum uses of ${row.slug}`} placeholder="∞" autocomplete="off" value=${sudoUses[row.slug] ?? ''}
+          onInput=${(event) => { const value = event.currentTarget.value; setSudoUses((current) => ({ ...current, [row.slug]: value })); }} /></label>`}
       ${canCarry && html`<${CarryChoice} slug=${row.slug} carried=${carriedNow(row.slug)}
         onChange=${(carried) => setCarryChoices((current) => ({ ...current, [row.slug]: carried }))} />`}
       ${refusedWhy ? html`<span class="perm-refused" title=${refusedWhy}>refused</span>`
@@ -1105,7 +1116,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     ${sudoMode && html`<${SudoLimits} duration=${duration} setDuration=${chooseDuration} reason=${reason} setReason=${setReason}
       maxSeconds=${policy.max_seconds} submit=${submit} />`}
     <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
-      ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
+      ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${usesBad ? 'A use limit is a whole number from 1 to 1000' : sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
       <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
       <button id="perm-edit-submit" class="primary" type="button" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</button>
     </div>

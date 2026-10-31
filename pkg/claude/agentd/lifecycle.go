@@ -3548,6 +3548,7 @@ func ambientSandboxProfileName(g *db.AgentGroup) string {
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	timing := config.StartupTiming("spawn_request")
 	defer timing("return")
+	var spawnSudoGrant int64
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
 	// the human resolves to "". It is the default reply-to target for
@@ -3619,6 +3620,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		if !ok {
 			return
 		}
+		// Read here: later gates overwrite what is on the request.
+		spawnSudoGrant = authorizedSudoGrantIDForRequest(r)
 	}
 	// Whether the grant that admitted this spawn was CONDITIONED on the sandbox
 	// profile, as opposed to merely being evaluated alongside it. Only that
@@ -5216,6 +5219,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			writeError(w, failure.Status, failure.Kind, failure.Msg)
 			return
 		}
+		spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
+		if !ok {
+			return
+		}
+		defer spawnUse.release()
+		p.onLaunchAttempt = spawnUse.keep
 		result, runErr := runNonInteractiveSpawn(r.Context(), p, body.RunTimeoutSeconds)
 		if runErr != nil {
 			writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
@@ -5229,11 +5238,23 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		beforeExecuteSpawnForTest()
 	}
 	p.UsageProfileIDs, p.UsageSpawnProfile = spawnUsageProfiles, namedProfile
+	// Taken last: a used-up grant drops out of the permission sources, and every
+	// check above must see the grant as it stood at the gate.
+	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
+	if !ok {
+		return
+	}
+	defer spawnUse.release()
 	outcome, fail := executeSpawn(g, p)
 	if fail != nil {
+		// The child may merely be slow, so this launch may well be running.
+		if fail.Kind == spawnUnconfirmedKind {
+			spawnUse.keep()
+		}
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	spawnUse.keep()
 
 	// executeSpawn intentionally re-reads default profiles as a safety net for
 	// non-HTTP callers. If state changed after the handler snapshot, report the
@@ -5340,6 +5361,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
+	// onLaunchAttempt runs when a one-shot's harness is about to start, the point
+	// past which a failure no longer means nothing ran.
+	onLaunchAttempt func()
 	// UsageProfileIDs are the usage profiles a human chose for this agent;
 	// UsageSpawnProfile is the explicitly named spawn profile whose linked
 	// usage profiles apply otherwise (see applySpawnUsageProfiles).
@@ -5884,6 +5908,9 @@ type spawnFailure struct {
 // A var, not a const, so a flow test can shrink it (SetAsyncSpawnInlineGrace-
 // ForTest) and drive the pending path without a multi-second real wait.
 var asyncSpawnInlineGrace = 6 * time.Second
+
+// spawnUnconfirmedKind is a launch that was started but not seen to come up.
+const spawnUnconfirmedKind = "spawn_unconfirmed"
 
 // beforeExecuteSpawnForTest is a deterministic seam for proving that the
 // resolved-shape echo follows the final parameters when default-profile state
@@ -8093,7 +8120,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			// makes fast terminal clients attach to a session that may never exist.
 			routeHelperCommitted = true
 			markBriefingConsumed(preConvID, preMsgID, briefingInlined)
-			return nil, &spawnFailure{http.StatusGatewayTimeout, "spawn_unconfirmed",
+			return nil, &spawnFailure{http.StatusGatewayTimeout, spawnUnconfirmedKind,
 				"launch enrollment was preserved, but no live tmux pane appeared before the startup deadline"}
 		}
 		focusSpawn()

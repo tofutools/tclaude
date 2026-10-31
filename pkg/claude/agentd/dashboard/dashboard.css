@@ -6733,6 +6733,12 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   position: sticky; top: 0; z-index: 1; padding: 4px 10px; font-size: 11px; font-weight: 600;
   color: #8b949e; background: #1c2128; border-bottom: 1px solid #21262d;
 }
+/* A sudo grant's use limit, on the row of a slug that has one. */
+.perm-uses { flex: 0 0 auto; font-size: 11px; color: #8b949e; white-space: nowrap; }
+.perm-uses input {
+  width: 42px; background: #0d1117; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 4px; font-size: 11px; color: #c9d1d9; font-family: inherit; text-align: right;
+}
 /* Who a Steward's grant is for. */
 .perm-steward-note { margin: 0; font-size: 11px; line-height: 1.45; color: #9da7b3; }
 .perm-steward-note b { color: #d2a8ff; font-weight: 600; }
