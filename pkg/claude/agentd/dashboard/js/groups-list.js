@@ -7,7 +7,7 @@ import {
   CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS,
   PENDING_COLS, PENDING_ACCESSORS,
 } from './sort.js';
-import { shortId, shortAgentId, idTooltip, relTime, shortCwd, groupShowOffline, offlineDefault } from './helpers.js';
+import { shortId, shortAgentId, idTooltip, relTime, shortCwd, groupOfflineOverride, groupShowOffline, offlineDefault } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { isWizardActive } from './slop.js';
 import { PAGE_SIZES, listLimit } from './list-paging.js';
@@ -167,6 +167,15 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
     : policy === 'optin'
       ? 'Remote-control policy: opt-in — defaults Claude Code Remote Access ON for agents spawned into this group (overrides the profile default; a per-spawn checkbox / flag still wins). Click to cycle to deny.'
       : 'Remote-control policy: deny — defaults Remote Access OFF for agents spawned into this group (overrides the profile default; a per-spawn checkbox / flag still wins). Click to cycle back to inherit.';
+  const offlineOverride = groupOfflineOverride(name);
+  const offlineLabel = {
+    inherit: wizardMode ? '💤 slumbering: tab default' : '💤 offline: tab default',
+    show: wizardMode ? '💤 slumbering: shown' : '💤 offline: shown',
+    hide: wizardMode ? '💤 slumbering: hidden' : '💤 offline: hidden',
+  }[offlineOverride];
+  const offlineTitle = wizardMode
+    ? "Choose whether this party shows slumbering heroes. Click to cycle: tab default, shown, hidden."
+    : "Choose whether this group shows offline members, whatever the tab-wide show offline setting says. Click to cycle: tab default, shown, hidden.";
   const quickPinTitle = wizardMode
     ? (pinned ? 'Quick options are pinned open for this party — click to let its enchanted header chips fold again.' : "Pin this party's quick options open so its enchanted header chips stay expanded.")
     : (pinned ? 'Quick options are pinned open for this group — its header chips stay expanded even though auto-fold is on. Click to let them fold to icons again.' : "Pin this group's quick options open — its header chips stay expanded (not folded to icons) even while auto-fold is on. Click to fold them with the rest.");
@@ -205,6 +214,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
     <${MenuButton} ...${shared} data-act="spawn-harness-policy" title=${wizardMode ? 'Set party wards for which realms may summon heroes into other realms' : 'Set group overrides for which harnesses may spawn agents on other harnesses'} regular="⇄ cross-harness spawns…" wizard="⇄ cross-realm summons…" onClick=${() => actions.openSpawnHarnessPolicy(group)} />
     <${MenuButton} ...${shared} data-act="toggle-group-notify" data-enabled=${notify ? '1' : '0'} title=${notifyTitle} regular=${notify ? '🔔 notifications: on' : '🔕 notifications: muted'} wizard=${notify ? '🔔 omens: on' : '🔕 omens: silent'} />
     <button role="menuitem" ...${shared} data-act="set-group-remote-control" data-policy=${policy} data-next=${nextPolicy} title=${remoteTitle}>${policy === 'deny' ? '🚫' : '📱'} remote policy: ${policy === 'optin' ? 'opt-in' : policy}</button>
+    <button role="menuitem" ...${shared} data-offline-override=${offlineOverride} title=${offlineTitle} onClick=${() => actions.cycleGroupOffline(group)}>${offlineLabel}</button>
     ${quickFold ? html`<button role="menuitem" ...${shared} data-pinned=${pinned ? '1' : '0'} title=${quickPinTitle} onClick=${() => actions.toggleQuickPin(group)}>${pinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>` : null}
     <${MenuButton} ...${shared} data-act="rename-group" title=${wizardMode ? 'Rename this party' : 'Rename this group'} regular="rename" wizard="rename party" onClick=${(event) => {
       event.preventDefault();

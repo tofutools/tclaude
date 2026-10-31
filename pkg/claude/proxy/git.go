@@ -103,7 +103,8 @@ func (o *gitProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 // --- git remotes ---
 
 type gitRemotesParams struct {
-	JSON bool `long:"json" optional:"true" help:"Emit the raw daemon response instead of a table."`
+	JSON     bool   `long:"json" optional:"true" help:"Emit the raw daemon response instead of a table."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '60s'). Capped at 300s. Timeout = deny."`
 }
 
 func gitRemotesCmd() *cobra.Command {
@@ -115,6 +116,10 @@ func gitRemotesCmd() *cobra.Command {
 			"run FIRST: it needs no network and tells you exactly what to ask the operator for if a remote " +
 			"is refused.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *gitRemotesParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *gitRemotesParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGitRemotes(p, os.Stdout, os.Stderr))
 		},
@@ -140,11 +145,16 @@ type gitRemotesResponse struct {
 }
 
 func runGitRemotes(p *gitRemotesParams, stdout, stderr io.Writer) int {
+	ask, err := agent.ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	if rc := agent.RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	var resp gitRemotesResponse
-	if err := agent.DaemonRequest(http.MethodGet, "/v1/git/remotes", nil, &resp, agent.DaemonOpts{}); err != nil {
+	if err := agent.DaemonRequest(http.MethodGet, "/v1/git/remotes", nil, &resp, agent.DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return agent.MapDaemonErrorToRC(err)
 	}

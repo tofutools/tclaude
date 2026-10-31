@@ -210,6 +210,10 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	// must not fail the save the human already confirmed.
 	_ = session.SyncClaudeCleanupPeriod(cfg)
 
+	if loadErr == nil {
+		tellStewardsNewName(current, cfg)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"raw":  string(raw),
 		"path": config.ConfigPath(),

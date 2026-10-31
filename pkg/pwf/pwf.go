@@ -80,8 +80,9 @@ type Workflow struct {
 	// version an unpinned subprocess reference to that id resolves to.
 	Templates []TemplateEntry `json:"templates"`
 	Params    []Param         `json:"params"`
-	// Roles are the agent roles steps ask for (Performer.Profile on agent
-	// performers); an importer maps each to a local role.
+	// Roles are the agent roles steps ask for (Performer.Profile or
+	// Performer.Role on agent performers); an importer maps each to a local
+	// role.
 	Roles []Use `json:"roles"`
 	// Programs are every command a step would run. Nothing runs on import;
 	// starting a run asks the operator to authorize each program profile.
@@ -316,6 +317,12 @@ func checkClosure(root string, byRef map[string]*Template, order []string) ([]st
 
 // Summarize derives workflow.json's computed fields from the templates.
 func Summarize(root string, byRef map[string]*Template, order []string) Workflow {
+	return summarize(root, byRef, order, true)
+}
+
+// summarize leaves role selectors out of Roles when roleSelectors is false,
+// which is how files written before they were listed derive.
+func summarize(root string, byRef map[string]*Template, order []string, roleSelectors bool) Workflow {
 	w := Workflow{Root: root, Params: []Param{}, Roles: []Use{}, Programs: []Program{}, Assignees: []Use{}, Humans: []string{}}
 	for _, ref := range order {
 		t := byRef[ref]
@@ -341,6 +348,9 @@ func Summarize(root string, byRef map[string]*Template, order []string) Workflow
 				case model.PerformerAgent:
 					if p.Profile != "" {
 						roles[p.Profile] = append(roles[p.Profile], where)
+					}
+					if roleSelectors && p.Role != "" && p.Role != p.Profile {
+						roles[p.Role] = append(roles[p.Role], where)
 					}
 					if p.Assignee != "" {
 						assignees[p.Assignee] = append(assignees[p.Assignee], where)
@@ -679,7 +689,14 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 	got, _ := marshal(a.Workflow)
 	want, _ := marshal(derived)
 	if !bytes.Equal(got, want) {
-		return nil, errors.New("pwf: workflow.json does not match its templates")
+		// A file written before role selectors were listed still opens, and
+		// reads as listing them, so its review matches a newer file's.
+		legacy := summarize(m.Root, a.Templates, a.Order, false)
+		legacy.Title, legacy.Summary = a.Workflow.Title, a.Workflow.Summary
+		if want, _ = marshal(legacy); !bytes.Equal(got, want) {
+			return nil, errors.New("pwf: workflow.json does not match its templates")
+		}
+		a.Workflow.Roles = derived.Roles
 	}
 	if err := a.readSignatures(files, read); err != nil {
 		return nil, err
