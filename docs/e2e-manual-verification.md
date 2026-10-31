@@ -53,7 +53,7 @@ access was needed. Watch for these points:
 E=scripts/e2e/e2e.sh
 export E2E_BASE=/tmp/claude-1000/e2e      # short path, see above
 $E build                                  # tclaude, tclaude-agentd, tclaude-hub, drive -> $E2E_BASE/bin
-$E up                                     # hub + node a + node b + mock APIs; prints the hub admin claim token
+$E up                                     # hub + node a + node b + mock APIs; the claim token is in $E2E_BASE/hub/data/admin-claim.token
 $E pair                                   # both nodes connect with hub invites and trust each other (unrestricted)
 $E browser start
 D=$E2E_BASE/bin/drive
@@ -105,8 +105,8 @@ Some tips:
 - `clicktext` can match a container, such as a table cell, instead of the
   button inside it. If nothing happens, use `eval` to find the element and
   read its markup, then `click` a CSS selector.
-- The fleet views (map, merged groups, Fleet admin) are opened with the map
-  button at the top right of the dashboard, or by opening `/fleet-admin`
+- The fleet views (map, ⚙ Fleet config) are opened with the **Fleet** chip at the
+  top right of the dashboard, or by opening `/fleet-admin`
   directly on a logged-in tab.
 - To switch nodes, open the other node's `dash` URL. Each node has its own
   dashboard session.
@@ -120,13 +120,13 @@ your report.
 ### 1. Fleet basics
 
 - [ ] Map shows both nodes as online, linked through the hub 📸
-- [ ] *Groups · all nodes* shows groups and agents from both nodes
-- [ ] Fleet → Peers lists the other node as trusted, with level and fingerprint
+- [ ] Groups with both nodes ticked under **nodes ▾** (or `?nodes=all`) shows groups and agents from both nodes
+- [ ] ⚙ Fleet config › Peers lists the other node as trusted, with level and fingerprint
 - [ ] `$E run a federation status` and `federation peers` agree with the UI
 
 ### 2. Remote terminal
 
-- [ ] From node a's map, open a node-b agent's terminal in the browser 📸
+- [ ] From node a's map, use **Open dashboard** on node b, then open a node-b agent's terminal in the browser 📸
 - [ ] Type a line. The node-b agent receives it, and the mock reply
       `[mock model @ node-b]` appears in the same terminal 📸
 
@@ -141,7 +141,7 @@ your report.
 
 ### 4. Hub administration
 
-- [ ] Fleet → Hub: claim the hub with the token printed by `e2e.sh up`.
+- [ ] ⚙ Fleet config › Hub: claim the hub with the token in `$E2E_BASE/hub/data/admin-claim.token`.
       The claim file under `hub/data/` is consumed 📸
 - [ ] Hub settings, admissions and health render. A setting change survives
       a reload
@@ -159,7 +159,7 @@ your report.
 
 ### 6. Boards (shared config without peer access)
 
-- [ ] On b: Fleet → Boards → create `team-presets`, then *Create invite…*
+- [ ] On b: ⚙ Fleet config › Boards → create `team-presets`, then **Manage boards** → open it → *Create invite…*
       (can read, 1 hour). The invite is shown once 📸
 - [ ] On a: paste the invite and Join. The board shows a as *can read* and
       b as *owner* 📸
@@ -178,7 +178,7 @@ your report.
 
 - Run scripts on a peer node (⚙ Fleet config → Run scripts)
 - Human inbox and answers across nodes
-- Peer mail: `federation export` / `import`, then `agent message <member>@b`
+- Peer offers: `federation offer-config` and `federation offers import`, and mail with `agent message <member>@b`
 
 ## Recording demos
 

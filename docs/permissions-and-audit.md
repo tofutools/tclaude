@@ -163,11 +163,11 @@ Local and remote grants are disjoint: unscoped grants, local scopes, defaults
 and group ownership never authorize remote actions, and peer-scoped grants
 never authorize local actions. A deny blocks the slug in both cases. The
 receiving operator must also grant the sending instance access to its local
-groups. See [Federation](federation.md#peer-grants-what-a-peer-may-see-and-do)
+groups. See [Federation](federation-peers.md#peer-grants-what-a-peer-may-see-and-do)
 for the two grant sets and worked examples. `tclaude agent permissions
 peer-reach add|remove` merges one `peer=` matcher into an agent's or group's
 grant without replacing the others; see
-[Federation](federation.md#discovery-what-your-agents-may-address).
+[Federation](federation-peers.md#discovery-what-your-agents-may-address).
 
 ### Denies are never scoped
 
