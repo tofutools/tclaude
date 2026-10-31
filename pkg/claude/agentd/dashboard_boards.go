@@ -594,6 +594,30 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/boards/{id}/group", collabRoute(handleDashboardBoardGroup))
 	mux.HandleFunc("GET /api/boards/{id}/live", collabRoute(handleDashboardBoardLive))
 	mux.HandleFunc("POST /api/boards/{id}/undo", collabRoute(handleDashboardBoardUndo))
+	mux.HandleFunc("DELETE /api/boards/{id}/sessions", collabRoute(handleDashboardBoardSessionsEnd))
+}
+
+// DELETE /api/boards/{id}/sessions — the operator ends every agent's session
+// on the board, its row in the Background terminals menu. The board stays.
+func handleDashboardBoardSessionsEnd(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	id, ok := boardPathID(w, r)
+	if !ok {
+		return
+	}
+	if _, err := db.GetCollabBoard(id); err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	ended, err := db.EndCollabBoardSessions(id)
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	setAuditTargetLabel(r, "board "+id)
+	writeJSON(w, http.StatusOK, map[string]any{"ended": ended})
 }
 
 // POST /api/boards/{id}/group {group} — link the board to a group ("" unlinks).
@@ -1048,4 +1072,63 @@ func handleBoardPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveBoardPatch(w, r, id, author, participant, "")
+}
+
+// boardSessionCaller gates the session routes and resolves whose session is
+// meant: always the caller's own, which is what keeps an agent from closing
+// another's. A session belongs to an agent, so a caller without one has none.
+func boardSessionCaller(w http.ResponseWriter, r *http.Request) (id, agentID string, ok bool) {
+	convID, ok := requirePermission(w, r, PermBoardsWrite)
+	if !ok {
+		return "", "", false
+	}
+	if id, ok = boardPathID(w, r); !ok {
+		return "", "", false
+	}
+	if _, agentID, ok = boardCaller(w, convID); !ok {
+		return "", "", false
+	}
+	if agentID == "" {
+		writeError(w, http.StatusBadRequest, "no_agent", "a board session belongs to an agent; this caller is not one")
+		return "", "", false
+	}
+	return id, agentID, true
+}
+
+// POST /v1/boards/{id}/session — (re)start the calling agent's board session.
+func handleBoardSessionOpen(w http.ResponseWriter, r *http.Request) {
+	id, agentID, ok := boardSessionCaller(w, r)
+	if !ok {
+		return
+	}
+	b, err := db.OpenCollabBoardSession(id, agentID)
+	if errors.Is(err, db.ErrCollabBoardAgentRetired) {
+		writeError(w, http.StatusConflict, "retired", "a retired agent cannot hold a board session")
+		return
+	}
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	// Opening may have made the agent a participant, which the editor shows.
+	boardLive.publish(id, "")
+	writeJSON(w, http.StatusOK, boardToJSON(b, nil))
+}
+
+// DELETE /v1/boards/{id}/session — end the calling agent's board session.
+func handleBoardSessionClose(w http.ResponseWriter, r *http.Request) {
+	id, agentID, ok := boardSessionCaller(w, r)
+	if !ok {
+		return
+	}
+	err := db.CloseCollabBoardSession(id, agentID)
+	if errors.Is(err, db.ErrCollabBoardNoSession) {
+		writeError(w, http.StatusNotFound, "no_session", "you have no session on this board")
+		return
+	}
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

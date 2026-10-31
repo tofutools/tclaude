@@ -13,6 +13,12 @@
 // unrestricted peer). A peer's agents open as remote terminals; its shells
 // can be ended from here, and attach on that node until the federation
 // stream carries shells.
+//
+// The listing also has a row per board with an agent's board session on it: the
+// agent works with no tab open, and the row is how the operator resumes the
+// board. It opens as a board tab and ends without touching the board. Boards
+// stay with their own node, so a peer never lists one, and a peer's per-node
+// view drops this node's, whose board routes the page would send to the peer.
 
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -21,6 +27,8 @@ import htm from 'htm';
 import {
   openGroupWebTermPane, openWebTermPane, openWebWindowPane, waitForTerminalSettled,
 } from './terminals-tab.js';
+import { boardPaneKey } from './board-model.js';
+import { boardOverlay, openBoardPane } from './board-overlay-state.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { tickedNodes } from './fleet-scope.js';
 import { remoteSessionAgents } from './remote-session-status.js';
@@ -118,6 +126,11 @@ async function readListing(fetchImpl, path) {
   }
 }
 
+// localBackgroundRows is the rows of this node's listing the page can open.
+export function localBackgroundRows(rows, remote = globalThis.__tclaudeRemoteNode?.id) {
+  return remote ? rows.filter((row) => row.kind !== 'board') : rows;
+}
+
 // startBackgroundTerminalsPoll reads the listing now and then every few
 // seconds while the page is visible. peers names the peer nodes to read
 // besides this one (backgroundPeers). Returns the stop function.
@@ -143,7 +156,7 @@ export function startBackgroundTerminalsPoll({
         ...nodes.map((peer) => readListing(fetchImpl, `/api/peer/${encodeURIComponent(peer.id)}/background-terminals`)),
       ]);
       // A failed read keeps that node's last good rows; the next tick retries.
-      if (own && own !== REFUSED) local = own;
+      if (own && own !== REFUSED) local = localBackgroundRows(own);
       const next = new Map();
       nodes.forEach((peer, i) => {
         if (theirs[i] === REFUSED) refusedUntil.set(peer.id, now() + PEER_REFUSED_BACKOFF_MS);
@@ -177,14 +190,16 @@ export function startBackgroundTerminalsPoll({
 
 // visibleBackgroundTerminals drops rows whose pane is already open here: the
 // listing lags an attach by up to one poll. A peer's agent is open when a
-// remote pane shows it, whichever mode it opened in.
-export function visibleBackgroundTerminals(rows, panes) {
+// remote pane shows it, whichever mode it opened in. A board is open in its tab
+// or floating in the overlay.
+export function visibleBackgroundTerminals(rows, panes, overlay = boardOverlay.value) {
   const open = new Set();
   for (const pane of panes || []) {
     open.add(pane.key);
     const remote = pane.seed?.remote;
     if (remote?.peer && remote.agent) open.add(`peer:${remote.peer}:${remote.agent}`);
   }
+  if (overlay) open.add(boardPaneKey(overlay.id));
   return (rows || []).filter((row) => !row.key || !open.has(row.key));
 }
 
@@ -193,6 +208,7 @@ const KIND_SECTIONS = Object.freeze([
   ['session', 'Sessions'],
   ['shell', 'Shells'],
   ['group_shell', 'Group shells'],
+  ['board', 'Boards'],
   ['other', 'Other tmux sessions'],
 ]);
 
@@ -213,9 +229,19 @@ function selectorOf(row) {
   return row.agent_id || row.conv_id || '';
 }
 
+// boardRowView reads a board row: its title and who has a session on it, by
+// the roster's live titles like the other rows.
+function boardRowView(row, snapshotValue) {
+  const roster = new Map((snapshotValue?.agents || []).map((agent) => [agent.agent_id, agent.title]));
+  const names = (row.agents || []).map((agent) => roster.get(agent.agent_id) || agent.title).filter(Boolean);
+  const title = row.label || row.board;
+  return { label: names.length ? `${title} · ${names.join(', ')}` : title, title, status: null };
+}
+
 // rowLabel prefers the roster's live title so a renamed agent reads right
 // before the next listing.
 function rowView(row, snapshotValue) {
+  if (row.kind === 'board') return boardRowView(row, snapshotValue);
   const selector = selectorOf(row);
   const seed = row.node ? { remote: { peer: row.node.id, agent: row.agent_id } } : { agent: selector };
   const status = selector ? terminalTabStatus({ label: row.label, seed }, snapshotValue, remoteSessionAgents.value) : null;
@@ -244,7 +270,9 @@ export function attachBackgroundTerminal(row, snapshotValue, { reveal = true, ac
   const selector = selectorOf(row);
   const options = { reveal, activate };
   let opened = null;
-  if (row.node && row.shell) {
+  if (row.kind === 'board' && row.board) {
+    opened = openBoardPane(row.board, title, options);
+  } else if (row.node && row.shell) {
     opened = openShell({ instance: row.node.id, ...row.shell, peerLabel: row.node.name, label: title, options });
   } else if (row.node) {
     opened = openRemote({ instance: row.node.id, agent: row.agent_id, peerLabel: row.node.name, label: row.label || '', options });
@@ -276,18 +304,21 @@ function openRemoteShellPane({ options, ...rest }) {
 // superseded generation, an unrecognised session) on its node and re-reads
 // the listing. Like the listing, it goes past a peer view's fetch routing: a
 // row of this node's ends here, a peer's through the peer proxy. Resolves to
-// '' on success or the server's error text.
+// '' on success or the server's error text. A board row has no tmux session:
+// this ends the agents' board sessions, and the board itself stays.
 export async function killBackgroundTerminal(row, {
   fetchImpl = globalThis.__tclaudeRemoteNode?.localFetch || ((...args) => fetch(...args)),
 } = {}) {
   const path = row.node ? `/api/peer/${encodeURIComponent(row.node.id)}/background-terminals/kill` : BACKGROUND_TERMINAL_KILL_PATH;
   try {
-    const response = await fetchImpl(path, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tmux_session: row.tmux_session }),
-    });
+    const response = row.kind === 'board'
+      ? await fetchImpl(`/api/boards/${encodeURIComponent(row.board)}/sessions`, { method: 'DELETE', credentials: 'same-origin' })
+      : await fetchImpl(path, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tmux_session: row.tmux_session }),
+      });
     if (response.ok) return '';
     const body = await response.json().catch(() => null);
     return body?.error || `kill failed (${response.status})`;
@@ -317,10 +348,14 @@ function KillButton({ row, label }) {
     setArmed(false);
     setError(failure);
   };
+  const board = row.kind === 'board';
+  const verb = board ? 'End' : 'Kill';
+  const hint = board
+    ? (armed ? "Click again to end the agents' sessions on this board. The board stays" : 'End the board sessions on this board')
+    : (armed ? 'Click again to end this tmux session and whatever runs in it' : `End tmux session ${row.tmux_session}`);
   return html`<button type="button" class=${`mux-btn mux-bg-kill${armed ? ' armed' : ''}`} disabled=${busy}
-    onClick=${onClick} aria-label=${`Kill ${label}`}
-    title=${error || (armed ? 'Click again to end this tmux session and whatever runs in it' : `End tmux session ${row.tmux_session}`)}>
-    ${busy ? 'Killing…' : armed ? 'Kill?' : error ? 'Failed' : 'Kill'}</button>`;
+    onClick=${onClick} aria-label=${`${verb} ${label}`} title=${error || hint}>
+    ${busy ? (board ? 'Ending…' : 'Killing…') : armed ? `${verb}?` : error ? 'Failed' : verb}</button>`;
 }
 
 let attachAllRunning = false;
@@ -405,7 +440,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
       onMouseEnter=${() => { leave.cancel(); setOpen(true); }} onMouseLeave=${scheduleClose}>
       <button type="button" class="mux-bg-trigger" aria-expanded=${open ? 'true' : 'false'} aria-haspopup="dialog"
         aria-label=${`${count} tclaude ${noun} running in the background without a terminal`}
-        title=${`${count} tclaude ${noun} still running in tmux with no terminal attached`}
+        title=${`${count} tclaude ${noun} still running with no terminal attached`}
         onClick=${() => { if (pinned) close(); else { setOpen(true); setPinned(true); } }}>
         <${BackgroundIcon} /><span class="mux-bg-count">${count}</span>
       </button>
@@ -422,6 +457,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
                   // agent/session rows borrow the roster light.
                   const conversation = row.kind === 'agent' || row.kind === 'session';
                   const statusClass = conversation ? (view.status?.className || 'unknown') : 'shell';
+                  const verb = row.kind === 'board' ? 'Open' : 'Attach';
                   return html`
                     <div class="mux-bg-row" key=${row.key || row.tmux_session}>
                       <span class=${`mux-tab-status mux-tab-status-${statusClass}`}
@@ -430,12 +466,12 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
                         // The title attaches too, a bigger target than the
                         // button; tabindex -1 keeps one tab stop per row.
                         ? html`<button type="button" class="mux-bg-name mux-bg-name-attach" tabindex="-1"
-                            title=${`Attach ${view.label}`} onClick=${() => attach(row)}>${view.label}</button>`
+                            title=${`${verb} ${view.label}`} onClick=${() => attach(row)}>${view.label}</button>`
                         : html`<span class="mux-bg-name" title=${view.label}>${view.label}</span>`}
                       ${idle.text ? html`<span class=${`mux-bg-idle${idle.stale ? ' stale' : ''}`}>${idle.text}</span>` : null}
                       ${row.key
                         ? html`<button type="button" class="mux-btn mux-bg-attach" onClick=${() => attach(row)}
-                            aria-label=${`Attach ${view.label}`}>Attach</button>`
+                            aria-label=${`${verb} ${view.label}`}>${verb}</button>`
                         : row.attachLock
                           ? html`<button type="button" class="mux-btn mux-bg-attach" disabled aria-disabled="true"
                               aria-label=${`Attach ${view.label}`}>Attach</button><${LockReason} why=${row.attachLock}/>`

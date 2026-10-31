@@ -1829,7 +1829,7 @@ function TerminalTabs({
         <div class="mux-bg-empty">
           <div class="mux-empty-title">No terminals open</div>
           ${hasBackground
-            ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running in tmux without a terminal. Hover the counter at the top right to attach or review them.</div>`
+            ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. Hover the counter at the top right to attach or review them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
           ${snapshot ? html`<${BoardsGate} snapshot=${snapshot}><div>Or open a board from the ＋ above.</div><//>` : null}
         </div>

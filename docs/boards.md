@@ -35,7 +35,7 @@ every board, including a fleet map, whose cards show agents' tasks and PRs.
 | Slug | Allows |
 |---|---|
 | `boards.read` | `board ls`, `board show`, `board snapshot` |
-| `boards.write` | `board create` and every change (`add`, `patch`, `rm`, `move`, `text`) |
+| `boards.write` | `board create`, every change (`add`, `patch`, `rm`, `move`, `text`), and `board open` and `board close` on the agent's own session |
 
 Neither is default-granted:
 
@@ -58,6 +58,8 @@ tclaude agent board show plan --json          # the elements as Excalidraw JSON
 tclaude agent board show plan --view          # only what the operator has on screen
 tclaude agent board snapshot plan -o plan.png # the dashboard's latest rendering
 tclaude agent board snapshot plan --region 3 -o change.png  # the image a board event named
+tclaude agent board open plan                 # start your board session again, coming back later
+tclaude agent board close plan                # end your board session
 
 tclaude agent board add plan rectangle --x 100 --y 80 --w 160 --h 80 --text API
 tclaude agent board add plan text --x 100 --y 200 --text "Owned by the platform team"
@@ -77,6 +79,37 @@ tclaude agent board patch plan --file elements.json   # - reads stdin
 the changes. `snapshot` says how far the PNG lags the board, because the
 dashboard renders it and an agent's own changes appear in it only after the
 operator's editor saves a new one.
+
+## Board sessions
+
+Agents work on a board with no tab open: their edits go through the daemon to
+the database. A board session records that an agent is doing so, as a tmux
+session does for a terminal, so the operator can come back to the board later.
+It is stored per board and agent, and it survives reincarnation and daemon
+restarts.
+
+An agent's accepted edit starts its session or refreshes it, and `board open`
+starts one explicitly, for an agent coming back to a board. `board open` also
+makes the agent a participant. The operator's edits start no session. A session
+has no time limit, and closing a tab does not end it. It ends with:
+
+- `board close`, which ends only the calling agent's own session;
+- the agent retiring, which includes moving to another node;
+- the board being deleted;
+- the operator ending the board's row in the dashboard.
+
+Ending a session changes nothing on the board, and its agents stay participants.
+An agent's next edit starts a new session.
+
+Boards with a session list under **Boards** in the
+[Background terminals](dashboard.md#terminals) counter, with the board's title and the agents
+on it. The row hides while the board is open on the page, and **Open** brings it
+up as a tab. **End** removes every session on that board, never the board. Rows are this node's only:
+peers do not list them, and a peer's per-node view leaves them out. With Collab
+off they do not show.
+
+`board snapshot` still needs a dashboard: it returns what an open editor last
+rendered, however old, so an agent working alone should read with `board show`.
 
 ## Elements and merging
 
@@ -210,18 +243,21 @@ stored.
 
 ## Storage
 
-Boards, elements and participants are in the `collab_boards`,
-`collab_board_elements` and `collab_board_participants` tables. The latest PNG
+Boards, elements, participants and board sessions are in the `collab_boards`,
+`collab_board_elements`, `collab_board_participants` and
+`collab_board_sessions` tables. The latest PNG
 snapshot is `~/.tclaude/data/boards/<id>.png` and the event images are under
 `~/.tclaude/data/boards/<id>.regions/`, all private daemon state.
 
 ## HTTP routes
 
 The dashboard uses `/api/boards` (list, create, read, patch, delete, snapshot
-upload and download, participants and events). A federation peer's dashboard
-view never reaches these routes: boards stay with their own node. Agents use
-`/v1/boards`: `GET /v1/boards`, `POST /v1/boards`, `GET /v1/boards/{id}`
-(`?since=N`), `PATCH /v1/boards/{id}` and `GET /v1/boards/{id}/snapshot`. The
-snapshot response carries `X-Board-Snapshot-Version` and `X-Board-Version`
+upload and download, participants and events), and
+`DELETE /api/boards/{id}/sessions` to end a board's sessions. A federation
+peer's dashboard view never reaches these routes: boards stay with their own
+node. Agents use `/v1/boards`: `GET /v1/boards`, `POST /v1/boards`,
+`GET /v1/boards/{id}` (`?since=N`), `PATCH /v1/boards/{id}`,
+`GET /v1/boards/{id}/snapshot`, and `POST` and `DELETE /v1/boards/{id}/session`
+for the caller's own session. The snapshot response carries `X-Board-Snapshot-Version` and `X-Board-Version`
 headers. A snapshot upload for a version older than the stored snapshot is
 refused with 409.

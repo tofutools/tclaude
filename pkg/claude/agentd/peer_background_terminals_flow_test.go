@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -62,4 +63,31 @@ func TestPeerView_BackgroundTerminalsFollowGrants(t *testing.T) {
 
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/background-terminals/kill", map[string]any{"tmux_session": groupShell("shells")}))
 	require.Equal(t, 403, rec.Code)
+}
+
+// Boards stay with their own node: even an unrestricted peer, which lists every
+// terminal, gets no board row.
+func TestPeerView_BackgroundTerminalsLeaveBoardsOut(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	enableCollab(t)
+	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+	f.World.Tmux.MarkAlive("someone-elses-session")
+	const conv = "pbg-board-conv"
+	f.HaveConvWithTitle(conv, "drawer")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	_, err = db.CreateCollabBoard("plan", "Plan", "operator", 10)
+	require.NoError(t, err)
+	_, err = db.OpenCollabBoardSession("plan", agentID)
+	require.NoError(t, err)
+
+	rec := testharness.Serve(agentd.PeerViewHandler(fh.peer.id.ID()), testharness.JSONRequest(t, "GET", "/api/background-terminals", nil))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var out struct {
+		Terminals []backgroundTerminalRow `json:"terminals"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.Terminals, 1, rec.Body.String())
+	require.Equal(t, "someone-elses-session", out.Terminals[0].TmuxSession)
 }

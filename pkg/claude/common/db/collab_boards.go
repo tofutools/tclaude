@@ -246,8 +246,9 @@ func ListCollabBoardElements(id string, since int64) ([]CollabBoardElement, erro
 // is none, when its version is higher, or when the versions tie and its nonce
 // is lower. When at least one element is accepted the board version is bumped
 // once and every accepted element is stamped with it. participant, when set,
-// joins the board in the same transaction. The patch is all-or-nothing: one
-// that would leave more than maxLive live elements, or more than maxStored
+// joins the board in the same transaction, and when anything was accepted its
+// board session starts or refreshes there too. The patch is all-or-nothing:
+// one that would leave more than maxLive live elements, or more than maxStored
 // rows including tombstones, changes nothing.
 func ApplyCollabBoardElements(id, by, participant string, elems []CollabBoardElement, maxLive, maxStored int) (version int64, accepted int, err error) {
 	return ApplyCollabBoardEdit(id, by, participant, elems, nil, maxLive, maxStored)
@@ -283,6 +284,11 @@ func ApplyCollabBoardEdit(id, by, participant string, elems []CollabBoardElement
 	}
 	if participant != "" {
 		if err := addCollabBoardParticipantTx(tx, id, participant); err != nil {
+			return 0, 0, err
+		}
+	}
+	if participant != "" && accepted > 0 {
+		if _, err := refreshCollabBoardSessionTx(tx, id, participant); err != nil {
 			return 0, 0, err
 		}
 	}
