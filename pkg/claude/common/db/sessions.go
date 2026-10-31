@@ -2181,6 +2181,40 @@ func SessionHarnesses() (map[string]string, error) {
 	return out, rows.Err()
 }
 
+// SessionHarnessesByIDs is SessionHarnesses for the given sessions only: the
+// rare cost rows with no denormalised harness, without scanning every session.
+func SessionHarnessesByIDs(sessionIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(sessionIDs))
+	if len(sessionIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkStrings(sessionIDs, batchChunkSize) {
+		clause, args := inClause(chunk)
+		rows, err := d.Query(`SELECT id, COALESCE(NULLIF(harness, ''), 'claude') FROM sessions WHERE id `+clause, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, harness string
+			if err := rows.Scan(&id, &harness); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[id] = harness
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // UpdateSessionEffort stores the reasoning-effort level ("low", "medium",
 // "high", "xhigh", "max") the session is currently running on. Claude
 // Code's statusline carries it as effort.level on every render (when the
@@ -2573,6 +2607,10 @@ func ReplaceSessionVirtualCostHistory(
 	if affected == 0 {
 		return nil
 	}
+	guard, err := guardCostOpening(tx, convID, sessionID)
+	if err != nil {
+		return err
+	}
 	if convID != "" {
 		if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = 0
 			WHERE conv_id = ? AND id <> ?`, convID, sessionID); err != nil {
@@ -2614,6 +2652,9 @@ func ReplaceSessionVirtualCostHistory(
 			snapshot.Day, dayConvID, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
 			return err
 		}
+	}
+	if err := guard.settle(tx, convID, sessionID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -2719,6 +2760,10 @@ func replaceSessionCostHistoryForGeneration(
 	if err != nil {
 		return false, err
 	}
+	guard, err := guardCostOpening(tx, convID, sessionID)
+	if err != nil {
+		return false, err
+	}
 	if convID != "" {
 		if _, err := tx.Exec(`UPDATE sessions SET `+zero+`
 			WHERE conv_id = ? AND id <> ?`, convID, sessionID); err != nil {
@@ -2760,6 +2805,9 @@ func replaceSessionCostHistoryForGeneration(
 			snapshot.Day, dayConvID, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
 			return false, err
 		}
+	}
+	if err := guard.settle(tx, convID, sessionID); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
@@ -2803,6 +2851,10 @@ type CostDailyRow struct {
 	// conversation's baseline there instead of at zero.
 	CarriedCostUSD    float64 `json:"-"`
 	CarriedVirtualUSD float64 `json:"-"`
+	// Opening is where the walk stands on this row's conversation just before
+	// the rows it was read with, when older rows were left out (see
+	// CostLedgerWindow). nil means the walk starts here.
+	Opening *CostOpening `json:"-"`
 }
 
 // AnnotateCostCarry sets each row's Carried* fields. Claude Code's
@@ -2827,6 +2879,13 @@ type CostDailyRow struct {
 // a counted conversation keeps its carry even when its predecessor is
 // ignored.
 func AnnotateCostCarry(rows []CostDailyRow) {
+	annotateCostCarry(rows, nil)
+}
+
+// annotateCostCarry is AnnotateCostCarry for rows that continue from older
+// ones: opening holds where each session's counter stood. It returns where the
+// counters stand after rows.
+func annotateCostCarry(rows []CostDailyRow, opening map[string]CostSessionOpening) map[string]CostSessionOpening {
 	bySession := map[string][]int{}
 	for i := range rows {
 		r := &rows[i]
@@ -2836,10 +2895,8 @@ func AnnotateCostCarry(rows []CostDailyRow) {
 		}
 		bySession[r.SessionID] = append(bySession[r.SessionID], i)
 	}
-	for _, idx := range bySession {
-		if len(idx) < 2 {
-			continue
-		}
+	closing := make(map[string]CostSessionOpening, len(bySession))
+	for sessionID, idx := range bySession {
 		sort.SliceStable(idx, func(a, b int) bool {
 			ra, rb := rows[idx[a]], rows[idx[b]]
 			if ra.Day != rb.Day {
@@ -2849,23 +2906,25 @@ func AnnotateCostCarry(rows []CostDailyRow) {
 		})
 		// Track the predecessor per column: a row carrying nothing in a
 		// column (the other billing mode) holds no counter state for it.
-		var lastReal, lastVirtual *CostDailyRow
+		last := opening[sessionID]
 		for _, i := range idx {
 			r := &rows[i]
 			if r.CostUSD > 0 {
-				if lastReal != nil && lastReal.ConvID != r.ConvID && lastReal.CostUSD <= r.CostUSD {
-					r.CarriedCostUSD = lastReal.CostUSD
+				if last.RealConv != "" && last.RealConv != r.ConvID && last.RealUSD <= r.CostUSD {
+					r.CarriedCostUSD = last.RealUSD
 				}
-				lastReal = r
+				last.RealConv, last.RealUSD = r.ConvID, r.CostUSD
 			}
 			if r.VirtualCostUSD > 0 {
-				if lastVirtual != nil && lastVirtual.ConvID != r.ConvID && lastVirtual.VirtualCostUSD <= r.VirtualCostUSD {
-					r.CarriedVirtualUSD = lastVirtual.VirtualCostUSD
+				if last.VirtualConv != "" && last.VirtualConv != r.ConvID && last.VirtualUSD <= r.VirtualCostUSD {
+					r.CarriedVirtualUSD = last.VirtualUSD
 				}
-				lastVirtual = r
+				last.VirtualConv, last.VirtualUSD = r.ConvID, r.VirtualCostUSD
 			}
 		}
+		closing[sessionID] = last
 	}
+	return closing
 }
 
 // CostDelta is one recovered slice of actual spend: on this local day,
@@ -2944,26 +3003,92 @@ type CostDelta struct {
 // WHAT-IF estimate). The delta logic is identical — virtual cost is the
 // same cumulative total_cost_usd, just captured on the subscription path.
 func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
+	walk := costWalkReal
+	if whatif {
+		walk = costWalkVirtual
+	}
+	return costDeltasOf(rows, walk)
+}
+
+// MixedCostDeltas recovers the display cost for each session independently:
+// real cost wins whenever present; otherwise the subscription what-if value is
+// eligible. This lets one Costs view contain API-key spend and subscription
+// estimates without selecting one database column globally or double-counting
+// a row that happens to carry both.
+func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
+	return costDeltasOf(rows, costWalkMixed)
+}
+
+func costDeltasOf(rows []CostDailyRow, walk costWalk) []CostDelta {
 	var out []CostDelta
+	walkCostRows(rows, walk, func(r *CostDailyRow, kind string, rise, _ float64) {
+		if rise > 0 {
+			out = append(out, CostDelta{
+				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: rise,
+				UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness, Kind: kind,
+			})
+		}
+	})
+	return out
+}
+
+// costWalk selects the cumulative a delta walk reads from each row.
+type costWalk int
+
+const (
+	costWalkReal    costWalk = iota // cost_usd
+	costWalkVirtual                 // virtual_cost_usd
+	costWalkMixed                   // cost_usd where present, else virtual_cost_usd
+)
+
+// costWalks lists every walk the cost surfaces can run.
+var costWalks = []costWalk{costWalkReal, costWalkVirtual, costWalkMixed}
+
+func (w costWalk) read(r *CostDailyRow) (val, carry float64, kind string) {
+	switch w {
+	case costWalkVirtual:
+		return r.VirtualCostUSD, r.CarriedVirtualUSD, ""
+	case costWalkMixed:
+		if r.CostUSD > 0 {
+			return r.CostUSD, r.CarriedCostUSD, "real"
+		}
+		return r.VirtualCostUSD, r.CarriedVirtualUSD, "what_if"
+	default:
+		return r.CostUSD, r.CarriedCostUSD, ""
+	}
+}
+
+// costRowKey is the Go twin of costConvKey.
+func costRowKey(r *CostDailyRow) string {
+	if r.ConvID != "" {
+		return r.ConvID
+	}
+	return r.SessionID
+}
+
+// walkCostRows is the one delta walk, see CostDeltas. step sees every row with
+// a value in walk's column: the amount it rose above the baseline, which may be
+// zero or negative, and the baseline it leaves behind.
+func walkCostRows(rows []CostDailyRow, walk costWalk, step func(r *CostDailyRow, kind string, rise, baseline float64)) {
 	prevKey := ""
 	prevSession := ""
 	baseline := 0.0
-	for _, r := range rows {
-		val := r.CostUSD
-		carry := r.CarriedCostUSD
-		if whatif {
-			val, carry = r.VirtualCostUSD, r.CarriedVirtualUSD
-		}
+	for i := range rows {
+		r := &rows[i]
+		val, carry, kind := walk.read(r)
 		if val <= 0 {
 			// A row with nothing in this column (a resumed conversation's
 			// superseded session, zeroed by a history replace) carries no
 			// counter state, so it must not reset the baseline the way a
-			// fresh session's lower counter does; see MixedCostDeltas.
+			// fresh session's lower counter does.
 			continue
 		}
-		key := r.ConvID
-		if key == "" {
-			key = r.SessionID
+		key := costRowKey(r)
+		if key != prevKey && r.Opening != nil {
+			// The conversation's older rows were not read: continue from
+			// where they left the walk.
+			position := r.Opening.Walks[walk]
+			prevKey, prevSession, baseline = key, position.Session, position.Baseline
 		}
 		switch {
 		case key != prevKey:
@@ -2983,59 +3108,12 @@ func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
 		}
 		prevKey = key
 		prevSession = r.SessionID
-		if d := val - baseline; d > 0 {
-			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness})
+		rise := val - baseline
+		if rise > 0 {
 			baseline = val
 		}
+		step(r, kind, rise, baseline)
 	}
-	return out
-}
-
-// MixedCostDeltas recovers the display cost for each session independently:
-// real cost wins whenever present; otherwise the subscription what-if value is
-// eligible. This lets one Costs view contain API-key spend and subscription
-// estimates without selecting one database column globally or double-counting
-// a row that happens to carry both.
-func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
-	var out []CostDelta
-	prevKey := ""
-	prevSession := ""
-	baseline := 0.0
-	for _, r := range rows {
-		val, carry, kind := r.CostUSD, r.CarriedCostUSD, "real"
-		if val <= 0 {
-			val, carry, kind = r.VirtualCostUSD, r.CarriedVirtualUSD, "what_if"
-		}
-		if val <= 0 {
-			// Superseded conversation rows are retained for any real-cost
-			// attribution but their virtual prefix is zeroed. They carry no
-			// counter state and must not reset the baseline merely because
-			// their old local session ID differs from the resumed one.
-			continue
-		}
-		key := r.ConvID
-		if key == "" {
-			key = r.SessionID
-		}
-		switch {
-		case key != prevKey:
-			baseline = carry
-		case r.SessionID != prevSession && val < baseline:
-			// A changed session whose counter drops starts fresh.
-			baseline = carry
-		case r.SessionID != prevSession && carry > baseline:
-			baseline = carry
-		}
-		prevKey, prevSession = key, r.SessionID
-		if d := val - baseline; d > 0 {
-			out = append(out, CostDelta{
-				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d,
-				UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness, Kind: kind,
-			})
-			baseline = val
-		}
-	}
-	return out
 }
 
 // SumCostSinceDay totals the actual spend recorded on or after fromDay
@@ -3084,16 +3162,84 @@ func SumCostSinceDay(fromDay string) (float64, error) {
 // so this hot read walks rows in canonical order without building a temporary
 // SQLite B-tree on every dashboard poll.
 func AllCostDailyRows() ([]CostDailyRow, error) {
-	db, err := Open()
-	if err != nil {
-		return nil, err
-	}
 	// v181 makes this ORDER BY load-bearing again: updated_at is INTEGER Unix
 	// nanoseconds, so SQLite's order is exact and the walk no longer needs a Go
 	// repair sort over variable-width/multi-zone text spellings.
-	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness
-		FROM session_cost_daily
-		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return queryCostDailyRows(d, allCostDailyRowsQuery)
+}
+
+const (
+	costDailyColumns = `session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness`
+	costConvKey      = `COALESCE(NULLIF(conv_id, ''), session_id)`
+	costWalkOrder    = costConvKey + `, day, updated_at, session_id`
+
+	allCostDailyRowsQuery = `SELECT ` + costDailyColumns + ` FROM session_cost_daily ORDER BY ` + costWalkOrder
+)
+
+// costDailyRowsForWalk is the exact read when no stored opening balance can
+// stand in for the older rows: everything a delta walk needs to produce the
+// deltas AllCostDailyRows would for days in [fromDay, toDay]; toDay "" is
+// open-ended. The walk is path-dependent, so a day window alone would be wrong:
+// a conversation's baseline comes from its whole history, and a row's carry
+// comes from every earlier row of its session. So this loads the history up to
+// toDay of each session that ran in a conversation with a row in the window,
+// which covers those conversations' own histories.
+//
+// That last step can pull in rows of a conversation with nothing in the window.
+// Their deltas are computed from a partial history and all fall before fromDay,
+// so callers must ignore deltas outside the window, as day-keyed totals do.
+//
+// withIgnored also loads every ignored conversation: the Costs view names them
+// from their history even when they spent nothing in the span.
+func costDailyRowsForWalk(fromDay, toDay string, withIgnored bool) ([]CostDailyRow, error) {
+	inWindow := `SELECT ` + costConvKey + ` AS conv FROM session_cost_daily WHERE day >= ?`
+	args := []any{fromDay}
+	upTo := ``
+	if toDay != "" {
+		inWindow += ` AND day <= ?`
+		args = append(args, toDay)
+		upTo = ` AND ` + costRowsUpTo(withIgnored)
+	}
+	if withIgnored {
+		inWindow += ` UNION SELECT conv_id FROM cost_ignored_convs`
+	}
+	if toDay != "" {
+		args = append(args, toDay)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return queryCostDailyRows(d, `WITH convs AS MATERIALIZED (`+inWindow+`),
+		walked AS MATERIALIZED (SELECT DISTINCT session_id FROM session_cost_daily
+			WHERE `+costConvKey+` IN (SELECT conv FROM convs))
+		SELECT `+costDailyColumns+` FROM session_cost_daily
+		WHERE session_id IN (SELECT session_id FROM walked)`+upTo+`
+		ORDER BY `+costWalkOrder, args...)
+}
+
+// costRowsUpTo bounds a read at toDay: no row after it can change a delta up to
+// it. An ignored conversation is named by its latest delta wherever that falls,
+// so withIgnored keeps its later rows.
+func costRowsUpTo(withIgnored bool) string {
+	if withIgnored {
+		return `(day <= ? OR conv_id IN (SELECT conv_id FROM cost_ignored_convs))`
+	}
+	return `day <= ?`
+}
+
+// costRowQuerier is the part of *sql.DB and *sql.Tx the ledger reads use.
+type costRowQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// scanCostDailyRows returns the rows of query, without their carry.
+func scanCostDailyRows(q costRowQuerier, query string, args ...any) ([]CostDailyRow, error) {
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3108,12 +3254,21 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 		r.UpdatedAtNS = updatedAt.UnixNano()
 		out = append(out, r)
 	}
-	if err := rows.Err(); err != nil {
+	return out, rows.Err()
+}
+
+func queryCostDailyRows(q costRowQuerier, query string, args ...any) ([]CostDailyRow, error) {
+	out, err := scanCostDailyRows(q, query, args...)
+	if err != nil {
 		return nil, err
 	}
 	AnnotateCostCarry(out)
 	return out, nil
 }
+
+// costNotIgnored mirrors the counted split: a row with no conversation cannot
+// be ignored.
+const costNotIgnored = `(conv_id = '' OR conv_id NOT IN (SELECT conv_id FROM cost_ignored_convs))`
 
 // CompareCostInstants orders two internal Unix-nanosecond instants. Zero is
 // the in-memory representation of SQL NULL: it ranks below every known instant
