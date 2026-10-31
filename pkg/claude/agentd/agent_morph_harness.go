@@ -563,6 +563,7 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 	if err := db.SetConvIndexArchived(convID, true); err != nil {
 		slog.Debug("morph: archive source conversation", "conv", short8(convID), "error", err)
 	}
+	recordConvLosses(newConv, storedConvLosses(convID), res.Report)
 	out := morphOutcome{result: "morphed", status: http.StatusOK, convID: newConv, history: res.Report}
 	if live == nil {
 		out.detail = "the agent is offline; it resumes as " + dst.Name + " when it is next woken"

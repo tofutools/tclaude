@@ -229,6 +229,12 @@ func groupExportPAF(exp *groupexport.Export, findings []paf.Finding, allowed boo
 	if id, err := proto.LoadIdentity(FederationKeyPath()); err == nil {
 		opts.Keys = []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
 	}
+	opts.EarlierLosses = map[string]*paf.Losses{}
+	for _, c := range exp.Convs {
+		if l := storedConvLosses(c.ConvID); l != nil {
+			opts.EarlierLosses[c.ConvID] = l
+		}
+	}
 	var buf bytes.Buffer
 	if err := legacy.WriteGroupExport(exp, &buf, opts); err != nil {
 		return nil, err
@@ -1067,6 +1073,17 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		if old != fresh {
 			collidedOnly[old] = fresh
 		}
+	}
+	for i, l := range landings {
+		if l.Rung == landingNone {
+			continue
+		}
+		c := &exp.Convs[i]
+		var earlier *paf.Losses
+		if decoded.Archive != nil && c.AgentKey != "" {
+			earlier, _ = decoded.Archive.Losses(c.AgentKey)
+		}
+		recordConvLosses(convRemap[c.ConvID], earlier, l.Losses)
 	}
 	saveCutMemberHistories(landings, exp, convRemap, result.GroupName)
 	slog.Info("group import complete",

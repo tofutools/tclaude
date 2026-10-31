@@ -304,6 +304,26 @@ func LossesFromReport(r *transcript.LossReport) Losses {
 	return l
 }
 
+// maxPriorLosses bounds the prior chain. A conversation that keeps being
+// converted loses its oldest reports rather than growing without limit.
+const maxPriorLosses = 32
+
+// ChainLosses returns next with earlier and the reports before it as prior,
+// oldest first. An earlier report with no source describes nothing and adds
+// nothing.
+func ChainLosses(earlier *Losses, next Losses) Losses {
+	if earlier == nil || earlier.Source == "" {
+		return next
+	}
+	prior := append(append([]Losses{}, earlier.Prior...), *earlier)
+	prior[len(prior)-1].Prior = nil
+	next.Prior = append(prior, next.Prior...)
+	if over := len(next.Prior) - maxPriorLosses; over > 0 {
+		next.Prior = next.Prior[over:]
+	}
+	return next
+}
+
 // ReportFromLosses converts losses.json back to a loss report.
 func ReportFromLosses(l *Losses) *transcript.LossReport {
 	r := &transcript.LossReport{}

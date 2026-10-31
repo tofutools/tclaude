@@ -40,6 +40,9 @@ type Info struct {
 	// Handoff is the agent-written handoff (context/handoff.md), a summary
 	// of earlier work that stands in for history a landing has to cut.
 	Handoff string
+	// Losses is the PAF's own loss report, or nil. A landing keeps it as the
+	// conversation's history of conversions.
+	Losses *paf.Losses
 }
 
 // MaxHandoffBytes bounds the handoff an import reads.
@@ -91,6 +94,9 @@ func DecodeBundleFile(f *os.File, lim DecodeLimits, dir string) (*agentbundle.Bu
 				return nil, Info{}, fmt.Errorf("read handoff: %w", err)
 			}
 			info.Handoff = string(raw)
+		}
+		if l, ok := a.Losses(key); ok {
+			info.Losses = l
 		}
 		if info.HasContext {
 			info.Context = func(opts paf.ReadOptions) (*transcript.Transcript, error) {

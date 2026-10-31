@@ -80,6 +80,8 @@ type AgentSummary struct {
 	Handoff      bool            `json:"handoff,omitempty"`
 	LandingRung  string          `json:"landing_rung,omitempty"`
 	Losses       []paf.LossItem  `json:"losses,omitempty"`
+	// PriorReports counts the loss reports of earlier conversions.
+	PriorReports int `json:"prior_reports,omitempty"`
 	Placeholders []string        `json:"placeholders,omitempty"`
 	Workspace    *paf.Workspace  `json:"workspace,omitempty"`
 	Sandbox      []string        `json:"sandbox,omitempty"`
@@ -248,7 +250,7 @@ func summarizeAgent(a *paf.Archive, key string, sizes map[string]int64) AgentSum
 	}
 	as.Handoff = a.HasEntry(paf.AgentPath(key, "context/handoff.md"))
 	if l, ok := a.Losses(key); ok {
-		as.LandingRung, as.Losses = l.LandingRung, l.Items
+		as.LandingRung, as.Losses, as.PriorReports = l.LandingRung, l.Items, len(l.Prior)
 	}
 	return as
 }
