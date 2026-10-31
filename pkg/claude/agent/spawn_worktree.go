@@ -60,6 +60,10 @@ type WorktreePrepareResponse struct {
 	Branch       string `json:"branch"`
 	Created      bool   `json:"created"`
 	DiscardToken string `json:"discard_token,omitempty"`
+	// LaunchDir is where a spawn into the request's group with a blank cwd
+	// would land, so the caller can tell an in-place worktree from a
+	// monorepo sub-repo without reading the group's default directory.
+	LaunchDir string `json:"launch_dir,omitempty"`
 }
 
 // WorktreeDiscardRequest takes back a worktree prepared earlier in this
@@ -90,6 +94,7 @@ type spawnWorktree struct {
 	Path         string
 	Created      bool
 	DiscardToken string
+	LaunchDir    string
 }
 
 // resolveSpawnWorktree turns a `--worktree <branch>` request into a
@@ -130,7 +135,7 @@ func resolveSpawnWorktree(group, repoDir, callerCwd, branch, base string, ask ti
 	if strings.TrimSpace(resp.Path) == "" {
 		return spawnWorktree{}, fmt.Errorf("daemon returned no worktree path for branch %s", branch)
 	}
-	return spawnWorktree{Path: resp.Path, Created: resp.Created, DiscardToken: resp.DiscardToken}, nil
+	return spawnWorktree{Path: resp.Path, Created: resp.Created, DiscardToken: resp.DiscardToken, LaunchDir: resp.LaunchDir}, nil
 }
 
 // discardSpawnWorktree tears down a worktree resolveSpawnWorktree just

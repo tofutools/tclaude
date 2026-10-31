@@ -1722,11 +1722,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	// A blank cwd stays blank: only the daemon can see the group's default.
 	callerCwd, _ := os.Getwd()
-	cwd := p.Cwd
-	if cwd != "" && !filepath.IsAbs(cwd) && !strings.HasPrefix(cwd, "~") {
-		// The daemon would read this against its own cwd, not the caller's.
-		cwd = filepath.Join(callerCwd, cwd)
-	}
+	cwd := callerRelativePath(p.Cwd, callerCwd)
 
 	environment, err := parseEnvironmentFlags(p.Environment)
 	if err != nil {
@@ -1869,7 +1865,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// leaking an orphan.
 	createdWorktree, discardWorktree := "", ""
 	if wt := strings.TrimSpace(p.Worktree); wt != "" {
-		worktreeRepo := strings.TrimSpace(p.WorktreeRepo)
+		worktreeRepo := callerRelativePath(strings.TrimSpace(p.WorktreeRepo), callerCwd)
 		if worktreeRepo == "" {
 			worktreeRepo = cwd
 		}
@@ -1889,8 +1885,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// Clean both sides before comparing: a trailing slash or "/."
 		// on --worktree-repo must not mis-classify an in-place worktree
 		// (worktree-repo == cwd) as the monorepo case. A blank repo is the
-		// daemon's choice of launch dir, so that is in-place too.
-		launchDir := cmp.Or(cwd, callerCwd)
+		// daemon's choice of launch dir, so that is in-place too. A blank cwd
+		// lands where the daemon says: this process cannot see the group's
+		// default, and an older daemon does not say.
+		launchDir := cmp.Or(cwd, prepared.LaunchDir, callerCwd)
 		if worktreeRepo != "" && filepath.Clean(worktreeRepo) != filepath.Clean(launchDir) {
 			// Monorepo sub-repo case: the agent launches in --cwd (the
 			// parent) and the worktree path/branch ride into its welcome.
@@ -2004,6 +2002,16 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
 	}
 	return &resp, rcOK
+}
+
+// callerRelativePath anchors a relative path flag on the caller's directory,
+// which the daemon would otherwise read against its own. Blank and "~" paths
+// stay as they are: the daemon gives those their meaning.
+func callerRelativePath(path, callerCwd string) string {
+	if path == "" || filepath.IsAbs(path) || strings.HasPrefix(path, "~") {
+		return path
+	}
+	return filepath.Join(callerCwd, path)
 }
 
 func implicitSpawnGroup(stderr io.Writer) (string, int) {

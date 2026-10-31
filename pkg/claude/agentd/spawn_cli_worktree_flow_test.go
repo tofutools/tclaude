@@ -199,6 +199,56 @@ func TestSpawnCLI_WorktreeCutFromGroupDefaultDir(t *testing.T) {
 		"the agent should launch in a worktree of the group's repo")
 }
 
+// Scenario: --worktree-repo names the group's default directory and --cwd is
+// omitted. The repo is the launch dir, so this is an in-place worktree even
+// though the CLI cannot see the default: the agent launches in the worktree, not
+// on the shared checkout.
+func TestSpawnCLI_WorktreeRepoIsGroupDefaultDirIsInPlace(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+
+	repo, parent := initRepoOnMain(t)
+	_, err := db.SetAgentGroupDefaultCwd("alpha", repo)
+	require.NoError(t, err)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", Worktree: "feat-x", WorktreeRepo: repo},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equalf(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+
+	rows, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+	assert.Equal(t, resolveSym(t, filepath.Join(parent, "repo-feat-x")), resolveSym(t, rows[0].Cwd))
+}
+
+// Scenario: relative --cwd and --worktree-repo both mean the caller's directory,
+// so `--cwd . --worktree-repo .` stays an in-place worktree of the caller's repo.
+func TestSpawnCLI_RelativeWorktreeRepoIsTheCallers(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+
+	repo, parent := initRepoOnMain(t)
+	chdirTo(t, repo)
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", Cwd: ".", Worktree: "feat-x", WorktreeRepo: "."},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equalf(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+
+	rows, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+	assert.Equal(t, resolveSym(t, filepath.Join(parent, "repo-feat-x")), resolveSym(t, rows[0].Cwd))
+}
+
 // Scenario: a human spawns an agent whose launch dir is a "virtual
 // monorepo" (a plain folder, not a git repo) while the code work
 // belongs in a git worktree of a nested sub-repo. `--worktree-repo`
