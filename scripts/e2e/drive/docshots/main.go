@@ -478,6 +478,12 @@ func runStep(p *rod.Page, st Step) error {
 	case st.Check != "":
 		return act(st.Check, `e => { const b = e.matches('input') ? e : e.querySelector('input'); if (!b) throw new Error('no checkbox'); if (!b.checked) b.click(); }`)
 	case st.Scroll != "":
+		// Dialogs fill in rows after they open, which moves the target, so scroll
+		// again once the layout has had time to settle.
+		if err := act(st.Scroll, `e => e.scrollIntoView({block: 'center'})`); err != nil {
+			return err
+		}
+		time.Sleep(600 * time.Millisecond)
 		return act(st.Scroll, `e => e.scrollIntoView({block: 'center'})`)
 	case st.Hide != "":
 		return act(st.Hide, `e => e.style.setProperty('display', 'none', 'important')`)
