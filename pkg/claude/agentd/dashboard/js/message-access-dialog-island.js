@@ -13,7 +13,7 @@ import { LockReason, NodeChip } from './lock-reason.js';
 import {
   DEFAULT_SUDO_POLICY, SUDO_DURATION_PRESETS, agentCandidates, groupMembers, groupsForPicker, permissionRows,
   permissionScopeSeed, permissionSeed, rowsByArea, scopeChips, scopeDimOptions, scopeDimRows,
-  scopeSupported, senderOnline, sudoByAgent, sudoDurationSeconds, sudoDurationText, sudoGrantScope,
+  scopeSupported, senderOnline, stewardAccessFor, sudoByAgent, sudoDurationSeconds, sudoDurationText, sudoGrantScope,
   sudoSecondsLeft, unreadableScopeSlugs, RECIPIENT_PICKS, combinePick,
 } from './message-access-dialog-model.js';
 import { openMemberPRs } from './pr-review-model.js';
@@ -701,10 +701,21 @@ function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft }) {
   </div>`;
 }
 
+// CarryChoice says who a Steward's grant is for. The second option stores it, so
+// it reads as what it does rather than as a scope of this one agent.
+function CarryChoice({ slug, carried, onChange }) {
+  return html`<select class="perm-carry" aria-label=${`Who ${slug} is for`}
+    title="All future Stewards stores this grant and gives it to each new Steward"
+    onChange=${(event) => onChange(event.currentTarget.value === 'all')}>
+    <option value="this" selected=${!carried}>This Steward only</option>
+    <option value="all" selected=${carried}>All future Stewards (stored)</option>
+  </select>`;
+}
+
 // SudoActive lists what an agent holds through sudo now, with its time left
 // ticking, so a grant can be extended or ended where the next one is made.
 // Extending adds whatever the duration control says: one control, one meaning.
-function SudoActive({ grants, duration, maxSeconds, busy, act }) {
+function SudoActive({ grants, duration, maxSeconds, busy, act, steward }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -725,6 +736,7 @@ function SudoActive({ grants, duration, maxSeconds, busy, act }) {
     return html`<div key=${grant.id} class="sudo-active-row" data-grant=${grant.id} title=${[grant.reason, grant.granted_by].filter(Boolean).join(' · ')}>
       <span class="sudo-active-slug">${grant.slug}</span>
       ${chips.length ? html`<span class="perm-scope-chips">${chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)}</span>` : null}
+      ${steward && html`<span class="perm-source">${grant.carried ? 'all future Stewards' : 'this Steward only'}</span>`}
       <span class="sudo-active-left">${sudoDurationText(sudoSecondsLeft(grant, now))} left</span>
       <button type="button" class="sudo-extend" disabled=${busy || !!blocked} title=${blocked || `Add ${duration} to this grant`}
         aria-label=${`Add ${duration} to ${grant.slug}`} onClick=${() => act.extend([grant.id])}>+${adds ? duration : '…'}</button>
@@ -766,6 +778,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     conv: sudoAgent?.conv_id || '',
     label: launched.label || sudoAgent?.title || launched.agentID,
   } : launched;
+  const stewardAccess = sudoMode || descriptor.mode === 'agent' ? stewardAccessFor(snapshot, descriptor.conv) : null;
+  // Only what the operator changed; the rest stays as the daemon has it.
+  const [carryChoices, setCarryChoices] = useState({});
+  const carriedNow = (slug) => carryChoices[slug] ?? (!sudoMode && stewardAccess?.carried[slug] !== undefined);
   const [policy, setPolicy] = useState(DEFAULT_SUDO_POLICY);
   const [duration, setDuration] = useState(() => sudoDurationText(DEFAULT_SUDO_POLICY.default_seconds));
   const durationTouched = useRef(false);
@@ -826,7 +842,8 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       ? JSON.stringify(descriptor.ownerScopes, null, 2) : ''));
   const [ownerScopesBaseline] = useState(() => ownerScopesText);
   const ownerScopesDirty = groupMode && ownerScopesText !== ownerScopesBaseline;
-  const dirty = rowsDirty || scopesDirty || ownerScopesDirty || !!reason.trim();
+  const carryDirty = Object.keys(carryChoices).length > 0;
+  const dirty = rowsDirty || scopesDirty || ownerScopesDirty || carryDirty || !!reason.trim();
   const sudoPicked = sudoMode ? rows.filter((row) => currentEffect(row.slug) === 'grant') : [];
   const sudoSeconds = sudoDurationSeconds(duration);
   const sudoReady = sudoPicked.length > 0 && !!sudoSeconds && sudoSeconds <= policy.max_seconds;
@@ -893,7 +910,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const scoped = Object.fromEntries(slugs.filter((slug) => Object.keys(effectiveScopes[slug] || {}).length)
       .map((slug) => [slug, effectiveScopes[slug]]));
     try {
-      await actions.grantSudo({ agentID: descriptor.agentID, slugs, duration: duration.trim(), reason: reason.trim(), scopes: scoped, node: descriptor.node });
+      await actions.grantSudo({
+        agentID: descriptor.agentID, slugs, duration: duration.trim(), reason: reason.trim(), scopes: scoped,
+        ...(stewardAccess ? { carry: slugs.filter(carriedNow) } : {}), node: descriptor.node,
+      });
       state.close();
     } catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
@@ -972,7 +992,13 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     // absent field as "unchanged", and sending the box's current value would
     // clear a stored narrowing this build could not decode into it.
     const ownerScopePayload = groupMode && ownerScopesDirty ? ownerScopes : null;
-    try { await actions.savePermissions(descriptor, full, scoped, ownerScopePayload); state.close(); }
+    const carry = Object.fromEntries(Object.entries(carryChoices).filter(([slug]) => currentEffect(slug) !== 'default'));
+    try {
+      await (Object.keys(carry).length
+        ? actions.savePermissions(descriptor, full, scoped, ownerScopePayload, carry)
+        : actions.savePermissions(descriptor, full, scoped, ownerScopePayload));
+      state.close();
+    }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -1002,15 +1028,19 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       : html`<${Words} plain=${html`<strong>PERMANENT</strong> — these per-agent overrides persist until changed. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks inherited sources, and <strong>Default</strong> inherits them.`}
           wizard=${html`<strong>THE GRIMOIRE</strong> — these bindings follow this hero until changed. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals inherited boons away, and <strong>Default</strong> inherits them.`}/>`}</div>
     <p class="perm-edit-subtitle" id="perm-edit-subtitle"><${Words} plain=${subtitle} wizard=${wizardSubtitle}/></p>
+    ${stewardAccess && html`<p class="perm-steward-note" id="perm-steward-note">Each grant is for <b>this Steward only</b>, which ends with this instance, or for <b>all future Stewards</b>, which is stored and given to each new Steward${sudoMode ? ' with the same expiry' : ''}. Config defaults are changed in Config.</p>`}
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
     <div class="perm-edit-toolbar"><input id="perm-edit-filter" type="text" value=${filter} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
       onInput=${(event) => setFilter(event.currentTarget.value)} /><button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"
-      onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'clear' : groupMode || grantOnly ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
+      onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'clear' : groupMode || grantOnly ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
     <div id="perm-edit-list" class="perm-edit-list">${activeSudo.length > 0 && html`<${SudoActive} grants=${activeSudo}
-      duration=${duration.trim()} maxSeconds=${policy.max_seconds} busy=${busy} act=${sudoActive} />`}
+      duration=${duration.trim()} maxSeconds=${policy.max_seconds} busy=${busy} act=${sudoActive} steward=${!!stewardAccess} />`}
     ${visible.length ? visible.map((row, index) => {
     const refusedWhy = sudoMode ? policy.refused?.[row.slug] : '';
     const sudoHeld = sudoMode ? activeSudo.find((grant) => grant.slug === row.slug) : null;
+    const fromConfig = !!stewardAccess?.config.has(row.slug);
+    const picked = currentEffect(row.slug) !== 'default';
+    const canCarry = !!stewardAccess && picked && !fromConfig && !stewardAccess.notCarryable.has(row.slug);
     // The scope controls appear only where they can mean something: a slug
     // that declares dimensions, granted, in an editor whose save path can
     // persist a scope. Everywhere else the row renders exactly as before.
@@ -1022,8 +1052,11 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     // the agent holds it would narrow it for the whole window, not elevate it.
     const scopable = !unreadableScope && scopesEditable && !!row.scope_dims?.length
       && currentEffect(row.slug) === 'grant' && !(sudoMode && row.granted);
+    const stewardSource = stewardAccess && (fromConfig ? 'Config defaults'
+      : stewardAccess.carried[row.slug] !== undefined ? 'all future Stewards' : 'this Steward only');
     const effText = sudoMode
-      ? (row.granted ? `already held: ${row.sources.join(' + ')}` : 'not held now')
+      ? (row.granted ? `already held: ${stewardSource || row.sources.join(' + ')}` : 'not held now')
+      : stewardAccess && (picked || fromConfig) ? (fromConfig ? 'Config defaults' : carriedNow(row.slug) ? 'all future Stewards' : 'this Steward only')
       : groupMode
       ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
       : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
@@ -1038,7 +1071,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
       ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
         title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
+      ${canCarry && html`<${CarryChoice} slug=${row.slug} carried=${carriedNow(row.slug)}
+        onChange=${(carried) => setCarryChoices((current) => ({ ...current, [row.slug]: carried }))} />`}
       ${refusedWhy ? html`<span class="perm-refused" title=${refusedWhy}>refused</span>`
+    : fromConfig && !sudoMode ? html`<span class="perm-refused" title="Changed in Config > Steward">in Config</span>`
     : sudoHeld ? html`<span class="perm-sudo-held" title="Already elevated: extend it under Active now">🔓 active</span>`
     : html`<div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${sudoMode ? 'Off' : groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
         <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${sudoMode ? 'Sudo' : groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>
