@@ -1316,8 +1316,20 @@ loss report of whatever produced the context. It records:
   oldest first, so successive morphs and imports add a report rather than
   overwrite the last one. Each item has the fields of `losses.json` itself,
   without its own `prior`. A writer that replaces a context with a new
-  translation moves the old report into `prior`; tclaude keeps `prior` when
-  it rewrites a PAF, for example when redacting.
+  translation moves the old report into `prior`.
+
+tclaude stores the report of the conversion that produced a conversation: a
+cross-harness morph, or a file import that lands it. The next morph,
+import landing or export then puts that report and its `prior` into the new
+report's `prior`, keeping the latest 32. A conversation that lands unchanged
+keeps the report it came with. An export with no neutral context, which
+includes every group PAF, still writes `losses.json` for a conversation with a
+stored report, as that report unchanged. tclaude also keeps `prior` when it
+rewrites a PAF, for example when redacting. `tclaude paf inspect` shows how many
+earlier reports a file carries.
+
+A clone does not take its source's report, and neither does a federation
+move, teleport or offer landing, which hands over a decoded bundle.
 
 Loss kinds include:
 

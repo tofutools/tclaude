@@ -2198,3 +2198,8 @@ CREATE TABLE steward_carried_sudo (
  reason TEXT NOT NULL DEFAULT '',
  revoked_at INTEGER
 , uses_limit INTEGER NOT NULL DEFAULT 0, uses_left INTEGER NOT NULL DEFAULT 0) STRICT;
+
+CREATE TABLE conv_loss_reports (
+		conv_id TEXT PRIMARY KEY,
+		report  TEXT NOT NULL
+	);

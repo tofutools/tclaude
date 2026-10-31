@@ -153,3 +153,21 @@ func TestGroupExportBlankTitleAndLargeManifest(t *testing.T) {
 	_, err = OpenFile(file, dir, paf.Producer{Name: "tclaude"}, paf.Options{Purpose: paf.PurposeInspect, Limits: paf.Limits{MaxArchiveBytes: 1 << 20}})
 	assert.ErrorContains(t, err, "expands past")
 }
+
+// A converted member's stored report travels in the group PAF even though a
+// group PAF carries no neutral context, and a reader accepts it.
+func TestGroupExportCarriesStoredLossReports(t *testing.T) {
+	exp := sampleGroupExport()
+	var buf bytes.Buffer
+	require.NoError(t, WriteGroupExport(exp, &buf, GroupWriteOptions{
+		Producer:      paf.Producer{Name: "tclaude", Version: "test"},
+		EarlierLosses: map[string]*paf.Losses{convA: {Source: "codex", Target: "claude", Items: []paf.LossItem{}}},
+	}))
+	a, err := paf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Options{Purpose: paf.PurposeImport})
+	require.NoError(t, err)
+	l, ok := a.Losses("fixer")
+	require.True(t, ok)
+	assert.Equal(t, "codex", l.Source)
+	_, ok = a.Losses("fixer-2")
+	assert.False(t, ok)
+}

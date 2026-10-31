@@ -131,6 +131,10 @@ type WriteOptions struct {
 	// Handoff, when set, is written as context/handoff.md: the agent's own
 	// summary of its earlier work, for a landing that has to cut history.
 	Handoff string
+	// EarlierLosses is the conversation's stored loss report, or nil. It goes
+	// into the new report's prior, and stands as losses.json when there is no
+	// Context to report on.
+	EarlierLosses *paf.Losses
 }
 
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
@@ -252,7 +256,12 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 		if err := paf.WriteTranscript(w, key, paf.ScopeEffective, opts.Context); err != nil {
 			return err
 		}
-		if err := w.WriteJSON(paf.AgentPath(key, "context/losses.json"), paf.LossesFromReport(opts.Context.Losses)); err != nil {
+		losses := paf.ChainLosses(opts.EarlierLosses, paf.LossesFromReport(opts.Context.Losses))
+		if err := w.WriteJSON(paf.AgentPath(key, "context/losses.json"), losses); err != nil {
+			return err
+		}
+	} else if opts.EarlierLosses != nil {
+		if err := w.WriteJSON(paf.AgentPath(key, "context/losses.json"), opts.EarlierLosses); err != nil {
 			return err
 		}
 	}
