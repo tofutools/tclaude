@@ -7,6 +7,16 @@
   --board-bg: #0d1117; --board-bar: #161b22; --board-line: #30363d;
   --board-text: #e6edf3; --board-muted: #8b949e; --board-blue: #58a6ff;
   --board-paper: #fbfaf7; --board-grid: #e7e3da;
+  --board-map-bar: rgba(22, 27, 34, .94); --board-map-line: #30363d; --board-map-text: #e6edf3;
+  --board-map-view: #1f6feb; --board-map-shade: rgba(13, 17, 23, .07);
+}
+body.wizard {
+  --board-map-bar: rgba(26, 19, 48, .95); --board-map-line: #7a5db0; --board-map-text: #e7d9f5;
+  --board-map-view: #a97bd6; --board-map-shade: rgba(18, 12, 36, .09);
+}
+body.slop, body.vegas {
+  --board-map-bar: rgba(74, 10, 10, .95); --board-map-line: #d4a017; --board-map-text: #ffe88c;
+  --board-map-view: #d4a017; --board-map-shade: rgba(42, 8, 8, .09);
 }
 
 /* -- list -- */
@@ -75,8 +85,10 @@
 }
 .board-tool {
   min-width: 30px; height: 30px; border-radius: 6px; border: 1px solid transparent;
-  background: transparent; color: var(--board-text); font-size: 15px; cursor: pointer;
+  background: transparent; color: var(--board-text); font-size: 15px; cursor: pointer; position: relative;
 }
+.board-tool-digit { position: absolute; right: 2px; bottom: 0; font-size: 9px; line-height: 12px; color: var(--board-muted); pointer-events: none; }
+.board-tool.on .board-tool-digit { color: #fff; }
 .board-tool:hover { background: var(--board-bar); border-color: var(--board-line); }
 .board-tool.on { background: #1f6feb; border-color: #388bfd; color: #fff; }
 .board-sep { width: 1px; height: 20px; background: var(--board-line); margin: 0 6px; }
@@ -109,13 +121,42 @@
   100% { filter: none; }
 }
 .board-text-input {
-  position: absolute; min-width: 120px; min-height: 1.4em; padding: 0; margin: 0; resize: none; overflow: hidden;
+  position: absolute; z-index: 2; min-width: 120px; min-height: 1.4em; padding: 0; margin: 0; resize: none; overflow: hidden;
   border: 1px dashed #1971c2; background: transparent; outline: none; line-height: 1.25;
   font-family: 'Segoe Print', 'Comic Sans MS', 'Chalkboard SE', cursive; field-sizing: content;
 }
 .board-empty-hint {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 420px;
   text-align: center; color: #868e96; font-size: 14px; pointer-events: none;
+}
+/* The minimap (js/board-minimap.js): paper like the canvas, so a drawing reads
+   the same in both, with the theme's colours on everything around the paper. */
+.board-minimap {
+  position: absolute; right: 8px; bottom: 8px; z-index: 1; width: min(208px, 45%); max-height: 60%; display: flex; flex-direction: column;
+  border: 1px solid var(--board-map-line); border-radius: 7px; overflow: hidden; box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+  background: var(--board-map-bar); color: var(--board-map-text);
+}
+.board-minimap-frame {
+  position: relative; flex: 0 1 132px; min-height: 0; overflow: hidden; background: var(--board-paper);
+  cursor: pointer; touch-action: none; user-select: none;
+}
+.board-minimap-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.board-minimap-view {
+  position: absolute; box-sizing: border-box; border: 1.5px solid var(--board-map-view); border-radius: 2px;
+  box-shadow: 0 0 0 999px var(--board-map-shade); pointer-events: none;
+}
+.board-minimap-bar { display: flex; align-items: center; gap: 2px; padding: 1px 3px; flex: none; }
+.board-minimap-bar button, .board-minimap-open {
+  min-width: 22px; height: 20px; padding: 0 4px; border: 0; border-radius: 4px; background: transparent;
+  color: inherit; font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+}
+.board-minimap-bar button:hover:not(:disabled), .board-minimap-open:hover { background: var(--board-map-line); }
+.board-minimap-bar button:disabled { opacity: .7; cursor: default; }
+.board-minimap-bar .board-minimap-zoom { min-width: 36px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.board-minimap-bar .board-minimap-hide { margin-left: auto; }
+.board-minimap-open {
+  position: absolute; right: 8px; bottom: 8px; z-index: 1; height: 26px; padding: 0 8px;
+  border: 1px solid var(--board-map-line); background: var(--board-map-bar); color: var(--board-map-text);
 }
 /* Presence (tcl-rawj2c): an agent looking at or drawing on the board. */
 .board-person.looking { border-color: #388bfd; }

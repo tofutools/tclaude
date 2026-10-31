@@ -154,7 +154,7 @@ it to apply a change.
 
 | Setting | Options |
 |---|---|
-| **Reads** | **Operator level (default)**: fleet, boards, the dashboard view, processes, triggers, usage, costs and host. **Fleet and boards only**: just those. |
+| **Reads** | **Operator level (default)**: fleet, boards, the dashboard view, processes, triggers, usage, costs, host and federation activity. **Fleet and boards only**: just those. Both list every agent and group. |
 | **Writes** | **Message agents (default)**: can reach any agent. **Boards and notifying you only**. **Message agents and start workers**: can also spawn and set task links. |
 | **Default permissions** | Extra permissions a new Steward starts with. `permissions.grant` and `permissions.revoke` aren't allowed. |
 
@@ -210,5 +210,68 @@ tclaude agent guide show --path <path> --circle "<text>" --underline "<text>" \
 tclaude agent guide show --open <agent>
 ```
 
+With Collab on, `fleet.read` also lifts the group scoping on `tclaude agent ls`
+and shows group default directories in `tclaude agent groups ls`, so the
+Steward can name any agent or group you have open. It changes only what is
+listed: who it can message is still decided at send, and group environment
+values stay with you.
+
 A cue holds up to six marks. These slugs and `fleet.read` are given to a Steward when
 it's summoned, and aren't granted to other agents by default.
+
+### Capture
+
+`tclaude agent guide capture -o view.png` shows the Steward what
+you see, with `dashboard.capture`, which it gets when summoned and other agents
+do not. It saves an image of your dashboard and prints the cursor position and
+what is under it, the focused control, any selected text, the viewport, and the
+open board with the region on screen. `--json` gives the same as data.
+
+The tab renders its own page, so a capture holds only that dashboard page,
+never another window or your desktop, and needs no browser prompt. Terminals are
+rendered as their real text. Every capture shows you a notice naming the agent,
+which is left out of the image. With several tabs open it takes the focused
+one, else the visible one heard from last. A hidden tab is never captured,
+because you would not see the notice, so the command then fails and says so; it
+also fails when no dashboard is open. The daemon stores a capture only when
+asked to with `--save`.
+
+A capture shows whatever is on screen, including open messages and terminal
+output, which reaches the Steward even though it cannot read agents' mail
+through the API. Password fields are masked. Hover styles are not reproduced,
+and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
+in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
+command fails there. It needs Collab, like the rest of the Steward.
+
+### Marks
+
+`tclaude agent guide mark <kind>` lets the Steward draw on your view
+to get your attention, with `dashboard.mark`, which it gets when summoned and
+other agents do not. A mark is a `highlight`, `circle`, `underline`, `box`,
+`arrow`, `freehand` stroke or `label`, on a control named by visible text
+(`--target`) or selector (`--ref`), or on a screen region (`--region`). `--blink`
+pulses it, unless your system asks for reduced motion. Marks follow their
+control as the page scrolls and resizes; a region follows the page's scroll.
+They never take a click: only the buttons on a mark's tip, and **Dismiss all
+marks**, respond to the pointer, and clicks on the rest of a tip reach the page
+under it. Neither a mark nor its tip lands on an approval control.
+
+Every mark has a tip with **✓** (got it), **×** (dismiss) and **Reply**. Reply
+sends your answer to the agent as mail naming the mark and its tip, so you need
+not say which one you mean, and the mark stays up. Each mark times out on its
+own: 60 seconds by default, 10 minutes at most. At most 10 marks are up at once,
+and a tip is at most 280 characters; past a limit the request is refused. A
+tab shows marks only while on screen.
+
+Marks are stored, so `tclaude agent guide marks` (paged, with `--state`) lists
+active, expired, dismissed, acknowledged, cleared and replaced marks, with who
+ended each and how. The newest 1000 ended marks are kept. Captures show marks
+and report whether each was drawn, so the Steward can confirm one landed.
+
+### Saved captures
+
+`guide capture --save` keeps a capture on this machine
+under `~/.tclaude/data/captures`, and `guide captures` and `guide captures get
+<id>` read it back, so the Steward can recover what has been going on, for
+example after compaction. The newest 50 are kept, up to 256 MiB in all; the
+oldest go first.

@@ -21,6 +21,14 @@ import (
 
 const PermFleetRead = "fleet.read"
 
+// readsWholeFleet reports whether an agent caller sees every agent and group,
+// as the operator does. It widens what a listing shows and nothing else: who an
+// agent can message is decided at send. A federated action runs as its source
+// conv but is not that conv's local read, so it stays scoped.
+func readsWholeFleet(r *http.Request, conv string) bool {
+	return conv != "" && peerActionFromRequest(r) == nil && collabRoutesEnabled() && holdsPermission(conv, PermFleetRead)
+}
+
 // fleetIdleAfter is how long an online agent has to sit idle before the
 // brief calls it out: long enough that a turn boundary is not news, short
 // enough that a finished or stuck worker is not forgotten.
