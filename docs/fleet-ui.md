@@ -244,7 +244,7 @@ page; type the path instead.
 The Groups toolbar's global default spawn profile, global sandbox profile and
 **+ new group** controls work on a peer view the peer shares them in
 (`node.spawn.defaults.manage`, `node.groups.create`; unrestricted trust holds
-both), and are greyed with the reason otherwise. See [Federation](federation.md), Managing a peer's node.
+both), and are greyed with the reason otherwise. See [Managing a peer's node](federation-work.md#managing-a-peers-node).
 
 In a fused view those three controls act on one of the listed nodes, which a
 chip in front of them names in the node's colour. It starts on the page's own

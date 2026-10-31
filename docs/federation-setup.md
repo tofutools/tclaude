@@ -2,7 +2,7 @@
 
 This walks through linking two tclaude instances (say, a laptop and a
 desktop) from nothing to an agent on one mailing an agent on the other.
-[Federation](federation.md) is the reference for everything shown here.
+[Federation](federation.md) maps the rest of what you can do with linked nodes.
 
 You need three things:
 

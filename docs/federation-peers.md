@@ -110,7 +110,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `message.direct` | mail to members; shares their names and ids so they are addressable |
 | `message.attachments` | attachments, together with `message.direct` on the same group |
 | `groups.members.spawn` | automatic worker spawning with receiving operator launch settings and caps |
-| `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort` | choose that launch setting per spawn request, with `groups.members.spawn` (see "Launch settings a peer may choose") |
+| `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort` | choose that launch setting per spawn request, with `groups.members.spawn` (see [Launch settings a peer may choose](federation-work.md#launch-settings-a-peer-may-choose)) |
 | `groups.members.spawn.profile` | select any enabled spawn profile that is not operator-only, with `groups.members.spawn` |
 | `groups.members.spawn.roles` | choose the spawn's roles from this node's roles (roles carry permissions here), with `groups.members.spawn` |
 | `groups.members.spawn.sandbox` | add one of this node's sandbox profiles to the spawn, with `groups.members.spawn` |
@@ -132,7 +132,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.takeover` | take over a member agent's terminal: disconnect its other viewers, including this node's local terminals; used with `sessions.watch` or `sessions.attach`; default off |
 | `sessions.shell` | open this node's tclaude shells from the peer's dashboard: the group's default-directory shell and its member agents' directory shells, attached in the browser over the federation terminal stream. This is host shell access as the tclaude user; default off |
 | `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
-| `groups.visibility.read` | a group's name, description and member count, with no message, presence, launch or roster grant. See [Group links](#group-links-and-peer-proposals) |
+| `groups.visibility.read` | a group's name, description and member count, with no message, presence, launch or roster grant. A grant that includes members also gives the roster. See [Group links](#group-links-and-peer-proposals) |
 | `groups.link.accept` | pre-authorize incoming group link proposals on that group |
 | `groups.members.stop`, `.resume`, `.retire`, `.clone` | stop, resume, retire or clone member agents from the peer's dashboard. See [Remote operator actions](federation-reference.md#remote-operator-actions) |
 | `agents.receive` | offer agents into that group. See [Sharing an agent](federation-moving.md#sharing-an-agent-with-a-peer) |
@@ -141,30 +141,31 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `agent.move` | move a member agent to a peer, with `groups.members.retire` on the source |
 | `jobs.run` | one-shot remote jobs in that group, under a launch policy. See [Remote one-shot jobs](federation-work.md#remote-one-shot-jobs) |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
-| `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model, the harness and sandbox implementation catalogs; group templates, in full (a template snapshotted from a group carries that group's context and briefs, even one the peer cannot see); the fused Groups view's right panel lists them; shares profile environment values and paths (unscoped only; see "The remote spawn dialog") |
+| `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model, the harness and sandbox implementation catalogs; group templates, in full (a template snapshotted from a group carries that group's context and briefs, even one the peer cannot see); the fused Groups view's right panel lists them; shares profile environment values and paths (unscoped only; see [The remote spawn dialog](federation-work.md#the-remote-spawn-dialog)) |
 | `node.spawn.defaults.manage` | set or clear the global default spawn profile and global sandbox profile from the peer page's Groups toolbar, choosing among existing profiles (`node.spawn.read` lists them; unscoped only) |
 | `node.spawn.profiles.create` | save a new spawn profile here from the peer's spawn dialog (**Save as profile…** → **Save on**); a restricted peer's profile is saved operator-only, so it opens nothing its spawn grants keep closed until this node's operator lifts that; editing and deleting profiles take unrestricted trust (unscoped only) |
-| `node.groups.create` | create plain groups from the peer page's **+ new group**: name, parent (a visible group), description, context, attachment, member cap; launch settings, templates and clones take unrestricted trust (unscoped only; see "Managing a peer's node") |
+| `node.groups.create` | create plain groups from the peer page's **+ new group**: name, parent (a visible group), description, context, attachment, member cap; launch settings, templates and clones take unrestricted trust (unscoped only; see [Managing a peer's node](federation-work.md#managing-a-peers-node)) |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
 | `usage.read` | usage totals (today, week, month), limit readings and budget counts, which the peer's fleet usage limits count (unscoped only; see [Fleet limits](usage-and-costs.md#fleet-limits-spend-across-peers)) |
 | `usage-rules.manage` | this node's usage limits, usage profiles, assignments and per-agent budget adjustments from the peer's dashboard (unscoped only) |
 | `usage-rules.enforce` | the peer's fleet usage limits notify, wrap up, stop and block spawns of member agents; this node performs and records each action; an unscoped grant also covers agents in no group |
 | `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
-| `node.update` | check and apply tclaude updates here. See [Updating nodes](federation-admin.md#updating-local-and-linked-nodes) |
-| `node.harnesses.read` | installed harness versions and whether credentials exist, as a yes or no |
-| `node.harnesses.install` | install and update harnesses here |
-| `node.credentials.receive` | receive harness credentials copied from a peer |
-| `node.exec` | **full remote code execution as the agentd user** |
-| `node.messages.read` | this node's agent mail and human notifications; this exposes private bodies across the whole node. See [Message history](federation-moving.md#message-history-across-nodes) |
-| `node.messages.manage` | change agent mail read state |
-| `node.messages.mark-read` | mark this node's human notifications read or unread |
-| `config.offer` | offer configuration to this node, for you to review |
-| `snapshots.receive` | keep encrypted resilience snapshots of the peer's agents here; nothing is imported |
+| `node.update` | check and apply tclaude updates here. See [Updating nodes](federation-admin.md#updating-local-and-linked-nodes) (unscoped only) |
+| `node.harnesses.read` | installed harness binary paths and versions, and whether credentials exist, as a yes or no (unscoped only) |
+| `node.harnesses.install` | install and update harnesses here (unscoped only) |
+| `node.credentials.receive` | receive harness credentials copied from a peer (unscoped only) |
+| `node.exec` | **full remote code execution as the agentd user** (unscoped only) |
+| `node.messages.read` | this node's agent mail and human notifications; this exposes private bodies across the whole node. See [Message history](federation-moving.md#message-history-across-nodes) (unscoped only) |
+| `node.messages.manage` | change agent mail read state (unscoped only) |
+| `node.messages.mark-read` | mark this node's human notifications read or unread (unscoped only) |
+| `config.offer` | offer configuration to this node, for you to review (unscoped only) |
+| `snapshots.receive` | keep encrypted resilience snapshots of the peer's agents here; nothing is imported (unscoped only) |
 | `models.proxy` | use a named model gateway here (`--scope http_proxy=<name>`) |
-| `models.proxy.leased` | lease-only access to the peer's own named gateway, for requester-paid workers (`--scope http_proxy=<name>`) |
+| `models.proxy.leased` | lease-only access to a named gateway here: only leases this node issued, for a [requester-paid worker](federation-models.md#requester-paid-workers), never ordinary opens (`--scope http_proxy=<name>`) |
 
-Prefer `--scope group=<local group>` to limit access. For the same slug, a
+Rows marked unscoped only are instance-wide and refuse a scope. For the rest,
+prefer `--scope group=<local group>` to limit access. For the same slug, a
 group-scoped peer grant takes precedence over an unscoped grant, including
 its spawn launch policy. Revoking the scoped row leaves any unscoped grant
 in force.
@@ -200,7 +201,7 @@ a new one is picked. Node-pool grants cannot be timed yet; grant the peer
 directly. `approvals.answer` cannot be timed either; away mode ends the cover.
 Applying a node profile or accepting a peer's proposal makes the grants it
 writes permanent. An approved operator access request is a timed grant too (see
-"Operator access requests").
+[Operator access requests](federation-work.md#operator-access-requests)).
 
 ### Changing a peer's groups
 

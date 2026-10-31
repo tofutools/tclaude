@@ -47,7 +47,7 @@ permissions do not imply it. Node profiles and node pools may carry this
 unscoped grant; group scopes are rejected.
 
 `GET /api/instance` exposes node metadata under `node.read`. Costs and audit
-collections require their own instance grants above. Those grants default off,
+collections require their own [instance grants](federation-peers.md#peer-grants-what-a-peer-may-see-and-do). Those grants default off,
 are never implied by group access, and can also be supplied by node profiles
 or pools. Only unrestricted trust implies them. Without a grant, a collection
 read succeeds with no rows and reports the omitted concept in metadata. An

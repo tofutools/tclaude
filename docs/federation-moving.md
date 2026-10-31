@@ -310,7 +310,7 @@ the directory. Without `--git-ref`, landing uses the policy's `cwd`.
 `--credentials local|proxy:<name>@<peer>` chooses a credential mode. Resolution
 uses an explicit flag, then `teleport_landing.credentials_default`, then `local`.
 `credentials_allowed` is a simple exact allowed list (default `["local"]`). Local
-mode uses provider credentials already on the receiver. Proxy mode uses the named gateway through the Claude Code binding described below. Modes never
+mode uses provider credentials already on the receiver. Proxy mode uses the named gateway through the [Claude Code binding](federation-models.md#model-gateways). Modes never
 silently fall back to each other. The chosen mode appears in the import preview,
 continuation briefing and audit.
 
@@ -552,7 +552,7 @@ Neither grant authorizes replies or approval decisions. Reply delivery to an
 agent uses the existing `operator-message` route and its group-scoped
 `message.direct` permission. Human notification replies, marking human
 notifications read, and one-shot ask-human decisions keep the unrestricted-only
-human-inbox routes described above. Peer access decisions, away cover,
+[human-inbox routes](federation-work.md#human-inbox-across-your-own-nodes). Peer access decisions, away cover,
 permanent approvals and process obligations remain local.
 
 A fused view retains each selected node's last successful page and its receipt
@@ -674,7 +674,7 @@ tclaude federation offer-config bob --only roles --only profiles
 
 Sending and managing offers are operator-only. The sender rechecks supplied
 files for credential patterns and omits structured credentials, using the local
-config export boundary described above. Flagged free text refuses sending
+config export boundary described under [Portable local setup bundles](#portable-local-setup-bundles). Flagged free text refuses sending
 unless `--allow-flagged` is explicit; content is never silently rewritten.
 
 The receiver sees offers in `federation inbox` and manages them with:

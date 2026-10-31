@@ -159,7 +159,7 @@ your report.
 
 ### 6. Boards (shared config without peer access)
 
-- [ ] On b: ⚙ Fleet config › Boards › **Manage boards** → create `team-presets`, open it, then *Create invite…*
+- [ ] On b: ⚙ Fleet config › Boards → create `team-presets`, then **Manage boards** → open it → *Create invite…*
       (can read, 1 hour). The invite is shown once 📸
 - [ ] On a: paste the invite and Join. The board shows a as *can read* and
       b as *owner* 📸
