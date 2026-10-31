@@ -229,6 +229,30 @@ test('a minimized window reopens on the same terminal, and releases it after a w
   assert.ok(mounted[0].disposed);
 });
 
+test('a minimized window never attaches a terminal of its own', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]), 'tclaude.dash.companion.active': A });
+  const { view, harness, mounted, snap } = await setup(t, { prefs });
+  const key = () => harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  const settle = () => harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  await key();
+  await settle();
+  await key();
+  await settle();
+  const attached = mounted.length;
+  assert.equal(attached, 1);
+  assert.ok(view.container.querySelector('.companion-window-warm'));
+  const before = snap.value;
+  const active = mounted[0].options.wsPath.endsWith(A) ? A : B;
+  const withoutActive = { ...before, groups: before.groups.map((g) => ({ ...g, members: g.members.filter((x) => x.agent_id !== active) })) };
+  await harness.act(() => { snap.value = withoutActive; });
+  await settle();
+  assert.equal(mounted.length, attached, 'the next tab does not attach while hidden');
+  assert.equal(view.container.querySelector('.companion-window'), null, 'the hidden window is gone');
+  await harness.act(() => { snap.value = before; });
+  await settle();
+  assert.equal(mounted.length, attached, 'coming back does not attach either');
+});
+
 test('Ctrl+. toggles the window and unpinning the last tab closes it', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, mounted } = await setup(t, { prefs });

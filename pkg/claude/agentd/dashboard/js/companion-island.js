@@ -290,7 +290,7 @@ export function CompanionApp({
   const [reconnectable, setReconnectable] = useState({});
   const [generation, setGeneration] = useState(0);
   const [focusToken, setFocusToken] = useState(0);
-  const [warm, setWarm] = useState(false);
+  const [warmId, setWarmId] = useState('');
   const warmTimer = useRef(null);
   const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
   // Unsent text per agent id, so a draft stays with the agent it was written
@@ -542,9 +542,15 @@ export function CompanionApp({
   // Minimizing hides the window and only releases its terminal later.
   useEffect(() => {
     if (!open) return undefined;
-    setWarm(true);
+    setWarmId(activeId || '');
     clearTimeout(warmTimer.current);
-    return () => { warmTimer.current = setTimeout(() => setWarm(false), WARM_MS); };
+    return () => { warmTimer.current = setTimeout(() => setWarmId(''), WARM_MS); };
+  }, [open, activeId]);
+  // Keys must not reach a terminal nobody can see.
+  useEffect(() => {
+    if (open) return;
+    const focused = win?.document?.activeElement;
+    if (windowRef.current?.contains(focused)) focused.blur?.();
   }, [open]);
   useEffect(() => () => clearTimeout(warmTimer.current), []);
 
@@ -1265,6 +1271,14 @@ export function CompanionApp({
   useEffect(() => {
     if (open && canReconnect) setGeneration((n) => n + 1);
   }, [open]);
+
+  // Only the terminal already attached may stay hidden. Mounting one for any
+  // other agent, or again after a restart, would take the attach from whatever
+  // view holds it, for a window nobody can see.
+  const warm = !!warmId && warmId === activeId && activeAgent?.online && !parked.has(warmId);
+  useEffect(() => {
+    if (!open && warmId && !warm) setWarmId('');
+  }, [open, warmId, warm]);
 
   const windowView = (open || warm) && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${open ? '' : ' companion-window-warm'}`}
