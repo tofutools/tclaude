@@ -131,7 +131,13 @@ function usePopover(rootRef, { timers = globalThis } = {}) {
         leaveTimer.current = 0;
         if (holdsText(rootRef.current)) return;
         setClosing(true);
-        leaveTimer.current = timers.setTimeout(() => { leaveTimer.current = 0; setClosing(false); setOpenRaw(false); }, POPOVER_FADE_MS);
+        leaveTimer.current = timers.setTimeout(() => {
+          leaveTimer.current = 0;
+          setClosing(false);
+          const focused = rootRef.current?.contains?.(globalThis.document?.activeElement);
+          setOpenRaw(false);
+          if (focused) rootRef.current.querySelector('button')?.focus();
+        }, POPOVER_FADE_MS);
       }, POPOVER_LEAVE_MS);
     },
   };

@@ -93,11 +93,12 @@ const watched = [];
 //
 // roots() gives the elements that are the popover, usually one holding both the
 // trigger and the panel; a pointer moving between separate ones is not away.
-// close(why) gets 'outside', 'escape' or 'away'. keep(event) leaves a press or
-// a key alone, for a confirmation that sits above the popover. escape: false
-// is for a menu whose Escape does something first, like clearing its filter.
-// The returned function stops watching.
-export function watchPopover({ roots, close, hold = null, keep = null, escape = true, doc = null }) {
+// close(why) gets 'outside', 'escape' or 'away'. A shown dialog above the
+// popover owns the page: its presses and Escape are its own, and the popover
+// waits behind it. A popover inside that dialog carries on as usual. escape:
+// false is for a menu whose Escape does something first, like clearing its
+// filter. The returned function stops watching.
+export function watchPopover({ roots, close, hold = null, escape = true, doc = null }) {
   const parts = () => [roots()].flat().filter(Boolean);
   const within = (target) => parts().some((root) => root.contains?.(target));
   const owner = doc || parts()[0]?.ownerDocument || globalThis.document;
@@ -110,8 +111,10 @@ export function watchPopover({ roots, close, hold = null, keep = null, escape = 
     if (timer) globalThis.clearTimeout(timer);
     timer = 0;
   };
+  const dialogAbove = () => [...(owner?.querySelectorAll?.('.modal-overlay.show, .manage-overlay.show') || [])]
+    .some((overlay) => !parts().some((root) => overlay.contains(root)));
   const held = () => {
-    if (pressed || hold?.()) return true;
+    if (pressed || hold?.() || dialogAbove()) return true;
     const active = owner?.activeElement;
     return (engaged && isTextField(active) && within(active)) || parts().some(holdsText);
   };
@@ -127,7 +130,7 @@ export function watchPopover({ roots, close, hold = null, keep = null, escape = 
   const onLeave = () => { away = true; schedule(); };
   const onEnter = () => { away = false; cancel(); };
   const onPointerDown = (event) => {
-    if (keep?.(event)) return;
+    if (dialogAbove()) return;
     if (within(event.target)) {
       pressed = true;
       if (isTextField(event.target)) engaged = true;
@@ -139,7 +142,7 @@ export function watchPopover({ roots, close, hold = null, keep = null, escape = 
   const onPointerUp = () => { pressed = false; };
   const onKeyDown = (event) => {
     if (within(event.target)) engaged = true;
-    if (!escape || event.key !== 'Escape' || watched.at(-1) !== entry || keep?.(event)) return;
+    if (!escape || event.key !== 'Escape' || watched.at(-1) !== entry || dialogAbove()) return;
     event.preventDefault();
     event.stopPropagation();
     close('escape');
@@ -185,7 +188,6 @@ export function useDismissablePopover(roots, open, close, options = {}) {
       roots: resolve,
       close: (why) => latest.current.close(why),
       hold: () => !!latest.current.options.hold?.(),
-      keep: (event) => !!latest.current.options.keep?.(event),
     });
   }, [open]);
 }

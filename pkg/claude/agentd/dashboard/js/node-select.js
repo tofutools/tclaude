@@ -59,7 +59,10 @@ export function NodeSelect({
   // A pick the caller ignores (All while already all) still re-renders, so
   // the boxes show the value again rather than the browser's toggle.
   const [, repaint] = useState(0);
-  useDismissablePopover(root, open, () => setOpen(false));
+  useDismissablePopover(root, open, (why) => {
+    setOpen(false);
+    if (why !== 'outside') root.current?.querySelector('.node-select-button')?.focus();
+  });
   useEffect(() => {
     if (open) root.current?.querySelector('.node-pop-filter input')?.focus();
     else setQuery('');

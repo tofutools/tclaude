@@ -50,7 +50,7 @@ export function MessageDownloadMenu({
     setOpen(false);
     caretRef.current?.focus();
   };
-  useDismissablePopover(rootRef, open, (why) => { if (why === 'escape') close(); else setOpen(false); });
+  useDismissablePopover(rootRef, open, (why) => { if (why === 'outside') setOpen(false); else close(); });
   const run = (action) => {
     close();
     action();

@@ -91,19 +91,31 @@ test('a drag that leaves the popover waits for the release', async (t) => {
   assert.deepEqual(closed, ['away']);
 });
 
-test('hold and keep leave the popover to what sits above it', async (t) => {
+test('hold keeps it through hover-away and ends with the reason', async (t) => {
   let holding = true;
-  const { harness, closed, leave, wait } = await watched(t, '<div></div>', {
-    hold: () => holding,
-    keep: (event) => event.key === 'Escape' && holding,
-  });
+  const { closed, leave, wait } = await watched(t, '<div></div>', { hold: () => holding });
   leave();
   await wait();
-  harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' });
   assert.deepEqual(closed, []);
   holding = false;
   await wait();
   assert.deepEqual(closed, ['away']);
+});
+
+test('a shown dialog above owns the page, a dialog around the popover does not', async (t) => {
+  const { harness, root, closed, leave, wait } = await watched(t);
+  const dialog = harness.document.body.appendChild(harness.document.createElement('div'));
+  dialog.className = 'modal-overlay show';
+  leave();
+  await wait();
+  harness.fireEvent(dialog, 'pointerdown');
+  const escape = harness.fireEvent(dialog, 'keydown', { key: 'Escape' });
+  assert.deepEqual(closed, [], 'it waits behind the dialog');
+  assert.equal(escape.defaultPrevented, false, 'Escape is the dialog\'s');
+
+  dialog.appendChild(root);
+  harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' });
+  assert.deepEqual(closed, ['escape'], 'a popover inside the dialog closes first');
 });
 
 test('stopping cancels a pending close', async (t) => {

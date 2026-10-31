@@ -124,12 +124,7 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
       .catch((cause) => { if (live) setError(cause.message); });
     return () => { live = false; };
   }, [row.id]);
-  // The delete confirmation is a shell dialog outside the preview; answering
-  // it (or cancelling with Escape) must not also close the preview.
-  useDismissablePopover([ref, { current: anchor }], true, onClose, {
-    keep: (event) => Boolean(event.target?.closest?.('#shell-confirm-root')),
-    hold: () => Boolean(document.querySelector('#shell-confirm-root')?.childElementCount),
-  });
+  useDismissablePopover([ref, { current: anchor }], true, onClose);
   const rect = anchor?.getBoundingClientRect?.();
   const style = rect ? `top:${Math.max(8, Math.min(rect.top, window.innerHeight - 340))}px;right:${Math.max(8, window.innerWidth - rect.left + 10)}px` : '';
   const pinned = new Set(row.pinnedGroups || []);

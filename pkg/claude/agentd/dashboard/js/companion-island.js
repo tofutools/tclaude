@@ -162,7 +162,7 @@ function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, 
   useEffect(() => { filterRef.current?.focus(); }, []);
   useDismissablePopover([menuRef, trigger], true, (why) => {
     onClose();
-    if (why === 'escape') trigger.current?.focus();
+    if (why !== 'outside') trigger.current?.focus();
   });
   const candidates = useMemo(() => {
     const needle = filter.trim().toLowerCase();

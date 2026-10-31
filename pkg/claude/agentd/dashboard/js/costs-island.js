@@ -204,7 +204,10 @@ function toggleCostFilter(event) {
     if (popover) popover.style.visibility = 'hidden';
     return;
   }
-  watchedFilters.set(menu, watchPopover({ roots: () => menu, close: () => { menu.open = false; } }));
+  watchedFilters.set(menu, watchPopover({ roots: () => menu, close: (why) => {
+    menu.open = false;
+    if (why !== 'outside') menu.querySelector(':scope > summary')?.focus();
+  } }));
   positionCostFilter(menu);
   menu.querySelector(':scope > .cost-filter-popover input[type="search"]')?.focus({ preventScroll: true });
 }

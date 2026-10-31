@@ -40,7 +40,7 @@ function SpawnDetails({ entry }) {
   useEffect(() => {
     if (open && details) closeRef.current?.focus();
   }, [open, details]);
-  useDismissablePopover([popoverRef, triggerRef], open && !!details, (why) => dismiss(why === 'escape'));
+  useDismissablePopover([popoverRef, triggerRef], open && !!details, (why) => dismiss(why !== 'outside'));
   if (!details) return null;
   return html`<span class="audit-spawn-info">
     <button type="button" class="spawn-field-help-trigger audit-spawn-info-trigger"

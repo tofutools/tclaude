@@ -1072,7 +1072,7 @@ function PaneContextMenu({
     node.querySelector('[role="menuitem"]')?.focus();
   }, [menu]);
 
-  useDismissablePopover(menuRef, true, (why) => closeMenu(why === 'escape'));
+  useDismissablePopover(menuRef, true, (why) => closeMenu(why !== 'outside'));
   useEffect(() => {
     const onFocusIn = (event) => {
       if (!menuRef.current?.contains(event.target)) closeMenu(false);
