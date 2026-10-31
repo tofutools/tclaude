@@ -479,7 +479,31 @@ test('a slug the agent already holds can be scoped, and the row says that narrow
   await harness.act(() => { row().querySelector('.perm-scope-twisty').click(); });
   await harness.input(host.querySelector('.perm-scope-free'), 'dev');
   await harness.act(() => { host.querySelector('.perm-scope-free-add').click(); });
-  assert.match(row().querySelector('.perm-narrows-held').textContent, /only use it within this scope/);
+  assert.match(row().querySelector('.perm-narrows-held').textContent, /replaces its own, group and default access/);
+  await mounted.unmount();
+});
+
+test('a held slug takes no use limit: what it holds is never counted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const current = { ...sudoSnapshot(), permissions: { defaults: ['groups.members.spawn'], overrides: {} } };
+  const { host, mounted } = await mountSudo(harness, sudoActions(), current);
+  await pickSudo(harness, host, 'groups.members.spawn');
+  assert.match(sudoRow(host, 'groups.members.spawn').querySelector('.perm-uses.none').title, /does not use a count/);
+  await mounted.unmount();
+});
+
+test('a peer draft still being typed drops the use limit from the grant', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const { host, mounted } = await mountSudo(harness, actions);
+  await pickSudo(harness, host, 'agent.spawn');
+  await harness.input(sudoRow(host, 'agent.spawn').querySelector('.perm-uses input'), '3');
+  await harness.act(() => { sudoRow(host, 'agent.spawn').querySelector('.perm-scope-twisty').click(); });
+  await harness.input(host.querySelector('.perm-scope-free'), 'inst_peer');
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(payloads[0].uses, undefined);
+  assert.deepEqual(payloads[0].scopes, { 'agent.spawn': { peer: ['inst_peer'] } });
   await mounted.unmount();
 });
 

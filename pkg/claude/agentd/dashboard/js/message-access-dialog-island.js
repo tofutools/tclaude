@@ -849,10 +849,13 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   const dirty = rowsDirty || scopesDirty || ownerScopesDirty || carryDirty || !!reason.trim();
   const sudoPicked = sudoMode ? rows.filter((row) => currentEffect(row.slug) === 'grant') : [];
   const sudoSeconds = sudoDurationSeconds(duration);
-  // A peer-scoped grant is spent on the far side of the link, out of count.
-  const countsUses = (row) => row.countable && !scopeOf(row.slug).peer?.length;
+  // Why a countable row takes no use limit here, or nothing when it can have one.
+  // A peer-scoped grant is spent past this node's count, and access the agent
+  // already holds is never counted against a grant.
+  const noUsesWhy = (row, scope) => (scope?.peer?.length ? 'A use limit covers local actions only, and this grant is scoped to a peer.'
+    : row.granted ? 'It already holds this, and what it already holds does not use a count.' : '');
   const usesFor = (slug) => String(sudoUses[slug] ?? '').trim();
-  const usesBad = sudoPicked.some((row) => countsUses(row) && usesFor(row.slug) && !/^[1-9]\d{0,2}$|^1000$/.test(usesFor(row.slug)));
+  const usesBad = sudoPicked.some((row) => row.countable && !noUsesWhy(row, scopeOf(row.slug)) && usesFor(row.slug) && !/^[1-9]\d{0,2}$|^1000$/.test(usesFor(row.slug)));
   const sudoReady = sudoPicked.length > 0 && !!sudoSeconds && sudoSeconds <= policy.max_seconds && !usesBad;
   const sudoLabel = sudoReady ? `Grant ${sudoPicked.length} for ${duration.trim()}` : 'Grant';
   const sudoRisky = sudoPicked.filter((row) => row.risky).length;
@@ -916,7 +919,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const slugs = sudoPicked.map((row) => row.slug);
     const scoped = Object.fromEntries(slugs.filter((slug) => Object.keys(effectiveScopes[slug] || {}).length)
       .map((slug) => [slug, effectiveScopes[slug]]));
-    const uses = Object.fromEntries(sudoPicked.filter((row) => countsUses(row) && usesFor(row.slug))
+    const uses = Object.fromEntries(sudoPicked.filter((row) => row.countable && !noUsesWhy(row, effectiveScopes[row.slug]) && usesFor(row.slug))
       .map((row) => [row.slug, Number(usesFor(row.slug))]));
     try {
       await actions.grantSudo({
@@ -1060,9 +1063,12 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const unreadableScope = unreadable.has(row.slug) && currentEffect(row.slug) === 'grant';
     const scopable = !unreadableScope && scopesEditable && !!row.scope_dims?.length
       && currentEffect(row.slug) === 'grant';
-    // A scoped sudo replaces what a slug already gives at the gate, so on a slug
-    // the agent holds it narrows that access for the whole window.
-    const narrowsHeld = sudoMode && picked && row.granted && Object.keys(scopeOf(row.slug)).length > 0;
+    // A scoped sudo takes the place of a held slug's own, group and default
+    // access here. Ownership, membership and groups.admin are consulted after
+    // it, and a peer-scoped grant never speaks to a local action at all.
+    const heldNote = !(sudoMode && picked && row.granted && Object.keys(scopeOf(row.slug)).length) ? ''
+      : scopeOf(row.slug).peer?.length ? 'This scope only covers work on that peer. What it holds here does not change.'
+        : 'It already holds this. Until this grant ends, this scope replaces its own, group and default access. Ownership, membership and groups.admin still apply.';
     const stewardSource = stewardAccess && (fromConfig ? 'Config defaults'
       : stewardAccess.carried[row.slug] !== undefined ? 'all future Stewards' : 'this Steward only');
     const effText = sudoMode
@@ -1079,13 +1085,13 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.risky ? html` <span class="perm-risk-badge" title="Reaches the host or credentials, destroys work, or widens what an agent can hand itself">⚠ risky</span>` : null}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span>
         ${refusedWhy ? html`<span class="perm-row-desc perm-refused-why">${refusedWhy}</span>` : null}
-        ${narrowsHeld ? html`<span class="perm-row-desc perm-narrows-held">It already holds this. Until this grant ends, it can only use it within this scope.</span>` : null}</div>
+        ${heldNote ? html`<span class="perm-row-desc perm-narrows-held">${heldNote}</span>` : null}</div>
       ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
       ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
         title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
-      ${sudoMode && row.countable && picked && !countsUses(row) && html`<span class="perm-uses none"
-        title="A use limit covers local actions only, and this grant is scoped to a peer.">no limit</span>`}
-      ${sudoMode && picked && countsUses(row) && html`<label class="perm-uses" title="Ends at whichever comes first, this or the time. Blank means no limit. A failed spawn does not use one.">
+      ${sudoMode && row.countable && picked && noUsesWhy(row, scopeOf(row.slug)) && html`<span class="perm-uses none"
+        title=${noUsesWhy(row, scopeOf(row.slug))}>no limit</span>`}
+      ${sudoMode && row.countable && picked && !noUsesWhy(row, scopeOf(row.slug)) && html`<label class="perm-uses" title="Ends at whichever comes first, this or the time. Blank means no limit. A failed spawn does not use one.">
         max <input type="text" inputmode="numeric" aria-label=${`Maximum uses of ${row.slug}`} placeholder="∞" autocomplete="off" value=${sudoUses[row.slug] ?? ''}
           onInput=${(event) => { const value = event.currentTarget.value; setSudoUses((current) => ({ ...current, [row.slug]: value })); }} /></label>`}
       ${canCarry && html`<${CarryChoice} slug=${row.slug} carried=${carriedNow(row.slug)}
