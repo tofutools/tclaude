@@ -380,3 +380,84 @@ func TestSteward_ProfileFromConfig(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, g.DefaultProfile, "the scribe profile is not the Steward's")
 }
+
+// A Steward lists what the operator lists, from a group of its own, and seeing
+// an agent gives it no way to write to it.
+func TestSteward_ListsEveryAgentAndGroup(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	setSteward(t, config.StewardReadsFleet, config.StewardWritesNone)
+
+	const worker = "stwd-aaaa-bbbb-cccc-000000000003"
+	f.HaveConvWithTitle(worker, "worker-bee")
+	f.HaveGroup("team")
+	f.HaveMember("team", worker)
+	f.HaveAliveSession(worker, "stwd3", "tclaude-stwd3", f.TestCwd("work"))
+	_, err := db.SetAgentGroupDefaultCwd("team", f.TestCwd("work"))
+	require.NoError(t, err)
+	const outsider = "stwd-aaaa-bbbb-cccc-000000000004"
+	f.HaveGroup("other")
+	f.HaveMember("other", outsider)
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	steward := decodeScribeResp(t, rec).ConvID
+
+	peers := func(caller, query string) (int, []string) {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/peers"+query, nil), caller))
+		var rows []struct {
+			ConvID string `json:"conv_id"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &rows)
+		convs := make([]string, 0, len(rows))
+		for _, row := range rows {
+			convs = append(convs, row.ConvID)
+		}
+		return rec.Code, convs
+	}
+	_, convs := peers(steward, "")
+	assert.Contains(t, convs, worker, "the Steward shares no group with it")
+	code, convs := peers(steward, "?group=team")
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, []string{worker}, convs)
+
+	_, convs = peers(outsider, "")
+	assert.NotContains(t, convs, worker, "an agent without fleet.read stays scoped")
+	code, _ = peers(outsider, "?group=team")
+	assert.Equal(t, http.StatusNotFound, code)
+
+	defaultCwd := func(caller string) string {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/groups", nil), caller))
+		require.Equal(t, http.StatusOK, rec.Code)
+		var groups []struct {
+			Name       string `json:"name"`
+			DefaultCwd string `json:"default_cwd"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &groups))
+		for _, g := range groups {
+			if g.Name == "team" {
+				return g.DefaultCwd
+			}
+		}
+		t.Fatal("group team is not listed")
+		return ""
+	}
+	assert.Equal(t, f.TestCwd("work"), defaultCwd(steward))
+	assert.Empty(t, defaultCwd(outsider))
+
+	sent := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": worker, "body": "hi"}), steward))
+	assert.Equal(t, http.StatusForbidden, sent.Code, "with writes off, seeing an agent does not reach it")
+
+	// fleet.read is a Collab surface: with Collab off the grant lifts nothing.
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Features)
+	cfg.Features.Collab = false
+	require.NoError(t, config.Save(cfg))
+	_, convs = peers(steward, "")
+	assert.NotContains(t, convs, worker)
+}

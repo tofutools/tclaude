@@ -29,6 +29,29 @@ from any corner; it keeps its place. Clicking the overlay or the companion
 brings that one forward. **Back to a tab** returns the board to the strip. One
 board floats at a time: opening another sends the first back to a tab.
 
+### Picking a tool
+
+Each tool in the board's menu has a number key, shown on its button: `1` to `9`
+and then `0`, in menu order, beside the tool's letter (hover a button for both).
+The keys go to the board you used last. They do nothing while you type on the
+board, in a terminal or in any other field, or after you click another part of
+the dashboard. With Ctrl, Alt or Cmd held they stay the browser's.
+
+### The minimap
+
+The minimap in the board's bottom right corner shows the whole board and marks
+the part on screen. It takes in remote and agent edits as they arrive. Click it
+to go there, or drag it to move the view; pressing on the marker holds the
+marker where you pressed it.
+
+The map has its own zoom, separate from the main view. Scroll over it, or use
+**−** and **+**, to go up to 32×, and the zoom between them to see the whole
+board again (it reads **Fit** when you do).
+Zoomed in, the map follows the main view when that leaves its window, and
+Shift+drag or the middle button moves the map's window by hand. **▾** hides the
+map to a small button. The zoom and the hidden state are remembered for every
+board, in the dashboard's saved preferences.
+
 ## Permissions
 
 Boards are global, not scoped to a group: `boards.read` and `boards.write` cover

@@ -1,0 +1,181 @@
+package agentd_test
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+var capturePNG = base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nrest"))
+
+type captureFlow struct {
+	t    *testing.T
+	f    *testharness.Flow
+	dash http.Handler
+}
+
+func newCaptureFlow(t *testing.T) *captureFlow {
+	t.Helper()
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	agentd.ResetDashboardCaptureForTest()
+	t.Cleanup(agentd.ResetDashboardCaptureForTest)
+	return &captureFlow{t: t, f: f, dash: dashMessageMux(t)}
+}
+
+// ping reports a tab and returns the capture aimed at it, if any.
+func (c *captureFlow) ping(client string, focused, visible bool) string {
+	c.t.Helper()
+	rec := testharness.Serve(c.dash, testharness.JSONRequest(c.t, http.MethodPost, "/api/companion/presence",
+		map[string]any{"client": client, "focused": focused, "visible": visible}))
+	require.Equal(c.t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		Capture struct {
+			ID string `json:"id"`
+		} `json:"capture"`
+	}
+	require.NoError(c.t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	return resp.Capture.ID
+}
+
+func (c *captureFlow) answer(id string, body map[string]any) int {
+	c.t.Helper()
+	return testharness.Serve(c.dash, testharness.JSONRequest(c.t, http.MethodPost, "/api/companion/capture/"+id, body)).Code
+}
+
+// request asks for a capture on its own goroutine, as the waiting CLI does.
+func (c *captureFlow) request() <-chan *httptest.ResponseRecorder {
+	out := make(chan *httptest.ResponseRecorder, 1)
+	req := agentd.AsHumanPeer(testharness.JSONRequest(c.t, http.MethodPost, "/v1/dashboard/capture", map[string]any{}))
+	go func() { out <- testharness.Serve(c.f.Mux, req) }()
+	return out
+}
+
+// await polls the tabs until one receives the request.
+func (c *captureFlow) await(ping func() string) string {
+	c.t.Helper()
+	var id string
+	require.Eventually(c.t, func() bool {
+		id = ping()
+		return id != ""
+	}, 5*time.Second, 5*time.Millisecond)
+	return id
+}
+
+func TestDashboardCapture_ClearErrorsWithoutAVisibleTab(t *testing.T) {
+	c := newCaptureFlow(t)
+	rec := <-c.request()
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Body.String(), "no_dashboard")
+
+	c.ping("hidden", false, false)
+	rec = <-c.request()
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "dashboard_hidden", "a tab the operator cannot see is not captured")
+}
+
+func TestDashboardCapture_ReturnsTheFocusedTabsRender(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("background", false, true)
+	c.ping("focused", true, true)
+
+	waiting := c.request()
+	id := c.await(func() string {
+		assert.Empty(t, c.ping("background", false, true), "only the focused tab is asked")
+		return c.ping("focused", true, true)
+	})
+	assert.Empty(t, c.ping("focused", true, true), "the request is delivered once")
+
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{
+		"png": capturePNG,
+		"context": map[string]any{
+			"tab": "boards", "path": "/boards/sketch", "focused": true,
+			"viewport": map[string]any{"width": 1400, "height": 850},
+			"cursor":   map[string]any{"x": 10, "y": 20, "inside": true, "under": map[string]any{"tag": "div", "text": "ok\x1b[31m"}},
+			"board":    map[string]any{"id": "sketch", "zoom": 1, "region": map[string]any{"x": 1, "y": 2, "width": 3, "height": 4}},
+		},
+	}))
+	rec := <-waiting
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		PNG     string `json:"png"`
+		Context struct {
+			Path   string `json:"path"`
+			Cursor struct {
+				Under struct {
+					Text string `json:"text"`
+				} `json:"under"`
+			} `json:"cursor"`
+			Board struct {
+				ID string `json:"id"`
+			} `json:"board"`
+		} `json:"context"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, capturePNG, resp.PNG)
+	assert.Equal(t, "/boards/sketch", resp.Context.Path)
+	assert.Equal(t, "sketch", resp.Context.Board.ID)
+	assert.Equal(t, "ok[31m", resp.Context.Cursor.Under.Text, "control bytes never reach the CLI")
+
+	assert.Equal(t, http.StatusConflict, c.answer(id, map[string]any{"png": capturePNG}), "a spent capture takes no second image")
+}
+
+func TestDashboardCapture_RenderFailureAndOneAtATime(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("tab", true, true)
+	waiting := c.request()
+	id := c.await(func() string { return c.ping("tab", true, true) })
+
+	busy := <-c.request()
+	assert.Equal(t, http.StatusConflict, busy.Code)
+	assert.Contains(t, busy.Body.String(), "capture_busy")
+
+	assert.Equal(t, http.StatusBadRequest, c.answer(id, map[string]any{"png": base64.StdEncoding.EncodeToString([]byte("not a png"))}))
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"error": "this browser could not draw the page"}))
+	rec := <-waiting
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Contains(t, rec.Body.String(), "could not draw the page")
+}
+
+// A tab that vanishes mid-request frees the next one, and a tab that says
+// goodbye stops being a candidate at once.
+func TestDashboardCapture_TimesOutAndForgetsClosedTabs(t *testing.T) {
+	c := newCaptureFlow(t)
+	t.Cleanup(agentd.SetCaptureTimeoutForTest(30 * time.Millisecond))
+	c.ping("tab", true, true)
+	rec := <-c.request()
+	assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
+
+	gone := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
+		map[string]any{"client": "tab", "gone": true}))
+	require.Equal(t, http.StatusNoContent, gone.Code)
+	rec = <-c.request()
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestDashboardCapture_NeedsPermission(t *testing.T) {
+	c := newCaptureFlow(t)
+	const conv = "capt-aaaa-bbbb-cccc-000000000001"
+	c.f.HaveConvWithTitle(conv, "worker")
+	c.f.HaveGroup("team")
+	c.f.HaveMember("team", conv)
+	c.f.HaveAliveSession(conv, "capt", "tclaude-capt", c.f.TestCwd("work"))
+	c.ping("tab", true, true)
+	ask := func() int {
+		return testharness.Serve(c.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/dashboard/capture", map[string]any{}), conv)).Code
+	}
+	assert.Equal(t, http.StatusForbidden, ask())
+
+	t.Cleanup(agentd.SetCaptureTimeoutForTest(10 * time.Millisecond))
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardCapture, "test"))
+	assert.Equal(t, http.StatusGatewayTimeout, ask(), "granted, it reaches the tab")
+}
