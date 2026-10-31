@@ -282,6 +282,12 @@ func (s *boardScene) routeLine(v boardElementView) [][2]float64 {
 	return routePath(v.Routing, start, end)
 }
 
+// handBent says a line's bends were placed by hand or by `board from-process`:
+// it has no routing to work them out again from.
+func handBent(v boardElementView) bool {
+	return v.Routing == "" && len(v.Points) > 2
+}
+
 // setPath stores a path on a line: its origin, offsets and box.
 func (s *boardScene) setPath(id string, path [][2]float64) {
 	if len(path) == 1 { // ends that meet: a line still needs two points
@@ -448,9 +454,14 @@ func runBoardConnect(p *boardConnectParams, id, lineID string, stdout, stderr io
 		fmt.Fprintf(stderr, "Error: %s is a %s; only arrows and lines connect\n", lineID, v.Type)
 		return rcInvalidArg
 	}
-	// A freed end stays where it is drawn now, not where a stale path has it.
-	s.setPath(lineID, s.routeLine(v))
-	v = s.view[lineID]
+	// A freed end stays where it is drawn now, not where a stale path has it. A
+	// line with hand-placed bends is drawn as stored, and only freeing keeps them.
+	onlyFreeing := p.Routing == "" && p.From == "" && p.FromSide == "" && p.To == "" && p.ToSide == ""
+	bent := handBent(v)
+	if !bent {
+		s.setPath(lineID, s.routeLine(v))
+		v = s.view[lineID]
+	}
 	type end struct {
 		key      string
 		binding  **boardViewBinding
@@ -495,7 +506,9 @@ func runBoardConnect(p *boardConnectParams, id, lineID string, stdout, stderr io
 		s.raw[lineID]["routing"] = p.Routing
 	}
 	s.view[lineID] = v
-	s.setPath(lineID, s.routeLine(v))
+	if !bent || !onlyFreeing {
+		s.setPath(lineID, s.routeLine(v))
+	}
 	changed := []string{lineID}
 	for _, textID := range s.order {
 		if s.view[textID].ContainerID == lineID && s.placeAttachedText(textID) {

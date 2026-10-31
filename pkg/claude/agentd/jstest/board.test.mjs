@@ -897,6 +897,13 @@ test('the editor attaches lines at snap points, offers a next shape, and routes 
   assert.deepEqual(moved.map((el) => el.id).sort(), ['a', line.id].sort());
   assert.equal(moved.find((el) => el.id === line.id).y, 330);
 
+  // A click that wobbles a pixel selects a line and leaves it attached.
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 300 + 40, 230 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 301 + 40, 231 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 301 + 40, 231 + 40));
+  assert.deepEqual(await saved(), [], 'no edit');
+  assert.equal(svg.querySelectorAll('.board-line-end.on').length, 2, 'both ends still attached');
+
   // Clicking a snap point offers the next shape; a click on blank takes it.
   await harness.act(() => pointer(harness, svg, 'pointerdown', 340, 480));
   await harness.act(() => pointer(harness, svg, 'pointerup', 340, 480));

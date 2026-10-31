@@ -944,7 +944,8 @@ func boardRmCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "rm <board> <element>...",
 		Short: "Delete elements from a board",
-		Long: "Writes a tombstone (isDeleted, version + 1) for each named element and the text attached to it. " +
+		Long: "Writes a tombstone (isDeleted, version + 1) for each named element and its attached text (containerId or " +
+			"`<id>-label`); other text inside a shape stays. " +
 			"An arrow or line attached to a deleted element stays where it is, with that end free.",
 		Args:        cobra.MinimumNArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -968,9 +969,13 @@ func runBoardRm(id string, elemIDs []string, stdout, stderr io.Writer) int {
 		}
 		gone[elemID] = true
 	}
-	for label, owner := range s.labelOwners() {
-		if gone[owner] {
-			gone[label] = true
+	// Only text named as attached: there is no undo here to bring back a note
+	// that merely lay inside a deleted box.
+	for _, textID := range s.order {
+		v := s.view[textID]
+		owner, labelled := strings.CutSuffix(textID, "-label")
+		if v.Type == "text" && (gone[v.ContainerID] || (labelled && v.ContainerID == "" && gone[owner])) {
+			gone[textID] = true
 		}
 	}
 	var changed []string
@@ -987,7 +992,7 @@ func runBoardRm(id string, elemIDs []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		// The line stays as it is drawn now, free at that end.
-		if v.Type != "freedraw" {
+		if v.Type != "freedraw" && !handBent(v) {
 			s.setPath(elemID, s.routeLine(v))
 		}
 		if start {
@@ -1009,7 +1014,7 @@ type boardMoveParams struct {
 func boardMoveCmd() *cobra.Command {
 	return boa.CmdT[boardMoveParams]{
 		Use:         "move <board> <element> [--x X] [--y Y]",
-		Short:       "Move an element (its label and bound arrows follow)",
+		Short:       "Move an element (its text and attached lines follow); a moved line detaches",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardMoveParams, _ *cobra.Command, args []string) {
@@ -1032,6 +1037,20 @@ func runBoardMove(p *boardMoveParams, id, elemID string, stdout, stderr io.Write
 	if !ok {
 		fmt.Fprintf(stderr, "Error: board %s has no live element %s\n", id, elemID)
 		return rcNotFound
+	}
+	if v.ContainerID != "" {
+		if _, attached := s.view[v.ContainerID]; attached {
+			fmt.Fprintf(stderr, "Error: %s is attached to %s and sits on it; move %s instead\n", elemID, v.ContainerID, v.ContainerID)
+			return rcInvalidArg
+		}
+	}
+	// A line moved away is pulled off what it was attached to, as a drag in the
+	// dashboard does: an attached end stays on its shape otherwise.
+	if isBoardLine(v.Type) {
+		v.StartBinding, v.EndBinding = nil, nil
+		s.view[elemID] = v
+		delete(s.raw[elemID], "startBinding")
+		delete(s.raw[elemID], "endBinding")
 	}
 	// The shape's label and the arrows bound to it move with it.
 	d := [2]float64{floatOr(p.X, v.X) - v.X, floatOr(p.Y, v.Y) - v.Y}

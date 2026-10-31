@@ -31,6 +31,8 @@ const html = htm.bind(h);
 // and to a shape to show its snap points.
 const SNAP_RADIUS_PX = 10;
 const SNAP_MARGIN_PX = 16;
+// A press that wanders less than this is a click, not a drag.
+const DRAG_THRESHOLD_PX = 4;
 // The canvas colour (--board-paper in board.css).
 const BOARD_PAPER = '#fbfaf7';
 
@@ -250,7 +252,11 @@ export function BoardEditor({
     if (onScreen) lastEditor = editorToken;
   }, [onScreen]);
   // Another tool takes back a snap point's offer.
-  useEffect(() => { suggesting.current = null; }, [tool]);
+  useEffect(() => {
+    if (!suggesting.current) return;
+    suggesting.current = null;
+    redraw();
+  }, [tool]);
   useEffect(() => () => {
     if (lastEditor === editorToken) lastEditor = null;
   }, []);
@@ -785,7 +791,7 @@ export function BoardEditor({
         gesture.current = { kind: 'end', id: line.id, end, drawn: line, orig: elements.current.get(line.id) };
         return;
       }
-      const snap = !event.shiftKey && snapHit(live, p.x, p.y, snapTol);
+      const snap = !event.shiftKey && shownSnap(live, p, snapTol);
       if (snap) {
         // A drag draws a line from the snap point; a click offers one.
         beginLine('arrow', p, { startBinding: snap }, true);
@@ -836,12 +842,18 @@ export function BoardEditor({
       backgroundColor: ['rectangle', 'ellipse', 'diamond'].includes(tool) ? fill : 'transparent',
     });
     // A pen stroke started on a snap point moves with that shape.
-    const snap = tool === 'freedraw' ? snapHit(live, p.x, p.y, snapTol) : null;
+    const snap = tool === 'freedraw' ? shownSnap(live, p, snapTol) : null;
     if (snap) el.startBinding = snap;
     active.current = new Set([el.id]);
     elements.current.set(el.id, el);
     gesture.current = { kind: 'draw', id: el.id, start: p, raw: [[0, 0]] };
     redraw();
+  }
+
+  // shownSnap is the snap point under the pointer, of the shape showing them.
+  function shownSnap(live, p, tol) {
+    const near = shapeNear(live, p.x, p.y, SNAP_MARGIN_PX / view.zoom);
+    return near ? snapHit([near], p.x, p.y, tol) : null;
   }
 
   function beginLine(type, p, props, fromSnap = false) {
@@ -953,6 +965,7 @@ export function BoardEditor({
     const el = elements.current.get(g.id);
     if (!el) return;
     if (g.kind === 'move' || g.kind === 'resize') {
+      if (!g.moved && Math.hypot(p.x - g.start.x, p.y - g.start.y) * view.zoom < DRAG_THRESHOLD_PX) return;
       if (g.kind === 'move') {
         for (const [id, orig] of g.origs) {
           const moved = { ...orig, x: orig.x + p.x - g.start.x, y: orig.y + p.y - g.start.y };

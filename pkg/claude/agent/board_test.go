@@ -381,6 +381,38 @@ func TestBoardMoveKeepsSnapRoutingStrokesAndText(t *testing.T) {
 	assert.Contains(t, byID, "e-label", "text attached to the line stays on it")
 }
 
+func TestBoardMoveDetachesALineAndRefusesAttachedText(t *testing.T) {
+	patched := fakeBoardDaemonWith(t, boardWiredFixture)
+	x := 500.0
+	var out, errb bytes.Buffer
+	require.Equal(t, rcOK, runBoardMove(&boardMoveParams{X: &x}, "plan", "e", &out, &errb), errb.String())
+	line := patchedByID(*patched)["e"]
+	assert.EqualValues(t, 500, line["x"])
+	assert.NotContains(t, line, "startBinding", "or the editor would draw it back on its shape")
+	assert.NotContains(t, line, "endBinding")
+
+	assert.Equal(t, rcInvalidArg, runBoardMove(&boardMoveParams{X: &x}, "plan", "e-label", &out, &errb))
+	assert.Contains(t, errb.String(), "move e instead")
+}
+
+func TestBoardKeepsHandPlacedBendsWhenAnEndIsFreed(t *testing.T) {
+	const fixture = `{"id":"plan","version":4,"elements":[
+	 {"id":"a","type":"rectangle","x":0,"y":0,"width":100,"height":50,"version":1},
+	 {"id":"box","type":"rectangle","x":500,"y":0,"width":100,"height":50,"version":1},
+	 {"id":"note","type":"text","x":520,"y":10,"width":40,"height":20,"text":"keep","version":1},
+	 {"id":"r","type":"arrow","x":100,"y":25,"width":200,"height":90,"version":1,"points":[[0,0],[100,90],[200,0]],
+	  "startBinding":{"elementId":"a"},"endBinding":{"elementId":"box"}}]}`
+	patched := fakeBoardDaemonWith(t, fixture)
+	var out, errb bytes.Buffer
+	require.Equal(t, rcOK, runBoardConnect(&boardConnectParams{FreeTo: true}, "plan", "r", &out, &errb), errb.String())
+	assert.Len(t, patchedByID(*patched)["r"]["points"], 3, "freeing an end does not straighten the line")
+
+	require.Equal(t, rcOK, runBoardRm("plan", []string{"box"}, &out, &errb), errb.String())
+	byID := patchedByID(*patched)
+	assert.Len(t, byID["r"]["points"], 3)
+	assert.NotContains(t, byID, "note", "text merely inside a box stays; the CLI has no undo")
+}
+
 func TestBoardConnectChangesRoutingAndEnds(t *testing.T) {
 	patched := fakeBoardDaemonWith(t, boardWiredFixture)
 	var out, errb bytes.Buffer

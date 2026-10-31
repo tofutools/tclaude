@@ -103,7 +103,7 @@ tclaude agent board add plan text --x 100 --y 200 --text "Owned by the platform 
 tclaude agent board add plan arrow --from <elemA> --to <elemB>
 tclaude agent board add plan arrow --from api --from-side right --to db --to-side left --routing elbow --text calls
 tclaude agent board add plan rectangle --right-of api --link --text DB --id db   # beside api, with an arrow from it
-tclaude agent board move plan <elem> --x 300 --y 80   # its label and bound arrows follow
+tclaude agent board move plan <elem> --x 300 --y 80   # its text and attached lines follow; a moved line detaches
 tclaude agent board layout plan [--direction down]    # arrange the shapes along their arrows
 tclaude agent board from-process flow review          # draw process template "review" as a flowchart
 tclaude agent board from-fleet fleet                  # draw the fleet: a column per group, a card per agent

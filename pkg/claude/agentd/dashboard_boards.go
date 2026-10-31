@@ -215,8 +215,15 @@ func normalizeBoardElement(raw json.RawMessage, author string) (db.CollabBoardEl
 		if !elementIDPattern.MatchString(b.ElementID) {
 			return fail("binding elementId must be 1-64 characters of [A-Za-z0-9_-]")
 		}
-		if b.FixedPoint != nil && (len(b.FixedPoint) != 2 || !boardInRange(&b.FixedPoint[0], 0, 1) || !boardInRange(&b.FixedPoint[1], 0, 1)) {
-			return fail("binding fixedPoint must be [x, y] fractions from 0 to 1")
+		if b.FixedPoint == nil {
+			continue
+		}
+		if len(b.FixedPoint) != 2 || !boardFinite(b.FixedPoint[0], boardMaxCoordinate) || !boardFinite(b.FixedPoint[1], boardMaxCoordinate) {
+			return fail("binding fixedPoint must be [x, y] fractions")
+		}
+		// Excalidraw can store a point just off the box; the editor clamps too.
+		for i, v := range b.FixedPoint {
+			b.FixedPoint[i] = min(1, max(0, v))
 		}
 	}
 	if e.Type != "arrow" && e.Type != "line" {

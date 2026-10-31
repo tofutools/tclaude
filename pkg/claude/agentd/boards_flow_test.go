@@ -238,9 +238,8 @@ func TestBoardsKeepConnectorAndAttachedTextFields(t *testing.T) {
 	}
 
 	for name, bad := range map[string]map[string]any{
-		"routing":    {"routing": "zigzag"},
-		"fixedPoint": {"startBinding": map[string]any{"elementId": "a", "fixedPoint": []float64{2, 0}}},
-		"short":      {"startBinding": map[string]any{"elementId": "a", "fixedPoint": []float64{0}}},
+		"routing": {"routing": "zigzag"},
+		"short":   {"startBinding": map[string]any{"elementId": "a", "fixedPoint": []float64{0}}},
 	} {
 		el := map[string]any{"id": "bad", "type": "arrow", "x": 0, "y": 0, "version": 1, "versionNonce": 1, "points": [][]float64{{0, 0}, {5, 0}}}
 		for k, v := range bad {
@@ -252,6 +251,13 @@ func TestBoardsKeepConnectorAndAttachedTextFields(t *testing.T) {
 	badLabel := map[string]any{"id": "bad", "type": "text", "x": 0, "y": 0, "text": "x", "version": 1, "versionNonce": 1, "containerId": "no spaces"}
 	rec := serve(http.MethodPatch, "/api/boards/wired", map[string]any{"elements": []any{badLabel}})
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// A snap point just off the box, as a pasted file may hold, is pulled onto it.
+	off := map[string]any{"id": "off", "type": "arrow", "x": 0, "y": 0, "version": 1, "versionNonce": 1, "points": [][]float64{{0, 0}, {5, 0}},
+		"startBinding": map[string]any{"elementId": "a", "fixedPoint": []float64{1.04, -0.5}}}
+	rec = serve(http.MethodPatch, "/api/boards/wired", map[string]any{"elements": []any{off}})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, map[string]any{"elementId": "a", "fixedPoint": []any{1.0, 0.0}}, read()["off"]["startBinding"])
 
 	// Deleting the line and undoing that brings it back whole.
 	gone := map[string]any{"id": "l", "type": "line", "version": 2, "versionNonce": 2, "isDeleted": true}
