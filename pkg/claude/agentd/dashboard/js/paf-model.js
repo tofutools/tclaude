@@ -27,14 +27,14 @@ export function exportParams({ agent, history = true, native = true, neutral = t
 // landingParams turns the group preview's choices into the
 // parseGroupLandingOptions query: an all-members harness/model plus
 // per-member overrides keyed by the member's title (or conv id).
-export function landingParams({ harness = '', model = '', members = {} } = {}) {
+export function landingParams({ harness = '', model = '', members = {}, confirmHistoryLoss = false } = {}) {
   const memberHarness = [];
   const memberModel = [];
   for (const [member, choice] of Object.entries(members)) {
     if (choice?.harness) memberHarness.push(`${member}=${choice.harness}`);
     if (choice?.model) memberModel.push(`${member}=${choice.model}`);
   }
-  return { harness, model, member_harness: memberHarness, member_model: memberModel };
+  return { harness, model, member_harness: memberHarness, member_model: memberModel, confirm_history_loss: confirmHistoryLoss ? 'true' : '' };
 }
 
 const RUNG = {

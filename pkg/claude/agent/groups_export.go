@@ -124,6 +124,8 @@ type groupsImportParams struct {
 	Model         string   `long:"model" optional:"true" help:"Landing model every member is budgeted for when its conversation translates"`
 	MemberHarness []string `long:"member-harness" optional:"true" help:"Land one member on a harness: member=harness, where member is its title or agent key (repeatable)"`
 	MemberModel   []string `long:"member-model" optional:"true" help:"Landing model for one member: member=model (repeatable)"`
+
+	ConfirmHistoryLoss bool `long:"confirm-history-loss" help:"Accept landings that cut 25% or more of a member's conversation to fit its landing model; the full history stays in the file and is saved beside the agent."`
 }
 
 // landingQuery encodes the landing choices as query parameters.
@@ -137,6 +139,9 @@ func (p *groupsImportParams) landingQuery() string {
 	}
 	for _, v := range p.MemberHarness {
 		q.Add("member_harness", v)
+	}
+	if p.ConfirmHistoryLoss {
+		q.Set("confirm_history_loss", "true")
 	}
 	for _, v := range p.MemberModel {
 		q.Add("member_model", v)
