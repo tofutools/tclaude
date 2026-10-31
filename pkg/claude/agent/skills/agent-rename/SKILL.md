@@ -39,7 +39,8 @@ Self-rename is opt-in. The fastest path is
 `tclaude setup --install-default-agent-permissions`, which grants
 `self.rename` (alongside the other self-lifecycle default slugs —
 `self.compact`, `self.clone`, `self.schedule`,
-`self.remote-control`) as defaults in one shot. Manual alternatives:
+`self.remote-control`, `self.interrupt`, `self.task`, `self.pr`, `self.tags`,
+`self.dir-repair`, `self.process`) as defaults in one shot. Manual alternatives:
 
 **Option 1 — globally for every agent.** Either edit
 `~/.tclaude/config.json`:
@@ -107,6 +108,7 @@ tclaude agent rename code-reviewer-frontend
 tclaude agent rename code_reviewer_frontend
 tclaude agent rename "code reviewer frontend"
 tclaude agent rename "[reviewer] frontend"
+tclaude agent rename --auto --target <peer>   # ask an agent to choose its own title
 tclaude agent rename "reviewer(frontend)"
 ```
 
@@ -157,7 +159,9 @@ Auth model: the caller passes if EITHER
 
 - they hold the `agent.rename` slug (default human-only — granted
   via `tclaude agent permissions grant <caller> agent.rename`), OR
-- they own at least one group that contains the target.
+- they hold the `groups.members.rename` slug on every active group containing the
+  target; owning a group gives you that slug for that group, so owning one of
+  two groups is not enough.
 
 Same charset gate applies. The response includes `caller_conv` so
 the audit trail records who renamed it. `--ask-human` is **not**

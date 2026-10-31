@@ -276,7 +276,7 @@ you already hold it. Anything else that changes the fleet goes through one
 | Deploy a task force from a template | `templates.instantiate` |
 | Set an existing agent's task link | `agent.task` |
 | Message an agent, if your brief does not include it | `message.direct` |
-| Retire an agent | `groups.members.retire` |
+| Retire an agent | `groups.members.retire`; an agent in no group needs `agent.retire` |
 
 Never retry a denied request; ask the operator what to change.
 
