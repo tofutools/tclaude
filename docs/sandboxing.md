@@ -1057,7 +1057,9 @@ posture, and a waived resource limit's notice stays on the launch record.
 The launch snapshot records a degradation notice with network reason
 `operator_unenforced_launch_override` and effect `not_enforced`; the dashboard
 renders a warning badge and the exact notice rather than claiming a sandbox
-lock or changing the recorded OS-sandbox verdict.
+lock or changing the recorded OS-sandbox verdict. The same goes for any other
+degradation notice with that effect, such as `operator_reduced_network_deny_override`
+for omitted deny entries; only a `resource_limits` notice leaves the lock.
 
 ### An untrusted `bwrap`
 

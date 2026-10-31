@@ -608,6 +608,7 @@ func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermGroupsImport); !ok {
 		return
 	}
+	giveBackSudoUses(r)
 	archive, into, asName, ok := readImportUpload(w, r)
 	if !ok {
 		return

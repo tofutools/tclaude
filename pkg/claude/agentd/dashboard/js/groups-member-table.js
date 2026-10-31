@@ -299,10 +299,12 @@ function osSandboxBadge(mode, state, unverified, implementation) {
 function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
-  const unenforcedOverride = (member.state?.sandbox_access_notices || []).some((notice) =>
+  // Any reason counts, so a rule the launch dropped can never earn the padlock,
+  // and neither can a reason added later. Resource limits are not confinement;
+  // they have their own line in the tooltip.
+  const unenforced = (member.state?.sandbox_access_notices || []).some((notice) =>
     notice?.class === 'degradation'
-      && notice?.axis === 'network'
-      && notice?.reason === 'operator_unenforced_launch_override'
+      && notice?.axis !== 'resource_limits'
       && notice?.effect === 'not_enforced');
   // A recorded verdict wins: it is the resolved outcome, where the mode is only
   // the request. Absent one (a pre-column row, or Codex — whose --sandbox mode
@@ -312,7 +314,7 @@ function sandboxIndicator(member) {
     const badge = osSandboxBadge(mode, state,
       !!member.state?.os_sandbox_unverified, member.state?.sandbox_implementation || '');
     if (!badge) return null;
-    if (unenforcedOverride) {
+    if (unenforced && !badge.danger) {
       return { status: 'NOT ENFORCED', danger: true, offline };
     }
     return { status: badge.status, danger: badge.danger, offline };
@@ -323,10 +325,10 @@ function sandboxIndicator(member) {
   // it must not earn the padlock that confined Codex modes receive through
   // this pre-verdict fallback.
   const danger = mode === 'danger-full-access' || mode === 'off'
-    || mode === 'access-control' || unenforcedOverride;
+    || mode === 'access-control';
   return {
-    status: unenforcedOverride ? 'NOT ENFORCED' : danger ? 'OFF' : 'ON',
-    danger,
+    status: danger ? 'OFF' : unenforced ? 'NOT ENFORCED' : 'ON',
+    danger: danger || unenforced,
     offline,
   };
 }

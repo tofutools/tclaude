@@ -702,6 +702,8 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	sandboxScopePinned := false
 	if ownerConv != "" {
 		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
+		// Metered only so a limited grant is seen and refused by name below.
+		req, _ = withSudoUseMeter(req)
 		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
 			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
 		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)

@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
+import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -89,14 +89,7 @@ export function ActivityHover({
   };
   useExclusivePopover(rootRef, open, () => { leave.cancel(); setHovered(false); setFocused(false); }, pinned);
 
-  useEffect(() => {
-    if (!pinned) return undefined;
-    const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [pinned]);
+  useDismissablePopover(rootRef, pinned, close);
 
   const onBlur = (event) => {
     if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false);

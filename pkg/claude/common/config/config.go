@@ -594,6 +594,10 @@ type DashboardConfig struct {
 	// each poll and toggles body.group-quick-fold. See
 	// (*Config).GroupQuickOptions.
 	GroupQuickOptions string `json:"group_quick_options,omitempty"`
+	// OverlayBackdrop picks what full-screen previews do to the page behind
+	// them: "dim" (default), "blur", "both" or "none". Blur is slow in a
+	// browser without GPU acceleration. See (*Config).OverlayBackdrop.
+	OverlayBackdrop string `json:"overlay_backdrop,omitempty"`
 	// DefaultTerminal selects how the dashboard's spawn auto-focus, per-agent
 	// focus / open-window / open-terminal actions open a console — one of
 	// DefaultTerminal{Native, Web}. "native" pops a native OS window (falling
@@ -2019,6 +2023,18 @@ func normalizeGroupQuickOptions(s string) string {
 	default:
 		return ""
 	}
+}
+
+// OverlayBackdrop returns dashboard.overlay_backdrop, with "dim" for anything
+// unset or unknown.
+func (c *Config) OverlayBackdrop() string {
+	if c != nil && c.Dashboard != nil {
+		switch v := c.Dashboard.OverlayBackdrop; v {
+		case "blur", "both", "none":
+			return v
+		}
+	}
+	return "dim"
 }
 
 // GroupQuickOptions reports the display mode for the group <summary> quick-

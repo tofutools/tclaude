@@ -294,6 +294,19 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
       </${Group}>
 
+      <${Group} title="Overlays">
+        <${Setting} title="Preview background" forId="cfg-dashboard-overlay-backdrop" k="dashboard.overlay_backdrop"
+          summary="What image and markdown previews do to the page behind them."
+          more=${html`Blur is slow in a browser running without hardware acceleration, so it is off by default. Dim keeps the page dark behind the preview. Disconnect screens always stay dim so their message stays readable; blur adds to that when chosen.`}>
+          <${ConfigSelect} id="cfg-dashboard-overlay-backdrop" aria-label="Preview background">
+            <option value="dim">Dim</option>
+            <option value="blur">Blur</option>
+            <option value="both">Both</option>
+            <option value="none">Nothing</option>
+          </${ConfigSelect}>
+        </${Setting}>
+      </${Group}>
+
       <${Group} title="Tabs">
         <${Setting} title="Plugins tab" forId="cfg-dashboard-always-show-plugins" k="dashboard.always_show_plugins_tab"
           summary="always show the Plugins tab, even with no plugins installed"

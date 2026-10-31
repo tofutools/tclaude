@@ -152,7 +152,7 @@ func handleSendWithRemoteCC(w http.ResponseWriter, r *http.Request, fromID strin
 	primary, _, err := agent.ResolveSelector(req.To)
 	if err != nil || primary == nil || strings.TrimSpace(req.Body) == "" {
 		req.Cc = localCC
-		dispatchSend(w, fromID, req) // writes the ordinary error
+		dispatchSend(w, r, fromID, req) // writes the ordinary error
 		return
 	}
 	targets, err := resolveFederatedCC(fromID, remoteCC, map[string]bool{})
@@ -169,7 +169,7 @@ func handleSendWithRemoteCC(w http.ResponseWriter, r *http.Request, fromID strin
 	}
 	req.Cc = localCC
 	cw := &captureWriter{h: http.Header{}, code: http.StatusOK}
-	dispatchSend(cw, fromID, req)
+	dispatchSend(cw, r, fromID, req)
 	if cw.code != http.StatusOK {
 		for k, v := range cw.h {
 			w.Header()[k] = v

@@ -1628,9 +1628,9 @@ func groupsSetDefaultDirCmd() *cobra.Command {
 		Long: "Set the working directory pre-filled into the spawn form for " +
 			"agents created directly into this group. The daemon also " +
 			"substitutes it server-side when a spawn request leaves cwd " +
-			"blank, so `tclaude agent spawn <group>` and the dashboard's " +
-			"'+ spawn agent' button both inherit it. Omit <dir> to clear " +
-			"the default (spawns then fall back to the daemon's own cwd). " +
+			"blank, so `tclaude agent spawn <group>` without --cwd and the " +
+			"dashboard's '+ spawn agent' button both inherit it. Omit <dir> " +
+			"to clear the default (`agent spawn` then uses the caller's cwd). " +
 			"Gated on the `groups.settings.default-dir` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDefaultDirParams, _ *cobra.Command) error {
