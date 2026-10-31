@@ -18,7 +18,7 @@ import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardIdFromTitle, bump, changeBounds,
+  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardIdFromTitle, boardTopZ, bump, changeBounds,
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
   entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
   QUICK_SHAPES, reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, stackOrder, suggestedShape, toExcalidraw, topHit, withLabels,
@@ -668,6 +668,7 @@ export function BoardEditor({
   function commit(next, { record = true } = {}) {
     if (!next.length) return;
     const step = [];
+    const top = boardTopZ(elements.current);
     for (const el of next) {
       const prev = elements.current.get(el.id);
       step.push({ id: el.id, before: prev || null });
@@ -675,7 +676,7 @@ export function BoardEditor({
       eventBatch.current.ids.push(el.id);
       // server_version is the daemon's read stamp, not element data.
       const { server_version: _stamp, ...data } = el;
-      const authored = { ...data, customData: { ...(el.customData || {}), author: 'operator' } };
+      const authored = { ...data, ...(!prev && top ? { z: top + 1 } : {}), customData: { ...(el.customData || {}), author: 'operator' } };
       elements.current.set(el.id, authored);
       pending.current.set(el.id, authored);
     }
@@ -1227,9 +1228,11 @@ export function BoardEditor({
     if (g?.kind === 'draw') elements.current.delete(g.id);
     if (g?.origs) for (const [id, orig] of g.origs) elements.current.set(id, orig);
     if (g?.kind === 'end') elements.current.set(g.id, g.orig);
+    for (const id of g?.erased || []) elements.current.set(id, { ...elements.current.get(id), isDeleted: false });
     gesture.current = null;
     active.current = new Set();
     suggesting.current = null;
+    redraw();
     if (editingText) finishText();
     const p = toBoard(event);
     pointerAt.current = p;

@@ -122,7 +122,9 @@ is already in the selection, in which case the menu acts on the whole selection.
 | Blank board | Add a shape or text there, paste there, select all, fit the board to the view, undo and redo |
 
 Arrow keys, Home and End move through it and Enter runs a row. Escape or clicking
-away closes it. Where the browser refuses to read the clipboard, Paste uses the
+away closes it. Bring to front and send to back hold across reloads and for
+everyone on the board. Anything you add lands on top; what an agent adds lands
+above ordinary elements but under what was brought to front. Where the browser refuses to read the clipboard, Paste uses the
 last copy made on this page.
 
 ### Picking a tool

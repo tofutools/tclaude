@@ -125,18 +125,21 @@ export function mergeElements(map, incoming, skip = null) {
   return changed;
 }
 
-// An element's place in the stack is its `z` once it has been sent to the front
-// or back, or else its position on the board, a long stride apart. So nothing is
-// written to the elements left where they are, and what anyone adds later, agents
-// included, is still above a million sends to the front.
-const STACK_STRIDE = 2 ** 20;
-const stackKey = (el, position) => (Number.isFinite(el.z) ? el.z : position * STACK_STRIDE);
-
+// Stacking: elements draw in the order the board stores them. One sent to the
+// front or back carries a `z`, above or below all those without one, so nothing
+// else is rewritten and every client sorts alike. Attached text stands with its
+// container. boardTopZ says what an editor's new element needs to land on top; an
+// agent's goes among those without a `z`, under anything sent to the front.
 function stacked(map) {
   const all = [...map.values()];
   if (!all.some((el) => Number.isFinite(el.z))) return all;
-  const key = new Map(all.map((el, i) => [el.id, stackKey(el, i)]));
-  return all.sort((a, b) => key.get(a.id) - key.get(b.id));
+  const key = (el) => el.z ?? map.get(el.containerId)?.z ?? 0;
+  return all.sort((a, b) => key(a) - key(b));
+}
+
+// boardTopZ is the highest `z` on the board, 0 when nothing is above the rest.
+export function boardTopZ(map) {
+  return Math.max(0, ...[...map.values()].map((el) => (Number.isFinite(el.z) ? el.z : 0)));
 }
 
 // liveElements lists the elements in stacking order, bottom first.
@@ -148,8 +151,8 @@ export function liveElements(map) {
 // their order among themselves, and returns the bumped elements.
 export function stackOrder(map, ids, where, opts) {
   const moving = new Set(withLabels(map, ids));
-  const keys = [...map.values()].map(stackKey);
-  const start = where === 'front' ? Math.max(...keys) + 1 : Math.min(...keys) - moving.size;
+  const low = Math.min(0, ...[...map.values()].map((el) => (Number.isFinite(el.z) ? el.z : 0)));
+  const start = where === 'front' ? boardTopZ(map) + 1 : low - moving.size;
   return stacked(map).filter((el) => moving.has(el.id) && !el.isDeleted).map((el, i) => bump(el, { z: start + i }, opts));
 }
 
@@ -881,7 +884,7 @@ export function cloneElements(elements, dx, dy, opts = {}) {
   }
   const rebind = (binding) => (binding && ids.has(binding.elementId) ? { ...binding, elementId: ids.get(binding.elementId) } : undefined);
   return elements.map((el) => {
-    const { server_version: _s, customData: _c, startBinding, endBinding, containerId, ...rest } = el;
+    const { server_version: _s, customData: _c, startBinding, endBinding, containerId, z: _z, ...rest } = el;
     const copy = newElement(el.type, {
       ...rest, id: ids.get(el.id),
       x: clampNum(el.x + dx, -MAX_COORD, MAX_COORD, 0), y: clampNum(el.y + dy, -MAX_COORD, MAX_COORD, 0),

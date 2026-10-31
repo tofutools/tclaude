@@ -387,12 +387,45 @@ test('bring to front and send to back reorder what is drawn, labels with their s
   await choose(env, 'Send to back');
   assert.deepEqual(order(), ['c', 'a', 'a-label', 'b']);
 
-  // Whatever is added later lands on top.
-  const map = new Map([m.newElement('rectangle', { id: 'x' }), m.newElement('rectangle', { id: 'y' })].map((el) => [el.id, el]));
-  map.set('w', m.newElement('rectangle', { id: 'w' }));
-  for (const el of m.stackOrder(map, ['x', 'y'], 'front')) map.set(el.id, el);
-  map.set('z', m.newElement('rectangle', { id: 'z' }));
-  assert.deepEqual(m.liveElements(map).map((el) => el.id), ['w', 'x', 'y', 'z']);
+  // A new shape from this editor lands on top of what was brought to front, and
+  // a duplicate of something sent back does too.
+  await rightClick(env, 900, 500);
+  await choose(env, 'Add diamond here');
+  assert.equal(order().at(-1), (await saved()).filter((el) => el.type === 'diamond').at(-1).id);
+  await rightClick(env, 150, 330);
+  await choose(env, 'Duplicate');
+  const [copy] = (await saved()).filter((el) => el.id !== 'c');
+  assert.equal(order().at(-1), copy.id);
+});
+
+test('the stack reads the same whatever a client still holds of deleted elements', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const held = new Map(['a', 'b', 'c'].map((id) => [id, m.newElement('rectangle', { id })]));
+  held.set('a', { ...held.get('a'), isDeleted: true });
+  for (const el of m.stackOrder(held, ['b'], 'front')) held.set(el.id, el);
+
+  // A fresh read leaves out what was deleted.
+  const fresh = new Map([...held].filter(([, el]) => !el.isDeleted));
+  for (const map of [held, fresh]) {
+    map.set('d', m.newElement('rectangle', { id: 'd' }));
+    map.set('b-label', m.newElement('text', { id: 'b-label', containerId: 'b', text: 'late' }));
+    assert.deepEqual(m.liveElements(map).map((el) => el.id), ['c', 'd', 'b', 'b-label']);
+  }
+  assert.equal(m.boardTopZ(held), held.get('b').z);
+  assert.ok(m.stackOrder(held, ['c'], 'back')[0].z < 0);
+});
+
+test('a context menu during an erase takes the erase back', async (t) => {
+  const env = await setup(t, twoShapes);
+  const { svg, fire, key, saved } = env;
+  await key('e');
+  await fire('pointerdown', 100, 130);
+  assert.equal(svg.querySelector('[data-element="a"]'), null, 'it goes as the eraser passes');
+  await rightClick(env, 100, 130);
+  assert.ok(svg.querySelector('[data-element="a"]'), 'and comes back, as nothing was saved');
+  await fire('pointerup', 100, 130);
+  assert.deepEqual(await saved(), []);
 });
 
 test('the context menu moves with the arrow keys, runs on Enter and closes on a click away', async (t) => {
