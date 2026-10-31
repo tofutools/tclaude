@@ -115,6 +115,9 @@ jq -e --arg id "$SOURCE_ID" 'any(.[]; .id == $id)' "$ROOT/src-sessions.json" >/d
 start_daemon src "$SRC_CWD"
 log "exporting the group from the source node"
 node src tclaude agent groups create crew
+# Listing from the project indexes the session; nothing else has told tclaude
+# about a conversation that no agent started.
+(cd "$SRC_CWD" && node src tclaude conv ls)
 node src tclaude agent groups add crew "$SOURCE_ID" --role lead
 node src tclaude agent groups export crew --format paf --out "$ROOT/crew.paf"
 test -s "$ROOT/crew.paf" || die "the group export wrote nothing"
