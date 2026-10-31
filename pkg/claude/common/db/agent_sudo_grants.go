@@ -301,6 +301,24 @@ func RevokeSudoGrant(id int64) (int64, error) {
 	return n, nil
 }
 
+// ExtendSudoGrant moves one still-active grant's expiry. Returns the rows
+// updated: 0 when the grant was revoked or ran out in the meantime, so a
+// finished elevation cannot be brought back this way.
+func ExtendSudoGrant(id int64, expiresAt time.Time) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`UPDATE agent_sudo_grants SET expires_at = ?
+		WHERE id = ? AND revoked_at IS NULL AND expires_at > ?`,
+		dbTime(expiresAt), id, dbTime(time.Now()))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // RevokeSudoGrantsByConv stamps revoked_at on every still-active row
 // for convID. Idempotent — already-revoked rows are skipped. Returns
 // the number of newly-revoked rows.
