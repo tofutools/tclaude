@@ -126,7 +126,7 @@ func handleDashboardBoardLive(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 	ws.SetReadLimit(512)
 
 	// Nothing is expected from the browser but pongs, and reading is what
