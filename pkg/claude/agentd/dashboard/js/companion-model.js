@@ -262,7 +262,7 @@ export function zoneRect(zone, viewport, top = 0) {
 }
 
 const TAB_NAMES = Object.freeze({
-  groups: 'Groups', processes: 'Processes', terminals: 'Terminals', messages: 'Messages',
+  groups: 'Groups', processes: 'Processes', terminals: 'Collab', messages: 'Messages',
   jobs: 'Jobs', usage: 'Usage', config: 'Config', access: 'Access', diagnostics: 'Diagnostics',
   plugins: 'Plugins', map: 'Map', vegas: 'Vegas', 'fleet-admin': 'Fleet admin',
 });

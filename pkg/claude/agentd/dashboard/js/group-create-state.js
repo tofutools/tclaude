@@ -18,6 +18,7 @@ export function createGroupCreateState({ getSnapshot = () => null } = {}) {
       parentGroup: String(parentGroup || ''),
       ...(node ? { node: String(node) } : {}),
       templates: Object.freeze([...(snapshot.templates || [])]),
+      showAttachment: Boolean(snapshot.group_attachments_mode) && snapshot.group_attachments_mode !== 'off',
       groups: Object.freeze([...(snapshot.groups || [])]),
     });
   }
@@ -41,6 +42,7 @@ export function createGroupCreateState({ getSnapshot = () => null } = {}) {
         parent: source?.parent || '', anchor: groupName, before: false,
       },
       templates: Object.freeze([...(snapshot.templates || [])]),
+      showAttachment: Boolean(snapshot.group_attachments_mode) && snapshot.group_attachments_mode !== 'off',
       groups: Object.freeze(groups),
     });
   }

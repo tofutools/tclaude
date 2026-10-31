@@ -1064,7 +1064,8 @@ type FederationConfig struct {
 	Teleport                *FederationTeleportConfig `json:"teleport,omitempty"`
 	// NodeLabels is a local set, shared by operator and future node-profile writers.
 	NodeLabels []string `json:"node_labels,omitempty"`
-	// MaxLiveAgents advertises node capacity; zero is unlimited.
+	// MaxLiveAgents advertises node capacity and the receiver enforces it on
+	// incoming work; zero is unlimited.
 	MaxLiveAgents int                   `json:"max_live_agents,omitempty"`
 	Away          *FederationAwayConfig `json:"away,omitempty"`
 	// UnrestrictedMaxLive caps automatic workers per unrestricted peer. Default 8.

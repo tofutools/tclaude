@@ -315,7 +315,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
         <${Setting} title="Group quick options" forId="cfg-dashboard-group-quick-fold" k="dashboard.group_quick_options"
           summary="auto-fold quick options to icons, expand on hover"
-          more=${html`Each group header carries a row of editable "quick option" chips — 📝 description, 📁 default dir, 🧠 default profile, 🔗 links. They can grow the header wide. <strong>Checked</strong> (default) folds them to <em>icon-only</em> at rest and slides the text open when you hover the group header — a horizontal accordion that reclaims the space. The group name, activity bots and 👥 member count always stay visible. <strong>Unchecked</strong> keeps the full chips always shown (the original look). Touch devices (which can't hover) always see the full chips regardless. You can also <em>pin</em> a single group's chips open from its ⚙ menu (📌 pin quick options) so it stays expanded even with auto-fold on. Stored as <code>dashboard.group_quick_options</code> (the default <code>hover</code> is omitted; unchecked writes <code>expanded</code>).`}>
+          more=${html`Each group header carries a row of editable "quick option" chips — 📝 description, 📁 default dir, 🧠 default profile, 🛡 sandbox profile, 💰 usage profile, 🔗 links. They can grow the header wide. <strong>Checked</strong> (default) folds them to <em>icon-only</em> at rest and slides the text open when you hover the group header — a horizontal accordion that reclaims the space. The group name, activity bots and 👥 member count always stay visible. <strong>Unchecked</strong> keeps the full chips always shown (the original look). Touch devices (which can't hover) always see the full chips regardless. You can also <em>pin</em> a single group's chips open from its ⚙ menu (📌 pin quick options) so it stays expanded even with auto-fold on. Stored as <code>dashboard.group_quick_options</code> (the default <code>hover</code> is omitted; unchecked writes <code>expanded</code>).`}>
           <${Toggle} id="cfg-dashboard-group-quick-fold" />
         </${Setting}>
         <${Setting} title="Group descriptions" forId="cfg-dashboard-show-group-description" k="dashboard.show_group_description" badges=${['deprecated']}
@@ -926,9 +926,9 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
     <${Panel} id="experimental" active=${active}>
       <${Group} title="Feature flags"
-        lede=${html`Opt-in flags for features under active development. Such features ship dark on
+        lede=${html`Opt-in flags for features under active development. Most ship dark on
           <code>main</code> — off by default and invisible in normal use — so they can land in
-          small increments without a long-lived feature branch. Expect rough edges while a
+          small increments without a long-lived feature branch, and a few stay listed while on by default. Expect rough edges while a
           flag is listed here; when a feature graduates, its flag disappears.`}>
         <${Setting} title="Processes" forId="cfg-feature-processes" k="features.processes"
           summary=${html`enable the in-development <strong>Processes</strong> feature`}

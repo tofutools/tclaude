@@ -928,7 +928,7 @@ func configureNotifications(params *Params) {
 		save = len(added) > 0
 	default:
 		// First run: no notifications block on disk yet. Offer to enable.
-		if askYesNo("Enable desktop notifications when Claude needs attention?", true, params.Yes) {
+		if askYesNo("Enable desktop notifications when an agent needs attention?", true, params.Yes) {
 			cfg.Notifications.Enabled = true
 			save = true
 			fmt.Println("✓ Notifications enabled")
