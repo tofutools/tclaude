@@ -188,6 +188,89 @@ func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 
 // `board fleet-changes` tells the operator's deleted cards from a redraw's by
 // the tombstone's author, which a read with ?since= returns.
+// Connector and attached-text fields survive a save, a read and an undo.
+func TestBoardsKeepConnectorAndAttachedTextFields(t *testing.T) {
+	_ = newFlow(t)
+	enableCollab(t)
+	dash := agentd.BuildDashboardHandlerForTest()
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+	}
+	create := serve(http.MethodPost, "/api/boards", map[string]any{"id": "wired"})
+	require.Equal(t, http.StatusCreated, create.Code, "body=%s", create.Body.String())
+
+	line := map[string]any{
+		"id": "l", "type": "line", "x": 0, "y": 0, "version": 1, "versionNonce": 1, "points": [][]float64{{0, 0}, {50, 0}},
+		"routing": "elbow", "startBinding": map[string]any{"elementId": "a", "fixedPoint": []float64{1, 0.5}},
+		"endBinding": map[string]any{"elementId": "b"},
+	}
+	label := map[string]any{"id": "l-label", "type": "text", "x": 0, "y": 0, "text": "go", "version": 1, "versionNonce": 1, "containerId": "l"}
+	stroke := map[string]any{"id": "f", "type": "freedraw", "x": 0, "y": 0, "version": 1, "versionNonce": 1, "points": [][]float64{{0, 0}, {5, 5}},
+		"routing": "curved", "startBinding": map[string]any{"elementId": "a"}}
+	box := rect("r", 1, 1, 0)
+	box["routing"], box["containerId"] = "elbow", "a"
+	box["startBinding"] = map[string]any{"elementId": "a"}
+	patch := serve(http.MethodPatch, "/api/boards/wired", map[string]any{"elements": []any{line, label, stroke, box}})
+	require.Equal(t, http.StatusOK, patch.Code, "body=%s", patch.Body.String())
+
+	read := func() map[string]map[string]any {
+		rec := serve(http.MethodGet, "/api/boards/wired", nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var doc struct {
+			Elements []map[string]any `json:"elements"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &doc))
+		byID := map[string]map[string]any{}
+		for _, e := range doc.Elements {
+			byID[e["id"].(string)] = e
+		}
+		return byID
+	}
+	byID := read()
+	assert.Equal(t, "elbow", byID["l"]["routing"])
+	assert.Equal(t, map[string]any{"elementId": "a", "fixedPoint": []any{1.0, 0.5}}, byID["l"]["startBinding"])
+	assert.Equal(t, map[string]any{"elementId": "b"}, byID["l"]["endBinding"])
+	assert.Equal(t, "l", byID["l-label"]["containerId"])
+	assert.Contains(t, byID["f"], "startBinding", "a stroke can start on a shape")
+	assert.NotContains(t, byID["f"], "routing", "a stroke has no line routing")
+	for _, key := range []string{"routing", "containerId", "startBinding"} {
+		assert.NotContains(t, byID["r"], key, "a box is no connector or label")
+	}
+
+	for name, bad := range map[string]map[string]any{
+		"routing": {"routing": "zigzag"},
+		"short":   {"startBinding": map[string]any{"elementId": "a", "fixedPoint": []float64{0}}},
+	} {
+		el := map[string]any{"id": "bad", "type": "arrow", "x": 0, "y": 0, "version": 1, "versionNonce": 1, "points": [][]float64{{0, 0}, {5, 0}}}
+		for k, v := range bad {
+			el[k] = v
+		}
+		rec := serve(http.MethodPatch, "/api/boards/wired", map[string]any{"elements": []any{el}})
+		assert.Equal(t, http.StatusBadRequest, rec.Code, name)
+	}
+	badLabel := map[string]any{"id": "bad", "type": "text", "x": 0, "y": 0, "text": "x", "version": 1, "versionNonce": 1, "containerId": "no spaces"}
+	rec := serve(http.MethodPatch, "/api/boards/wired", map[string]any{"elements": []any{badLabel}})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// A snap point just off the box, as a pasted file may hold, is pulled onto it.
+	off := map[string]any{"id": "off", "type": "arrow", "x": 0, "y": 0, "version": 1, "versionNonce": 1, "points": [][]float64{{0, 0}, {5, 0}},
+		"startBinding": map[string]any{"elementId": "a", "fixedPoint": []float64{1.04, -0.5}}}
+	rec = serve(http.MethodPatch, "/api/boards/wired", map[string]any{"elements": []any{off}})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, map[string]any{"elementId": "a", "fixedPoint": []any{1.0, 0.0}}, read()["off"]["startBinding"])
+
+	// Deleting the line and undoing that brings it back whole.
+	gone := map[string]any{"id": "l", "type": "line", "version": 2, "versionNonce": 2, "isDeleted": true}
+	rec = serve(http.MethodPatch, "/api/boards/wired", map[string]any{"elements": []any{gone}, "steps": [][]any{{map[string]any{"id": "l", "before": line}}}})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	require.NotContains(t, read(), "l")
+	rec = serve(http.MethodPost, "/api/boards/wired/undo", map[string]any{})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	back := read()["l"]
+	assert.Equal(t, "elbow", back["routing"])
+	assert.Equal(t, map[string]any{"elementId": "a", "fixedPoint": []any{1.0, 0.5}}, back["startBinding"])
+}
+
 func TestBoardsTombstoneKeepsItsAuthor(t *testing.T) {
 	_ = newFlow(t)
 	enableCollab(t)
