@@ -638,7 +638,8 @@ test('footer open PR titles open the PR details card unless turned off', async (
   assert.ok(card, 'the shared PR details card opens on the title');
   assert.match(card.querySelector('.prd-title').textContent, /Hover me\s+#4/);
   assert.equal(card.querySelector('.prd-repo').textContent.trim(), 'acme/app');
-  await harness.act(() => harness.fireEvent(hoverRoot(), 'mouseleave'));
+  // mouseleave does not bubble: this leaves the card, not the open popover.
+  await harness.act(() => hoverRoot().dispatchEvent(new (hoverRoot().ownerDocument.defaultView.Event)('mouseleave')));
   // The card lingers briefly after the pointer leaves; wait that out so the
   // Escape below reaches a title with no card open.
   const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/pr-checks-hover.js');

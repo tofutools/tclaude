@@ -11,6 +11,7 @@ import { usageView } from './shell-model.js';
 import { featureNeeds, featureState, needsSuffix } from './peer-view-limits.js';
 import { LockReason } from './lock-reason.js';
 import { dashPrefs } from './prefs.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 export const USAGE_NODE_PREF = 'tclaude.dash.headerUsageNode';
@@ -88,17 +89,7 @@ export function useUsageNode({ nodes, selfID, fetchImpl = (...a) => globalThis.f
 export function UsageNodePill({ nodes, selected, onSelect, peakOf, onOpen }) {
   const [open, setOpen] = useState(false);
   const root = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => { if (!root.current?.contains(event.target)) setOpen(false); };
-    const key = (event) => { if (event.key === 'Escape') setOpen(false); };
-    globalThis.document?.addEventListener('pointerdown', close, true);
-    globalThis.document?.addEventListener('keydown', key);
-    return () => {
-      globalThis.document?.removeEventListener('pointerdown', close, true);
-      globalThis.document?.removeEventListener('keydown', key);
-    };
-  }, [open]);
+  useDismissablePopover(root, open, () => setOpen(false));
   const node = nodes.find((n) => n.id === selected) || nodes[0];
   const label = (n) => `${n.local ? '⌂ ' : ''}${n.name}`;
   return html`<span class="usage-node" ref=${root}>

@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { NOTIFY_TYPES, NOTIFY_DELIVERIES } from './notify-state.js';
 import { browserNotifyPermission } from './browser-notify.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -43,24 +44,7 @@ export function NotifyApp({ state, actions, documentRef = document }) {
   const current = state.view.value;
   const { settings } = current;
 
-  // These listeners are document-scoped because pointerdown outside the island
-  // and Escape must dismiss it. The effect cleanup is essential: shell islands
-  // can be unmounted independently during a failed mount rollback or pagehide.
-  useEffect(() => {
-    const onPointerDown = (event) => {
-      if (!state.open.value || rootRef.current?.contains(event.target)) return;
-      actions.close();
-    };
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape' && state.open.value) actions.close();
-    };
-    documentRef.addEventListener('pointerdown', onPointerDown);
-    documentRef.addEventListener('keydown', onKeyDown);
-    return () => {
-      documentRef.removeEventListener('pointerdown', onPointerDown);
-      documentRef.removeEventListener('keydown', onKeyDown);
-    };
-  }, [actions, documentRef, state]);
+  useDismissablePopover(rootRef, current.open, () => actions.close(), { doc: documentRef });
 
   const bellTitle = current.bellEnabled
     ? 'Notifications ON — click to choose which notifications you want'

@@ -37,6 +37,7 @@ import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -154,8 +155,15 @@ function without(set, value) {
 // How recently a key in the terminal counts as still typing when a cue lands.
 const CUE_TYPING_WINDOW_MS = 3000;
 
-function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, onClose, busy }) {
+function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, onClose, busy, trigger }) {
   const [filter, setFilter] = useState('');
+  const menuRef = useRef(null);
+  const filterRef = useRef(null);
+  useEffect(() => { filterRef.current?.focus(); }, []);
+  useDismissablePopover([menuRef, trigger], true, (why) => {
+    onClose();
+    if (why !== 'outside') trigger.current?.focus();
+  });
   const candidates = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     return [...agents.values()]
@@ -164,26 +172,13 @@ function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, 
       .sort((a, b) => (b.scribe - a.scribe) || a.name.localeCompare(b.name))
       .slice(0, 40);
   }, [agents, tabs, steward, filter]);
-  useEffect(() => {
-    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
-    // The + button toggles the menu itself.
-    const onPointer = (event) => {
-      if (!event.target?.closest?.('.companion-menu, .companion-add')) onClose();
-    };
-    globalThis.addEventListener?.('keydown', onKey);
-    globalThis.document?.addEventListener('pointerdown', onPointer, true);
-    return () => {
-      globalThis.removeEventListener?.('keydown', onKey);
-      globalThis.document?.removeEventListener('pointerdown', onPointer, true);
-    };
-  }, [onClose]);
   const stewardPinned = steward && tabs.includes(steward.agentId);
-  return html`<div class="companion-menu" role="menu" aria-label="Add a companion">
+  return html`<div ref=${menuRef} class="companion-menu" role="menu" aria-label="Add a companion">
     ${!stewardPinned && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
     </button>`}
-    <input type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
+    <input ref=${filterRef} type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
       value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
     <div class="companion-menu-list">
       ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" onClick=${() => onPin(agent.agentId)}>
@@ -278,6 +273,7 @@ export function CompanionApp({
   });
   const [guide, setGuide] = useState(null);
   const [menu, setMenu] = useState(false);
+  const addRef = useRef(null);
   const [busy, setBusy] = useState(false);
   // The Steward just shut down, { agentId, name }. It reads as gone from here
   // on: the snapshot can still show it online for a poll.
@@ -1371,7 +1367,7 @@ export function CompanionApp({
           <button type="button" role="tab" aria-selected=${showQueue ? 'true' : 'false'} title="Decisions agents are waiting on"
             onClick=${() => setDeciding((v) => !v)}><span class="companion-decide-mark" aria-hidden="true">◆</span><span>${queue.length} to decide</span></button>
         </div>`}
-        <button type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${menu ? 'true' : 'false'}
+        <button ref=${addRef} type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${menu ? 'true' : 'false'}
           title=${`Summon ${stewardLabel} or pin a live agent`} onClick=${() => setMenu((v) => !v)}>＋</button>
       </div>
       <div class="companion-controls">
@@ -1397,7 +1393,7 @@ export function CompanionApp({
       </div>
     </header>
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
-      stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
+      stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} trigger=${addRef} />`}
     <div class="companion-body">
       ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
         ${activeApprovals.length > 0 && html`<p class="companion-decide-note" role="status">${activeAgent.name} also has

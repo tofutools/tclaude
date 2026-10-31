@@ -2,9 +2,10 @@
 // companion tab and the quick permissions panel, and the way to raise that
 // panel. Dependency-light so a terminal tab can raise it too.
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { approvalSummary, stewardSummonBody, timeLeft } from './companion-model.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -94,6 +95,8 @@ export function StewardShutdown({ agent, fetchImpl, onDown }) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const rootRef = useRef(null);
+  useDismissablePopover(rootRef, asking, () => setAsking(false), { hold: () => busy || !!error });
   async function confirm() {
     setBusy(true);
     setError('');
@@ -107,11 +110,10 @@ export function StewardShutdown({ agent, fetchImpl, onDown }) {
       setBusy(false);
     }
   }
-  return html`<span class="steward-shutdown">
+  return html`<span ref=${rootRef} class="steward-shutdown">
     <button type="button" class="steward-shutdown-open" aria-label=${`Shut down ${agent.name}`} aria-expanded=${asking ? 'true' : 'false'}
       title="Shut down: end this conversation" onClick=${() => { setError(''); setAsking((value) => !value); }}>⏻</button>
-    ${asking && html`<div class="steward-shutdown-confirm" role="alertdialog" aria-label=${`Shut down ${agent.name}?`}
-      onKeyDown=${(event) => { if (event.key === 'Escape') setAsking(false); }}>
+    ${asking && html`<div class="steward-shutdown-confirm" role="alertdialog" aria-label=${`Shut down ${agent.name}?`}>
       <p><b>Shut down ${agent.name}?</b> This ends its conversation and what was given to this Steward only. Grants for all future Stewards are kept. You can start a new one afterwards.</p>
       ${error && html`<p class="steward-shutdown-error" role="alert">${error}</p>`}
       <div class="steward-shutdown-actions">

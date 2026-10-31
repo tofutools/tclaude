@@ -25,6 +25,7 @@ import {
 } from './board-model.js';
 import { BoardMinimap } from './board-minimap.js';
 import { companionAgents } from './companion-model.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -221,6 +222,8 @@ export function BoardEditor({
   const setEditingText = (value) => { editingRef.current = value; setEditingTextState(value); };
   const [flash, setFlash] = useState(() => new Set());
   const [invite, setInvite] = useState(false);
+  const inviteRef = useRef(null);
+  useDismissablePopover(inviteRef, invite, () => setInvite(false));
   const svgRef = useRef(null);
   const pending = useRef(new Map()); // id -> element awaiting PATCH
   const saving = useRef(0); // PATCHes in flight
@@ -1376,7 +1379,7 @@ export function BoardEditor({
             <button type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
           </span>`;
         })}
-        <span class="board-invite-wrap">
+        <span class="board-invite-wrap" ref=${inviteRef}>
           <button type="button" class="board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent</button>
           ${invite && html`<div class="board-invite-menu" role="menu">
             ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)

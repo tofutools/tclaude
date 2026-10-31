@@ -13,7 +13,7 @@ func TestDashboardHTML_SpawnSandboxHelpUsesNativeTooltips(t *testing.T) {
 		"aria-label=${name}":               "the caveat variant renames itself, so the [!] is not a sighted-only cue",
 		`.spawn-field-help-trigger.warn {`: "a caveat trigger paints differently from ordinary field help",
 		`aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'}`:               "disclosure publishes expanded state",
-		`<span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}`: "only explicitly opened help joins the tab order",
+		`<span ref=${descriptionRef} id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}`: "only explicitly opened help joins the tab order",
 		`<label class="cron-create-label" for=${id}>`:                                           "selector retains an explicit label",
 		`title=${help} aria-describedby=${help ? descriptionID : null}`:                         "select receives native and accessible help, with no dangling reference while help is empty",
 		`descriptionID="agent-spawn-sandbox-profile-preview"`:                                   "sandbox-profile preview keeps its stable id",

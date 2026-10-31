@@ -695,7 +695,7 @@ test('native group and member menus share dismissal, focus, flip and publish sta
   assert.equal(memberMenu.classList.contains('open'), false, 'a menu item dismisses its menu');
 
   await harness.act(() => harness.fireEvent(memberCog, 'click'));
-  await harness.act(() => harness.fireEvent(harness.document.body, 'click'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
   assert.equal(memberMenu.classList.contains('open'), false, 'outside click dismisses the menu');
 
   await harness.act(() => harness.fireEvent(groupCog, 'click'));
