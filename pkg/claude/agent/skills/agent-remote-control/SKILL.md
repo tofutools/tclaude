@@ -49,7 +49,8 @@ Self remote-control is opt-in. The fastest path is
 `tclaude setup --install-default-agent-permissions`, which grants
 `self.remote-control` (alongside the other self-lifecycle default slugs —
 `self.rename`, `self.compact`, `self.clone`,
-`self.schedule`) as defaults in one shot. Manual alternatives:
+`self.schedule`, `self.interrupt`, `self.task`, `self.pr`, `self.tags`,
+`self.dir-repair`, `self.process`) as defaults in one shot. Manual alternatives:
 
 **Option 1 — globally for every agent.** Either edit
 `~/.tclaude/config.json`:
@@ -195,8 +196,9 @@ Auth model: the caller passes if EITHER
 
 - they hold the `agent.remote-control` slug (default human-only — granted
   via `tclaude agent permissions grant <caller> agent.remote-control`), OR
-- they own at least one group that contains the target (mirrors how
-  `tclaude agent message` already special-cases group owners).
+- they hold the `groups.members.remote-control` slug on every active group containing the
+  target; owning a group gives you that slug for that group, so owning one of
+  two groups is not enough.
 
 The response includes `caller_conv` / `caller_agent_id` so the target's
 audit trail records who acted. `--ask-human` is **not** honored on the

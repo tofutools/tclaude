@@ -2,7 +2,7 @@
 name: agent-schedule
 description: >-
   Schedule recurring nudges and check-ins via `tclaude agent cron {ls, add, rm,
-  logs}`. The agentd scheduler ticks every 30s, discards offline ticks by
+  logs, enable, disable, run-now}`. The agentd scheduler ticks every 30s, discards offline ticks by
   default, and can opt jobs into durable offline delivery. Use
   to set up periodic status pings to peer agents (e.g. a
   Product Owner agent pinging workers every 10 minutes), self-check-ins, or any
@@ -33,6 +33,10 @@ human input is still online: its accepted nudge waits until the pane is safe.
 | `tclaude agent cron add --cron "*/5 * * * *" --body "..."` | Same, but on a cron expression instead of a fixed interval (mutually exclusive with `--interval`). Standard 5-field syntax plus `@hourly`/`@daily`/…; evaluated in the daemon's local timezone unless prefixed `CRON_TZ=<zone>`. |
 | `tclaude agent cron add --interval 10m --run-immediately --body "..."` | Opt into exactly one immediate first fire, then continue from that fire on the normal cadence. Omit the flag to wait. |
 | `tclaude agent cron add --interval 10m --queue-when-offline --body "..."` | Persist ticks for offline recipients. By default offline ticks are discarded so stale scheduled nudges do not build up. |
+| `tclaude agent cron add --target group:NAME [--role R] --interval 10m --body "..."` | Deliver to a whole group, or one role in it (needs `groups.messages.schedule`) |
+| `tclaude agent cron add --action spawn --spawn-profile P --instruction "..." --interval 1h` | Start a worker per tick instead of sending a message. Gated by `features.triggers`. |
+| `tclaude agent cron disable <id>`, `enable <id>`            | Pause and resume a job without deleting it |
+| `tclaude agent cron run-now <id>`                           | Fire a job now, without waiting for its next tick |
 | `tclaude agent cron rm <id>`                                | Delete a job by ID (from `cron ls`)                                                   |
 | `tclaude agent cron logs <id> [--limit N]`                  | Show recent fires (newest first), including `ok`, `skipped_offline`, `partial_offline`, and failure statuses. |
 
@@ -41,11 +45,12 @@ human input is still online: its accepted nudge waits until the pane is safe.
 | Slug              | Default-granted | What it covers                                                                                       |
 |-------------------|-----------------|------------------------------------------------------------------------------------------------------|
 | `self.schedule`   | yes             | Manage your own scheduled jobs (target == you).                                                      |
-| `agent.schedule`  | no              | Manage jobs targeting ANOTHER agent. Group owners can manage jobs on members they own without this. |
+| `agent.schedule`  | no              | Manage jobs targeting ANOTHER agent. `groups.members.schedule` on every group containing the target also works. |
 
 `self.schedule` is seeded by `tclaude setup --install-default-agent-permissions`
 alongside the other self-lifecycle default slugs (`self.rename`,
-`self.compact`, `self.clone`, `self.remote-control`). Self-reincarnation needs no slug.
+`self.compact`, `self.clone`, `self.remote-control`, `self.interrupt`, `self.task`,
+`self.pr`, `self.tags`, `self.dir-repair`, `self.process`). Self-reincarnation needs no slug.
 
 ## When to use
 
@@ -139,9 +144,10 @@ tclaude agent cron add \
   --body "Self-check: do you still know your task?"
 ```
 
-Group owners get this for free on members of groups they own — the
-same "implicit power" rule used by `agent.reincarnate`,
-`agent.compact`, `agent.rename`, etc.
+The alternative is `groups.members.schedule` on every active group containing
+the target. Ownership contributes that slug for owned groups, so owning one of
+two groups is not enough. The same rule applies to `agent.reincarnate`,
+`agent.compact`, `agent.rename` and the like.
 
 ## Delivery semantics
 

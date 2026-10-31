@@ -176,6 +176,6 @@ The human opens the dashboard (`tclaude agent dashboard`) and the
 **Messages** tab. Messages are listed newest-first with sender, group,
 subject, body, and a read/unread marker; the human marks them read,
 focuses the sending agent's window, or clears read messages. There is
-reply button too: a reply, or the pick on a decision, comes back to your
+a reply button too: a reply, or the pick on a decision, comes back to your
 inbox. The focus button opens your window so the human can talk to you
 there.
