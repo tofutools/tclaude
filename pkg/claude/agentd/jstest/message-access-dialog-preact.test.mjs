@@ -467,6 +467,15 @@ test('granting sends the duration, reason and scope, and keeps the draft when it
   await mounted.unmount();
 });
 
+test('a slug the agent already holds offers no scope: it would narrow, not elevate', async (t) => {
+  const harness = await createPreactHarness(t);
+  const current = { ...sudoSnapshot(), permissions: { defaults: ['groups.members.spawn'], overrides: {} } };
+  const { host, mounted } = await mountSudo(harness, sudoActions(), current);
+  await pickSudo(harness, host, 'groups.members.spawn');
+  assert.equal(!!sudoRow(host, 'groups.members.spawn').querySelector('button.perm-scope-twisty'), false);
+  await mounted.unmount();
+});
+
 test('a duration over the maximum or unreadable says so and cannot be granted', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, mounted } = await mountSudo(harness, sudoActions());

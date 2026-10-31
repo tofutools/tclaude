@@ -9,7 +9,7 @@ import { openWebWindowPane, registerTerminalShellController } from './terminals-
 import { bindTerminalNavRouting } from './terminal-nav-route.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
-import { bindTerminalHandoffReceiver, encodeTerminalOpenHash } from './terminal-handoff.js';
+import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
@@ -416,9 +416,13 @@ function TerminalPane({
 
 const fetchFromPage = (...args) => globalThis.fetch(...args);
 
-// StewardDownNotice is a detached Steward window after its shut down: the
-// terminal has ended, so it offers the new one here. Loading the page anew, not
-// swapping the hash, is what gives the new agent a clean terminal.
+// The page is going away by script and must not ask first.
+const TERMINAL_LEAVING_EVENT = 'tclaude:terminal-leaving';
+
+// StewardDownNotice is a detached Steward window after its shut down. The new
+// Steward lives in the dashboard's companion, not here: the companion would
+// attach it anyway, and a terminal has one attach, so this window would lose it.
+// With no dashboard behind it, this window becomes one.
 function StewardDownNotice({ pane, actions }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -427,13 +431,16 @@ function StewardDownNotice({ pane, actions }) {
     setError('');
     try {
       const result = await requestStewardSummon(fetchFromPage);
-      const agent = String(result.agent_id || '');
-      if (!agent) throw new Error('the summon returned no agent id');
+      if (!result.agent_id) throw new Error('the summon returned no agent id');
       await actions.closePane(pane.key, { skipDetach: true });
-      globalThis.location.replace(`/terminals?solo=1&steward=${encodeURIComponent(agent)}${encodeTerminalOpenHash({
-        ...pane.seed, ws: `/api/open-window-ws/${encodeURIComponent(agent)}`, key: `window:${agent}`,
-        hideConv: agent, agent, label: result.name || 'steward', harness: '', initialRetry: true,
-      })}`);
+      // The pane is gone, but its unload guard only lifts after the next paint.
+      window.dispatchEvent(new Event(TERMINAL_LEAVING_EVENT));
+      if (window.opener && !window.opener.closed) {
+        try { window.opener.focus(); } catch (_) { /* browser focus is best-effort */ }
+        window.close();
+      } else {
+        window.location.replace('/');
+      }
     } catch (cause) {
       setError(`Could not start a new Steward: ${cause?.message || cause}`);
       setBusy(false);
@@ -1685,15 +1692,17 @@ function TerminalTabs({
       event.preventDefault();
       event.returnValue = true;
     };
-    const disarmForAuth = () => {
+    const disarm = () => {
       if (!armed) return;
       armed = false;
       window.removeEventListener('beforeunload', confirmUnload);
     };
     window.addEventListener('beforeunload', confirmUnload);
-    window.addEventListener('tclaude:auth-expired', disarmForAuth);
+    window.addEventListener('tclaude:auth-expired', disarm);
+    window.addEventListener(TERMINAL_LEAVING_EVENT, disarm);
     return () => {
-      window.removeEventListener('tclaude:auth-expired', disarmForAuth);
+      window.removeEventListener('tclaude:auth-expired', disarm);
+      window.removeEventListener(TERMINAL_LEAVING_EVENT, disarm);
       window.removeEventListener('beforeunload', confirmUnload);
     };
   }, [confirmsReload]);

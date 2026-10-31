@@ -654,8 +654,9 @@ running.
 ⏻ shuts the Steward down, after asking: it ends the conversation and retires
 the agent, so its grants and sudo end with it, and the window then offers
 **Start a new Steward**. A new one is a fresh agent; the old conversation stays
-in history. A detached Steward window has the same ⏻ in its header and offers
-the new Steward in place.
+in history. A detached Steward window has the same ⏻ in its header; its
+**Start a new Steward** closes the window and the new one opens in the
+companion.
 While an agent in the window holds elevated access, its tab and chip show 🔓
 and a band above its terminal lists it: sudo grants with their time left and,
 for a live Steward, anything else beyond what Config gives it. **End now**
@@ -936,7 +937,8 @@ Three subtabs:
   a Steward. It groups permissions by area, keeps its search above the list and
   the duration and Grant button below it, marks risky permissions, and says why
   a slug is refused. Picked permissions can be narrowed with scopes like any
-  grant. **Active now** lists what the agent already holds, with time left,
+  grant, except one the agent already holds: a scoped sudo would replace what
+  it has for the whole window. **Active now** lists what the agent already holds, with time left,
   **+duration** to extend and **Revoke**. Limits are the server's: the default
   is 5 minutes, the maximum 1 hour counted from now (extensions included), and
   permissions.grant/revoke are blocklisted. `agent.sudo` in config changes them.

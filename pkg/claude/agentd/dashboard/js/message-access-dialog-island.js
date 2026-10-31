@@ -1018,8 +1018,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     // exactly that and left alone: it authorizes nothing today, and the one
     // thing the editor must not do is quietly rewrite it into a blanket grant.
     const unreadableScope = unreadable.has(row.slug) && currentEffect(row.slug) === 'grant';
+    // A scoped sudo replaces what a slug already gives at the gate, so on a slug
+    // the agent holds it would narrow it for the whole window, not elevate it.
     const scopable = !unreadableScope && scopesEditable && !!row.scope_dims?.length
-      && currentEffect(row.slug) === 'grant';
+      && currentEffect(row.slug) === 'grant' && !(sudoMode && row.granted);
     const effText = sudoMode
       ? (row.granted ? `already held: ${row.sources.join(' + ')}` : 'not held now')
       : groupMode
