@@ -76,3 +76,49 @@ func TestTakeSudoUse_UnlimitedGrantIsNotCounted(t *testing.T) {
 	assert.False(t, limited)
 	assert.False(t, taken)
 }
+
+// Two live Stewards hold a copy each of one stored grant, and share its count.
+func TestTakeSudoUse_CopiesOfAStoredGrantShareOneCount(t *testing.T) {
+	setupTestDB(t)
+	id := insertLimitedSudoGrant(t, 3)
+	require.NoError(t, CarrySudoGrant(id))
+	grant, err := GetSudoGrant(id)
+	require.NoError(t, err)
+
+	const other = "uses-aaaa-bbbb-cccc-2222"
+	otherAgent, _, err := EnsureAgentForConv(other, "test")
+	require.NoError(t, err)
+	stored, err := ListActiveStewardCarriedSudo()
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	second, err := InheritStewardCarriedSudo(otherAgent, stored[0], "test")
+	require.NoError(t, err)
+
+	var taken int
+	for _, grantID := range []int64{grant.ID, second, grant.ID, second, grant.ID, second} {
+		_, ok, err := TakeSudoUse(grantID)
+		require.NoError(t, err)
+		if ok {
+			taken++
+		}
+	}
+	assert.Equal(t, 3, taken)
+}
+
+func TestGroupExportKeepsSudoUseLimits(t *testing.T) {
+	setupTestDB(t)
+	id := insertLimitedSudoGrant(t, 5)
+	_, ok, err := TakeSudoUse(id)
+	require.NoError(t, err)
+	require.True(t, ok)
+	grant, err := GetSudoGrant(id)
+	require.NoError(t, err)
+
+	d, err := Open()
+	require.NoError(t, err)
+	exported, err := collectSudoGrants(d, []string{grant.ConvID})
+	require.NoError(t, err)
+	require.Len(t, exported, 1)
+	assert.Equal(t, int64(5), exported[0].UsesLimit)
+	assert.Equal(t, int64(4), exported[0].UsesLeft)
+}

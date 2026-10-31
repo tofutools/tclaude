@@ -235,11 +235,12 @@ and is recorded as `sudo.extend`.
 
 A dashboard grant of `agent.spawn` or `groups.members.spawn` can also carry a use
 limit, for example any group for 10 minutes, at most 5 agents. The daemon takes
-one use atomically when the spawn passes its permission check, so parallel spawns
-cannot exceed the limit, and gives it back if the spawn is refused or fails before
-it starts. A spawn that started and later died has used its count. Uses are only
-spent where sudo is what allowed the spawn. Triggers and remote spawns cannot
-count, so they refuse a use-limited grant.
+one use atomically just before the launch, so parallel spawns cannot exceed the
+limit, and gives it back if the launch fails. A spawn that started and later died
+has used its count, and so has one whose pane was not seen to come up in time. Uses
+are only spent where sudo is what allowed the spawn. Triggers and schedules cannot
+count, so they refuse a use-limited grant, and a grant scoped to a peer takes no
+limit because remote spawns cannot count either.
 
 ## Asking the human at the moment of denial
 

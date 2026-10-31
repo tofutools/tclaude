@@ -2236,6 +2236,10 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("uses for %s must be between 1 and %d", slug, maxSudoUses), http.StatusBadRequest)
 			return
 		}
+		if scope, err := permissionScopeForEval(scopes[slug]); err != nil || len(scope[ScopeDimPeer]) != 0 {
+			http.Error(w, "a use limit covers local spawns only, so "+slug+" cannot have one with a peer scope", http.StatusBadRequest)
+			return
+		}
 	}
 	dur, ok := resolveSudoDuration(w, body.Duration, policy)
 	if !ok {

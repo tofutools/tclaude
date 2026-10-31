@@ -368,8 +368,8 @@ func TakeSudoUse(id int64) (limited, taken bool, err error) {
 		return false, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var limit int64
-	if err := tx.QueryRow(`SELECT uses_limit FROM agent_sudo_grants WHERE id = ?`, id).Scan(&limit); err != nil {
+	var limit, carried int64
+	if err := tx.QueryRow(`SELECT uses_limit, carried_id FROM agent_sudo_grants WHERE id = ?`, id).Scan(&limit, &carried); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, false, nil
 		}
@@ -387,9 +387,17 @@ func TakeSudoUse(id int64) (limited, taken bool, err error) {
 	if n == 0 {
 		return true, false, nil
 	}
-	if _, err := tx.Exec(`UPDATE steward_carried_sudo SET uses_left = uses_left - 1
-		WHERE uses_left > 0 AND id = (SELECT carried_id FROM agent_sudo_grants WHERE id = ?)`, id); err != nil {
-		return true, false, err
+	// Two live Stewards each hold a copy of a stored grant, so the stored row is
+	// the count they share: when it is out, this copy is out too.
+	if carried > 0 {
+		res, err := tx.Exec(`UPDATE steward_carried_sudo SET uses_left = uses_left - 1
+			WHERE id = ? AND uses_left > 0`, carried)
+		if err != nil {
+			return true, false, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return true, false, nil
+		}
 	}
 	return true, true, tx.Commit()
 }

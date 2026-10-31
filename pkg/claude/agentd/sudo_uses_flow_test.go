@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -125,4 +126,64 @@ func TestSudoUses_NewStewardNeverRefillsAStoredGrant(t *testing.T) {
 	require.True(t, taken)
 	c.shutDown(second)
 	assert.Empty(t, c.sudoSlugs(c.summon()), "a used-up grant is not handed on")
+}
+
+// A launch that never happened spawned nothing.
+func TestSudoUses_LaunchFailureGivesItsUseBack(t *testing.T) {
+	f := newFlow(t)
+	lead := spawnCapableLead(t, f)
+	id := haveLimitedSpawnSudo(t, lead, 1)
+	previous := agentd.Spawn
+	agentd.Spawn = &failingBundleSpawner{}
+	t.Cleanup(func() { agentd.Spawn = previous })
+
+	failed := spawnAttempt(t, f, lead, "alpha", "one")
+	require.NotEqualf(t, http.StatusOK, failed.Code, "body=%s", failed.Body)
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id))
+}
+
+// A scribe summon is a spawn, and a limit reaches it. A forged decision header
+// must not spend someone else's grant.
+func TestSudoUses_ScribeSummonCounts(t *testing.T) {
+	f := newFlow(t)
+	lead := spawnCapableLead(t, f)
+	id := haveLimitedSpawnSudo(t, lead, 1)
+	stubScribeTerminal(t)
+	require.NoError(t, db.SetAgentPermissionOverride(lead, agentd.PermPermissionsGrant, db.PermEffectGrant, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(lead, agentd.PermAgentStop, db.PermEffectGrant, "test"))
+
+	const victim = "sudouses-aaaa-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(victim, "victim")
+	other := haveLimitedSpawnSudo(t, victim, 1)
+
+	summon := func(name string) *http.Request {
+		r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+			map[string]any{"name": name, "brief": "Help.", "slugs": []string{agentd.PermAgentStop}}), lead)
+		r.Header.Set("X-Tclaude-Internal-Authorized-Sudo-Grant", strconv.FormatInt(other, 10))
+		return r
+	}
+	first := testharness.Serve(f.Mux, summon("helper-one"))
+	require.Equalf(t, http.StatusOK, first.Code, "body=%s", first.Body.String())
+	assert.Equal(t, int64(0), sudoUsesLeft(t, id))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, other), "only the caller's own grant is spent")
+
+	over := testharness.Serve(f.Mux, summon("helper-two"))
+	assert.Equalf(t, http.StatusForbidden, over.Code, "body=%s", over.Body.String())
+}
+
+// Remote spawns do not pass the reservation, so the pair cannot be granted.
+func TestSudoUses_PeerScopeTakesNoLimit(t *testing.T) {
+	fh := newFedHarness(t)
+	const conv = "sudouses-aaaa-bbbb-cccc-000000000003"
+	fh.f.HaveConvWithTitle(conv, "worker")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+
+	rec := testharness.Serve(dashMessageMux(t), testharness.JSONRequest(t, http.MethodPost, "/api/sudo", map[string]any{
+		"agent_id": agentID, "slugs": []string{agentd.PermGroupsMembersSpawn}, "duration": "5m",
+		"uses":   map[string]int{agentd.PermGroupsMembersSpawn: 3},
+		"scopes": map[string]any{agentd.PermGroupsMembersSpawn: map[string]any{"peer": []string{fh.peer.id.ID() + "/builders"}}},
+	}))
+	assert.Equalf(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "local spawns only")
 }
