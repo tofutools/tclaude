@@ -825,7 +825,7 @@ func TestSteward_ReconcileOfAStewardFromBeforeTheRecord(t *testing.T) {
 	conv := c.summon()
 	d, err := db.Open()
 	require.NoError(t, err)
-	_, err = d.Exec(`DELETE FROM steward_offered_permissions`)
+	_, err = d.Exec(`DELETE FROM steward_offered_permissions WHERE slug <> ?`, db.StewardRecordOpened)
 	require.NoError(t, err)
 	for _, slug := range []string{agentd.PermDashboardCapture, agentd.PermDashboardMark, agentd.PermHumanNotify} {
 		_, err = db.RevokeAgentPermission(conv, slug)
@@ -839,5 +839,23 @@ func TestSteward_ReconcileOfAStewardFromBeforeTheRecord(t *testing.T) {
 	effect, _ = stewardOverrideHeld(t, conv, agentd.PermDashboardMark)
 	assert.Equal(t, db.PermEffectGrant, effect)
 	_, held := stewardOverrideHeld(t, conv, agentd.PermHumanNotify)
+	assert.False(t, held)
+}
+
+// Scenario: an agent reaches the Steward's group and description some other way
+// than a summon. Those are not access, so reconcile gives it nothing.
+func TestSteward_ReconcileLeavesAnAgentThatWasNeverSummoned(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	conv := c.summon()
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`DELETE FROM steward_offered_permissions`)
+	require.NoError(t, err)
+	_, err = db.RevokeAgentPermission(conv, agentd.PermDashboardCapture)
+	require.NoError(t, err)
+
+	agentd.ReconcileStewardAccessForTest()
+
+	_, held := stewardOverrideHeld(t, conv, agentd.PermDashboardCapture)
 	assert.False(t, held)
 }

@@ -386,7 +386,7 @@ func reconcileStewardAccess(cfg *config.Config) {
 // reconcileResumingSteward catches a Steward up as it comes back: it may have
 // missed a Config change while it was down.
 func reconcileResumingSteward(conv string) {
-	if !slices.Contains(stewardConvs(), conv) {
+	if !collabRoutesEnabled() || !slices.Contains(stewardConvs(), conv) {
 		return
 	}
 	cfg, err := config.LoadShared()
@@ -401,7 +401,8 @@ func reconcileResumingSteward(conv string) {
 // and tells it, as its brief cannot. Offering a slug is what gets recorded, so
 // one the operator later removes by any route is simply not offered again, and
 // any override already on the slug stands. It only adds. A message to a Steward
-// that is not running waits for its resume.
+// that is not running waits for its resume. An agent with no record was not
+// summoned as a Steward, whatever its member description says, and gets nothing.
 func reconcileSteward(conv string, cfg *config.Config) {
 	agentID, err := db.AgentIDForConv(conv)
 	if err != nil || agentID == "" {
@@ -418,15 +419,21 @@ func reconcileSteward(conv string, cfg *config.Config) {
 		slog.Warn("steward: read offered permissions failed", "conv", short8(conv), "error", err)
 		return
 	}
+	if !offered[db.StewardRecordOpened] {
+		return
+	}
 	levels := stewardLevelSlugs(cfg)
-	if len(offered) == 0 {
+	if len(offered) == 1 {
 		// Summoned before the record existed.
+		var baseline []string
 		for _, slug := range levels {
 			if !slices.Contains(stewardSlugsBeforeRecords, slug) {
+				baseline = append(baseline, slug)
 				offered[slug] = true
 			}
 		}
-		if err := offerStewardPermissions(agentID, offered); err != nil {
+		if err := db.OfferStewardPermissions(agentID, baseline...); err != nil {
+			slog.Warn("steward: record offered permissions failed", "conv", short8(conv), "error", err)
 			return
 		}
 	}
@@ -443,7 +450,7 @@ func reconcileSteward(conv string, cfg *config.Config) {
 			}
 			added = append(added, slug)
 		}
-		if err := db.OfferStewardPermission(agentID, slug); err != nil {
+		if err := db.OfferStewardPermissions(agentID, slug); err != nil {
 			slog.Warn("steward: record offered permission failed", "conv", short8(conv), "slug", slug, "error", err)
 		}
 	}
@@ -456,29 +463,28 @@ func reconcileSteward(conv string, cfg *config.Config) {
 	}
 }
 
-func offerStewardPermissions(agentID string, slugs map[string]bool) error {
-	for slug := range slugs {
-		if err := db.OfferStewardPermission(agentID, slug); err != nil {
-			slog.Warn("steward: record offered permission failed", "slug", slug, "error", err)
-			return err
-		}
-	}
-	return nil
-}
-
-// recordStewardOffer notes at summon what a new Steward's levels gave it, so a
-// slug added later is known to be new.
-func recordStewardOffer(convID string, cfg *config.Config) {
+// recordStewardOffer opens a new Steward's record with what the summon gave it,
+// so a slug added later is known to be new. Birth grants can fail without
+// failing the spawn, and one that did was never offered.
+func recordStewardOffer(convID string, offered map[string]db.PermissionOverride) {
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil || agentID == "" {
 		slog.Warn("steward: resolve agent for offered permissions failed", "conv", short8(convID), "error", err)
 		return
 	}
-	slugs := map[string]bool{}
-	for _, slug := range stewardLevelSlugs(cfg) {
-		slugs[slug] = true
+	held, err := agentPermissionOverrides(convID)
+	if err != nil {
+		slog.Warn("steward: read overrides for offered permissions failed", "conv", short8(convID), "error", err)
 	}
-	_ = offerStewardPermissions(agentID, slugs)
+	slugs := []string{db.StewardRecordOpened}
+	for slug := range offered {
+		if held[slug].Effect == db.PermEffectGrant {
+			slugs = append(slugs, slug)
+		}
+	}
+	if err := db.OfferStewardPermissions(agentID, slugs...); err != nil {
+		slog.Warn("steward: record offered permissions failed", "conv", short8(convID), "error", err)
+	}
 }
 
 // stewardElevation is what a Steward holds beyond Config and the defaults,

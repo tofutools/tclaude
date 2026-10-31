@@ -163,15 +163,29 @@ func endCarriedSudo(tx *sql.Tx, where string, args ...any) error {
 	return err
 }
 
-// OfferStewardPermission records that a Steward's levels have given it a slug,
-// once. What the operator does with it afterwards is theirs.
-func OfferStewardPermission(agentID, slug string) error {
+// StewardRecordOpened is the row every Steward's record starts with. Alone, it
+// is a record with nothing in it yet.
+const StewardRecordOpened = ""
+
+// OfferStewardPermissions records that a Steward's levels have given it these
+// slugs, once and all together. What the operator does with them afterwards is
+// theirs.
+func OfferStewardPermissions(agentID string, slugs ...string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT OR IGNORE INTO steward_offered_permissions (agent_id, slug) VALUES (?, ?)`, agentID, slug)
-	return err
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, slug := range slugs {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO steward_offered_permissions (agent_id, slug) VALUES (?, ?)`, agentID, slug); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ListStewardOfferedPermissions returns what a Steward's levels have given it.

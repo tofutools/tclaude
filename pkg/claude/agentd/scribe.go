@@ -470,9 +470,7 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 		}
 	}
 	if scopeKey == stewardScopeKind+"/" {
-		if cfg, err := config.LoadShared(); err == nil {
-			recordStewardOffer(outcome.ConvID, cfg)
-		}
+		recordStewardOffer(outcome.ConvID, overrides)
 	}
 	// Sudo stands on the operator's approval, so only the operator's own summon
 	// passes it on: an agent could otherwise write a brief for a Steward holding
