@@ -21,3 +21,10 @@ test('writeClipboard says whether the text got there', async (t) => {
   doc.execCommand = () => false;
   assert.equal(await writeClipboard('hello'), false);
 });
+
+test('a menu that cannot read the clipboard blames plain HTTP only on a plain http page', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { clipboardReadNote } = await harness.importDashboardModule('js/insecure-origin.js');
+  assert.match(clipboardReadNote('Ctrl+V', { isSecureContext: false }), /over plain HTTP except on localhost\. Use Ctrl\+V/);
+  assert.doesNotMatch(clipboardReadNote('Ctrl+V', { isSecureContext: true }), /HTTP/);
+});

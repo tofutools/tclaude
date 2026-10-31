@@ -27,9 +27,13 @@ export const BROWSER_NOTIFY_IDLE_POLL_MS = 30000;
 
 const ENDPOINT = '/api/browser-notifications';
 
-// NOTIFICATIONS_NEED_SECURE_ORIGIN is what the operator is told when this page
+// notificationsUnsupportedNote is what the operator is told when this page
 // cannot raise a notification.
-export const NOTIFICATIONS_NEED_SECURE_ORIGIN = 'Browser notifications don’t work over plain HTTP except on localhost.';
+export function notificationsUnsupportedNote(win = globalThis) {
+  return win.isSecureContext === true
+    ? 'This browser can’t raise notifications.'
+    : 'Browser notifications don’t work over plain HTTP except on localhost.';
+}
 
 // notificationsUsable reports whether this browsing context can raise a
 // notification at all. Outside a secure context (an http:// dashboard reached

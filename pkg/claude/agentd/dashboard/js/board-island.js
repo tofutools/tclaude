@@ -24,6 +24,7 @@ import {
   QUICK_SHAPES, reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, stackOrder, suggestedShape, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
 import { BoardContextMenu } from './board-context-menu.js';
+import { clipboardReadNote } from './insecure-origin.js';
 import { BoardMinimap } from './board-minimap.js';
 import { BoardQuickMenu, QUICK_MENU_SIZE } from './board-quick-menu.js';
 import { companionAgents } from './companion-model.js';
@@ -1255,13 +1256,10 @@ export function BoardEditor({
     pasteText(text || copied.current);
   }
 
-  // A menu row cannot read the clipboard without a secure context, though the
-  // paste key can: only that key receives the text from the browser.
   function pasteItem(p, keys) {
     const run = () => pasteAt(p);
     if (win?.navigator?.clipboard?.readText) return { label: 'Paste here', keys, run };
-    const note = `The menu can’t read the clipboard over plain HTTP except on localhost. Use ${keys}.`;
-    return { label: copied.current ? 'Paste board copy here' : 'Paste here', keys, disabled: !copied.current, note, run };
+    return { label: copied.current ? 'Paste board copy here' : 'Paste here', keys, disabled: !copied.current, note: clipboardReadNote(keys, win), run };
   }
 
   function addShape(kind, p) {

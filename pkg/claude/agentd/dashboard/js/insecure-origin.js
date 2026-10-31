@@ -36,6 +36,14 @@ export function clipboardFailure(secureReason = 'the clipboard is not available 
     : secureReason;
 }
 
+// clipboardReadNote explains a menu that cannot read the clipboard: the paste
+// key still can, because only it receives the text from the browser.
+export function clipboardReadNote(keys, win = globalThis) {
+  return win.isSecureContext === true
+    ? `This browser can’t read the clipboard from a menu. Use ${keys}.`
+    : `The menu can’t read the clipboard over plain HTTP except on localhost. Use ${keys}.`;
+}
+
 // writeClipboard puts text on the clipboard and says whether it got there. Call
 // it from the click: the legacy copy needs the user's gesture.
 export async function writeClipboard(text) {
