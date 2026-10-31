@@ -3780,6 +3780,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				fmt.Sprintf("reply_to %q: %v", rt, rtErr))
 			return
 		}
+		// The briefing is from this actor, so its child could answer a Steward
+		// the spawner may not write to.
+		if spawnerConvID != "" && res.ConvID != spawnerConvID && isLiveSteward(res.ConvID) {
+			if _, _, ok := resolveMessageRouting(w, spawnerConvID, res.ConvID); !ok {
+				return
+			}
+		}
 		replyToConv = res.ConvID
 	}
 

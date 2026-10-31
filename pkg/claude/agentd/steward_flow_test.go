@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -68,6 +69,7 @@ func TestSteward_ReachableFromTheDashboard(t *testing.T) {
 	f.HaveGroup("team")
 	f.HaveMember("team", worker)
 	f.HaveAliveSession(worker, "stwd2", "tclaude-stwd2", f.TestCwd("work"))
+	require.NoError(t, db.GrantAgentPermission(worker, agentd.PermMessageDirect, "test"))
 	sent := postDashMessage(t, mux, map[string]any{"from": worker, "to": "steward", "body": "from a worker"})
 	require.Less(t, sent.Code, 300, sent.Body.String())
 	rows, err = db.ListAgentMessagesForConv(conv, 10)
@@ -75,9 +77,8 @@ func TestSteward_ReachableFromTheDashboard(t *testing.T) {
 	assert.Equal(t, "from a worker", rows[0].Body)
 }
 
-// A Steward's access comes from config, whatever the summon asks for, and any
-// agent can reach a live one.
-func TestSteward_AccessFromConfigAndReachableByAnyAgent(t *testing.T) {
+// A Steward's access comes from config, whatever the summon asks for.
+func TestSteward_AccessFromConfigAndAddress(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
 	enableCollab(t)
 	stubScribeTerminal(t)
@@ -116,8 +117,33 @@ func TestSteward_AccessFromConfigAndReachableByAnyAgent(t *testing.T) {
 	require.Equalf(t, http.StatusOK, spaced.Code, "summon body=%s", spaced.Body.String())
 	assert.False(t, has(decodeScribeResp(t, spaced).ConvID, agentd.PermNodeExec), "nor by spelling the scope differently")
 
-	assert.Less(t, send("steward"), 300, "the Steward has an address")
-	assert.Less(t, send(conv), 300, "and takes mail from any agent")
+	refused := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": "steward", "body": "done"}), worker))
+	assert.Equal(t, http.StatusForbidden, refused.Code, "a worker cannot write to the Steward first")
+	assert.Contains(t, refused.Body.String(), "tclaude agent reply", "and is told what it can do")
+	assert.Equal(t, http.StatusForbidden, send(conv), "nor by its conversation")
+	const teammate = "stwd-aaaa-bbbb-cccc-000000000003"
+	f.HaveMember("team", teammate)
+	f.HaveAliveSession(teammate, "stwt", "tclaude-stwt", f.TestCwd("team"))
+	viaCc := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": teammate, "cc": []string{"steward"}, "body": "copy"}), worker)
+	assert.Equal(t, http.StatusForbidden, testharness.Serve(f.Mux, viaCc).Code, "nor as a copy")
+
+	// Naming the Steward as a child's reply target would hand the child a
+	// briefing "from" it to answer.
+	require.NoError(t, db.GrantAgentPermission(worker, agentd.PermGroupsMembersSpawn, "test"))
+	forged := f.AsAgent(worker).SpawnWith("team", map[string]any{"name": "child", "initial_message": "Task", "reply_to": conv})
+	assert.Equal(t, http.StatusForbidden, forged.Code, "spawn body=%s", forged.Raw)
+
+	// The Steward wrote first, so the worker can answer, and the answer lands.
+	asked := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": worker, "body": "how is it going?"}), conv))
+	require.Lessf(t, asked.Code, 300, "steward send body=%s", asked.Body.String())
+	inbox, err := db.ListAgentMessagesForConv(worker, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, inbox)
+	answered := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, fmt.Sprintf("/v1/messages/%d/reply", inbox[0].ID), map[string]any{"body": "done"}), worker))
+	require.Lessf(t, answered.Code, 300, "reply body=%s", answered.Body.String())
+
+	require.NoError(t, db.GrantAgentPermission(worker, agentd.PermMessageDirect, "test"))
+	assert.Less(t, send("steward"), 300, "with message.direct the Steward has an address")
 	copied := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": conv, "cc": []string{"steward"}, "body": "copy"}), worker)
 	assert.NotEqual(t, http.StatusNotFound, testharness.Serve(f.Mux, copied).Code, "the address works in cc too")
 	rows, err := db.ListAgentMessagesForConv(conv, 10)
@@ -128,19 +154,12 @@ func TestSteward_AccessFromConfigAndReachableByAnyAgent(t *testing.T) {
 			delivered++
 		}
 	}
-	assert.Equal(t, 2, delivered, "the summon's brief is mail too")
+	assert.Equal(t, 2, delivered, "the answer and the send")
 
-	// Not an open door: only the Steward, only with Collab on.
-	const other = "stwd-aaaa-bbbb-cccc-000000000002"
-	f.HaveGroup("elsewhere")
-	f.HaveMember("elsewhere", other)
-	f.HaveAliveSession(other, "stwo", "tclaude-stwo", f.TestCwd("other"))
-	assert.Equal(t, http.StatusForbidden, send(other))
 	sessions, err := db.FindSessionsByConvID(conv)
 	require.NoError(t, err)
 	require.NotEmpty(t, sessions)
 	f.MarkOffline(sessions[0].TmuxSession)
-	assert.Equal(t, http.StatusForbidden, send(conv), "only a live Steward")
 
 	setSteward(t, config.StewardReadsFleet, config.StewardWritesNone)
 	conv = summon()
