@@ -166,6 +166,24 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	// dry-run preview, the bytes written to disk, and the next GET all
 	// match exactly — config.Save persists this normalized form.
 	config.Normalize(cfg)
+	// config.Validate cannot see the slug registry, so this list is checked
+	// here, after Normalize so a renamed slug counts under its current name.
+	if unknown := unknownStewardSlugs(cfg); len(unknown) > 0 {
+		msgs := make([]string, 0, len(unknown))
+		for _, slug := range unknown {
+			msgs = append(msgs, fmt.Sprintf("steward.default_permissions: unknown permission slug %q", slug))
+		}
+		configErrors(w, msgs...)
+		return
+	}
+	if recursive := recursiveStewardSlugs(cfg); len(recursive) > 0 {
+		msgs := make([]string, 0, len(recursive))
+		for _, slug := range recursive {
+			msgs = append(msgs, fmt.Sprintf("steward.default_permissions: %q cannot be a default; grant it to a running Steward instead", slug))
+		}
+		configErrors(w, msgs...)
+		return
+	}
 	// The form shows every per-type checkbox, so an unchecked one is a
 	// choice `tclaude setup` must not undo.
 	cfg.Notifications.MarkNotifyTypesKnown()

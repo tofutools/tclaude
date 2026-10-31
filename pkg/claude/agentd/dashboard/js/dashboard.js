@@ -169,7 +169,12 @@ async function settleInitialLayout() {
     }),
     () => mountSpawnHarnessPolicyFeature({ confirmDiscard, notify: toast }),
     () => mountDockFeature(),
-    () => mountCompanionFeature({ notify: toast, onComposeMessage: (seed) => openOperatorMessageDialog(seed) }),
+    () => mountCompanionFeature({
+      notify: toast,
+      onComposeMessage: (seed) => openOperatorMessageDialog(seed),
+      openPermissions: (conv, label) => openPermEditModal(conv, label),
+      openSudo: (agentID) => openSudoGrantModal(agentID),
+    }),
     () => mountAccessPanelFeature({ notify: toast }),
     () => mountBoardOverlayFeature({ notify: toast }),
     () => mountPluginsFeature({

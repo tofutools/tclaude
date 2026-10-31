@@ -1341,6 +1341,12 @@ type StewardConfig struct {
 	// Writes is "none", "messaging" or "workers"; see the StewardWrites
 	// constants.
 	Writes string `json:"writes,omitempty"`
+	// DefaultPermissions are permission slugs a new Steward is born with on top
+	// of Reads and Writes, the Steward's own agent.default_permissions. The
+	// daemon applies them at summon, and the Config tab refuses unknown slugs.
+	// The steward block is deliberately not a portable config bundle key, so
+	// only the operator can set this.
+	DefaultPermissions []string `json:"default_permissions,omitempty"`
 }
 
 const (
@@ -1422,6 +1428,21 @@ func (c *Config) StewardWrites() string {
 		return c.Steward.Writes
 	}
 	return StewardWritesMessaging
+}
+
+// StewardDefaultPermissions returns the configured extra slugs, trimmed.
+// Nil-safe.
+func (c *Config) StewardDefaultPermissions() []string {
+	if c == nil || c.Steward == nil {
+		return nil
+	}
+	var slugs []string
+	for _, slug := range c.Steward.DefaultPermissions {
+		if slug = strings.TrimSpace(slug); slug != "" {
+			slugs = append(slugs, slug)
+		}
+	}
+	return slugs
 }
 
 // CostConfig holds cost display knobs and estimated API spend alert limits.
@@ -3773,10 +3794,19 @@ var groupPermissionRenames = map[string]string{
 // permission slugs. It also runs from Normalize so a read-only managed process
 // gets the correct effective policy even when it cannot rewrite operator state.
 func canonicalizePermissionNames(c *Config) bool {
-	if c == nil || c.Agent == nil {
+	if c == nil {
 		return false
 	}
-	changed := renamePermissionList(&c.Agent.DefaultPermissions, semanticProxyPermissionRenames, groupPermissionRenames)
+	changed := false
+	if c.Steward != nil {
+		changed = renamePermissionList(&c.Steward.DefaultPermissions, semanticProxyPermissionRenames, groupPermissionRenames)
+	}
+	if c.Agent == nil {
+		return changed
+	}
+	if renamePermissionList(&c.Agent.DefaultPermissions, semanticProxyPermissionRenames, groupPermissionRenames) {
+		changed = true
+	}
 	if c.Agent.Sudo == nil {
 		return changed
 	}

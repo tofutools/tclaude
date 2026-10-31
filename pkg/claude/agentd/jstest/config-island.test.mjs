@@ -653,6 +653,38 @@ test('Config list reconciliation preserves unrelated typing and focuses the adde
   await mounted.unmount();
 });
 
+test('Config edits the default Steward permissions with the slug list and drops an empty one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify({ steward: { name: 'Jeeves', default_permissions: ['agent.spawn'] } }) }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  await harness.act(() => {});
+  const list = () => mounted.container.querySelector('#cfg-steward-permissions');
+  assert.equal(list().querySelector('input').value, 'agent.spawn');
+  assert.equal(list().querySelector('input').getAttribute('list'), 'cfg-slug-list', 'the same slug suggestions as agent defaults');
+
+  harness.fireEvent(list().querySelector('.cfg-list-add'), 'click');
+  await harness.act(() => {});
+  await harness.input(list().querySelector('.cfg-list-row:last-of-type input'), ' agent.task ');
+  assert.deepEqual(adapter.assembleConfig().steward.default_permissions, ['agent.spawn', 'agent.task']);
+
+  for (const button of [...list().querySelectorAll('.cfg-row-del')].reverse()) {
+    harness.fireEvent(button, 'click');
+    await harness.act(() => {});
+  }
+  const steward = adapter.assembleConfig().steward;
+  assert.equal(steward.name, 'Jeeves');
+  assert.equal('default_permissions' in steward, false, 'an empty list is not written out');
+  await mounted.unmount();
+});
+
 test('Config teardown cancels its Preact-owned diff modal', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }] = await Promise.all([

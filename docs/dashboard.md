@@ -644,7 +644,11 @@ profiles, processes or your sandbox. It proposes a plan first and runs each
 change with `--ask-human`, so you approve it in the dashboard. The exceptions
 are what its Writes setting gives it at birth, which need no prompt:
 `message.direct` under `messaging`, and `message.direct`, `agent.spawn` and
-`agent.task` under `workers`.
+`agent.task` under `workers`, plus any **Default permissions** you set.
+On a Steward's tab, 🛡 in the title bar opens the agent permissions editor and
+**sudo** opens the Grant sudo dialog, so you can change its access directly.
+They are dashboard actions only, and are disabled while the Steward is not
+running.
 While an agent in the window holds elevated access, its tab and chip show 🔓
 and a band above its terminal lists it: sudo grants with their time left and,
 for a live Steward, anything else beyond what Config gives it. **End now**
@@ -693,11 +697,18 @@ What a new Steward may do is set under **Config > Steward**, and the daemon
 grants it: a summon cannot ask for more. **Reads** is `operator` by default
 (fleet, boards, processes, triggers, usage, costs and host) or `fleet` for the
 fleet and boards alone. **Writes** is `messaging` by default (reach any agent),
-`none`, or `workers`, which also lets it start workers. Anything
+`none`, or `workers`, which also lets it start workers. **Default permissions**
+(`steward.default_permissions`, empty by default) lists extra slugs a new
+Steward is born with on top of those levels, with the same list editor as the
+agent defaults. Saving refuses a slug the daemon does not know and `permissions.grant` or
+`permissions.revoke`, which you can still give a running Steward from its
+permissions editor. The Steward's brief names the extras, and they do not count as elevated access. Anything
 else still goes through `--ask-human`. Messaging uses `message.direct`, so it
 also reaches agents on linked instances that export a mail-capable group; set
 Writes to `none` to rule that out. A running Steward keeps the access it was
-summoned with, so retire it to apply a change.
+summoned with, so retire it to apply a change. Only this node's Config tab
+changes these settings: the daemon gives agents and linked instances no way to
+read or write them, and config bundles do not carry them.
 
 **Name** in the same section is what you call your Steward. The companion
 shows it, and agents can message the Steward by it as well as by `steward`,

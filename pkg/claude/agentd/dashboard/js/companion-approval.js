@@ -45,6 +45,22 @@ export async function endElevatedAccess(fetchImpl, agent, access) {
   if (failed) throw failed.reason;
 }
 
+// StewardAccessControls open the dashboard's own permissions editor and sudo
+// dialog for a Steward. They are operator actions in the browser: both save
+// through the cookie-authed /api routes, which no agent reaches. Offline there
+// is no one to change, so they stay in place and say why.
+export function StewardAccessControls({ agent, openPermissions, openSudo }) {
+  const offline = `${agent.name} is not running. Resume it to change its access.`;
+  return html`
+    ${openPermissions && html`<button type="button" class="companion-steward-perms" disabled=${!agent.online}
+      aria-label=${`Edit ${agent.name}'s permissions`} title=${agent.online ? 'Permissions: edit its standing grants and denies' : offline}
+      onClick=${() => openPermissions(agent.convId, agent.name)}>🛡</button>`}
+    ${openSudo && html`<button type="button" class="companion-steward-sudo" disabled=${!agent.online}
+      aria-label=${`Grant ${agent.name} sudo`} title=${agent.online ? 'Sudo: grant a time-bounded elevation' : offline}
+      onClick=${() => openSudo(agent.agentId)}>sudo</button>`}
+  `;
+}
+
 // ElevatedBand says an agent holds more than its usual access and ends it in
 // one click. No confirmation: taking access away is safe, and it can ask again.
 export function ElevatedBand({ agent, access, fetchImpl, notify }) {

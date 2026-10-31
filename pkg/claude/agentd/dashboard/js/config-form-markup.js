@@ -900,6 +900,10 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
             <option value="workers">Message agents and start workers</option>
           </${ConfigSelect}>
         </${Setting}>
+        <${Setting} title="Default permissions" wide k="steward.default_permissions"
+          summary="Permission slugs a new Steward is born with, on top of Reads and Writes. A running Steward keeps what it was summoned with.">
+          <${StringList} id="cfg-steward-permissions" values=${lists['cfg-steward-permissions']} datalist="cfg-slug-list" placeholder="permission slug" onChange=${onListChange} />
+        </${Setting}>
       </${Group}>
       <${Group} title="Launch">
         <${Setting} title="Spawn profile" forId="cfg-steward-profile" k="steward.profile"

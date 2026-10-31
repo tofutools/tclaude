@@ -54,7 +54,7 @@ function fakeDictation() {
   return fake;
 }
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {}, locks = null } = {}) {
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, openPermissions = null, openSudo = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {}, locks = null } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -71,7 +71,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sess
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} sessionPrefs=${sessionPrefs} fetchImpl=${fetchFn} notify=${notify}
-    locks=${locks} onComposeMessage=${onComposeMessage} openMorph=${openMorph} detachWindow=${detachWindow} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    locks=${locks} onComposeMessage=${onComposeMessage} openMorph=${openMorph} openPermissions=${openPermissions} openSudo=${openSudo} detachWindow=${detachWindow} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -82,6 +82,49 @@ test('with nothing pinned a single Steward chip invites the operator in', async 
   await harness.act(() => chip.click());
   assert.match(view.container.textContent, /Summon the Steward/);
   assert.equal(view.container.querySelector('[role="menu"]'), null, 'the empty window explains itself; the add menu stays closed');
+});
+
+test('a live Steward\'s title bar opens the permissions editor and the sudo dialog', async (t) => {
+  const opened = [];
+  const { view, harness, controller } = await setup(t, {
+    snapshot: snapshotWith({ steward: true }),
+    openPermissions: (conv, label) => opened.push(['permissions', conv, label]),
+    openSudo: (agent) => opened.push(['sudo', agent]),
+  });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.companion-steward-perms').click());
+  await harness.act(() => view.container.querySelector('.companion-steward-sudo').click());
+  assert.deepEqual(opened, [['permissions', 'conv-s', 'steward-k3x'], ['sudo', S]]);
+});
+
+test('a Steward that stopped keeps the access controls disabled, with the reason', async (t) => {
+  const snapshot = snapshotWith({ steward: true });
+  const { view, harness, controller, snap } = await setup(t, { snapshot, openPermissions: () => {}, openSudo: () => {} });
+  await harness.act(() => controller().open(S));
+  const stopped = structuredClone(snapshot);
+  stopped.groups.find((group) => group.name === 'steward').members[0].online = false;
+  await harness.act(() => { snap.value = stopped; });
+  const permissions = view.container.querySelector('.companion-steward-perms');
+  const sudo = view.container.querySelector('.companion-steward-sudo');
+  assert.equal(permissions.disabled, true);
+  assert.equal(sudo.disabled, true);
+  assert.match(permissions.title, /not running/);
+});
+
+test('the access controls are the Steward\'s alone', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }), openPermissions: () => {}, openSudo: () => {} });
+  await harness.act(() => controller().open(A));
+  assert.ok(harness.getByRole(view.container, 'tab', { name: /alpha/ }));
+  assert.equal(view.container.querySelector('.companion-steward-perms'), null);
+  assert.equal(view.container.querySelector('.companion-steward-sudo'), null);
+});
+
+test('with no Steward running the empty window says where its access controls will be', async (t) => {
+  const { view, harness } = await setup(t, { openPermissions: () => {}, openSudo: () => {} });
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: /Open the companion/ }).click());
+  assert.equal(view.container.querySelector('.companion-steward-perms'), null);
+  assert.match(view.container.textContent, /Once it is running, 🛡 and sudo in the title bar change its access/);
 });
 
 test('summoning the Steward posts a scoped scribe summon and attaches its terminal', async (t) => {
