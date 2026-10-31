@@ -159,9 +159,29 @@ export function cueOpenClaimed(stored, cue) {
   return [cueOpenKey(cue), ...earlier].slice(0, CUE_OPEN_CLAIMS_KEPT).join('\n');
 }
 
-// An unfocused but visible tab (a second monitor) gives the focused one
-// this long to take a hand-over first.
-export const CUE_OPEN_UNFOCUSED_DELAY_MS = 400;
+// claimCueLock is the claim every open tab sees at once, unlike shared prefs:
+// a Web Lock named for the hand-over, which the winner keeps until its page
+// closes so a tab that sees the cue later still loses. Without Web Locks (an
+// insecure origin, an old browser), or if the request fails, it resolves true
+// and leaves the claim to the shared prefs.
+export function claimCueLock(locks, cue) {
+  if (typeof locks?.request !== 'function') return Promise.resolve(true);
+  return new Promise((resolve) => {
+    try {
+      locks.request(`tclaude.companion.cue-open/${cueOpenKey(cue)}`, { ifAvailable: true }, (lock) => {
+        resolve(!!lock);
+        return lock ? new Promise(() => {}) : undefined;
+      }).catch(() => resolve(true));
+    } catch {
+      resolve(true);
+    }
+  });
+}
+
+// An unfocused but visible tab (a second monitor) gives the focused one this
+// long to take a hand-over first. Tabs poll the snapshot every 2s on their own
+// clocks, so the focused tab can see a cue that much later.
+export const CUE_OPEN_UNFOCUSED_DELAY_MS = 2500;
 
 function rectKey(r) {
   return r ? `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}` : '-';

@@ -83,6 +83,26 @@ function clampAxis(length, start, min, availLength, availStart) {
   return { span, start: Math.round(placed) };
 }
 
+// elementScreenPoint is where a page element's corner sits on screen: the
+// browser window's position, its chrome, and the element's place in the
+// viewport. Browsers do not report the viewport's own position, so the chrome
+// is estimated from the outer and inner sizes: the width splits between both
+// side borders and the height sits above the page. A negative estimate (a
+// zoomed page) counts as none. Returns null when the window has no position.
+export function elementScreenPoint(win, rect) {
+  const screenX = Number(win?.screenX);
+  const screenY = Number(win?.screenY);
+  if (!Number.isFinite(screenX) || !Number.isFinite(screenY)) return null;
+  const chrome = (outer, inner) => {
+    const span = Number(outer) - Number(inner);
+    return Number.isFinite(span) && span > 0 ? span : 0;
+  };
+  return {
+    x: Math.round(screenX + chrome(win.outerWidth, win.innerWidth) / 2 + (Number(rect?.left) || 0)),
+    y: Math.round(screenY + chrome(win.outerHeight, win.innerHeight) + (Number(rect?.top) || 0)),
+  };
+}
+
 // detachWindowFeatures sizes the detached window to the pane the terminal is
 // leaving and puts it where the drag was released, kept on-screen when the
 // release point is on the screen this page can measure. It returns '' when
