@@ -229,7 +229,7 @@ func fleetChanges(fleet *fleetResp, doc *boardDoc) (changes []fleetChange, ok bo
 			if to != "" && to != from.group {
 				move(from, to, "arrow")
 			}
-		case e.Type == "text" && !isFleetSketchID(id) && strings.TrimSpace(e.Text) != "":
+		case e.Type == "text" && e.ContainerID == "" && !isFleetSketchID(id) && strings.TrimSpace(e.Text) != "":
 			box := elementBox(e)
 			if to := fleetBandAt(bands, box.X+box.W/2, box.Y+box.H/2); to != "" && to != fleetNoGroup {
 				add(fleetChange{Kind: "add", To: to, Text: strings.TrimSpace(e.Text), Via: "note"})
