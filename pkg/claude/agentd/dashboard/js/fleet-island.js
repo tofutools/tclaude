@@ -18,7 +18,7 @@ import { isModifiedClick } from './helpers.js';
 import { toPath } from './nav-history-core.js';
 import { LockReason } from './lock-reason.js';
 import { nodeSnapshot } from './node-api.js';
-import { holdsText, useDismissablePopover } from './hover-popover.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -99,57 +99,29 @@ function pickNode(state, id, { navigate, remote, switchNode, tab }) {
   else switchNode(id === selfID ? '' : id);
 }
 
-// POPOVER_LEAVE_MS is how long a node popover stays once the pointer has
-// left its chip and popover; it then fades out over POPOVER_FADE_MS (the
+// A node popover fades out over POPOVER_FADE_MS as hover-away closes it (the
 // .node-pop.closing transition), focus or not.
-export const POPOVER_LEAVE_MS = 1000;
 const POPOVER_FADE_MS = 200;
 
-// usePopover closes a popover on a click outside it, Escape, or a while after
-// the pointer leaves it (hover's handlers go on the root). The popover is
-// fixed under its button (the chip host clips), right-aligned to it.
-function usePopover(rootRef, { timers = globalThis } = {}) {
+// useNodePopover keeps a node popover fixed under its button (the chip host
+// clips), right-aligned to it; hover-popover.js decides when it closes. closing
+// marks the fade.
+function useNodePopover(rootRef) {
   const [open, setOpenRaw] = useState(false);
   const [closing, setClosing] = useState(false);
   const [pos, setPos] = useState(null);
-  const leaveTimer = useRef(0);
-  const cancelLeave = () => { timers.clearTimeout(leaveTimer.current); leaveTimer.current = 0; setClosing(false); };
   const setOpen = (next) => {
-    cancelLeave();
+    setClosing(false);
     const r = next && rootRef.current?.getBoundingClientRect?.();
     if (r) setPos({ top: Math.round(r.bottom + 6), right: Math.max(8, Math.round((globalThis.innerWidth || r.right) - r.right)) });
     setOpenRaw(next);
   };
-  useEffect(() => () => timers.clearTimeout(leaveTimer.current), []);
-  const hover = {
-    closing,
-    onMouseEnter: () => { if (leaveTimer.current || closing) cancelLeave(); },
-    onMouseLeave: () => {
-      if (!open) return;
-      timers.clearTimeout(leaveTimer.current);
-      leaveTimer.current = timers.setTimeout(() => {
-        leaveTimer.current = 0;
-        if (holdsText(rootRef.current)) return;
-        setClosing(true);
-        leaveTimer.current = timers.setTimeout(() => {
-          leaveTimer.current = 0;
-          setClosing(false);
-          const focused = rootRef.current?.contains?.(globalThis.document?.activeElement);
-          setOpenRaw(false);
-          if (focused) rootRef.current.querySelector('button')?.focus();
-        }, POPOVER_FADE_MS);
-      }, POPOVER_LEAVE_MS);
-    },
-  };
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
-    const onKey = (event) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
-  }, [open]);
-  return [open, setOpen, pos ? `top:${pos.top}px;right:${pos.right}px` : '', hover];
+  useDismissablePopover(rootRef, open, (why) => {
+    const focused = why === 'away' && rootRef.current?.contains?.(globalThis.document?.activeElement);
+    setOpen(false);
+    if (focused) rootRef.current.querySelector('button')?.focus();
+  }, { fadeMs: POPOVER_FADE_MS, fading: setClosing });
+  return [open, setOpen, pos ? `top:${pos.top}px;right:${pos.right}px` : '', closing];
 }
 
 // closedNode says why an offline peer cannot be opened, or '' when it can:
@@ -173,7 +145,7 @@ function nodeMeta(node) {
 function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
   const rootRef = useRef(null);
   const inputRef = useRef(null);
-  const [open, setOpen, popStyle, hover] = usePopover(rootRef);
+  const [open, setOpen, popStyle, closing] = useNodePopover(rootRef);
   const [query, setQuery] = useState('');
   const [hl, setHl] = useState(0);
   useEffect(() => { if (open) { setQuery(''); setHl(0); inputRef.current?.focus(); } }, [open]);
@@ -193,13 +165,13 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
     <span class="node-pop-meta">${nodeMeta(node)}${!fused && node.id === pageNode ? ' · shown' : ''}</span>
   </button>`;
   const self = list[0]?.local ? list[0] : null;
-  return html`<span class="node-pick" ref=${rootRef} onMouseEnter=${hover.onMouseEnter} onMouseLeave=${hover.onMouseLeave}>
+  return html`<span class="node-pick" ref=${rootRef}>
     <button type="button" class=${`node-chip node-pick-btn${fused ? (isTicked(fused, shown.id) ? ' ticked' : '') : ' active'}${shown.local || shown.online ? '' : ' offline'}`} style=${`--nc:${shown.color}`}
       aria-haspopup="listbox" aria-expanded=${open ? 'true' : 'false'} aria-label=${`Node: ${shown.name}. Choose a node`} title=${`${shown.name}: pick a node to show`}
       onClick=${() => setOpen(!open)}>
       ${shown.local && html`<span class="node-chip-home" aria-hidden="true">⌂</span>`}<span class="node-chip-name">${shown.name}</span><span class="node-pick-caret" aria-hidden="true">▾</span><span class="node-chip-dot"></span>
     </button>
-    ${open && html`<div class=${`node-pop${hover.closing ? ' closing' : ''}`} role="dialog" aria-label="Choose a node" style=${popStyle}>
+    ${open && html`<div class=${`node-pop${closing ? ' closing' : ''}`} role="dialog" aria-label="Choose a node" style=${popStyle}>
       <label class="node-pop-filter"><input ref=${inputRef} type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes"
         onInput=${(e) => { setQuery(e.currentTarget.value); setHl(0); }} onKeyDown=${onKey} /></label>
       <div role="listbox" aria-label="Nodes">
@@ -216,7 +188,7 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
 // node with no peers yet still opens it, to list itself and say how to link.
 function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
   const rootRef = useRef(null);
-  const [open, setOpen, popStyle, hover] = usePopover(rootRef);
+  const [open, setOpen, popStyle, closing] = useNodePopover(rootRef);
   const [query, setQuery] = useState('');
   useEffect(() => { if (open) rootRef.current?.querySelector('.node-pop-filter input')?.focus(); }, [open]);
   const nodes = fleetNodes(fleet);
@@ -237,14 +209,14 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
     if (alone) setOpen(!open);
     else if (!fused) { onFuse('all'); setOpen(true); } else setOpen(!open);
   };
-  return html`<span class="node-pick" ref=${rootRef} onMouseEnter=${hover.onMouseEnter} onMouseLeave=${hover.onMouseLeave}>
+  return html`<span class="node-pick" ref=${rootRef}>
     <button type="button" class=${`node-chip node-fuse${fused ? ' active' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       aria-label=${fused ? `Fused view of ${ticked.length} of ${nodes.length} nodes. Change the nodes` : 'Show several nodes together'}
       title=${fused ? `Groups and Terminals show ${ticked.length} of ${nodes.length} nodes` : alone ? NO_PEERS : 'Show several nodes together in Groups and Terminals'} onClick=${onButton}>
       <span class="node-fuse-stack" aria-hidden="true">${nodes.slice(0, 4).map((n) => html`<b key=${n.id} class=${isTicked(fused || 'all', n.id) ? '' : 'off'} style=${`--c:${n.color}`}></b>`)}</span>
       <span class="node-chip-name">${fused ? `${ticked.length}/${nodes.length}` : 'nodes'}</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
-    ${open && html`<div class=${`node-pop node-fuse-pop${hover.closing ? ' closing' : ''}`} role="dialog" aria-label="Fuse nodes" style=${popStyle}>
+    ${open && html`<div class=${`node-pop node-fuse-pop${closing ? ' closing' : ''}`} role="dialog" aria-label="Fuse nodes" style=${popStyle}>
       <div class="node-pop-head"><span>Fuse nodes</span>${!alone && fused !== 'all' && html`<button type="button" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all</button>`}</div>
       ${list !== nodes && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${list.map((node) => html`<div key=${node.id} class=${`node-pop-row${node.online || node.local ? '' : ' offline'}`} style=${`--nc:${node.color}`}>
