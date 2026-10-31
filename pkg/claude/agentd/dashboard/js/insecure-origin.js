@@ -44,6 +44,27 @@ export function clipboardReadNote(keys, win = globalThis) {
     : `The menu can’t read the clipboard over plain HTTP except on localhost. Use ${keys}.`;
 }
 
+// dictationBlock says why dictation can't be used here, or null when it can:
+// `note` for the page and `why` for the longer tooltip. A browser without
+// speech recognition comes first, since HTTPS would not help it. Otherwise a
+// non-secure page gets its own answer, because the browser refuses the
+// microphone there whatever the site permission says.
+export function dictationBlock(supported, win = globalThis) {
+  if (!supported) {
+    return {
+      note: 'Dictation isn’t available in this browser',
+      why: 'This browser has no speech recognition. Dictation works in Chrome, Edge and Safari.',
+    };
+  }
+  if (win.isSecureContext === false) {
+    return {
+      note: 'Dictation needs HTTPS or localhost',
+      why: 'Browsers refuse the microphone on plain HTTP pages, and no site permission changes that. Open the dashboard on localhost, or over HTTPS such as tailscale serve.',
+    };
+  }
+  return null;
+}
+
 // writeClipboard puts text on the clipboard and says whether it got there. Call
 // it from the click: the legacy copy needs the user's gesture.
 export async function writeClipboard(text) {

@@ -81,7 +81,10 @@ The same hardened build fits three deployment shapes:
 
 - **LAN** — bind `0.0.0.0:8443` and connect directly.
 - **Mesh VPN** — bind the tailnet/VPN IP; `tailscale serve` can front it with
-  a real certificate.
+  a real certificate. A plain `http://` tailnet address works for most of the
+  dashboard, but browsers refuse secure-only features there, including
+  [dictation](companion.md#voice-and-dictation). For those, use the HTTPS
+  address `tailscale serve` gives you, or `localhost` on the host.
 - **Public tunnel** — bind loopback and let the tunnel terminate its own TLS;
   mTLS and the passphrase still apply underneath.
 

@@ -1429,6 +1429,36 @@ test('the tools float over the terminal, and the text field shows only while the
   assert.ok(tools.classList.contains('listening'), 'never dimmed while the mic is open');
 });
 
+async function openWithMic(t, { supported, secure }) {
+  const dictationImpl = () => ({ supported, start() {}, stop() {}, abort() {} });
+  const { view, harness, controller } = await setup(t, { prefs: memoryPrefs(), dictationImpl });
+  harness.window.isSecureContext = secure;
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  return { mic: view.container.querySelector('.companion-mic'), note: view.container.querySelector('.companion-mic-note'), container: view.container };
+}
+
+test('a browser without speech recognition gets a disabled mic and a note saying so', async (t) => {
+  const { mic, note, container } = await openWithMic(t, { supported: false, secure: true });
+  assert.equal(mic.disabled, true);
+  assert.match(note.textContent, /this browser/);
+  assert.equal(container.querySelector('.companion-context'), null, 'view only serves dictation');
+});
+
+test('a plain http page gets a disabled mic and a note saying what it needs', async (t) => {
+  const { mic, note } = await openWithMic(t, { supported: true, secure: false });
+  assert.equal(mic.disabled, true);
+  assert.match(note.textContent, /HTTPS or localhost/);
+  assert.match(mic.title, /tailscale serve/);
+});
+
+test('a secure page keeps a working mic with no note', async (t) => {
+  const { mic, note, container } = await openWithMic(t, { supported: true, secure: true });
+  assert.equal(mic.disabled, false);
+  assert.equal(note, null);
+  assert.ok(container.querySelector('.companion-context'));
+});
+
 test('the draft strip leaves room for an approval, and the status pill clears the tools', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const dictation = fakeDictation();

@@ -323,11 +323,15 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 }
 .annotate-send:not(:disabled) { background: #238636; border-color: #2ea043; color: #fff; }
 .annotate-btn:disabled, .annotate-send:disabled { opacity: .5; cursor: default; }
-.companion-floating .companion-annotate {
+/* The floating tools share one button: the mic and ✎ light up alike, and only
+   when they can be used. A live mic keeps its own red. */
+.companion-floating .companion-tool {
   padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
-  color: var(--cmp-amber-text); font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
+  font: inherit; line-height: 1; cursor: pointer;
 }
-.companion-floating .companion-annotate:hover { border-color: var(--cmp-amber); }
+.companion-floating .companion-tool:enabled:not(.on):hover { border-color: var(--cmp-amber); }
+.companion-floating .companion-tool:disabled { opacity: .5; cursor: not-allowed; }
+.companion-floating .companion-annotate { color: var(--cmp-amber-text); font-size: 14px; }
 
 /* One-click starters for the Steward (guided setup, tcl-bifqbb). */
 
@@ -335,10 +339,8 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-controls .companion-voice.on { color: var(--cmp-green); }
 
 /* Dictation (tcl-sqxkb0). */
-.companion-floating .companion-mic {
-  padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
-  color: var(--cmp-text); font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
-}
+.companion-floating .companion-mic { color: var(--cmp-text); font-size: 13px; }
+.companion-mic-note { color: var(--cmp-text); font-size: 11px; white-space: nowrap; cursor: help; }
 .companion-floating .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .companion-floating .companion-mic.on { animation: none; } }
 

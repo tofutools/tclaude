@@ -111,8 +111,14 @@ on OpenCode.
 **Dictation.** **🎤** dictates into a draft. Pause and say "send" on its own to send
 it, or press the button again to stop and edit. Typing in the draft also stops it.
 No reply is read while the mic is open. It uses your browser's speech recognition,
-and in Chrome the audio is recognized by Google's service. The mic is hidden in
-browsers without it.
+and in Chrome the audio is recognized by Google's service.
+
+Where dictation can't work, the mic is disabled and a note beside it says why. That
+covers browsers without speech recognition, and plain HTTP pages away from localhost.
+Browsers refuse the microphone on those pages, so no site permission helps. To
+dictate, open the dashboard on `localhost` or over HTTPS, for example with
+[`tailscale serve`](remote.md#where-to-run-it). **🔈** voice doesn't need the
+microphone and still works on plain HTTP.
 
 ## Marking up a page
 

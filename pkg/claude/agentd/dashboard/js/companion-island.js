@@ -33,6 +33,7 @@ import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js'
 import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
+import { dictationBlock } from './insecure-origin.js';
 import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
@@ -1356,15 +1357,17 @@ export function CompanionApp({
   // Over the terminal, taking no room: the anchor has no height, and only the
   // cluster itself takes the pointer. Before the terminal in the DOM, because
   // Tab typed into a terminal stays there.
+  const micBlock = dictationBlock(dictation.supported, win);
   const floatingTools = showComposer && html`<div class=${`companion-floating${listening ? ' listening' : ''}`} role="group" aria-label="Message tools">
-      ${dictation.supported && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
+      ${!micBlock && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
       </label>`}
-      ${dictation.supported && html`<button type="button" class=${`companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
-        aria-label=${`Dictate a message to ${activeAgent.name}`}
-        title=${'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
-        onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
-      <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
+      <button type="button" class=${`companion-tool companion-mic${listening ? ' on' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
+        aria-label=${`Dictate a message to ${activeAgent.name}`} disabled=${!!micBlock}
+        title=${micBlock?.why || 'Dictate (say “send” at the end to send). Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
+        onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>
+      ${micBlock && html`<span class="companion-mic-note" title=${micBlock.why}>${micBlock.note}</span>`}
+      <button type="button" class="companion-tool companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
   </div>`;
 
