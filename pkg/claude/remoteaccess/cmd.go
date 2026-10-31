@@ -41,7 +41,7 @@ type setupParams struct {
 	Bind   string `long:"bind" default:"0.0.0.0:8443" help:"Address the remote listener binds to (e.g. 0.0.0.0:8443 for LAN, a tailnet IP for mesh, 127.0.0.1:8443 behind a tunnel)."`
 	Hosts  string `long:"host" optional:"true" help:"Extra comma-separated names/IPs the server cert must be valid for (a tailnet name, a tunnel hostname). Local IPs + hostname are always included."`
 	Client string `long:"client" default:"phone" help:"Name for the first device's client certificate."`
-	Out    string `long:"out" optional:"true" help:"Where to write the device .p12 (default: ~/.tclaude/remote-access/clients/<name>.p12)."`
+	Out    string `long:"out" optional:"true" help:"Where to write the device .p12 (default: ~/.tclaude/data/remote-access/clients/<name>.p12)."`
 	Enable bool   `long:"enable" default:"true" help:"Also set remote_access.enabled + bind in config.json so agentd starts the listener (restart agentd to apply)."`
 
 	// RegenerateCerts is required to re-run setup once material already
@@ -117,12 +117,12 @@ func runSetup(p *setupParams) error {
 
 type addClientParams struct {
 	Name string `long:"name" descr:"Name for the new device's client certificate." positional:"true"`
-	Out  string `long:"out" optional:"true" help:"Where to write the device .p12 (default: ~/.tclaude/remote-access/clients/<name>.p12)."`
+	Out  string `long:"out" optional:"true" help:"Where to write the device .p12 (default: ~/.tclaude/data/remote-access/clients/<name>.p12)."`
 }
 
 func addClientCmd() *cobra.Command {
 	c := boa.CmdT[addClientParams]{
-		Use:         "add-client <name>",
+		Use:         "add-client",
 		Short:       "Issue another device's client certificate (.p12) from the existing CA",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *addClientParams, _ *cobra.Command, _ []string) {

@@ -16,7 +16,7 @@ type FocusParams struct {
 
 func FocusCmd() *cobra.Command {
 	return boa.CmdT[FocusParams]{
-		Use:         "focus <id>",
+		Use:         "focus",
 		Short:       "Focus a coding session's terminal window",
 		Long:        "Attempts to focus the terminal window for a session. If not found, opens a new window and attaches.",
 		ParamEnrich: common.DefaultParamEnricher(),

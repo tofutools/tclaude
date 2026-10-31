@@ -1993,6 +1993,18 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
    overlay stack, Escape routing, and refresh suspension all see it. */
 .image-preview-overlay {
   padding: 16px; background: rgba(0, 0, 0, .82);
+}
+/* dashboard.overlay_backdrop: dim is the plain rule above. */
+:root[data-overlay-backdrop="blur"] .image-preview-overlay,
+:root[data-overlay-backdrop="blur"] .markdown-preview-overlay { background: transparent; }
+:root[data-overlay-backdrop="none"] .image-preview-overlay,
+:root[data-overlay-backdrop="none"] .markdown-preview-overlay { background: transparent; }
+:root[data-overlay-backdrop="blur"] .image-preview-overlay,
+:root[data-overlay-backdrop="blur"] .markdown-preview-overlay,
+:root[data-overlay-backdrop="blur"] .disconnect-overlay,
+:root[data-overlay-backdrop="both"] .image-preview-overlay,
+:root[data-overlay-backdrop="both"] .markdown-preview-overlay,
+:root[data-overlay-backdrop="both"] .disconnect-overlay {
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .image-preview-dialog {
@@ -2198,7 +2210,6 @@ body.slop .attachment-preview-position { color: #c9a86b; }
    refresh suspension all see it. */
 .markdown-preview-overlay {
   padding: 16px; background: rgba(0, 0, 0, .82);
-  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .markdown-preview-dialog {
   position: relative;
@@ -5474,8 +5485,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   display: none; align-items: center; justify-content: center;
   padding: 24px;
   background: rgba(0,0,0,0.72);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
 }
 .disconnect-overlay.show { display: flex; }
 .disconnect-card {
@@ -6741,6 +6750,10 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .perm-uses.none { cursor: help; text-decoration: underline dotted; }
 .perm-narrows-held { color: #d29922; }
+#sudo-uses {
+  width: 56px; background: #0d1117; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 4px; font-size: 11px; color: #c9d1d9; font-family: inherit; text-align: right;
+}
 /* Who a Steward's grant is for. */
 .perm-steward-note { margin: 0; font-size: 11px; line-height: 1.45; color: #9da7b3; }
 .perm-steward-note b { color: #d2a8ff; font-weight: 600; }

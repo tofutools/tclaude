@@ -197,8 +197,9 @@ whose `workflow.json` disagrees. That makes it safe to show a review from
   marks the version an unpinned subprocess reference to that id resolves to;
   each id has at most one head.
 - `params`: the root template's inputs.
-- `roles`: the agent roles steps ask for (an agent performer's `profile`),
-  each with the steps that use it.
+- `roles`: the agent roles steps ask for (an agent performer's `profile` or
+  `role`), each with the steps that use it. Files written before `role` was
+  listed still open, and read as listing it.
 - `programs`: every command step, as `{step, profile, run, args}`.
 - `assignees`: steps that name one specific agent.
 - `humans`: steps a person performs.

@@ -1385,7 +1385,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label">Initial msg</span>
       <textarea id="agent-spawn-init-msg" rows="4" value=${draft.initialMessage} disabled=${busy}
         onInput=${(event) => update('initialMessage', event.currentTarget.value)}
-        placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤16384 chars)" spellcheck="false"></textarea>
+        placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤16384 bytes)" spellcheck="false"></textarea>
     </label>
     <div class="cron-create-row agent-spawn-prompts-row"
       title="Saved prompts open the task brief, in order, ahead of the initial message. Pre-filled from the profile, else the group's default prompts.">
@@ -1479,7 +1479,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label">Task link</span>
       <input id="agent-spawn-task" type="url" inputmode="url" value=${draft.task} disabled=${busy}
         onInput=${(event) => update('task', event.currentTarget.value)}
-        placeholder="optional — Linear/GitHub/ticket URL (http(s)); shown in the Task column" autocomplete="off" spellcheck="false" />
+        placeholder="optional — Linear/GitHub/ticket URL (http(s)); shown in the Task link column" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row" id="agent-spawn-harness-row"
       title="Coding harness for the new agent. The harness switches the Model + Effort menus and launch controls.">

@@ -799,22 +799,31 @@ export function changeBounds(map, changedIds, before, context = 80) {
   return { x: box.x - context, y: box.y - context, width: box.width + context * 2, height: box.height + context * 2 };
 }
 
-// agentWritten says an agent last wrote this element. Its text stays out of
-// the summary, which reaches the board's agents as the operator's own words.
-function agentWritten(el) {
-  const author = el.customData?.author;
-  return !!author && author !== 'operator';
+// operatorWrote lists the text elements the operator wrote in this batch. Only
+// these are quoted: the summary reaches the board's agents as the operator's
+// own words. An element's saved author cannot show this, because it names
+// whoever touched it last, so an agent's text that the operator merely dragged
+// reads as the operator's.
+function operatorWrote(map, changedIds, before) {
+  const wrote = new Set();
+  for (const id of changedIds) {
+    const el = map.get(id);
+    const prev = before.get(id);
+    if (el?.type !== 'text' || (el.customData?.author || 'operator') !== 'operator') continue;
+    if (!prev || prev.isDeleted || prev.text !== el.text) wrote.add(id);
+  }
+  return wrote;
 }
 
-function label(el, map) {
-  if (el.type === 'text') return agentWritten(el) ? 'text' : `text “${String(el.text || '').slice(0, 40)}”`;
+function label(el, map, wrote) {
+  if (el.type === 'text') return wrote.has(el.id) ? `text “${String(el.text || '').slice(0, 40)}”` : 'text';
   // A shape's label is the text inside it, when there is one.
   if (SHAPES.has(el.type) && map) {
     const inner = [...map.values()].find((t) => !t.isDeleted && t.type === 'text' && (() => {
       const c = center(t); const b = elementBounds(el);
       return c.x >= b.x && c.x <= b.x + b.width && c.y >= b.y && c.y <= b.y + b.height;
     })());
-    if (inner && !agentWritten(inner)) return `${el.type} “${String(inner.text || '').slice(0, 40)}”`;
+    if (inner && wrote.has(inner.id)) return `${el.type} “${String(inner.text || '').slice(0, 40)}”`;
   }
   return el.type;
 }
@@ -835,6 +844,7 @@ function nearestLabelled(map, point, ignore) {
 // and where (near which labelled shape). `before` maps id -> the element as
 // it was before the batch (undefined for new ones).
 export function describeChanges(map, changedIds, before) {
+  const wrote = operatorWrote(map, new Set(changedIds), before);
   const added = []; const edited = []; const removed = [];
   for (const id of new Set(changedIds)) {
     const el = map.get(id);
@@ -850,12 +860,12 @@ export function describeChanges(map, changedIds, before) {
   const group = (list, verb) => {
     if (!list.length) return;
     const strokes = list.filter((el) => el.type === 'freedraw');
-    const named = list.filter((el) => el.type !== 'freedraw').map((el) => label(el, map));
+    const named = list.filter((el) => el.type !== 'freedraw').map((el) => label(el, map, wrote));
     const bits = [...named.slice(0, 4)];
     if (named.length > 4) bits.push(`${named.length - 4} more`);
     if (strokes.length) {
       const near = nearestLabelled(map, center(strokes[strokes.length - 1]), ignore);
-      bits.push(`${strokes.length} freehand stroke${strokes.length === 1 ? '' : 's'}${near ? ` near ${label(near, map)}` : ''}`);
+      bits.push(`${strokes.length} freehand stroke${strokes.length === 1 ? '' : 's'}${near ? ` near ${label(near, map, wrote)}` : ''}`);
     }
     parts.push(`${verb} ${bits.join(', ')}`);
   };

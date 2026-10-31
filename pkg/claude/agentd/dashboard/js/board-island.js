@@ -47,6 +47,8 @@ const BOARD_LIVE_RETRY_MS = 1000;
 const BOARD_LIVE_RETRY_MAX_MS = 30000;
 export const BOARD_FLUSH_MS = 250;
 export const BOARD_EVENT_IDLE_MS = 1500;
+// The daemon's limit: one event per board in this long (boardEventInterval).
+export const BOARD_EVENT_RETRY_MS = 3000;
 export const BOARD_SNAPSHOT_IDLE_MS = 2500;
 export const BOARD_VIEW_REFRESH_MS = 30000;
 // The daemon's limit for an event image (boardMaxRegionBytes).
@@ -607,12 +609,32 @@ export function BoardEditor({
         if (png && png.size <= BOARD_EVENT_IMAGE_MAX) event.image = await (await import('./board-export.js')).blobToBase64(png);
       } catch { /* text only */ }
     }
+    if (await postEvent(event) !== 429) return;
+    // The daemon is still limiting this board's last event. A closed editor can
+    // only send this one again, drawn image and all. An open one puts the edits
+    // back in with any newer ones, so the retry describes them together.
+    if (disposed.current) {
+      setTimeout(() => void postEvent(event), BOARD_EVENT_RETRY_MS);
+      return;
+    }
+    const newer = eventBatch.current;
+    eventBatch.current = { ids: [...ids, ...newer.ids], before: new Map([...newer.before, ...before]) };
+    clearTimeout(timers.current.event);
+    timers.current.event = setTimeout(sendEvent, BOARD_EVENT_RETRY_MS);
+  }
+
+  // postEvent answers the response status, or 0 if none came. Other than a 429,
+  // events are best-effort.
+  async function postEvent(event) {
     try {
-      await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/events`, {
+      const response = await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/events`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(event),
       });
-    } catch { /* events are best-effort */ }
+      return response.status;
+    } catch {
+      return 0;
+    }
   }
 
   // commit records operator edits: the merged map, the undo step, the PATCH
@@ -1252,13 +1274,15 @@ export function BoardEditor({
     }
   }
 
-  // sendInvite tells an agent how to use the board.
+  // sendInvite tells an agent how to use the board. This mail is
+  // operator-authored, so like the board event it quotes nothing agents wrote:
+  // not the title, which any agent with boards.write can set, nor a group name.
   function sendInvite(agentId, why = "You're invited to") {
     return fetchImpl('/api/operator-message', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         to: agentId, subject: `[board ${boardId}] you're invited`,
-        body: `${why} the shared board "${meta.title}" (${boardId}). The operator draws there; you get a short event when their edits settle.\n`
+        body: `${why} the shared board ${boardId}. The operator draws there; you get a short event when their edits settle.\n`
           + `Look: \`tclaude agent board show ${boardId}\` (elements as text; \`--view\` for what the operator has on screen) or \`tclaude agent board snapshot ${boardId} -o /tmp/${boardId}.png\` (an image to view).\n`
           + `Draw: \`tclaude agent board add ${boardId} rectangle --x 100 --y 100 --w 160 --h 80 --text "Idea"\`, arrows with --from/--to element ids (--from-side/--to-side for a snap point, --routing elbow or curved); build a flow with \`--right-of <id> --link\` and tidy it with \`board layout ${boardId}\`; \`board rm\`, \`board move\`, \`board text\` (any element), \`board connect\`. See \`tclaude agent board --help\`.`,
       }),
@@ -1278,7 +1302,7 @@ export function BoardEditor({
       const before = new Set([...meta.participants, ...meta.groupMembers]);
       setMeta((m) => ({ ...m, group: result.group || '', groupMembers: members }));
       const fresh = members.filter((id) => !before.has(id) && agents.get(id)?.online);
-      await Promise.allSettled(fresh.map((id) => sendInvite(id, `Your group "${result.group}" now has`)));
+      await Promise.allSettled(fresh.map((id) => sendInvite(id, 'Your group now has')));
       notify(result.group ? `This is now ${result.group}'s board${fresh.length ? `; told ${fresh.length} online member${fresh.length === 1 ? '' : 's'}` : ''}.` : 'The board no longer belongs to a group.');
     } catch (error) {
       // The select shows the old group again.

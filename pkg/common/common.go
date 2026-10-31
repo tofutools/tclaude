@@ -14,7 +14,18 @@ func DefaultParamEnricher() boa.ParamEnricher {
 		boa.ParamEnricherBool,
 		boa.ParamEnricherName,
 		boa.ParamEnricherShort,
+		paramEnricherNoShort,
 	)
+}
+
+// paramEnricherNoShort makes the tag short:"-" mean "no shorthand". The tag is
+// what stops ParamEnricherShort deriving a letter, but left in place pflag
+// registers "-" itself and help prints "--, --flag".
+func paramEnricherNoShort(_ []boa.Param, param boa.Param, _ string) error {
+	if param.GetShort() == "-" {
+		param.SetShort("")
+	}
+	return nil
 }
 
 // Size unit multipliers

@@ -719,3 +719,41 @@ func TestSteward_StoredSudoReachesOnlyTheOperatorsSummon(t *testing.T) {
 	require.Equalf(t, http.StatusOK, byAgent.Code, "body=%s", byAgent.Body.String())
 	assert.Empty(t, c.sudoSlugs(decodeScribeResp(t, byAgent).ConvID))
 }
+
+// The name reaches a Steward in its brief, and the companion does not summon
+// one that is live, so a save has to tell it.
+func TestSteward_RunningStewardHearsANewName(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	conv := c.summon()
+	saveName := func(name string) {
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		if cfg.Steward == nil {
+			cfg.Steward = &config.StewardConfig{}
+		}
+		cfg.Steward.Name = name
+		rec := c.post("/api/config", map[string]any{"config": cfg})
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	}
+	nameMail := func() []string {
+		msgs, err := db.ListAgentMessagesForConv(conv, 50)
+		require.NoError(t, err)
+		var bodies []string
+		for _, m := range msgs {
+			if m.Subject == "Your name changed" {
+				bodies = append(bodies, m.Body)
+			}
+		}
+		return bodies
+	}
+
+	saveName("Ada")
+	require.Len(t, nameMail(), 1)
+	assert.Contains(t, nameMail()[0], "calls you Ada")
+
+	saveName("Ada")
+	assert.Len(t, nameMail(), 1, "a save that keeps the name says nothing")
+
+	saveName("")
+	assert.Len(t, nameMail(), 2, "and clearing it is a change too")
+}

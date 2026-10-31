@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"cmp"
 	"bytes"
 	"crypto/rand"
 	"database/sql"
@@ -3786,7 +3787,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// The briefing is from this actor, so its child could answer a Steward
 		// the spawner may not write to.
 		if spawnerConvID != "" && res.ConvID != spawnerConvID && isLiveSteward(res.ConvID) {
-			if _, _, ok := resolveMessageRouting(w, spawnerConvID, res.ConvID); !ok {
+			if _, _, ok := resolveMessageRouting(w, r, spawnerConvID, res.ConvID); !ok {
 				return
 			}
 		}
@@ -3805,11 +3806,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// default_cwd (the "group default start dir" set via the
 	// dashboard or `groups set-default-dir`). This makes the default
 	// reach every spawn path — CLI, API, dashboard — not just the
-	// dashboard's client-side prefill. An empty default_cwd leaves
-	// cwd blank, so resolveSpawnCwd keeps its prior behaviour of
-	// inheriting the daemon's own cwd.
+	// dashboard's client-side prefill. Past an empty default_cwd comes
+	// the directory the CLI ran in; with neither, cwd stays blank and
+	// resolveSpawnCwd inherits the daemon's own cwd as before.
 	if body.Cwd == "" {
-		body.Cwd = g.DefaultCwd
+		body.Cwd = cmp.Or(g.DefaultCwd, body.CallerCwd)
 	}
 
 	// Resolve the harness independently through the complete chain. Other launch

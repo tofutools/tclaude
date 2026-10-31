@@ -1425,7 +1425,7 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 }
 
 // TestDashboardHTML_CogMenuFilter pins the shell-side contract of the ⚙ cog
-// menus' type-to-filter box (docs/dashboard.md, "Filtering a ⚙ menu"). Behaviour
+// menus' type-to-filter box (docs/dashboard-groups.md). Behaviour
 // lives in the Node suites — jstest/menu-filter.test.mjs for the matching rules,
 // cog-menu-filter-preact.test.mjs and toolbar-actions-menu.test.mjs for the two
 // owners — so these guards only cover what those cannot see: that the static

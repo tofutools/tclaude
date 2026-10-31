@@ -718,3 +718,11 @@ test('a fused view lists the other nodes\' automations under their node pills an
     ['inst_forge POST /api/cron/7/disable', 'inst_forge GET /api/jobs'], "it runs on forge's routes, then re-reads forge's list");
   await mounted.unmount(); fleet.dispose();
 });
+
+test('Triggers stays out of the subnav until a snapshot turns it on', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { automationsSubnavEntries } = await harness.importDashboardModule('js/automations-subnav.js');
+  assert.equal(automationsSubnavEntries(null).includes('trigger'), false);
+  assert.equal(automationsSubnavEntries({ triggers_enabled: false }).includes('trigger'), false);
+  assert.equal(automationsSubnavEntries({ triggers_enabled: true }).includes('trigger'), true);
+});

@@ -27,6 +27,7 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 | Tabs | Vegas music in regular mode | `slop.vegas_in_regular_mode` | off |
 | Header & rows | Horizontal scroll | `dashboard.hscroll_follow` | on |
 | Header & rows | Group quick options | `dashboard.group_quick_options` | `hover` |
+| Overlays | Preview background | `dashboard.overlay_backdrop` | `dim`; also `blur`, `both`, `none` |
 | Header & rows | Group descriptions (deprecated) | `dashboard.show_group_description` | off |
 | Header & rows | CI on finished PRs | `dashboard.show_final_pr_checks` | off |
 | Header & rows | Agent hide button | `dashboard.show_agent_hide_button` | off |

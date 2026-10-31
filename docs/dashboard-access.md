@@ -34,12 +34,14 @@ keeps its search above the list and the duration and Grant button below it, mark
 risky permissions, and says why a slug is refused. Picked permissions can be narrowed
 with scopes like any grant. On one the agent already holds, a scoped sudo replaces its
 own, group and default access until the grant ends, while ownership, membership and
-`groups.admin` still apply. The row says so. A permission with a countable action, today
-`agent.spawn` and `groups.members.spawn`, also takes a **max** number of uses: the
-grant ends at whichever comes first, the time or the count, and a scope works as usual.
-A grant scoped to a peer takes no use limit, because the count stops at this node, and
-neither does a permission the agent already holds, because that access is never counted.
-A grant stored for all future Stewards keeps its scope.
+`groups.admin` still apply. The row says so. **Max uses** under the list limits every
+picked permission that names a countable action, per permission, and a row's own **max**
+overrides it: the grant ends at whichever comes first, the time or the count, and a
+scope works as usual. A row that cannot have a limit says **no limit**, with the reason
+on hover. That includes a grant scoped to a peer, because the count stops at this node,
+and a permission the agent already holds, because that access is never counted. See
+[what counts](permissions-and-audit.md#use-limits). A grant stored for all future
+Stewards keeps its scope.
 **Active now** lists what the agent already holds, with scope, time and uses left,
 **+duration** to extend and **Revoke**.
 

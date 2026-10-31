@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -316,8 +317,13 @@ type SpawnRequest struct {
 	NonInteractive    bool  `json:"non_interactive,omitempty"`
 	RunTimeoutSeconds int64 `json:"run_timeout_seconds,omitempty"`
 	// Cwd is the working directory for the new CC session. Empty falls
-	// back to the group's default_cwd, then the daemon's own cwd.
+	// back to the group's default_cwd, then CallerCwd, then the daemon's
+	// own cwd.
 	Cwd string `json:"cwd,omitempty"`
+	// CallerCwd is where the CLI was run. It is only a fallback, and the
+	// daemon has to apply it: the group's default_cwd comes first, and the
+	// group listing does not show that to an agent caller.
+	CallerCwd string `json:"caller_cwd,omitempty"`
 	// TimeoutSeconds bounds how long the daemon waits for the new
 	// conv-id to materialise. <= 0 falls back to 30s; capped at 300s.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
@@ -831,7 +837,7 @@ type SpawnParams struct {
 	InitialMessage string   `long:"initial-message" short:"m" optional:"true" help:"Task brief for an interactive agent; with --non-interactive, the one-shot prompt or shell command"`
 	File           string   `long:"file" short:"f" optional:"true" help:"Read --initial-message from this file ('-' reads stdin). Mutually exclusive with --initial-message; same 16384-byte cap"`
 	ReplyTo        string   `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
-	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
+	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the group's default directory, then the caller's cwd)"`
 	Timeout        string   `long:"timeout" short:"t" optional:"true" help:"Interactive: conv-id wait (default 30s); non-interactive: entire run (default 1h)"`
 	NonInteractive bool     `long:"non-interactive" help:"Run one prompt to completion using the resolved launch policy (including private per-run directories and pre-launch scripts); model gateways and managed instructions require an interactive worker"`
 	GroupContext   bool     `long:"group-context" help:"Include the group's startup context in a non-interactive prompt (off by default)"`
@@ -852,7 +858,7 @@ type SpawnParams struct {
 	HarnessConfig             string   `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
 	IUnderstandBreakGlassRisk bool     `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 
-	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
+	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd (or the group's default directory, then the caller's cwd), unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
 	WorktreeRepo string `long:"worktree-repo" optional:"true" help:"Repo to create the --worktree in when it differs from --cwd (the monorepo sub-repo case): the agent still launches in --cwd and the worktree path/branch ride into its welcome. Default: the repo containing --cwd, with the agent launched inside the worktree"`
 
@@ -881,7 +887,7 @@ type SpawnParams struct {
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
 	Effort     string `long:"effort" optional:"true" help:"Reasoning effort for the new agent (per-harness; Copilot also accepts none|minimal). Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
-	ModelProxy string `long:"model-proxy" optional:"true" help:"Claude Code model gateway <name>@<trusted peer>; fail closed when unavailable"`
+	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>, for Claude Code, Codex or Copilot; fail closed when unavailable"`
 	Model      string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
 
 	// Harness picks the coding harness the new agent runs. Declared last
@@ -894,7 +900,7 @@ type SpawnParams struct {
 	// inherit/on/off modes are delivered as a `--settings` override (see
 	// harness.claudeSandbox). Declared last (no explicit short) for the same
 	// reason as the fields above.
-	Sandbox string `long:"sandbox" optional:"true" help:"The new agent's HARNESS-BUILTIN sandbox mode: what its harness does about sandboxing, not who enforces containment (that is --sandbox-impl). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = filled by the default-profile chain, then the harness default (Codex: tclaude-agent; Claude: inherit). See 'Default resolution' in the command help"`
+	Sandbox string `long:"sandbox" optional:"true" help:"The new agent's HARNESS-BUILTIN sandbox mode: what its harness does about sandboxing, not who enforces containment (that is --sandbox-impl). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. OpenCode: access-control | tclaude-layer | off. Copilot: inherit | off. Gemini CLI: inherit | off, and seatbelt on macOS. pi: off. Unset = filled by the default-profile chain, then the harness default (Codex: tclaude-agent; Claude: inherit). See 'Default resolution' in the command help"`
 
 	// AskUserQuestionTimeout is the Claude Code AskUserQuestion idle-timeout
 	// override for the new agent, delivered via `--settings`. Declared last (no
@@ -909,7 +915,7 @@ type SpawnParams struct {
 	// profile chain and then to each harness's safe default (Codex: never;
 	// Claude: auto). For an agent caller, a bare harness default is narrowed to
 	// the caller's own same-harness posture when the caller cannot grant it.
-	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = filled by the profile chain, then the harness default (Codex: never; Claude: auto); an agent caller that cannot grant that default gets its own same-harness posture instead (disclosed in the resolved launch notes)"`
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. OpenCode: deny|ask|allow-tools. Copilot: inherit|allow-tools|yolo. Unset = filled by the profile chain, then the harness default (Codex: never; Claude: auto); an agent caller that cannot grant that default gets its own same-harness posture instead (disclosed in the resolved launch notes)"`
 
 	// ToolGovernance is OpenCode's independent built-in tool action.
 	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance for bash/glob/grep/lsp/task/skill: allow | ask | deny. Unset = filled by the profile chain, then allow. Not applicable to claude/codex"`
@@ -1060,7 +1066,7 @@ func spawnCmd() *cobra.Command {
 			"inspect the defaults up front with `tclaude agent profiles default show` " +
 			"and `tclaude agent groups ls` (PROFILE column). " +
 			"\n\n" +
-			"Requires the `groups.members.spawn` permission (default: human-only).",
+			"Requires `agent.spawn`, or `groups.members.spawn` for the group (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, cmd *cobra.Command) error {
 			// Environment is a non-splitting StringArray: values may contain commas.
@@ -1714,12 +1720,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			return nil, rcInvalidArg
 		}
 	}
-	cwd := p.Cwd
-	if cwd == "" {
-		if wd, err := os.Getwd(); err == nil {
-			cwd = wd
-		}
-	}
+	// A blank cwd stays blank: only the daemon can see the group's default.
+	callerCwd, _ := os.Getwd()
+	cwd := callerRelativePath(p.Cwd, callerCwd)
 
 	environment, err := parseEnvironmentFlags(p.Environment)
 	if err != nil {
@@ -1746,6 +1749,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		InitialMessage:         initialMessage,
 		ReplyTo:                strings.TrimSpace(p.ReplyTo),
 		Cwd:                    cwd,
+		CallerCwd:              callerCwd,
 		TimeoutSeconds:         timeoutSeconds,
 		AutoFocus:              merged.AutoFocus,
 		Effort:                 effort,
@@ -1861,11 +1865,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// leaking an orphan.
 	createdWorktree, discardWorktree := "", ""
 	if wt := strings.TrimSpace(p.Worktree); wt != "" {
-		worktreeRepo := strings.TrimSpace(p.WorktreeRepo)
+		worktreeRepo := callerRelativePath(strings.TrimSpace(p.WorktreeRepo), callerCwd)
 		if worktreeRepo == "" {
 			worktreeRepo = cwd
 		}
-		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, wt, p.WorktreeBase, ask)
+		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, callerCwd, wt, p.WorktreeBase, ask)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
 			// The failure now comes off the wire, so it carries the
@@ -1880,8 +1884,12 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 		// Clean both sides before comparing: a trailing slash or "/."
 		// on --worktree-repo must not mis-classify an in-place worktree
-		// (worktree-repo == cwd) as the monorepo case.
-		if filepath.Clean(worktreeRepo) != filepath.Clean(cwd) {
+		// (worktree-repo == cwd) as the monorepo case. A blank repo is the
+		// daemon's choice of launch dir, so that is in-place too. A blank cwd
+		// lands where the daemon says: this process cannot see the group's
+		// default, and an older daemon does not say.
+		launchDir := cmp.Or(cwd, prepared.LaunchDir, callerCwd)
+		if worktreeRepo != "" && filepath.Clean(worktreeRepo) != filepath.Clean(launchDir) {
 			// Monorepo sub-repo case: the agent launches in --cwd (the
 			// parent) and the worktree path/branch ride into its welcome.
 			req.WorktreePath = wtPath
@@ -1994,6 +2002,16 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
 	}
 	return &resp, rcOK
+}
+
+// callerRelativePath anchors a relative path flag on the caller's directory,
+// which the daemon would otherwise read against its own. Blank and "~" paths
+// stay as they are: the daemon gives those their meaning.
+func callerRelativePath(path, callerCwd string) string {
+	if path == "" || filepath.IsAbs(path) || strings.HasPrefix(path, "~") {
+		return path
+	}
+	return filepath.Join(callerCwd, path)
 }
 
 func implicitSpawnGroup(stderr io.Writer) (string, int) {

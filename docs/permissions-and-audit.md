@@ -76,10 +76,6 @@ The magic target `default` edits the global defaults list; `deny` blocks an
 otherwise-default slug for one agent; `revoke` clears either back to the
 inherited state.
 
-!!! note
-    Some CLI help text still says overrides live in `~/.tclaude/config.json`.
-    The real path is `~/.tclaude/data/config.json`.
-
 ### Defaults installed by setup
 
 `tclaude setup --install-default-agent-permissions` (idempotent) grants the
@@ -246,14 +242,50 @@ The dashboard grants through the sudo variant of the permission editor (see
 one that is running. An extension keeps to the same maximum, measured from now,
 and is recorded as `sudo.extend`.
 
-A dashboard grant of `agent.spawn` or `groups.members.spawn` can also carry a use
-limit, for example any group for 10 minutes, at most 5 agents. The daemon takes
-one use atomically just before the launch, so parallel spawns cannot exceed the
-limit, and gives it back if the launch fails. A spawn that started and later died
-has used its count, and so has one whose pane was not seen to come up in time. Uses
-are only spent where sudo is what allowed the spawn. Triggers and schedules cannot
-count, so they refuse a use-limited grant, and a grant scoped to a peer takes no
-limit because remote spawns cannot count either.
+### Use limits
+
+A dashboard grant of a countable permission can also carry a use limit, for example
+any group for 10 minutes, at most 5 agents. It ends at whichever runs out first, the
+time or the count, and the daemon enforces both.
+
+One permitted action is one use. The daemon takes the use atomically before the
+action, so parallel requests cannot exceed the limit, and gives it back when the
+request is refused or fails. Reading (`GET`), dry runs, import previews and a remote
+control status check are free, and uses are only spent where sudo is what allowed the
+action: standing access leaves the grant untouched.
+
+These count:
+
+- spawns: `agent.spawn`, `groups.members.spawn`. One use per launch, given back if the
+  launch fails. A spawn that started and later died has used its count, and so has one
+  whose pane was not seen to come up in time.
+- an agent's own actions, such as `self.rename`, `self.compact`, `self.clone`,
+  `self.task` and `self.tags`.
+- actions on other agents, as `agent.*` and `groups.members.*`: stop, resume, retire,
+  delete, rename, compact, interrupt, clone, morph, promote, reincarnate, remote
+  control, task, tags, PR and process.
+- group changes: `groups.create`, `groups.delete`, `groups.rename`, `groups.clone`,
+  `groups.archive`, `groups.nest`, `groups.attachment`, `groups.import`,
+  `groups.owners.manage`, `groups.link.add`, `groups.link.remove`,
+  `groups.members.add`, `groups.members.remove`, `groups.members.update`.
+- `message.direct`, `human.notify`, `human.clipboard`.
+- `templates.manage`, `templates.instantiate`, `profiles.manage`, `roles.manage`,
+  `prompts.manage`, `process.templates.manage`, `process.runs.start`,
+  `process.runs.manage`, `process.advance`, `usage-rules.manage` and
+  `settings.default-model`.
+
+Everything else takes no limit, and the editor says why on the row:
+
+- slugs that only read, or are part of a spawn such as `groups.members.spawn.model`.
+- `groups.admin`, which covers many actions: limit the specific permission.
+- schedules and triggers, which act later with no request to count.
+- slugs one task checks many times: boards, dashboard marks, the proxies, sessions and
+  routes.
+- slugs that act across a peer link, such as moves, teleports and remote jobs.
+
+A limited grant only works where a use can be counted. Triggers, schedules, moves and
+other checks made outside a request refuse it, and a grant scoped to a peer takes no
+limit.
 
 ## Asking the human at the moment of denial
 

@@ -3,24 +3,14 @@ import assert from 'node:assert/strict';
 import { assertAbsent, assertDifferentNode, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
-function memoryPrefs(initial = {}) {
-  const values = new Map(Object.entries(initial));
-  return {
-    values,
-    getItem(key) { return values.get(key) ?? null; },
-    setItem(key, value) { values.set(key, String(value)); },
-    removeItem(key) { values.delete(key); },
-  };
-}
-
 const keysOf = (state) => state.panes.value.map((pane) => pane.key);
 const stripOf = (state) => state.segments.value.map((segment) => (segment.type === 'group'
   ? `${segment.group.name}[${segment.panes.map((pane) => pane.key).join(',')}]`
   : segment.pane.key));
 
-async function openState(harness, prefs) {
+async function openState(harness) {
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
-  const state = createTerminalShellState({ prefs });
+  const state = createTerminalShellState();
   for (const key of ['a', 'b', 'c', 'd']) {
     state.openPane({ ws: `/${key}`, key, label: key, agent: `agt_${key}` });
   }
@@ -29,7 +19,7 @@ async function openState(harness, prefs) {
 
 test('a tab group is a contiguous run that survives joins, leaves, and dissolution', async (t) => {
   const harness = await createPreactHarness(t);
-  const state = await openState(harness, memoryPrefs());
+  const state = await openState(harness);
 
   assert.deepEqual(stripOf(state), ['a', 'b', 'c', 'd']);
   const work = state.createGroup({ name: '  TCL-618  ', keys: ['b', 'd'] });
@@ -64,7 +54,7 @@ test('a tab group is a contiguous run that survives joins, leaves, and dissoluti
 
 test('keyboard tab movement steps inside a group, out at its edges, and hops whole groups', async (t) => {
   const harness = await createPreactHarness(t);
-  const state = await openState(harness, memoryPrefs());
+  const state = await openState(harness);
   const group = state.createGroup({ name: 'infra', keys: ['b', 'c'] });
   assert.deepEqual(stripOf(state), ['a', 'infra[b,c]', 'd']);
 
@@ -93,7 +83,7 @@ test('keyboard tab movement steps inside a group, out at its edges, and hops who
 
 test('a whole group moves as one block, preserving its membership', async (t) => {
   const harness = await createPreactHarness(t);
-  const state = await openState(harness, memoryPrefs());
+  const state = await openState(harness);
   const infra = state.createGroup({ name: 'infra', keys: ['b', 'c'] });
   assert.deepEqual(stripOf(state), ['a', 'infra[b,c]', 'd']);
 
@@ -115,7 +105,7 @@ test('a whole group moves as one block, preserving its membership', async (t) =>
 
 test('a group dropped next to another group lands beside the whole stack, not inside it', async (t) => {
   const harness = await createPreactHarness(t);
-  const state = await openState(harness, memoryPrefs());
+  const state = await openState(harness);
   const left = state.createGroup({ name: 'left', keys: ['a', 'b'] });
   const right = state.createGroup({ name: 'right', keys: ['c', 'd'] });
   assert.deepEqual(stripOf(state), ['left[a,b]', 'right[c,d]']);
@@ -130,7 +120,7 @@ test('a group dropped next to another group lands beside the whole stack, not in
 
 test('keyboard group movement hops the stack over whole neighbouring segments', async (t) => {
   const harness = await createPreactHarness(t);
-  const state = await openState(harness, memoryPrefs());
+  const state = await openState(harness);
   const infra = state.createGroup({ name: 'infra', keys: ['b', 'c'] });
   assert.deepEqual(stripOf(state), ['a', 'infra[b,c]', 'd']);
 
@@ -147,7 +137,7 @@ test('keyboard group movement hops the stack over whole neighbouring segments', 
 
 test('collapsing a group never hides the terminal the operator is looking at', async (t) => {
   const harness = await createPreactHarness(t);
-  const state = await openState(harness, memoryPrefs());
+  const state = await openState(harness);
   const group = state.createGroup({ name: 'infra', keys: ['b', 'c'] });
 
   state.activatePane('c');
@@ -183,7 +173,7 @@ test('collapsing a group never hides the terminal the operator is looking at', a
 
 test('re-asserting a collapse state is a no-op, so an unrelated close cannot spring a group open', async (t) => {
   const harness = await createPreactHarness(t);
-  const state = await openState(harness, memoryPrefs());
+  const state = await openState(harness);
   const group = state.createGroup({ name: 'infra', keys: ['b', 'c'] });
   state.activatePane('a');
   state.setGroupCollapsed(group.id, true);
@@ -208,7 +198,7 @@ test('re-asserting a collapse state is a no-op, so an unrelated close cannot spr
 
 test('a tab can be parked at a group boundary that a drop on a tab cannot reach', async (t) => {
   const harness = await createPreactHarness(t);
-  const state = await openState(harness, memoryPrefs());
+  const state = await openState(harness);
   // Two adjacent stacks with no ungrouped tab between them: the position
   // between them, and before the leading one, are the drag-unreachable spots.
   const left = state.createGroup({ name: 'left', keys: ['a', 'b'] });
@@ -233,7 +223,7 @@ test('creating a group at the cap evicts an invisible dormant stack instead of f
   const harness = await createPreactHarness(t);
   const { createTerminalShellState, MAX_TERMINAL_TAB_GROUPS } =
     await harness.importDashboardModule('js/terminal-shell-state.js');
-  const state = createTerminalShellState({ prefs: memoryPrefs() });
+  const state = createTerminalShellState();
 
   // Fill the cap with stacks whose only tab is then closed: each becomes
   // dormant — remembered for reopening, but with no pill and no menu.
@@ -258,7 +248,7 @@ test('creating a group at the cap evicts an invisible dormant stack instead of f
 
   // With every stack now backing an OPEN tab there is nothing dormant to evict,
   // so the cap genuinely holds.
-  const filler = createTerminalShellState({ prefs: memoryPrefs() });
+  const filler = createTerminalShellState();
   for (let index = 0; index < MAX_TERMINAL_TAB_GROUPS; index += 1) {
     const key = `o${index}`;
     filler.openPane({ ws: `/${key}`, key, label: key });
@@ -280,54 +270,42 @@ test('group names strip invisible and bidi-spoofing characters, not just control
   assert.equal(sanitizeGroupName('  keep me  '), 'keep me');
 });
 
-test('tab groups persist, restore, and remain bounded', async (t) => {
+test('tab groups live with their page: another window keeps its own and nothing is saved', async (t) => {
   const harness = await createPreactHarness(t);
-  const { createTerminalShellState, TERMINAL_TAB_GROUP_KEY, MAX_TERMINAL_TAB_GROUPS } =
-    await harness.importDashboardModule('js/terminal-shell-state.js');
-  const prefs = memoryPrefs();
-  const state = await openState(harness, prefs);
-  const group = state.createGroup({ name: 'infra', keys: ['b', 'c'] });
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  // A value an older dashboard left behind must not come back as anyone's groups.
+  dashPrefs.setItem('tclaude.dash.terminals.groups', JSON.stringify({
+    groups: [{ id: 'group-1', name: 'stale' }], members: { a: 'group-1' },
+  }));
+  const before = dashPrefs.getItem('tclaude.dash.terminals.groups');
+  const first = await openState(harness);
+  assert.deepEqual(first.groups.value, []);
+  const second = await openState(harness);
 
-  const stored = JSON.parse(prefs.getItem(TERMINAL_TAB_GROUP_KEY));
-  assert.deepEqual(stored.groups, [{ id: group.id, name: 'infra', color: 'blue', collapsed: false }]);
-  assert.deepEqual(stored.members, { b: group.id, c: group.id });
+  const infra = first.createGroup({ name: 'infra', keys: ['a', 'b'] });
+  const docs = second.createGroup({ name: 'docs', keys: ['a'] });
+  first.renameGroup(infra.id, 'platform');
+  second.setGroupCollapsed(docs.id, true);
 
-  // Membership outlives the terminals themselves: closing every tab of a
-  // stack and reopening one restores it to its stack.
+  assert.deepEqual(stripOf(first), ['platform[a,b]', 'c', 'd']);
+  assert.deepEqual(stripOf(second), ['docs[a]', 'b', 'c', 'd'], 'a change in one window never touches the other');
+  assert.equal(second.groupFor('b'), null);
+  assert.equal(dashPrefs.getItem('tclaude.dash.terminals.groups'), before, 'no window writes a shared list');
+});
+
+test('a tab reopened in the same page returns to its stack', async (t) => {
+  const harness = await createPreactHarness(t);
+  const state = await openState(harness);
+  state.createGroup({ name: 'infra', keys: ['b', 'c'] });
+
   state.removePanes(['b', 'c']);
-  assert.deepEqual(JSON.parse(prefs.getItem(TERMINAL_TAB_GROUP_KEY)).members, { b: group.id, c: group.id });
-
-  const restored = createTerminalShellState({ prefs });
-  for (const key of ['a', 'c']) restored.openPane({ ws: `/${key}`, key, label: key });
-  assert.deepEqual(stripOf(restored), ['a', 'infra[c]'], 'a reopened tab returns to its stack');
-  restored.openPane({ ws: '/d', key: 'd', label: 'd' });
-  restored.openPane({ ws: '/b', key: 'b', label: 'b' });
-  assert.deepEqual(stripOf(restored), ['a', 'infra[c,b]', 'd'],
+  assert.deepEqual(stripOf(state), ['a', 'd'], 'a stack with no open tab has nothing to show');
+  state.openPane({ ws: '/c', key: 'c', label: 'c' });
+  assert.deepEqual(stripOf(state), ['a', 'd', 'infra[c]'], 'a reopened tab returns to its stack');
+  state.openPane({ ws: '/e', key: 'e', label: 'e' });
+  state.openPane({ ws: '/b', key: 'b', label: 'b' });
+  assert.deepEqual(stripOf(state), ['a', 'd', 'infra[c,b]', 'e'],
     'a remembered member appends inside its group without moving the group');
-  assert.equal(restored.groups.value[0].id, group.id);
-
-  const hostile = createTerminalShellState({
-    prefs: memoryPrefs({
-      'tclaude.dash.terminals.groups': JSON.stringify({
-        groups: [
-          { id: 'group-1', name: 'okbell', color: 'not-a-colour' },
-          { id: 'group-1', name: 'duplicate id' },
-          { name: 'no id' },
-          ...Array.from({ length: 40 }, (_, index) => ({ id: `flood-${index}`, name: `flood ${index}` })),
-        ],
-        members: { a: 'group-1', b: 'nonexistent', 7: 'group-1' },
-      }),
-    }),
-  });
-  hostile.openPane({ ws: '/a', key: 'a', label: 'a' });
-  hostile.openPane({ ws: '/b', key: 'b', label: 'b' });
-  assert.equal(hostile.groups.value.length, MAX_TERMINAL_TAB_GROUPS, 'the stored group count is capped');
-  assert.equal(hostile.groups.value[0].name, 'ok bell', 'control characters never reach the strip');
-  assert.equal(hostile.groups.value[0].color, 'blue');
-  assert.deepEqual(hostile.groups.value.map((entry) => entry.id).filter((id) => id === 'group-1'), ['group-1'],
-    'a duplicate id is dropped rather than shadowing the first');
-  assert.equal(hostile.groupFor('a').id, 'group-1');
-  assert.equal(hostile.groupFor('b'), null, 'membership pointing at no group is ungrouped');
 });
 
 test('the strip renders group stacks with a collapsing pill, a join drop target, and group actions', async (t) => {
@@ -335,7 +313,7 @@ test('the strip renders group stacks with a collapsing pill, a join drop target,
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { createTerminalShellActions } = await harness.importDashboardModule('js/terminal-shell-actions.js');
   const { TerminalTabs } = await harness.importDashboardModule('js/terminal-shell-island.js');
-  const state = createTerminalShellState({ prefs: memoryPrefs(), persistPresentation: false });
+  const state = createTerminalShellState();
   const actions = createTerminalShellActions({ state, fetchImpl: async () => ({ ok: true }) });
   const widgetFactory = () => ({
     connect: async () => true,
@@ -429,7 +407,7 @@ test('a tab context menu offers the grouping commands drag-and-drop cannot reach
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { createTerminalShellActions } = await harness.importDashboardModule('js/terminal-shell-actions.js');
   const { TerminalTabs } = await harness.importDashboardModule('js/terminal-shell-island.js');
-  const state = createTerminalShellState({ prefs: memoryPrefs(), persistPresentation: false });
+  const state = createTerminalShellState();
   const actions = createTerminalShellActions({ state, fetchImpl: async () => ({ ok: true }) });
   const widgetFactory = () => ({
     connect: async () => true,
@@ -480,7 +458,7 @@ async function mountStrip(harness, keys) {
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { createTerminalShellActions } = await harness.importDashboardModule('js/terminal-shell-actions.js');
   const { TerminalTabs } = await harness.importDashboardModule('js/terminal-shell-island.js');
-  const state = createTerminalShellState({ prefs: memoryPrefs(), persistPresentation: false });
+  const state = createTerminalShellState();
   const actions = createTerminalShellActions({ state, fetchImpl: async () => ({ ok: true }) });
   const widgetFactory = () => ({
     connect: async () => true,

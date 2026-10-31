@@ -226,6 +226,7 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 	// back to the last-known tracked value. This is the only readback path and
 	// it is on-demand only — never polled.
 	if intent == "status" {
+		giveBackSudoUses(r)
 		tracked := false
 		if sess != nil {
 			tracked = sess.RemoteControl

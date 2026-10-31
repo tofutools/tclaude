@@ -28,7 +28,7 @@ import (
 type cloneParams struct {
 	FollowUp      string `pos:"true" optional:"true" help:"Optional first-turn prompt for the clone (quote multi-word strings)."`
 	File          string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
-	Target        string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.clone permission, or being an owner of a group containing the target."`
+	Target        string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.clone permission, or being an owner of every active group containing the target."`
 	NoCopyConv    bool   `long:"no-copy-conv" help:"Spawn the clone with a fresh context (default: copy the original's jsonl so the clone starts with the same conversation history)."`
 	AskHuman      string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 	Cwd           string `long:"cwd" short:"C" optional:"true" help:"Spawn the clone in this directory (e.g. a git worktree) instead of the original's cwd. An agent caller must be able to write there."`
@@ -62,7 +62,7 @@ func cloneCmd() *cobra.Command {
 			"(off by default). " +
 			"\n\n" +
 			"Cross-agent: --target <selector> clones ANOTHER agent (requires the " +
-			"agent.clone permission, or being an owner of a group containing the target). " +
+			"agent.clone permission, or being an owner of every active group containing the target). " +
 			"Otherwise self-targeted, requires the self.clone permission " +
 			"(default-granted alongside self.compact; self-reincarnation needs no slug).",
 		ParamEnrich: common.DefaultParamEnricher(),

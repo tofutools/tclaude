@@ -889,7 +889,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [linkOpen]);
 
-  if (!fleet) return html`<div class="empty">Not connected to a federation hub. Set it up in ⚙ Fleet or with <code>tclaude federation</code> (see docs/federation.md).</div>`;
+  if (!fleet) return html`<div class="empty">Not connected to a federation hub. Set it up in ⚙ Fleet config or with <code>tclaude federation</code> (see docs/federation.md).</div>`;
   const t = now();
   const peerById = new Map(fleet.peers.map((p) => [p.id, p]));
   const card = (node) => cardView(node, current.summaries[node.id], t);
