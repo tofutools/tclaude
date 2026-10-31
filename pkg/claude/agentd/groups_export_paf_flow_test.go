@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -344,4 +346,66 @@ func TestGroupExport_PAFScanRefusesUnlessAllowed(t *testing.T) {
 	require.NotEmpty(t, insp.Findings)
 	assert.Equal(t, "github-token", insp.Findings[0].Kind)
 	assert.Contains(t, insp.Findings[0].Locations[0], "ext/tclaude/group-state.json")
+}
+
+// Scenario: a group is imported onto a model whose context window fits only a
+// small part of a member's conversation.
+//
+// Expected:
+//   - The dry run warns about the cut, and the import is refused with nothing
+//     written, naming the member, until the cut is confirmed.
+//   - Once confirmed, the whole conversation is saved beside the member, and
+//     its inbox says where.
+func TestGroupImport_LargeCutNeedsConfirmationAndSavesFullHistory(t *testing.T) {
+	f := newFlow(t)
+	codexHome := testutil.CanonicalTempDir(t)
+	t.Setenv("CODEX_HOME", codexHome)
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte("model = \"gpt-5.5\"\nmodel_context_window = 20000\n"), 0o600))
+	const a = "0f0e0d0c-0b0a-4908-8706-0504030201c3"
+	cwd := testutil.CanonicalTempDir(t)
+	seedLongClaudeConversation(t, f, a, "grp-long", cwd, 30, 1000)
+	require.NoError(t, db.SetConvIndexCustomTitle(a, "alice", "claude"))
+	f.HaveEnrolledAgent(a)
+	f.HaveGroup("crew")
+	f.HaveMemberWithRole("crew", a, "lead")
+	archive := exportGroupAs(t, f, "crew", "paf")
+
+	dest := testutil.CanonicalTempDir(t)
+	q := url.Values{"into": {dest}, "as": {"crew-small"}, "harness": {"codex"}, "model": {"gpt-5.5"}}
+	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/groups/import/inspect?"+q.Encode(), bytes.NewReader(archive)))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "--confirm-history-loss", "the dry run says so")
+
+	refused, _ := importGroupWith(t, f, archive, q)
+	require.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), "history_confirmation_required")
+	assert.Contains(t, refused.Body.String(), "alice")
+	g, err := db.GetAgentGroupByName("crew-small")
+	require.NoError(t, err)
+	require.Nil(t, g, "a refused import writes nothing")
+
+	q.Set("confirm_history_loss", "true")
+	imported, _ := importGroupWith(t, f, archive, q)
+	require.Equal(t, http.StatusOK, imported.Code, imported.Body.String())
+	g, err = db.GetAgentGroupByName("crew-small")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	members, err := db.ListAgentGroupMembers(g.ID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	msgs, err := db.ListAgentMessagesForConv(members[0].ConvID, 10)
+	require.NoError(t, err)
+	var pointer string
+	for _, m := range msgs {
+		if m.Subject == "Your full imported history" {
+			pointer = m.Body
+		}
+	}
+	require.NotEmpty(t, pointer, "the member is told where its full history is")
+	path := regexp.MustCompile(`(/\S+/transcript\.md)`).FindString(pointer)
+	require.NotEmpty(t, path, pointer)
+	full, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(full), "turn 15:", "the saved transcript has the turns the landing cut")
 }

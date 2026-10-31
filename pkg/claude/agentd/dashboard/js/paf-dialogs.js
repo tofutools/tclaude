@@ -278,11 +278,19 @@ export function offlineImportBlocker(preview, choices) {
   return '';
 }
 
+// memberCutsToConfirm lists the members whose landing cuts so much of their
+// conversation that the group import needs the importer's confirmation, as
+// the route does (history_confirmation_required).
+export function memberCutsToConfirm(landings) {
+  return (landings || []).filter((row) => row.rung === 'translated' && row.losses?.needs_summary);
+}
+
 // MemberLandings is the group preview's per-member landing table: each
 // member's harness and model (defaulting to the all-members choice) and the
 // rung its history takes, with the losses a translation would cause.
-export function MemberLandings({ landings, landing, setLanding }) {
+export function MemberLandings({ landings, landing, setLanding, confirmCut, setConfirmCut }) {
   if (!landings?.length) return null;
+  const cuts = memberCutsToConfirm(landings);
   const member = (key) => landing.members?.[key] || { harness: '', model: '' };
   const setMember = (key, patch) => setLanding({ ...landing, members: { ...landing.members, [key]: { ...member(key), ...patch } } });
   return html`<div class="paf-members" id="group-import-landings">
@@ -306,5 +314,7 @@ export function MemberLandings({ landings, landing, setLanding }) {
         </tr>`;
       })}
     </tbody></table>
+    ${cuts.length > 0 && html`<${Check} id="group-import-confirm-loss" checked=${!!confirmCut} onChange=${setConfirmCut}
+      hint="The full history stays in the file and is saved beside each agent, which is told where. A model with a larger window keeps more.">Accept cutting the conversation of ${cuts.map((row) => `${row.title || row.conv_id.slice(0, 8)} (about ${row.losses.dropped_percent}%)`).join(', ')} to fit the landing model</${Check}>`}
   </div>`;
 }

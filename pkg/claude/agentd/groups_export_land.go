@@ -3,10 +3,12 @@ package agentd
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
@@ -32,6 +34,8 @@ type groupLandingOptions struct {
 	// MemberHarness and MemberModel are keyed by member: its title, its
 	// agent key in a group PAF, or its conversation id.
 	MemberHarness, MemberModel map[string]string
+	// ConfirmHistoryLoss accepts members' large history cuts.
+	ConfirmHistoryLoss bool
 }
 
 // parseGroupLandingOptions reads harness, model, and the repeatable
@@ -40,6 +44,7 @@ func parseGroupLandingOptions(q url.Values) (groupLandingOptions, error) {
 	o := groupLandingOptions{
 		Harness: strings.TrimSpace(q.Get("harness")), Model: strings.TrimSpace(q.Get("model")),
 		MemberHarness: map[string]string{}, MemberModel: map[string]string{},
+		ConfirmHistoryLoss: q.Get("confirm_history_loss") == "true",
 	}
 	for param, into := range map[string]map[string]string{"member_harness": o.MemberHarness, "member_model": o.MemberModel} {
 		for _, binding := range q[param] {
@@ -177,8 +182,57 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		if dst.Name != src {
 			l.Warnings = append(l.Warnings, fmt.Sprintf("lands on %s instead of %s; receiver defaults apply at its next launch", dst.Name, src))
 		}
+		if l.needsCutConfirm() {
+			l.Warnings = append(l.Warnings, fmt.Sprintf("cutting %d%% of the conversation needs confirmation: --confirm-history-loss", l.cutPercent()))
+		}
 	}
 	return out, nil
+}
+
+// needsCutConfirm says the member's landing cuts so much of its conversation
+// that the importer must accept it, as an agent import must.
+func (l *groupMemberLanding) needsCutConfirm() bool {
+	return l.history != nil && l.Losses != nil && l.Losses.NeedsSummary
+}
+
+// unconfirmedCuts refuses the landings when any needs a confirmation that was
+// not given. The refusal names each member and its cut.
+func unconfirmedCuts(ls []*groupMemberLanding, confirmed bool) error {
+	if confirmed {
+		return nil
+	}
+	var cuts []string
+	for _, l := range ls {
+		if l.needsCutConfirm() {
+			cuts = append(cuts, fmt.Sprintf("%s about %d%%", l.Title, l.cutPercent()))
+		}
+	}
+	if len(cuts) == 0 {
+		return nil
+	}
+	sort.Strings(cuts)
+	return &groupHistoryCutError{cuts}
+}
+
+// groupHistoryCutError is the import's refusal of unconfirmed history cuts.
+type groupHistoryCutError struct{ cuts []string }
+
+func (e *groupHistoryCutError) Error() string {
+	return "landing cuts the conversation of " + strings.Join(e.cuts, ", ") + ". Confirm with --confirm-history-loss (the full history stays in the file and is saved beside each agent), or choose a model with a larger context window."
+}
+
+// saveCutMemberHistories saves the whole conversation of every member whose
+// landing cut it, beside the agent, as an agent import does.
+func saveCutMemberHistories(ls []*groupMemberLanding, exp *groupexport.Export, convRemap map[string]string, group string) {
+	g, err := db.GetAgentGroupByName(group)
+	if err != nil {
+		slog.Warn("import: save full history", "group", group, "error", err)
+	}
+	for i, l := range ls {
+		if l.full != nil {
+			saveLandedHistory(agent.SpawnResponse{ConvID: convRemap[exp.Convs[i].ConvID]}, l.historyLanding, g)
+		}
+	}
 }
 
 // memberNeutralContext reads a group PAF member's neutral context, or is
