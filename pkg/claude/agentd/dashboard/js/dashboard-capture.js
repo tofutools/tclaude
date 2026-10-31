@@ -11,11 +11,16 @@
 // data-capture-skip (the capture's own cue) are left out.
 // dashboard-imperative-boundary: browser-io
 
+import { randomUUID } from './insecure-origin.js';
+
 export const CAPTURE_PRESENCE_MS = 1500;
 export const CAPTURE_HIDDEN_PRESENCE_MS = 10000;
 export const CAPTURE_NOTICE_MS = 4000;
 const CAPTURE_MAX_SIDE = 2560;
 const CAPTURE_RENDER_TIMEOUT_MS = 12000;
+// A hung exchange must not end presence: the daemon reads a silent tab as gone.
+const CAPTURE_PING_TIMEOUT_MS = 8000;
+const CAPTURE_ANSWER_TIMEOUT_MS = CAPTURE_RENDER_TIMEOUT_MS + 8000;
 const CAPTURE_TEXT_MAX = 240;
 const XHTML = 'http://www.w3.org/1999/xhtml';
 const SVG = 'http://www.w3.org/2000/svg';
@@ -123,7 +128,7 @@ export function trackPointer(win, now = Date.now) {
 // startCapturePresence tells the daemon this tab is open and whether it is on
 // screen, and answers a capture aimed at it. It returns a stop function.
 export function startCapturePresence({
-  win, fetchImpl, tab, onCapture, onMarks, marks = () => [], render = renderPage, randomId = () => win.crypto.randomUUID(),
+  win, fetchImpl, tab, onCapture, onMarks, marks = () => [], render = renderPage, randomId = () => randomUUID(win.crypto),
   setTimeoutImpl = (fn, ms) => win.setTimeout(fn, ms), clearTimeoutImpl = (id) => win.clearTimeout(id),
 }) {
   const doc = win.document;
@@ -134,9 +139,16 @@ export function startCapturePresence({
   let inFlight = false;
 
   const hidden = () => doc.visibilityState === 'hidden';
-  const send = (body) => fetchImpl('/api/companion/presence', {
-    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  const within = (work, ms) => new Promise((resolve, reject) => {
+    const limit = setTimeoutImpl(() => reject(new Error('timed out')), ms);
+    Promise.resolve(work).then(resolve, reject).finally(() => clearTimeoutImpl(limit));
   });
+  const send = async (body, signal) => {
+    const response = await fetchImpl('/api/companion/presence', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+    });
+    return response?.ok ? response.json() : null;
+  };
   const answer = async (request) => {
     onCapture?.(request);
     let body;
@@ -164,14 +176,18 @@ export function startCapturePresence({
   async function ping() {
     if (stopped || inFlight) return;
     inFlight = true;
+    const abort = win.AbortController ? new win.AbortController() : null;
     try {
-      const response = await send({ client, focused: !!doc.hasFocus?.(), visible: !hidden() });
-      const data = response?.ok ? await response.json() : null;
+      const body = { client, focused: !!doc.hasFocus?.(), visible: !hidden() };
+      const data = await within(send(body, abort?.signal), CAPTURE_PING_TIMEOUT_MS);
       if (Array.isArray(data?.marks)) onMarks?.(data.marks);
-      if (data?.capture?.id) await answer(data.capture);
-    } catch { /* the next ping retries */ }
-    inFlight = false;
-    schedule();
+      if (data?.capture?.id) await within(answer(data.capture), CAPTURE_ANSWER_TIMEOUT_MS);
+    } catch {
+      abort?.abort();
+    } finally {
+      inFlight = false;
+      schedule();
+    }
   }
   const pingNow = () => { void ping(); };
   const goodbye = () => {

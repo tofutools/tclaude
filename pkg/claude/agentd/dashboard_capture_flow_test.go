@@ -83,6 +83,30 @@ func TestDashboardCapture_ClearErrorsWithoutAVisibleTab(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "dashboard_hidden", "a tab the operator cannot see is not captured")
 }
 
+func TestDashboardCapture_APollingPageIsNotCalledClosed(t *testing.T) {
+	c := newCaptureFlow(t)
+	rec := <-c.request()
+	assert.Contains(t, rec.Body.String(), "no dashboard has connected since the daemon started")
+
+	// A page polling its snapshot exists even if its presence loop never ran.
+	polled := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, polled.Code)
+	rec = <-c.request()
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "dashboard_silent")
+	assert.Contains(t, rec.Body.String(), "reloading that page")
+	assert.NotContains(t, rec.Body.String(), "no dashboard is open")
+
+	// Its goodbye ends that: a closed page is not told to reload.
+	c.ping("tab", true, true)
+	gone := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
+		map[string]any{"client": "tab", "gone": true}))
+	require.Equal(t, http.StatusNoContent, gone.Code)
+	rec = <-c.request()
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Body.String(), "last heard from")
+}
+
 func TestDashboardCapture_ReturnsTheFocusedTabsRender(t *testing.T) {
 	c := newCaptureFlow(t)
 	c.ping("background", false, true)

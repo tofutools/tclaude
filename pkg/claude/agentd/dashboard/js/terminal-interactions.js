@@ -7,6 +7,7 @@ import {
   isCommandPaletteShortcut,
   requestCommandPalette,
 } from './command-registry.js';
+import { writeClipboard } from './insecure-origin.js';
 
 const IMAGE_TYPES = new Map([
   ['image/png', 'png'],
@@ -450,29 +451,6 @@ function shortenPathForStatus(path, max = 100) {
   if (path.length <= max) return path;
   const tailLength = Math.min(48, Math.floor((max - 1) / 2));
   return `${path.slice(0, max - tailLength - 1)}…${path.slice(-tailLength)}`;
-}
-
-function legacyCopy(text) {
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.setAttribute('readonly', '');
-  area.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
-  document.body.append(area);
-  area.select();
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-  area.remove();
-  return ok;
-}
-
-async function writeClipboard(text) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch (_) { /* insecure context or denied permission: use legacy copy */ }
-  }
-  return legacyCopy(text);
 }
 
 // Arbitrary file paste and drop are for agent terminals only: the agent reads

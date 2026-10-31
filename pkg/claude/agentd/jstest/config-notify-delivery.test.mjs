@@ -70,7 +70,7 @@ test('the browser permission control reports an unsupported context instead of o
   const { mounted } = await mountConfig(harness, { notifications: { enabled: true, delivery: 'browser' } });
 
   const section = mounted.container.querySelector('#cfg-notif-delivery').closest('.cfg-field');
-  assert.match(section.textContent, /cannot raise notifications/i);
+  assert.match(section.textContent, /plain HTTP except on localhost/);
   assertAbsent(section.querySelector('button'), 'no grant button when the API is absent');
   await mounted.unmount();
 });

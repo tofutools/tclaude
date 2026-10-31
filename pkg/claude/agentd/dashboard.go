@@ -3004,6 +3004,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
+	if !isPeerSnapshot(r) {
+		noteDashboardPoll()
+	}
 	// This response is dynamic even when static_version remains unchanged: the
 	// query parameter only lets us omit stable registry blobs, while agent
 	// liveness and status still change on every poll. Never let a browser or

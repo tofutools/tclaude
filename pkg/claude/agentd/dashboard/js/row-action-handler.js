@@ -48,6 +48,7 @@ import { refuseInPeerView } from './peer-view-guard.js';
 import { ownGroupData } from './fleet-merged-model.js';
 import { GROUP_GRANT_ACTS, READ_ONLY_ACTS, isAgentGrantAct } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
+import { writeClipboard } from './insecure-origin.js';
 
 export async function handleRowAction(action) {
   // A control on a group in the fused Groups view names it group@node: the
@@ -627,19 +628,10 @@ export async function handleRowAction(action) {
         // out-of-band — `claude --resume <id>` from its dir, or
         // `tclaude agent seance --target <id>`. A one-click in-dashboard
         // open of the grave is a planned follow-up.
-        // Only claim "copied" when the clipboard API exists AND the write
-        // resolves. `navigator.clipboard?.writeText(...)` returns undefined
-        // (not a rejection) when clipboard is missing — awaiting that would
-        // still hit the success toast without anything being written. So gate
-        // on the API first, and fall back to the conv-id toast otherwise.
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          try {
-            await navigator.clipboard.writeText(conv);
-            toast(`conv-id copied: ${shortId(conv)} — inspect with 'claude --resume' or 'tclaude agent seance --target'`);
-            return;
-          } catch (_) {
-            // fall through to the conv-id toast below
-          }
+        // Only claim "copied" when the write worked; otherwise show the id.
+        if (await writeClipboard(conv)) {
+          toast(`conv-id copied: ${shortId(conv)} — inspect with 'claude --resume' or 'tclaude agent seance --target'`);
+          return;
         }
         toast(`conv-id: ${conv}`);
         return;

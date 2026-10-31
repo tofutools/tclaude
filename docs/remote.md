@@ -101,6 +101,11 @@ it strictly behind your own reverse proxy, SSO, VPN, or IAP — `agentd` warns
 loudly on a non-loopback bind. The localhost listener is kept alongside, and
 this is also the supported network path for the standalone TUI dashboard.
 
+Plain HTTP this way is supported, including agent capture (`guide capture`) and
+the copy buttons. Browser notifications cannot work there: browsers allow them
+only over HTTPS or on localhost, and the dashboard says so where you would turn
+them on.
+
 ## Claude Code Remote Control
 
 Claude Code has a built-in remote-session feature: with the host logged in to

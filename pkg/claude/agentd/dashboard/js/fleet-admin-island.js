@@ -33,6 +33,7 @@ import { openProposalComposer } from './links-controller.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './fleet-model.js';
 import { LABEL_RE, UNRESTRICTED_CONSEQUENCE, adminView, shortFingerprint, shortID } from './fleet-admin-model.js';
+import { writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 
@@ -72,10 +73,8 @@ function defaultSwitchHome() {
   globalThis.location.assign(nodeHref('', { pathname: toPath(fleetAdminLocation()), search: globalThis.location.search }));
 }
 
-function defaultCopy(text) {
-  const clipboard = globalThis.navigator?.clipboard;
-  if (!clipboard?.writeText) return Promise.reject(new Error('clipboard unavailable'));
-  return clipboard.writeText(text);
+async function defaultCopy(text) {
+  if (!await writeClipboard(text)) throw new Error('clipboard unavailable');
 }
 
 function errText(error) { return error?.message || String(error); }

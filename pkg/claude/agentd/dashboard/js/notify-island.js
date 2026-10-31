@@ -2,7 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { NOTIFY_TYPES, NOTIFY_DELIVERIES } from './notify-state.js';
-import { browserNotifyPermission } from './browser-notify.js';
+import { NOTIFICATIONS_NEED_SECURE_ORIGIN, browserNotifyPermission } from './browser-notify.js';
 import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
@@ -33,7 +33,7 @@ function browserPermissionNote(delivery, permission) {
     case 'denied':
       return 'Browser notifications are blocked — allow them in your browser’s site settings.';
     case 'unsupported':
-      return 'This browser can’t raise notifications here (needs https or localhost).';
+      return NOTIFICATIONS_NEED_SECURE_ORIGIN;
     default:
       return 'Your browser hasn’t granted permission yet — pick this to be asked.';
   }

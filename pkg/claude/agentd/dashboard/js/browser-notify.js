@@ -27,11 +27,16 @@ export const BROWSER_NOTIFY_IDLE_POLL_MS = 30000;
 
 const ENDPOINT = '/api/browser-notifications';
 
+// NOTIFICATIONS_NEED_SECURE_ORIGIN is what the operator is told when this page
+// cannot raise a notification.
+export const NOTIFICATIONS_NEED_SECURE_ORIGIN = 'Browser notifications don’t work over plain HTTP except on localhost.';
+
 // notificationsUsable reports whether this browsing context can raise a
-// notification at all. The API is absent outside a secure context (an http://
-// dashboard reached by IP over a LAN), so feature-detect rather than assume.
+// notification at all. Outside a secure context (an http:// dashboard reached
+// by IP over a LAN) the API is absent, or present and permanently denied, which
+// is no setting the operator can change.
 function notificationsUsable(win) {
-  return typeof win?.Notification === 'function';
+  return typeof win?.Notification === 'function' && win.isSecureContext !== false;
 }
 
 // requestBrowserNotifyPermission asks the browser for permission. Must be

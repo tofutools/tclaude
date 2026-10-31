@@ -226,7 +226,9 @@ agents are counted, and `--all` lists them. `--group <name>` narrows it, and `--
 gives the raw brief. It needs `fleet.read`.
 
 **`tclaude agent guide`** drives the pointing. `guide view` needs
-`dashboard.view.read`. `guide show` needs `dashboard.guide`:
+`dashboard.view.read`. Its time on the view counts from the last view
+change, so it grows while the operator stays put; its `connection` line says
+when a tab last reported and a page last polled. `guide show` needs `dashboard.guide`:
 
 ```bash
 tclaude agent guide show --tab <tab> --target "<visible text>" --note "<note>"
