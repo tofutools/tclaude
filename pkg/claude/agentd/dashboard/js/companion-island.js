@@ -22,13 +22,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
-  clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
+  clampPlacement, fitPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent, viewportOf,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
-import { ResizeFrame, resizedPlacement } from './window-resize.js';
+import { ResizeFrame, resizedPlacement, savedAfterResize } from './window-resize.js';
 import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js';
 import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -270,7 +270,7 @@ export function CompanionApp({
     const vp = viewportOf(win);
     const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
     if (saved?.snap) return zoneRect(saved.snap, vp, snapTopOf(win));
-    return clampPlacement(saved || defaultPlacement(vp), vp);
+    return fitPlacement(saved || defaultPlacement(vp), vp);
   });
   const [guide, setGuide] = useState(null);
   const [menu, setMenu] = useState(false);
@@ -560,6 +560,11 @@ export function CompanionApp({
   }, [open]);
   useEffect(() => () => clearTimeout(warmTimer.current), []);
 
+  // Reopen where the operator left it, if that still fits.
+  useLayoutEffect(() => {
+    if (open) setPlacement((p) => (p.snap ? p : floatingPlacement()));
+  }, [open]);
+
   // Grow the window out of the chip it was opened from.
   useLayoutEffect(() => {
     if (!open) return;
@@ -575,18 +580,29 @@ export function CompanionApp({
     ], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
   }, [open]);
 
-  // Keep a floating window on screen when the browser resizes.
+  // Keep a floating window on screen when the browser resizes, working from the
+  // saved placement so a larger browser restores what a smaller one shrank.
   useEffect(() => {
-    const onResize = () => setPlacement((p) => {
-      const vp = viewportOf(win);
-      return p.snap ? zoneRect(p.snap, vp, snapTop()) : clampPlacement(p, vp);
-    });
+    const onResize = () => setPlacement((p) => (
+      p.snap ? zoneRect(p.snap, viewportOf(win), snapTop()) : floatingPlacement()
+    ));
     win?.addEventListener?.('resize', onResize);
     return () => win?.removeEventListener?.('resize', onResize);
   }, [win]);
 
   function snapTop() {
     return snapTopOf(win);
+  }
+
+  function floatingPlacement() {
+    const vp = viewportOf(win);
+    return fitPlacement({ ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || defaultPlacement(vp)), snap: '' }, vp);
+  }
+
+  // A move keeps the saved size: the window may only be small for this viewport.
+  function withSavedSize(p) {
+    const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
+    return saved ? { ...p, w: saved.w, h: saved.h } : p;
   }
 
   function savePlacement(p) {
@@ -613,6 +629,7 @@ export function CompanionApp({
     handle.setPointerCapture?.(event.pointerId);
     const vp = viewportOf(win);
     let start = placement;
+    const tornOff = !!start.snap;
     if (start.snap) {
       // Tearing a snapped window off restores a floating size under the pointer.
       const floating = clampPlacement({ ...defaultPlacement(vp), ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || {}), snap: '' }, vp);
@@ -623,7 +640,9 @@ export function CompanionApp({
     const sy = event.clientY;
     let zone = '';
     let last = start;
+    let moved = false;
     const move = (m) => {
+      moved = true;
       last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
       setPlacement(last);
       zone = snapZone({ x: m.clientX, y: m.clientY }, viewportOf(win));
@@ -635,11 +654,11 @@ export function CompanionApp({
       handle.removeEventListener('pointercancel', up);
       setGuide(null);
       if (zone) {
-        savePlacement({ ...last, snap: '' });
         setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
-        writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify({ ...last, snap: zone }));
-      } else {
-        savePlacement(last);
+        savePlacement({ ...withSavedSize(last), snap: zone });
+      } else if (moved || tornOff) {
+        // A click shows the fitted placement, which is not the operator's to keep.
+        savePlacement(withSavedSize(last));
       }
     };
     handle.addEventListener('pointermove', move);
@@ -662,7 +681,9 @@ export function CompanionApp({
     const sx = event.clientX;
     const sy = event.clientY;
     let last = start;
+    let moved = false;
     const move = (m) => {
+      moved = true;
       const dx = m.clientX - sx;
       const dy = m.clientY - sy;
       // A snapped panel resizes along its free edge only.
@@ -685,7 +706,7 @@ export function CompanionApp({
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
       handle.removeEventListener('pointercancel', up);
-      if (!start.snap) savePlacement(last);
+      if (!start.snap && moved) savePlacement(savedAfterResize(last, zone, parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF))));
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
