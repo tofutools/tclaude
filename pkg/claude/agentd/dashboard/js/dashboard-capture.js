@@ -362,7 +362,10 @@ function cloneVisible(source, { win, inline, tasks }, scroller = { x: 0, y: 0 })
         copy = span;
       }
       const sticky = child.nodeType === 1 && win.getComputedStyle(child).position === 'sticky';
-      if (!sticky && copy.style) {
+      if (sticky) {
+        // Its siblings move instead, so it stays put.
+        copy.style?.removeProperty('translate');
+      } else if (copy.style) {
         copy.style.setProperty('translate', `${-scrollX}px ${-scrollY}px`);
         if (copy.tagName.toLowerCase() === 'span') copy.style.setProperty('display', 'inline-block');
       }

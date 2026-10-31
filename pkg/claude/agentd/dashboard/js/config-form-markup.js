@@ -885,7 +885,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <${Group} title="Access" lede="Set when a Steward is summoned, so a running Steward keeps what it was born with: retire it to apply a change. Anything beyond this asks you first. Agents can always message a live Steward.">
         <${Setting} title="Reads" forId="cfg-steward-reads" k="steward.reads"
           summary="What a Steward can read."
-          more="Every level lists all agents and groups, as you see them, and reads boards and the dashboard view. Operator level adds processes, triggers, usage, costs, host load, federation activity and agents' context state. It never includes other agents' mail, private setup text, or GitHub, Linear and AWB through your credentials.">
+          more="Every level lists all agents and groups, as you see them, and reads boards and the dashboard view. Operator level adds processes, triggers, usage, costs, host load, federation activity and agents' context state. Reads never include other agents' mail through the API, private setup text, or GitHub, Linear and AWB through your credentials. At every level a Steward can capture your dashboard, so it sees what is on screen, including any open messages, and you see a notice each time.">
           <${ConfigSelect} id="cfg-steward-reads" aria-label="What a Steward can read">
             <option value="operator">Operator level (default)</option>
             <option value="fleet">Fleet and boards only</option>

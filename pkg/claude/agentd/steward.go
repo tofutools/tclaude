@@ -30,8 +30,8 @@ var stewardBaseSlugs = []string{
 // of the whole fleet that fleet.read already lists. Reads are safe to give by
 // default because injected text in a worker's reply can only look with them;
 // writing stays with the levels below, steward.default_permissions and sudo.
-// Left out on purpose: reading other agents' mail (agent.inbox-watch), private setup text
-// (config export), and the proxy.* reads, which spend the operator's GitHub,
+// Left out on purpose: reading other agents' mail (agent.inbox-watch), though a
+// capture shows whatever the operator has open, private setup text (config export), and the proxy.* reads, which spend the operator's GitHub,
 // Linear and AWB credentials outside tclaude.
 var stewardOperatorReadSlugs = []string{
 	PermProcessTemplatesRead, PermProcessRunsRead, PermTriggersRead, PermUsageRead, PermHostRead, PermCostsRead,
