@@ -1352,8 +1352,7 @@ export function CompanionApp({
   // Over the terminal, taking no room: the anchor has no height, and only the
   // cluster itself takes the pointer. Before the terminal in the DOM, because
   // Tab typed into a terminal stays there.
-  const floatingTools = showComposer && html`<div class="companion-floating-anchor">
-    <div class=${`companion-floating${listening ? ' listening' : ''}`} role="group" aria-label="Message tools">
+  const floatingTools = showComposer && html`<div class=${`companion-floating${listening ? ' listening' : ''}`} role="group" aria-label="Message tools">
       ${dictation.supported && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => setWithContext(event.currentTarget.checked)} /> view
       </label>`}
@@ -1363,7 +1362,6 @@ export function CompanionApp({
         onClick=${toggleDictation}>${listening ? '⏺' : '🎤'}</button>`}
       <button type="button" class="companion-annotate" aria-label=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${startAnnotating}>✎</button>
-    </div>
   </div>`;
 
   const windowView = (open || warm) && html`<section ref=${windowRef}
@@ -1416,7 +1414,7 @@ export function CompanionApp({
     </header>
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} />`}
-    <div class="companion-body">
+    <div class=${`companion-body${showComposer && showField && activeApprovals.length + activeDecisions.length ? ' clear-strip' : ''}`}>
       ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
         ${activeApprovals.length > 0 && html`<p class="companion-decide-note" role="status">${activeAgent.name} also has
           ${activeApprovals.length === 1 ? ' an approval' : ` ${activeApprovals.length} approvals`} waiting:
@@ -1435,8 +1433,8 @@ export function CompanionApp({
         <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : shutDown ? `Start a new ${customName || 'Steward'}` : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
-      ${activeAgent && parked.has(activeAgent.agentId) && floatingTools}
       ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
+      ${activeAgent && parked.has(activeAgent.agentId) && html`<div class="companion-floating-anchor">${floatingTools}</div>`}
       ${activeAgent && !activeAgent.online && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is offline.</p>
         <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
@@ -1447,10 +1445,12 @@ export function CompanionApp({
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
         ${status === 'needs' && !activeApprovals.length && !activeDecisions.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
-        ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
+        <div class="companion-floating-anchor">
+          ${floatingTools}
+          ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
           ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
           : termStatus}</div>`}
-        ${floatingTools}
+        </div>
         <${CompanionTerminal} key=${activeAgent.agentId} agent=${activeAgent} generation=${generation}
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}

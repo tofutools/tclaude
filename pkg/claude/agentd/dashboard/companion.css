@@ -100,7 +100,7 @@
 .companion-controls button:disabled:hover { background: none; color: var(--cmp-muted); }
 
 .companion-menu {
-  position: absolute; top: 36px; left: 8px; z-index: 2; width: min(340px, calc(100% - 16px));
+  position: absolute; top: 36px; left: 8px; z-index: 4; width: min(340px, calc(100% - 16px));
   background: var(--cmp-bar); border: 1px solid var(--cmp-edge); border-radius: 8px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, .55); padding: 6px; display: flex; flex-direction: column; gap: 6px;
 }
@@ -138,7 +138,7 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .companion-term-status {
-  position: absolute; top: 8px; right: 10px; z-index: 1; padding: 3px 8px; border-radius: 6px;
+  position: absolute; top: 44px; right: 10px; z-index: 1; padding: 3px 8px; border-radius: 6px;
   background: var(--cmp-bar); border: 1px solid var(--cmp-line); color: var(--cmp-muted); font-size: 11px;
 }
 .companion-term-status button { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
@@ -163,6 +163,8 @@
   border: 1px solid var(--cmp-line); border-radius: 8px; background: var(--cmp-bar); box-shadow: 0 4px 12px rgba(0, 0, 0, .45);
 }
 .companion-input.listening { border-color: var(--cmp-red); }
+/* Approvals and decisions stack down the body: the strip must not cover their buttons. */
+.companion-body.clear-strip { padding-bottom: 52px; }
 .companion-context { display: inline-flex; align-items: center; gap: 4px; color: var(--cmp-muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
 .companion-context input { margin: 0; accent-color: var(--cmp-blue); }
 .companion-draft {
