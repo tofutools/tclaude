@@ -676,4 +676,12 @@ test('the link fields follow the group attachments feature', async (t) => {
     assert.equal(state.dialog.value.showAttachment, shown, `new group, mode ${mode}`);
     state.close();
   }
+
+  // The setting is this node's, and a peer's snapshot leaves it out.
+  const nodeApi = await harness.importDashboardModule('js/node-api.js');
+  const release = nodeApi.setNodeSnapshotSource((id) => (id === 'inst_forge' ? { templates: [], groups: [{ name: 'build' }] } : null));
+  const state = createGroupCreateState({ getSnapshot: () => ({ templates: [], groups: [], group_attachments_mode: 'float' }) });
+  state.open('', 'build', 'inst_forge');
+  assert.equal(state.dialog.value.showAttachment, true, 'on a peer');
+  release();
 });
