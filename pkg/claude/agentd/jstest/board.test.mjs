@@ -272,6 +272,52 @@ test('a retry that loses to its own unanswered first attempt is not reported', a
   assert.equal(events().length, 1);
 });
 
+test('with a socket the editor reads on a signal instead of polling, and polls again without one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardEditor, BOARD_POLL_MS, BOARD_LIVE_SETTLE_MS } = await harness.importDashboardModule('js/board-island.js');
+  const sockets = [];
+  const win = Object.create(harness.window, { location: { value: { protocol: 'http:', host: 'dash.test' } } });
+  class FakeSocket {
+    constructor(url) { this.url = url; sockets.push(this); }
+    close() {}
+  }
+  let reads = 0;
+  let client = '';
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).includes('?since=')) reads += 1;
+    if (String(url).endsWith('/view') && init.body) client = JSON.parse(init.body).client || client;
+    return ok({ id: 'plan', title: 'Plan', version: 1, participants: [], elements: [] });
+  };
+  boardsSection(harness);
+  const view = await harness.mount(harness.html`<${BoardEditor} boardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${harness.signals.signal({ groups: [] })} win=${win} WebSocketCtor=${FakeSocket} fetchImpl=${fetchImpl} />`);
+  await harness.act(() => wait());
+  assert.match(sockets[0].url, /^wss?:\/\/.*\/api\/boards\/plan\/live$/);
+  view.container.querySelector('svg.board-canvas').getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 });
+  await harness.act(async () => { sockets[0].onopen(); await wait(BOARD_LIVE_SETTLE_MS + 40); });
+  assert.equal(reads, 1, 'opening catches up on anything missed');
+
+  await harness.act(() => wait(BOARD_POLL_MS * 2 + 50));
+  assert.equal(reads, 1, 'nothing changed, so nothing is read');
+  assert.ok(client, 'the view report still runs');
+
+  await harness.act(async () => { sockets[0].onmessage({ data: JSON.stringify({ type: 'changed', client }) }); await wait(BOARD_POLL_MS + 50); });
+  assert.equal(reads, 2, 'its own edit is read once, on the next tick, to move the cursor');
+  await harness.act(async () => { sockets[0].onmessage({ data: JSON.stringify({ type: 'changed' }) }); await wait(BOARD_LIVE_SETTLE_MS + 40); });
+  assert.equal(reads, 3, 'a signal reads straight away');
+  await harness.act(async () => {
+    for (let i = 0; i < 6; i += 1) { sockets[0].onmessage({ data: '{"type":"changed"}' }); await wait(BOARD_LIVE_SETTLE_MS / 2); }
+    await wait(BOARD_LIVE_SETTLE_MS + 40);
+  });
+  assert.ok(reads >= 5, 'a steady stream of signals still reads');
+
+  const before = reads;
+  await harness.act(async () => { sockets[0].onclose(); await wait(BOARD_POLL_MS + 50); });
+  assert.ok(reads > before, 'a lost socket falls back to the poll');
+  await harness.act(() => wait(BOARD_POLL_MS));
+  assert.equal(sockets.length, 2, 'and it reconnects');
+  await view.unmount();
+});
+
 test('an agent edit arriving on the poll is drawn and flashed', async (t) => {
   const harness = await createPreactHarness(t);
   const { BoardEditor, BOARD_POLL_MS } = await harness.importDashboardModule('js/board-island.js');

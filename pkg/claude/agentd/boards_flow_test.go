@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -555,4 +556,47 @@ func TestBoardsBelongToAGroupWhoseMembersGetEvents(t *testing.T) {
 	rec = serve(http.MethodPost, "/api/boards/flow/events", map[string]any{"text": "again"})
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.NotContains(t, rec.Body.String(), memberID, "an unlinked board stops mailing the group")
+}
+
+func TestBoardsLiveSocketSignalsChangesWithoutContent(t *testing.T) {
+	f := newFlow(t)
+	enableCollab(t)
+	const conv = "board-live-conv"
+	f.HaveConvWithTitle(conv, "live")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermBoardsWrite, "test"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	require.Equal(t, http.StatusCreated, testharness.Serve(dash, boardDashReq(t, http.MethodPost, "/api/boards", map[string]string{"id": "plan"})).Code)
+
+	srv := httptest.NewServer(dash)
+	t.Cleanup(srv.Close)
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	header := http.Header{"Origin": {"http://127.0.0.1:0"}}
+
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL+"/api/boards/nope/live", header)
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL+"/api/boards/plan/live", header)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	next := func() map[string]any {
+		t.Helper()
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+		var message map[string]any
+		require.NoError(t, conn.ReadJSON(&message))
+		return message
+	}
+
+	edit := boardDashReq(t, http.MethodPatch, "/api/boards/plan", map[string]any{"elements": []map[string]any{rect("a", 1, 1, 0)}})
+	edit.Header.Set("X-Board-Client", "tab-1")
+	require.Equal(t, http.StatusOK, testharness.Serve(dash, edit).Code)
+	assert.Equal(t, map[string]any{"type": "changed", "client": "tab-1"}, next(), "the editor can recognise its own edit")
+
+	agentEdit := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch, "/v1/boards/plan", map[string]any{"elements": []map[string]any{rect("b", 1, 1, 0)}}), conv)
+	require.Equal(t, http.StatusOK, testharness.Serve(f.Mux, agentEdit).Code)
+	assert.Equal(t, map[string]any{"type": "changed"}, next(), "an agent's edit reaches the editor")
+
+	require.Equal(t, http.StatusNoContent, testharness.Serve(dash, boardDashReq(t, http.MethodDelete, "/api/boards/plan", nil)).Code)
+	assert.Equal(t, map[string]any{"type": "changed"}, next(), "deleting the board is a change too")
 }

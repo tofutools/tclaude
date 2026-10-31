@@ -521,6 +521,9 @@ func serveBoardPatch(w http.ResponseWriter, r *http.Request, id, author, partici
 	if accepted > 0 {
 		boardPresence.noteEdit(id, participant)
 	}
+	if accepted > 0 || participant != "" {
+		boardLive.publish(id, boardClient(r))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"version": version, "accepted": accepted})
 }
 
@@ -573,6 +576,7 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/boards/{id}/events", collabRoute(handleDashboardBoardEvent))
 	mux.HandleFunc("POST /api/boards/{id}/view", collabRoute(handleDashboardBoardView))
 	mux.HandleFunc("POST /api/boards/{id}/group", collabRoute(handleDashboardBoardGroup))
+	mux.HandleFunc("GET /api/boards/{id}/live", collabRoute(handleDashboardBoardLive))
 }
 
 // POST /api/boards/{id}/group {group} — link the board to a group ("" unlinks).
@@ -600,6 +604,7 @@ func handleDashboardBoardGroup(w http.ResponseWriter, r *http.Request) {
 		writeBoardStoreError(w, err)
 		return
 	}
+	boardLive.publish(id, "")
 	b, err := db.GetCollabBoard(id)
 	if err != nil {
 		writeBoardStoreError(w, err)
@@ -660,6 +665,7 @@ func handleDashboardBoardDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	boardEvents.forget(id)
 	boardPresence.forget(id)
+	boardLive.publish(id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -804,6 +810,7 @@ func handleDashboardBoardParticipants(w http.ResponseWriter, r *http.Request) {
 		writeBoardStoreError(w, err)
 		return
 	}
+	boardLive.publish(id, "")
 	writeJSON(w, http.StatusOK, map[string]any{"participants": participants})
 }
 
@@ -982,6 +989,7 @@ func handleBoardRead(w http.ResponseWriter, r *http.Request) {
 		if agentID, err := db.AgentIDForConv(convID); err == nil && agentID != "" {
 			if _, err := db.GetCollabBoard(id); err == nil {
 				boardPresence.noteRead(id, agentID)
+				boardLive.publish(id, "")
 			}
 		}
 	}

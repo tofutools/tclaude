@@ -371,7 +371,7 @@ var peerViewOwnNodeRoutes = []string{
 	// Collab boards are this node's operator workspace with its own agents.
 	"GET /api/boards", "POST /api/boards", "GET /api/boards/{id}", "PATCH /api/boards/{id}", "DELETE /api/boards/{id}",
 	"PUT /api/boards/{id}/snapshot", "GET /api/boards/{id}/snapshot",
-	"POST /api/boards/{id}/participants", "POST /api/boards/{id}/events", "POST /api/boards/{id}/view", "POST /api/boards/{id}/group",
+	"GET /api/boards/{id}/live", "POST /api/boards/{id}/participants", "POST /api/boards/{id}/events", "POST /api/boards/{id}/view", "POST /api/boards/{id}/group",
 	// The operator's own Claude subscription token never serves a peer.
 	"GET /api/federation/claude-subscription",
 	"PUT /api/federation/claude-subscription",
