@@ -9,7 +9,8 @@
 // It draws on a canvas, not in SVG: a board can hold 5000 elements, and the map
 // must cost the editor next to nothing. The canvas redraws only when the board
 // or the window changed, at most once a frame and less often when a draw is
-// slow. A pan of the main view only moves the marker.
+// slow. A pan inside the map only moves the marker; one past the board's edge
+// grows the map, so it redraws within that limit.
 
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';

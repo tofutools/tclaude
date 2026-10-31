@@ -45,7 +45,8 @@ to go there, or drag it to move the view; pressing on the marker holds the
 marker where you pressed it.
 
 The map has its own zoom, separate from the main view. Scroll over it, or use
-**−** and **+**, to go up to 32×, and **Fit** to see the whole board again.
+**−** and **+**, to go up to 32×, and the zoom between them to see the whole
+board again (it reads **Fit** when you do).
 Zoomed in, the map follows the main view when that leaves its window, and
 Shift+drag or the middle button moves the map's window by hand. **▾** hides the
 map to a small button. The zoom and the hidden state are remembered for every
