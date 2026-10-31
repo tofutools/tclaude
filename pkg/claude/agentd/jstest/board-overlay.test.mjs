@@ -273,6 +273,21 @@ scenario('a smaller browser fits the window without losing its saved size', asyn
   assert.notEqual(dashPrefs.getItem(key), before);
   await resize(1600, 900);
   assert.deepEqual(box().slice(2), [760, 500], 'a larger browser brings it back');
+
+  await resize(600, 400);
+  const press = async (node, dx) => harness.act(async () => {
+    harness.fireEvent(node, 'pointerdown', { button: 0, pointerId: 1, clientX: 100, clientY: 10 });
+    if (!('onpointerdown' in node)) harness.fireEvent(node, 'PointerDown', { button: 0, pointerId: 1, clientX: 100, clientY: 10 });
+    if (dx) node.dispatchEvent(event('pointermove', 100 + dx, 10));
+    node.dispatchEvent(event('pointerup', 100 + dx, 10));
+    await wait();
+  });
+  const held = dashPrefs.getItem(key);
+  await press(title, 0);
+  await press(overlayHost.querySelector('.window-resize-zone.e'), 0);
+  assert.equal(dashPrefs.getItem(key), held, 'a click saves nothing');
+  await press(overlayHost.querySelector('.window-resize-zone.e'), -20);
+  assert.equal(JSON.parse(dashPrefs.getItem(key)).h, 500, 'a side drag keeps the saved height');
 });
 
 scenario('dragging the title bar moves the window and saves its place', async ({ harness, overlayHost, overlayState, dashPrefs, island }) => {

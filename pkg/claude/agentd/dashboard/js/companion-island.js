@@ -28,7 +28,7 @@ import {
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
-import { ResizeFrame, resizedPlacement } from './window-resize.js';
+import { ResizeFrame, resizedPlacement, savedAfterResize } from './window-resize.js';
 import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js';
 import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -629,6 +629,7 @@ export function CompanionApp({
     handle.setPointerCapture?.(event.pointerId);
     const vp = viewportOf(win);
     let start = placement;
+    const tornOff = !!start.snap;
     if (start.snap) {
       // Tearing a snapped window off restores a floating size under the pointer.
       const floating = clampPlacement({ ...defaultPlacement(vp), ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || {}), snap: '' }, vp);
@@ -639,7 +640,9 @@ export function CompanionApp({
     const sy = event.clientY;
     let zone = '';
     let last = start;
+    let moved = false;
     const move = (m) => {
+      moved = true;
       last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
       setPlacement(last);
       zone = snapZone({ x: m.clientX, y: m.clientY }, viewportOf(win));
@@ -653,7 +656,8 @@ export function CompanionApp({
       if (zone) {
         setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
         savePlacement({ ...withSavedSize(last), snap: zone });
-      } else {
+      } else if (moved || tornOff) {
+        // A click shows the fitted placement, which is not the operator's to keep.
         savePlacement(withSavedSize(last));
       }
     };
@@ -677,7 +681,9 @@ export function CompanionApp({
     const sx = event.clientX;
     const sy = event.clientY;
     let last = start;
+    let moved = false;
     const move = (m) => {
+      moved = true;
       const dx = m.clientX - sx;
       const dy = m.clientY - sy;
       // A snapped panel resizes along its free edge only.
@@ -700,7 +706,7 @@ export function CompanionApp({
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
       handle.removeEventListener('pointercancel', up);
-      if (!start.snap) savePlacement(last);
+      if (!start.snap && moved) savePlacement(savedAfterResize(last, zone, parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF))));
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);

@@ -1276,12 +1276,29 @@ test('a reopened window fits the viewport and a larger browser restores its save
   [x, y, w, h] = box();
   assert.ok(w <= 700 && x + w <= 800 && h < 400 && y >= 0, 'shrunk only as far as it must be');
   assert.deepEqual(JSON.parse(prefs.getItem('tclaude.dash.companion.placement')), saved, 'and the saved place is untouched');
+  const press = (node, dx) => harness.act(async () => {
+    const event = (type, x) => Object.assign(new harness.window.Event(type, { bubbles: true }), { button: 0, pointerId: 1, clientX: x, clientY: 10 });
+    node.dispatchEvent(event('pointerdown', 100));
+    if (dx) node.dispatchEvent(event('pointermove', 100 + dx));
+    node.dispatchEvent(event('pointerup', 100 + dx));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await press(view.container.querySelector('.companion-titlebar'), 0);
+  await press(view.container.querySelector('.window-resize-zone.e'), 0);
+  assert.deepEqual(JSON.parse(prefs.getItem('tclaude.dash.companion.placement')), saved, 'a click saves nothing');
   viewport(1800, 1000);
   await harness.act(async () => {
     harness.window.dispatchEvent(new harness.window.Event('resize'));
     await new Promise((r) => setTimeout(r, 0));
   });
   assert.deepEqual(box(), [900, 500, 700, 400], 'a larger browser brings it all back');
+  viewport(800, 400);
+  await harness.act(async () => {
+    harness.window.dispatchEvent(new harness.window.Event('resize'));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await press(view.container.querySelector('.window-resize-zone.e'), -20);
+  assert.equal(JSON.parse(prefs.getItem('tclaude.dash.companion.placement')).h, 400, 'a side drag keeps the saved height');
 });
 
 test('every edge and corner of a floating window resizes it, and the opposite side stays put', async (t) => {

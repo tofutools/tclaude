@@ -13,10 +13,10 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { BoardEditor, BoardsGate } from './board-island.js';
 import { boardOverlay, boardOverlayRaise, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
-import { COMPANION_FOOTER_ROOM, clampPlacement, fitPlacement, parsePlacement } from './companion-model.js';
+import { COMPANION_FOOTER_ROOM, clampPlacement, fitPlacement, parsePlacement, viewportOf } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { isBoardId } from './board-model.js';
-import { ResizeFrame, resizedPlacement } from './window-resize.js';
+import { ResizeFrame, resizedPlacement, savedAfterResize } from './window-resize.js';
 
 const html = htm.bind(h);
 
@@ -32,10 +32,6 @@ export function defaultOverlayPlacement(viewport) {
   const w = Math.min(DEFAULT_W, viewport.width - 48);
   const h = Math.min(DEFAULT_H, viewport.height - 140);
   return clampPlacement({ x: 24, y: viewport.height - h - COMPANION_FOOTER_ROOM - 56, w, h, snap: '' }, viewport);
-}
-
-function viewportOf(win) {
-  return { width: win?.innerWidth || 1280, height: win?.innerHeight || 800 };
 }
 
 function sessionStore(win) {
@@ -76,7 +72,9 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
     const sx = event.clientX;
     const sy = event.clientY;
     let last = placement;
+    let moved = false;
     const move = (m) => {
+      moved = true;
       last = next(m.clientX - sx, m.clientY - sy, viewportOf(win));
       setPlacement(last);
     };
@@ -88,6 +86,8 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
     };
     const up = () => {
       stop();
+      // A click shows the fitted placement, which is not the operator's to keep.
+      if (!moved) return;
       try { prefs?.setItem?.(BOARD_OVERLAY_PLACEMENT_PREF, JSON.stringify(saved(last))); } catch { /* the window stays where it is */ }
     };
     handle.addEventListener('pointermove', move);
@@ -109,7 +109,9 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
     if (event.button !== 0) return;
     event.stopPropagation();
     const start = placement;
-    drag(event, (dx, dy, viewport) => resizedPlacement(start, zone, dx, dy, viewport));
+    const size = parsePlacement(prefs?.getItem?.(BOARD_OVERLAY_PLACEMENT_PREF));
+    drag(event, (dx, dy, viewport) => resizedPlacement(start, zone, dx, dy, viewport),
+      (p) => savedAfterResize(p, zone, size));
   }
 
   return html`<div class="board-overlay" role="dialog" aria-label=${`Board ${board.label}`}
