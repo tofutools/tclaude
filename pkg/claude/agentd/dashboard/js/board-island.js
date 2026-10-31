@@ -1255,6 +1255,15 @@ export function BoardEditor({
     pasteText(text || copied.current);
   }
 
+  // A menu row cannot read the clipboard without a secure context, though the
+  // paste key can: only that key receives the text from the browser.
+  function pasteItem(p, keys) {
+    const run = () => pasteAt(p);
+    if (win?.navigator?.clipboard?.readText) return { label: 'Paste here', keys, run };
+    const note = `The menu can’t read the clipboard over plain HTTP except on localhost. Use ${keys}.`;
+    return { label: copied.current ? 'Paste board copy here' : 'Paste here', keys, disabled: !copied.current, note, run };
+  }
+
   function addShape(kind, p) {
     const shape = newElement(kind, { x: p.x - 80, y: p.y - 40, width: 160, height: 80, strokeColor: color, backgroundColor: fill });
     commit([shape]);
@@ -1280,7 +1289,7 @@ export function BoardEditor({
         ...QUICK_SHAPES.map(({ id, label }) => ({ label: `Add ${label.toLowerCase()} here`, run: () => addShape(id, menu.p) })),
         { label: 'Add text here', keys: 'Double-click', run: () => beginText(null, menu.p) },
         'separator',
-        { label: 'Paste here', keys: `${mod}+V`, disabled: !win?.navigator?.clipboard?.readText && !copied.current, run: () => pasteAt(menu.p) },
+        pasteItem(menu.p, `${mod}+V`),
         { label: 'Select all', keys: `${mod}+A`, disabled: !live.length, run: selectAll },
         { label: 'Fit board to view', disabled: !live.length, run: fitView },
         'separator',

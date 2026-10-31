@@ -52,10 +52,11 @@ export function BoardContextMenu({ x, y, label, items, win, onClose }) {
             onClick=${() => run(s.run)}>${s.color === 'transparent' ? '∅' : ''}</button>`)}
         </div>`;
       }
-      return html`<button key=${i} type="button" tabIndex="-1" disabled=${!!item.disabled} role=${item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+      const note = item.note && html`<div key=${`${i}-note`} class="board-context-note">${item.note}</div>`;
+      return [html`<button key=${i} type="button" tabIndex="-1" disabled=${!!item.disabled} role=${item.checked === undefined ? 'menuitem' : 'menuitemradio'}
         aria-checked=${item.checked === undefined ? null : String(item.checked)} class=${`mux-tab-menu-item${item.danger ? ' danger' : ''}`} onClick=${() => run(item.run)}>
         <span>${item.checked ? '✓ ' : ''}${item.label}</span>${item.keys && html`<kbd>${item.keys}</kbd>`}
-      </button>`;
+      </button>`, note];
     })}
   </div>`;
 }

@@ -312,6 +312,8 @@ test('the context menu offers what applies to what was clicked', async (t) => {
   await rightClick(env, 700, 500);
   assert.ok(rowNamed(root, 'Add ellipse here') && rowNamed(root, 'Paste here') && rowNamed(root, 'Select all'), 'blank board');
   assert.match(rowNamed(root, 'Select all').textContent, /Ctrl\+A/, 'a shortcut shows beside its action');
+  assert.equal(rowNamed(root, 'Paste here').disabled, true, 'without a secure context the menu cannot read the clipboard');
+  assert.match(root.querySelector('.board-context-note').textContent, /over plain HTTP except on localhost\. Use Ctrl\+V/, 'and says so');
   await key('Escape', root.querySelector('.board-context button'));
   assert.equal(root.querySelector('.board-context'), null, 'Escape closes it');
 

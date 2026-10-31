@@ -103,7 +103,8 @@ this is also the supported network path for the standalone TUI dashboard.
 
 Plain HTTP this way is supported, including agent capture (`guide capture`) and
 the copy buttons. A copy that has to fetch its text first, such as Copy Markdown
-on a message, can be refused by the browser there, and says so. Browser notifications cannot work there: browsers allow them
+on a message, can be refused by the browser there, and says so. A board's Ctrl+V works there;
+its right-click Paste can't read the system clipboard, and says so. Browser notifications cannot work there: browsers allow them
 only over HTTPS or on localhost, and the dashboard says so where you would turn
 them on.
 
