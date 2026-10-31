@@ -6,6 +6,7 @@ import { createAgentRosterReconciler, normalizeSeed } from './terminals-core.js'
 import { terminalAttachConfig } from './terminal-attach-config.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
+import { isWizardActive } from './slop.js';
 
 let controller = null;
 let prepareRuntime = null;
@@ -69,7 +70,7 @@ export function detachWebWindow(agent, label, { harness = '', size = null, at = 
   if (!target) return null;
   const seed = {
     ws: `/api/open-window-ws/${encodeURIComponent(agent)}`, label, key: `window:${agent}`, hideConv: agent, agent, harness,
-    initialRetry: true, wizard: document.body.classList.contains('wizard'), terminalAttach: terminalAttachConfig(),
+    initialRetry: true, wizard: isWizardActive(), terminalAttach: terminalAttachConfig(),
   };
   try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); } catch { return null; }
   return target;

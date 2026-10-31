@@ -15,7 +15,7 @@ func TestTerminalsCore_UnloadGuardTracksOpenPanes(t *testing.T) {
 		"const confirmUnload = (event) =>",
 		"event.preventDefault()",
 		"event.returnValue = true",
-		"if (!hasPanes) return undefined",
+		"if (!hasTerminals) return undefined",
 		"window.addEventListener('beforeunload', confirmUnload)",
 		"window.removeEventListener('beforeunload', confirmUnload)",
 		"window.addEventListener('tclaude:auth-expired', disarmForAuth)",
