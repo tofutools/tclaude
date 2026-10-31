@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -199,13 +200,16 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 	var costErr error
 	var costHistoryAvailable bool
 	timed("cost_history", func() {
-		rows, _, _, err := countedCostDailyRows()
+		now := time.Now()
+		// Every figure here is month-to-date or today, so the walk needs only
+		// this month's conversations, however long the ledger has grown.
+		monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
+		rows, _, _, err := countedCostRowsForWindow(monthKey, "", false)
 		costErr = err
 		costHistoryAvailable = err == nil
-		now := time.Now()
 		deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
 		if displayConfig != nil {
-			harnesses, harnessErr := db.SessionHarnesses()
+			harnesses, harnessErr := costHarnessFallback(deltas)
 			if harnessErr != nil {
 				slog.Debug("usage snapshot: harness fallback unavailable", "error", harnessErr)
 			}
@@ -213,12 +217,6 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 		}
 		totalCost, todayCost = dashboardCostTotalsFromDeltas(deltas, now, "real")
 		apiCosts = dashboardProviderCostsFromDeltas(deltas, now, "real")
-		for _, row := range rows {
-			if row.CostUSD > 0 {
-				hasRealCost = true
-				break
-			}
-		}
 		if includeWhatIf && costHistoryAvailable {
 			whatIfCosts = dashboardProviderCostsFromDeltas(deltas, now, "what_if")
 		}
@@ -228,6 +226,13 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 			// ordered history read fails, the cheap EXISTS probe can still keep a
 			// real-cost account's Costs tab visible.
 			hasRealCost, costErr = db.HasAnyRealCost()
+			return
+		}
+		// Costs-tab visibility is about all history, which the window does not
+		// load. Any row in hand settles it; only otherwise ask the database.
+		hasRealCost = slices.ContainsFunc(rows, func(row db.CostDailyRow) bool { return row.CostUSD > 0 })
+		if !hasRealCost {
+			hasRealCost, costErr = db.HasCountedRealCost()
 		}
 	})
 

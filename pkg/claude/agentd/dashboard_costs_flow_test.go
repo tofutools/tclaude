@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -527,4 +528,34 @@ func daysInclusive(t *testing.T, a, b string) int {
 	tb, err := time.Parse("2006-01-02", b)
 	require.NoError(t, err)
 	return int(tb.Sub(ta).Hours()/24) + 1
+}
+
+// Scenario: the ledger only holds last year's spend. The polled surfaces no
+// longer read that history, yet it must still keep the Costs tab visible and
+// anchor the month projection, and the tab's own response must come gzipped.
+func TestDashboardCosts_OldHistoryOutsideTheWindow(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+	d, err := db.Open()
+	require.NoError(t, err)
+	oldDay := time.Now().AddDate(-1, 0, 0).Format("2006-01-02")
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES ('old-sess', ?, 'old-conv', 4.5)`, oldDay)
+	require.NoError(t, err)
+
+	snap := fetchSnapshotOnly(t, mux)
+	assert.True(t, snap.CostTabVisible, "real spend outside the month keeps the Costs tab")
+
+	req := testharness.JSONRequest(t, http.MethodGet, "/api/costs", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := testharness.Serve(mux, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "gzip", rec.Header().Get("Content-Encoding"))
+	zr, err := gzip.NewReader(rec.Body)
+	require.NoError(t, err)
+	var costs costsResp
+	require.NoError(t, json.NewDecoder(zr).Decode(&costs))
+	assert.Equal(t, oldDay, costs.FirstDay, "the first costed day spans all history")
+	assert.Zero(t, costs.TotalUSD, "nothing was spent in the default span")
+	assert.Empty(t, costs.Agents)
 }

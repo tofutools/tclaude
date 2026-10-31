@@ -1,6 +1,8 @@
 package db
 
 import (
+	"fmt"
+	"math/rand/v2"
 	"testing"
 	"time"
 
@@ -824,4 +826,157 @@ func TestReplaceSessionCostHistoryForGenerationRealAcrossResume(t *testing.T) {
 		total += delta.USD
 	}
 	assert.InDelta(t, 4, total, 1e-12)
+}
+
+// TestCostDailyRowsForWindow_MatchesFullWalk pins the windowed read to the full
+// walk on the histories that make the walk path-dependent: a /clear moving a
+// session between conversations (carry), a resume across sessions (baseline),
+// conversation-less rows and mixed billing. Every window start must produce the
+// same deltas from its day on as walking the whole ledger.
+func TestCostDailyRowsForWindow_MatchesFullWalk(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	rng := rand.New(rand.NewPCG(7, 42))
+	day := func(n int) string {
+		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, n).Format(costDayFormat)
+	}
+	const days = 40
+	for s := range 30 {
+		session := fmt.Sprintf("sess-%02d", s)
+		cost := 0.0
+		// A session starts in one conversation and may hop to neighbours.
+		conv := fmt.Sprintf("conv-%02d", rng.IntN(12))
+		for n := rng.IntN(days / 2); n < days; n += 1 + rng.IntN(6) {
+			cost += rng.Float64() * 4
+			switch rng.IntN(6) {
+			case 0:
+				conv = fmt.Sprintf("conv-%02d", rng.IntN(12))
+			case 1:
+				cost = rng.Float64() // A fresh process counter.
+			}
+			rowConv := conv
+			if s%10 == 9 {
+				rowConv = ""
+			}
+			realCost, virtual := cost, 0.0
+			if s%5 == 4 {
+				realCost, virtual = 0, cost
+			}
+			_, err := d.Exec(`INSERT OR REPLACE INTO session_cost_daily
+				(session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+				session, day(n), rowConv, realCost, virtual, int64(n+1)*int64(time.Hour)+int64(s))
+			require.NoError(t, err)
+		}
+	}
+	all, err := AllCostDailyRows()
+	require.NoError(t, err)
+
+	since := func(deltas []CostDelta, from, to string) []CostDelta {
+		out := []CostDelta{}
+		for _, delta := range deltas {
+			if delta.Day >= from && (to == "" || delta.Day <= to) {
+				out = append(out, delta)
+			}
+		}
+		return out
+	}
+	for start := range days + 2 {
+		from := day(start)
+		for _, to := range []string{"", day(start + 7)} {
+			windowed, err := CostDailyRowsForWindow(from, to, false)
+			require.NoError(t, err)
+			assert.LessOrEqual(t, len(windowed), len(all))
+			assert.Equal(t, since(MixedCostDeltas(all), from, to), since(MixedCostDeltas(windowed), from, to), "mixed from %s to %q", from, to)
+			assert.Equal(t, since(CostDeltas(all, false), from, to), since(CostDeltas(windowed, false), from, to), "real from %s to %q", from, to)
+		}
+	}
+}
+
+// A long ledger must not ride along with a window that does not touch it: this
+// is the point of the windowed read. An ignored conversation is the exception
+// when asked for, because the Costs view names it from its whole history.
+func TestCostDailyRowsForWindow_SkipsUntouchedHistory(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	for _, r := range []CostDailyRow{
+		{SessionID: "old", Day: "2026-01-01", ConvID: "conv-old", CostUSD: 1},
+		{SessionID: "skipped", Day: "2026-01-01", ConvID: "conv-skipped", CostUSD: 1},
+		{SessionID: "long", Day: "2026-01-01", ConvID: "conv-long", CostUSD: 1},
+		{SessionID: "long", Day: "2026-06-02", ConvID: "conv-long", CostUSD: 2},
+	} {
+		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES (?, ?, ?, ?)`,
+			r.SessionID, r.Day, r.ConvID, r.CostUSD)
+		require.NoError(t, err)
+	}
+	require.NoError(t, SetCostConvIgnored("conv-old", true))
+	sessions := func(rows []CostDailyRow) []string {
+		out := []string{}
+		for _, r := range rows {
+			out = append(out, r.SessionID+"@"+r.Day)
+		}
+		return out
+	}
+
+	rows, err := CostDailyRowsForWindow("2026-06-01", "", false)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"long@2026-01-01", "long@2026-06-02"}, sessions(rows), "whole history of the active conversation only")
+
+	rows, err = CostDailyRowsForWindow("2026-06-01", "", true)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"long@2026-01-01", "long@2026-06-02", "old@2026-01-01"}, sessions(rows), "ignored conversation joins on request")
+}
+
+func TestFirstCountedCostDayAndRealCost(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	day, err := FirstCountedCostDay(true)
+	require.NoError(t, err)
+	assert.Empty(t, day, "no spend, no first day")
+	real, err := HasCountedRealCost()
+	require.NoError(t, err)
+	assert.False(t, real)
+
+	for _, r := range []CostDailyRow{
+		{SessionID: "ignored", Day: "2026-01-01", ConvID: "conv-ignored", CostUSD: 1},
+		{SessionID: "what-if", Day: "2026-02-01", ConvID: "conv-what-if", VirtualCostUSD: 1},
+		{SessionID: "zero", Day: "2026-02-02", ConvID: "conv-zero"},
+	} {
+		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, virtual_cost_usd) VALUES (?, ?, ?, ?, ?)`,
+			r.SessionID, r.Day, r.ConvID, r.CostUSD, r.VirtualCostUSD)
+		require.NoError(t, err)
+	}
+	require.NoError(t, SetCostConvIgnored("conv-ignored", true))
+
+	day, err = FirstCountedCostDay(true)
+	require.NoError(t, err)
+	assert.Equal(t, "2026-02-01", day, "ignored spend does not anchor the first day; estimates do when counted")
+	day, err = FirstCountedCostDay(false)
+	require.NoError(t, err)
+	assert.Empty(t, day, "the real column alone has no counted spend")
+	real, err = HasCountedRealCost()
+	require.NoError(t, err)
+	assert.False(t, real, "an ignored conversation's real spend does not count")
+
+	require.NoError(t, SetCostConvIgnored("conv-ignored", false))
+	real, err = HasCountedRealCost()
+	require.NoError(t, err)
+	assert.True(t, real)
+	day, err = FirstCountedCostDay(false)
+	require.NoError(t, err)
+	assert.Equal(t, "2026-01-01", day)
+}
+
+func TestSessionHarnessesByIDs(t *testing.T) {
+	setupTestDB(t)
+	saveCostSession(t, "harness-a", "idle", 0)
+	saveCostSession(t, "harness-b", "idle", 0)
+	got, err := SessionHarnessesByIDs([]string{"harness-a", "missing"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"harness-a": DefaultHarness}, got)
+	got, err = SessionHarnessesByIDs(nil)
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }

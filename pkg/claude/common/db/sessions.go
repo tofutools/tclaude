@@ -2181,6 +2181,40 @@ func SessionHarnesses() (map[string]string, error) {
 	return out, rows.Err()
 }
 
+// SessionHarnessesByIDs is SessionHarnesses for the given sessions only: the
+// rare cost rows with no denormalised harness, without scanning every session.
+func SessionHarnessesByIDs(sessionIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(sessionIDs))
+	if len(sessionIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkStrings(sessionIDs, batchChunkSize) {
+		clause, args := inClause(chunk)
+		rows, err := d.Query(`SELECT id, COALESCE(NULLIF(harness, ''), 'claude') FROM sessions WHERE id `+clause, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, harness string
+			if err := rows.Scan(&id, &harness); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[id] = harness
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // UpdateSessionEffort stores the reasoning-effort level ("low", "medium",
 // "high", "xhigh", "max") the session is currently running on. Claude
 // Code's statusline carries it as effort.level on every render (when the
@@ -3084,16 +3118,59 @@ func SumCostSinceDay(fromDay string) (float64, error) {
 // so this hot read walks rows in canonical order without building a temporary
 // SQLite B-tree on every dashboard poll.
 func AllCostDailyRows() ([]CostDailyRow, error) {
+	// v181 makes this ORDER BY load-bearing again: updated_at is INTEGER Unix
+	// nanoseconds, so SQLite's order is exact and the walk no longer needs a Go
+	// repair sort over variable-width/multi-zone text spellings.
+	return queryCostDailyRows(`SELECT ` + costDailyColumns + `
+		FROM session_cost_daily
+		ORDER BY ` + costWalkOrder)
+}
+
+const (
+	costDailyColumns = `session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness`
+	costConvKey      = `COALESCE(NULLIF(conv_id, ''), session_id)`
+	costWalkOrder    = costConvKey + `, day, updated_at, session_id`
+)
+
+// CostDailyRowsForWindow returns the rows a delta walk needs to produce exactly
+// the deltas AllCostDailyRows would for days in [fromDay, toDay]; toDay "" is
+// open-ended. The walk is path-dependent, so a day window alone would be wrong:
+// a conversation's baseline comes from its whole history, and a row's carry
+// comes from every earlier row of its session. So this loads the full history
+// of each conversation with a row in the window, plus the full history of each
+// session those conversations ran in.
+//
+// That last step can pull in rows of a conversation with nothing in the window.
+// Their deltas are computed from a partial history and all fall before fromDay,
+// so callers must ignore deltas outside the window, as day-keyed totals do.
+//
+// withIgnored also loads every ignored conversation in full: the Costs view
+// names them from their history even when they spent nothing in the span.
+func CostDailyRowsForWindow(fromDay, toDay string, withIgnored bool) ([]CostDailyRow, error) {
+	inWindow := `SELECT ` + costConvKey + ` AS conv FROM session_cost_daily WHERE day >= ?`
+	args := []any{fromDay}
+	if toDay != "" {
+		inWindow += ` AND day <= ?`
+		args = append(args, toDay)
+	}
+	if withIgnored {
+		inWindow += ` UNION SELECT conv_id FROM cost_ignored_convs`
+	}
+	return queryCostDailyRows(`WITH convs AS MATERIALIZED (`+inWindow+`),
+		walked AS MATERIALIZED (SELECT DISTINCT session_id FROM session_cost_daily
+			WHERE `+costConvKey+` IN (SELECT conv FROM convs))
+		SELECT `+costDailyColumns+` FROM session_cost_daily
+		WHERE session_id IN (SELECT session_id FROM walked)
+			OR `+costConvKey+` IN (SELECT conv FROM convs)
+		ORDER BY `+costWalkOrder, args...)
+}
+
+func queryCostDailyRows(query string, args ...any) ([]CostDailyRow, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	// v181 makes this ORDER BY load-bearing again: updated_at is INTEGER Unix
-	// nanoseconds, so SQLite's order is exact and the walk no longer needs a Go
-	// repair sort over variable-width/multi-zone text spellings.
-	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness
-		FROM session_cost_daily
-		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3114,6 +3191,44 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	AnnotateCostCarry(out)
 	return out, nil
 }
+
+// FirstCountedCostDay returns the earliest day with recorded spend outside the
+// ignored conversations, or "" when there is none. withWhatIf also counts
+// subscription estimates.
+func FirstCountedCostDay(withWhatIf bool) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	spent := `cost_usd > 0`
+	if withWhatIf {
+		spent = `(cost_usd > 0 OR virtual_cost_usd > 0)`
+	}
+	var day string
+	err = d.QueryRow(`SELECT day FROM session_cost_daily
+		WHERE ` + spent + ` AND ` + costNotIgnored + ` ORDER BY day LIMIT 1`).Scan(&day)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return day, err
+}
+
+// HasCountedRealCost is HasAnyRealCost minus the ignored conversations: the
+// same answer as finding a real-cost row among the counted history.
+func HasCountedRealCost() (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var exists int
+	err = d.QueryRow(`SELECT EXISTS(SELECT 1 FROM session_cost_daily
+		WHERE cost_usd > 0 AND ` + costNotIgnored + `)`).Scan(&exists)
+	return exists == 1, err
+}
+
+// costNotIgnored mirrors the counted split: a row with no conversation cannot
+// be ignored.
+const costNotIgnored = `(conv_id = '' OR conv_id NOT IN (SELECT conv_id FROM cost_ignored_convs))`
 
 // CompareCostInstants orders two internal Unix-nanosecond instants. Zero is
 // the in-memory representation of SQL NULL: it ranks below every known instant

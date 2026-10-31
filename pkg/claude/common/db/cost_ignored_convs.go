@@ -67,8 +67,10 @@ func MarkCostConvsBilledElsewhere() error {
 	if err != nil {
 		return err
 	}
-	// The totals read this often: write only when a conversation is new.
-	const unmarked = `FROM session_cost_daily c JOIN model_proxy_launches l ON l.session = c.session_id
+	// The totals read this often: write only when a conversation is new. CROSS
+	// JOIN pins SQLite to walking the launches, usually none, instead of every
+	// cost row.
+	const unmarked = `FROM model_proxy_launches l CROSS JOIN session_cost_daily c ON c.session_id = l.session
 		WHERE c.conv_id <> '' AND NOT EXISTS (SELECT 1 FROM cost_ignored_convs i WHERE i.conv_id = c.conv_id AND i.reason <> '')`
 	var pending bool
 	if err := d.QueryRow(`SELECT EXISTS (SELECT 1 ` + unmarked + `)`).Scan(&pending); err != nil || !pending {

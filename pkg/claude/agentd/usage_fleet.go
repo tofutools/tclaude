@@ -81,7 +81,13 @@ func localUsageTotals(now time.Time) (usageTotals, error) {
 		now.Format("2006-01-02") == usageTotalsAt.Format("2006-01-02") {
 		return usageTotalsV, nil
 	}
-	rows, _, _, err := countedCostDailyRows()
+	// Every period below sums whole days from its own start, so the earliest
+	// start bounds the walk.
+	earliest := now.Format(costDayKey)
+	for _, p := range usageFleetPeriods {
+		earliest = min(earliest, usagerules.PeriodStartDay(p, now))
+	}
+	rows, _, _, err := countedCostRowsForWindow(earliest, "", false)
 	if err != nil {
 		return nil, err
 	}
