@@ -174,7 +174,7 @@ log "the attached OpenCode TUI draws the conversation"
 wait_for 90 "the imported conversation in the OpenCode TUI" pane_shows_history
 cat "$ROOT/pane.txt"
 
-log "the managed server serves the same session and is ready for a turn"
+log "the managed server serves the same session"
 DB=$ROOT/dst/.tclaude/data/db.sqlite
 python3 - "$DB" "$LANDED" "$SECRET" "$DST_CWD" <<'PY'
 import base64, json, sqlite3, sys, urllib.parse, urllib.request
