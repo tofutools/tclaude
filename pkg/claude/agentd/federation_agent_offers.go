@@ -427,7 +427,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 	}
-	bundle, err := decodeAgentArchive(archive)
+	bundle, losses, err := decodeAgentOffer(archive)
 	if err != nil {
 		writeError(w, 400, "bundle", err.Error())
 		return
@@ -490,6 +490,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		}
 		inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: query.Encode()}
 		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleDataContextKey{}, bundle))
+		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleLossesContextKey{}, losses))
 		inner.Body = http.NoBody
 		inner.ContentLength = 0
 		if identity != nil && apply {

@@ -8,7 +8,7 @@ import (
 
 // A Steward already in place gets an empty record to catch up from. Only the
 // scribe Steward scope counts, not a look-alike group or another member.
-func TestMigrateV294OpensARecordForExistingStewards(t *testing.T) {
+func TestMigrateV295OpensARecordForExistingStewards(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)
@@ -21,9 +21,9 @@ func TestMigrateV294OpensARecordForExistingStewards(t *testing.T) {
 	mustExec(t, d, join, steward, "agt_real", "Reusable scribe scope: steward/")
 	mustExec(t, d, join, steward, "agt_member", "something else")
 	mustExec(t, d, join, other, "agt_lookalike", "Reusable scribe scope: steward/")
-	mustExec(t, d, `UPDATE schema_version SET version = 293`)
+	mustExec(t, d, `UPDATE schema_version SET version = 294`)
 
-	require.NoError(t, migrateV293toV294(d))
+	require.NoError(t, migrateV294toV295(d))
 
 	offered, err := ListStewardOfferedPermissions("agt_real")
 	require.NoError(t, err)

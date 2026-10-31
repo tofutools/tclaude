@@ -2068,6 +2068,18 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 	if err != nil {
 		return nil, fmt.Errorf("resolve recovered launch directory: %w", err)
 	}
+	profile, err := recordBaselineResumeProfile(convID, harnessName, physicalCwd)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("resume: recovered missing conversation profile from harness store",
+		"conv", short8(convID), "harness", harnessName, "cwd", physicalCwd)
+	return profile, nil
+}
+
+// recordBaselineResumeProfile persists the launch baseline of a conversation
+// with no recorded posture, on the conversation and on its agent if it has one.
+func recordBaselineResumeProfile(convID, harnessName, physicalCwd string) (*db.ConversationResumeProfile, error) {
 	empty := ""
 	// Recovery has no recorded approval input to reproduce, so it records none:
 	// a blank posture re-resolves under current config at every relaunch (see
@@ -2112,8 +2124,6 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 			}
 		}
 	}
-	slog.Info("resume: recovered missing conversation profile from harness store",
-		"conv", short8(convID), "harness", harnessName, "cwd", physicalCwd)
 	return &profile, nil
 }
 

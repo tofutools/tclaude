@@ -188,6 +188,25 @@ test('the overlay placement stays reachable and resizing holds the opposite corn
   assert.equal(top.y + top.h, start.y + start.h, 'the top edge stops at the viewport');
 });
 
+test('a window opens where it was left if that fits, moved in first, and shrunk last', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { COMPANION_FOOTER_ROOM, fitPlacement } = await harness.importDashboardModule('js/companion-model.js');
+  const box = ({ x, y, w, h }) => [x, y, w, h];
+  const viewport = { width: 1000, height: 700 };
+  const saved = { x: 100, y: 80, w: 600, h: 400, snap: '' };
+  assert.deepEqual(box(fitPlacement(saved, viewport)), [100, 80, 600, 400], 'a place that fits is untouched');
+  assert.deepEqual(box(fitPlacement({ ...saved, x: 900, y: 650 }, viewport)), [400, 700 - COMPANION_FOOTER_ROOM - 400, 600, 400],
+    'one past the corner moves in at full size');
+  assert.deepEqual(box(fitPlacement({ ...saved, x: -300, y: -50 }, viewport)), [0, 0, 600, 400], 'and from the other side');
+  const big = fitPlacement({ ...saved, w: 1800, h: 1200 }, viewport);
+  assert.ok(big.x >= 0 && big.x + big.w <= 1000, 'one too wide fits after shrinking');
+  assert.ok(big.y >= 0 && big.y + big.h <= 700 - COMPANION_FOOTER_ROOM, 'one too tall too');
+  const tiny = fitPlacement(saved, { width: 300, height: 150 });
+  assert.deepEqual([tiny.w, tiny.h], [360, 220], 'the minimum size holds');
+  assert.equal(tiny.x + tiny.w, 300, 'with the title bar controls still on screen');
+  assert.equal(tiny.y, 0);
+});
+
 test('an edge resizes one side only and holds the opposite edge', async (t) => {
   const harness = await createPreactHarness(t);
   const { resizedPlacement } = await harness.importDashboardModule('js/window-resize.js');
@@ -215,6 +234,60 @@ test('an edge resizes one side only and holds the opposite edge', async (t) => {
   const past = { x: -100, y: 200, w: 600, h: 400, snap: '' };
   assert.deepEqual(box(resizedPlacement(past, 'w', 10, 0, viewport)), [-90, 200, 590, 400], 'a window past the limit shrinks without jumping');
   assert.deepEqual(box(resizedPlacement(past, 'w', -10, 0, viewport)), [-100, 200, 600, 400], 'and does not grow further past it');
+});
+
+scenario('a smaller browser fits the window without losing its saved size', async ({ harness, overlayHost, overlayState, dashPrefs }) => {
+  const key = 'tclaude.dash.board-overlay.placement';
+  harness.window.innerWidth = 1600;
+  harness.window.innerHeight = 900;
+  dashPrefs.setItem(key, JSON.stringify({ x: 800, y: 300, w: 760, h: 500, snap: '' }));
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'plan'); await wait(); });
+  const frame = overlayHost.querySelector('.board-overlay');
+  const box = () => ['left', 'top', 'width', 'height'].map((key) => parseFloat(frame.style[key]));
+  const resize = (w, h) => harness.act(async () => {
+    harness.window.innerWidth = w;
+    harness.window.innerHeight = h;
+    harness.window.dispatchEvent(new harness.window.Event('resize'));
+    await wait();
+  });
+  assert.deepEqual(box(), [800, 300, 760, 500]);
+  await resize(1000, 600);
+  const [x, y, w, h] = box();
+  assert.equal(w, 760, 'it moves in before it shrinks');
+  assert.equal(h, 500);
+  assert.ok(x + w <= 1000 && y + h <= 600);
+  await resize(600, 400);
+  assert.ok(box()[2] < 760, 'and shrinks when it has to');
+  const before = dashPrefs.getItem(key);
+  const title = overlayHost.querySelector('.board-overlay-titlebar');
+  const event = (type, x, y) => Object.assign(new harness.window.Event(type, { bubbles: true }), { button: 0, pointerId: 1, clientX: x, clientY: y });
+  await harness.act(async () => {
+    harness.fireEvent(title, 'pointerdown', { button: 0, pointerId: 1, clientX: 100, clientY: 10 });
+    if (!('onpointerdown' in title)) harness.fireEvent(title, 'PointerDown', { button: 0, pointerId: 1, clientX: 100, clientY: 10 });
+    title.dispatchEvent(event('pointermove', 90, 15));
+    title.dispatchEvent(event('pointerup', 90, 15));
+    await wait();
+  });
+  const moved = JSON.parse(dashPrefs.getItem(key));
+  assert.deepEqual([moved.w, moved.h], [760, 500], 'a move keeps the saved size');
+  assert.notEqual(dashPrefs.getItem(key), before);
+  await resize(1600, 900);
+  assert.deepEqual(box().slice(2), [760, 500], 'a larger browser brings it back');
+
+  await resize(600, 400);
+  const press = async (node, dx) => harness.act(async () => {
+    harness.fireEvent(node, 'pointerdown', { button: 0, pointerId: 1, clientX: 100, clientY: 10 });
+    if (!('onpointerdown' in node)) harness.fireEvent(node, 'PointerDown', { button: 0, pointerId: 1, clientX: 100, clientY: 10 });
+    if (dx) node.dispatchEvent(event('pointermove', 100 + dx, 10));
+    node.dispatchEvent(event('pointerup', 100 + dx, 10));
+    await wait();
+  });
+  const held = dashPrefs.getItem(key);
+  await press(title, 0);
+  await press(overlayHost.querySelector('.window-resize-zone.e'), 0);
+  assert.equal(dashPrefs.getItem(key), held, 'a click saves nothing');
+  await press(overlayHost.querySelector('.window-resize-zone.e'), -20);
+  assert.equal(JSON.parse(dashPrefs.getItem(key)).h, 500, 'a side drag keeps the saved height');
 });
 
 scenario('dragging the title bar moves the window and saves its place', async ({ harness, overlayHost, overlayState, dashPrefs, island }) => {

@@ -743,7 +743,11 @@ Each member of a group PAF lands like an
   and is translated otherwise, with the losses shown. A member whose
   conversation cannot land imports as configuration, with a warning. Its
   record still names its landing harness, so it resumes there.
-- **OpenCode:** a member landing on OpenCode imports as configuration for now.
+- **OpenCode:** a member landing on OpenCode installs its conversation into
+  this host's OpenCode store through the `opencode` CLI, which is where its
+  first resume reads it. The member resumes without tclaude's sandbox, so its
+  conversation shares that store with other unsandboxed OpenCode agents. Without
+  `opencode` installed it imports as configuration, with a warning.
 
 A Claude Code member landing on Claude Code takes the group import's own
 path, which rewrites embedded paths and keeps its conversation id unless it
@@ -1320,7 +1324,13 @@ loss report of whatever produced the context. It records:
   translation moves the old report into `prior`.
 
 tclaude stores the report of the conversion that produced a conversation: a
-cross-harness morph, or a file import that lands it. The next morph,
+cross-harness morph, or an import that lands it. A clone with its history
+keeps the source's report, and so does a group clone. A federation offer, move
+or teleport carries the report in the PAF, with only harnesses, kinds,
+severities, landing labels and numbers: `detail`, `context_window_source` and
+extensions stay on the sending node, and the receiver drops them too. Snapshots
+are written the same way, since they can reach another node. A peer on bundle
+v1 has no `losses.json`, so the record stops there. The next morph,
 import landing or export then puts that report and its `prior` into the new
 report's `prior`, keeping the latest 32. A conversation that lands unchanged
 keeps the report it came with. An export with no neutral context, which

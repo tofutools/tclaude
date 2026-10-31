@@ -271,7 +271,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
 	registerProfileRoutes(mux)
-	mux.HandleFunc("/api/costs", handleDashboardCosts)
+	mux.HandleFunc("/api/costs", withGzip(handleDashboardCosts))
 	mux.HandleFunc("/api/costs/ignore", handleDashboardCostsIgnore)
 	mux.HandleFunc("/api/usage-history", withGzip(handleDashboardUsageHistory))
 	mux.HandleFunc("/api/usage-history/point", handleDashboardUsageHistoryPoint)

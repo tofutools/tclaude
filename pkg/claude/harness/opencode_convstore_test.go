@@ -337,3 +337,21 @@ func TestOpenCodeConvStoreResolveSkipsImpossibleIDWithoutCLI(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, ref)
 }
+
+// `opencode session list` shows only one project, so a snapshot evicts what is
+// gone from the directories it covers and leaves other projects' rows alone.
+func TestOpenCodeSyncKeepsRowsOutsideTheSnapshot(t *testing.T) {
+	withTestDB(t)
+	for id, dir := range map[string]string{"ses_gone": "/repo/a", "ses_other": "/repo/b"} {
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: dir, ProjectPath: dir, Harness: OpenCodeName}))
+	}
+	_, err := syncOpenCodeConvIndex([]openCodeSession{{ID: "ses_here", Directory: "/repo/a"}})
+	require.NoError(t, err)
+
+	gone, err := db.GetConvIndex("ses_gone")
+	require.NoError(t, err)
+	assert.Nil(t, gone)
+	other, err := db.GetConvIndex("ses_other")
+	require.NoError(t, err)
+	assert.NotNil(t, other)
+}

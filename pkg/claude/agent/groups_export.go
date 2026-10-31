@@ -232,6 +232,7 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 		SkippedAliases []string          `json:"skipped_head_aliases"`
 		FileWarnings   []string          `json:"file_warnings"`
 		PromptWarnings []string          `json:"prompt_warnings"`
+		Landings       []groupLanding    `json:"landings,omitempty"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -249,6 +250,9 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 
 	fmt.Fprintf(stdout, "Imported group %q (id=%d) into %s\n", resp.Group, resp.GroupID, resp.TargetDir)
 	fmt.Fprintf(stdout, "  %d agent(s), %d message(s)\n", resp.AgentCount, resp.MessageCount)
+	for _, l := range resp.Landings {
+		fmt.Fprintf(stdout, "  %s: %s\n", l.Title, l.summary())
+	}
 	if len(resp.ConvRemaps) > 0 {
 		fmt.Fprintf(stdout, "  %d conv-id(s) collided locally and were remapped to fresh ids:\n", len(resp.ConvRemaps))
 		for old, fresh := range resp.ConvRemaps {
@@ -266,6 +270,27 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  note: %s\n", w)
 	}
 	return rcOK
+}
+
+// groupLanding is one member's landing, as the daemon reports it.
+type groupLanding struct {
+	Title         string   `json:"title"`
+	SourceHarness string   `json:"source_harness"`
+	Harness       string   `json:"harness"`
+	Model         string   `json:"model,omitempty"`
+	Rung          string   `json:"rung"`
+	Warnings      []string `json:"warnings,omitempty"`
+}
+
+func (l groupLanding) summary() string {
+	where := l.Harness
+	if l.SourceHarness != "" && l.SourceHarness != l.Harness {
+		where = l.SourceHarness + " -> " + l.Harness
+	}
+	if l.Model != "" {
+		where += " (" + l.Model + ")"
+	}
+	return where + ", history " + l.Rung
 }
 
 // runGroupsImportDryRun drives `groups import --dry-run`: it POSTs the
@@ -305,14 +330,7 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			Count     int      `json:"count"`
 			Locations []string `json:"locations"`
 		} `json:"findings"`
-		Landings []struct {
-			Title         string   `json:"title"`
-			SourceHarness string   `json:"source_harness"`
-			Harness       string   `json:"harness"`
-			Model         string   `json:"model"`
-			Rung          string   `json:"rung"`
-			Warnings      []string `json:"warnings"`
-		} `json:"landings"`
+		Landings []groupLanding `json:"landings"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -358,14 +376,7 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 	if len(insp.Landings) > 0 {
 		fmt.Fprintf(stdout, "\nMembers land:\n")
 		for _, l := range insp.Landings {
-			where := l.Harness
-			if l.SourceHarness != "" && l.SourceHarness != l.Harness {
-				where = l.SourceHarness + " -> " + l.Harness
-			}
-			if l.Model != "" {
-				where += " (" + l.Model + ")"
-			}
-			fmt.Fprintf(stdout, "  %s: %s, history %s\n", l.Title, where, l.Rung)
+			fmt.Fprintf(stdout, "  %s: %s\n", l.Title, l.summary())
 			for _, w := range l.Warnings {
 				fmt.Fprintf(stdout, "    warning: %s\n", w)
 			}

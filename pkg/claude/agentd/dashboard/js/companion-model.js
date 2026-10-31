@@ -227,6 +227,20 @@ export function clampPlacement(p, viewport) {
   return { x, y, w, h, snap: p.snap || '' };
 }
 
+// fitPlacement is where a window opens: exactly its saved place when that fits,
+// otherwise moved in, and smaller only if the viewport cannot hold it. Unlike
+// clampPlacement it keeps the whole title bar on screen, because the close and
+// minimize controls sit at its right end. A viewport narrower than the minimum
+// width keeps that right end. The result is never saved, so a larger browser
+// brings back the operator's own size.
+export function fitPlacement(p, viewport) {
+  const { w, h, snap } = clampPlacement(p, viewport);
+  const right = viewport.width - w;
+  const x = Math.round(Math.max(Math.min(0, right), Math.min(p.x, right)));
+  const y = Math.round(Math.max(0, Math.min(p.y, viewport.height - COMPANION_FOOTER_ROOM - h)));
+  return { x, y, w, h, snap };
+}
+
 // snapZone names the edge a dragged window would snap to for a pointer
 // position, or '' to keep floating.
 export function snapZone(pointer, viewport) {

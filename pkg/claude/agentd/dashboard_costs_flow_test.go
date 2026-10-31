@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -27,6 +28,12 @@ type costsResp struct {
 	WhatIfTotalUSD     float64         `json:"what_if_total_usd"`
 	VirtualCostCredits float64         `json:"virtual_cost_credits"`
 	CostKind           string          `json:"cost_kind"`
+	Ignored            []struct {
+		ConvID  string  `json:"conv_id"`
+		Model   string  `json:"model"`
+		Harness string  `json:"harness"`
+		CostUSD float64 `json:"cost_usd"`
+	} `json:"ignored"`
 }
 type costsRespDay struct {
 	Day                string  `json:"day"`
@@ -527,4 +534,113 @@ func daysInclusive(t *testing.T, a, b string) int {
 	tb, err := time.Parse("2006-01-02", b)
 	require.NoError(t, err)
 	return int(tb.Sub(ta).Hours()/24) + 1
+}
+
+// Scenario: the ledger only holds last year's spend. The polled surfaces no
+// longer read that history, yet it must still keep the Costs tab visible and
+// anchor the month projection, and the tab's own response must come gzipped.
+func TestDashboardCosts_OldHistoryOutsideTheWindow(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+	d, err := db.Open()
+	require.NoError(t, err)
+	oldDay := time.Now().AddDate(-1, 0, 0).Format("2006-01-02")
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES ('old-sess', ?, 'old-conv', 4.5)`, oldDay)
+	require.NoError(t, err)
+
+	snap := fetchSnapshotOnly(t, mux)
+	assert.True(t, snap.CostTabVisible, "real spend outside the month keeps the Costs tab")
+
+	req := testharness.JSONRequest(t, http.MethodGet, "/api/costs", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := testharness.Serve(mux, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "gzip", rec.Header().Get("Content-Encoding"))
+	zr, err := gzip.NewReader(rec.Body)
+	require.NoError(t, err)
+	var costs costsResp
+	require.NoError(t, json.NewDecoder(zr).Decode(&costs))
+	assert.Equal(t, oldDay, costs.FirstDay, "the first costed day spans all history")
+	assert.Zero(t, costs.TotalUSD, "nothing was spent in the default span")
+	assert.Empty(t, costs.Agents)
+}
+
+// With the opening built, the default view keeps every figure older rows feed:
+// first_day, the Costs-tab visibility, an ignored conversation's name, a resumed
+// conversation's delta. It must not need those rows, so they are replaced by
+// nonsense first; an older range still reads the real history.
+func TestDashboardCosts_DefaultViewFromStoredOpening(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	oldDay := now.AddDate(0, -3, 0).Format("2006-01-02")
+	today := now.Format("2006-01-02")
+	for _, row := range []struct {
+		session, day, conv string
+		cost               float64
+		model, harness     string
+	}{
+		{"long-sess", oldDay, "long-conv", 10, "old-model", "claude"},
+		{"long-sess", today, "long-conv", 12.5, "new-model", "claude"},
+		{"ignored-sess", oldDay, "ignored-conv", 8, "ignored-model", "codex"},
+	} {
+		_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, model, harness) VALUES (?, ?, ?, ?, ?, ?)`,
+			row.session, row.day, row.conv, row.cost, row.model, row.harness)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.SetCostConvIgnored("ignored-conv", true))
+	require.NoError(t, db.RefreshCostOpening(now))
+
+	want := fetchCosts(t, mux, "")
+	require.InDelta(t, 2.5, want.TotalUSD, 1e-9, "the resume counts its rise, not its cumulative")
+	require.Equal(t, oldDay, want.FirstDay)
+	require.Len(t, want.Ignored, 1)
+	require.Equal(t, "ignored-model", want.Ignored[0].Model)
+
+	for _, trigger := range []string{"insert", "delete", "update"} {
+		_, err = d.Exec(`DROP TRIGGER cost_opening_stale_` + trigger)
+		require.NoError(t, err)
+	}
+	_, err = d.Exec(`UPDATE session_cost_daily SET cost_usd = 9999, model = 'poison' WHERE day = ?`, oldDay)
+	require.NoError(t, err)
+
+	got := fetchCosts(t, mux, "")
+	assert.Equal(t, want, got, "the default view reads nothing older than the opening")
+	snap := fetchSnapshotOnly(t, mux)
+	assert.True(t, snap.CostTabVisible)
+	assert.InDelta(t, 2.5, snap.Usage.TotalCostUSD, 1e-9, "the top bar reads nothing older either")
+
+	older := fetchCosts(t, mux, "?from="+oldDay)
+	assert.Greater(t, older.TotalUSD, 9000.0, "an older range does read the older rows")
+}
+
+// An ignored conversation is named by its latest delta even when that falls
+// after the span: every read that stops at to must keep those rows.
+func TestDashboardCosts_IgnoredNamedFromRowsAfterTheSpan(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	day := func(n int) string { return now.AddDate(0, 0, -n).Format("2006-01-02") }
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, model, harness) VALUES ('ignored-sess', ?, 'ignored-conv', 3, 'late-model', 'codex')`, day(2))
+	require.NoError(t, err)
+	require.NoError(t, db.SetCostConvIgnored("ignored-conv", true))
+
+	check := func(label, query string) {
+		got := fetchCosts(t, mux, query)
+		require.Len(t, got.Ignored, 1, label)
+		assert.Equal(t, "late-model", got.Ignored[0].Model, label)
+		assert.Equal(t, "codex", got.Ignored[0].Harness, label)
+		assert.Zero(t, got.Ignored[0].CostUSD, label)
+	}
+	check("full read, older range", "?from="+day(90)+"&to="+day(60))
+	require.NoError(t, db.RefreshCostOpening(now))
+	check("older range", "?from="+day(90)+"&to="+day(60))
+	check("range inside the opening", "?from="+day(20)+"&to="+day(10))
 }

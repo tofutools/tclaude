@@ -329,7 +329,7 @@ func TestUniqueCloneTitle_NumericSuffixInBaseName(t *testing.T) {
 
 // A live source may be mid-append; the copy stops at the last whole record.
 func TestCompleteLinesReaderDropsTrailingFragment(t *testing.T) {
-	r := &completeLinesReader{r: bufio.NewReader(strings.NewReader("{\"a\":1}\n{\"b\":2}\n{\"c\":"))}
+	r := &completeLinesReader{r: bufio.NewReader(strings.NewReader("{\"a\":1}\n{\"b\":2}\n{\"c\":")), limit: 1 << 20}
 	got, err := io.ReadAll(r)
 	require.NoError(t, err)
 	assert.Equal(t, "{\"a\":1}\n{\"b\":2}\n", string(got))

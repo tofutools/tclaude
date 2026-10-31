@@ -783,6 +783,7 @@ func runServe(p *serveParams) error {
 	// statusbar is running to populate it. Shares the daemon-wide stop
 	// channel.
 	startUsagePoller(cronStop)
+	startCostOpeningRefresher(cronStop)
 	startUsageFleetPoller(cronStop)
 	startHostMetricsPoller(cronStop)
 
