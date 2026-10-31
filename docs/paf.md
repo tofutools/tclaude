@@ -1580,6 +1580,19 @@ follows the same refuse-or-degrade rules as `requires`.
   in the manifest like any entry, and are hashed and signed with the rest.
 
 Extension data is scanned for credentials like everything else.
+
+tclaude keeps extensions it does not understand when it imports an agent PAF:
+the data on the manifest, agent and environment objects, on context entries
+with an `id`, and under `ext/<id>/`, up to 8 MiB per agent. A later export of
+the agent writes it back, and `copy` decides what survives. `safe` extensions
+always go back out. `unsafe` ones go back out only while the agent's history is
+byte for byte what landed, which needs an offline import (`--no-start`) of the
+native history: a translated landing changed what they describe, and a started
+agent is changing it. Context entry extensions return only for entries that
+still have the same id in the export, so they do not survive a change of
+harness. A group import does not keep them, and neither does a federation move,
+teleport or offer landing. Redaction and publishing drop them as above.
+
 Redaction, `strip_identity` and publishing keep an extension only when the
 tool understands it and applies the same redactions to its data. Otherwise
 they drop it, whatever its `copy` flag. `copy: safe` never exempts data from

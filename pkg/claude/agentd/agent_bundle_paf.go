@@ -96,6 +96,7 @@ func archiveAgentPAFWith(b *agentbundle.Bundle, sign bool, parts pafHistoryParts
 	if !parts.NoContext {
 		opts.Context = neutralContext(b)
 	}
+	opts.Extensions = carriedExtensions(b.SourceConv, b)
 	if parts.NoNative && b.Manifest.History != nil {
 		if opts.Context == nil {
 			return nil, errors.New("the conversation has no neutral form to carry without its native history")

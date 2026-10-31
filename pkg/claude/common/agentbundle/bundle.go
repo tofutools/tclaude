@@ -118,7 +118,9 @@ type Bundle struct {
 	Manifest            Manifest
 	Transcript          []byte
 	// TranscriptPath is local-only; it is never an archive entry or a wire path.
-	TranscriptPath  string
+	TranscriptPath string
+	// SourceConv is the exported conversation; local-only, like TranscriptPath.
+	SourceConv      string
 	MaxBytes        int64
 	ownedTranscript bool
 }

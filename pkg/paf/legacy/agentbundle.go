@@ -131,6 +131,8 @@ type WriteOptions struct {
 	// Handoff, when set, is written as context/handoff.md: the agent's own
 	// summary of its earlier work, for a landing that has to cut history.
 	Handoff string
+	// Extensions is extension data kept from an imported PAF, to write back.
+	Extensions *paf.CarriedExtensions
 }
 
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
@@ -190,6 +192,12 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 	}
 	if err := ag.Extensions.Set(paf.ExtTclaude, ext); err != nil {
 		return err
+	}
+	var carriedRoot paf.Extensions
+	if opts.Extensions != nil {
+		if err := opts.Extensions.WriteTo(w, &carriedRoot, &ag.Extensions, &env.Extensions); err != nil {
+			return err
+		}
 	}
 	for _, p := range m.Placeholders {
 		ph := paf.Placeholder{Name: p.Name, Original: p.Original}
@@ -268,6 +276,9 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 	var root paf.Extensions
 	if err := root.Set(paf.ExtTclaude, map[string]any{"converted_from": ConvertedFrom{Format: m.Format, FormatVersion: m.FormatVersion, TclaudeVersion: m.TclaudeVersion, CreatedAt: m.CreatedAt}}); err != nil {
 		return err
+	}
+	for id, raw := range carriedRoot {
+		root[id] = raw
 	}
 	w.SetManifestExtensions(root)
 	_, err := w.Close(producer, keys...)

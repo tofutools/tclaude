@@ -177,3 +177,119 @@ func TestAgentImportRescansNeutralContext(t *testing.T) {
 	assert.Equal(t, "github-token", preview.Findings[0].Kind)
 	assert.Contains(t, preview.Findings[0].Locations[0], "context/transcript.jsonl")
 }
+
+const (
+	extSafe   = "com.example.notes"
+	extUnsafe = "com.example.index"
+)
+
+// withForeignExtensions rewrites an exported PAF as a tool with two extensions
+// tclaude does not know would write it: one copy: safe, one copy: unsafe.
+func withForeignExtensions(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	b, _, err := legacy.DecodeBundleBytes(raw, legacy.DecodeLimits{MaxBytes: 1 << 30}, "")
+	require.NoError(t, err)
+	defer func() { _ = b.Close() }()
+	decl := func(copyRule string) paf.ExtensionDecl {
+		return paf.ExtensionDecl{Version: "1.0", System: "example", Spec: "https://example.com/spec", Copy: copyRule}
+	}
+	var out bytes.Buffer
+	require.NoError(t, legacy.WriteAgentBundle(b, &out, legacy.WriteOptions{
+		Producer: paf.Producer{Name: "example"},
+		Extensions: &paf.CarriedExtensions{
+			Decls:       map[string]paf.ExtensionDecl{extSafe: decl("safe"), extUnsafe: decl("unsafe")},
+			Agent:       paf.Extensions{extSafe: json.RawMessage(`{"note":"keep me"}`), extUnsafe: json.RawMessage(`{"offset":7}`)},
+			Environment: paf.Extensions{extSafe: json.RawMessage(`{"env":true}`)},
+			Manifest:    paf.Extensions{extSafe: json.RawMessage(`{"root":true}`)},
+			Entries:     []paf.CarriedEntry{{Path: "ext/" + extSafe + "/notes.txt", MediaType: "text/plain", Data: []byte("notes")}},
+		},
+	}))
+	return out.Bytes()
+}
+
+// exportedPAF exports conv as a PAF and opens it.
+func exportedPAF(t *testing.T, f *testharness.Flow, conv string) (*paf.Archive, *paf.Agent) {
+	t.Helper()
+	rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+conv+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	a, err := paf.Open(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()), paf.Options{Purpose: paf.PurposeInspect})
+	require.NoError(t, err)
+	ag, ok := a.Agent(a.Manifest.Agents[0])
+	require.True(t, ok)
+	return a, ag
+}
+
+// Scenario: a PAF from another tool carries extensions tclaude does not
+// understand, one declared copy: safe and one copy: unsafe.
+//
+// Expected:
+//   - Imported offline with its history unchanged, an export writes both back.
+//   - Translated for another harness, an export keeps only the safe one, with
+//     its declaration, object data and ext/ entry intact.
+func TestAgentExportKeepsUnknownExtensions(t *testing.T) {
+	f := newFlow(t)
+	t.Setenv("CODEX_HOME", "")
+	f.HaveGroup("receiver")
+	const source = "0f0e0d0c-0b0a-4908-8706-050403020a0d"
+	cwd := testutil.CanonicalTempDir(t)
+	seedClaudeConversation(t, f, source, "ext-src", cwd)
+	rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	raw := withForeignExtensions(t, rec.Body.Bytes())
+
+	dest := testutil.CanonicalTempDir(t)
+	offline := importAgentArchive(t, f, raw, url.Values{"cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"offline"}, "start": {"false"}})
+	require.True(t, offline.Applied)
+	a, ag := exportedPAF(t, f, offline.Spawn.ConvID)
+	assert.Contains(t, a.Manifest.ExtensionsUsed, extSafe)
+	assert.Contains(t, a.Manifest.ExtensionsUsed, extUnsafe, "the history is unchanged, so copy: unsafe data still holds")
+	assert.JSONEq(t, `{"offset":7}`, string(ag.Extensions[extUnsafe]))
+
+	translated := importAgentArchive(t, f, raw, url.Values{"harness": {"codex"}, "model": {"gpt-5.5"}, "cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"translated"}})
+	require.True(t, translated.Applied)
+	a, ag = exportedPAF(t, f, translated.Spawn.ConvID)
+	assert.NotContains(t, a.Manifest.ExtensionsUsed, extUnsafe, "translating drops copy: unsafe data")
+	assert.Equal(t, "safe", a.Manifest.ExtensionsUsed[extSafe].Copy)
+	assert.JSONEq(t, `{"note":"keep me"}`, string(ag.Extensions[extSafe]))
+	assert.JSONEq(t, `{"root":true}`, string(a.Manifest.Extensions[extSafe]))
+	env, _ := a.Environment(a.Manifest.Agents[0])
+	assert.JSONEq(t, `{"env":true}`, string(env.Extensions[extSafe]))
+	notes, err := a.ReadEntry("ext/"+extSafe+"/notes.txt", 1024)
+	require.NoError(t, err)
+	assert.Equal(t, "notes", string(notes))
+}
+
+// Scenario: an imported agent's kept extension data holds a credential.
+//
+// Expected: the export's scan finds it and refuses, as for any other content.
+func TestAgentExportScansKeptExtensions(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("receiver")
+	const source = "0f0e0d0c-0b0a-4908-8706-050403020a0e"
+	cwd := testutil.CanonicalTempDir(t)
+	seedClaudeConversation(t, f, source, "ext-scan", cwd)
+	rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	b, _, err := legacy.DecodeBundleBytes(rec.Body.Bytes(), legacy.DecodeLimits{MaxBytes: 1 << 30}, "")
+	require.NoError(t, err)
+	defer func() { _ = b.Close() }()
+	var out bytes.Buffer
+	require.NoError(t, legacy.WriteAgentBundle(b, &out, legacy.WriteOptions{
+		Producer: paf.Producer{Name: "example"},
+		Extensions: &paf.CarriedExtensions{
+			Decls: map[string]paf.ExtensionDecl{extSafe: {Version: "1.0", System: "example", Spec: "https://example.com/spec", Copy: "safe"}},
+			Agent: paf.Extensions{extSafe: json.RawMessage(`{"token":"ghp_0123456789abcdefghijklmnopqrstuvwxyz01"}`)},
+		},
+	}))
+	dest := testutil.CanonicalTempDir(t)
+	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent-bundle/import?"+url.Values{"cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"scanned"}, "start": {"false"}, "allow_flagged": {"true"}}.Encode(), bytes.NewReader(out.Bytes())))
+	imported := httptest.NewRecorder()
+	f.Mux.ServeHTTP(imported, r)
+	require.Equal(t, http.StatusOK, imported.Code, imported.Body.String())
+	var res landingResult
+	require.NoError(t, json.Unmarshal(imported.Body.Bytes(), &res))
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+res.Spawn.ConvID+"&history=true&format=paf", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}

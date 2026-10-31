@@ -50,6 +50,7 @@ func WriteTranscript(w *Writer, key, scope string, t *transcript.Transcript) err
 			t.Losses.Add(transcript.LossUnknownRecord, 1, "empty entry")
 			continue
 		}
+		l.Extensions = w.lineExt[l.ID]
 		if err := cw.Write(l); err != nil {
 			_ = closer.Close()
 			return err

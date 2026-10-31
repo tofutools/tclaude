@@ -44,6 +44,7 @@ type Writer struct {
 	extReq   []string
 	extSeen  map[string]bool
 	manExt   Extensions
+	lineExt  map[string]Extensions
 	natives  []string
 	members  []string
 }

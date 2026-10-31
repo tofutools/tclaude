@@ -320,6 +320,7 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 			}
 		}
 	}
+	b.SourceConv = convID
 	b.Manifest.Findings, err = scanAgentBundle(b)
 	if err != nil {
 		_ = b.Close()
@@ -341,6 +342,7 @@ func scanAgentBundle(b *agentbundle.Bundle) ([]agentbundle.Finding, error) {
 		Warnings     []string                   `json:"warnings"`
 	}{b.Manifest.Placeholders, b.Manifest.CreatedAt, b.Manifest.TclaudeVersion, b.Manifest.Warnings})
 	c.JSON(metadata, "manifest")
+	scanCarriedExtensions(c, carriedExtensions(b.SourceConv, b))
 	history, err := b.OpenHistory()
 	if err != nil {
 		return nil, err
@@ -508,6 +510,8 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	direct := b == nil
 	// handoff is the agent-written summary a PAF may carry.
 	var handoff string
+	// collectExtensions reads the file's unknown extension data.
+	var collectExtensions func() (*paf.CarriedExtensions, []string, error)
 	if b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
@@ -527,7 +531,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() { _ = b.Close() }()
-		neutral, rescan, handoff = info.Context, info.Scan, info.Handoff
+		neutral, rescan, handoff, collectExtensions = info.Context, info.Scan, info.Handoff, info.Extensions
 	}
 	arrival, _ := r.Context().Value(arrivalContextKey{}).(*arrivalContext)
 	if arrival == nil {
@@ -863,6 +867,16 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if landing.full != nil {
 		saveLandedHistory(spawned, landing, group)
+	}
+	if collectExtensions != nil {
+		carried, dropped, err := collectExtensions()
+		if err != nil {
+			slog.Warn("import: read extension data", "agent", spawned.AgentID, "error", err)
+		}
+		for _, id := range dropped {
+			slog.Warn("import: extension data too large to keep", "agent", spawned.AgentID, "extension", id)
+		}
+		keepImportedExtensions(spawned, carried, h, noStart, landing, preview.Cwd)
 	}
 	preview.Applied = true
 	preview.Offline = noStart

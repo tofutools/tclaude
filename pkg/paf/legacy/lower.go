@@ -40,6 +40,9 @@ type Info struct {
 	// Handoff is the agent-written handoff (context/handoff.md), a summary
 	// of earlier work that stands in for history a landing has to cut.
 	Handoff string
+	// Extensions gathers the extension data this release does not understand
+	// while the decoded file stays open. It is nil for a v1 bundle.
+	Extensions func() (*paf.CarriedExtensions, []string, error)
 }
 
 // MaxHandoffBytes bounds the handoff an import reads.
@@ -85,6 +88,7 @@ func DecodeBundleFile(f *os.File, lim DecodeLimits, dir string) (*agentbundle.Bu
 		key := a.Manifest.Agents[0]
 		info := Info{Source: paf.Format, Signatures: a.Signatures, HasContext: a.HasContext(key, paf.ScopeEffective)}
 		info.Scan = func(recordLimit int) ([]paf.Finding, error) { return privacy.ScanArchive(a, recordLimit) }
+		info.Extensions = func() (*paf.CarriedExtensions, []string, error) { return paf.CollectExtensions(a, key) }
 		if p := paf.AgentPath(key, "context/handoff.md"); a.HasEntry(p) {
 			raw, err := a.ReadEntry(p, MaxHandoffBytes)
 			if err != nil {
