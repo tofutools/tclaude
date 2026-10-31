@@ -206,7 +206,7 @@ Badges only show when they apply.
 | 👁+N | N monitors still watching (log tail, CI poll, websocket) |
 | 🚫 | agentd has refused N callbacks from this session; see below |
 | 🔒 | Sandbox confined |
-| ⚠ | Sandbox off, unknown or not enforced |
+| ⚠ | Sandbox off, unknown, not enforced or partly enforced. Hover for the details. |
 | 📱 | Remote control on (Claude Code, best-known state). Click to open the session. |
 | ⚡ | Codex fast mode. Click to turn it off. |
 | 🔓 | N active sudo grants. Click to manage them. |
