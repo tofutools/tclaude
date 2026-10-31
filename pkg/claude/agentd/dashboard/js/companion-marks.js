@@ -116,6 +116,13 @@ export function consentRects(doc) {
   return rects;
 }
 
+// toolRects are the companion's floating controls. A tip stays off them, but a
+// mark may ring them: they are not approvals.
+export function toolRects(doc) {
+  return [...doc.querySelectorAll('.companion-floating, .companion-input')]
+    .map((el) => el.getBoundingClientRect()).filter((rect) => rect.width && rect.height);
+}
+
 const overConsent = (rect, consent) => consent.some((other) => rectsOverlap(rect, other));
 
 // resolveMark finds what a mark points at now: {element, from}, {rect} for a
@@ -256,7 +263,7 @@ export function MarksLayer({ marks, win, onEnd, onDismissAll, onReply, onReport 
     return { mark, rect, from: liveRect(found.from), why: found.why, scrollDelta: { x: anchor.x - at.x, y: anchor.y - at.y } };
   });
   // A bare mark still needs a way to end it, so every mark gets a tip.
-  const places = placeTips(drawn, win.innerWidth, win.innerHeight, consentRects(doc));
+  const places = placeTips(drawn, win.innerWidth, win.innerHeight, [...consentRects(doc), ...toolRects(doc)]);
   return html`<svg class="companion-marks" aria-hidden="true">
       ${drawn.filter((d) => !d.why).map((d) => html`<${MarkShape} key=${d.mark.id} ...${d} />`)}
     </svg>

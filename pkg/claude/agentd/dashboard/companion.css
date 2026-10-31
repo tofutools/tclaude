@@ -100,7 +100,7 @@
 .companion-controls button:disabled:hover { background: none; color: var(--cmp-muted); }
 
 .companion-menu {
-  position: absolute; top: 36px; left: 8px; z-index: 2; width: min(340px, calc(100% - 16px));
+  position: absolute; top: 36px; left: 8px; z-index: 4; width: min(340px, calc(100% - 16px));
   background: var(--cmp-bar); border: 1px solid var(--cmp-edge); border-radius: 8px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, .55); padding: 6px; display: flex; flex-direction: column; gap: 6px;
 }
@@ -118,7 +118,7 @@
 .companion-menu-empty { color: var(--cmp-muted); font-size: 12px; padding: 6px 8px; }
 
 .companion-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.companion-term-host { flex: 1; min-height: 0; padding: 6px 6px 0; overflow: hidden; }
+.companion-term-host { flex: 1; min-height: 0; padding: 6px; overflow: hidden; }
 .companion-term-host .xterm { height: 100%; }
 .companion-term-host .xterm-viewport { scrollbar-width: none; }
 .companion-term-host .xterm-viewport::-webkit-scrollbar { display: none; }
@@ -138,7 +138,7 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .companion-term-status {
-  position: absolute; top: 8px; right: 10px; z-index: 1; padding: 3px 8px; border-radius: 6px;
+  position: absolute; top: 44px; right: 10px; z-index: 1; padding: 3px 8px; border-radius: 6px;
   background: var(--cmp-bar); border: 1px solid var(--cmp-line); color: var(--cmp-muted); font-size: 11px;
 }
 .companion-term-status button { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
@@ -151,10 +151,22 @@
 }
 .companion-primary:disabled { opacity: .6; cursor: progress; }
 
-.companion-input { flex: none; box-sizing: border-box; min-height: 40px; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--cmp-line); }
+.companion-floating-anchor { position: relative; height: 0; z-index: 3; }
+.companion-floating {
+  position: absolute; top: 6px; right: 8px; display: flex; align-items: center; gap: 6px; padding: 3px 6px;
+  border: 1px solid var(--cmp-line); border-radius: 8px; background: var(--cmp-bar); opacity: .4; transition: opacity .15s;
+}
+.companion-window:hover .companion-floating, .companion-floating:focus-within, .companion-floating.listening { opacity: 1; }
+@media (hover: none) { .companion-floating { opacity: 1; } }
+.companion-input {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 5px 6px;
+  border: 1px solid var(--cmp-line); border-radius: 8px; background: var(--cmp-bar); box-shadow: 0 4px 12px rgba(0, 0, 0, .45);
+}
+.companion-input.listening { border-color: var(--cmp-red); }
+/* Approvals and decisions stack down the body: the strip must not cover their buttons. */
+.companion-body.clear-strip { padding-bottom: 52px; }
 .companion-context { display: inline-flex; align-items: center; gap: 4px; color: var(--cmp-muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
 .companion-context input { margin: 0; accent-color: var(--cmp-blue); }
-.companion-input-gap { flex: 1; }
 .companion-draft {
   flex: 1; min-width: 0; background: #0f1419; border: 1px solid var(--cmp-line); border-radius: 6px;
   color: var(--cmp-text); padding: 5px 8px; font: inherit; font-size: 12px;
@@ -315,11 +327,11 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 }
 .annotate-send:not(:disabled) { background: #238636; border-color: #2ea043; color: #fff; }
 .annotate-btn:disabled, .annotate-send:disabled { opacity: .5; cursor: default; }
-.companion-input .companion-annotate {
+.companion-floating .companion-annotate {
   padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
   color: var(--cmp-amber-text); font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
 }
-.companion-input .companion-annotate:hover { border-color: var(--cmp-amber); }
+.companion-floating .companion-annotate:hover { border-color: var(--cmp-amber); }
 
 /* One-click starters for the Steward (guided setup, tcl-bifqbb). */
 
@@ -327,12 +339,12 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-controls .companion-voice.on { color: var(--cmp-green); }
 
 /* Dictation (tcl-sqxkb0). */
-.companion-input .companion-mic {
+.companion-floating .companion-mic {
   padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
   color: var(--cmp-text); font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
 }
-.companion-input .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .companion-input .companion-mic.on { animation: none; } }
+.companion-floating .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .companion-floating .companion-mic.on { animation: none; } }
 
 /* Agent marks on the operator's view (tcl-0waby5): hand-drawn circles,
    underlines and arrows a cue draws over the page. */
