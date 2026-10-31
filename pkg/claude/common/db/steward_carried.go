@@ -163,24 +163,24 @@ func endCarriedSudo(tx *sql.Tx, where string, args ...any) error {
 	return err
 }
 
-// WithholdStewardPermission notes that the operator took a permission off a
-// Steward. Its levels giving the slug does not bring it back.
-func WithholdStewardPermission(agentID, slug string) error {
+// OfferStewardPermission records that a Steward's levels have given it a slug,
+// once. What the operator does with it afterwards is theirs.
+func OfferStewardPermission(agentID, slug string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT OR IGNORE INTO steward_withheld_permissions (agent_id, slug) VALUES (?, ?)`, agentID, slug)
+	_, err = d.Exec(`INSERT OR IGNORE INTO steward_offered_permissions (agent_id, slug) VALUES (?, ?)`, agentID, slug)
 	return err
 }
 
-// ListStewardWithheldPermissions returns what was taken off a Steward.
-func ListStewardWithheldPermissions(agentID string) (map[string]bool, error) {
+// ListStewardOfferedPermissions returns what a Steward's levels have given it.
+func ListStewardOfferedPermissions(agentID string) (map[string]bool, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT slug FROM steward_withheld_permissions WHERE agent_id = ?`, agentID)
+	rows, err := d.Query(`SELECT slug FROM steward_offered_permissions WHERE agent_id = ?`, agentID)
 	if err != nil {
 		return nil, err
 	}

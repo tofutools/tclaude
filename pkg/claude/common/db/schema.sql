@@ -2203,3 +2203,9 @@ CREATE TABLE conv_loss_reports (
 		conv_id TEXT PRIMARY KEY,
 		report  TEXT NOT NULL
 	);
+
+CREATE TABLE steward_offered_permissions (
+		agent_id TEXT NOT NULL,
+		slug     TEXT NOT NULL,
+		PRIMARY KEY (agent_id, slug)
+	) STRICT;

@@ -2348,3 +2348,10 @@ func ReconcileStewardAccessForTest() {
 	cfg, _ := clconfig.Load()
 	reconcileStewardAccess(cfg)
 }
+
+// AddStewardBaseSlugForTest stands in for a release adding a slug to the base set.
+func AddStewardBaseSlugForTest(slug string) func() {
+	before := stewardBaseSlugs
+	stewardBaseSlugs = append(slices.Clone(before), slug)
+	return func() { stewardBaseSlugs = before }
+}

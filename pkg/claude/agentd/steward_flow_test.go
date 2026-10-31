@@ -758,54 +758,86 @@ func TestSteward_RunningStewardHearsANewName(t *testing.T) {
 	assert.Len(t, nameMail(), 2, "and clearing it is a change too")
 }
 
-// Scenario: a Steward summoned before a slug joined the base set gets it from
-// the next reconcile and hears about it, while what the operator took off stays off.
-func TestSteward_ReconcileAddsWhatLevelsGiveAndNothingRemoved(t *testing.T) {
+func stewardOverrideHeld(t *testing.T, conv, slug string) (string, bool) {
+	t.Helper()
+	overrides, err := db.ListAgentPermissionOverrideRowsForConv(conv)
+	require.NoError(t, err)
+	for _, row := range overrides {
+		if row.Slug == slug {
+			return row.Effect, true
+		}
+	}
+	return "", false
+}
+
+// Scenario: a release adds a slug to the base set. A running Steward gets it and
+// hears about it, unless it denies it, and what the operator takes off later,
+// by any route, stays off.
+func TestSteward_ReconcileAddsANewSlugAndKeepsRemovalsAndDenies(t *testing.T) {
 	c := newStewardCarryFlow(t)
 	conv := c.summon()
-	slugHeld := func(slug string) (db.PermissionOverride, bool) {
-		overrides, err := db.ListAgentPermissionOverrideRowsForConv(conv)
+	accessMail := func() []*db.AgentMessage {
+		messages, err := db.ListUndeliveredAgentMessagesFor(conv)
 		require.NoError(t, err)
-		for _, row := range overrides {
-			if row.Slug == slug {
-				return db.PermissionOverride{Effect: row.Effect}, true
+		var out []*db.AgentMessage
+		for _, message := range messages {
+			if message.Subject == "Your access changed" {
+				out = append(out, message)
 			}
 		}
-		return db.PermissionOverride{}, false
+		return out
 	}
-	// Born before these joined the base set: nothing records them as removed.
-	_, err := db.RevokeAgentPermission(conv, agentd.PermDashboardCapture)
+	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermPromptsManage, db.PermEffectDeny, "test"))
+	t.Cleanup(agentd.AddStewardBaseSlugForTest(agentd.PermRolesManage))
+	t.Cleanup(agentd.AddStewardBaseSlugForTest(agentd.PermPromptsManage))
+	_, err := db.RevokeAgentPermission(conv, agentd.PermHumanNotify)
 	require.NoError(t, err)
-	_, err = db.RevokeAgentPermission(conv, agentd.PermDashboardMark)
-	require.NoError(t, err)
-	// The operator's own choices.
-	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermBoardsWrite, db.PermEffectDeny, "test"))
-	revoke := testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/permissions/revoke",
-		map[string]any{"slug": agentd.PermHumanNotify, "target": conv})))
-	require.Equalf(t, http.StatusOK, revoke.Code, "body=%s", revoke.Body.String())
 
 	agentd.ReconcileStewardAccessForTest()
 
-	capture, held := slugHeld(agentd.PermDashboardCapture)
+	effect, held := stewardOverrideHeld(t, conv, agentd.PermRolesManage)
 	require.True(t, held, "a slug that is simply new arrives")
-	assert.Equal(t, db.PermEffectGrant, capture.Effect)
-	_, held = slugHeld(agentd.PermDashboardMark)
-	assert.True(t, held)
-	denied, held := slugHeld(agentd.PermBoardsWrite)
-	require.True(t, held)
-	assert.Equal(t, db.PermEffectDeny, denied.Effect, "a deny stays")
-	_, held = slugHeld(agentd.PermHumanNotify)
-	assert.False(t, held, "a slug the operator took off stays off")
+	assert.Equal(t, db.PermEffectGrant, effect)
+	_, held = stewardOverrideHeld(t, conv, agentd.PermHumanNotify)
+	assert.False(t, held, "offered once and taken off, so it stays off")
+	effect, _ = stewardOverrideHeld(t, conv, agentd.PermPromptsManage)
+	assert.Equal(t, db.PermEffectDeny, effect, "a deny stays")
 
-	messages, err := db.ListUndeliveredAgentMessagesFor(conv)
+	mail := accessMail()
+	require.Len(t, mail, 1)
+	assert.Contains(t, mail[0].Body, agentd.PermRolesManage)
+	assert.NotContains(t, mail[0].Body, agentd.PermPromptsManage)
+	assert.Contains(t, mail[0].Body, "guide capture -o /tmp/view.png")
+
+	// Taken off after it arrived, and nothing further to say.
+	_, err = db.RevokeAgentPermission(conv, agentd.PermRolesManage)
 	require.NoError(t, err)
-	require.Len(t, messages, 1)
-	assert.Equal(t, "Your access changed", messages[0].Subject)
-	assert.Contains(t, messages[0].Body, agentd.PermDashboardCapture)
-	assert.Contains(t, messages[0].Body, "guide capture -o /tmp/view.png")
+	agentd.ReconcileStewardAccessForTest()
+	_, held = stewardOverrideHeld(t, conv, agentd.PermRolesManage)
+	assert.False(t, held)
+	assert.Len(t, accessMail(), 1)
+}
+
+// Scenario: a Steward from before the record, like the one that could not take a
+// screenshot. It gets capture, and any other gap counts as deliberate.
+func TestSteward_ReconcileOfAStewardFromBeforeTheRecord(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	conv := c.summon()
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`DELETE FROM steward_offered_permissions`)
+	require.NoError(t, err)
+	for _, slug := range []string{agentd.PermDashboardCapture, agentd.PermDashboardMark, agentd.PermHumanNotify} {
+		_, err = db.RevokeAgentPermission(conv, slug)
+		require.NoError(t, err)
+	}
 
 	agentd.ReconcileStewardAccessForTest()
-	again, err := db.ListUndeliveredAgentMessagesFor(conv)
-	require.NoError(t, err)
-	assert.Len(t, again, 1, "nothing changed, so nothing to say")
+
+	effect, _ := stewardOverrideHeld(t, conv, agentd.PermDashboardCapture)
+	assert.Equal(t, db.PermEffectGrant, effect)
+	effect, _ = stewardOverrideHeld(t, conv, agentd.PermDashboardMark)
+	assert.Equal(t, db.PermEffectGrant, effect)
+	_, held := stewardOverrideHeld(t, conv, agentd.PermHumanNotify)
+	assert.False(t, held)
 }

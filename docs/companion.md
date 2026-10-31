@@ -180,7 +180,9 @@ instance alone. `permissions.grant` and `permissions.revoke` cannot be stored.
 
 Stewards that are already running catch up when the daemon starts or when they resume:
 each gets what its levels now give and a message saying so. Saving Config > Steward
-does not change one on its own. This only adds. A deny stays, and so does a permission you revoked from that Steward.
+does not change one on its own. Each slug is given once, so this only adds: a deny
+stays, and so does a permission you took off that Steward. Default permissions reach
+new Stewards only.
 
 While an agent in the window holds elevated access, its tab and pill show **🔓**, and
 a band above its terminal lists what it holds. **End sudo** appears when it holds

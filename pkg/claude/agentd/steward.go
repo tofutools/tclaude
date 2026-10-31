@@ -253,9 +253,6 @@ func saveStewardCarry(convID string, before map[string]db.PermissionOverride, ef
 		return err
 	}
 	for slug, effect := range effects {
-		if effect == "default" && holdsOverride(before, slug) {
-			withholdStewardPermission(convID, slug)
-		}
 		_, wasStored := stored[slug]
 		keep, chosen := carry[slug]
 		if !chosen {
@@ -369,80 +366,119 @@ func stewardConvs() []string {
 	return convs
 }
 
-// reconcileStewardAccess brings Stewards up to what their levels give, since
+// stewardSlugsBeforeRecords joined the levels before Stewards had a record of
+// what they were offered, so one summoned earlier may simply not have them. For
+// any other slug it lacks, a Steward without a record lost it on purpose.
+var stewardSlugsBeforeRecords = []string{PermDashboardCapture, PermDashboardMark, PermFederationAuditRead}
+
+// reconcileStewardAccess brings every Steward up to what its levels give, since
 // they are only granted it at summon and outlive upgrades. It runs when the
-// daemon starts and when a Steward resumes.
-// It only adds. An override of either kind stands, and so does a slug the
-// operator took off that Steward. It tells each Steward what changed, as its
-// brief cannot, and a message to one not running waits for its resume.
+// daemon starts. See reconcileSteward.
 func reconcileStewardAccess(cfg *config.Config) {
 	if !collabRoutesEnabled() {
 		return
 	}
 	for _, conv := range stewardConvs() {
-		added := reconcileStewardConv(conv, cfg)
-		if len(added) == 0 {
-			continue
-		}
-		body := "You now also hold: " + strings.Join(added, ", ") + ".\n\n" + stewardAccessNote(cfg) + "\n\n" + stewardCaptureGuide
-		if _, err := queueAgentMessage(&db.AgentMessage{ToConv: conv, Subject: "Your access changed", Body: body}); err != nil {
-			slog.Warn("steward: access change message failed", "conv", short8(conv), "error", err)
-		}
+		reconcileSteward(conv, cfg)
 	}
 }
 
 // reconcileResumingSteward catches a Steward up as it comes back: it may have
 // missed a Config change while it was down.
 func reconcileResumingSteward(conv string) {
-	if slices.Contains(stewardConvs(), conv) {
-		cfg, _ := config.Load()
-		reconcileStewardAccess(cfg)
+	if !slices.Contains(stewardConvs(), conv) {
+		return
 	}
+	cfg, err := config.LoadShared()
+	if err != nil {
+		slog.Warn("steward: read config for access reconcile failed", "error", err)
+		return
+	}
+	reconcileSteward(conv, cfg)
 }
 
-func reconcileStewardConv(conv string, cfg *config.Config) []string {
+// reconcileSteward gives a Steward each level slug it has not been offered yet,
+// and tells it, as its brief cannot. Offering a slug is what gets recorded, so
+// one the operator later removes by any route is simply not offered again, and
+// any override already on the slug stands. It only adds. A message to a Steward
+// that is not running waits for its resume.
+func reconcileSteward(conv string, cfg *config.Config) {
 	agentID, err := db.AgentIDForConv(conv)
 	if err != nil || agentID == "" {
 		slog.Warn("steward: resolve agent for access reconcile failed", "conv", short8(conv), "error", err)
-		return nil
+		return
 	}
 	overrides, err := agentPermissionOverrides(conv)
 	if err != nil {
 		slog.Warn("steward: read overrides for access reconcile failed", "conv", short8(conv), "error", err)
-		return nil
-	}
-	withheld, err := db.ListStewardWithheldPermissions(agentID)
-	if err != nil {
-		slog.Warn("steward: read withheld permissions failed", "conv", short8(conv), "error", err)
-		return nil
-	}
-	var added []string
-	for _, slug := range stewardSlugs(cfg) {
-		if holdsOverride(overrides, slug) || withheld[slug] || slices.Contains(added, slug) {
-			continue
-		}
-		if err := db.SetAgentPermissionOverride(conv, slug, db.PermEffectGrant, stewardReconcileGranter); err != nil {
-			slog.Warn("steward: add permission failed", "conv", short8(conv), "slug", slug, "error", err)
-			continue
-		}
-		added = append(added, slug)
-	}
-	return added
-}
-
-// withholdStewardPermission remembers that the operator took a slug off a
-// Steward, so a later reconcile leaves it off.
-func withholdStewardPermission(convID, slug string) {
-	if !slices.Contains(stewardConvs(), convID) {
 		return
 	}
-	agentID, err := db.AgentIDForConv(convID)
-	if err == nil && agentID != "" {
-		err = db.WithholdStewardPermission(agentID, slug)
-	}
+	offered, err := db.ListStewardOfferedPermissions(agentID)
 	if err != nil {
-		slog.Warn("steward: record removed permission failed", "conv", short8(convID), "slug", slug, "error", err)
+		slog.Warn("steward: read offered permissions failed", "conv", short8(conv), "error", err)
+		return
 	}
+	levels := stewardLevelSlugs(cfg)
+	if len(offered) == 0 {
+		// Summoned before the record existed.
+		for _, slug := range levels {
+			if !slices.Contains(stewardSlugsBeforeRecords, slug) {
+				offered[slug] = true
+			}
+		}
+		if err := offerStewardPermissions(agentID, offered); err != nil {
+			return
+		}
+	}
+	var added []string
+	for _, slug := range levels {
+		if offered[slug] {
+			continue
+		}
+		offered[slug] = true
+		if !holdsOverride(overrides, slug) {
+			if err := db.SetAgentPermissionOverride(conv, slug, db.PermEffectGrant, stewardReconcileGranter); err != nil {
+				slog.Warn("steward: add permission failed", "conv", short8(conv), "slug", slug, "error", err)
+				continue
+			}
+			added = append(added, slug)
+		}
+		if err := db.OfferStewardPermission(agentID, slug); err != nil {
+			slog.Warn("steward: record offered permission failed", "conv", short8(conv), "slug", slug, "error", err)
+		}
+	}
+	if len(added) == 0 {
+		return
+	}
+	body := "You now also hold: " + strings.Join(added, ", ") + ".\n\n" + stewardCaptureGuide
+	if _, err := queueAgentMessage(&db.AgentMessage{ToConv: conv, Subject: "Your access changed", Body: body}); err != nil {
+		slog.Warn("steward: access change message failed", "conv", short8(conv), "error", err)
+	}
+}
+
+func offerStewardPermissions(agentID string, slugs map[string]bool) error {
+	for slug := range slugs {
+		if err := db.OfferStewardPermission(agentID, slug); err != nil {
+			slog.Warn("steward: record offered permission failed", "slug", slug, "error", err)
+			return err
+		}
+	}
+	return nil
+}
+
+// recordStewardOffer notes at summon what a new Steward's levels gave it, so a
+// slug added later is known to be new.
+func recordStewardOffer(convID string, cfg *config.Config) {
+	agentID, err := db.AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		slog.Warn("steward: resolve agent for offered permissions failed", "conv", short8(convID), "error", err)
+		return
+	}
+	slugs := map[string]bool{}
+	for _, slug := range stewardLevelSlugs(cfg) {
+		slugs[slug] = true
+	}
+	_ = offerStewardPermissions(agentID, slugs)
 }
 
 // stewardElevation is what a Steward holds beyond Config and the defaults,
