@@ -2316,3 +2316,25 @@ func SetUsageRulesLiveSessionsForTest(fn func() (map[string]struct{}, error)) fu
 	usageRulesLiveSessions = fn
 	return func() { usageRulesLiveSessions = prev }
 }
+
+// HoldsPermissionForTest is the context-free check triggers and listings use.
+func HoldsPermissionForTest(convID, slug string) bool { return holdsPermission(convID, slug) }
+
+// SudoCountabilityForTest maps every registered slug to why it takes no use limit.
+func SudoCountabilityForTest() map[string]string {
+	out := map[string]string{}
+	for _, slug := range knownSlugs() {
+		out[slug] = sudoUseLimitRefusal(slug)
+	}
+	return out
+}
+
+// IsCountableForTest reports what the registry tells the editor.
+func IsCountableForTest(slug string) bool {
+	for _, p := range permissionRegistry {
+		if p.Slug == slug {
+			return p.Countable
+		}
+	}
+	return false
+}

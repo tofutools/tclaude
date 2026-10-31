@@ -390,9 +390,9 @@ test('a notification on another node is answered through that node, text only', 
 });
 
 const sudoSlugs = [
-  { slug: 'agent.stop', description: 'stop agents' },
+  { slug: 'agent.stop', description: 'stop agents', countable: true },
   { slug: 'groups.members.spawn', description: 'spawn', scope_dims: ['group'], countable: true },
-  { slug: 'node.exec', description: 'run commands', risky: true },
+  { slug: 'node.exec', description: 'run commands', risky: true, not_countable_why: 'It runs too often.' },
   { slug: 'permissions.grant', description: 'grant', risky: true },
 ];
 
@@ -604,7 +604,8 @@ test('a countable slug takes a use limit, sent with the grant and shown beside t
 
   await pickSudo(harness, host, 'node.exec');
   await pickSudo(harness, host, 'groups.members.spawn');
-  assert.equal(!!sudoRow(host, 'node.exec').querySelector('.perm-uses'), false, 'nothing to count');
+  assert.equal(sudoRow(host, 'node.exec').querySelector('.perm-uses input'), null, 'nothing to count');
+  assert.equal(sudoRow(host, 'node.exec').querySelector('.perm-uses.none').title, 'It runs too often.');
   const uses = () => sudoRow(host, 'groups.members.spawn').querySelector('.perm-uses input');
   await harness.input(uses(), '0');
   assert.equal(host.querySelector('#perm-edit-submit').disabled, true);
@@ -612,6 +613,23 @@ test('a countable slug takes a use limit, sent with the grant and shown beside t
   await harness.input(uses(), '3');
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(payloads[0].uses, { 'groups.members.spawn': 3 });
+  await mounted.unmount();
+});
+
+test('the bundle limit reaches every countable pick, and a row can differ from it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const { host, mounted } = await mountSudo(harness, actions, sudoSnapshot([]));
+  await pickSudo(harness, host, 'node.exec');
+  await pickSudo(harness, host, 'groups.members.spawn');
+  await pickSudo(harness, host, 'agent.stop');
+  await harness.input(host.querySelector('#sudo-uses'), '5');
+  assert.match(host.querySelector('#sudo-uses-hint').textContent, /1 picked takes no limit/);
+  assert.equal(sudoRow(host, 'agent.stop').querySelector('.perm-uses input').placeholder, '5');
+  await harness.input(sudoRow(host, 'agent.stop').querySelector('.perm-uses input'), '2');
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(payloads[0].uses, { 'groups.members.spawn': 5, 'agent.stop': 2 });
   await mounted.unmount();
 });
 

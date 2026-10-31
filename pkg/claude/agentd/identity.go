@@ -595,7 +595,7 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 // gates use. They need the whole verdict, not just the resolution, because a
 // scoped allow can only be answered against the request's ActionContext.
 func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) permVerdict {
-	src := localPermissionSources(loadPermSources(convID))
+	src := sudoSourcesForRequest(r, localPermissionSources(loadPermSources(convID)))
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
 		return resolveEffectivePermissionVerdictFrom(src, slug, defaults[slug], defaults[PermGroupsAdmin])
 	}
@@ -609,8 +609,10 @@ func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) pe
 // particular, a dedicated deny suppresses an umbrella grant. An umbrella deny
 // does not suppress a separately granted dedicated capability; it only removes
 // the umbrella source.
+//
+// It has no request to count against, so a use-limited grant does not speak here.
 func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
-	src := localPermissionSources(loadPermSources(convID))
+	src := withoutLimitedSudo(localPermissionSources(loadPermSources(convID)))
 	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, adminDefaultAllowed)
 }
 
@@ -699,7 +701,10 @@ type permVerdict struct {
 
 type sudoPermSource struct {
 	ID        int64
+	Slug      string
 	ScopeJSON string
+	// Limited marks a grant with a use limit: see sudoSourcesForRequest.
+	Limited bool
 }
 
 type overridePermSource struct {
@@ -781,7 +786,7 @@ func loadPermSourcesForState(convID string, failOnTierReadError, allowAway bool)
 				continue
 			}
 			if _, seen := out.sudo[g.Slug]; !seen {
-				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, ScopeJSON: g.ScopeJSON}
+				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, Slug: g.Slug, ScopeJSON: g.ScopeJSON, Limited: g.UsesLimit > 0}
 			}
 		}
 	}
@@ -1359,6 +1364,9 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 		allowed, matched, evalErr = permissionAllowsAction(r, p.ConvID, perm, actionCtx)
 		if evalErr != nil {
 			writeError(w, http.StatusInternalServerError, "io", evalErr.Error())
+			return "", false
+		}
+		if allowed && !spendSudoUse(w, r, p.ConvID, perm, actionCtx) {
 			return "", false
 		}
 		recordAuditPermissionScope(r, perm, matched)
