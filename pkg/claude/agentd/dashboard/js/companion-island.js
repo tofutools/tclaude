@@ -567,10 +567,15 @@ export function CompanionApp({
     writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
   }
 
-  // A click on the title bar or other empty space focuses nothing by itself.
-  // Give focus back to the terminal, so typing works and the border returns.
-  function onWindowClick() {
-    if (!windowRef.current?.contains(win?.document?.activeElement)) setFocusToken((n) => n + 1);
+  // A click on the title bar or other empty space leaves focus on the page.
+  // Give it back to the terminal, so typing works and the border returns.
+  // Controls keep their click, which may have opened a dialog, and a text
+  // selection survives so it can be copied.
+  function onWindowClick(event) {
+    if (event.target.closest?.('button, a, input, textarea, select, label')) return;
+    if (win?.getSelection?.()?.isCollapsed === false) return;
+    const active = win?.document?.activeElement;
+    if (!active || active === win.document.body) setFocusToken((n) => n + 1);
   }
 
   function onTitlePointerDown(event) {

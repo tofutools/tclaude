@@ -215,6 +215,9 @@ test('a click on empty window space gives focus back to the terminal', async (t)
   await harness.act(async () => { button.focus(); });
   await click();
   assert.equal(mounted.at(-1).focused, before + 1, 'focus already in the window stays where it is');
+  harness.window.document.activeElement?.blur?.();
+  await harness.act(() => view.container.querySelector('.companion-add').click());
+  assert.equal(mounted.at(-1).focused, before + 1, 'a control keeps its click, which may open a dialog');
 });
 
 test('Ctrl+. toggles the window and unpinning the last tab closes it', async (t) => {
