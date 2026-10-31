@@ -32,6 +32,7 @@ func TestMigrateV103toV104_AddsAndBackfillsHarness(t *testing.T) {
 	d, err := Open()
 	require.NoError(t, err, "Open")
 
+	mustExec(t, d, `DROP TRIGGER cost_opening_stale_update`) // It names the column.
 	mustExec(t, d, `ALTER TABLE session_cost_daily DROP COLUMN harness`)
 	mustExec(t, d, `UPDATE schema_version SET version = 103`)
 
