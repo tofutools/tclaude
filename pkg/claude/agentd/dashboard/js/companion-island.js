@@ -40,6 +40,9 @@ const html = htm.bind(h);
 
 const PEEK_DELAY_MS = 220;
 const PENDING_MS = 30000;
+// How long a minimized window keeps its terminal attached, so reopening it
+// shows content at once. After this it detaches and the next open reconnects.
+const WARM_MS = 5 * 60 * 1000;
 
 // snapTopOf is where a snapped side panel starts: just below the nav bar.
 function snapTopOf(win) {
@@ -287,6 +290,8 @@ export function CompanionApp({
   const [reconnectable, setReconnectable] = useState({});
   const [generation, setGeneration] = useState(0);
   const [focusToken, setFocusToken] = useState(0);
+  const [warm, setWarm] = useState(false);
+  const warmTimer = useRef(null);
   const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
   // Unsent text per agent id, so a draft stays with the agent it was written
   // for however the active tab changes.
@@ -533,6 +538,15 @@ export function CompanionApp({
     win?.addEventListener?.('keydown', onKey, true);
     return () => win?.removeEventListener?.('keydown', onKey, true);
   }, [toggle, win, activeAgent?.agentId, activeAgent?.online]);
+
+  // Minimizing hides the window and only releases its terminal later.
+  useEffect(() => {
+    if (!open) return undefined;
+    setWarm(true);
+    clearTimeout(warmTimer.current);
+    return () => { warmTimer.current = setTimeout(() => setWarm(false), WARM_MS); };
+  }, [open]);
+  useEffect(() => () => clearTimeout(warmTimer.current), []);
 
   // Grow the window out of the chip it was opened from.
   useLayoutEffect(() => {
@@ -1246,9 +1260,15 @@ export function CompanionApp({
   const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
   const starting = !activeAgent && activeId && pending.current.has(activeId);
 
-  const windowView = open && html`<section ref=${windowRef}
-    class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}`}
-    style=${style} role="dialog" aria-label="Companion" aria-modal="false">
+  // A terminal that lost its attach while hidden, for example to a Terminals
+  // tab pane, has nothing to show, so reopening starts a fresh connection.
+  useEffect(() => {
+    if (open && canReconnect) setGeneration((n) => n + 1);
+  }, [open]);
+
+  const windowView = (open || warm) && html`<section ref=${windowRef}
+    class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${open ? '' : ' companion-window-warm'}`}
+    style=${style} role="dialog" aria-label="Companion" aria-modal="false" aria-hidden=${open ? undefined : 'true'}>
     <header class="companion-titlebar" onPointerDown=${onTitlePointerDown}>
       <span class="companion-grip" aria-hidden="true">⋮⋮</span>
       <div class="companion-tabs" role="tablist" aria-label="Companion agents">
