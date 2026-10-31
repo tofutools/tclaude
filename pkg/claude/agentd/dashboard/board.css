@@ -102,6 +102,10 @@
 .board-canvas:not(.tool-select):not(.tool-hand):not(.tool-text) { cursor: crosshair; }
 .board-selection { fill: none; stroke: #1971c2; stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .board-handle { fill: #fff; stroke: #1971c2; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.board-snap { fill: #fff; stroke: #1971c2; stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: crosshair; }
+.board-line-end { fill: #fff; stroke: #1971c2; stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: move; }
+.board-line-end.on { fill: #1971c2; }
+.board-suggestion { opacity: .45; pointer-events: none; }
 .board-band { fill: rgba(25, 113, 194, .08); stroke: #1971c2; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .board-flash { animation: board-flash 1.6s ease-out; }
 @keyframes board-flash {

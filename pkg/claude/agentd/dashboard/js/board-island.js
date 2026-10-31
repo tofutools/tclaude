@@ -18,14 +18,19 @@ import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, alignMoves, boardIdFromTitle, bump, center, changeBounds,
-  cleanText, clipboardText, cloneElements, connectArrow, contentBounds, describeChanges, elementBounds, elementsInBox,
+  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, bindingAt, boardIdFromTitle, bump, center, changeBounds,
+  cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, elementBounds, elementsInBox,
   labelOf, labelOwners, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
-  reboundArrows, shapeAt, simplifyStroke, toExcalidraw, topHit, withLabels,
+  reboundArrows, routeConnector, shapeAt, shapeNear, simplifyStroke, snapHit, snapPoints, suggestedShape, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
 import { companionAgents } from './companion-model.js';
 
 const html = htm.bind(h);
+
+// How close the pointer must be, in screen pixels, to a snap point to take it,
+// and to a shape to show its snap points.
+const SNAP_RADIUS_PX = 10;
+const SNAP_MARGIN_PX = 16;
 
 export const BOARD_POLL_MS = 1000;
 // With the socket up nothing is polled but a slow check that catches a missed
@@ -182,6 +187,8 @@ export function BoardEditor({
   const [tool, setTool] = useState('select');
   const [color, setColor] = useState(BOARD_COLORS[0]);
   const [fill, setFill] = useState(BOARD_FILLS[0]);
+  const [routing, setRouting] = useState('straight'); // for the next line drawn
+  const [hoverShape, setHoverShape] = useState(''); // id of the shape showing its snap points
   const [selected, setSelected] = useState([]); // ids
   const pointerAt = useRef(null); // the last board point under the pointer, for paste
   const [presence, setPresence] = useState(() => new Map()); // agent id -> drawing | looking
@@ -214,6 +221,8 @@ export function BoardEditor({
   const eventBatch = useRef({ ids: [], before: new Map() });
   const timers = useRef({});
   const gesture = useRef(null);
+  // A clicked snap point's offer: {from, fixedPoint, at}, see suggestion().
+  const suggesting = useRef(null);
   const disposed = useRef(false);
   // Timer callbacks read the latest participants, not their render's.
   const metaRef = useRef(meta);
@@ -232,6 +241,8 @@ export function BoardEditor({
   useEffect(() => {
     if (onScreen) lastEditor = editorToken;
   }, [onScreen]);
+  // Another tool takes back a snap point's offer.
+  useEffect(() => { suggesting.current = null; }, [tool]);
   useEffect(() => () => {
     if (lastEditor === editorToken) lastEditor = null;
   }, []);
@@ -684,10 +695,12 @@ export function BoardEditor({
     }
   }
 
-  // remove deletes elements; a deleted shape takes its label with it.
+  // remove deletes elements; a deleted shape takes its label with it, and the
+  // lines attached to it stay where they are, free at that end.
   function remove(ids) {
-    const next = withLabels(elements.current, ids).map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted).map((el) => bump(el, { isDeleted: true }));
-    commit(next);
+    const gone = new Set(withLabels(elements.current, ids));
+    const next = [...gone].map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted).map((el) => bump(el, { isDeleted: true }));
+    commit([...next, ...detachedLines(elements.current, gone)]);
     setSelected([]);
   }
 
@@ -704,12 +717,14 @@ export function BoardEditor({
     commit(withArrows([...next.values()]));
   }
 
+  const attached = (el) => !!(el.startBinding || el.endBinding);
+
   function align(how) {
     const owners = labelOwners(elements.current);
     const chosen = new Set(selected);
     // Labels follow their shapes and arrows follow their ends.
     const targets = selected.map((id) => elements.current.get(id))
-      .filter((el) => el && !el.isDeleted && el.type !== 'arrow' && !chosen.has(owners.get(el.id)));
+      .filter((el) => el && !el.isDeleted && el.type !== 'arrow' && !attached(el) && !chosen.has(owners.get(el.id)));
     moveBy(alignMoves(targets, how));
   }
 
@@ -744,13 +759,28 @@ export function BoardEditor({
     pointerAt.current = p;
     const svg = svgRef.current;
     svg?.setPointerCapture?.(event.pointerId);
-    const live = liveElements(elements.current);
+    const live = drawnElements(elements.current);
     const panning = tool === 'hand' || event.button === 1;
     if (panning) {
       gesture.current = { kind: 'pan', sx: event.clientX, sy: event.clientY, view };
       return;
     }
+    if (suggesting.current) { acceptSuggestion(p); return; }
+    const snapTol = SNAP_RADIUS_PX / view.zoom;
     if (tool === 'select') {
+      const line = selected.length === 1 && live.find((el) => el.id === selected[0] && (el.type === 'arrow' || el.type === 'line'));
+      const end = line && lineEndAt(line, p, snapTol);
+      if (end) {
+        active.current = new Set([line.id]);
+        gesture.current = { kind: 'end', id: line.id, end, drawn: line, orig: elements.current.get(line.id) };
+        return;
+      }
+      const snap = !event.shiftKey && snapHit(live, p.x, p.y, snapTol);
+      if (snap) {
+        // A drag draws a line from the snap point; a click offers one.
+        beginLine('arrow', p, { startBinding: snap }, true);
+        return;
+      }
       const hit = topHit(live, p.x, p.y, 6 / view.zoom);
       if (!hit) {
         // Empty space: a rubber band; with Shift it adds to the selection.
@@ -770,10 +800,7 @@ export function BoardEditor({
       const movers = onHandle ? [hit.id] : withLabels(elements.current, ids);
       active.current = new Set(movers);
       const origs = new Map(movers.map((id) => [id, elements.current.get(id)]).filter(([, el]) => el && !el.isDeleted));
-      // The bound arrows' originals: the drag redraws them from these, and
-      // pointerup restores them so the commit (and its undo) starts clean.
-      const arrows = live.filter((el) => el.type === 'arrow' && !origs.has(el.id) && (origs.has(el.startBinding?.elementId) || origs.has(el.endBinding?.elementId)));
-      gesture.current = { kind: onHandle ? 'resize' : 'move', id: hit.id, start: p, orig: hit, origs, arrows };
+      gesture.current = { kind: onHandle ? 'resize' : 'move', id: hit.id, start: p, orig: elements.current.get(hit.id), origs };
       return;
     }
     if (tool === 'eraser') {
@@ -787,19 +814,97 @@ export function BoardEditor({
       else beginText(null, p);
       return;
     }
+    if (tool === 'arrow' || tool === 'line') {
+      const start = bindingAt(live, p.x, p.y, snapTol);
+      beginLine(tool, p, start ? { startBinding: start } : {});
+      return;
+    }
     const el = newElement(tool, {
       x: p.x, y: p.y, strokeColor: color,
       backgroundColor: ['rectangle', 'ellipse', 'diamond'].includes(tool) ? fill : 'transparent',
-      ...(tool === 'arrow' || tool === 'line' ? { points: [[0, 0], [0, 0]] } : {}),
     });
-    if (tool === 'arrow') {
-      const from = shapeAt(live, p.x, p.y);
-      if (from) el.startBinding = { elementId: from.id };
-    }
+    // A pen stroke started on a snap point moves with that shape.
+    const snap = tool === 'freedraw' ? snapHit(live, p.x, p.y, snapTol) : null;
+    if (snap) el.startBinding = snap;
     active.current = new Set([el.id]);
     elements.current.set(el.id, el);
     gesture.current = { kind: 'draw', id: el.id, start: p, raw: [[0, 0]] };
     redraw();
+  }
+
+  function beginLine(type, p, props, fromSnap = false) {
+    const el = newElement(type, {
+      x: p.x, y: p.y, strokeColor: color, backgroundColor: 'transparent', points: [[0, 0], [0, 0]],
+      ...(routing !== 'straight' ? { routing } : {}), ...props,
+    });
+    active.current = new Set([el.id]);
+    elements.current.set(el.id, el);
+    gesture.current = { kind: 'draw', id: el.id, start: p, raw: [[0, 0]], fromSnap };
+    redraw();
+  }
+
+  // lineEndAt says which end of a drawn line is under the point.
+  function lineEndAt(line, p, tol) {
+    const first = line.points[0]; const last = line.points[line.points.length - 1];
+    if (Math.hypot(p.x - (line.x + last[0]), p.y - (line.y + last[1])) <= tol) return 'end';
+    if (Math.hypot(p.x - (line.x + first[0]), p.y - (line.y + first[1])) <= tol) return 'start';
+    return '';
+  }
+
+  // lineWithEnd is a line with one end moved to p, the other kept as drawn.
+  function lineWithEnd(g, p) {
+    const { drawn, end } = g;
+    const first = drawn.points[0]; const last = drawn.points[drawn.points.length - 1];
+    const a = end === 'start' ? p : { x: drawn.x + first[0], y: drawn.y + first[1] };
+    const b = end === 'end' ? p : { x: drawn.x + last[0], y: drawn.y + last[1] };
+    return {
+      ...g.orig, x: a.x, y: a.y, width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y), points: [[0, 0], [b.x - a.x, b.y - a.y]],
+      [end === 'start' ? 'startBinding' : 'endBinding']: undefined,
+    };
+  }
+
+  // suggestion draws a clicked snap point's offer: a line from it, to the shape
+  // under the pointer, or to a ghost of the next shape.
+  function suggestion() {
+    const offer = suggesting.current;
+    const from = offer && elements.current.get(offer.from);
+    if (!from || from.isDeleted) return null;
+    const live = drawnElements(elements.current);
+    const start = { elementId: from.id, fixedPoint: offer.fixedPoint };
+    const end = offer.at && bindingAt(live, offer.at.x, offer.at.y, SNAP_RADIUS_PX / view.zoom, from.id);
+    const map = new Map(elements.current);
+    const ghost = end ? null : { id: 'suggested', ...suggestedShape(from, offer.fixedPoint, offer.at) };
+    if (ghost) map.set(ghost.id, ghost);
+    const line = {
+      id: 'suggested-line', type: 'arrow', x: 0, y: 0, points: [[0, 0], [0, 0]], strokeColor: from.strokeColor, routing,
+      startBinding: start, endBinding: end || { elementId: ghost.id },
+    };
+    return { ghost, line: { ...line, ...routeConnector(line, map, true) } };
+  }
+
+  function acceptSuggestion(p) {
+    suggesting.current.at = p;
+    const offer = suggestion();
+    suggesting.current = null;
+    if (!offer) { redraw(); return; }
+    const { id: _ghostId, ...ghostProps } = offer.ghost || {};
+    const shape = offer.ghost && newElement(offer.ghost.type, ghostProps);
+    const { id: _lineId, routing: lineRouting, ...lineProps } = offer.line;
+    const connector = newElement('arrow', {
+      ...lineProps, ...(lineRouting !== 'straight' ? { routing: lineRouting } : {}),
+      ...(shape ? { endBinding: { elementId: shape.id } } : {}),
+    });
+    commit(shape ? [shape, connector] : [connector]);
+    setSelected([(shape || connector).id]);
+  }
+
+  // chooseRouting sets the routing of the selected lines, and of the next.
+  function chooseRouting(id, lines) {
+    setRouting(id);
+    commit(withArrows(lines.map((el) => {
+      const next = { ...el, routing: id };
+      return bump(next, routeConnector(next, elements.current, true));
+    })));
   }
 
   function eraseAt(p) {
@@ -815,6 +920,11 @@ export function BoardEditor({
     const p = toBoard(event);
     pointerAt.current = p;
     const g = gesture.current;
+    if (tool !== 'hand' && tool !== 'text' && tool !== 'eraser' && !['move', 'resize', 'band', 'pan', 'erase'].includes(g?.kind)) {
+      const near = shapeNear(liveElements(elements.current), p.x, p.y, SNAP_MARGIN_PX / view.zoom);
+      setHoverShape(near?.id || '');
+    }
+    if (suggesting.current) { suggesting.current.at = p; redraw(); return; }
     if (!g) return;
     if (g.kind === 'band') { g.now = p; redraw(); return; }
     if (g.kind === 'pan') {
@@ -822,18 +932,26 @@ export function BoardEditor({
       return;
     }
     if (g.kind === 'erase') { eraseAt(p); return; }
+    if (g.kind === 'end') {
+      elements.current.set(g.id, lineWithEnd(g, p));
+      g.moved = true;
+      redraw();
+      return;
+    }
     const el = elements.current.get(g.id);
     if (!el) return;
     if (g.kind === 'move' || g.kind === 'resize') {
       if (g.kind === 'move') {
-        for (const [id, orig] of g.origs) elements.current.set(id, { ...orig, x: orig.x + p.x - g.start.x, y: orig.y + p.y - g.start.y });
+        for (const [id, orig] of g.origs) {
+          const moved = { ...orig, x: orig.x + p.x - g.start.x, y: orig.y + p.y - g.start.y };
+          // Dragging a line away pulls its ends off what is staying behind.
+          if (orig.startBinding && !g.origs.has(orig.startBinding.elementId)) moved.startBinding = undefined;
+          if (orig.endBinding && !g.origs.has(orig.endBinding.elementId)) moved.endBinding = undefined;
+          elements.current.set(id, moved);
+        }
       } else {
         elements.current.set(g.id, { ...g.orig, width: Math.max(8, g.orig.width + p.x - g.start.x), height: Math.max(8, g.orig.height + p.y - g.start.y) });
       }
-      // Rebind from the originals so a long drag does not inflate versions.
-      const temp = new Map(elements.current);
-      for (const arrow of g.arrows) temp.set(arrow.id, arrow);
-      for (const arrow of reboundArrows(temp, [...g.origs.keys()])) if (!g.origs.has(arrow.id)) elements.current.set(arrow.id, arrow);
       g.moved = true;
     } else if (g.kind === 'draw') {
       const dx = p.x - g.start.x; const dy = p.y - g.start.y;
@@ -875,10 +993,24 @@ export function BoardEditor({
       for (const [id, orig] of g.origs) {
         const now = elements.current.get(id);
         elements.current.set(id, orig);
-        changed.push(bump(orig, { x: now.x, y: now.y, width: now.width, height: now.height }));
+        const geometry = { x: now.x, y: now.y, width: now.width, height: now.height };
+        if (orig.startBinding) geometry.startBinding = now.startBinding;
+        if (orig.endBinding) geometry.endBinding = now.endBinding;
+        changed.push(bump(orig, geometry));
       }
-      for (const arrow of g.arrows) elements.current.set(arrow.id, arrow);
       commit(withArrows(changed));
+      return;
+    }
+    if (g.kind === 'end') {
+      const now = elements.current.get(g.id);
+      elements.current.set(g.id, g.orig);
+      if (!g.moved) { redraw(); return; }
+      const key = g.end === 'start' ? 'startBinding' : 'endBinding';
+      const other = g.orig[g.end === 'start' ? 'endBinding' : 'startBinding']?.elementId;
+      const p = toBoard(event);
+      const binding = bindingAt(drawnElements(elements.current), p.x, p.y, SNAP_RADIUS_PX / view.zoom, other);
+      const next = { ...now, [key]: binding || undefined };
+      commit(withArrows([bump(g.orig, { ...next, ...routeConnector(next, elements.current, true) })]));
       return;
     }
     if (g.kind !== 'draw') return;
@@ -894,13 +1026,14 @@ export function BoardEditor({
       done = { ...el, points, width: b.width, height: b.height };
     } else if (el.type === 'arrow' || el.type === 'line') {
       const [, [dx, dy]] = el.points;
-      if (Math.hypot(dx, dy) < 6) { redraw(); return; }
-      if (el.type === 'arrow') {
-        const to = shapeAt(liveElements(elements.current), p.x, p.y, el.startBinding?.elementId);
-        const from = el.startBinding && elements.current.get(el.startBinding.elementId);
-        if (to) done = { ...done, endBinding: { elementId: to.id } };
-        if (from && to) done = { ...done, ...connectArrow(from, to) };
+      if (Math.hypot(dx, dy) < 6) {
+        if (g.fromSnap) suggesting.current = { from: el.startBinding.elementId, fixedPoint: el.startBinding.fixedPoint, at: null };
+        redraw();
+        return;
       }
+      const to = bindingAt(drawnElements(elements.current), p.x, p.y, SNAP_RADIUS_PX / view.zoom, el.startBinding?.elementId);
+      if (to) done = { ...done, endBinding: to };
+      done = { ...done, ...routeConnector(done, elements.current, true) };
     } else if (el.width < 6 && el.height < 6) {
       redraw();
       return;
@@ -1019,7 +1152,7 @@ export function BoardEditor({
       }
       if (mod || event.altKey) return;
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length) { event.preventDefault(); remove(selected); return; }
-      if (event.key === 'Escape') { setSelected([]); setTool('select'); return; }
+      if (event.key === 'Escape') { suggesting.current = null; setSelected([]); setTool('select'); return; }
       const t = BOARD_TOOLS.find((candidate) => candidate.key === key);
       if (t) setTool(t.id);
     };
@@ -1127,9 +1260,13 @@ export function BoardEditor({
 
   // -- render -------------------------------------------------------------------
 
-  const live = liveElements(elements.current);
-  const sels = selected.map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted);
+  const live = drawnElements(elements.current);
+  const sels = selected.map((id) => live.find((el) => el.id === id)).filter(Boolean);
   const sel = sels.length === 1 ? sels[0] : null;
+  const lines = sels.filter((el) => el.type === 'arrow' || el.type === 'line');
+  const shownRouting = lines[0]?.routing || (lines.length ? 'straight' : routing);
+  const snapShape = tool !== 'hand' && tool !== 'text' && tool !== 'eraser' ? live.find((el) => el.id === hoverShape) : null;
+  const offer = suggesting.current ? suggestion() : null;
   const band = gesture.current?.kind === 'band' ? normalizeBox(gesture.current.start.x, gesture.current.start.y, gesture.current.now.x, gesture.current.now.y) : null;
   const arrangeable = (() => {
     const owners = labelOwners(elements.current);
@@ -1192,6 +1329,9 @@ export function BoardEditor({
       ${BOARD_FILLS.map((c) => html`<button key=${c} type="button" class=${`board-swatch fill${fill === c ? ' on' : ''}`}
         style=${c === 'transparent' ? '' : `background:${c}`} aria-label=${c === 'transparent' ? 'No fill' : `Fill ${c}`}
         onClick=${() => { setFill(c); commit(sels.filter((el) => ['rectangle', 'ellipse', 'diamond'].includes(el.type)).map((el) => bump(el, { backgroundColor: c }))); }}>${c === 'transparent' ? '∅' : ''}</button>`)}
+      ${(lines.length > 0 || tool === 'arrow' || tool === 'line') && html`<span class="board-sep"></span>${LINE_ROUTES.map((r) => html`<button key=${r.id} type="button"
+        class=${`board-tool${shownRouting === r.id ? ' on' : ''}`} aria-pressed=${shownRouting === r.id ? 'true' : 'false'} title=${r.label} aria-label=${r.label}
+        onClick=${() => chooseRouting(r.id, lines)}>${r.icon}</button>`)}`}
       <span class="board-sep"></span>
       <button type="button" class="board-tool" title="Undo (Ctrl+Z)" aria-label="Undo" onClick=${() => undo(false)}>↶</button>
       <button type="button" class="board-tool" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" onClick=${() => undo(true)}>↷</button>
@@ -1206,7 +1346,7 @@ export function BoardEditor({
         onWheel=${onWheel} onDblClick=${onDoubleClick}>
         <g data-board-viewport transform=${transform}>
           ${live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} />`)}
-          ${(sels.length > 0 || band) && html`<g data-board-chrome>
+          ${(sels.length > 0 || band || snapShape || offer) && html`<g data-board-chrome>
             ${sels.map((el) => {
               const b = elementBounds(el);
               return html`<rect key=${el.id} class="board-selection" x=${b.x - pad} y=${b.y - pad} width=${b.width + pad * 2} height=${b.height + pad * 2} />`;
@@ -1216,6 +1356,13 @@ export function BoardEditor({
               return html`<rect class="board-handle" x=${b.x + b.width - 4 / view.zoom} y=${b.y + b.height - 4 / view.zoom} width=${8 / view.zoom} height=${8 / view.zoom} />`;
             })()}
             ${band && html`<rect class="board-band" x=${band.x} y=${band.y} width=${band.width} height=${band.height} />`}
+            ${sel && (sel.type === 'arrow' || sel.type === 'line') && [sel.points[0], sel.points[sel.points.length - 1]].map(([px, py], i) => html`<circle key=${i}
+              class=${`board-line-end${(i ? sel.endBinding : sel.startBinding) ? ' on' : ''}`} cx=${sel.x + px} cy=${sel.y + py} r=${5 / view.zoom} />`)}
+            ${snapShape && snapPoints(snapShape).map(({ x, y }, i) => html`<circle key=${i} class="board-snap" cx=${x} cy=${y} r=${5 / view.zoom} />`)}
+            ${offer && html`<g class="board-suggestion">
+              ${offer.ghost && html`<${BoardElement} el=${{ ...offer.ghost, strokeWidth: 2 }} />`}
+              <${BoardElement} el=${offer.line} />
+            </g>`}
           </g>`}
         </g>
       </svg>

@@ -265,7 +265,6 @@ func TestBoardsKeepConnectorAndAttachedTextFields(t *testing.T) {
 	assert.Equal(t, map[string]any{"elementId": "a", "fixedPoint": []any{1.0, 0.5}}, back["startBinding"])
 }
 
-
 func TestBoardsTombstoneKeepsItsAuthor(t *testing.T) {
 	_ = newFlow(t)
 	enableCollab(t)
