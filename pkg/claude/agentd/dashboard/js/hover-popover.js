@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 
 // The one place the dashboard's hover popovers take their close timing from,
 // the registry that keeps at most one of them on screen, and the close rule of
@@ -172,7 +172,8 @@ export function watchPopover({ roots, close, hold = null, keep = null, escape = 
 export function useDismissablePopover(roots, open, close, options = {}) {
   const latest = useRef(null);
   latest.current = { roots, close, options };
-  useEffect(() => {
+  // At commit, not after paint: a press or Escape can follow the click at once.
+  useLayoutEffect(() => {
     if (!open) return undefined;
     const resolve = () => {
       const given = latest.current.roots;
