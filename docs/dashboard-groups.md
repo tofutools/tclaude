@@ -286,7 +286,7 @@ The rest is optional: startup context, environment, max members, link.
 
 ### The spawn dialog
 
-To start an agent, use the spawn button on a group's **Agents** section, drag a
+To start an agent, use the spawn button inside a group, drag a
 profile, role or template onto the group, or press Ctrl/Cmd-K and type
 `spawn`. It runs the same path as `tclaude agent spawn`; see
 [Spawning and lifecycle](spawning-and-lifecycle.md).
