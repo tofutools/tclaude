@@ -405,6 +405,7 @@ export function BoardEditor({
         // it would hold back every later save.
         if (error.status === 413) {
           forgetEdits(batch.map((el) => el.id));
+          rollBack(batch.map((el) => el.id), steps);
           if (!disposed.current) notify(`The board refused your latest edits as too large, so they were not saved: ${error.message}`, true);
           return;
         }
@@ -424,6 +425,7 @@ export function BoardEditor({
         // retrying it would hold every later edit back for good.
         const dropped = batch[Number(bad[1])]?.id;
         forgetEdits([dropped]);
+        rollBack([dropped], steps);
         if (!disposed.current) notify(`The board refused an edit: ${error.message}`, true);
         for (const el of batch) if (el.id !== dropped && !pending.current.has(el.id)) pending.current.set(el.id, el);
         const left = steps.map((step) => step.filter(({ id }) => id !== dropped)).filter((step) => step.length);
@@ -442,6 +444,19 @@ export function BoardEditor({
     } finally {
       saving.current -= 1;
     }
+  }
+
+  // rollBack puts refused edits back as they were: they never reached the
+  // daemon, so nothing could undo them later. A newer edit in hand stays.
+  function rollBack(ids, steps) {
+    for (const id of ids) {
+      if (pending.current.has(id) || active.current.has(id)) continue;
+      const entry = steps.flat().find((each) => each.id === id);
+      if (!entry) continue;
+      if (entry.before) elements.current.set(id, entry.before);
+      else elements.current.delete(id);
+    }
+    if (!disposed.current) redraw();
   }
 
   // forgetEdits takes edits the board did not keep out of the agents' event.
@@ -548,11 +563,20 @@ export function BoardEditor({
   // it may be what makes it fit, so it is undone here.
   function undoRefused() {
     const step = pendingSteps.current.pop();
-    commit(step.map(({ id, before }) => {
+    // What the step created never reached the daemon, so it just goes.
+    const created = step.filter(({ before }) => !before).map(({ id }) => id);
+    for (const id of created) {
+      pending.current.delete(id);
+      elements.current.delete(id);
+    }
+    forgetEdits(created);
+    commit(step.filter(({ before }) => before).map(({ id, before }) => {
       const cur = elements.current.get(id);
-      if (before) return bump(cur || before, { ...before, version: cur?.version || before.version });
-      return cur ? bump(cur, { isDeleted: true }) : null;
-    }).filter(Boolean), { record: false });
+      return bump(cur || before, { ...before, version: cur?.version || before.version });
+    }), { record: false });
+    if (!pending.current.size) refused.current = false;
+    setSelected([]);
+    redraw();
   }
 
   async function undoStep(redo) {
@@ -585,7 +609,7 @@ export function BoardEditor({
         redraw();
       }
       if (result.skipped) {
-        notify(`Left ${result.skipped === 1 ? 'a shape' : `${result.skipped} shapes`} alone: an agent changed ${result.skipped === 1 ? 'it' : 'them'} since.`, false);
+        notify(`Left ${result.skipped === 1 ? 'a shape' : `${result.skipped} shapes`} alone: ${result.skipped === 1 ? 'it has' : 'they have'} changed since.`, false);
       }
     } catch (error) {
       if (!disposed.current) notify(`Could not ${redo ? 'redo' : 'undo'}: ${error?.message || error}`, true);

@@ -241,7 +241,7 @@ test('undo takes back a batch the board refused, so the board can fit it', async
     if (JSON.parse(init.body).elements.some((el) => el.isDeleted)) return ok({ version: 3, accepted: 1 });
     return { ok: false, status: 400, json: async () => ({ message: 'too many elements' }) };
   };
-  const { harness, svg, island, patches } = await drawnBoard(t, { answer });
+  const { harness, svg, island, patches, view } = await drawnBoard(t, { answer });
   await harness.act(() => wait(island.BOARD_FLUSH_MS + 20));
   assert.equal(svg.querySelectorAll('rect.board-el').length, 1, 'refused, but kept on screen');
   await harness.act(async () => {
@@ -250,9 +250,22 @@ test('undo takes back a batch the board refused, so the board can fit it', async
   });
   assert.equal(svg.querySelectorAll('rect.board-el').length, 0, 'undone here');
   assert.deepEqual(undos, [], 'the daemon never had this step');
+  const sent = patches().length;
   await harness.act(() => wait(island.BOARD_FLUSH_MS + 20));
-  assert.equal(patches().at(-1).body.elements[0].isDeleted, true);
-  assert.deepEqual(patches().at(-1).body.steps, [], 'and no step is saved for it');
+  assert.equal(patches().length, sent, 'and a shape it never stored needs no tombstone');
+  assert.equal(view.container.querySelector('.board-sync')?.textContent === 'not saved', false);
+});
+
+test('an element refused on its own goes back to how it was', async (t) => {
+  const answer = async (_url, init) => {
+    if (init.method !== 'PATCH') return null;
+    return { ok: false, status: 400, json: async () => ({ message: 'elements[0]: text must be printable' }) };
+  };
+  const { harness, svg, island, notes } = await drawnBoard(t, { answer });
+  assert.equal(svg.querySelectorAll('rect.board-el').length, 1);
+  await harness.act(() => wait(island.BOARD_FLUSH_MS + 20));
+  assert.equal(svg.querySelectorAll('rect.board-el').length, 0, 'no refused shape stays on screen looking saved');
+  assert.match(notes.at(-1).text, /refused an edit/);
 });
 
 test('an element refused by index is left out of the event', async (t) => {
