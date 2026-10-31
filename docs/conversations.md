@@ -156,13 +156,17 @@ merged conversation list:
 | `Enter` | Create or attach a session for the selected conversation |
 | `/` | Text search: title, first prompt, project path, git branch, session id |
 | `s` | [Semantic search](#semantic-search) (requires Ollama) |
-| `x`/`Del` | Delete (session-aware confirmation, below) |
-| `W` | Create a [worktree](worktrees.md) from the selected conversation |
+| `Del`/`Backspace`/`ctrl+d` | Delete (session-aware confirmation, below) |
+| `x` | Show or hide archived conversations |
+| `w`/`W` | Create a [worktree](worktrees.md) from the selected conversation |
+| `f` | Group filter |
+| `c` | Choose columns |
 | `r` | Refresh |
 | `h`/`?` | Help |
+| `q` | Quit |
 
 Session indicators in the list: `⚡` means the conversation has an attached
-session; `○` means an active background session.
+session, `▷` a detached tmux session, and `◉` a session outside tmux.
 
 Deleting a conversation that has an active session asks what to do: `y`
 deletes the conversation and stops the session, `s` stops the session only,

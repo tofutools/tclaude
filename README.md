@@ -90,7 +90,7 @@ short hands-on tutorials from installing to running your first agent team.
 - [Learn](https://tofutools.github.io/tclaude/learn/): tutorials for new users.
 - [Architecture](https://tofutools.github.io/tclaude/architecture/): how
   sessions, conversations, agents and the daemon fit together.
-- [Harnesses](https://tofutools.github.io/tclaude/harnesses/): the five
+- [Harnesses](https://tofutools.github.io/tclaude/harnesses/): the six
   harnesses and what each supports.
 - [Full documentation](https://tofutools.github.io/tclaude/): everything else,
   from fleet operations to sandboxing and federation.

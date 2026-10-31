@@ -64,7 +64,8 @@ agents, and the daemon, read [Architecture](architecture.md).
 
 tmux is required for session management. You also need at least one harness
 CLI installed and authenticated: Claude Code, Codex CLI, OpenCode, Copilot
-CLI, or Gemini CLI (beta).
+CLI, Gemini CLI (beta), or pi. On Linux, tclaude's sandbox, the default for new
+installs, also needs `bubblewrap`.
 
 ## Installation
 
@@ -152,8 +153,8 @@ Optional extras are additive and idempotent:
 
 | Flag | Adds |
 |---|---|
-| `--install-agent-skills` | Bundled coordination skills (`agent-*`, `human-*`, `process-templates`) for every coding harness through Claude Code, shared `~/.agents/skills`, and Codex home directories |
-| `--install-proxy-skills` | Skills for the configured [credential proxies](proxies.md) (`proxy-git`, `proxy-linear`, and/or `proxy-awb`); not included by `--install-all` |
+| `--install-agent-skills` | Bundled skills (`agent-*`, `human-*`, `process-templates`, `present-pr-to-operator`, `reincarnate`, `tclaude-setup`, `tclaude-fleet`) for every coding harness through Claude Code, shared `~/.agents/skills`, and Codex home directories |
+| `--install-proxy-skills` | Skills for the configured [credential proxies](proxies.md) (`proxy-git`, `proxy-linear`, `proxy-awb` and `proxy-http`); not included by `--install-all` |
 | `--install-utility-skills` | Optional utility skills from the repo's `skills/` directory, such as `demo-recording` (record a narrated demo video of a feature built end to end and send it to the operator); not included by `--install-all` |
 | `--install-default-agent-permissions` | Low-risk permission slugs the bundled skills exercise, as agent defaults in `~/.tclaude/data/config.json` |
 | `--install-sandbox-hardening` | Append-only sandbox and deny entries in `~/.claude/settings.json` that protect agentd's private state |
