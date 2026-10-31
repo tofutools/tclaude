@@ -253,6 +253,26 @@ test('a minimized window never attaches a terminal of its own', async (t) => {
   assert.equal(mounted.length, attached, 'coming back does not attach either');
 });
 
+test('a click on empty window space gives focus back to the terminal', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, mounted } = await setup(t, { prefs });
+  await harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const titlebar = view.container.querySelector('.companion-titlebar');
+  const click = () => harness.act(() => titlebar.click());
+  harness.window.document.activeElement?.blur?.();
+  const before = mounted.at(-1).focused;
+  await click();
+  assert.equal(mounted.at(-1).focused, before + 1, 'focus returns to the terminal');
+  const button = view.container.querySelector('.companion-window button');
+  await harness.act(async () => { button.focus(); });
+  await click();
+  assert.equal(mounted.at(-1).focused, before + 1, 'focus already in the window stays where it is');
+  harness.window.document.activeElement?.blur?.();
+  await harness.act(() => view.container.querySelector('.companion-add').click());
+  assert.equal(mounted.at(-1).focused, before + 1, 'a control keeps its click, which may open a dialog');
+});
+
 test('Ctrl+. toggles the window and unpinning the last tab closes it', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, mounted } = await setup(t, { prefs });
@@ -267,6 +287,15 @@ test('Ctrl+. toggles the window and unpinning the last tab closes it', async (t)
   await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Unpin alpha' }).click());
   assert.equal(view.container.querySelector(SHOWN_WINDOW), null);
   assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.tabs')), []);
+});
+
+test('viewportOf leaves out page scrollbars', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  const win = { innerWidth: 1280, innerHeight: 800, document: { documentElement: { clientWidth: 1265, clientHeight: 785 } } };
+  assert.deepEqual(m.viewportOf(win), { width: 1265, height: 785 });
+  assert.deepEqual(m.viewportOf({ innerWidth: 1000, innerHeight: 700 }), { width: 1000, height: 700 });
+  assert.deepEqual(m.viewportOf(null), { width: 1280, height: 800 });
 });
 
 test('placement model: clamping, snap zones and status folding', async (t) => {
