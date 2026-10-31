@@ -9,6 +9,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -387,6 +388,33 @@ func loadCostOpeningsFor[T any](q costRowQuerier, query string, keys []string, o
 // conversation, so a day filter on it would visit every older entry.
 const recentCostRowsFrom = ` FROM session_cost_daily INDEXED BY idx_session_cost_daily_day WHERE day >= ?`
 
+var costReadsFromOpening, costReadsFull, costReadsOlderRange, costReadsLifetimeRule atomic.Int64
+
+// CostReadCounts counts this process's cost reads since the last
+// TakeCostReadCounts. FullHistory is what a live install should keep near zero:
+// default reads the stored opening could not serve. LifetimeRule is the whole
+// ledger read that lifetime usage rules need by design.
+type CostReadCounts struct {
+	FromOpening, FullHistory, OlderRange, LifetimeRule int64
+}
+
+// NoteFullCostRead counts a default read that took the whole ledger because the
+// stored opening could not serve it, for a caller that skipped CostLedgerWindow.
+func NoteFullCostRead() { costReadsFull.Add(1) }
+
+// NoteLifetimeRuleCostRead counts a whole ledger read for a lifetime usage rule.
+func NoteLifetimeRuleCostRead() { costReadsLifetimeRule.Add(1) }
+
+// TakeCostReadCounts returns the counts and starts new ones.
+func TakeCostReadCounts() CostReadCounts {
+	return CostReadCounts{
+		FromOpening:  costReadsFromOpening.Swap(0),
+		FullHistory:  costReadsFull.Swap(0),
+		OlderRange:   costReadsOlderRange.Swap(0),
+		LifetimeRule: costReadsLifetimeRule.Swap(0),
+	}
+}
+
 // CostLedger is what a window read returns.
 type CostLedger struct {
 	// Rows walk to the exact deltas for the window. Deltas before the window
@@ -411,14 +439,18 @@ type CostLedger struct {
 func CostLedgerWindow(fromDay, toDay string, withIgnored bool) (CostLedger, error) {
 	ledger, older, err := costLedgerFromOpening(fromDay, toDay, withIgnored)
 	if err == nil && ledger != nil {
+		costReadsFromOpening.Add(1)
 		return *ledger, nil
 	}
 	if err != nil {
 		slog.Warn("cost opening balance unusable; reading the full cost history", "error", err)
 		markCostOpeningStale()
 	}
-	if !older {
-		slog.Info("cost opening balance missing or stale; reading the full cost history", "from", fromDay)
+	if older {
+		costReadsOlderRange.Add(1)
+	} else {
+		costReadsFull.Add(1)
+		slog.Debug("cost opening balance missing or stale; reading the full cost history", "from", fromDay)
 	}
 	rows, err := costDailyRowsForWalk(fromDay, toDay, withIgnored)
 	if err != nil {
@@ -503,14 +535,25 @@ func costLedgerFromOpening(fromDay, toDay string, withIgnored bool) (ledger *Cos
 	return out, false, nil
 }
 
-// CostOpeningSpentConvs lists the conversations with spend before the opening
-// day, ignored or not.
+// CostOpeningServes reports whether the stored opening can stand in for rows
+// older than fromDay, without reading any ledger rows.
+func CostOpeningServes(fromDay string) bool {
+	d, err := Open()
+	if err != nil {
+		return false
+	}
+	meta, err := readCostOpeningMeta(d)
+	return err == nil && meta.usable() && fromDay >= meta.day
+}
+
+// CostOpeningSpentConvs lists the counted conversations with spend before the
+// opening day.
 func CostOpeningSpentConvs() ([]string, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT conv_id FROM cost_opening_spend WHERE conv_id <> ''`)
+	rows, err := d.Query(`SELECT conv_id FROM cost_opening_spend WHERE conv_id <> '' AND ` + costNotIgnored)
 	if err != nil {
 		return nil, err
 	}
@@ -606,7 +649,7 @@ type costOpeningGuard struct {
 func costOlderRowsFingerprint(tx *sql.Tx, convID, sessionID string) (string, error) {
 	var fingerprint string
 	err := tx.QueryRow(`SELECT COALESCE(group_concat(line, char(10)), '') FROM (
-		SELECT session_id || '|' || conv_id || '|' || day || '|' || printf('%.17g', cost_usd) || '|' || printf('%.17g', virtual_cost_usd)
+		SELECT session_id || '|' || conv_id || '|' || day || '|' || printf('%!.17g', cost_usd) || '|' || printf('%!.17g', virtual_cost_usd)
 			|| '|' || COALESCE(updated_at, '') || '|' || model || '|' || harness AS line
 		FROM session_cost_daily
 		WHERE ((conv_id = ? AND conv_id <> '') OR session_id = ?)

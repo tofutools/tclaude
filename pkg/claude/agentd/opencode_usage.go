@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -873,7 +875,10 @@ func projectOpenCodeMessageCostUsage(
 		return projectOpenCodeMessageCost(usage, prices, legacyLongContextCutoff)
 	}
 	total := 0.0
-	for _, step := range state.steps {
+	// Sorted for the same reason as the messages in the projection: the sum must
+	// not change with map order.
+	for _, key := range slices.Sorted(maps.Keys(state.steps)) {
+		step := state.steps[key]
 		step.ProviderID = usage.ProviderID
 		step.ModelID = usage.ModelID
 		projected := projectOpenCodeMessageCost(step, prices, legacyLongContextCutoff)
@@ -1017,6 +1022,16 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 		return
 	}
 
+	// usages is a map, and a float sum depends on its order. A fixed order keeps
+	// an old day's cumulative identical across flushes, so rewriting it changes
+	// nothing and the stored cost opening survives (see db.CostOpening).
+	sort.Slice(states, func(i, j int) bool {
+		a, b := states[i].message, states[j].message
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.MessageID < b.MessageID
+	})
 	projections := make(map[string]openCodeProjectedMessageCost, len(states))
 	type dailyContribution struct {
 		usd       float64

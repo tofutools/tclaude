@@ -54,6 +54,7 @@ func startCostOpeningRefresher(stop <-chan struct{}) {
 			case <-stop:
 				return
 			case <-t.C:
+				logCostReadCounts()
 			case <-costOpeningRefreshRequests:
 				select {
 				case <-stop:
@@ -73,6 +74,22 @@ func startCostOpeningRefresher(stop <-chan struct{}) {
 			}
 		}
 	}()
+}
+
+// logCostReadCounts is how a live install shows whether the read limit holds:
+// full_history should stay near zero, and a steady count means something keeps
+// marking the opening stale.
+func logCostReadCounts() {
+	counts := db.TakeCostReadCounts()
+	if counts == (db.CostReadCounts{}) {
+		return
+	}
+	logAt := slog.Info
+	if counts.FullHistory > 0 {
+		logAt = slog.Warn
+	}
+	logAt("cost reads since the last report", "from_opening", counts.FromOpening,
+		"full_history", counts.FullHistory, "older_range", counts.OlderRange, "lifetime_rule", counts.LifetimeRule)
 }
 
 func refreshCostOpening(now time.Time) {

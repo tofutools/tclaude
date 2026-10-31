@@ -321,10 +321,16 @@ func (st *usageRulesState) spendRows() (rows []db.CostDailyRow, olderSpend []str
 	for _, l := range st.limits {
 		measure([]usagerules.Rule{l.Rule})
 	}
-	for _, p := range st.profiles {
-		measure(p.Rules)
+	// Only a profile effectiveUsageProfiles can resolve is ever evaluated: the
+	// table also holds links, and rows of agents that have retired.
+	for _, a := range st.assignments {
+		applies := a.Scope == db.UsageScopeGroup || a.Scope == db.UsageScopeGlobal ||
+			(a.Scope == db.UsageScopeAgent && st.agents[a.ScopeID] != nil)
+		if p := st.profiles[a.ProfileID]; p != nil && applies {
+			measure(p.Rules)
+		}
 	}
-	if !lifetime {
+	if !lifetime && db.CostOpeningServes(earliest) {
 		read, err := countedCostRowsForWindow(earliest, "", false)
 		if err != nil {
 			return nil, nil, err
@@ -335,6 +341,12 @@ func (st *usageRulesState) spendRows() (rows []db.CostDailyRow, olderSpend []str
 			}
 			slog.Warn("cost opening balance unusable; reading the full cost history", "error", err)
 		}
+	}
+	if lifetime {
+		db.NoteLifetimeRuleCostRead()
+	} else {
+		db.NoteFullCostRead()
+		requestCostOpeningRefresh()
 	}
 	rows, _, _, err = countedCostDailyRows()
 	return rows, nil, err
