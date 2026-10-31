@@ -38,7 +38,7 @@ stays with the page.
 Click a pill, or press **Ctrl+.** anywhere, to open the window. It stays above the
 page without blocking it, and comes back when you reload the tab.
 
-- **Move it** by its title bar. Resize it from a corner.
+- **Move it** by its title bar. Resize it from any edge or corner.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer.
 - **Each agent is a tab**, up to eight. **＋** summons the Steward or pins another

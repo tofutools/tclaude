@@ -25,7 +25,7 @@ board opens nothing and becomes `/terminals`.
 **Open in overlay**, on the board or its tab's right-click menu, floats the
 board in its own window over every dashboard view, apart from the companion
 window, so you can work in both at once. Drag it by its title bar and resize it
-from any corner; it keeps its place. Clicking the overlay or the companion
+from any edge or corner; it keeps its place. Clicking the overlay or the companion
 brings that one forward. **Back to a tab** returns the board to the strip. One
 board floats at a time: opening another sends the first back to a tab.
 

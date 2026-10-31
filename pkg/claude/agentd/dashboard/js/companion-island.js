@@ -28,6 +28,7 @@ import {
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
+import { ResizeFrame, resizedPlacement } from './window-resize.js';
 import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js';
 import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -651,7 +652,7 @@ export function CompanionApp({
     };
   }
 
-  function onResizePointerDown(event, corner = 'se') {
+  function onResizePointerDown(event, zone = '') {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -668,13 +669,7 @@ export function CompanionApp({
       if (start.snap === 'right') last = { ...start, x: start.x + dx, w: start.w - dx };
       else if (start.snap === 'left') last = { ...start, w: start.w + dx };
       else if (start.snap === 'bottom') last = { ...start, y: start.y + dy, h: start.h - dy };
-      else {
-        last = {
-          ...start,
-          w: start.w + (corner.includes('w') ? -dx : dx),
-          h: start.h + (corner.includes('n') ? -dy : dy),
-        };
-      }
+      else last = resizedPlacement(start, zone, dx, dy, viewportOf(win));
       if (start.snap) {
         const vp = viewportOf(win);
         const w = Math.min(vp.width, Math.max(COMPANION_MIN_W, last.w));
@@ -683,14 +678,6 @@ export function CompanionApp({
         last = { ...last, w, h };
         if (start.snap === 'right') last.x = vp.width - w;
         if (start.snap === 'bottom') last.y = start.y + start.h - h;
-      } else {
-        // Clamp the size first: the corner opposite the drag stays put.
-        const sized = clampPlacement(last, viewportOf(win));
-        const x = corner.includes('w') ? start.x + start.w - sized.w : start.x;
-        // The top edge stops at the viewport, or the bottom edge would move.
-        const h = corner.includes('n') ? Math.min(sized.h, start.y + start.h) : sized.h;
-        const y = corner.includes('n') ? start.y + start.h - h : start.y;
-        last = clampPlacement({ ...sized, x, y, h }, viewportOf(win));
       }
       setPlacement(last);
     };
@@ -1458,14 +1445,13 @@ export function CompanionApp({
         aria-label=${`Message ${activeAgent.name}`} value=${draft} onInput=${(event) => { speaker.cancel(); if (listeningRef.current) dictation.abort?.(); setDraft(activeAgent.agentId, event.currentTarget.value); }} />`}
       ${showField && html`<button type="submit" disabled=${sending || !draft.trim()}>Send</button>`}
     </form>`}
-    <div class="companion-resize" aria-hidden="true" onPointerDown=${(event) => onResizePointerDown(event)}></div>
-    ${!placement.snap && ['nw', 'ne', 'sw'].map((corner) => html`<div key=${corner} class=${`companion-resize-corner ${corner}`} aria-hidden="true"
-      onPointerDown=${(event) => onResizePointerDown(event, corner)}></div>`)}
+    ${placement.snap && html`<div class="companion-resize" aria-hidden="true" onPointerDown=${(event) => onResizePointerDown(event)}></div>`}
   </section>`;
 
   return html`
     ${guide && html`<div class="companion-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
     ${windowView}
+    ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} className="companion-resize-frame" onResizeStart=${onResizePointerDown} />`}
     ${chips}
     ${annotating && html`<${AnnotateOverlay} agentName=${annotating.name} win=${win}
       onSend=${sendAnnotation} onCancel=${() => setAnnotating(null)} />`}
