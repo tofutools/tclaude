@@ -200,6 +200,26 @@ test('the message row queues operator mail with the dashboard view attached', as
   assert.match(mail.body.body, /^what can I do here\?\n\n\[dashboard view: Processes \(/);
 });
 
+test('a click on empty window space gives focus back to the terminal', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, mounted } = await setup(t, { prefs });
+  await harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const titlebar = view.container.querySelector('.companion-titlebar');
+  const click = () => harness.act(() => titlebar.click());
+  harness.window.document.activeElement?.blur?.();
+  const before = mounted.at(-1).focused;
+  await click();
+  assert.equal(mounted.at(-1).focused, before + 1, 'focus returns to the terminal');
+  const button = view.container.querySelector('.companion-window button');
+  await harness.act(async () => { button.focus(); });
+  await click();
+  assert.equal(mounted.at(-1).focused, before + 1, 'focus already in the window stays where it is');
+  harness.window.document.activeElement?.blur?.();
+  await harness.act(() => view.container.querySelector('.companion-add').click());
+  assert.equal(mounted.at(-1).focused, before + 1, 'a control keeps its click, which may open a dialog');
+});
+
 test('Ctrl+. toggles the window and unpinning the last tab closes it', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, mounted } = await setup(t, { prefs });
