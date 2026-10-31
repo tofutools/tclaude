@@ -100,7 +100,7 @@ function pickNode(state, id, { navigate, remote, switchNode, tab }) {
 }
 
 // A node popover fades out over POPOVER_FADE_MS as hover-away closes it (the
-// .node-pop.closing transition), focus or not.
+// .node-pop.closing transition).
 const POPOVER_FADE_MS = 200;
 
 // useNodePopover keeps a node popover fixed under its button (the chip host
