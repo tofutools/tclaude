@@ -74,7 +74,7 @@ type sudoRequestParams struct {
 
 func sudoRequestCmd() *cobra.Command {
 	return boa.CmdT[sudoRequestParams]{
-		Use:         "request <slug>...",
+		Use:         "request",
 		Short:       "Ask the human to elevate one or more slugs for a bounded duration (or, with --target, proactively grant)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *sudoRequestParams, _ *cobra.Command, _ []string) {
@@ -231,7 +231,7 @@ type sudoRevokeParams struct {
 
 func sudoRevokeCmd() *cobra.Command {
 	return boa.CmdT[sudoRevokeParams]{
-		Use:         "revoke [<id>] [--conv <selector> | --all]",
+		Use:         "revoke [--conv <selector> | --all]",
 		Short:       "Revoke sudo grants (one by id, all for one conv, or every active)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *sudoRevokeParams, _ *cobra.Command, _ []string) {

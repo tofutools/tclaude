@@ -1042,7 +1042,7 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
   const state = member.state || {};
   const canRename = harnessCanRename(snapshot, state.harness);
   const idPrefix = memberColHidden('id') ? `${idTooltip(member.agent_id, member.conv_id)} — ` : '';
-  if (!canRename) return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+  if (!canRename) return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${PresenceBadge} member=${member} /><${SubscriptionBadge} member=${member} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
   return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><${InlineEditor}
     editorKey=${editorKey} value=${member.title || ''} className="rowname-input"
     placeholder="1-64 chars: A-Za-z0-9 _ - [ ] { } ( ) — Enter saves, Esc cancels"

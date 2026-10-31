@@ -25,7 +25,7 @@ import (
 type reincarnateParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"First-turn prompt for the new agent (REQUIRED — give it inline here or via --file). Quote multi-word strings. If you have no concrete next directive, summarise your previous 'life' (what you were doing, where the relevant files are) so the successor has something to start from."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
-	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of every active group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"Deprecated compatibility no-op for self-reincarnation, which needs no permission; cross-agent calls still require an explicit grant or group ownership."`
 }
 
@@ -48,7 +48,7 @@ func reincarnateCmd() *cobra.Command {
 			"By default the target is the calling agent itself (self-reincarnate). " +
 			"Use --target <selector> to reincarnate ANOTHER agent — the manager " +
 			"pattern. Cross-agent calls require the agent.reincarnate permission, " +
-			"OR the caller being an owner of a group containing the target. " +
+			"OR the caller being an owner of every active group containing the target. " +
 			"\n\n" +
 			"Persist any task state to disk *before* calling — the daemon migrates " +
 			"identity, not work. The skill (agent-lifecycle) explains the disk-handoff " +

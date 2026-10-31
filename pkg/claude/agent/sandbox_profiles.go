@@ -271,7 +271,7 @@ type sandboxProfilesShowParams struct {
 
 func sandboxProfilesShowCmd() *cobra.Command {
 	return boa.CmdT[sandboxProfilesShowParams]{
-		Use: "show <name>", Short: "Show one sandbox profile", ParamEnrich: common.DefaultParamEnricher(),
+		Use: "show", Short: "Show one sandbox profile", ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *sandboxProfilesShowParams, _ *cobra.Command, _ []string) {
 			os.Exit(runSandboxProfilesShow(p, os.Stdout, os.Stderr))
 		},
@@ -622,7 +622,7 @@ type sandboxProfilesEditParams struct {
 }
 
 func sandboxProfilesEditCmd() *cobra.Command {
-	return boa.CmdT[sandboxProfilesEditParams]{Use: "edit <name> --file <path>", Short: "Replace or rename a sandbox profile from JSON", Long: "Replace the complete profile. The JSON name may differ from <name> to rename it; stable assignment references follow the rename.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesEditParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[sandboxProfilesEditParams]{Use: "edit --file <path>", Short: "Replace or rename a sandbox profile from JSON", Long: "Replace the complete profile. The JSON name may differ from <name> to rename it; stable assignment references follow the rename.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesEditParams, _ *cobra.Command, _ []string) {
 		os.Exit(runSandboxProfilesEdit(p, os.Stdin, os.Stdout, os.Stderr))
 	}}.ToCobra()
 }
@@ -664,7 +664,7 @@ type sandboxProfilesRmParams struct {
 }
 
 func sandboxProfilesRmCmd() *cobra.Command {
-	return boa.CmdT[sandboxProfilesRmParams]{Use: "rm <name>", Aliases: []string{"remove", "delete"}, Short: "Delete a sandbox profile", Long: "Delete a sandbox profile. Global and group assignments to its stable ID are cleared atomically.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesRmParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[sandboxProfilesRmParams]{Use: "rm", Aliases: []string{"remove", "delete"}, Short: "Delete a sandbox profile", Long: "Delete a sandbox profile. Global and group assignments to its stable ID are cleared atomically.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesRmParams, _ *cobra.Command, _ []string) {
 		os.Exit(runSandboxProfilesRm(p, os.Stdout, os.Stderr))
 	}}.ToCobra()
 }
@@ -721,7 +721,7 @@ type sandboxProfilesNameParams struct {
 }
 
 func sandboxProfilesDefaultSetCmd() *cobra.Command {
-	return boa.CmdT[sandboxProfilesNameParams]{Use: "set <name>", Short: "Set the global sandbox-profile default", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesNameParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[sandboxProfilesNameParams]{Use: "set", Short: "Set the global sandbox-profile default", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesNameParams, _ *cobra.Command, _ []string) {
 		os.Exit(runSandboxProfilesDefaultSet(p, os.Stdout, os.Stderr))
 	}}.ToCobra()
 }
@@ -751,7 +751,7 @@ type sandboxProfilesGroupShowParams struct {
 }
 
 func sandboxProfilesGroupShowCmd() *cobra.Command {
-	return boa.CmdT[sandboxProfilesGroupShowParams]{Use: "show <group>", Short: "Show a group's sandbox-profile assignment", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesGroupShowParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[sandboxProfilesGroupShowParams]{Use: "show", Short: "Show a group's sandbox-profile assignment", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesGroupShowParams, _ *cobra.Command, _ []string) {
 		os.Exit(runSandboxProfilesGroupShow(p, os.Stdout, os.Stderr))
 	}}.ToCobra()
 }
@@ -786,7 +786,7 @@ type sandboxProfilesGroupSetParams struct {
 }
 
 func sandboxProfilesGroupSetCmd() *cobra.Command {
-	return boa.CmdT[sandboxProfilesGroupSetParams]{Use: "set <group> <name>", Short: "Assign a sandbox profile to a group", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesGroupSetParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[sandboxProfilesGroupSetParams]{Use: "set", Short: "Assign a sandbox profile to a group", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesGroupSetParams, _ *cobra.Command, _ []string) {
 		os.Exit(runSandboxProfilesGroupSet(p, os.Stdout, os.Stderr))
 	}}.ToCobra()
 }
@@ -803,7 +803,7 @@ type sandboxProfilesGroupClearParams struct {
 }
 
 func sandboxProfilesGroupClearCmd() *cobra.Command {
-	return boa.CmdT[sandboxProfilesGroupClearParams]{Use: "clear <group>", Short: "Clear a group's sandbox-profile assignment", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesGroupClearParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[sandboxProfilesGroupClearParams]{Use: "clear", Short: "Clear a group's sandbox-profile assignment", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesGroupClearParams, _ *cobra.Command, _ []string) {
 		os.Exit(runSandboxProfilesGroupClear(p, os.Stdout, os.Stderr))
 	}}.ToCobra()
 }
@@ -857,7 +857,7 @@ type sandboxProfilesExportParams struct {
 }
 
 func sandboxProfilesExportCmd() *cobra.Command {
-	return boa.CmdT[sandboxProfilesExportParams]{Use: "export [name...]", Short: "Export portable sandbox-profile JSON", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesExportParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[sandboxProfilesExportParams]{Use: "export", Short: "Export portable sandbox-profile JSON", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxProfilesExportParams, _ *cobra.Command, _ []string) {
 		os.Exit(runSandboxProfilesExport(p, os.Stdout, os.Stderr))
 	}}.ToCobra()
 }

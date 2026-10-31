@@ -479,7 +479,7 @@ function GroupCreateDialog({
         placeholder="optional — 0 = unlimited; a spawn that would exceed it is refused"
         autocomplete="off" />
     </label>
-    <label class="cron-create-row">
+    ${current.showAttachment ? html`<label class="cron-create-row">
       <span class="cron-create-label"><${Words}
         plain="Link / attachment" wizard="Quest portal" /></span>
       <input id="group-create-attachment-url" type="url" value=${draft.attachmentURL}
@@ -496,7 +496,7 @@ function GroupCreateDialog({
         onInput=${(event) => setField('attachmentLabel', event.currentTarget.value)}
         onKeyDown=${submitOnEnter} placeholder="optional display name / alias"
         autocomplete="off" spellcheck="false" />
-    </label>
+    </label>` : null}
     <div class="cron-create-error" id="group-create-error" role=${error ? 'alert' : undefined}>${error}</div>
     <div class="modal-buttons">
       <button id="group-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>

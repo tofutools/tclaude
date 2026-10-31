@@ -116,7 +116,7 @@ type routesPublishParams struct {
 
 func routesPublishCmd() *cobra.Command {
 	return boa.CmdT[routesPublishParams]{
-		Use:         "publish <name>",
+		Use:         "publish",
 		Short:       "Publish a named endpoint to a group or the host",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *routesPublishParams, _ *cobra.Command) error {
@@ -205,7 +205,7 @@ type routesOpenParams struct {
 
 func routesOpenCmd() *cobra.Command {
 	return boa.CmdT[routesOpenParams]{
-		Use:         "open <route>",
+		Use:         "open",
 		Short:       "Open a route and receive a consumer-local endpoint",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *routesOpenParams, _ *cobra.Command) error {
@@ -487,7 +487,7 @@ type routesCloseParams struct {
 
 func routesCloseCmd() *cobra.Command {
 	return boa.CmdT[routesCloseParams]{
-		Use:         "close <route>",
+		Use:         "close",
 		Short:       "Close a published route or consumer lease",
 		Long:        "Closes the caller's own route or consumer lease. Pass the lease ID printed by routes open, or a route reference together with --group. The daemon decides whether the caller owns the published route or an open consumer lease.",
 		ParamEnrich: common.DefaultParamEnricher(),

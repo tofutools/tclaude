@@ -2338,3 +2338,6 @@ func IsCountableForTest(slug string) bool {
 	}
 	return false
 }
+
+// SweepCopilotUsageForTest runs one tick of the daemon's Copilot poller.
+func SweepCopilotUsageForTest() { sweepCopilotUsage(context.Background()) }

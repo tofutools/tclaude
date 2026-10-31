@@ -76,10 +76,6 @@ The magic target `default` edits the global defaults list; `deny` blocks an
 otherwise-default slug for one agent; `revoke` clears either back to the
 inherited state.
 
-!!! note
-    Some CLI help text still says overrides live in `~/.tclaude/config.json`.
-    The real path is `~/.tclaude/data/config.json`.
-
 ### Defaults installed by setup
 
 `tclaude setup --install-default-agent-permissions` (idempotent) grants the

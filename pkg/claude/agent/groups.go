@@ -34,7 +34,7 @@ func groupsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "groups",
 		Short:       "Manage agent groups (allow-listed who can talk to whom)",
-		Long:        "`ls` and `members` are open. Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json. Slugs: groups.create, groups.delete, groups.members.add, groups.members.remove, groups.members.update.",
+		Long:        "`ls` and `members` are open. Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json. Slugs: groups.create, groups.delete, groups.members.add, groups.members.remove, groups.members.update.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			groupsLsCmd(),
@@ -1998,7 +1998,7 @@ func groupsSetEnvironmentCmd() *cobra.Command {
 	return boa.CmdT[groupsSetEnvironmentParams]{
 		Use:         "set-environment",
 		Short:       "Replace or clear a group's common spawn environment",
-		Long:        "Replace the environment inherited by fresh spawns in this group. Repeat --env NAME=value; omit --env to clear it. Existing agents retain the values frozen at their original spawn.",
+		Long:        "Replace the environment inherited by fresh spawns in this group. Repeat --env NAME=value; omit --env to clear it. A running process keeps its environment; the group values are read again on its next stop/resume, restart, clone or reincarnate.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetEnvironmentParams, cmd *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)

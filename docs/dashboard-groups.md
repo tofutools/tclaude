@@ -47,7 +47,9 @@ The **⚙** actions menu has a filter box, like every ⚙ menu in the dashboard:
 
 **show offline** and **show ungrouped** are on by default. The others are off:
 **show retired**, **show conversations**, **show replaced generations** and
-**show offline scribes**. Your choices are saved by the daemon.
+**show offline scribes**. Your choices are saved by the daemon. A group's ⚙ menu
+overrides **show offline** for that group: click 💤 to cycle through the tab
+default, shown and hidden.
 
 Below them, **Columns** lists what you can hide: ID, State, Process, Last, Age,
 CWD, Branch, Role, Task link and Description. ID is off by default, and Process

@@ -34,7 +34,7 @@ type snapshotShareParams struct {
 }
 
 func snapshotShareCmd() *cobra.Command {
-	return boa.CmdT[snapshotShareParams]{Use: "share [<name>]", Short: "Share a snapshot on a Board with named members (human only)",
+	return boa.CmdT[snapshotShareParams]{Use: "share", Short: "Share a snapshot on a Board with named members (human only)",
 		Long: "Publish a snapshot to a Board, encrypted to the named members only (and this node). Other members see that\n" +
 			"it exists but cannot open it. The Board hub deletes it at expiry: 7 days by default, at most 30. Members who\n" +
 			"fetched it keep their copy.\n\n" +
@@ -139,7 +139,7 @@ type snapshotBoardParams struct {
 }
 
 func snapshotBoardCmd() *cobra.Command {
-	return boa.CmdT[snapshotBoardParams]{Use: "board <ls|fetch|preview|import|rm>", Short: "Receive or remove snapshots shared on a Board (human only)",
+	return boa.CmdT[snapshotBoardParams]{Use: "board", Short: "Receive or remove snapshots shared on a Board (human only)",
 		Long: "ls lists a board's snapshots and which are addressed to this node. fetch downloads, decrypts, validates and\n" +
 			"rescans one; it never imports. preview shows the agent it would create and prints a preview token; import\n" +
 			"needs that token with the same options and creates a new agent, briefed that the received history is\n" +

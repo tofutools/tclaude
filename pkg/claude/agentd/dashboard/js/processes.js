@@ -3,7 +3,7 @@
 // visibility and redirects an active hidden tab.
 import { $, $$ } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
-import { configPanel, setConfigPanel } from './config-panel.js';
+import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
 
 // applyCollabVisibility shows or hides the Collab surfaces (features.collab).
 // The Terminals tab stays; the shell drops its board tabs (mountTerminalShell).
@@ -13,7 +13,14 @@ export function applyCollabVisibility(data) {
   // The palette and the scope banner read this label as text.
   const label = $('nav [data-tab="terminals"] .tab-label-regular');
   if (label) label.textContent = visible ? 'Collab' : 'Terminals';
-  if (!visible && configPanel.value === 'steward') setConfigPanel('appearance');
+  if (!visible && configPanel.value === 'steward') {
+    setConfigPanel('appearance');
+    if ($('#tab-config')?.classList.contains('active')) {
+      document.dispatchEvent(new CustomEvent('tclaude:navigated', {
+        detail: { location: configLocation(), correction: true },
+      }));
+    }
+  }
 }
 
 export function applyProcessesTabVisibility(data) {

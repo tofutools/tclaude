@@ -881,7 +881,7 @@ type SpawnParams struct {
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
 	Effort     string `long:"effort" optional:"true" help:"Reasoning effort for the new agent (per-harness; Copilot also accepts none|minimal). Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
-	ModelProxy string `long:"model-proxy" optional:"true" help:"Claude Code model gateway <name>@<trusted peer>; fail closed when unavailable"`
+	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>, for Claude Code, Codex or Copilot; fail closed when unavailable"`
 	Model      string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
 
 	// Harness picks the coding harness the new agent runs. Declared last
@@ -894,7 +894,7 @@ type SpawnParams struct {
 	// inherit/on/off modes are delivered as a `--settings` override (see
 	// harness.claudeSandbox). Declared last (no explicit short) for the same
 	// reason as the fields above.
-	Sandbox string `long:"sandbox" optional:"true" help:"The new agent's HARNESS-BUILTIN sandbox mode: what its harness does about sandboxing, not who enforces containment (that is --sandbox-impl). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = filled by the default-profile chain, then the harness default (Codex: tclaude-agent; Claude: inherit). See 'Default resolution' in the command help"`
+	Sandbox string `long:"sandbox" optional:"true" help:"The new agent's HARNESS-BUILTIN sandbox mode: what its harness does about sandboxing, not who enforces containment (that is --sandbox-impl). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. OpenCode: access-control | tclaude-layer | off. Copilot: inherit | off. Gemini CLI: inherit | off, and seatbelt on macOS. pi: off. Unset = filled by the default-profile chain, then the harness default (Codex: tclaude-agent; Claude: inherit). See 'Default resolution' in the command help"`
 
 	// AskUserQuestionTimeout is the Claude Code AskUserQuestion idle-timeout
 	// override for the new agent, delivered via `--settings`. Declared last (no
@@ -909,7 +909,7 @@ type SpawnParams struct {
 	// profile chain and then to each harness's safe default (Codex: never;
 	// Claude: auto). For an agent caller, a bare harness default is narrowed to
 	// the caller's own same-harness posture when the caller cannot grant it.
-	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = filled by the profile chain, then the harness default (Codex: never; Claude: auto); an agent caller that cannot grant that default gets its own same-harness posture instead (disclosed in the resolved launch notes)"`
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. OpenCode: deny|ask|allow-tools. Copilot: inherit|allow-tools|yolo. Unset = filled by the profile chain, then the harness default (Codex: never; Claude: auto); an agent caller that cannot grant that default gets its own same-harness posture instead (disclosed in the resolved launch notes)"`
 
 	// ToolGovernance is OpenCode's independent built-in tool action.
 	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance for bash/glob/grep/lsp/task/skill: allow | ask | deny. Unset = filled by the profile chain, then allow. Not applicable to claude/codex"`
@@ -1060,7 +1060,7 @@ func spawnCmd() *cobra.Command {
 			"inspect the defaults up front with `tclaude agent profiles default show` " +
 			"and `tclaude agent groups ls` (PROFILE column). " +
 			"\n\n" +
-			"Requires the `groups.members.spawn` permission (default: human-only).",
+			"Requires `agent.spawn`, or `groups.members.spawn` for the group (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, cmd *cobra.Command) error {
 			// Environment is a non-splitting StringArray: values may contain commas.

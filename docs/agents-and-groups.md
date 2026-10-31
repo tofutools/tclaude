@@ -51,10 +51,6 @@ instead of mutating twice.
 Daemon-side configuration lives under `agent.*` keys in
 `~/.tclaude/data/config.json`.
 
-!!! note
-    Some CLI help text still points at `~/.tclaude/config.json`. The real
-    path is `~/.tclaude/data/config.json`.
-
 For the full architectural model — what state lives where and how the
 pieces relate — see [Architecture](architecture.md).
 
@@ -203,6 +199,10 @@ Claude Code's compaction hooks look the same for both, so while a subagent is
 running tclaude holds the message until the agent's next turn event and sends
 it only if the main transcript recorded a compaction. If the transcript can't
 be read it sends the message anyway.
+
+Claude Code, Codex, OpenCode, pi and Copilot all report compactions. Gemini CLI
+does not, so a Gemini agent gets nothing after one; see
+[Startup-context re-injection](harnesses.md#startup-context-re-injection).
 
 The rest of tclaude waits for the same answer. A compaction that might be a
 subagent's skips the pre-compact guard and the "compacting" status. The agent's

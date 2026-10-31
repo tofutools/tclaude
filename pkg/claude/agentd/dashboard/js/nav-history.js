@@ -60,8 +60,8 @@ let ready = false;
 
 // tabAvailable reports whether a routable tab is actually reachable right now —
 // its nav button exists and isn't CSS-hidden (offsetParent === null means a
-// display:none up the chain, exactly how the Terminals tab drops out with no
-// live terminals, or a disabled Costs/Plugins tab). A restored URL pointing at
+// display:none up the chain, exactly how a disabled Costs/Plugins tab drops
+// out). A restored URL pointing at
 // an unavailable tab is a stale target (AC #5): the caller falls back to the
 // default rather than stranding on a blank hidden section.
 //

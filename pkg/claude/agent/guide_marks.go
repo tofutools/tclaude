@@ -67,7 +67,7 @@ func parseMarkPoints(raw string) ([][2]float64, error) {
 
 func guideMarkCmd() *cobra.Command {
 	return boa.CmdT[guideMarkParams]{
-		Use:   "mark <kind>",
+		Use:   "mark",
 		Short: "Draw a mark on the operator's view to get their attention",
 		Long: "Draws on the operator's dashboard: a highlight, circle, underline, box, arrow, freehand stroke or label, " +
 			"with an optional short tip. Marks take no clicks, follow their control and time out on their own. The operator " +
@@ -230,7 +230,7 @@ type guideUnmarkParams struct {
 
 func guideUnmarkCmd() *cobra.Command {
 	return boa.CmdT[guideUnmarkParams]{
-		Use:         "unmark [id]",
+		Use:         "unmark",
 		Short:       "Take down a mark, or all of yours",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideUnmarkParams, _ *cobra.Command, _ []string) {
@@ -332,7 +332,7 @@ type guideCaptureGetParams struct {
 
 func guideCaptureGetCmd() *cobra.Command {
 	return boa.CmdT[guideCaptureGetParams]{
-		Use:         "get <id>",
+		Use:         "get",
 		Short:       "Fetch a saved capture's image and context",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideCaptureGetParams, _ *cobra.Command, _ []string) {

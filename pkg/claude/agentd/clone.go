@@ -1080,7 +1080,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// "clone modal sat for 30s then showed a toast but nothing appeared"
 	// trap. Logs (~/.tclaude/output.log) and the captured subprocess
 	// stderr (see liveSpawnResume) tell the rest of the story.
-	warn = fmt.Sprintf("spawned tclaude session for %s but its tmux session never registered within %s — the new agent may still come online; check ~/.tclaude/output.log for subprocess errors",
+	warn = fmt.Sprintf("spawned tclaude session for %s but its tmux session never registered within %s — the new agent may still come online; check ~/.tclaude/data/output.log for subprocess errors",
 		short8(newConv), reincarnateSpawnTimeout)
 	slog.Warn("clone: copy-path poll timed out; tmux session never registered",
 		"new_conv", newConv, "deadline", reincarnateSpawnTimeout)

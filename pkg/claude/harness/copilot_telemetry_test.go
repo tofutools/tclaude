@@ -506,3 +506,19 @@ func TestCopilotErrorMessageIsBounded(t *testing.T) {
 	got := sanitizeCopilotText(strings.Repeat("a", copilotErrorMessageLimit*3))
 	assert.LessOrEqual(t, len(got), copilotErrorMessageLimit+len("…"))
 }
+
+// A failed compaction and a subagent's leave the main conversation's context
+// where it was, so only the main thread's successes count. An absent success
+// field is a success, as in the rest of the fold.
+func TestCopilotTelemetryCountsMainThreadCompactions(t *testing.T) {
+	var state copilotRuntimeScanState
+	for _, line := range []string{
+		`{"type":"session.compaction_complete","data":{"success":true}}`,
+		`{"type":"session.compaction_complete","data":{"success":false}}`,
+		`{"type":"session.compaction_complete","agentId":"sub-1","data":{"success":true}}`,
+		`{"type":"session.compaction_complete","data":{}}`,
+	} {
+		require.True(t, state.consumeLine([]byte(line)))
+	}
+	assert.Equal(t, 2, state.snapshot().Compactions)
+}

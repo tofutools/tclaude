@@ -234,7 +234,7 @@
     <!-- The mixer — persistent music/FX volume sliders in a popover,
          anchored next to the master mute so all sound control lives in
          one spot. slop-volume.js owns it; values persist to
-         ~/.tclaude/config.json via /api/slop/volumes. -->
+         ~/.tclaude/data/config.json via /api/slop/volumes. -->
     <span class="slop-volume-wrap">
       <button class="slop-hud-btn" id="slop-volume-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="slop-volume-pop" title="Volume — music &amp; FX sliders (saved to tclaude config)">🎚️</button>
       <div id="slop-volume-pop" role="group" aria-label="Slop volume sliders">
@@ -523,7 +523,7 @@
   <section id="tab-diagnostics">
     <div class="access-subnav activity-subnav" role="tablist" aria-label="Diagnostics views">
       <a class="access-subtab activity-subtab active" data-subtab="audit" href="/diagnostics/audit" role="tab" aria-selected="true" aria-controls="activity-audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">Deeds</span></a>
-      <a class="access-subtab activity-subtab" data-subtab="logs" href="/diagnostics/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
+      <a class="access-subtab activity-subtab" data-subtab="logs" href="/diagnostics/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/data/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
       <a class="access-subtab activity-subtab" data-subtab="performance" href="/diagnostics/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — daemon CPU/heap profiling captures, plus dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
       <a class="access-subtab activity-subtab" data-subtab="doctor" href="/diagnostics/doctor" role="tab" aria-selected="false" aria-controls="activity-doctor" title="Doctor — missing tools, incomplete setup, and decisions tclaude needs from you"><span class="tab-label-regular">Doctor</span><span class="tab-label-wizard">Apothecary</span><span id="doctor-subtab-badge-root"></span></a>
     </div>

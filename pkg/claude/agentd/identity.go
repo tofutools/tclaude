@@ -1449,7 +1449,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 			return "", false
 		}
 		writeError(w, http.StatusForbidden, "permission",
-			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json; or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)", perm))
+			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json; or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)", perm))
 		return "", false
 	}
 	return p.ConvID, true

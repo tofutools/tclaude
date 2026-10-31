@@ -36,7 +36,7 @@ func remoteControlCmd() *cobra.Command {
 			"exposing the session to claude.ai/code + the Claude mobile app. " +
 			"By default the target is the calling agent itself (requires `self.remote-control`). " +
 			"Use --target <selector> to act on ANOTHER agent — the manager pattern (requires " +
-			"`agent.remote-control`, or being an owner of a group containing the target).\n\n" +
+			"`agent.remote-control`, or being an owner of every active group containing the target).\n\n" +
 			"Intent (positional, default `toggle`):\n" +
 			"  on      enable remote access (no-op if already on)\n" +
 			"  off     disable remote access (sends the confirm Enter CC prompts for)\n" +
@@ -62,7 +62,7 @@ func remoteControlCmd() *cobra.Command {
 
 type remoteControlParams struct {
 	Intent   string `pos:"true" optional:"true" help:"on | off | toggle | status (default: toggle)"`
-	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.remote-control permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.remote-control permission, or being an owner of every active group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 

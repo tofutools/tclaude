@@ -72,12 +72,12 @@ type Params struct {
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
 	InstallAll               bool `long:"install-all" help:"Install all standard extras on top of the baseline setup. Proxy skills remain opt-in via --install-proxy-skills."`
-	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) for all coding harnesses into ~/.claude/skills, shared ~/.agents/skills, and CODEX_HOME/skills. Idempotent; overwrites existing if present."`
+	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, process-templates, present-pr-to-operator, reincarnate, tclaude-setup and tclaude-fleet) for all coding harnesses into ~/.claude/skills, shared ~/.agents/skills, and CODEX_HOME/skills. Idempotent; overwrites existing if present."`
 	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) skills for configured credential proxies for all coding harnesses into ~/.claude/skills, shared ~/.agents/skills, and CODEX_HOME/skills. Not included by --install-all."`
 	InstallUtilitySkills     bool `long:"install-utility-skills" help:"Also install (or refresh) optional utility skills (e.g. demo-recording: record and send a demo video of a feature built end to end) for all coding harnesses through Claude Code, shared ~/.agents/skills, and Codex home directories. Not included by --install-all."`
-	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
+	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/data/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandboxing.md. Append-only and idempotent; never removes or overwrites existing values."`
-	InstallResumeThreshold   bool `long:"install-resume-threshold-override" help:"Also write a claude_resume.threshold_minutes override to ~/.tclaude/config.json that suppresses Claude Code's interactive 'Resume from summary' prompt for tclaude-spawned panes (it breaks scripted resume). Idempotent; skips if a value is already configured, never overwrites it."`
+	InstallResumeThreshold   bool `long:"install-resume-threshold-override" help:"Also write a claude_resume.threshold_minutes override to ~/.tclaude/data/config.json that suppresses Claude Code's interactive 'Resume from summary' prompt for tclaude-spawned panes (it breaks scripted resume). Idempotent; skips if a value is already configured, never overwrites it."`
 
 	// Harness selects which coding harness's hooks to install/check
 	// (default "claude" → ~/.claude/settings.json; "codex" →
@@ -462,7 +462,7 @@ func installExtras(params *Params) error {
 }
 
 // installResumeThresholdOverride writes a claude_resume.threshold_minutes
-// override to ~/.tclaude/config.json that suppresses Claude Code's interactive
+// override to ~/.tclaude/data/config.json that suppresses Claude Code's interactive
 // "Resume from summary" chooser — the multiple-choice prompt CC pops when
 // resuming an old, large session, which hangs tclaude's scripted resume (a
 // detached tmux pane can't answer a TUI it didn't expect). tclaude injects the
@@ -482,7 +482,7 @@ func installResumeThresholdOverride() error {
 		// so skip with a warning rather than clobber it. (A simply-absent file is
 		// not an error: Load returns the default config with a nil error, and we
 		// proceed to write it.)
-		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/config.json (%v). Fix it and re-run.\n", err)
+		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/data/config.json (%v). Fix it and re-run.\n", err)
 		return nil
 	}
 	if cfg.ClaudeResume != nil && cfg.ClaudeResume.ThresholdMinutes != nil {
@@ -503,7 +503,7 @@ func installResumeThresholdOverride() error {
 }
 
 // installDefaultMusicVolume writes slop.music_volume=50 to
-// ~/.tclaude/config.json so a fresh install starts the Vegas/slop and
+// ~/.tclaude/data/config.json so a fresh install starts the Vegas/slop and
 // wizard-mode soundtrack at half volume — full volume startled users on first
 // entry. The value matches config.DefaultMusicVolume, the same default readers
 // fall back to when the key is absent (see ResolvedSlopVolumes); writing it
@@ -522,7 +522,7 @@ func installDefaultMusicVolume() error {
 		// so skip with a warning rather than clobber it. (A simply-absent file is
 		// not an error: Load returns the default config with a nil error, and we
 		// proceed to write it.)
-		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/config.json (%v). Fix it and re-run.\n", err)
+		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/data/config.json (%v). Fix it and re-run.\n", err)
 		return nil
 	}
 	if cfg.Slop != nil && cfg.Slop.MusicVolume != nil {
@@ -829,7 +829,7 @@ func installProxySkills() error {
 
 // installDefaultAgentPermissions adds the low-risk permission
 // slugs the bundled agent-* skills exercise (defaultPermsForBundledSkills)
-// to agent.default_permissions in ~/.tclaude/config.json, creating the
+// to agent.default_permissions in ~/.tclaude/data/config.json, creating the
 // section if missing. Idempotent — slugs already present are silently
 // skipped. The user explicitly opted in by passing the flag (or
 // --install-all); we don't prompt further.
@@ -928,7 +928,7 @@ func configureNotifications(params *Params) {
 		save = len(added) > 0
 	default:
 		// First run: no notifications block on disk yet. Offer to enable.
-		if askYesNo("Enable desktop notifications when Claude needs attention?", true, params.Yes) {
+		if askYesNo("Enable desktop notifications when an agent needs attention?", true, params.Yes) {
 			cfg.Notifications.Enabled = true
 			save = true
 			fmt.Println("✓ Notifications enabled")
