@@ -117,7 +117,7 @@ Where dictation can't work, the mic is disabled and a note beside it says why. T
 covers browsers without speech recognition, and plain HTTP pages away from localhost.
 Browsers refuse the microphone on those pages, so no site permission helps. To
 dictate, open the dashboard on `localhost` or over HTTPS, for example with
-[`tailscale serve`](remote.md#where-to-run-it). **🔈** voice doesn't need the
+[`tailscale serve`](remote.md#what-is-and-isnt-exposed). **🔈** voice doesn't need the
 microphone and still works on plain HTTP.
 
 ## Marking up a page
