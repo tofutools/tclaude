@@ -23,11 +23,13 @@ import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
   clampPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
-  defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent,
+  defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent, viewportOf,
   stewardSummonBody, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
+import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js';
+import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { ApprovalCard, ElevatedBand, StewardAccessControls, openAccessPanel } from './companion-approval.js';
@@ -51,10 +53,6 @@ function snapTopOf(win) {
   }
 }
 const PEEK_REFRESH_MS = 1500;
-
-function viewportOf(win) {
-  return { width: win?.innerWidth || 1280, height: win?.innerHeight || 800 };
-}
 
 function reducedMotion(win) {
   try {
@@ -567,6 +565,17 @@ export function CompanionApp({
     writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
   }
 
+  // A click on the title bar or other empty space leaves focus on the page.
+  // Give it back to the terminal, so typing works and the border returns.
+  // Controls keep their click, which may have opened a dialog, and a text
+  // selection survives so it can be copied.
+  function onWindowClick(event) {
+    if (event.target.closest?.('button, a, input, textarea, select, label')) return;
+    if (win?.getSelection?.()?.isCollapsed === false) return;
+    const active = win?.document?.activeElement;
+    if (!active || active === win.document.body) setFocusToken((n) => n + 1);
+  }
+
   function onTitlePointerDown(event) {
     if (event.button !== 0 || event.target.closest?.('button, input, [role="tab"]')) return;
     const node = windowRef.current;
@@ -1004,6 +1013,54 @@ export function CompanionApp({
     };
   }, [win, fetchImpl]);
 
+  // Stay reachable for `tclaude agent guide capture`, and tell the operator
+  // each time their view is captured.
+  const [captureNotice, setCaptureNotice] = useState('');
+  const [marks, setMarks] = useState([]);
+  const marksSeen = useRef('');
+  const markReport = useRef([]);
+  const receiveMarks = useCallback((next) => {
+    const key = marksKey(next);
+    if (key === marksSeen.current) return;
+    marksSeen.current = key;
+    // The layer leaves with the last mark, so it cannot report that itself.
+    if (!next.length) markReport.current = [];
+    setMarks(next);
+  }, []);
+  const postMark = (path, body) => fetchImpl(`/api/companion/marks/${path}`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+  });
+  const endMark = useCallback(async (mark, action) => {
+    receiveMarks(marks.filter((each) => each.id !== mark.id));
+    try { await postMark(`${mark.id}/${action}`); } catch { notify?.('Could not end that mark', 'error'); }
+  }, [marks]);
+  const dismissAllMarks = useCallback(async () => {
+    receiveMarks([]);
+    try { await postMark('dismiss'); } catch { notify?.('Could not dismiss the marks', 'error'); }
+  }, []);
+  const replyToMark = useCallback(async (mark, text) => {
+    try {
+      const response = await postMark(`${mark.id}/reply`, { text });
+      if (response?.ok) return true;
+      const data = await response?.json?.().catch(() => null);
+      notify?.(data?.error || 'Could not send that reply', 'error');
+    } catch { notify?.('Could not send that reply', 'error'); }
+    return false;
+  }, []);
+  useEffect(() => {
+    if (!win?.document || !win.crypto?.randomUUID) return undefined;
+    return startCapturePresence({
+      win, fetchImpl, tab: () => activeTab.value,
+      onCapture: (request) => setCaptureNotice(request.agent_name || 'An agent'),
+      onMarks: receiveMarks, marks: () => markReport.current,
+    });
+  }, [win, fetchImpl]);
+  useEffect(() => {
+    if (!captureNotice) return undefined;
+    const timer = setTimeout(() => setCaptureNotice(''), CAPTURE_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [captureNotice]);
+
   const seenCues = useRef(new Set());
   const cuesPrimed = useRef(false);
   const cueRun = useRef(0);
@@ -1248,7 +1305,7 @@ export function CompanionApp({
 
   const windowView = open && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}`}
-    style=${style} role="dialog" aria-label="Companion" aria-modal="false">
+    style=${style} role="dialog" aria-label="Companion" aria-modal="false" onClick=${onWindowClick}>
     <header class="companion-titlebar" onPointerDown=${onTitlePointerDown}>
       <span class="companion-grip" aria-hidden="true">⋮⋮</span>
       <div class="companion-tabs" role="tablist" aria-label="Companion agents">
@@ -1360,6 +1417,9 @@ export function CompanionApp({
     ${annotating && html`<${AnnotateOverlay} agentName=${annotating.name} win=${win}
       onSend=${sendAnnotation} onCancel=${() => setAnnotating(null)} />`}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
+    ${marks.length > 0 && win && html`<${MarksLayer} marks=${marks} win=${win} onEnd=${endMark} onDismissAll=${dismissAllMarks}
+      onReply=${replyToMark} onReport=${(report) => { markReport.current = report; }} />`}
+    ${captureNotice && html`<div class="companion-capture-notice" role="status" data-capture-skip>${captureNotice} captured this view</div>`}
     ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} marks=${guideCue.marks} onDismiss=${dismissGuide} win=${win} />`}
     ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
 }
