@@ -1,25 +1,19 @@
 import { batch, computed, signal } from '@preact/signals';
-import { dashPrefs } from './prefs.js';
 import { normalizeSeed } from './terminals-core.js';
 import { findTerminalAgent } from './terminal-tab-status.js';
 
-export const TERMINAL_TAB_GROUP_KEY = 'tclaude.dash.terminals.groups';
-export const MAX_REMEMBERED_TERMINAL_PANES = 512;
 export const MAX_TERMINAL_TAB_GROUPS = 24;
 export const MAX_TERMINAL_GROUP_NAME_LENGTH = 40;
-export const MAX_TERMINAL_TAB_GROUP_BYTES = 60 * 1024;
 
 // Named palette slots rather than raw colours: mux.css owns the actual values
-// for both the ordinary and the wizard theme, so a stored group keeps its
-// identity when either palette is retuned.
+// for both the ordinary and the wizard theme.
 export const TERMINAL_GROUP_COLORS = Object.freeze([
   'blue', 'purple', 'green', 'amber', 'red', 'teal', 'pink', 'slate',
 ]);
 
 // Group names are operator text rendered into the tab strip and into the
-// accessible announcements, so they are normalized the same way on the way in
-// from a dialog and on the way back off persistence: nothing invisible, no
-// runaway length, never empty.
+// accessible announcements, so they are normalized on the way in from a dialog:
+// nothing invisible, no runaway length, never empty.
 //
 // Stripped: C0/DEL, the C1 range, the Unicode line/paragraph separators, and
 // the invisible formatting characters — zero-width joiners/spaces, the soft
@@ -100,7 +94,7 @@ export function terminalSeedKey(seed) {
   return seed.key || seed.ws;
 }
 
-export function createTerminalShellState({ prefs = dashPrefs, persistPresentation = true } = {}) {
+export function createTerminalShellState() {
   const panes = signal([]);
   const activeKey = signal(null);
   const revealRequest = signal(0);
@@ -146,68 +140,13 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   }));
   let paneSequence = 0;
   let groupSequence = 0;
-  let groupsLoaded = false;
 
-  // Membership is remembered for keys that are not currently open: closing
-  // every tab of a stack and reopening one later restores it to its stack
-  // instead of dropping it into the ungrouped run.
-  function loadGroups() {
-    if (groupsLoaded) return;
-    groupsLoaded = true;
-    let parsed = null;
-    try { parsed = JSON.parse(prefs.getItem(TERMINAL_TAB_GROUP_KEY) || 'null'); } catch (_) { parsed = null; }
-    if (!parsed || typeof parsed !== 'object') return;
-    const loaded = [];
-    const ids = new Set();
-    for (const raw of Array.isArray(parsed.groups) ? parsed.groups : []) {
-      if (loaded.length >= MAX_TERMINAL_TAB_GROUPS) break;
-      const id = typeof raw?.id === 'string' && raw.id && !ids.has(raw.id) ? raw.id : null;
-      if (!id) continue;
-      ids.add(id);
-      loaded.push(Object.freeze({
-        id,
-        name: sanitizeGroupName(raw.name),
-        color: normalizeColor(raw.color, loaded.length),
-        collapsed: raw.collapsed === true,
-      }));
-      const suffix = Number.parseInt(/^group-(\d+)$/.exec(id)?.[1] ?? '', 10);
-      if (Number.isInteger(suffix) && suffix > groupSequence) groupSequence = suffix;
-    }
-    const members = new Map();
-    const source = parsed.members && typeof parsed.members === 'object' ? parsed.members : {};
-    for (const [key, groupID] of Object.entries(source)) {
-      if (members.size >= MAX_REMEMBERED_TERMINAL_PANES) break;
-      if (typeof key === 'string' && key && ids.has(groupID)) members.set(key, groupID);
-    }
-    groups.value = loaded;
-    membership.value = members;
-  }
-
-  function persistGroups() {
-    if (!persistPresentation) return;
-    // Prefer membership for tabs that are open right now, then the remembered
-    // tail, and stop before the byte cap.
-    const openKeys = new Set(panes.value.map((pane) => pane.key));
-    const ordered = [...membership.value.entries()]
-      .sort((a, b) => Number(openKeys.has(b[0])) - Number(openKeys.has(a[0])));
-    // Object.create(null) so a pane key literally named "__proto__" is stored
-    // as data instead of being swallowed by Object.prototype.
-    const members = Object.create(null);
-    const encoder = new TextEncoder();
-    let bytes = encoder.encode(JSON.stringify({ groups: groups.value, members: {} })).byteLength;
-    for (const [key, groupID] of ordered) {
-      const entryBytes = encoder.encode(JSON.stringify(key) + JSON.stringify(groupID)).byteLength + 2;
-      if (bytes + entryBytes > MAX_TERMINAL_TAB_GROUP_BYTES) break;
-      members[key] = groupID;
-      bytes += entryBytes;
-    }
-    try {
-      prefs.setItem(TERMINAL_TAB_GROUP_KEY, JSON.stringify({ groups: groups.value, members }));
-    } catch (_) {}
-  }
+  // Groups live with their page, like the tabs in them: each window has its own
+  // and nothing is saved. Membership is remembered for keys that are not
+  // currently open: closing every tab of a stack and reopening one restores it
+  // to its stack instead of dropping it into the ungrouped run.
 
   function groupIDFor(key) {
-    loadGroups();
     const groupID = membership.value.get(key) || null;
     return groupID && groupIndex.value.has(groupID) ? groupID : null;
   }
@@ -230,7 +169,7 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
 
   // setMembership is the single write path for pane→group edges. It drops the
   // entry entirely for the ungrouped case so a stack that is later dissolved
-  // does not leave dead keys behind in the persisted map.
+  // does not leave dead keys behind in the map.
   function setMembership(assignments) {
     const next = new Map(membership.value);
     let changed = false;
@@ -263,7 +202,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     if (orderChanged) {
       panes.value = normalized;
     }
-    if (changed) persistGroups();
     return changed || orderChanged;
   }
 
@@ -280,7 +218,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   function openPane(raw, { reveal = true, activate = true } = {}) {
     const seed = normalizeSeed(raw);
     if (!seed) return null;
-    loadGroups();
     const key = terminalSeedKey(seed);
     const existing = panes.value.find((pane) => pane.key === key);
     if (existing) {
@@ -355,7 +292,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   // between two members joins it — with no separate drop zone to discover.
   function reorderPane(key, targetKey, { after = false } = {}) {
     if (key === targetKey) return null;
-    loadGroups();
     const current = panes.value;
     const pane = current.find((candidate) => candidate.key === key);
     if (!pane || !current.some((candidate) => candidate.key === targetKey)) return null;
@@ -380,7 +316,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   // inside it (which the contiguity rule would immediately undo). Dropping a
   // stack on one of its own tabs is a no-op.
   function moveGroup(groupID, anchorKey, { after = false } = {}) {
-    loadGroups();
     const group = groupIndex.value.get(groupID);
     if (!group) return null;
     const members = panes.value.filter((pane) => groupIDFor(pane.key) === groupID);
@@ -413,7 +348,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   // stacks rather than tunnelling through them, which would otherwise be
   // undone by the contiguity normalization on the very next keypress.
   function movePaneByOffset(key, offset) {
-    loadGroups();
     if (!Number.isInteger(offset) || offset === 0) return null;
     const direction = offset > 0 ? 1 : -1;
     const steps = Math.abs(offset);
@@ -430,7 +364,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   // whole stack over one neighbouring segment per step, which is the same
   // block move the drag performs.
   function moveGroupByOffset(groupID, offset) {
-    loadGroups();
     if (!groupIndex.value.has(groupID) || !Number.isInteger(offset) || offset === 0) return null;
     const direction = offset > 0 ? 1 : -1;
     let moved = null;
@@ -456,7 +389,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   // The anchor is the outermost REMAINING member, so the tab lands clear of the
   // span it just left rather than back inside it.
   function movePaneOutsideGroup(key, groupID, { after = false } = {}) {
-    loadGroups();
     const current = panes.value;
     const pane = current.find((candidate) => candidate.key === key);
     if (!pane || !groupIndex.value.has(groupID)) return null;
@@ -539,12 +471,11 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   }
 
   function createGroup({ name = '', color = null, keys = [] } = {}) {
-    loadGroups();
     if (groups.value.length >= MAX_TERMINAL_TAB_GROUPS) {
       // At the cap, evict the oldest DORMANT stack rather than refusing. A
       // refusal here is invisible and permanent: dormant stacks have no pill
       // and no menu, so an operator who closed 24 grouped terminals could never
-      // make another group again, across restarts, with nothing to click.
+      // make another group again, with nothing to click.
       const evictable = dormantGroups()[0];
       if (!evictable) return null;
       forgetGroup(evictable.id);
@@ -571,7 +502,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   }
 
   function updateGroup(id, patch) {
-    loadGroups();
     const index = groups.value.findIndex((group) => group.id === id);
     if (index < 0) return null;
     const current = groups.value[index];
@@ -581,7 +511,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     const list = [...groups.value];
     list[index] = next;
     groups.value = list;
-    persistGroups();
     return next;
   }
 
@@ -600,7 +529,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   // visible in the collapsed pill instead — the island renders it — rather than
   // refusing a collapse the operator explicitly asked for.
   function setGroupCollapsed(id, collapsed) {
-    loadGroups();
     const group = groupIndex.value.get(id);
     if (!group) return null;
     // Re-asserting the state a stack is already in must not move activation:
@@ -631,7 +559,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   // in place. The terminals themselves are untouched — this is the "ungroup"
   // command, not a close.
   function dissolveGroup(id) {
-    loadGroups();
     if (!groupIndex.value.has(id)) return false;
     const members = [...membership.value.entries()]
       .filter(([, groupID]) => groupID === id)
@@ -641,12 +568,10 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     for (const key of members) next.delete(key);
     membership.value = next;
     panes.value = normalizeGrouping(panes.value, groupIDFor);
-    persistGroups();
     return true;
   }
 
   function assignPaneToGroup(key, groupID) {
-    loadGroups();
     if (!panes.value.some((pane) => pane.key === key)) return false;
     if (groupID && !groupIndex.value.has(groupID)) return false;
     if (!groupID) return commitGrouping([[key, null]]);
@@ -704,12 +629,8 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   function dispose() {
     panes.value = [];
     activeKey.value = null;
-    // Grouping is prefs-backed, so this drops only the in-memory mirror; a
-    // remount reloads it. Clearing groupsLoaded is what makes that reload
-    // happen instead of the successor starting from an empty registry.
     groups.value = [];
     membership.value = new Map();
-    groupsLoaded = false;
   }
 
   return Object.freeze({

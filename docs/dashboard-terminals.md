@@ -27,7 +27,8 @@ pending permission request, a **🔑** opens the
 [approval panel](companion.md#answering-permission-requests).
 
 - **Reorder** by dragging. Drag one tab onto another to make a named, collapsible
-  group.
+  group. Like the tabs in them, groups belong to their browser window and end
+  with it, so a reload starts without them.
 - **Right-click a tab** (or Shift+F10) for `New group from this tab`, `Add to
   "<group>"`, `Remove from group`, `Detach tab`, `Close tab`, `Close other tabs`
   and `Close all tabs`. Boards add `Open in overlay`.

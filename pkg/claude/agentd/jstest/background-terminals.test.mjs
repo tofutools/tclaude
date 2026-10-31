@@ -20,7 +20,7 @@ async function mountTabs(t) {
     harness.importDashboardModule('js/background-terminals.js'),
     harness.importDashboardModule('js/terminals-tab.js'),
   ]);
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const actions = createTerminalShellActions({
     state, fetchImpl: async () => ({ ok: true }), windowRef: harness.window, documentRef: harness.document,
   });
