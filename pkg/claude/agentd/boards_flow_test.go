@@ -688,6 +688,28 @@ func TestBoardsUndoIsPerActorAndServerSide(t *testing.T) {
 	assert.Equal(t, 1, skipped.Skipped)
 	assert.Equal(t, 90.0, stored("a").X, "the agent's edit stands")
 
+	// An agent's change stays safe from a later undo too, even once the
+	// operator's own undo has written the same shape back.
+	base := stored("a")
+	mine := rect("a", base.Version+1, 5, 100)
+	edit(mine, rect("a", base.Version, 1, base.X))
+	theirs := rect("a", stored("a").Version+1, 6, 110)
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch, "/v1/boards/plan",
+		map[string]any{"elements": []map[string]any{theirs}}), conv))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	again := rect("a", stored("a").Version+1, 7, 120)
+	edit(again, theirs)
+	assert.Equal(t, 110.0, undo(false).Elements[0].X, "undoing my last edit puts the agent's back")
+	chained := undo(false)
+	assert.Empty(t, chained.Elements)
+	assert.Equal(t, 1, chained.Skipped, "my earlier step would revert the agent's edit, so it stays")
+	assert.Equal(t, 110.0, stored("a").X)
+
+	// A resend of a saved batch, or an edit that lost, adds no step.
+	lost := rect("a", 1, 1, 130)
+	edit(lost, nil)
+	assert.Empty(t, undo(false).Elements, "the lost edit left nothing to undo")
+
 	// An agent's patch adds nothing to the operator's history.
 	for undo(false).Skipped > 0 {
 	}

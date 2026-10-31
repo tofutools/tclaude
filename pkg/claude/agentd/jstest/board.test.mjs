@@ -233,6 +233,28 @@ test('a batch refused as a whole stays pending and the next change retries it', 
   assert.equal(events().length, 1);
 });
 
+test('undo takes back a batch the board refused, so the board can fit it', async (t) => {
+  const undos = [];
+  const answer = async (url, init) => {
+    if (url.endsWith('/undo')) undos.push(url);
+    if (init.method !== 'PATCH') return null;
+    if (JSON.parse(init.body).elements.some((el) => el.isDeleted)) return ok({ version: 3, accepted: 1 });
+    return { ok: false, status: 400, json: async () => ({ message: 'too many elements' }) };
+  };
+  const { harness, svg, island, patches } = await drawnBoard(t, { answer });
+  await harness.act(() => wait(island.BOARD_FLUSH_MS + 20));
+  assert.equal(svg.querySelectorAll('rect.board-el').length, 1, 'refused, but kept on screen');
+  await harness.act(async () => {
+    harness.fireEvent(harness.window.document.body, 'keydown', { key: 'z', ctrlKey: true });
+    await wait();
+  });
+  assert.equal(svg.querySelectorAll('rect.board-el').length, 0, 'undone here');
+  assert.deepEqual(undos, [], 'the daemon never had this step');
+  await harness.act(() => wait(island.BOARD_FLUSH_MS + 20));
+  assert.equal(patches().at(-1).body.elements[0].isDeleted, true);
+  assert.deepEqual(patches().at(-1).body.steps, [], 'and no step is saved for it');
+});
+
 test('an element refused by index is left out of the event', async (t) => {
   let refuse = true;
   const { settle, events, notes } = await drawnBoard(t, {

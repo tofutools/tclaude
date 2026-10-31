@@ -273,11 +273,12 @@ func ApplyCollabBoardEdit(id, by, participant string, elems []CollabBoardElement
 		}
 		return 0, 0, err
 	}
-	version, accepted, err = applyCollabBoardElementsTx(tx, id, by, version, elems, maxLive, maxStored)
+	version, kept, err := applyCollabBoardElementsTx(tx, id, by, version, elems, maxLive, maxStored)
 	if err != nil {
 		return 0, 0, err
 	}
-	if err := recordCollabBoardStepsTx(tx, id, history); err != nil {
+	accepted = len(kept)
+	if err := recordCollabBoardStepsTx(tx, id, history, kept); err != nil {
 		return 0, 0, err
 	}
 	if participant != "" {
@@ -291,10 +292,11 @@ func ApplyCollabBoardEdit(id, by, participant string, elems []CollabBoardElement
 	return version, accepted, nil
 }
 
-// applyCollabBoardElementsTx is the merge. version is the board's current
-// version; the caller holds collabBoardWriteMu.
-func applyCollabBoardElementsTx(tx *sql.Tx, id, by string, version int64, elems []CollabBoardElement, maxLive, maxStored int) (int64, int, error) {
-	accepted := 0
+// applyCollabBoardElementsTx is the merge, returning the board's version and
+// the ids it accepted. version is the board's current version; the caller
+// holds collabBoardWriteMu.
+func applyCollabBoardElementsTx(tx *sql.Tx, id, by string, version int64, elems []CollabBoardElement, maxLive, maxStored int) (int64, map[string]bool, error) {
+	accepted := map[string]bool{}
 	next := version + 1
 	// The last occurrence of an id in one patch is the one that counts, as if
 	// the patch had been sent element by element.
@@ -317,7 +319,7 @@ func applyCollabBoardElementsTx(tx *sql.Tx, id, by string, version int64, elems 
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 		case err != nil:
-			return 0, 0, err
+			return 0, nil, err
 		case e.Version > storedVersion, e.Version == storedVersion && e.Nonce < storedNonce:
 		default:
 			continue
@@ -331,24 +333,24 @@ func applyCollabBoardElementsTx(tx *sql.Tx, id, by string, version int64, elems 
  ON CONFLICT(board_id, element_id) DO UPDATE SET element_version = excluded.element_version, nonce = excluded.nonce,
  server_version = excluded.server_version, is_deleted = excluded.is_deleted, body = excluded.body`,
 			id, e.ID, e.Version, e.Nonce, next, deleted, string(e.Body)); err != nil {
-			return 0, 0, err
+			return 0, nil, err
 		}
-		accepted++
+		accepted[e.ID] = true
 	}
-	if accepted > 0 {
+	if len(accepted) > 0 {
 		var live, stored int
 		if err := tx.QueryRow(`SELECT COALESCE(SUM(is_deleted = 0), 0), COUNT(*) FROM collab_board_elements WHERE board_id = ?`, id).Scan(&live, &stored); err != nil {
-			return 0, 0, err
+			return 0, nil, err
 		}
 		if live > maxLive {
-			return 0, 0, &CollabBoardTooManyElementsError{Count: live, Limit: maxLive}
+			return 0, nil, &CollabBoardTooManyElementsError{Count: live, Limit: maxLive}
 		}
 		if stored > maxStored {
-			return 0, 0, &CollabBoardTooManyElementsError{Count: stored, Limit: maxStored, Stored: true}
+			return 0, nil, &CollabBoardTooManyElementsError{Count: stored, Limit: maxStored, Stored: true}
 		}
 		if _, err := tx.Exec(`UPDATE collab_boards SET version = ?, updated_at = ?, updated_by = ? WHERE id = ?`,
 			next, dbTime(time.Now()), by, id); err != nil {
-			return 0, 0, err
+			return 0, nil, err
 		}
 		version = next
 	}

@@ -2,6 +2,8 @@ package agentd
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"math/big"
 	"net/http"
@@ -32,24 +34,58 @@ func validBoardSteps(steps [][]db.CollabBoardStepElement) [][]db.CollabBoardStep
 	return out
 }
 
-func boardElementAuthor(body json.RawMessage) string {
-	var e struct {
-		CustomData *boardElementMeta `json:"customData"`
-	}
-	if json.Unmarshal(body, &e) != nil || e.CustomData == nil {
+// boardFingerprint identifies what an element looks like, leaving out what
+// each write changes anyway. It is empty for anything that is not an element.
+func boardFingerprint(body json.RawMessage) string {
+	if len(body) == 0 || string(body) == "null" {
 		return ""
 	}
-	return e.CustomData.Author
+	normalized, err := normalizeBoardElement(body, "")
+	if err != nil {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(normalized.Body, &fields); err != nil {
+		return ""
+	}
+	for _, key := range []string{"version", "versionNonce", "updated", "customData"} {
+		delete(fields, key)
+	}
+	canonical, err := json.Marshal(fields)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:16])
+}
+
+// boardStepsWithAfter fills in what each step left behind: for an element a
+// later step in the batch also changed, that step's before; otherwise what the
+// batch itself writes.
+func boardStepsWithAfter(steps [][]db.CollabBoardStepElement, elems []db.CollabBoardElement) [][]db.CollabBoardStepElement {
+	after := make(map[string]string, len(elems))
+	for _, e := range elems {
+		after[e.ID] = boardFingerprint(e.Body)
+	}
+	for i := len(steps) - 1; i >= 0; i-- {
+		for j := range steps[i] {
+			each := &steps[i][j]
+			each.After = after[each.ID]
+			after[each.ID] = boardFingerprint(each.Before)
+		}
+	}
+	return steps
 }
 
 // boardRestore builds the write that puts a step element back for actor. An
-// element someone else changed since is theirs now, so it is left alone. The
-// write is a version above both what is stored and what comes back, so the
-// merge takes it, and it passes the same checks as any edit.
+// element that no longer looks as the step left it has been changed by someone
+// else, so it is left alone. The write is a version above both what is stored
+// and what comes back, so the merge takes it, and it passes the same checks as
+// any edit.
 func boardRestore(actor string) db.CollabBoardRestore {
-	return func(step db.CollabBoardStepElement, cur *db.CollabBoardElement) *db.CollabBoardElement {
-		if cur != nil && boardElementAuthor(cur.Body) != actor {
-			return nil
+	return func(step db.CollabBoardStepElement, cur *db.CollabBoardElement) (*db.CollabBoardElement, string) {
+		if cur != nil && step.After != "" && boardFingerprint(cur.Body) != step.After {
+			return nil, ""
 		}
 		source := step.Before
 		deleting := len(source) == 0 || string(source) == "null"
@@ -58,13 +94,13 @@ func boardRestore(actor string) db.CollabBoardRestore {
 		}
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(source, &fields); err != nil {
-			return nil
+			return nil, ""
 		}
 		var was struct {
 			Version int64 `json:"version"`
 		}
 		if json.Unmarshal(source, &was) != nil {
-			return nil
+			return nil, ""
 		}
 		version := was.Version
 		if cur != nil && cur.Version > version {
@@ -72,7 +108,7 @@ func boardRestore(actor string) db.CollabBoardRestore {
 		}
 		nonce, err := rand.Int(rand.Reader, big.NewInt(1<<31-1))
 		if err != nil {
-			return nil
+			return nil, ""
 		}
 		set := func(key string, value any) bool {
 			raw, err := json.Marshal(value)
@@ -85,13 +121,13 @@ func boardRestore(actor string) db.CollabBoardRestore {
 		}
 		raw, err := json.Marshal(fields)
 		if !ok || err != nil {
-			return nil
+			return nil, ""
 		}
 		write, err := normalizeBoardElement(raw, actor)
 		if err != nil {
-			return nil
+			return nil, ""
 		}
-		return &write
+		return &write, boardFingerprint(write.Body)
 	}
 }
 

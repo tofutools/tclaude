@@ -18,10 +18,13 @@ const (
 	collabBoardHistoryMaxBytes = 16 << 20
 )
 
-// CollabBoardStepElement is one element of a step: what to put back.
+// CollabBoardStepElement is one element of a step: what to put back, and a
+// fingerprint of what the step left there. An element that no longer matches
+// has been changed by someone else, even if the operator's own undo wrote it.
 type CollabBoardStepElement struct {
 	ID     string          `json:"id"`
 	Before json.RawMessage `json:"before"`
+	After  string          `json:"after,omitempty"`
 }
 
 // CollabBoardHistory is what an edit adds to its actor's undo history.
@@ -30,9 +33,10 @@ type CollabBoardHistory struct {
 	Steps [][]CollabBoardStepElement
 }
 
-// CollabBoardRestore turns one step element into the write that undoes it, or
-// nil to leave the element alone. cur is the stored element, nil if none.
-type CollabBoardRestore func(step CollabBoardStepElement, cur *CollabBoardElement) *CollabBoardElement
+// CollabBoardRestore turns one step element into the write that undoes it and
+// that write's fingerprint, or nil to leave the element alone. cur is the
+// stored element, nil if none.
+type CollabBoardRestore func(step CollabBoardStepElement, cur *CollabBoardElement) (*CollabBoardElement, string)
 
 // CollabBoardUndoResult is what an undo or redo did. Elements carry their
 // server version. Skipped counts elements restore left alone, and Empty says
@@ -92,17 +96,33 @@ func pushCollabBoardStepTx(tx *sql.Tx, boardID, actor, stack string, step []Coll
 	return err
 }
 
-// recordCollabBoardStepsTx adds new work to the actor's history. New work ends
-// what could be redone.
-func recordCollabBoardStepsTx(tx *sql.Tx, boardID string, history *CollabBoardHistory) error {
-	if history == nil || len(history.Steps) == 0 {
+// recordCollabBoardStepsTx adds new work to the actor's history. Only elements
+// the merge accepted count: a resent batch, or an edit that lost to a newer
+// version, changed nothing to undo. New work ends what could be redone.
+func recordCollabBoardStepsTx(tx *sql.Tx, boardID string, history *CollabBoardHistory, accepted map[string]bool) error {
+	if history == nil {
+		return nil
+	}
+	steps := make([][]CollabBoardStepElement, 0, len(history.Steps))
+	for _, step := range history.Steps {
+		kept := make([]CollabBoardStepElement, 0, len(step))
+		for _, each := range step {
+			if accepted[each.ID] {
+				kept = append(kept, each)
+			}
+		}
+		if len(kept) > 0 {
+			steps = append(steps, kept)
+		}
+	}
+	if len(steps) == 0 {
 		return nil
 	}
 	if _, err := tx.Exec(`DELETE FROM collab_board_history WHERE board_id = ? AND actor = ? AND stack = ?`,
 		boardID, history.Actor, collabBoardHistoryRedo); err != nil {
 		return err
 	}
-	for _, step := range history.Steps {
+	for _, step := range steps {
 		if err := pushCollabBoardStepTx(tx, boardID, history.Actor, collabBoardHistoryUndo, step); err != nil {
 			return err
 		}
@@ -174,7 +194,7 @@ func UndoCollabBoard(id, actor string, redo bool, restore CollabBoardRestore, ma
 			stored.ID, stored.Deleted, stored.Body = each.ID, deleted != 0, json.RawMessage(raw)
 			cur = &stored
 		}
-		write := restore(each, cur)
+		write, after := restore(each, cur)
 		if write == nil {
 			out.Skipped++
 			continue
@@ -184,7 +204,7 @@ func UndoCollabBoard(id, actor string, redo bool, restore CollabBoardRestore, ma
 		if cur != nil {
 			before = cur.Body
 		}
-		inverse = append(inverse, CollabBoardStepElement{ID: each.ID, Before: before})
+		inverse = append(inverse, CollabBoardStepElement{ID: each.ID, Before: before, After: after})
 	}
 	if len(writes) > 0 {
 		version, _, err := applyCollabBoardElementsTx(tx, id, actor, out.Version, writes, maxLive, maxStored)

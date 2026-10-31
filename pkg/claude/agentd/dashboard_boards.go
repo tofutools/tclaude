@@ -527,7 +527,7 @@ func serveBoardPatch(w http.ResponseWriter, r *http.Request, id, author, partici
 	}
 	var history *db.CollabBoardHistory
 	if historyActor != "" {
-		history = &db.CollabBoardHistory{Actor: historyActor, Steps: validBoardSteps(req.Steps)}
+		history = &db.CollabBoardHistory{Actor: historyActor, Steps: boardStepsWithAfter(validBoardSteps(req.Steps), elems)}
 	}
 	version, accepted, err := db.ApplyCollabBoardEdit(id, author, participant, elems, history, boardMaxLiveElements, boardMaxStoredRows)
 	if err != nil {
