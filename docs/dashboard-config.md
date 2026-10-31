@@ -147,7 +147,7 @@ options, see [Ask sandbox policy](ask.md#sandbox-policy).
 ## Daemon & network
 
 `/config/daemon`: how agentd starts, where the dashboard listens, and remote access.
-All but **Auto-launch dashboard** need an `agentd restart`.
+Rows with the `agentd restart` badge need one.
 
 | Group | Label | Key | Default |
 |---|---|---|---|

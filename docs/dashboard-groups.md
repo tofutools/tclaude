@@ -45,7 +45,7 @@ The **⚙** actions menu has a filter box, like every ⚙ menu in the dashboard:
 
 ### What ▾ view controls
 
-**show offline** is on by default. The others are off: **show ungrouped**,
+**show offline** and **show ungrouped** are on by default. The others are off:
 **show retired**, **show conversations**, **show replaced generations** and
 **show offline scribes**. Your choices are saved by the daemon.
 
@@ -102,11 +102,11 @@ Below the sections is the group's list of links, with **+ link**.
 | `✉ message` | Write to the group, or to some of it |
 | `🗂 view messages` | Open the group's folder in [Messages](dashboard-messages.md) |
 | `📋 set startup context…` | What every agent joining the group is told |
-| `☆ make directory auto-join default` | Sessions started in this directory join this group |
+| `☆ make directory auto-join default` | This group wins when bare `tclaude` finds several groups for the directory (needs a default directory) |
 | `🔑 group permissions…` | Grants for every member |
 | `⇄ cross-harness spawns…` | This group's harness spawn rules |
 | `🔔 notifications: on` | Mute or unmute the group |
-| `📱 remote policy: inherit` | Whether members may use remote control |
+| `📱 remote policy: inherit` | The default for new agents: opt-in, deny or inherit. A spawn's own setting still wins. |
 | `📌 pin quick options open` | Keep the quick options expanded |
 | `rename`, `📂 nest under…`, `⧉ clone…` | Organize the group |
 | `⧉ save as template…`, `⤓ export…` | Reuse or move it |
@@ -121,8 +121,9 @@ Below the sections is the group's list of links, with **+ link**.
 
 Drag a group header onto another group to nest it, or to its top or bottom edge
 to reorder. Ctrl/Cmd-drag a header to clone the group. Drag an agent's row to
-another group to move it, onto **Retired** to retire it, and from **Retired** to
-a group to reinstate it. Dragging a **Conversations** row to a group promotes it
+another group to move it. A **Retire** bin appears while you drag: drop a row there
+to retire it, or a queued spawn to discard it. Drag from **Retired** to a group to
+reinstate an agent. Dragging a **Conversations** row to a group promotes it
 and adds it. From the library, drag a profile, role or template onto a group to
 spawn. Once a drop lands, the receiving group opens and a short blip marks the
 spot.
@@ -130,7 +131,8 @@ spot.
 ## The member row
 
 Each agent is one row. The first column has the status dot, then icons for
-focus window, hide window, retire, and **⚙**. Below them is the harness line,
+focus window, retire, and **⚙**. **Agent hide button** in
+[Config › Appearance](dashboard-config.md#appearance) adds a hide window icon. Below them is the harness line,
 such as `CC · Opus 4.8 hi $0.42`: harness, model, effort and cost.
 
 - **The status dot** is `●` online and `○` offline. Click it to turn the agent
@@ -183,7 +185,8 @@ redacted.
 - **The focus icon** jumps to the agent's web pane, or its native window when
   **Default terminal** is set to native in
   [Config › Terminals & windows](dashboard-config.md#terminals-windows).
-- **The hide icon** detaches a native window. The agent keeps running.
+- **The hide icon**, when turned on, detaches a native window. The agent keeps
+  running.
 - **`terminals & windows…`** gives all four choices: **Open session window**,
   **Open session in browser**, **Shell in its directory** and **Shell in
   browser**.
@@ -305,7 +308,7 @@ and press **Spawn** (Ctrl/Cmd+Enter). The rest of the form overrides the profile
 
 **⏸ Add to queue** (Ctrl/Cmd+Shift+Enter) saves the spawn without starting it.
 Queued agents show as rows with **▶** to start them, and a **⏸ queued** chip in
-the toolbar lists them.
+the toolbar lists them. Drag a queued row to the **Retire** bin to discard it.
 
 Saved prompts are covered in the [library](dashboard-library.md#saved-prompts).
 
@@ -379,7 +382,12 @@ findings, with these actions:
 
 Resilience policies are managed with `tclaude agent snapshot policy`; when any
 exist, a table here shows each one's last good snapshot and when the next is due.
-For peers, see [A peer's dashboard](fleet-ui.md#a-peers-dashboard-remote-node-view).
+
+Snapshots stay on their node. If a peer trusts this node unrestricted, its agents
+show **📸 snapshot…** and **⤓ export (PAF)…**, and its groups **⤓ export…**, on its
+own page and in the fused Groups view. The dialog acts on that node's library, and
+files download through this node. A public copy or a board share is made here, from
+the downloaded file. A restricted peer hides these items.
 
 ## Pull or sync group repositories
 
