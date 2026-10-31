@@ -6733,6 +6733,8 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   position: sticky; top: 0; z-index: 1; padding: 4px 10px; font-size: 11px; font-weight: 600;
   color: #8b949e; background: #1c2128; border-bottom: 1px solid #21262d;
 }
+/* Not holding a slug is the normal state here, not a failure. */
+.sudo-edit-modal .perm-row-eff.denied { color: #7d8590; }
 .perm-row.risky { box-shadow: inset 3px 0 0 #d29922; }
 .perm-risk-badge { font-size: 10px; color: #e3b341; white-space: nowrap; }
 .perm-refused-why { color: #e3b341; white-space: normal; }
