@@ -567,3 +567,22 @@ func TestMainCompactionThatRotatesTheConv_StillQueues(t *testing.T) {
 	require.Len(t, msgs, 1)
 	assert.Equal(t, db.ReinjectedAfterCompactSubject, msgs[0].Subject)
 }
+
+func TestTaskRunnerCompaction_NeverHolds(t *testing.T) {
+	subagentCompactionFixture(t)
+
+	for _, input := range []HookCallbackInput{
+		{HookEventName: "SessionStart", Source: "compact"},
+		{HookEventName: "PostCompact", Trigger: "auto"},
+	} {
+		input.ConvID = "conv-1"
+		var buf bytes.Buffer
+		amb := HookAmbient{TaskSignalPath: filepath.Join(t.TempDir(), "signal")}
+		require.NoError(t, DispatchHookEvent(context.Background(), input, "sess-1", amb, &buf))
+	}
+
+	held, err := db.PeekHeldContextReinjection("sess-1")
+	require.NoError(t, err)
+	assert.Nil(t, held)
+	assertMainContext(t, 0, 0)
+}

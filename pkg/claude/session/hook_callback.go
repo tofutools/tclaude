@@ -837,7 +837,7 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 	if !amb.InTaskRunnerHook() {
 		QueueContextReinjection(input, envSessionID)
 	}
-	if compactionHeld(input, envSessionID) {
+	if !amb.InTaskRunnerHook() && compactionHeld(input, envSessionID) {
 		return HookResponse{}, nil
 	}
 	input = applyStandingOrderTurnOrigin(input, envSessionID)
@@ -1502,7 +1502,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		// nudged_pct ladder so the context nudge re-arms from scratch on the
 		// next climb. A held compaction may be a subagent's, so the main
 		// session keeps its figures until the hold settles.
-		if envSessionID != "" && !compactionHeld(input, envSessionID) {
+		if envSessionID != "" && (amb.InTaskRunnerHook() || !compactionHeld(input, envSessionID)) {
 			if err := db.ResetCompact(envSessionID); err != nil {
 				slog.Warn("failed to reset compact state", "error", err, "module", "hooks")
 			} else {
