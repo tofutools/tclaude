@@ -443,7 +443,7 @@ generates no approval request for the reviewer to decide.
 
   **Ad-hoc human approval.** If you need an action just this once,
   most mutating commands take `--ask-human <duration>` (check `--help`; writes to
-  `templates`, `profiles`, `roles` and `sandbox-profiles`, and `cron add`, do not):
+  `templates`, `profiles`, `roles` and `sandbox-profiles`, and `cron` writes, do not):
 
   ```bash
   tclaude agent groups create foo --ask-human 30s

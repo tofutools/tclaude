@@ -34,7 +34,7 @@ human input is still online: its accepted nudge waits until the pane is safe.
 | `tclaude agent cron add --interval 10m --run-immediately --body "..."` | Opt into exactly one immediate first fire, then continue from that fire on the normal cadence. Omit the flag to wait. |
 | `tclaude agent cron add --interval 10m --queue-when-offline --body "..."` | Persist ticks for offline recipients. By default offline ticks are discarded so stale scheduled nudges do not build up. |
 | `tclaude agent cron add --target group:NAME [--role R] --interval 10m --body "..."` | Deliver to a whole group, or one role in it (needs `groups.messages.schedule`) |
-| `tclaude agent cron add --action spawn --spawn-profile P --instruction "..." --interval 1h` | Start a worker per tick instead of sending a message. Gated by `features.triggers`. |
+| `tclaude agent cron add --action spawn --target group:NAME --spawn-profile P --instruction "..." --interval 1h` | Start a worker per tick instead of sending a message. Needs `features.triggers` and `groups.messages.schedule`; when it fires, the job's owner also needs `agent.spawn` or `groups.members.spawn`. |
 | `tclaude agent cron disable <id>`, `enable <id>`            | Pause and resume a job without deleting it |
 | `tclaude agent cron run-now <id>`                           | Fire a job now, without waiting for its next tick |
 | `tclaude agent cron rm <id>`                                | Delete a job by ID (from `cron ls`)                                                   |
