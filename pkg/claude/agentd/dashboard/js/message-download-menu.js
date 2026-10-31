@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { attachmentSize, messageAttachments, messageExportHref } from './human-attachments.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 
@@ -29,9 +30,15 @@ export function triggerDownload(href, documentRef = globalThis.document) {
   link.remove();
 }
 
+const SHARED_CLIPBOARD = {
+  async writeText(text) {
+    if (!await writeClipboard(text)) throw new Error(clipboardFailure());
+  },
+};
+
 export function MessageDownloadMenu({
   message, node = '', toast, download = triggerDownload, fetchImpl = globalThis.fetch?.bind(globalThis),
-  clipboard = globalThis.navigator?.clipboard,
+  clipboard = SHARED_CLIPBOARD,
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
@@ -57,7 +64,7 @@ export function MessageDownloadMenu({
   };
   const copyMarkdown = async () => {
     try {
-      if (!clipboard?.writeText) throw new Error('clipboard unavailable');
+      if (!clipboard?.writeText) throw new Error(clipboardFailure());
       const response = await fetchImpl(messageExportHref(message.id, false, node));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       await clipboard.writeText(await response.text());

@@ -2,7 +2,7 @@ import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { createContext, h } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
-import { browserNotifyPermission, requestBrowserNotifyPermission } from './browser-notify.js';
+import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
@@ -37,7 +37,7 @@ function ConfigButton(props) { return routedControl('button', props); }
 function BrowserNotifyPermissionButton() {
   const [state, setState] = useState(() => browserNotifyPermission());
   if (state === 'unsupported') {
-    return html`<span class="cfg-hint" style="padding-left:0">This browser cannot raise notifications here (needs https or localhost).</span>`;
+    return html`<span class="cfg-hint" style="padding-left:0">${notificationsUnsupportedNote()}</span>`;
   }
   if (state === 'granted') return html`<span class="cfg-inline">✓ browser permission granted</span>`;
   const denied = state === 'denied';

@@ -38,12 +38,16 @@ type guideViewParams struct {
 }
 
 type guideViewResp struct {
-	Known      bool      `json:"known"`
-	Tab        string    `json:"tab"`
-	Path       string    `json:"path"`
-	Title      string    `json:"title"`
-	At         time.Time `json:"at"`
-	AgeSeconds int       `json:"age_seconds"`
+	Known bool      `json:"known"`
+	Tab   string    `json:"tab"`
+	Path  string    `json:"path"`
+	Title string    `json:"title"`
+	At    time.Time `json:"at"`
+	// AgeSeconds counts from the last view change, so it grows while the
+	// operator stays on one view. The two below show whether a tab is alive.
+	AgeSeconds           int  `json:"age_seconds"`
+	TabHeardAgeSeconds   *int `json:"tab_heard_age_seconds,omitempty"`
+	PagePolledAgeSeconds *int `json:"page_polled_age_seconds,omitempty"`
 }
 
 func guideViewCmd() *cobra.Command {
@@ -73,15 +77,30 @@ func runGuideView(p *guideViewParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	if !resp.Known {
-		fmt.Fprintln(stdout, "No dashboard view reported yet (the operator has not opened the dashboard since the daemon started).")
+		fmt.Fprintln(stdout, "No dashboard view reported since the daemon started.")
+		fmt.Fprintf(stdout, "connection: %s\n", guideConnection(resp))
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "tab:   %s\npath:  %s\n", resp.Tab, resp.Path)
 	if resp.Title != "" {
 		fmt.Fprintf(stdout, "title: %s\n", resp.Title)
 	}
-	fmt.Fprintf(stdout, "seen:  %ds ago\n", resp.AgeSeconds)
+	fmt.Fprintf(stdout, "on this view for: %ds (since the view last changed, not a sign of connection)\n", resp.AgeSeconds)
+	fmt.Fprintf(stdout, "connection: %s\n", guideConnection(resp))
 	return rcOK
+}
+
+// guideConnection says what the daemon last heard from the dashboard.
+func guideConnection(resp guideViewResp) string {
+	switch {
+	case resp.TabHeardAgeSeconds != nil && resp.PagePolledAgeSeconds != nil:
+		return fmt.Sprintf("tab reported %ds ago, page polled %ds ago", *resp.TabHeardAgeSeconds, *resp.PagePolledAgeSeconds)
+	case resp.TabHeardAgeSeconds != nil:
+		return fmt.Sprintf("tab reported %ds ago", *resp.TabHeardAgeSeconds)
+	case resp.PagePolledAgeSeconds != nil:
+		return fmt.Sprintf("page polled %ds ago, no tab has reported since the daemon started", *resp.PagePolledAgeSeconds)
+	}
+	return "nothing heard since the daemon started"
 }
 
 type guideCaptureParams struct {
@@ -167,6 +186,9 @@ func runGuideCapture(p *guideCaptureParams, stdout, stderr io.Writer) int {
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/dashboard/capture", map[string]any{"save": p.Save, "label": p.Label}, &resp, DaemonOpts{Timeout: guideCaptureTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
+		if de, ok := err.(*DaemonError); ok && de.Code == "permission" {
+			fmt.Fprintln(stderr, "Capture exists, but you do not hold dashboard.capture. Ask for it: tclaude agent sudo request dashboard.capture")
+		}
 		return MapDaemonErrorToRC(err)
 	}
 	image, err := base64.StdEncoding.DecodeString(resp.PNG)

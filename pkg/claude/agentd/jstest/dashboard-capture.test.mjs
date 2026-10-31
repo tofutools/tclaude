@@ -93,7 +93,7 @@ test('a tab reports presence, then shows the cue and hands in its render', async
   assert.equal(h.calls[1].url, '/api/companion/capture/c1');
   assert.equal(h.calls[1].body.png, globalThis.btoa('png'));
   assert.equal(h.calls[1].body.context.tab, 'groups');
-  assert.deepEqual(h.timers, [1500], 'and goes back to pinging');
+  assert.equal(h.timers.at(-1), 1500, 'and goes back to pinging');
   stop();
   assert.equal(h.listeners.size, 0, 'stopping removes every listener');
 });
@@ -120,6 +120,51 @@ test('a hidden tab says so and pings slowly', async () => {
   });
   await settle();
   assert.deepEqual(h.calls[0].body, { client: 'tab-3', focused: false, visible: false });
-  assert.deepEqual(h.timers, [10000]);
+  assert.equal(h.timers.at(-1), 10000);
+  stop();
+});
+
+test('a tab on a page without crypto.randomUUID still reports presence', async () => {
+  const h = presenceHarness([]);
+  h.win.crypto = { getRandomValues: (bytes) => bytes.fill(7) };
+  const stop = startCapturePresence({
+    win: h.win, fetchImpl: h.fetchImpl, tab: () => '', render: async () => new Blob(['png']),
+    setTimeoutImpl: () => 1, clearTimeoutImpl: () => {},
+  });
+  await settle();
+  assert.match(h.calls[0].body.client, /^07070707-0707-4707-8707-070707070707$/);
+  stop();
+});
+
+test('a ping that never answers cannot end presence', async () => {
+  const h = presenceHarness([]);
+  const pending = [];
+  let sent = 0;
+  const stop = startCapturePresence({
+    win: h.win, tab: () => '', randomId: () => 'tab-4',
+    fetchImpl: () => { sent += 1; return new Promise(() => {}); },
+    setTimeoutImpl: (fn, ms) => { pending.push({ fn, ms }); return pending.length; }, clearTimeoutImpl: () => {},
+  });
+  await settle();
+  assert.equal(sent, 1);
+  pending.find((t) => t.ms === 8000).fn();
+  await settle();
+  pending.find((t) => t.ms === 1500).fn();
+  await settle();
+  assert.equal(sent, 2, 'the loop goes on after the timeout');
+  stop();
+});
+
+test('a render that never finishes cannot end presence', async () => {
+  const h = presenceHarness([{ capture: { id: 'c9' } }]);
+  const pending = [];
+  const stop = startCapturePresence({
+    win: h.win, fetchImpl: h.fetchImpl, tab: () => '', randomId: () => 'tab-5', render: () => new Promise(() => {}),
+    setTimeoutImpl: (fn, ms) => { if (ms === 60) fn(); else pending.push({ fn, ms }); return 1; }, clearTimeoutImpl: () => {},
+  });
+  await settle();
+  pending.find((t) => t.ms === 20000).fn();
+  await settle();
+  assert.ok(pending.some((t) => t.ms === 1500), 'it goes back to pinging');
   stop();
 });

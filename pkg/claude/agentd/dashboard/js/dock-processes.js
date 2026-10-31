@@ -38,6 +38,7 @@ import {
   renameItem, togglePin,
 } from './dock-library.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 
@@ -300,12 +301,8 @@ export function DockProcesses({
       togglePin(prefs, 'processes', row.id);
       setPinsVersion((value) => value + 1);
     } else if (key === 'copy-item') {
-      try {
-        await navigator.clipboard.writeText(row.id);
-        notify?.(`copied ${row.id}`);
-      } catch {
-        notify?.('copy failed: the clipboard is not available here', true);
-      }
+      if (await writeClipboard(row.id)) notify?.(`copied ${row.id}`);
+      else notify?.(`copy failed: ${clipboardFailure()}`, true);
     } else if (key === 'export-item') {
       const failed = await exportWorkflow(row.id, { fetchImpl }).catch((cause) => cause.message);
       if (failed) notify?.(`export failed: ${failed}`, true);

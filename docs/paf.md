@@ -743,7 +743,11 @@ Each member of a group PAF lands like an
   and is translated otherwise, with the losses shown. A member whose
   conversation cannot land imports as configuration, with a warning. Its
   record still names its landing harness, so it resumes there.
-- **OpenCode:** a member landing on OpenCode imports as configuration for now.
+- **OpenCode:** a member landing on OpenCode installs its conversation into
+  this host's OpenCode store through the `opencode` CLI, which is where its
+  first resume reads it. The member resumes without tclaude's sandbox, so its
+  conversation shares that store with other unsandboxed OpenCode agents. Without
+  `opencode` installed it imports as configuration, with a warning.
 
 A Claude Code member landing on Claude Code takes the group import's own
 path, which rewrites embedded paths and keeps its conversation id unless it

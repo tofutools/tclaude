@@ -359,7 +359,7 @@ test('detaching a board carries it to the solo page, which renders it and sends 
   await harness.act(async () => { await page.start(); await wait(); });
   assert.ok(host.querySelector('svg.board-canvas'), 'the solo page renders the board');
   assert.ok([...host.querySelectorAll('button')].some((b) => b.textContent.includes('↩ dashboard')));
-  assert.ok(requests.includes('/api/snapshot'), 'it reads the roster, to name the agents on the board');
+  assert.ok(requests.includes('/api/snapshot?standalone=1'), 'it reads the roster, to name the agents on the board');
   page.dispose();
 });
 

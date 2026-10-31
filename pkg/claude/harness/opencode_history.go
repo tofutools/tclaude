@@ -240,6 +240,10 @@ func (h openCodeHistory) Validate(raw []byte, id string) error {
 func (h openCodeHistory) ValidateReader(r io.Reader, id string) error {
 	return rewriteOpenCodeHistory(r, id, "", "", io.Discard)
 }
+
+// ValidOpenCodeConvID says whether id has the shape of an OpenCode session id.
+func ValidOpenCodeConvID(id string) bool { return validOpenCodeHistoryID(id, "ses_") }
+
 func validOpenCodeHistoryID(id, prefix string) bool {
 	if len(id) <= len(prefix) || len(id) > 160 || id[:len(prefix)] != prefix {
 		return false

@@ -158,7 +158,7 @@ export function createStandaloneTerminalsPage({
     statusPollSelector = selector;
     stopStatusPoll = startStandaloneStatusPoll({
       selector, snapshot, fetchImpl, documentRef,
-      ...(soloSeed.board ? { path: '/api/snapshot', adopt: (value) => value, pollMs: STANDALONE_ROSTER_POLL_MS } : {}),
+      ...(soloSeed.board ? { path: '/api/snapshot?standalone=1', adopt: (value) => value, pollMs: STANDALONE_ROSTER_POLL_MS } : {}),
     });
   }
 

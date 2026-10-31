@@ -44,6 +44,18 @@ export function resizedPlacement(start, zone, dx, dy, viewport) {
   }, viewport);
 }
 
+// savedAfterResize is what a finished resize remembers. A window fitted to a small
+// viewport shows less than its saved size, so the side the drag did not touch
+// keeps the saved value.
+export function savedAfterResize(last, zone, saved) {
+  if (!saved) return last;
+  return {
+    ...last,
+    w: /[ew]/.test(zone) ? last.w : saved.w,
+    h: /[ns]/.test(zone) ? last.h : saved.h,
+  };
+}
+
 export function ResizeFrame({ placement, className, onResizeStart }) {
   return html`<div class=${`window-resize-frame ${className}`} aria-hidden="true"
     style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`}>
