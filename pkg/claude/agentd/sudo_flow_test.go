@@ -671,14 +671,14 @@ func TestSudo_RevokingLeavesPermanentPermissionsInForce(t *testing.T) {
 	routes := []struct {
 		name string
 		mux  func(f *testharness.Flow) http.Handler
-		path func(id int64, agentID string) string
+		paths func(ids []int64, agentID string) []string
 	}{
-		{"cli one", flowMux, func(id int64, _ string) string { return fmt.Sprintf("/v1/sudo/%d", id) }},
-		{"cli by agent", flowMux, func(int64, string) string { return "/v1/sudo?conv=" + conv }},
-		{"cli all", flowMux, func(int64, string) string { return "/v1/sudo?all=1" }},
-		{"dialog revoke", dashMux(t), func(id int64, _ string) string { return fmt.Sprintf("/api/sudo/%d", id) }},
-		{"End", dashMux(t), func(_ int64, agentID string) string { return "/api/sudo?agent_id=" + agentID }},
-		{"dialog revoke all", dashMux(t), func(int64, string) string { return "/api/sudo?all=1" }},
+		{"cli one", flowMux, func(ids []int64, _ string) []string { return eachSudoPath("/v1/sudo/%d", ids) }},
+		{"cli by agent", flowMux, func([]int64, string) []string { return []string{"/v1/sudo?conv=" + conv} }},
+		{"cli all", flowMux, func([]int64, string) []string { return []string{"/v1/sudo?all=1"} }},
+		{"dialog revoke", dashMux(t), func(ids []int64, _ string) []string { return eachSudoPath("/api/sudo/%d", ids) }},
+		{"End", dashMux(t), func(_ []int64, agentID string) []string { return []string{"/api/sudo?agent_id=" + agentID} }},
+		{"dialog revoke all", dashMux(t), func([]int64, string) []string { return []string{"/api/sudo?all=1"} }},
 	}
 	for _, route := range routes {
 		t.Run(route.name, func(t *testing.T) {
@@ -694,17 +694,22 @@ func TestSudo_RevokingLeavesPermanentPermissionsInForce(t *testing.T) {
 			}
 			agentID, _, err := db.EnsureAgentForConv(conv, "test")
 			require.NoError(t, err)
-			var last int64
+			var ids []int64
 			for _, slug := range []string{agentd.PermMessageDirect, agentd.PermHumanNotify} {
 				now := time.Now()
-				last, err = db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: slug,
+				id, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: slug,
 					GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test"})
 				require.NoError(t, err)
+				ids = append(ids, id)
 			}
 
-			revoke := testharness.Serve(route.mux(f), agentd.AsHumanPeer(testharness.JSONRequest(t,
-				http.MethodDelete, route.path(last, agentID), nil)))
-			require.Equalf(t, http.StatusOK, revoke.Code, "body=%s", revoke.Body.String())
+			for _, path := range route.paths(ids, agentID) {
+				revoke := testharness.Serve(route.mux(f), agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodDelete, path, nil)))
+				require.Equalf(t, http.StatusOK, revoke.Code, "body=%s", revoke.Body.String())
+			}
+			active, err := db.ListActiveSudoGrants(conv)
+			require.NoError(t, err)
+			require.Empty(t, active, "only the permanent sources can answer below")
 
 			overrides, err := db.ListAgentPermissionOverrideRowsForConv(conv)
 			require.NoError(t, err)
@@ -716,6 +721,14 @@ func TestSudo_RevokingLeavesPermanentPermissionsInForce(t *testing.T) {
 			assert.True(t, agentd.HoldsPermissionForTest(conv, agentd.PermHumanNotify), "default permission still in force")
 		})
 	}
+}
+
+func eachSudoPath(format string, ids []int64) []string {
+	paths := make([]string, 0, len(ids))
+	for _, id := range ids {
+		paths = append(paths, fmt.Sprintf(format, id))
+	}
+	return paths
 }
 
 func flowMux(f *testharness.Flow) http.Handler { return f.Mux }
@@ -739,6 +752,9 @@ func TestSudo_EndKeepsStoredStandingAndEndsStoredSudo(t *testing.T) {
 		GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test"})
 	require.NoError(t, err)
 	require.NoError(t, db.CarrySudoGrant(id))
+	before, err := db.ListActiveStewardCarriedSudo()
+	require.NoError(t, err)
+	require.Len(t, before, 1)
 
 	end := testharness.Serve(dashMessageMux(t), agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodDelete, "/api/sudo?agent_id="+agentID, nil)))

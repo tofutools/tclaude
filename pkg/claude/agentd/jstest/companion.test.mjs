@@ -1216,6 +1216,11 @@ test('elevated access shows on the agent, and End ends only its sudo', async (t)
   assert.match(stored.textContent, /agent\.spawn 12 min left, all future Stewards: ending it ends it for them too/);
   assert.doesNotMatch(stored.textContent, /agent\.stop 12 min left, all/, 'an instance grant says nothing about Stewards');
   assert.match(stored.querySelector('button').title, /stored for future Stewards/);
+  const deletes = () => calls.filter((call) => call.method === 'DELETE').length;
+  const before = deletes();
+  await harness.act(async () => { stored.querySelector('button').click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(deletes(), before + 1);
+  assert.equal(calls.filter((call) => call.url === '/api/permissions').length, 0);
 
   await harness.act(async () => { snap.value = { ...snap.value, sudo: [] }; });
   const left = view.container.querySelector('.companion-elevated');

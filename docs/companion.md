@@ -183,7 +183,8 @@ a band above its terminal lists what it holds. **End sudo** appears when it hold
 temporary sudo and ends that, with no confirmation; it can ask again. A sudo grant
 stored for all future Stewards ends for them too, and the band says so on that grant.
 Permanent access is listed but stays, including standing permissions stored for future
-Stewards: change standing and default permissions in the 🛡 editor,
+Stewards: change standing permissions in the 🛡 editor, Config defaults in
+**Config > Steward**,
 and access from a group or from owning one in Groups.
 
 ### Shutting it down

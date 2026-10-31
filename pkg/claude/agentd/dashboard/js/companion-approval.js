@@ -122,7 +122,7 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
     setBusy(true);
     try {
       await endSudoAccess(fetchImpl, agent);
-      notify(access.sudoStored ? `Ended ${agent.name}'s sudo, and future Stewards no longer get what was stored.`
+      notify(access.sudoStored ? `Ended ${agent.name}'s sudo, and future Stewards no longer get the stored sudo.`
         : `Ended ${agent.name}'s sudo.`);
     } catch (error) {
       notify(`Could not end ${agent.name}'s sudo: ${error?.message || error}`, true);
