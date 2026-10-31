@@ -348,7 +348,7 @@ func liveStewardConvs() []string {
 // stewardElevation is what a Steward holds beyond Config and the defaults,
 // sudo aside: the snapshot lists sudo for every agent.
 type stewardElevation struct {
-	// Standing grants are its own, so they can be revoked.
+	// Standing grants are its own, changed in the permissions editor.
 	Standing []string `json:"standing,omitempty"`
 	// Inherited ones come from a group, shared with other members, or from
 	// group ownership.

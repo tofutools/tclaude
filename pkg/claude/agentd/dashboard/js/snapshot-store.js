@@ -178,13 +178,15 @@ export const dashboardState = createDashboardState();
 
 // SNAPSHOT_STATIC_KEYS are the registries a snapshot leaves out when the
 // request's static_version still matches (dashboard.go snapshotStaticVersion).
-const SNAPSHOT_STATIC_KEYS = ['slugs', 'templates', 'profiles', 'roles', 'saved_prompts', 'plugins_catalog'];
+const SNAPSHOT_STATIC_KEYS = ['slugs', 'templates', 'profiles', 'roles', 'saved_prompts', 'plugins_catalog', 'harnesses', 'sandbox_impl'];
 
 // restoreUnchangedStatics fills next's omitted registries from prev, the
 // snapshot whose static_version the request sent. It changes next in place.
 export function restoreUnchangedStatics(next, prev) {
   if (!next?.static_unchanged || !prev || prev.static_version !== next.static_version) return next;
-  for (const key of SNAPSHOT_STATIC_KEYS) next[key] = prev[key];
+  // Only what this reply left out: a peer on an older build omits fewer keys.
+  for (const key of SNAPSHOT_STATIC_KEYS) next[key] = next[key] ?? prev[key];
+  if (next.permissions) next.permissions.scope_dim_options ??= prev.permissions?.scope_dim_options;
   return next;
 }
 

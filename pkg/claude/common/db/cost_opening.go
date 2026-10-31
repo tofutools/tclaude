@@ -32,7 +32,7 @@ const CostReadLimitDays = 40
 // RefreshCostOpening derives all of it from the ledger. It is a cache and never
 // the source of truth: every reader falls back to the full read when it is
 // missing, marked stale or unreadable. Triggers mark it stale when a row older
-// than its day changes (see migrateV292toV293), and a refresh audits it against
+// than its day changes (see migrateV293toV294), and a refresh audits it against
 // the ledger before replacing it.
 
 // CostWalkPosition is where a walk stands on a conversation.

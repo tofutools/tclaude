@@ -148,7 +148,7 @@ test('a peer poll sends the static_version it holds and keeps the registries an 
   await harness.act(() => { state.setFused('all'); });
   await harness.act(async () => { await timers.queue.shift().fn(); });
   await harness.act(async () => { await timers.queue.shift().fn(); });
-  assert.deepEqual(calls, ['/api/peer/inst_forge/snapshot', '/api/peer/inst_forge/snapshot?static_version=v1']);
+  assert.deepEqual(calls, ['/api/peer/inst_forge/snapshot', '/api/peer/inst_forge/snapshot?static_version=v1&static_catalogs=1']);
   assert.deepEqual(nodeApi.nodeSnapshot('inst_forge')?.roles, [{ name: 'reviewer' }], 'the unchanged reply keeps the roles already read');
   await harness.act(() => { activeTab.value = 'usage'; });
   await mounted.unmount(); state.dispose();

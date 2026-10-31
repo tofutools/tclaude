@@ -2,12 +2,12 @@ package db
 
 import "database/sql"
 
-// migrateV292toV293 adds the stored opening of the cost delta walk, see
+// migrateV293toV294 adds the stored opening of the cost delta walk, see
 // cost_opening.go. It stays empty until the daemon's first refresh, and readers
 // use the full history until then, so an upgrade changes no total. The triggers
 // mark it stale when any row older than its day changes in a way the walk or
 // the Costs view could see.
-func migrateV292toV293(d *sql.DB) error {
+func migrateV293toV294(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -59,7 +59,7 @@ func migrateV292toV293(d *sql.DB) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 293`); err != nil {
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 294`); err != nil {
 		return err
 	}
 	return tx.Commit()

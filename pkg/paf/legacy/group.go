@@ -48,6 +48,9 @@ type GroupWriteOptions struct {
 	// privacy.json; AllowedFindings records a human's allowance.
 	Findings        []paf.Finding
 	AllowedFindings bool
+	// EarlierLosses holds the stored loss reports of converted conversations,
+	// by conversation id. Each is written as that agent's losses.json.
+	EarlierLosses map[string]*paf.Losses
 }
 
 // WriteGroupExport writes a group export as a group PAF. group.json carries
@@ -108,6 +111,11 @@ func WriteGroupExport(exp *groupexport.Export, out io.Writer, opts GroupWriteOpt
 		}
 		if ag.Native != nil {
 			if err := w.WriteFile(ag.Native.Path, "application/jsonl", c.Content); err != nil {
+				return err
+			}
+		}
+		if l := opts.EarlierLosses[c.ConvID]; l != nil {
+			if err := w.WriteJSON(paf.AgentPath(key, "context/losses.json"), l); err != nil {
 				return err
 			}
 		}

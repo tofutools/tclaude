@@ -179,9 +179,13 @@ to later Stewards too, while revoking an instance-only grant affects that
 instance alone. `permissions.grant` and `permissions.revoke` cannot be stored.
 
 While an agent in the window holds elevated access, its tab and pill show **🔓**, and
-a band above its terminal lists what it holds. **End now** revokes what the agent
-holds itself, with no confirmation; it can ask again. Access from a group or from
-owning one is listed but stays, since other members share it. Change that in Groups.
+a band above its terminal lists what it holds. **End sudo** appears when it holds
+temporary sudo and ends that, with no confirmation; it can ask again. A sudo grant
+stored for all future Stewards ends for them too, and the band says so on that grant.
+Permanent access is listed but stays, including standing permissions stored for future
+Stewards: change standing permissions in the 🛡 editor, Config defaults in
+**Config > Steward**,
+and access from a group or from owning one in Groups.
 
 ### Shutting it down
 

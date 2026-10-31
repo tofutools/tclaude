@@ -406,7 +406,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
 
   const close = () => { setOpen(false); setPinned(false); };
   useExclusivePopover(rootRef, open, close, pinned);
-  useDismissablePopover(rootRef, open, close);
+  useDismissablePopover(rootRef, open, close, { hoverOpened: () => !pinned });
   useEffect(() => { if (!count) close(); }, [count]);
   if (!count) return null;
 
