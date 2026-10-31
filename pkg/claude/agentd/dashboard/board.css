@@ -132,12 +132,12 @@ body.slop, body.vegas {
 /* The minimap (js/board-minimap.js): paper like the canvas, so a drawing reads
    the same in both, with the theme's colours on everything around the paper. */
 .board-minimap {
-  position: absolute; right: 8px; bottom: 8px; z-index: 1; width: min(208px, 45%); display: flex; flex-direction: column;
+  position: absolute; right: 8px; bottom: 8px; z-index: 1; width: min(208px, 45%); max-height: 60%; display: flex; flex-direction: column;
   border: 1px solid var(--board-map-line); border-radius: 7px; overflow: hidden; box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
   background: var(--board-map-bar); color: var(--board-map-text);
 }
 .board-minimap-frame {
-  position: relative; height: 132px; max-height: 30vh; overflow: hidden; background: var(--board-paper);
+  position: relative; flex: 0 1 132px; min-height: 0; overflow: hidden; background: var(--board-paper);
   cursor: pointer; touch-action: none; user-select: none;
 }
 .board-minimap-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
