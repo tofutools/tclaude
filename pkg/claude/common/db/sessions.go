@@ -3202,7 +3202,7 @@ func costDailyRowsForWalk(fromDay, toDay string, withIgnored bool) ([]CostDailyR
 	if toDay != "" {
 		inWindow += ` AND day <= ?`
 		args = append(args, toDay)
-		upTo = ` AND day <= ?`
+		upTo = ` AND ` + costRowsUpTo(withIgnored)
 	}
 	if withIgnored {
 		inWindow += ` UNION SELECT conv_id FROM cost_ignored_convs`
@@ -3220,6 +3220,16 @@ func costDailyRowsForWalk(fromDay, toDay string, withIgnored bool) ([]CostDailyR
 		SELECT `+costDailyColumns+` FROM session_cost_daily
 		WHERE session_id IN (SELECT session_id FROM walked)`+upTo+`
 		ORDER BY `+costWalkOrder, args...)
+}
+
+// costRowsUpTo bounds a read at toDay: no row after it can change a delta up to
+// it. An ignored conversation is named by its latest delta wherever that falls,
+// so withIgnored keeps its later rows.
+func costRowsUpTo(withIgnored bool) string {
+	if withIgnored {
+		return `(day <= ? OR conv_id IN (SELECT conv_id FROM cost_ignored_convs))`
+	}
+	return `day <= ?`
 }
 
 // costRowQuerier is the part of *sql.DB and *sql.Tx the ledger reads use.

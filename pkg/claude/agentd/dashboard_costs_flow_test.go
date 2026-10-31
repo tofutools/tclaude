@@ -617,3 +617,30 @@ func TestDashboardCosts_DefaultViewFromStoredOpening(t *testing.T) {
 	older := fetchCosts(t, mux, "?from="+oldDay)
 	assert.Greater(t, older.TotalUSD, 9000.0, "an older range does read the older rows")
 }
+
+// An ignored conversation is named by its latest delta even when that falls
+// after the span: every read that stops at to must keep those rows.
+func TestDashboardCosts_IgnoredNamedFromRowsAfterTheSpan(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	day := func(n int) string { return now.AddDate(0, 0, -n).Format("2006-01-02") }
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, model, harness) VALUES ('ignored-sess', ?, 'ignored-conv', 3, 'late-model', 'codex')`, day(2))
+	require.NoError(t, err)
+	require.NoError(t, db.SetCostConvIgnored("ignored-conv", true))
+
+	check := func(label, query string) {
+		got := fetchCosts(t, mux, query)
+		require.Len(t, got.Ignored, 1, label)
+		assert.Equal(t, "late-model", got.Ignored[0].Model, label)
+		assert.Equal(t, "codex", got.Ignored[0].Harness, label)
+		assert.Zero(t, got.Ignored[0].CostUSD, label)
+	}
+	check("full read, older range", "?from="+day(90)+"&to="+day(60))
+	require.NoError(t, db.RefreshCostOpening(now))
+	check("older range", "?from="+day(90)+"&to="+day(60))
+	check("range inside the opening", "?from="+day(20)+"&to="+day(10))
+}

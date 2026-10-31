@@ -353,6 +353,16 @@ func TestCostOpening_BrokenStateFallsBack(t *testing.T) {
 			hasReal, err := HasCountedRealCost()
 			require.NoError(t, err)
 			assert.True(t, hasReal)
+			if strings.HasPrefix(name, "corrupt") {
+				due, err := CostOpeningDue(costTestNow(openingAt))
+				require.NoError(t, err)
+				assert.True(t, due, "an unreadable opening asks to be rebuilt")
+				require.NoError(t, RefreshCostOpening(costTestNow(openingAt)))
+				ledger, err := CostLedgerWindow(opening, "", true)
+				require.NoError(t, err)
+				assert.Equal(t, opening, ledger.OpeningDay, "and the rebuild restores it")
+				assertCostWindowMatchesFullWalk(t, all, ledger.Rows, opening, "")
+			}
 		})
 	}
 }

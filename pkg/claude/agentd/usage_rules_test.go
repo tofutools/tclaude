@@ -367,3 +367,39 @@ func TestUsageRules_AgentAdjustments(t *testing.T) {
 	pollUsageRules(time.Now())
 	require.Contains(t, f.agentSubjects("conv-b"), `Usage budget reached: please wrap up ("budget")`)
 }
+
+// A day, week or month rule reads inside the limit and gets the full ledger's
+// figure from it. A lifetime rule is the one period that needs the older rows.
+func TestUsageRules_SpendReadStaysInsideTheLimitUnlessLifetime(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 10)
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	old := now.AddDate(0, -3, 0).Format(costDayKey)
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES ('old-sess', ?, 'old-conv', 7), ('long-sess', ?, 'long-conv', 20), ('long-sess', ?, 'long-conv', 23)`,
+		old, old, now.Format(costDayKey))
+	require.NoError(t, err)
+	require.NoError(t, db.RefreshCostOpening(now))
+
+	spent := func(period usagerules.Period) float64 {
+		st := &usageRulesState{now: now, limits: []*db.UsageLimit{{Rule: usagerules.Rule{Metric: usagerules.MetricTotalUSD, Period: period}}}}
+		rows, err := st.spendRows()
+		require.NoError(t, err)
+		return sumUsageSlices(newUsageSpend(mixedCostDeltasFromRows(rows), nil).all, usagerules.MetricTotalUSD, usagerules.PeriodStartDay(period, now))
+	}
+	full, _, _, err := countedCostDailyRows()
+	require.NoError(t, err)
+	wantMonth := sumUsageSlices(newUsageSpend(mixedCostDeltasFromRows(full), nil).all, usagerules.MetricTotalUSD, usagerules.PeriodStartDay(usagerules.PeriodMonth, now))
+	require.InDelta(t, wantMonth, spent(usagerules.PeriodMonth), 1e-9)
+	lifetime := spent(usagerules.PeriodLifetime)
+
+	for _, trigger := range []string{"insert", "delete", "update"} {
+		_, err = d.Exec(`DROP TRIGGER cost_opening_stale_` + trigger)
+		require.NoError(t, err)
+	}
+	_, err = d.Exec(`UPDATE session_cost_daily SET cost_usd = 9999 WHERE day = ?`, old)
+	require.NoError(t, err)
+	require.InDelta(t, wantMonth, spent(usagerules.PeriodMonth), 1e-9, "a month rule reads no older row")
+	require.Greater(t, spent(usagerules.PeriodLifetime), lifetime, "a lifetime rule does")
+}

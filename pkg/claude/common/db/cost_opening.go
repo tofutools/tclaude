@@ -415,6 +415,7 @@ func CostLedgerWindow(fromDay, toDay string, withIgnored bool) (CostLedger, erro
 	}
 	if err != nil {
 		slog.Warn("cost opening balance unusable; reading the full cost history", "error", err)
+		markCostOpeningStale()
 	}
 	if !older {
 		slog.Debug("cost opening balance missing or stale; reading the full cost history", "from", fromDay)
@@ -424,6 +425,18 @@ func CostLedgerWindow(fromDay, toDay string, withIgnored bool) (CostLedger, erro
 		return CostLedger{}, err
 	}
 	return CostLedger{Rows: rows, NeedsRefresh: !older}, nil
+}
+
+// markCostOpeningStale makes a refresh rebuild state a reader could not use. The
+// read goes on without it, so a failure here costs only the rebuild.
+func markCostOpeningStale() {
+	d, err := Open()
+	if err != nil {
+		return
+	}
+	if _, err := d.Exec(`UPDATE cost_opening_meta SET stale = 1`); err != nil {
+		slog.Debug("cost opening: mark stale", "error", err)
+	}
 }
 
 // costLedgerFromOpening returns nil when the opening cannot serve the window;
@@ -446,7 +459,7 @@ func costLedgerFromOpening(fromDay, toDay string, withIgnored bool) (ledger *Cos
 	query := `SELECT ` + costDailyColumns + recentCostRowsFrom
 	args := []any{meta.day}
 	if toDay != "" {
-		query += ` AND day <= ?`
+		query += ` AND ` + costRowsUpTo(withIgnored)
 		args = append(args, toDay)
 	}
 	rows, err := scanCostDailyRows(d, query+` ORDER BY `+costWalkOrder, args...)

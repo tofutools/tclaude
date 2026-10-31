@@ -36,6 +36,8 @@ func TestDashboardPollPerfReport(t *testing.T) {
 	seedPollPerfHistory(t, f.HaveGroup, f.HaveMember, f.HaveConvWithTitle, f.HaveRetiredAgent, func(conv, label, tmux string) {
 		f.HaveAliveSession(conv, label, tmux, f.TestCwd(label))
 	})
+	// The daemon's refresher does this at startup; a test has no daemon.
+	require.NoError(t, db.RefreshCostOpening(time.Now()))
 	mux := agentd.BuildDashboardHandlerForTest()
 
 	first := httptest.NewRecorder()
