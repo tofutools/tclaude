@@ -1,0 +1,10 @@
+{
+  "frozenTime": "2026-06-16T10:30:00Z",
+  "width": 1680,
+  "height": 1050,
+  "shots": [
+    {"name": "dashboard-groups", "fixture": "fleet", "page": "/", "tab": "groups", "target": "docs/assets/dashboard-groups.png", "width": 1760, "height": 1300, "steps": []},
+    {"name": "dashboard-usage-overview", "fixture": "fleet", "page": "/usage", "tab": "usage", "target": "docs/assets/dashboard-usage-overview.png", "steps": []},
+    {"name": "learn-dashboard-lead-team", "fixture": "learn", "page": "/", "tab": "groups", "target": "docs/assets/learn-dashboard-lead-team.png", "width": 1400, "height": 480, "steps": []}
+  ]
+}

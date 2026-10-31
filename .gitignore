@@ -88,3 +88,5 @@ excalidraw.log
 
 # GoReleaser output. Untracked here, it marks every release build as modified.
 /dist/
+
+docshots-out/
