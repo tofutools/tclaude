@@ -134,7 +134,7 @@ function drawElement(ctx, el, box, scale) {
     String(el.text || '').split('\n').forEach((line, i) => ctx.fillText(line, box.x, box.y + size * (i + 1) * 1.1));
     return;
   }
-  if (el.points) {
+  if (el.points?.length) {
     const step = Math.ceil(el.points.length / MAX_LINE_POINTS);
     ctx.beginPath();
     for (let i = 0; i < el.points.length; i += step) {
@@ -261,7 +261,8 @@ export function BoardMinimap({ elements, tick, view, svgRef, onScreen = true, wi
       marker.style.width = `${width}px`;
       marker.style.height = `${height}px`;
     }
-    const key = `${tick},${window.x},${window.y},${window.scale},${frame.width},${frame.height}`;
+    // The ratio changes when the page moves to another screen.
+    const key = `${tick},${window.x},${window.y},${window.scale},${frame.width},${frame.height},${win?.devicePixelRatio}`;
     if (key !== drawn.current) {
       drawn.current = key;
       schedule();
@@ -280,6 +281,15 @@ export function BoardMinimap({ elements, tick, view, svgRef, onScreen = true, wi
     if (svgRef.current) observer.observe(svgRef.current);
     return () => observer.disconnect();
   }, [collapsed, win]);
+
+  // A tab stays mounted while another is showing, and that one may have changed
+  // the map's settings.
+  useEffect(() => {
+    if (!onScreen) return;
+    drawn.current = '';
+    setCollapsed(prefs.getItem(BOARD_MINIMAP_COLLAPSED_PREF) === '1');
+    setZoom(clampMinimapZoom(Number(prefs.getItem(BOARD_MINIMAP_ZOOM_PREF) || 1)));
+  }, [onScreen]);
 
   useEffect(() => () => {
     if (win?.cancelAnimationFrame) win.cancelAnimationFrame(pendingDraw.current);

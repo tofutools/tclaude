@@ -254,6 +254,22 @@ test('the minimap collapses, and stays collapsed', async (t) => {
   assert.equal(dashPrefs.getItem(minimap.BOARD_MINIMAP_COLLAPSED_PREF), '0');
 });
 
+test('a tab left mounted picks up the map settings when it comes back', async (t) => {
+  const { harness, island, minimap, dashPrefs } = await setup(t);
+  const shown = harness.signals.signal(true);
+  const snapshot = harness.signals.signal({ groups: [] });
+  const Host = () => harness.html`<${island.BoardEditor} boardId="plan" onScreen=${shown.value} snapshot=${snapshot}
+    fetchImpl=${boardFetch({ version: 1, elements: [] })} win=${harness.window} rasterize=${null} />`;
+  const { container: root } = await harness.mount(harness.html`<${Host} />`);
+  await harness.act(() => wait());
+  assert.ok(root.querySelector('.board-minimap'));
+  await harness.act(() => { shown.value = false; });
+  dashPrefs.setItem(minimap.BOARD_MINIMAP_COLLAPSED_PREF, '1');
+  await harness.act(() => { shown.value = true; });
+  await harness.act(() => wait());
+  assert.equal(root.querySelector('.board-minimap'), null);
+});
+
 test('a pan does not re-render the shapes', async (t) => {
   const { harness, mount } = await setup(t);
   const root = await mount(boardFetch({ version: 1, elements: [{ ...rect(0, 0, 100, 100), id: 'a' }] }));
