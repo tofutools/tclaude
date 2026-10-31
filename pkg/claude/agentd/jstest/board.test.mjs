@@ -196,6 +196,58 @@ async function drawnBoard(t, { answer, board = {} } = {}) {
 
 const pageHide = (harness) => harness.window.dispatchEvent(new harness.window.Event('pagehide'));
 
+test('an event the daemon rate limits goes out again with the newer edits', async (t) => {
+  let limited = true;
+  const board = await drawnBoard(t, {
+    answer: async (url, init) => {
+      if (url.endsWith('/events') && limited) {
+        limited = false;
+        const { harness, view, svg } = board;
+        await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Rectangle' }).click());
+        await harness.act(() => pointer(harness, svg, 'pointerdown', 300, 100));
+        await harness.act(() => pointer(harness, svg, 'pointermove', 420, 160));
+        await harness.act(() => pointer(harness, svg, 'pointerup', 420, 160));
+        return ok({ error: 'rate_limited' }, 429);
+      }
+      return null;
+    },
+  });
+  const { harness, settle, events, island } = board;
+  await settle();
+  assert.equal(events().length, 1);
+  assert.match(events()[0].body.text, /drew rectangle\.$/);
+  await harness.act(() => wait(island.BOARD_EVENT_RETRY_MS + 100));
+  assert.equal(events().length, 2);
+  assert.match(events()[1].body.text, /drew rectangle, rectangle\.$/);
+  await settle();
+  assert.equal(events().length, 2, 'an accepted event is not sent again');
+});
+
+test('a closed editor resends a rate limited event once', async (t) => {
+  const { harness, view, settle, events, island } = await drawnBoard(t, {
+    answer: async (url) => (url.endsWith('/events') ? ok({ error: 'rate_limited' }, 429) : null),
+  });
+  await harness.act(() => wait(island.BOARD_FLUSH_MS + 60));
+  await view.unmount();
+  await wait(50);
+  assert.equal(events().length, 1, 'closing tells the agents straight away');
+  await wait(island.BOARD_EVENT_RETRY_MS + 100);
+  assert.equal(events().length, 2);
+  assert.deepEqual(events()[1].body, events()[0].body);
+  await wait(island.BOARD_EVENT_RETRY_MS + 100);
+  assert.equal(events().length, 2);
+  await settle();
+});
+
+test('other event failures are not retried', async (t) => {
+  const { harness, settle, events, island } = await drawnBoard(t, {
+    answer: async (url) => (url.endsWith('/events') ? ok({ error: 'tmux' }, 503) : null),
+  });
+  await settle();
+  await harness.act(() => wait(island.BOARD_EVENT_RETRY_MS + 100));
+  assert.equal(events().length, 1);
+});
+
 test('an edit still waiting for its save goes out on pagehide, keepalive and once', async (t) => {
   const { harness, patches, settle } = await drawnBoard(t);
   assert.equal(patches().length, 0, 'the debounce holds it');
