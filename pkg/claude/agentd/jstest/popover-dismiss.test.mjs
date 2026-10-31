@@ -51,6 +51,21 @@ test('the pointer staying away closes, coming back in time keeps it', async (t) 
 });
 
 let hovering = false;
+test('a fading popover closes after the fade, unless the pointer comes back', async (t) => {
+  const fades = [];
+  const { closed, leave, enter, wait } = await watched(t, undefined, { fadeMs: 60, fading: (on) => fades.push(on) });
+  leave();
+  await wait();
+  assert.deepEqual([fades, closed], [[true], []]);
+  enter();
+  await wait();
+  assert.deepEqual([fades, closed], [[true, false], []]);
+  leave();
+  await wait();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.deepEqual([fades, closed], [[true, false, true], ['away']]);
+});
+
 test('a click-opened popover outlasts the hover delay, a hover-opened one does not', async (t) => {
   const { harness, closed, leave } = await watched(t, undefined, { hoverOpened: () => hovering });
   const { HOVER_CLOSE_MS, CLICK_CLOSE_MS } = await harness.importDashboardModule('js/hover-popover.js');

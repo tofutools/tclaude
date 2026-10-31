@@ -92,7 +92,9 @@ const watched = [];
 // hold() keeps it through hover-away, and the check repeats while the pointer
 // is away, so it closes once the reason ends. A press or Escape still closes.
 // A popover that hover can open too passes hoverOpened(), and takes the hover
-// delay for as long as that says so.
+// delay for as long as that says so. fadeMs is for a popover that fades out as
+// hover-away closes it: fading(true) starts the fade, close follows fadeMs
+// later, and the pointer coming back first calls fading(false) and keeps it.
 //
 // A cog menu focuses its filter as it opens, which is why focus alone does not
 // count: the field counts once the operator pressed it or used the keyboard.
@@ -104,7 +106,7 @@ const watched = [];
 // waits behind it. A popover inside that dialog carries on as usual. escape:
 // false is for a menu whose Escape does something first, like clearing its
 // filter. The returned function stops watching.
-export function watchPopover({ roots, close, hold = null, hoverOpened = null, escape = true, doc = null }) {
+export function watchPopover({ roots, close, hold = null, hoverOpened = null, escape = true, fadeMs = 0, fading = null, doc = null }) {
   const parts = () => [roots()].flat().filter(Boolean);
   const within = (target) => parts().some((root) => root.contains?.(target));
   const owner = doc || parts()[0]?.ownerDocument || globalThis.document;
@@ -113,6 +115,7 @@ export function watchPopover({ roots, close, hold = null, hoverOpened = null, es
   let away = false;
   let pressed = false;
   let engaged = false;
+  let fadingOut = false;
   const cancel = () => {
     if (timer) globalThis.clearTimeout(timer);
     timer = 0;
@@ -124,17 +127,31 @@ export function watchPopover({ roots, close, hold = null, hoverOpened = null, es
     const active = owner?.activeElement;
     return (engaged && isTextField(active) && within(active)) || parts().some(holdsText);
   };
+  const fade = () => {
+    fadingOut = true;
+    fading?.(true);
+    timer = globalThis.setTimeout(() => {
+      timer = 0;
+      close('away');
+    }, fadeMs);
+  };
   const schedule = () => {
     cancel();
     timer = globalThis.setTimeout(() => {
       timer = 0;
       if (!away) return;
       if (held()) schedule();
+      else if (fadeMs) fade();
       else close('away');
     }, hoverOpened?.() ? HOVER_CLOSE_MS : CLICK_CLOSE_MS);
   };
   const onLeave = () => { away = true; schedule(); };
-  const onEnter = () => { away = false; cancel(); };
+  const onEnter = () => {
+    away = false;
+    cancel();
+    if (fadingOut) fading?.(false);
+    fadingOut = false;
+  };
   const onPointerDown = (event) => {
     if (dialogAbove()) return;
     if (within(event.target)) {
@@ -195,6 +212,7 @@ export function useDismissablePopover(roots, open, close, options = {}) {
       close: (why) => latest.current.close(why),
       hold: () => !!latest.current.options.hold?.(),
       hoverOpened: () => !!latest.current.options.hoverOpened?.(),
+      fading: (on) => latest.current.options.fading?.(on),
     });
   }, [open]);
 }
