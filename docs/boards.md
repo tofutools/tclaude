@@ -29,7 +29,6 @@ from any corner; it keeps its place. Clicking the overlay or the companion
 brings that one forward. **Back to a tab** returns the board to the strip. One
 board floats at a time: opening another sends the first back to a tab.
 
-<<<<<<< HEAD
 ### Drawing
 
 The toolbar's tools have keys: **V** select, **H** pan, **R** rectangle, **O** ellipse,
@@ -52,7 +51,7 @@ person's chip to open that agent in the companion, or **×** to remove them. **�
 agent** lists live agents and also sends the one you pick instructions for using
 boards. The group selector files the board under a group, and **⤓** downloads it as
 `.excalidraw`.
-=======
+
 ### Connecting shapes
 
 With the select, arrow, line or pen tool, a shape shows four snap points, the
@@ -87,7 +86,6 @@ double-click again to change it. Text sits in the middle of a box or halfway
 along a line, moves with its shape, and masks the line behind it. Empty the text
 to remove it. Clicking the text picks its shape. Text does not wrap to fit a
 shape.
->>>>>>> origin/main
 
 ### Picking a tool
 
@@ -119,13 +117,8 @@ every board, including a fleet map, whose cards show agents' tasks and PRs.
 
 | Slug | Allows |
 |---|---|
-<<<<<<< HEAD
 | `boards.read` | `board ls`, `board show`, `board snapshot`, `board fleet-changes` (with `fleet.read`) |
-| `boards.write` | `board create`, every change (`add`, `patch`, `rm`, `move`, `text`, `layout`, `from-fleet`, `from-process`), and `board open` and `board close` on the agent's own session |
-=======
-| `boards.read` | `board ls`, `board show`, `board snapshot` |
-| `boards.write` | `board create`, every change (`add`, `patch`, `rm`, `move`, `text`, `connect`), and `board open` and `board close` on the agent's own session |
->>>>>>> origin/main
+| `boards.write` | `board create`, every change (`add`, `patch`, `rm`, `move`, `text`, `connect`, `layout`, `from-fleet`, `from-process`), and `board open` and `board close` on the agent's own session |
 
 Neither is default-granted, although a Steward gets both when summoned:
 
@@ -219,14 +212,6 @@ connectors (`startBinding`, `endBinding`, `routing`), and `version`,
 at most 5000 live elements and 20000 stored ones (tombstones included), and
 there are at most 500 boards. A patch that breaks a limit changes nothing.
 
-<<<<<<< HEAD
-Only `text` elements carry text. A shape's label is a text element inside it,
-so `board add <shape> --text ...` adds a second, centred text element
-(`<id>-label`). `board move` carries the label and any bound arrows; a raw
-`patch` does not. Elements are returned in creation
-order, which is also their stacking order, and an edit keeps an element's
-place.
-=======
 Only `text` elements draw text. Text on a shape or line is a second element
 (`<id>-label`) whose `containerId` names what it sits on, as in Excalidraw. The
 stored `x` and `y` are kept up to date, but the editor places it from its
@@ -247,7 +232,6 @@ attached end from its binding, so a line stays on its shape after a raw `patch`
 or a merge of two edits, without anyone saving the line. A binding to a deleted
 element reads as a free end. A bound line with bends and no `routing`, as
 `board from-process` draws rework, keeps its path until an end moves.
->>>>>>> origin/main
 
 Each element merges on its own, as Excalidraw reconciles: an incoming element
 replaces the stored one when there is none, when its `version` is higher, or
