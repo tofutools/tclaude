@@ -388,21 +388,30 @@ func loadCostOpeningsFor[T any](q costRowQuerier, query string, keys []string, o
 // conversation, so a day filter on it would visit every older entry.
 const recentCostRowsFrom = ` FROM session_cost_daily INDEXED BY idx_session_cost_daily_day WHERE day >= ?`
 
-var costReadsFromOpening, costReadsFull, costReadsOlderRange atomic.Int64
+var costReadsFromOpening, costReadsFull, costReadsOlderRange, costReadsLifetimeRule atomic.Int64
 
-// CostReadCounts counts this process's window reads since the last
+// CostReadCounts counts this process's cost reads since the last
 // TakeCostReadCounts. FullHistory is what a live install should keep near zero:
-// default reads the stored opening could not serve.
+// default reads the stored opening could not serve. LifetimeRule is the whole
+// ledger read that lifetime usage rules need by design.
 type CostReadCounts struct {
-	FromOpening, FullHistory, OlderRange int64
+	FromOpening, FullHistory, OlderRange, LifetimeRule int64
 }
+
+// NoteFullCostRead counts a default read that took the whole ledger because the
+// stored opening could not serve it, for a caller that skipped CostLedgerWindow.
+func NoteFullCostRead() { costReadsFull.Add(1) }
+
+// NoteLifetimeRuleCostRead counts a whole ledger read for a lifetime usage rule.
+func NoteLifetimeRuleCostRead() { costReadsLifetimeRule.Add(1) }
 
 // TakeCostReadCounts returns the counts and starts new ones.
 func TakeCostReadCounts() CostReadCounts {
 	return CostReadCounts{
-		FromOpening: costReadsFromOpening.Swap(0),
-		FullHistory: costReadsFull.Swap(0),
-		OlderRange:  costReadsOlderRange.Swap(0),
+		FromOpening:  costReadsFromOpening.Swap(0),
+		FullHistory:  costReadsFull.Swap(0),
+		OlderRange:   costReadsOlderRange.Swap(0),
+		LifetimeRule: costReadsLifetimeRule.Swap(0),
 	}
 }
 

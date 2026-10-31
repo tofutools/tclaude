@@ -89,7 +89,7 @@ func logCostReadCounts() {
 		logAt = slog.Warn
 	}
 	logAt("cost reads since the last report", "from_opening", counts.FromOpening,
-		"full_history", counts.FullHistory, "older_range", counts.OlderRange)
+		"full_history", counts.FullHistory, "older_range", counts.OlderRange, "lifetime_rule", counts.LifetimeRule)
 }
 
 func refreshCostOpening(now time.Time) {

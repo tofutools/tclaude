@@ -449,17 +449,24 @@ func TestUsageRules_UnassignedLifetimeRuleKeepsTheWindow(t *testing.T) {
 
 	st := &usageRulesState{now: time.Now(),
 		profiles:    map[int64]*db.UsageProfile{lifetime.ID: lifetime, assigned.ID: assigned},
-		assignments: []db.UsageProfileAssignment{{ProfileID: assigned.ID}},
+		assignments: []db.UsageProfileAssignment{{Scope: db.UsageScopeGlobal, ProfileID: assigned.ID}},
 	}
 	db.TakeCostReadCounts()
 	_, _, err := st.spendRows()
 	require.NoError(t, err)
 	require.Equal(t, db.CostReadCounts{FromOpening: 1}, db.TakeCostReadCounts())
 
-	st.assignments = append(st.assignments, db.UsageProfileAssignment{ProfileID: lifetime.ID})
+	st.assignments = append(st.assignments,
+		db.UsageProfileAssignment{Scope: db.UsageScopeSpawnProfile, ScopeID: "linked", ProfileID: lifetime.ID},
+		db.UsageProfileAssignment{Scope: db.UsageScopeAgent, ScopeID: "agt_retired", ProfileID: lifetime.ID})
 	_, _, err = st.spendRows()
 	require.NoError(t, err)
-	require.Equal(t, db.CostReadCounts{}, db.TakeCostReadCounts(), "an assigned lifetime rule takes the plain full read")
+	require.Equal(t, db.CostReadCounts{FromOpening: 1}, db.TakeCostReadCounts(), "a link or a retired agent evaluates nothing")
+
+	st.assignments = append(st.assignments, db.UsageProfileAssignment{Scope: db.UsageScopeGroup, ScopeID: "1", ProfileID: lifetime.ID})
+	_, _, err = st.spendRows()
+	require.NoError(t, err)
+	require.Equal(t, db.CostReadCounts{LifetimeRule: 1}, db.TakeCostReadCounts(), "an assigned lifetime rule reads the whole ledger, and it shows")
 }
 
 // An opening that cannot serve the rule read costs one full read, not a window
@@ -471,7 +478,7 @@ func TestUsageRules_UnusableOpeningReadsOnce(t *testing.T) {
 	db.TakeCostReadCounts()
 	_, _, err := st.spendRows()
 	require.NoError(t, err)
-	require.Equal(t, db.CostReadCounts{}, db.TakeCostReadCounts())
+	require.Equal(t, db.CostReadCounts{FullHistory: 1}, db.TakeCostReadCounts())
 }
 
 // Ignored old spend does not count as having spent: an agent whose only older
