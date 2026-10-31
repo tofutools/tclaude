@@ -563,6 +563,17 @@ export function CompanionApp({
     writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
   }
 
+  // A click on the title bar or other empty space leaves focus on the page.
+  // Give it back to the terminal, so typing works and the border returns.
+  // Controls keep their click, which may have opened a dialog, and a text
+  // selection survives so it can be copied.
+  function onWindowClick(event) {
+    if (event.target.closest?.('button, a, input, textarea, select, label')) return;
+    if (win?.getSelection?.()?.isCollapsed === false) return;
+    const active = win?.document?.activeElement;
+    if (!active || active === win.document.body) setFocusToken((n) => n + 1);
+  }
+
   function onTitlePointerDown(event) {
     if (event.button !== 0 || event.target.closest?.('button, input, [role="tab"]')) return;
     const node = windowRef.current;
@@ -1244,7 +1255,7 @@ export function CompanionApp({
 
   const windowView = open && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}`}
-    style=${style} role="dialog" aria-label="Companion" aria-modal="false">
+    style=${style} role="dialog" aria-label="Companion" aria-modal="false" onClick=${onWindowClick}>
     <header class="companion-titlebar" onPointerDown=${onTitlePointerDown}>
       <span class="companion-grip" aria-hidden="true">⋮⋮</span>
       <div class="companion-tabs" role="tablist" aria-label="Companion agents">

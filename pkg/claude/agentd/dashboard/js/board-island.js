@@ -19,10 +19,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import htm from 'htm';
 import {
   ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardIdFromTitle, bump, changeBounds,
-  cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, elementBounds, elementsInBox,
+  boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, elementBounds, elementsInBox,
   labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
   reboundArrows, routeConnector, shapeAt, shapeNear, simplifyStroke, snapHit, snapPoints, suggestedShape, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
+import { BoardMinimap } from './board-minimap.js';
 import { companionAgents } from './companion-model.js';
 
 const html = htm.bind(h);
@@ -189,6 +190,9 @@ export function BoardEditor({
   onScreen = true, visible = null, headActions = null, onTitle = null,
 }) {
   const elements = useRef(new Map());
+  // The live elements as drawn, by id: lines on their shapes and text on its
+  // container. One Map refilled on each change, as the minimap expects.
+  const drawnMap = useRef(new Map());
   const version = useRef(0);
   const [tick, setTick] = useState(0);
   const redraw = useCallback(() => setTick((n) => n + 1), []);
@@ -1067,6 +1071,13 @@ export function BoardEditor({
     if (el.type !== 'freedraw') setSelected([done.id]);
   }
 
+  // centerOn moves the view to a board point, at the zoom it has.
+  const centerOn = useCallback((x, y) => {
+    const rect = svgRef.current?.getBoundingClientRect?.();
+    if (!rect?.width || !rect?.height) return;
+    setView((v) => ({ ...v, x: x - rect.width / 2 / v.zoom, y: y - rect.height / 2 / v.zoom }));
+  }, []);
+
   function onWheel(event) {
     event.preventDefault();
     const rect = svgRef.current?.getBoundingClientRect?.() || { left: 0, top: 0 };
@@ -1153,7 +1164,9 @@ export function BoardEditor({
   useEffect(() => {
     const ours = (event) => {
       const target = event.target;
-      if (editingText || target?.closest?.('input, textarea, [contenteditable="true"], .companion-window')) return false;
+      // Typing belongs to whatever holds the focus: a field, a terminal (xterm
+      // takes keys in a textarea), a select's type-ahead, another editor.
+      if (editingText || target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), .companion-window')) return false;
       if (!shown()) return false;
       return !!rootRef.current?.contains?.(target) || (target === win?.document?.body && lastEditor === editorToken);
     };
@@ -1181,7 +1194,7 @@ export function BoardEditor({
       if (mod || event.altKey) return;
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length) { event.preventDefault(); remove(selected); return; }
       if (event.key === 'Escape') { suggesting.current = null; setSelected([]); setTool('select'); return; }
-      const t = BOARD_TOOLS.find((candidate) => candidate.key === key);
+      const t = BOARD_TOOLS.find((candidate, index) => candidate.key === key || boardToolDigit(index) === key);
       if (t) setTool(t.id);
     };
     // Copy and paste use the system clipboard in Excalidraw's format, so
@@ -1288,8 +1301,14 @@ export function BoardEditor({
 
   // -- render -------------------------------------------------------------------
 
-  const live = drawnElements(elements.current);
-  const drawnById = new Map(live.map((el) => [el.id, el]));
+  // A pan or a zoom changes no element, so it works none of this out again.
+  const live = useMemo(() => {
+    const list = drawnElements(elements.current);
+    drawnMap.current.clear();
+    for (const el of list) drawnMap.current.set(el.id, el);
+    return list;
+  }, [tick]);
+  const drawnById = drawnMap.current;
   const sels = selected.map((id) => drawnById.get(id)).filter(Boolean);
   const sel = sels.length === 1 ? sels[0] : null;
   const lines = sels.filter((el) => el.type === 'arrow' || el.type === 'line');
@@ -1308,6 +1327,9 @@ export function BoardEditor({
   const groupNames = [...new Set([meta.group, ...(snapshot.value?.groups || []).filter((g) => g?.name && !g.scribe && !g.archived).map((g) => g.name)].filter(Boolean))].sort();
   const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId) && !meta.groupMembers.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
   void tick;
+  // A pan or a zoom renders the editor without changing an element: the same
+  // list lets Preact skip every shape, which a board of thousands needs.
+  const drawn = useMemo(() => live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} onLine=${!!drawnById.get(el.containerId)?.points} />`), [tick, flash]);
 
   return html`<div ref=${rootRef} class="board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }}>
     <header class="board-head">
@@ -1348,9 +1370,13 @@ export function BoardEditor({
       ${headActions}
     </header>
     <div class="board-toolbar" role="toolbar" aria-label="Board tools">
-      ${BOARD_TOOLS.map((t) => html`<button key=${t.id} type="button" class=${`board-tool${tool === t.id ? ' on' : ''}`}
-        aria-pressed=${tool === t.id ? 'true' : 'false'} title=${`${t.label} (${t.key.toUpperCase()})`} aria-label=${t.label}
-        onClick=${() => setTool(t.id)}>${t.icon}</button>`)}
+      ${BOARD_TOOLS.map((t, index) => {
+        const digit = boardToolDigit(index);
+        const keys = digit ? [digit, t.key.toUpperCase()] : [t.key.toUpperCase()];
+        return html`<button key=${t.id} type="button" class=${`board-tool${tool === t.id ? ' on' : ''}`}
+          aria-pressed=${tool === t.id ? 'true' : 'false'} title=${`${t.label} (${keys.join(' or ')})`} aria-label=${t.label}
+          aria-keyshortcuts=${keys.join(' ')} onClick=${() => setTool(t.id)}>${t.icon}${digit && html`<span class="board-tool-digit" aria-hidden="true">${digit}</span>`}</button>`;
+      })}
       <span class="board-sep"></span>
       ${BOARD_COLORS.map((c) => html`<button key=${c} type="button" class=${`board-swatch${color === c ? ' on' : ''}`} style=${`background:${c}`}
         aria-label=${`Stroke ${c}`} onClick=${() => { setColor(c); if (sels.length) commit(sels.map((el) => bump(el, { strokeColor: c }))); }}></button>`)}
@@ -1372,9 +1398,10 @@ export function BoardEditor({
     <div class="board-canvas-wrap">
       <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`}
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
+        onPointerLeave=${() => setHoverShape('')}
         onWheel=${onWheel} onDblClick=${onDoubleClick}>
         <g data-board-viewport transform=${transform}>
-          ${live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} onLine=${!!drawnById.get(el.containerId)?.points} />`)}
+          ${drawn}
           ${(sels.length > 0 || band || snapShape || offer) && html`<g data-board-chrome>
             ${sels.map((el) => {
               const b = elementBounds(el);
@@ -1405,6 +1432,7 @@ export function BoardEditor({
         onBlur=${finishText}></textarea>`}
       ${drawing.length > 0 && html`<div class="board-drawing-note" role="status">✎ ${drawing.join(', ')} ${drawing.length === 1 ? 'is' : 'are'} drawing…</div>`}
       ${!live.length && status === 'ready' && html`<div class="board-empty-hint">Pick a tool and draw. Invite an agent to draw with you; it reads the board as shapes and as an image.</div>`}
+      <${BoardMinimap} elements=${drawnMap.current} tick=${tick} view=${view} svgRef=${svgRef} onScreen=${onScreen} win=${win} onNavigate=${centerOn} />
     </div>
   </div>`;
 }

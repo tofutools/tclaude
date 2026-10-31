@@ -21,6 +21,12 @@ export const BOARD_TOOLS = Object.freeze([
   { id: 'eraser', key: 'e', label: 'Eraser', icon: '⌫' },
 ]);
 
+// boardToolDigit is the number key of the tool at `index`: the keyboard's row,
+// 1 to 9 and then 0. A tool past the tenth has none.
+export function boardToolDigit(index) {
+  return index < 9 ? String(index + 1) : index === 9 ? '0' : '';
+}
+
 export const BOARD_COLORS = Object.freeze(['#1e1e1e', '#e03131', '#2f9e44', '#1971c2', '#f08c00', '#9c36b5']);
 export const BOARD_FILLS = Object.freeze(['transparent', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99', '#eebefa']);
 

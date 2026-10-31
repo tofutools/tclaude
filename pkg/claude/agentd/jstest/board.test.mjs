@@ -916,6 +916,15 @@ test('the editor attaches lines at snap points, offers a next shape, and routes 
   await harness.act(() => pointer(harness, svg, 'pointermove', 450 + 40, 165 + 40));
   await harness.act(() => pointer(harness, svg, 'pointerdown', 450 + 40, 160 + 40));
   await harness.act(() => pointer(harness, svg, 'pointerup', 450 + 40, 160 + 40));
+  // A number key picks another tool, which takes the offer back too.
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: '3' }));
+  await harness.act(() => wait(20));
+  assert.equal(svg.querySelector('.board-suggestion'), null, 'a number key takes it back');
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: '1' }));
+  await harness.act(() => wait(20));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 450 + 40, 165 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 450 + 40, 160 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 450 + 40, 160 + 40));
   await harness.act(() => pointer(harness, svg, 'pointermove', 700, 500));
   await harness.act(() => pointer(harness, svg, 'pointerdown', 700, 500));
   await harness.act(() => pointer(harness, svg, 'pointerup', 700, 500));
