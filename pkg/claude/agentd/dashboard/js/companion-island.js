@@ -1107,7 +1107,13 @@ export function CompanionApp({
     };
     const focused = win?.document?.hasFocus?.() ?? true;
     if (focused) void take();
-    else setTimeout(take, CUE_OPEN_UNFOCUSED_DELAY_MS);
+    else {
+      setTimeout(() => {
+        // The operator may have left this tab during the wait.
+        if (win?.document?.visibilityState === 'hidden') heldOpen.current.push(cue);
+        else void take();
+      }, CUE_OPEN_UNFOCUSED_DELAY_MS);
+    }
   };
   // An agent the Steward hands over opens in the window, in the dashboard
   // tab the operator is looking at only: a terminal attach takes over from
