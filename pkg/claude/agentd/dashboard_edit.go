@@ -2188,9 +2188,14 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
 		return
 	}
+	carryCfg, _ := config.Load()
 	for _, slug := range body.Carry {
 		if !slices.Contains(body.Slugs, slug) {
 			http.Error(w, "carry names slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+		if refusal := carryRefusal(carryCfg, slug); refusal != "" {
+			http.Error(w, refusal, http.StatusForbidden)
 			return
 		}
 	}
@@ -2352,6 +2357,14 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	steward := isLiveSteward(res.ConvID)
+	var overridesBefore map[string]db.PermissionOverride
+	if steward {
+		var err error
+		if overridesBefore, err = agentPermissionOverrides(res.ConvID); err != nil {
+			http.Error(w, "read overrides: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	if len(body.Carry) > 0 && !steward {
 		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
 		return
@@ -2434,7 +2447,7 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		changed++
 	}
 	if steward {
-		if err := saveStewardCarry(res.ConvID, body.Overrides, body.Carry); err != nil {
+		if err := saveStewardCarry(res.ConvID, overridesBefore, body.Overrides, body.Carry); err != nil {
 			http.Error(w, "save for future Stewards: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

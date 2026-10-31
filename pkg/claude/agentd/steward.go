@@ -201,6 +201,13 @@ func mergeStewardCarried(in map[string]db.PermissionOverride) {
 		if _, config := in[slug]; config || !IsKnownPermSlug(slug) || slices.Contains(sudoDefaultBlocklist, slug) {
 			continue
 		}
+		// One stored grant a later version cannot read must not block every summon.
+		if override.Scope != "" {
+			if _, err := canonicalPermissionScopeForSlug(slug, override.Scope); err != nil {
+				slog.Warn("steward: skip carried permission with a bad scope", "slug", slug, "error", err)
+				continue
+			}
+		}
 		in[slug] = override
 	}
 }
@@ -222,7 +229,7 @@ func inheritStewardCarriedSudo(convID string) {
 	cfg, _ := config.Load()
 	blocklist := resolveSudoConfig(cfg, convID, agentID, "").Blocklist
 	for _, grant := range grants {
-		if !IsKnownPermSlug(grant.Slug) || slices.Contains(blocklist, grant.Slug) {
+		if !IsKnownPermSlug(grant.Slug) || slices.Contains(blocklist, grant.Slug) || slices.Contains(sudoDefaultBlocklist, grant.Slug) {
 			continue
 		}
 		if _, err := db.InheritStewardCarriedSudo(agentID, grant, stewardCarriedGranter); err != nil {
@@ -234,7 +241,7 @@ func inheritStewardCarriedSudo(convID string) {
 // saveStewardCarry applies the editor's choices to what is stored. A slug set
 // back to Default is revoked for later Stewards too, whether or not the batch
 // said so; what stays stored takes the instance's current scope.
-func saveStewardCarry(convID string, effects map[string]string, carry map[string]bool) error {
+func saveStewardCarry(convID string, before map[string]db.PermissionOverride, effects map[string]string, carry map[string]bool) error {
 	current, err := agentPermissionOverrides(convID)
 	if err != nil {
 		return err
@@ -254,13 +261,33 @@ func saveStewardCarry(convID string, effects map[string]string, carry map[string
 			if err := db.SetStewardCarriedPermission(slug, current[slug], dashboardGranter); err != nil {
 				return err
 			}
-		case wasStored:
+		// The editor posts every row, so a row that was Default all along
+		// changes nothing: this instance not holding a stored grant is no
+		// choice about it.
+		case wasStored && (chosen || holdsOverride(before, slug)):
 			if err := db.DeleteStewardCarriedPermission(slug); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func holdsOverride(overrides map[string]db.PermissionOverride, slug string) bool {
+	_, held := overrides[slug]
+	return held
+}
+
+// endStoredStewardPermission makes a CLI revoke or deny hold for later
+// Stewards, as a sudo revoke and the editor do. Only a live Steward's own row
+// says anything about what is stored.
+func endStoredStewardPermission(convID, slug string) {
+	if !isLiveSteward(convID) {
+		return
+	}
+	if err := db.DeleteStewardCarriedPermission(slug); err != nil {
+		slog.Warn("steward: end stored permission failed", "slug", slug, "error", err)
+	}
 }
 
 // stewardBrief adds to the summon's brief what the daemon owns: the access

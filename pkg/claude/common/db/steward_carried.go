@@ -120,6 +120,23 @@ func ListActiveStewardCarriedSudo() ([]*CarriedSudoGrant, error) {
 	return out, rows.Err()
 }
 
+// endAllCarriedSudo ends every stored grant. With no Steward running nothing
+// links to them, and revoke-all still has to reach them. Returns those no
+// running instance holds, so the caller's count covers each grant once.
+func endAllCarriedSudo() (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`UPDATE steward_carried_sudo SET revoked_at = ?
+		WHERE revoked_at IS NULL AND id NOT IN (SELECT carried_id FROM agent_sudo_grants
+			WHERE carried_id > 0 AND revoked_at IS NULL)`, dbTime(time.Now()))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // InheritStewardCarriedSudo gives one instance a stored grant, with its
 // original expiry. Instance rows are ordinary sudo grants from here on.
 func InheritStewardCarriedSudo(agentID string, g *CarriedSudoGrant, by string) (int64, error) {

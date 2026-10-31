@@ -123,7 +123,8 @@ export function StewardShutdown({ agent, fetchImpl, onDown }) {
 }
 
 // ElevatedBand says an agent holds more than its usual access and ends it in
-// one click. No confirmation: taking access away is safe, and it can ask again.
+// one click. No confirmation: taking access away is safe, and it can ask again,
+// so it reaches stored grants too. The band says which those are.
 export function ElevatedBand({ agent, access, fetchImpl, notify }) {
   const [busy, setBusy] = useState(false);
   async function end() {
@@ -132,7 +133,8 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
       await endElevatedAccess(fetchImpl, agent, access);
       notify(access.inherited.length
         ? `Ended what ${agent.name} held itself. Group access remains: change it in Groups.`
-        : `${agent.name} is back to its usual access.`);
+        : access.anyStored ? `${agent.name} is back to its usual access, and future Stewards no longer get what was stored.`
+          : `${agent.name} is back to its usual access.`);
     } catch (error) {
       notify(`Could not end ${agent.name}'s elevated access: ${error?.message || error}`, true);
     } finally {
@@ -143,11 +145,11 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
     <span aria-hidden="true">🔓</span>
     <div class="companion-elevated-text">
       <b>Elevated access</b>
-      ${access.sudo.map((grant) => html`<span key=${grant.id}><code>${grant.slug}</code> ${timeLeft(grant.remaining_seconds)} left</span>`)}
-      ${access.standing.map((slug) => html`<span key=${slug}><code>${slug}</code> standing</span>`)}
+      ${access.sudo.map((grant) => html`<span key=${grant.id}><code>${grant.slug}</code> ${timeLeft(grant.remaining_seconds)} left${grant.carried ? ', all future Stewards' : ''}</span>`)}
+      ${access.standing.map((slug) => html`<span key=${slug}><code>${slug}</code> ${access.stored?.has(slug) ? 'standing, all future Stewards' : 'standing'}</span>`)}
       ${access.inherited.map((slug) => html`<span key=${slug}><code>${slug}</code> from a group</span>`)}
     </div>
-    ${(access.sudo.length > 0 || access.standing.length > 0) && html`<button type="button" disabled=${busy} onClick=${end}>${busy ? 'Ending…' : 'End now'}</button>`}
+    ${(access.sudo.length > 0 || access.standing.length > 0) && html`<button type="button" disabled=${busy} title=${access.anyStored ? 'Also ends what is kept for all future Stewards' : 'End this access now'} onClick=${end}>${busy ? 'Ending…' : 'End now'}</button>`}
   </div>`;
 }
 

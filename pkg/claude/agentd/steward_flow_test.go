@@ -643,9 +643,79 @@ func TestSteward_CarryIsRefusedOutsideItsRules(t *testing.T) {
 		"its sudo":               {"/api/sudo", map[string]any{"agent_id": namedAgent, "slugs": []string{agentd.PermAgentStop}, "carry": []string{agentd.PermAgentStop}}, http.StatusForbidden},
 		"a Config slug":          {"/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermFleetRead: "grant"}, "carry": map[string]bool{agentd.PermFleetRead: true}}, http.StatusForbidden},
 		"grant authority":        {"/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermPermissionsGrant: "grant"}, "carry": map[string]bool{agentd.PermPermissionsGrant: true}}, http.StatusForbidden},
+		"sudo grant authority":   {"/api/sudo", map[string]any{"agent_id": c.agentID(steward), "slugs": []string{agentd.PermFleetRead}, "duration": "5m", "carry": []string{agentd.PermFleetRead}}, http.StatusForbidden},
 	} {
 		assert.Equal(t, tc.want, c.post(tc.path, tc.body).Code, name)
 	}
 	c.shutDown(steward)
 	assert.Equal(t, "", stewardOverride(t, c.summon(), agentd.PermAgentStop))
+}
+
+// Revoke-all is the last resort, so it reaches a stored grant with no Steward
+// running, when no live row links to it.
+func TestSteward_RevokeAllReachesStoredSudoBetweenStewards(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	first := c.summon()
+	rec := c.post("/api/sudo", map[string]any{"agent_id": c.agentID(first), "slugs": []string{agentd.PermNodeExec},
+		"duration": "45s", "carry": []string{agentd.PermNodeExec}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	c.shutDown(first)
+
+	n, err := db.RevokeAllActiveSudoGrants()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "the count covers the stored grant")
+	assert.Empty(t, c.sudoSlugs(c.summon()))
+}
+
+// A CLI revoke or deny of a stored grant holds for later Stewards, and a later
+// save of an unrelated row is no choice about a slug the instance does not hold.
+func TestSteward_StoredGrantFollowsCLIAndSurvivesUnrelatedSaves(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	first := c.summon()
+	rec := c.post("/api/permissions", map[string]any{"conv": first,
+		"overrides": map[string]string{agentd.PermAgentStop: "grant", agentd.PermNodeExec: "grant"},
+		"carry":     map[string]bool{agentd.PermAgentStop: true, agentd.PermNodeExec: true}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	// The row is gone from this instance by other means, so a save posts Default.
+	require.NoError(t, func() error { _, err := db.RevokeAgentPermission(first, agentd.PermNodeExec); return err }())
+	rec = c.post("/api/permissions", map[string]any{"conv": first,
+		"overrides": map[string]string{agentd.PermNodeExec: "default", agentd.PermAgentStop: "grant"}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	stored, err := db.ListStewardCarriedPermissions()
+	require.NoError(t, err)
+	assert.Contains(t, stored, agentd.PermNodeExec)
+
+	revoked := testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/permissions/revoke",
+		map[string]any{"target": first, "slug": agentd.PermAgentStop})))
+	require.Equalf(t, http.StatusOK, revoked.Code, "body=%s", revoked.Body.String())
+	c.shutDown(first)
+	assert.Equal(t, "", stewardOverride(t, c.summon(), agentd.PermAgentStop))
+}
+
+// Stored sudo stands on the operator's approval: an agent's summon must not
+// pass it on, and a Steward scope with an id is not the real Steward.
+func TestSteward_StoredSudoReachesOnlyTheOperatorsSummon(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	first := c.summon()
+	rec := c.post("/api/sudo", map[string]any{"agent_id": c.agentID(first), "slugs": []string{agentd.PermNodeExec},
+		"duration": "45s", "carry": []string{agentd.PermNodeExec}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	c.shutDown(first)
+
+	crafted := testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward", "id": "x"}, "brief": "Help.",
+	})))
+	assert.Equalf(t, http.StatusBadRequest, crafted.Code, "body=%s", crafted.Body.String())
+
+	const caller = "stwd-aaaa-bbbb-cccc-000000000009"
+	c.f.HaveGroup("leads")
+	haveSpawnCapableMember(t, c.f, "leads", caller)
+	require.NoError(t, db.SetAgentPermissionOverride(caller, agentd.PermGroupsMembersSpawn, db.PermEffectGrant, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(caller, agentd.PermPermissionsGrant, db.PermEffectGrant, "test"))
+	byAgent := agentReq(t, c.f, caller, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})
+	require.Equalf(t, http.StatusOK, byAgent.Code, "body=%s", byAgent.Body.String())
+	assert.Empty(t, c.sudoSlugs(decodeScribeResp(t, byAgent).ConvID))
 }

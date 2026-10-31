@@ -474,7 +474,11 @@ export function elevatedAccess(snapshot, agent) {
   if (!agent) return null;
   const sudo = (snapshot?.sudo || []).filter((grant) => grant.agent_id === agent.agentId);
   const { standing = [], inherited = [] } = snapshot?.steward_elevated?.[agent.agentId] || {};
-  return sudo.length || standing.length || inherited.length ? { sudo, standing, inherited } : null;
+  // Ending these also ends them for later Stewards, so the band says so.
+  const stored = new Set(Object.keys(snapshot?.steward_access?.carried || {}));
+  const storedHere = standing.filter((slug) => stored.has(slug));
+  const anyStored = storedHere.length > 0 || sudo.some((grant) => grant.carried);
+  return sudo.length || standing.length || inherited.length ? { sudo, standing, inherited, stored, anyStored } : null;
 }
 
 // timeLeft reads a sudo grant's remaining seconds.

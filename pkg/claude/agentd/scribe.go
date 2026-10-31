@@ -165,6 +165,11 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
 			return
 		}
+		// Grants stored for future Stewards reach only the one real Steward.
+		if strings.TrimSpace(body.Scope.ID) != "" {
+			writeError(w, http.StatusBadRequest, "scope", "a Steward's scope takes no id")
+			return
+		}
 		// Everything that recognises a Steward looks in this one group, and
 		// the name is the group.
 		if strings.TrimSpace(body.Name) != stewardGroupName {
@@ -451,7 +456,10 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
 		}
 	}
-	if scopeKey == stewardScopeKind+"/" {
+	// Sudo stands on the operator's approval, so only the operator's own summon
+	// passes it on: an agent could otherwise write a brief for a Steward holding
+	// what it does not hold itself.
+	if scopeKey == stewardScopeKind+"/" && spawnerConvID == "" {
 		inheritStewardCarriedSudo(outcome.ConvID)
 	}
 	out := &scribeOutcome{Name: p.Name, ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}

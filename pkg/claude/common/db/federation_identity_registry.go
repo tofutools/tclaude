@@ -74,6 +74,8 @@ var FederationIdentityColumns = []IdentityColumn{
 	{"agent_permissions", "scope_json", IdentityRebind},
 	{"agent_group_permissions", "scope_json", IdentityRebind},
 	{"agent_sudo_grants", "scope_json", IdentityClose},
+	{"steward_carried_permissions", "scope_json", IdentityRebind},
+	{"steward_carried_sudo", "scope_json", IdentityClose},
 	{"agent_groups", "owner_scopes_json", IdentityRebind},
 	{"group_templates", "owner_scopes_json", IdentityHistorical},
 	{"model_proxy_launches", "reference", IdentityClose},

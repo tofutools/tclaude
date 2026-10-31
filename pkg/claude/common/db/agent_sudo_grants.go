@@ -377,7 +377,12 @@ func RevokeSudoGrantsByAgent(agentID string) (int64, error) {
 // still-active row revoked-now. Returns the row count for the human
 // to verify before they nuke prod.
 func RevokeAllActiveSudoGrants() (int64, error) {
-	return revokeSudoGrants(`1 = 1`)
+	stored, err := endAllCarriedSudo()
+	if err != nil {
+		return 0, err
+	}
+	n, err := revokeSudoGrants(`1 = 1`)
+	return n + stored, err
 }
 
 func scanSudoGrant(s rowScanner) (*SudoGrant, error) {

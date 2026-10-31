@@ -1032,7 +1032,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
     <div class="perm-edit-toolbar"><input id="perm-edit-filter" type="text" value=${filter} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
       onInput=${(event) => setFilter(event.currentTarget.value)} /><button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"
-      onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'clear' : groupMode || grantOnly ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
+      onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'clear' : groupMode || grantOnly ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
     <div id="perm-edit-list" class="perm-edit-list">${activeSudo.length > 0 && html`<${SudoActive} grants=${activeSudo}
       duration=${duration.trim()} maxSeconds=${policy.max_seconds} busy=${busy} act=${sudoActive} steward=${!!stewardAccess} />`}
     ${visible.length ? visible.map((row, index) => {
