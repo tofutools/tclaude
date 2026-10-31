@@ -175,7 +175,7 @@ denies and scopes included. Stored sudo keeps its original expiry: a new Steward
 never restarts the clock. The editors show which of the three sources each grant
 comes from: this Steward, all future Stewards, or Config defaults, which are
 changed only in **Config > Steward**. Changing or revoking a stored grant applies
-to later Stewards too, while revoking an instance-only grant affects that
+to later Stewards too, and the revoke says so, while revoking an instance-only grant affects that
 instance alone. `permissions.grant` and `permissions.revoke` cannot be stored.
 
 While an agent in the window holds elevated access, its tab and pill show **🔓**, and
