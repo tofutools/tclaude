@@ -4,8 +4,9 @@
 // for the element model and merge rules.
 //
 // The editor keeps every element in a Map, renders it as SVG, and syncs with
-// the daemon: local edits are batched into PATCH /api/boards/{id}, and a poll
-// (GET ?since=<version>) merges what agents changed. When the operator's edits
+// the daemon: local edits are batched into PATCH /api/boards/{id}, and GET
+// ?since=<version> merges what agents changed. A socket says when to read
+// (GET /api/boards/{id}/live); without one the editor polls. When the operator's edits
 // settle, the board's participating agents get one short text event describing
 // them (POST /api/boards/{id}/events) with a PNG of the changed region, and a
 // PNG snapshot of the whole board is uploaded so agents can look at the board
@@ -27,6 +28,13 @@ import { companionAgents } from './companion-model.js';
 const html = htm.bind(h);
 
 export const BOARD_POLL_MS = 1000;
+// With the socket up nothing is polled but a slow check that catches a missed
+// signal, and a quicker one while presence badges need to age out.
+export const BOARD_LIVE_CHECK_MS = 15000;
+export const BOARD_LIVE_PRESENCE_MS = 3000;
+export const BOARD_LIVE_SETTLE_MS = 100;
+const BOARD_LIVE_RETRY_MS = 1000;
+const BOARD_LIVE_RETRY_MAX_MS = 30000;
 export const BOARD_FLUSH_MS = 250;
 export const BOARD_EVENT_IDLE_MS = 1500;
 export const BOARD_SNAPSHOT_IDLE_MS = 2500;
@@ -136,7 +144,7 @@ export function BoardElement({ el, flash = false }) {
 // or view shows: `onScreen` says it is the tab showing, and `visible` whether
 // its surroundings are. headActions are the host's own controls.
 export function BoardEditor({
-  boardId, fetchImpl, notify = () => {}, snapshot, win, rasterize = rasterizeBoard, onOpenAgent,
+  boardId, fetchImpl, notify = () => {}, snapshot, win, WebSocketCtor = win?.WebSocket, rasterize = rasterizeBoard, onOpenAgent,
   onScreen = true, visible = null, headActions = null, onTitle = null,
 }) {
   const elements = useRef(new Map());
@@ -200,10 +208,21 @@ export function BoardEditor({
 
   const agents = useMemo(() => companionAgents(snapshot.value), [snapshot.value]);
 
-  // Load, then poll for agents' edits.
+  // Load, then read again whenever the socket says the board changed, or on
+  // the poll while there is no socket.
   useEffect(() => {
     disposed.current = false;
     let pollTimer = null;
+    let liveOpen = false;
+    let liveSocket = null;
+    let liveRetry = null;
+    let liveDelay = BOARD_LIVE_RETRY_MS;
+    let stale = false;
+    let retry = false;
+    let started = false;
+    let ticking = false;
+    let lastLoad = 0;
+    let presenceShown = false;
     const load = async (since) => {
       try {
         const query = since ? `?since=${since}` : '';
@@ -215,12 +234,14 @@ export function BoardEditor({
         });
         if (board.title) onTitleRef.current?.(board.title);
         setPresence(new Map((board.presence?.agents || []).map((a) => [a.agent_id, a.state])));
+        presenceShown = !!board.presence?.agents?.length;
         const skip = new Set([...active.current, ...pending.current.keys()]);
         const incoming = board.elements || [];
         const changed = mergeElements(elements.current, incoming, skip);
         // An element skipped because the operator holds it must come again on
         // the next poll, so the cursor only moves past fully merged responses.
         const skipped = incoming.some((el) => skip.has(el?.id));
+        if (skipped) retry = true;
         if (Number.isFinite(board.version) && !skipped) version.current = Math.max(version.current, board.version);
         if (changed.length) {
           if (since) {
@@ -236,22 +257,68 @@ export function BoardEditor({
         }
         setStatus('ready');
       } catch (error) {
+        retry = true;
         if (!disposed.current) setStatus(since ? 'offline' : `error: ${error?.message || error}`);
       }
     };
-    void load(0).then(() => {
-      const tickPoll = async () => {
-        if (disposed.current) return;
-        const looking = win?.document?.visibilityState !== 'hidden' && shown();
-        void reportView(looking);
-        if (looking) await load(version.current);
-        if (!disposed.current) pollTimer = setTimeout(tickPoll, BOARD_POLL_MS);
+    const due = () => !liveOpen || stale || retry
+      || Date.now() - lastLoad >= (presenceShown ? BOARD_LIVE_PRESENCE_MS : BOARD_LIVE_CHECK_MS);
+    const tick = async () => {
+      if (disposed.current || ticking) return;
+      ticking = true;
+      clearTimeout(pollTimer);
+      const looking = win?.document?.visibilityState !== 'hidden' && shown();
+      void reportView(looking);
+      if (looking && due()) {
+        stale = false;
+        retry = false;
+        lastLoad = Date.now();
+        await load(version.current);
+      }
+      ticking = false;
+      if (!disposed.current) pollTimer = setTimeout(tick, stale && looking && liveOpen ? BOARD_LIVE_SETTLE_MS : BOARD_POLL_MS);
+    };
+    // Signals arrive in bursts while an agent draws; a short wait reads once.
+    const signal = () => {
+      stale = true;
+      if (!started || ticking) return;
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(tick, BOARD_LIVE_SETTLE_MS);
+    };
+    const connect = () => {
+      if (disposed.current || !WebSocketCtor) return;
+      const scheme = win.location?.protocol === 'https:' ? 'wss:' : 'ws:';
+      try {
+        liveSocket = new WebSocketCtor(`${scheme}//${win.location.host}/api/boards/${encodeURIComponent(boardId)}/live`);
+      } catch {
+        return;
+      }
+      // Opening reads too: whatever landed while there was no socket.
+      liveSocket.onopen = () => { liveOpen = true; liveDelay = BOARD_LIVE_RETRY_MS; signal(); };
+      liveSocket.onmessage = (event) => {
+        let message = null;
+        try { message = JSON.parse(event.data); } catch { /* every read is safe */ }
+        if (!message || message.client !== viewClient.current) signal();
       };
-      pollTimer = setTimeout(tickPoll, BOARD_POLL_MS);
+      liveSocket.onclose = () => {
+        liveOpen = false;
+        liveSocket = null;
+        if (disposed.current) return;
+        liveRetry = setTimeout(connect, liveDelay);
+        liveDelay = Math.min(liveDelay * 2, BOARD_LIVE_RETRY_MAX_MS);
+      };
+    };
+    connect();
+    void load(0).then(() => {
+      lastLoad = Date.now();
+      started = true;
+      pollTimer = setTimeout(tick, stale && liveOpen ? BOARD_LIVE_SETTLE_MS : BOARD_POLL_MS);
     });
     return () => {
       disposed.current = true;
       clearTimeout(pollTimer);
+      clearTimeout(liveRetry);
+      liveSocket?.close();
       void reportView(false);
       const eventPending = !!timers.current.event;
       for (const timer of Object.values(timers.current)) clearTimeout(timer);
@@ -291,7 +358,7 @@ export function BoardEditor({
     saving.current += 1;
     try {
       const result = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}`, {
-        method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Board-Client': viewClient.current },
         body: JSON.stringify({ elements: batch }),
       }));
       // The poll cursor is not advanced from here: agent edits that landed

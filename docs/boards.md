@@ -104,6 +104,10 @@ when the versions are equal and its `versionNonce` is lower. To change an
 element, send it with `version + 1`; `move`, `text` and `rm` do this for you.
 A deletion is a tombstone (`isDeleted: true`) that stays so it can sync.
 
+An open editor holds a socket (`GET /api/boards/{id}/live`) that says when the
+board changed, and reads the change with `GET ?since=`. The socket carries no
+board content. Without it, as in a peer's view, the editor polls every second.
+
 The board's own version goes up once for every patch that changed at least one
 element, and each changed element records that version as its
 `server_version`. A plain read returns the live elements; a read with
