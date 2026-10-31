@@ -34,9 +34,15 @@ var stewardOperatorReadSlugs = []string{
 	PermAgentContextInfo,
 }
 
-// stewardSlugs is the access a Steward is born with under this config. The
-// daemon decides it, not the summoning client.
+// stewardSlugs is the access a Steward is born with under this config: its
+// levels, then the operator's default permissions. The daemon decides it, not
+// the summoning client.
 func stewardSlugs(cfg *config.Config) []string {
+	return append(stewardLevelSlugs(cfg), stewardDefaultSlugs(cfg)...)
+}
+
+// stewardLevelSlugs is what the Reads and Writes levels give.
+func stewardLevelSlugs(cfg *config.Config) []string {
 	slugs := append([]string{}, stewardBaseSlugs...)
 	if cfg.StewardReads() == config.StewardReadsOperator {
 		slugs = append(slugs, stewardOperatorReadSlugs...)
@@ -50,20 +56,66 @@ func stewardSlugs(cfg *config.Config) []string {
 	return slugs
 }
 
+// stewardDefaultSlugs are the registered entries of steward.default_permissions.
+// Saving through the Config tab refuses an unknown slug, so one here comes from
+// a hand edit or a slug a later version dropped. It can grant nothing, so it is
+// left out rather than stopping every summon.
+func stewardDefaultSlugs(cfg *config.Config) []string {
+	var slugs []string
+	for _, slug := range cfg.StewardDefaultPermissions() {
+		if IsKnownPermSlug(slug) {
+			slugs = append(slugs, slug)
+		}
+	}
+	return slugs
+}
+
+// unknownStewardSlugs are the entries of steward.default_permissions the slug
+// registry does not know.
+func unknownStewardSlugs(cfg *config.Config) []string {
+	var slugs []string
+	for _, slug := range cfg.StewardDefaultPermissions() {
+		if !IsKnownPermSlug(slug) {
+			slugs = append(slugs, slug)
+		}
+	}
+	return slugs
+}
+
+// stewardExtraSlugs are the default permissions the levels do not already give.
+func stewardExtraSlugs(cfg *config.Config) []string {
+	seen := map[string]bool{}
+	for _, slug := range stewardLevelSlugs(cfg) {
+		seen[slug] = true
+	}
+	var extra []string
+	for _, slug := range stewardDefaultSlugs(cfg) {
+		if !seen[slug] {
+			seen[slug] = true
+			extra = append(extra, slug)
+		}
+	}
+	return extra
+}
+
 // stewardAccessNote tells a Steward what it was born with, for its brief.
 func stewardAccessNote(cfg *config.Config) string {
 	reads := "the fleet, boards and the dashboard view"
 	if cfg.StewardReads() == config.StewardReadsOperator {
 		reads = "what the operator reads across tclaude"
 	}
-	writes := "drawing on boards and notifying the operator; everything else needs approval"
+	writes := "drawing on boards and notifying the operator"
 	switch cfg.StewardWrites() {
 	case config.StewardWritesMessaging:
-		writes = "messaging any agent, drawing on boards and notifying the operator; everything else needs approval"
+		writes = "messaging any agent, drawing on boards and notifying the operator"
 	case config.StewardWritesWorkers:
-		writes = "messaging any agent, starting workers, drawing on boards and notifying the operator; everything else needs approval"
+		writes = "messaging any agent, starting workers, drawing on boards and notifying the operator"
 	}
-	return "Your access, set by the operator: you can read " + reads + ". You can write: " + writes + "."
+	note := "Your access, set by the operator: you can read " + reads + ". You can write: " + writes
+	if extra := stewardExtraSlugs(cfg); len(extra) > 0 {
+		return note + ". The operator also granted you these permissions: " + strings.Join(extra, ", ") + ". Everything else needs approval."
+	}
+	return note + "; everything else needs approval."
 }
 
 // stewardBrief adds to the summon's brief what the daemon owns: the access

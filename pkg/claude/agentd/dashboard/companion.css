@@ -93,6 +93,9 @@
 }
 .companion-add:hover, .companion-controls button:hover { background: #21262d; color: var(--cmp-text); }
 .companion-controls { display: flex; gap: 2px; margin-left: 4px; }
+.companion-controls .companion-steward-sudo { width: auto; padding: 0 5px; font-size: 11px; }
+.companion-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
+.companion-controls button:disabled:hover { background: none; color: var(--cmp-muted); }
 
 .companion-menu {
   position: absolute; top: 36px; left: 8px; z-index: 2; width: min(340px, calc(100% - 16px));
@@ -357,4 +360,4 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 
 /* The dialogs the window opens must not land behind it. Other plain modals
    stay under it, so an agent can be used beside the editor it is helping with. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show) .companion-window { z-index: 90; }
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show, #sudo-grant-modal.show) .companion-window { z-index: 90; }

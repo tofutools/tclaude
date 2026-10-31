@@ -29,7 +29,7 @@ import {
 import { registerCompanionController } from './companion-facade.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
-import { ApprovalCard, ElevatedBand, openAccessPanel } from './companion-approval.js';
+import { ApprovalCard, ElevatedBand, StewardAccessControls, openAccessPanel } from './companion-approval.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { VOICE_PREF, createDictation, createSpeaker, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
@@ -246,6 +246,8 @@ export function CompanionApp({
   win = globalThis.window,
   onComposeMessage = null,
   openMorph = null,
+  openPermissions = null,
+  openSudo = null,
   detachWindow = null,
   sessionPrefs: sessionPrefsImpl = null,
   registerController = registerCompanionController,
@@ -1271,6 +1273,7 @@ export function CompanionApp({
           aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
           title="Agents are asking for permission"
           onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
+        ${activeAgent?.steward && !showQueue && html`<${StewardAccessControls} agent=${activeAgent} openPermissions=${openPermissions} openSudo=${openSudo} />`}
         ${activeAgent?.online && !showQueue && html`
           ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${composeToActive}>✉</button>`}
           ${detachWindow && !parked.has(activeAgent.agentId) && html`<button type="button" class="companion-detach" aria-label=${`Detach ${activeAgent.name} into its own window`} title="Detach into its own browser window" onClick=${() => detachToWindow(activeAgent)}>⧉</button>`}
@@ -1296,7 +1299,7 @@ export function CompanionApp({
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>
         <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
           groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
-        <p class="companion-empty-note">Config > Steward sets what it can do without asking.</p>
+        <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, 🛡 and sudo in the title bar change its access.</p>
         <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}

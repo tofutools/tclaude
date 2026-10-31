@@ -626,6 +626,7 @@ function populateConfigForm(cfg) {
   void populateProfileSelect('#cfg-steward-profile', '(global default profile)', (cfg.steward || {}).profile);
   setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
   setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
+  renderCfgStringList('cfg-steward-permissions', (cfg.steward || {}).default_permissions || [], 'cfg-slug-list', 'permission slug');
   $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
   $('#cfg-steward-startup-prompt').value = (cfg.steward || {}).startup_prompt || '';
 
@@ -1007,6 +1008,8 @@ function assembleConfig() {
   const stewardWrites = controlValue($('#cfg-steward-writes'));
   if (stewardReads && stewardReads !== 'operator') steward.reads = stewardReads; else delete steward.reads;
   if (stewardWrites && stewardWrites !== 'messaging') steward.writes = stewardWrites; else delete steward.writes;
+  const stewardPerms = readCfgStringList('cfg-steward-permissions');
+  if (stewardPerms.length) steward.default_permissions = stewardPerms; else delete steward.default_permissions;
   const stewardProfile = controlValue($('#cfg-steward-profile')).trim();
   if (stewardProfile) steward.profile = stewardProfile; else delete steward.profile;
   const stewardName = controlValue($('#cfg-steward-name')).trim();

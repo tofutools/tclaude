@@ -304,6 +304,7 @@ const companionDescriptor = createIslandDescriptor({
         snapshot: dashboardState.snapshot, activeTab: dashboardState.activeTab, prefs: dashPrefs,
         notify: dependencies.notify, widgetFactory: mountTerminalWidget, loadRuntime: loadXtermRuntime,
         closeTerminalPanes: closeTerminalsForConvs, onComposeMessage: dependencies.onComposeMessage,
+        openPermissions: dependencies.openPermissions, openSudo: dependencies.openSudo,
         detachWindow: (agent, label, options) => detachWebWindow(agent, label, options),
         openMorph: async (data) => {
           const { openLaunchTargetDialog } = await import('./action-dialog-controller.js');
