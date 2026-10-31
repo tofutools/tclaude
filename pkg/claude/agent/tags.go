@@ -60,7 +60,7 @@ type tagsResp struct {
 
 type tagsSetParams struct {
 	Tags     []string `pos:"true" help:"The complete tag set to store (replaces any existing tags). Pass zero tags to clear."`
-	Target   string   `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.tags, or owning a group containing the target."`
+	Target   string   `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.tags, or owning every active group containing the target."`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -88,7 +88,7 @@ func runTagsSet(p *tagsSetParams, stdout, stderr io.Writer) int {
 
 type tagsAddParams struct {
 	Tags     []string `pos:"true" help:"One or more tags to add (unioned onto the existing set)."`
-	Target   string   `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Requires agent.tags, or owning a group containing the target."`
+	Target   string   `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Requires agent.tags, or owning every active group containing the target."`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -125,7 +125,7 @@ func runTagsAdd(p *tagsAddParams, stdout, stderr io.Writer) int {
 
 type tagsRmParams struct {
 	Tags     []string `pos:"true" help:"One or more tags to remove from the set (tags not present are ignored)."`
-	Target   string   `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Requires agent.tags, or owning a group containing the target."`
+	Target   string   `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Requires agent.tags, or owning every active group containing the target."`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -161,7 +161,7 @@ func runTagsRm(p *tagsRmParams, stdout, stderr io.Writer) int {
 // --- tags show ---
 
 type tagsShowParams struct {
-	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's tags instead of self. Requires agent.tags, or owning a group containing the target."`
+	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's tags instead of self. Requires agent.tags, or owning every active group containing the target."`
 }
 
 func tagsShowCmd() *cobra.Command {

@@ -14,7 +14,7 @@ import (
 )
 
 type codexAppServerStatusParams struct {
-	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's Codex-drive diagnostics instead of self. Requires agent.context-info, or ownership of a group containing the target."`
+	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's Codex-drive diagnostics instead of self. Requires agent.context-info, or ownership of every active group containing the target."`
 	JSON   bool   `long:"json" help:"Output JSON"`
 }
 

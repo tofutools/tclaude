@@ -283,7 +283,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		return "", false
 	}
 	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of every active group containing it (grant via `tclaude agent permissions grant %s %s`, or add caller as owner of each of those groups)",
+		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of every active group containing it (grant via `tclaude agent permissions grant %s %s`, add caller as owner of each of those groups, or use --ask-human on a command that offers it for another agent)",
 			perm, short8(targetConv), perm, short8(p.ConvID)))
 	return "", false
 }

@@ -30,8 +30,8 @@ import (
 
 func taskForceCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
-		Use:         "task-force",
-		Short:       "Deploy a task force against a mission",
+		Use:   "task-force",
+		Short: "Deploy a task force against a mission",
 		Long: "Deploy a whole agent team against a topic, problem or epic. `deploy` wraps a group template: it " +
 			"creates a fresh group, spawns the template's team, and folds the --mission into the group context " +
 			"every agent sees. The mission-framed twin of `templates instantiate`.",
@@ -234,7 +234,7 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 
 type taskForceStandDownParams struct {
 	Name       string `pos:"true" name:"group" help:"Group to stand down (a deployed task force, or any group)."`
-	NoShutdown bool   `long:"no-shutdown" help:"Leave each retired member's running session alive. By default stand-down also soft-exits the running tmux pane (sends /exit); pass this to keep the processes running."`
+	NoShutdown bool   `long:"no-shutdown" short:"-" help:"Leave each retired member's running session alive. By default stand-down also soft-exits the running tmux pane (sends /exit); pass this to keep the processes running."`
 	Reason     string `long:"reason" short:"r" optional:"true" help:"Why the force is being stood down (recorded in the audit trail)."`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
