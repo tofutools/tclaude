@@ -1,7 +1,7 @@
 // board-overlay.js -- a board in a floating window of its own (tcl-h4y60w),
 // apart from the companion window, so the operator can work in both at once.
 // It floats over every dashboard view, and moves like the companion: drag by
-// the title bar, resize from any corner, stay reachable when the browser
+// the title bar, resize from any edge or corner, stay reachable when the browser
 // shrinks, and keep its place. It does not snap to edges.
 //
 // The two share the companion's z-index layer: the one last clicked is on top
@@ -16,6 +16,7 @@ import { boardOverlay, boardOverlayRaise, returnBoardToTab, setBoardOverlayLabel
 import { COMPANION_FOOTER_ROOM, clampPlacement, parsePlacement } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { isBoardId } from './board-model.js';
+import { ResizeFrame, resizedPlacement } from './window-resize.js';
 
 const html = htm.bind(h);
 
@@ -25,28 +26,12 @@ export const BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.board-overlay.placemen
 export const BOARD_OVERLAY_OPEN_KEY = 'tclaude.dash.board-overlay.open';
 const DEFAULT_W = 760;
 const DEFAULT_H = 540;
-const CORNERS = ['se', 'nw', 'ne', 'sw'];
 
 // The bottom left, clear of the companion's default bottom right.
 export function defaultOverlayPlacement(viewport) {
   const w = Math.min(DEFAULT_W, viewport.width - 48);
   const h = Math.min(DEFAULT_H, viewport.height - 140);
   return clampPlacement({ x: 24, y: viewport.height - h - COMPANION_FOOTER_ROOM - 56, w, h, snap: '' }, viewport);
-}
-
-// resizedPlacement is a corner drag: the corner opposite the drag stays put, as
-// it does for the companion, including where the size or the viewport stops it.
-export function resizedPlacement(start, corner, dx, dy, viewport) {
-  const sized = clampPlacement({
-    ...start,
-    w: start.w + (corner.includes('w') ? -dx : dx),
-    h: start.h + (corner.includes('n') ? -dy : dy),
-  }, viewport);
-  const x = corner.includes('w') ? start.x + start.w - sized.w : start.x;
-  // The top edge stops at the viewport, or the bottom edge would move.
-  const height = corner.includes('n') ? Math.min(sized.h, start.y + start.h) : sized.h;
-  const y = corner.includes('n') ? start.y + start.h - height : start.y;
-  return clampPlacement({ ...sized, x, y, h: height }, viewport);
 }
 
 function viewportOf(win) {
@@ -116,11 +101,11 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
     drag(event, (dx, dy, viewport) => clampPlacement({ ...start, x: start.x + dx, y: start.y + dy }, viewport));
   }
 
-  function onCornerPointerDown(event, corner) {
+  function onResizePointerDown(event, zone) {
     if (event.button !== 0) return;
     event.stopPropagation();
     const start = placement;
-    drag(event, (dx, dy, viewport) => resizedPlacement(start, corner, dx, dy, viewport));
+    drag(event, (dx, dy, viewport) => resizedPlacement(start, zone, dx, dy, viewport));
   }
 
   return html`<div class="board-overlay" role="dialog" aria-label=${`Board ${board.label}`}
@@ -134,9 +119,8 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
     </header>
     <${BoardEditor} key=${board.id} boardId=${board.id} snapshot=${snapshot} win=${win} fetchImpl=${fetchImpl}
       notify=${notify} onTitle=${(title) => setBoardOverlayLabel(board.id, title)} onOpenAgent=${(agent) => openInCompanion(agent)} />
-    ${CORNERS.map((corner) => html`<div key=${corner} class=${`board-overlay-corner ${corner}`} aria-hidden="true"
-      onPointerDown=${(event) => onCornerPointerDown(event, corner)}></div>`)}
-  </div>`;
+  </div>
+  <${ResizeFrame} placement=${placement} className="board-overlay-resize-frame" onResizeStart=${onResizePointerDown} />`;
 }
 
 export function BoardOverlay({ snapshot, ...props }) {
@@ -157,8 +141,8 @@ export function mountBoardOverlayIsland({
   // Clicking either window brings it forward; clicking the page changes nothing.
   const onPointerDown = (event) => {
     const target = event.target;
-    if (target?.closest?.('.board-overlay')) front(true);
-    else if (target?.closest?.('.companion-window')) front(false);
+    if (target?.closest?.('.board-overlay, .board-overlay-resize-frame')) front(true);
+    else if (target?.closest?.('.companion-window, .companion-resize-frame')) front(false);
   };
   doc?.addEventListener?.('pointerdown', onPointerDown, true);
   const stopRaise = boardOverlayRaise.subscribe((request) => { if (request) front(true); });

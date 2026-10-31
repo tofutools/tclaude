@@ -1968,6 +1968,21 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 .video-preview-trigger:hover .video-preview-play,
 .video-preview-trigger:focus-visible .video-preview-play { border-color: #58a6ff; color: #dbeafe; }
 
+/* Edges and corners of a floating window (window-resize.js): 6px strips that
+   straddle the edge, with the corners on top. The frame matches the window's
+   layer and passes every other pointer through. */
+.window-resize-frame { position: fixed; z-index: 950; pointer-events: none; }
+.window-resize-zone { position: absolute; pointer-events: auto; touch-action: none; }
+.window-resize-zone.n, .window-resize-zone.s { left: 9px; right: 9px; height: 6px; cursor: ns-resize; }
+.window-resize-zone.e, .window-resize-zone.w { top: 9px; bottom: 9px; width: 6px; cursor: ew-resize; }
+.window-resize-zone.nw, .window-resize-zone.ne, .window-resize-zone.sw, .window-resize-zone.se { width: 12px; height: 12px; }
+.window-resize-zone:is(.n, .nw, .ne) { top: -3px; }
+.window-resize-zone:is(.s, .sw, .se) { bottom: -3px; }
+.window-resize-zone:is(.w, .nw, .sw) { left: -3px; }
+.window-resize-zone:is(.e, .ne, .se) { right: -3px; }
+.window-resize-zone:is(.nw, .se) { cursor: nwse-resize; }
+.window-resize-zone:is(.ne, .sw) { cursor: nesw-resize; }
+
 /* Shared corner grip for the resizable attachment viewers (dialog-resize.js).
    It is absolutely positioned against the dialog, so it lands on the same
    corner whether the dialog's last row is a footer or the scrolling stage.
