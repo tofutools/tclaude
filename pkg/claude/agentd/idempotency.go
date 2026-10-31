@@ -42,12 +42,17 @@ var idempotencyOwnerID = uuid.NewString()
 // so never gives the space back. An agent polling a failing matrix build would
 // inflate the operator's daemon DB by hundreds of megabytes.
 //
-// Deliberately just these two, not every proxy read: the criterion is that the
+// Deliberately just these, not every proxy read: the criterion is that the
 // response is BULK, and the JSON reads are bounded at 16 KiB, where the
 // durable copy is cheap enough not to be worth reasoning about.
+//
+// A dashboard capture changes nothing either, and its response is an image of
+// the operator's screen, which must not sit in the database at all. A retry
+// simply takes a fresh one.
 var bulkReadRoutes = map[string]bool{
 	"/v1/github/pr/comments":    true,
 	"/v1/github/run/log-failed": true,
+	"/v1/dashboard/capture":     true,
 }
 
 func isBulkReadRoute(path string) bool { return bulkReadRoutes[path] }

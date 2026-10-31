@@ -1344,6 +1344,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/host/status", handleHostStatus)
 	mux.HandleFunc("GET /v1/dashboard/view", collabRoute(handleDashboardViewRead))
 	mux.HandleFunc("POST /v1/dashboard/cue", collabRoute(handleDashboardCue))
+	mux.HandleFunc("POST /v1/dashboard/capture", collabRoute(handleDashboardCapture))
 	mux.HandleFunc("GET /v1/fleet", collabRoute(handleFleet))
 	mux.HandleFunc("GET /v1/boards", collabRoute(handleBoardList))
 	mux.HandleFunc("POST /v1/boards", collabRoute(handleBoardCreate))

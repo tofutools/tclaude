@@ -229,6 +229,11 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 @keyframes companion-guide-in { from { opacity: 0; transform: scale(1.15); } }
 @keyframes companion-guide-pulse { 50% { box-shadow: 0 0 0 10px rgba(163, 113, 247, .08), 0 0 24px rgba(163, 113, 247, .35); } }
 .companion-guide-anchor { position: fixed; z-index: 953; }
+.companion-capture-notice {
+  position: fixed; z-index: 954; top: 12px; left: 50%; transform: translateX(-50%);
+  padding: 6px 14px; border-radius: 999px; pointer-events: none;
+  background: #1f6feb; color: #fff; font-size: 13px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
 .companion-guide-float { position: fixed; z-index: 953; right: 16px; bottom: calc(var(--footer-h, 29px) + 58px); }
 .companion-guide-note {
   display: flex; align-items: flex-start; gap: 8px; max-width: 330px; padding: 8px 10px;

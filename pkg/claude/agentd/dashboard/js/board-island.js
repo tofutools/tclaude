@@ -1218,7 +1218,7 @@ export function BoardEditor({
       <span class="board-zoom">${Math.round(view.zoom * 100)}%</span>
     </div>
     <div class="board-canvas-wrap">
-      <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`}
+      <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`} data-board-id=${boardId}
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
         onWheel=${onWheel} onDblClick=${onDoubleClick}>
         <g data-board-viewport transform=${transform}>

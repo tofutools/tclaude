@@ -691,14 +691,20 @@ and agents that have sat idle for ten minutes or more. **Brief me** asks the
 Steward for that, most urgent first. The listing needs `fleet.read`, which
 the Steward is granted when it is summoned and other agents are not;
 `--group <name>` narrows it to one group and `--json` gives the raw brief.
+With Collab on, `fleet.read` also lifts the group scoping on `tclaude agent ls`
+and shows group default directories in `tclaude agent groups ls`, so the
+Steward can name any agent or group you have open. It changes only what is
+listed: who it can message is still decided at send, and group environment
+values stay with you.
 
 **Config > Steward** appears while Collab is on. Its **Spawn profile** is what
 a new Steward launches with; unset, it uses the global default profile.
 
 What a new Steward may do is set under **Config > Steward**, and the daemon
 grants it: a summon cannot ask for more. **Reads** is `operator` by default
-(fleet, boards, processes, triggers, usage, costs and host) or `fleet` for the
-fleet and boards alone. **Writes** is `messaging` by default (reach any agent),
+(fleet, boards, processes, triggers, usage, costs, host and federation
+activity) or `fleet` for the fleet and boards alone. Both list every agent and
+group. **Writes** is `messaging` by default (reach any agent),
 `none`, or `workers`, which also lets it start workers. **Default permissions**
 (`steward.default_permissions`, empty by default) lists extra slugs a new
 Steward is born with on top of those levels, with the same list editor as the
@@ -744,6 +750,27 @@ cue
 only points: it never presses anything, and it plays once, then fades after a
 few seconds or when you dismiss it. Both slugs are granted to the Steward when
 it is summoned and are not default-granted to other agents.
+
+**Capture.** `tclaude agent guide capture -o view.png` shows the Steward what
+you see, with `dashboard.capture`, which it gets when summoned and other agents
+do not. It saves an image of your dashboard and prints the cursor position and
+what is under it, the focused control, any selected text, the viewport, and the
+open board with the region on screen. `--json` gives the same as data.
+
+The tab renders its own page, so a capture holds only that dashboard page,
+never another window or your desktop, and needs no browser prompt. Terminals are
+rendered as their real text. Every capture shows you a notice naming the agent,
+which is left out of the image. With several tabs open it takes the focused
+one, else the visible one heard from last. A hidden tab is never captured,
+because you would not see the notice, so the command then fails and says so; it
+also fails when no dashboard is open. Nothing is stored by the daemon.
+
+A capture shows whatever is on screen, including open messages and terminal
+output, which reaches the Steward even though it cannot read agents' mail
+through the API. Password fields are masked. Hover styles are not reproduced,
+and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
+in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
+command fails there. It needs Collab, like the rest of the Steward.
 
 **Decisions.** When an agent asks you to choose (`notify-human --option`),
 its tab shows the question, any attached mock and one button per option,
