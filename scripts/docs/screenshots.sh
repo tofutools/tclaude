@@ -38,8 +38,8 @@ go test -c -overlay "$work/overlay.json" -o "$work/agentd.test" ./pkg/claude/age
 # Nothing below may see the operator's home: the server, Chrome and the driver
 # all run with HOME inside the throwaway directory.
 export DOCSHOTS_REAL_HOME="$HOME"
-export HOME="$work/home" TZ=UTC LC_ALL=C.UTF-8
-mkdir -p "$HOME"
+export HOME="$work/home" TMPDIR="$work/tmp" TZ=UTC LC_ALL=C.UTF-8
+mkdir -p "$HOME" "$TMPDIR"
 "$work/docshots" -root "$root" -manifest scripts/docs/shots.json \
   -server "$work/agentd.test" -server-dir pkg/claude/agentd \
-  -out "$root/docshots-out" "${install[@]}" "${only[@]}"
+  -out "$root/docshots-out" ${install[@]+"${install[@]}"} ${only[@]+"${only[@]}"}

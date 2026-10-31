@@ -19,6 +19,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -129,7 +130,7 @@ func TestDocShotsServe(t *testing.T) {
 		prs  map[string]docPR
 	)
 	switch fixture := os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE"); fixture {
-	case "fleet":
+	case "fleet", "collab", "steward":
 		repo = docRepo
 		prs = map[string]docPR{
 			"checkout-redesign": {1482, "open", docChecks(14, 0)},
@@ -159,6 +160,13 @@ func TestDocShotsServe(t *testing.T) {
 		seedDocFleet(t, f)
 	} else {
 		seedLearnTeam(t, f)
+	}
+	switch os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE") {
+	case "collab":
+		enableCollab(t)
+	case "steward":
+		enableCollab(t)
+		seedDocSteward(t, f)
 	}
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -263,6 +271,32 @@ func seedDocFleet(t *testing.T, f *testharness.Flow) {
 	seedDocSandboxProfile(t)
 	seedDocTemplate(t)
 	seedDocProcess(t, f)
+}
+
+// seedDocSteward summons the Steward through the real route and has it put one
+// decision to the operator.
+func seedDocSteward(t *testing.T, f *testharness.Flow) {
+	t.Helper()
+	stubScribeTerminal(t)
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help the operator.",
+	})))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("summon the Steward: %d %s", rec.Code, rec.Body.String())
+	}
+	conv := decodeScribeResp(t, rec).ConvID
+	// The summon names it steward-<random>; a fixed title keeps the images stable.
+	f.HaveConvWithTitle(conv, "steward")
+	if _, err := db.InsertHumanMessageWithAttachments(&db.HumanMessage{
+		FromConv: conv, FromTitle: "steward", GroupName: "steward",
+		Subject:     "Where should the health check live?",
+		Body:        "The worker can add it to the existing admin server or start a small new one. The admin server is less code, but it is only reachable from inside the network.",
+		Options:     []string{"Admin server", "New server", "Ask the team"},
+		Recommended: 1,
+		CreatedAt:   time.Now().Add(-2 * time.Minute),
+	}, nil); err != nil {
+		t.Fatalf("decision: %v", err)
+	}
 }
 
 // seedDocCostHistory backfills two weeks of spend, so the month chart has a

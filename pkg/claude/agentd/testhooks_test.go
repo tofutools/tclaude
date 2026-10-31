@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	clconfig "github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"net/http"
 	"slices"
@@ -14,7 +15,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	clconfig "github.com/tofutools/tclaude/pkg/claude/common/config"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"

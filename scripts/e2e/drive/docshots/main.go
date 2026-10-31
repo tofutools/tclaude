@@ -17,11 +17,14 @@ import (
 	"image/png"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -35,6 +38,31 @@ const stepTimeout = 8 * time.Second
 // changedShare is the share of pixels that must differ before a new image
 // replaces the installed one, so font-rendering noise causes no diff.
 const changedShare = 0.0005
+
+// cleanups stops Chrome and the server on every exit path, including a signal:
+// Chrome runs in its own process group, so Ctrl-C alone would orphan it.
+var cleanups, serverCleanup cleanupList
+
+type cleanupList struct {
+	mu  sync.Mutex
+	fns []func()
+}
+
+func (c *cleanupList) add(fn func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fns = append(c.fns, fn)
+}
+
+func (c *cleanupList) run() {
+	c.mu.Lock()
+	fns := c.fns
+	c.fns = nil
+	c.mu.Unlock()
+	for _, fn := range slices.Backward(fns) {
+		fn()
+	}
+}
 
 // Step is one setup action. Exactly one verb field is set; Text narrows the
 // verb's CSS selector to elements containing that text.
@@ -127,6 +155,14 @@ func main() {
 	install := flag.Bool("install", false, "copy changed images onto their targets")
 	overlay := flag.String("write-overlay", "", "write a go build overlay freezing time.Now into this directory, then exit")
 	flag.Parse()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signals
+		serverCleanup.run()
+		cleanups.run()
+		os.Exit(130)
+	}()
 	if *overlay != "" {
 		if err := writeOverlay(*manifestPath, *root, *overlay); err != nil {
 			fmt.Fprintln(os.Stderr, "docshots:", err)
@@ -237,32 +273,27 @@ func run(manifestPath, root, serverBin, serverDir, out, only string, install boo
 	if err != nil {
 		return err
 	}
-	defer stop()
+	cleanups.add(stop)
+	defer cleanups.run()
 
-	var fixtures []string
-	for _, s := range m.Shots {
-		if !slices.Contains(fixtures, s.Fixture) {
-			fixtures = append(fixtures, s.Fixture)
-		}
-	}
+	// Each shot gets its own server: dashboard prefs and read state live in the
+	// daemon, so a shared one would let shots change each other, and --only would
+	// differ from a full run.
 	var failures []string
-	for _, fixture := range fixtures {
-		url, stopServer, err := startServer(serverBin, serverDir, fixture)
+	for _, s := range m.Shots {
+		url, stopServer, err := startServer(serverBin, serverDir, s.Fixture)
 		if err != nil {
-			return fmt.Errorf("fixture %s: %w", fixture, err)
+			return fmt.Errorf("fixture %s: %w", s.Fixture, err)
 		}
-		for _, s := range m.Shots {
-			if s.Fixture != fixture {
-				continue
-			}
-			if err := capture(browser, url, m, s, out); err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", s.Name, err))
-				fmt.Fprintf(os.Stderr, "FAIL %s: %v\n", s.Name, err)
-				continue
-			}
-			fmt.Println("shot", s.Name)
+		serverCleanup.add(stopServer)
+		err = capture(browser, url, m, s, out)
+		serverCleanup.run()
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", s.Name, err))
+			fmt.Fprintf(os.Stderr, "FAIL %s: %v\n", s.Name, err)
+			continue
 		}
-		stopServer()
+		fmt.Println("shot", s.Name)
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("%d of %d shots failed, nothing installed:\n  %s", len(failures), len(m.Shots), strings.Join(failures, "\n  "))
@@ -319,7 +350,7 @@ func startServer(bin, dir, fixture string) (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	cmd := exec.Command(bin, "-test.run", "^TestDocShotsServe$", "-test.timeout", "0")
+	cmd := exec.Command(bin, "-test.run", "^TestDocShotsServe$", "-test.timeout", "30m")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TCLAUDE_DOCSHOTS_SERVE="+work, "TCLAUDE_DOCSHOTS_FIXTURE="+fixture, "TZ=UTC")
 	var log bytes.Buffer
@@ -492,6 +523,9 @@ func runStep(p *rod.Page, st Step) error {
 		// cannot bring it back.
 		return addCSS(p, st.Remove+` { display: none !important; }`)
 	case st.Open != "":
+		if err := poll(p, st.Open, ""); err != nil {
+			return err
+		}
 		_, err := p.Eval(`(s) => document.querySelectorAll(s).forEach(d => { d.open = true; })`, st.Open)
 		return err
 	case st.Eval != "":
