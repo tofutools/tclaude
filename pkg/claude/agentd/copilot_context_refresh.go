@@ -77,11 +77,11 @@ type copilotContextRefreshState struct {
 	persistedWindow int64
 	persistedPct    float64
 
-	// compactions is the compaction count already answered with a startup
-	// context re-injection. It is only meaningful once compactionsKnown is
+	// compactions and clears are the counts already answered with a startup
+	// context re-injection. They are only meaningful once boundariesKnown is
 	// set, by a restored checkpoint or by the first scan of the log.
-	compactions      int
-	compactionsKnown bool
+	compactions, clears int
+	boundariesKnown     bool
 
 	// contextTier is the latest durable session.start/model_change tier. It is
 	// read by the independent Copilot usage-store poller, so access stays under
@@ -136,8 +136,8 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	if !hydrated {
 		// Copilot creates the session directory before the log. Nothing to say
 		// yet, and writing zeros would blank a genuine earlier reading. It does
-		// settle the compaction baseline: no log means none have happened.
-		state.compactionsKnown = true
+		// settle the boundary baseline: no log means none have happened.
+		state.boundariesKnown = true
 		return
 	}
 	setCopilotContextTier(state, snap.ContextTier)
@@ -147,35 +147,43 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	copilotContextRefreshMu.Unlock()
 
 	persistCopilotContextSnapshot(sess, state, snap)
-	if reinjectAfterCopilotCompaction(sess, state, snap) {
+	if reinjectAfterCopilotBoundary(sess, state, snap) {
 		// Saved now, past the throttle: a restart that rolled back to an older
-		// checkpoint would answer this compaction a second time.
+		// checkpoint would answer this boundary a second time.
 		state.checkpointAt = time.Time{}
 	}
 	persistCopilotCheckpoint(sess, state)
 }
 
-// reinjectAfterCopilotCompaction queues the startup-context re-injection for
-// compactions the log gained since the last look, and reports whether it did.
-// Copilot has no post-compaction hook, so its durable log is the only signal.
-// Several compactions between two looks earn one message: each would carry the
-// same text.
+// reinjectAfterCopilotBoundary queues the startup-context re-injection for
+// compactions and clears the log gained since the last look, and reports
+// whether it did. Copilot has no post-compaction hook, so its durable log is
+// the only signal. Several of a kind between two looks earn one message: each
+// would carry the same text.
 //
 // The first scan of a log with no checkpoint only sets the baseline. Those
-// compactions belong to an earlier lifetime of a resumed conversation, and
+// boundaries belong to an earlier lifetime of a resumed conversation, and
 // whatever briefing they dropped is not this launch's to restore.
-func reinjectAfterCopilotCompaction(
+func reinjectAfterCopilotBoundary(
 	sess *db.SessionRow,
 	state *copilotContextRefreshState,
 	snap harness.CopilotRuntimeSnapshot,
 ) bool {
-	seen, known := state.compactions, state.compactionsKnown
-	state.compactions, state.compactionsKnown = snap.Compactions, true
-	if !known || snap.Compactions <= seen {
+	compactions, clears, known := state.compactions, state.clears, state.boundariesKnown
+	state.compactions, state.clears, state.boundariesKnown = snap.Compactions, snap.ContextClears, true
+	if !known {
 		return false
 	}
-	session.QueueCompactionReinjection(sess.ConvID)
-	return true
+	queued := false
+	if snap.Compactions > compactions {
+		session.QueueCompactionReinjection(sess.ConvID)
+		queued = true
+	}
+	if snap.ContextClears > clears {
+		session.QueueClearReinjection(sess.ConvID)
+		queued = true
+	}
+	return queued
 }
 
 // claimCopilotContextRefresh returns the session's follower state when this
@@ -258,7 +266,7 @@ func loadCopilotCheckpoint(sess *db.SessionRow, state *copilotContextRefreshStat
 		return
 	}
 	state.checkpointAt = time.Now()
-	state.compactions, state.compactionsKnown = state.follower.CheckpointedCompactions(sess.ConvID)
+	state.compactions, state.clears, state.boundariesKnown = state.follower.CheckpointedBoundaries(sess.ConvID)
 }
 
 func persistCopilotCheckpoint(sess *db.SessionRow, state *copilotContextRefreshState) {

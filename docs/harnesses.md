@@ -994,10 +994,11 @@ Non-interactive one-shot runs also refuse a proxy choice.
 
 Every harness that reports a compaction gets the same queued message; see
 [Agents and groups](agents-and-groups.md). Copilot has no post-compaction hook,
-so the daemon notices a compaction from `session.compaction_complete` in the
-session event log, within a few seconds. A failed compaction, or a subagent's,
-queues nothing. Compactions already in a resumed conversation's log are not
-answered again.
+so the daemon reads compactions from `session.compaction_complete` and `/clear`
+from `session.context_cleared` in the session event log. It notices within a
+few seconds, and the message can take up to about 30 seconds more to arrive. A
+failed compaction, or a subagent's, queues nothing. What is already in a resumed
+conversation's log is not answered again.
 
 Gemini CLI is the gap: `PreCompress` is advisory and fires before the
 compression, and no event follows it, so tclaude cannot tell whether a

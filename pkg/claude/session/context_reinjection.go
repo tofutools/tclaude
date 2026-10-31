@@ -110,6 +110,11 @@ func QueueCompactionReinjection(convID string) {
 	queueReinjection(convID, startupctx.BoundaryCompact)
 }
 
+// QueueClearReinjection is QueueCompactionReinjection for a /clear.
+func QueueClearReinjection(convID string) {
+	queueReinjection(convID, startupctx.BoundaryClear)
+}
+
 // subagentsShareCompactionHooks reports whether a harness announces a
 // subagent's compaction through the main thread's hooks.
 func subagentsShareCompactionHooks(harnessName string) bool {

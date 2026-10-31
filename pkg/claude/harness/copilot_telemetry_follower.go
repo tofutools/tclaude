@@ -91,6 +91,7 @@ type copilotTelemetryCheckpoint struct {
 	AssistantOutputTokens int64                    `json:"assistant_output_tokens,omitempty"`
 	Lifetimes             int                      `json:"lifetimes,omitempty"`
 	Compactions           int                      `json:"compactions,omitempty"`
+	ContextClears         int                      `json:"context_clears,omitempty"`
 	Context               *CopilotContextTelemetry `json:"context,omitempty"`
 	Usage                 *CopilotUsage            `json:"usage,omitempty"`
 	NanoAIU               float64                  `json:"nano_aiu,omitempty"`
@@ -135,6 +136,7 @@ func (f *CopilotTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	state.assistantOutputTokens = cp.AssistantOutputTokens
 	state.lifetimes = cp.Lifetimes
 	state.compactions = cp.Compactions
+	state.contextClears = cp.ContextClears
 	if cp.Context != nil {
 		state.context = *cp.Context
 		state.hasContext = true
@@ -168,17 +170,17 @@ func (f *CopilotTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	return nil
 }
 
-// CheckpointedCompactions reports the compaction count restored by
+// CheckpointedBoundaries reports the compaction and clear counts restored by
 // RestoreCheckpoint for convID. ok is false when nothing was restored, or when
 // the restored fold belongs to another conversation and the next
 // RuntimeTelemetry call will discard it.
-func (f *CopilotTelemetryFollower) CheckpointedCompactions(convID string) (count int, ok bool) {
+func (f *CopilotTelemetryFollower) CheckpointedBoundaries(convID string) (compactions, clears int, ok bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.hydrated || f.convID != convID {
-		return 0, false
+		return 0, 0, false
 	}
-	return f.state.compactions, true
+	return f.state.compactions, f.state.contextClears, true
 }
 
 // Checkpoint returns a deterministic durable checkpoint once at least one
@@ -212,6 +214,7 @@ func (f *CopilotTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		AssistantOutputTokens: f.state.assistantOutputTokens,
 		Lifetimes:             f.state.lifetimes,
 		Compactions:           f.state.compactions,
+		ContextClears:         f.state.contextClears,
 		NanoAIU:               f.state.nanoAIU,
 		HasNanoAIU:            f.state.hasNanoAIU,
 		PremiumRequests:       f.state.premiumRequests,

@@ -168,6 +168,7 @@ func TestContextReinjection_InvalidSettingWritesNothing(t *testing.T) {
 //   - A compaction that failed queues nothing, and neither does a subagent's.
 //   - The daemon's poller alone finds a real compaction and queues one
 //     re-injection, which is not repeated on later ticks.
+//   - A later /clear, also known only from the log, queues the identity.
 func TestContextReinjection_CopilotCompactionFromEventLog(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("alpha")
@@ -208,6 +209,15 @@ func TestContextReinjection_CopilotCompactionFromEventLog(t *testing.T) {
 
 	sweep()
 	assert.Len(t, inbox(), 1, "one compaction is answered once")
+
+	require.NoError(t, sim.AppendEvent(map[string]any{
+		"type": "session.context_cleared",
+		"data": map[string]any{"messagesCleared": 3},
+	}))
+	sweep()
+	got = inbox()
+	require.Len(t, got, 2, "a /clear in the log queues its own re-injection")
+	assert.Contains(t, got[0].Body+got[1].Body, "Your conversation was cleared")
 }
 
 // Scenario: a Copilot conversation with compactions from an earlier lifetime
