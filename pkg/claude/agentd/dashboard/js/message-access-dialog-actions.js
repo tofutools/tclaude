@@ -143,10 +143,10 @@ export function createMessageAccessDialogActions({
   const on = (node) => nodeFetch(node || '', { fetchImpl });
   const changedOn = (node) => { if (node) announceNodeChanged(node); return refresh(); };
 
-  async function grantSudo({ agentID, slugs, duration, reason, node = '' }) {
+  async function grantSudo({ agentID, slugs, duration, reason, scopes = {}, carry = [], uses = {}, node = '' }) {
     const response = await requestJSON(on(node), '/api/sudo', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_id: agentID, slugs, duration, reason }),
+      body: JSON.stringify({ agent_id: agentID, slugs, duration, reason, ...(Object.keys(scopes).length ? { scopes } : {}), ...(carry.length ? { carry } : {}), ...(Object.keys(uses).length ? { uses } : {}) }),
     });
     const ok = (response.grants || []).filter((grant) => grant.id > 0).length;
     const failed = (response.grants || []).length - ok;
@@ -158,14 +158,37 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
+  // The limits the server holds this agent to. A node too old to say keeps the
+  // editor on its defaults; the grant itself is checked there regardless.
+  async function sudoPolicy({ agentID, node = '' }) {
+    return requestJSON(on(node), `/api/sudo/policy?agent_id=${encodeURIComponent(agentID)}`, {});
+  }
+
+  async function extendSudo({ ids, duration, node = '' }) {
+    const results = await Promise.allSettled(ids.map((id) => requestJSON(on(node), `/api/sudo/${encodeURIComponent(id)}/extend`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration }),
+    })));
+    void changedOn(node);
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed) throw failed.reason;
+  }
+
+  async function revokeSudo({ ids = [], agentID = '', node = '' }) {
+    const urls = agentID ? [`/api/sudo?agent_id=${encodeURIComponent(agentID)}`] : ids.map((id) => `/api/sudo/${encodeURIComponent(id)}`);
+    const results = await Promise.allSettled(urls.map((url) => requestJSON(on(node), url, { method: 'DELETE' })));
+    void changedOn(node);
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed) throw failed.reason;
+  }
+
   // Per-slug grant scopes use the same union wire shape in every mode. The
   // fourth argument is group-only owner-bypass narrowing, a distinct concept
   // from the scopes attached to the group's explicit grants.
-  async function savePermissions(descriptor, selection, scopes = {}, ownerScopes = null) {
+  async function savePermissions(descriptor, selection, scopes = {}, ownerScopes = null, carry = {}) {
     if (descriptor.mode === 'agent') {
       const response = await requestJSON(on(descriptor.node), '/api/permissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conv: descriptor.conv, overrides: selection, scopes }),
+        body: JSON.stringify({ conv: descriptor.conv, overrides: selection, scopes, ...(Object.keys(carry).length ? { carry } : {}) }),
       });
       const changed = response.changed || 0;
       notify(`Permissions saved — ${changed} change${changed === 1 ? '' : 's'}`);
@@ -207,5 +230,5 @@ export function createMessageAccessDialogActions({
     return { overrides: kept };
   }
 
-  return Object.freeze({ sendMessage, sendDirectMessages, sendOperatorMessage, replyHuman, grantSudo, savePermissions });
+  return Object.freeze({ sendMessage, sendDirectMessages, sendOperatorMessage, replyHuman, grantSudo, sudoPolicy, extendSudo, revokeSudo, savePermissions });
 }

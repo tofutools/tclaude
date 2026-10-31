@@ -54,6 +54,8 @@ function fakeDictation() {
   return fake;
 }
 
+const SHOWN_WINDOW = '.companion-window:not(.companion-window-warm)';
+
 async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, openPermissions = null, openSudo = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {}, locks = null } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
@@ -111,6 +113,31 @@ test('a Steward that stopped keeps the access controls disabled, with the reason
   assert.match(permissions.title, /not running/);
 });
 
+test('shutting a Steward down asks first, retires it, and offers a new one', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
+  const retires = () => calls.filter(([, url]) => url.endsWith('/retire'));
+  assert.deepEqual(retires(), [], 'nothing happens before the confirmation');
+  assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /ends its conversation/);
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await Promise.resolve(); await Promise.resolve(); });
+  assert.deepEqual(retires(), [['POST', `/api/agents/${encodeURIComponent(S)}/retire`]]);
+  assert.match(view.container.querySelector('.companion-shutdown-note').textContent, /is shut down/);
+  assert.match(view.container.textContent, /Start a new Steward/);
+});
+
+test('a refused shut-down stays on the Steward and says why', async (t) => {
+  const fetchImpl = async () => ({ ok: false, status: 409, text: async () => '{"message":"nothing to retire"}', json: async () => ({}) });
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await Promise.resolve(); await Promise.resolve(); });
+  assert.match(view.container.querySelector('.steward-shutdown-error').textContent, /nothing to retire/);
+  assert.equal(view.container.querySelector('.companion-shutdown-note'), null);
+});
+
 test('the access controls are the Steward\'s alone', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }), openPermissions: () => {}, openSudo: () => {} });
@@ -118,6 +145,7 @@ test('the access controls are the Steward\'s alone', async (t) => {
   assert.ok(harness.getByRole(view.container, 'tab', { name: /alpha/ }));
   assert.equal(view.container.querySelector('.companion-steward-perms'), null);
   assert.equal(view.container.querySelector('.companion-steward-sudo'), null);
+  assert.equal(view.container.querySelector('.steward-shutdown-open'), null);
 });
 
 test('with no Steward running the empty window says where its access controls will be', async (t) => {
@@ -200,6 +228,57 @@ test('the message row queues operator mail with the dashboard view attached', as
   assert.match(mail.body.body, /^what can I do here\?\n\n\[dashboard view: Processes \(/);
 });
 
+test('a minimized window reopens on the same terminal, and releases it after a while', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, mounted } = await setup(t, { prefs });
+  const key = () => harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  const settle = () => harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await key();
+  await settle();
+  assert.equal(mounted.length, 1);
+  await key();
+  await settle();
+  assert.ok(view.container.querySelector('.companion-window-warm'), 'hidden, not removed');
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null);
+  t.mock.timers.tick(60 * 1000);
+  await key();
+  await settle();
+  assert.ok(view.container.querySelector(SHOWN_WINDOW));
+  assert.equal(mounted.length, 1, 'no new terminal');
+  assert.equal(mounted[0].disposed, false);
+  await key();
+  await settle();
+  await harness.act(async () => { t.mock.timers.tick(5 * 60 * 1000); });
+  await settle();
+  assert.equal(view.container.querySelector('.companion-window'), null, 'released');
+  assert.ok(mounted[0].disposed);
+});
+
+test('a minimized window never attaches a terminal of its own', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]), 'tclaude.dash.companion.active': A });
+  const { view, harness, mounted, snap } = await setup(t, { prefs });
+  const key = () => harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  const settle = () => harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  await key();
+  await settle();
+  await key();
+  await settle();
+  const attached = mounted.length;
+  assert.equal(attached, 1);
+  assert.ok(view.container.querySelector('.companion-window-warm'));
+  const before = snap.value;
+  const active = mounted[0].options.wsPath.endsWith(A) ? A : B;
+  const withoutActive = { ...before, groups: before.groups.map((g) => ({ ...g, members: g.members.filter((x) => x.agent_id !== active) })) };
+  await harness.act(() => { snap.value = withoutActive; });
+  await settle();
+  assert.equal(mounted.length, attached, 'the next tab does not attach while hidden');
+  assert.equal(view.container.querySelector('.companion-window'), null, 'the hidden window is gone');
+  await harness.act(() => { snap.value = before; });
+  await settle();
+  assert.equal(mounted.length, attached, 'coming back does not attach either');
+});
+
 test('a click on empty window space gives focus back to the terminal', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, mounted } = await setup(t, { prefs });
@@ -228,11 +307,11 @@ test('Ctrl+. toggles the window and unpinning the last tab closes it', async (t)
   assert.ok(view.container.querySelector('.companion-window'), 'window opened');
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   await key();
-  assert.equal(view.container.querySelector('.companion-window'), null, 'window minimized');
-  assert.ok(mounted[0].disposed, 'minimizing disposes the terminal widget');
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null, 'window minimized');
+  assert.equal(mounted[0].disposed, false, 'a minimized window keeps its terminal attached');
   await key();
   await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Unpin alpha' }).click());
-  assert.equal(view.container.querySelector('.companion-window'), null);
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null);
   assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.tabs')), []);
 });
 
@@ -407,7 +486,7 @@ test('a decision from a pinned agent is answered with a button in its companion 
 
 test('a cue can open the agent that needs the operator in the companion window', async (t) => {
   const { view, harness, snap } = await setup(t);
-  assert.equal(view.container.querySelector('.companion-window'), null);
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null);
   await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
   await harness.act(async () => {
     snap.value = { ...snap.value, companion_cues: [{ id: 3, agent_name: 'steward', open: B }] };
@@ -593,7 +672,7 @@ test('a hand-over another tab holds opens nothing here, shown or held', async (t
   const taken = { id: 5, agent_name: 'steward', open: B, at: new Date().toISOString() };
   held.add(`tclaude.companion.cue-open/5@${taken.at}`);
   await settle([taken]);
-  assert.equal(view.container.querySelector('.companion-window'), null, 'the other tab has it');
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null, 'the other tab has it');
   assert.equal(prefs.store.get('tclaude.dash.companion.cue-open'), undefined);
 
   const doc = harness.window.document;
@@ -604,7 +683,7 @@ test('a hand-over another tab holds opens nothing here, shown or held', async (t
   held.add(`tclaude.companion.cue-open/6@${heldCue.at}`);
   visibility = 'visible';
   await harness.act(async () => { doc.dispatchEvent(new harness.window.Event('visibilitychange')); await new Promise((r) => setTimeout(r, 0)); });
-  assert.equal(view.container.querySelector('.companion-window'), null, 'a held hand-over another tab took meanwhile is dropped');
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null, 'a held hand-over another tab took meanwhile is dropped');
 
   const free = { id: 7, agent_name: 'steward', open: B, at: new Date().toISOString() };
   await settle([taken, heldCue, free]);
@@ -637,7 +716,7 @@ test('a hand-over cue on a hidden dashboard tab waits until the tab is shown', a
     await new Promise((r) => setTimeout(r, 0));
   });
   await settleClaim(harness);
-  assert.equal(view.container.querySelector('.companion-window'), null, 'nothing opens while hidden');
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null, 'nothing opens while hidden');
   await show();
   assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true', 'bravo opens on return');
   assert.match(prefs.store.get('tclaude.dash.companion.cue-open'), /^5@/, 'the hand-over is claimed for the other dashboard tabs');
@@ -667,7 +746,7 @@ test('live scribes and Stewards keep a tab by themselves, and a closed one stays
   assert.ok(chip(/steward-k3x/), 'the Steward has a pill without being pinned');
   assert.ok(chip(/process-scribe-a1/), 'so has a scribe, whoever summoned it');
   assert.equal(chip(/bravo/), undefined, 'ordinary agents still wait to be pinned');
-  assert.equal(view.container.querySelector('.companion-window'), null, 'a helper appearing does not open the window');
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null, 'a helper appearing does not open the window');
 
   // Two Stewards can be live (a changed permission set summons a fresh one).
   await harness.act(async () => { snap.value = withHelpers({ second: true }); });
@@ -767,7 +846,7 @@ test('a permission request opens in a right-hand panel from its pill, and the pa
   const chip = harness.getByRole(view.container, 'button', { name: /alpha: / });
   assert.match(chip.textContent, /approval/);
   await harness.act(() => chip.click());
-  assert.equal(view.container.querySelector('.companion-window'), null, 'the window stays minimized');
+  assert.equal(view.container.querySelector(SHOWN_WINDOW), null, 'the window stays minimized');
   const cards = panelHost.querySelectorAll('.companion-approval');
   assert.equal(cards.length, 2, 'what one card can answer, from every agent');
   assert.match(panelHost.textContent, /2 requests need a closer look in Messages/, 'a peer\'s request or a proposal is sent on, never approved blind');

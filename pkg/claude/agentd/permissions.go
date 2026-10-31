@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -56,6 +57,10 @@ type PermSlug struct {
 	// explicit deny, not an endpoint-specific bypass.
 	MemberImplied bool `json:"member_implied,omitempty"`
 	AutoGrantable bool `json:"auto_grantable,omitempty"`
+	// Risky marks a slug the editors call out: see riskySlugs.
+	Risky bool `json:"risky,omitempty"`
+	// Countable marks a slug a sudo grant can limit by uses: see countableSudoSlugs.
+	Countable bool `json:"countable,omitempty"`
 }
 
 func initPermissionRegistry() {
@@ -63,6 +68,10 @@ func initPermissionRegistry() {
 }
 
 func initPermissionRegistryEntries(registry []PermSlug) {
+	for i := range registry {
+		registry[i].Risky = slices.Contains(riskySlugs, registry[i].Slug)
+		registry[i].Countable = slices.Contains(countableSudoSlugs, registry[i].Slug)
+	}
 	seenSlugs := map[string]bool{}
 	for i := range registry {
 		p := &registry[i]
@@ -116,6 +125,19 @@ func containsScopeDim(dims []ScopeDim, want ScopeDim) bool {
 }
 
 func init() { initPermissionRegistry() }
+
+// riskySlugs are the slugs the permission editors mark: each reaches past
+// tclaude's own state to the host or to credentials, destroys work, or widens
+// what an agent can hand itself. It is display guidance, not a gate.
+var riskySlugs = []string{
+	PermNodeExec, PermSessionsShell, PermSessionsAttach, PermSessionsTakeover,
+	PermNodeUpdate, PermNodeHarnessesInstall, PermNodeCredentialsReceive,
+	PermConfigImport, PermConfigExport, PermAgentBundleImport,
+	PermAgentDelete, PermGroupsMembersDelete,
+	PermGroupsMembersSpawnPermissions, PermGroupsMembersSpawnSandbox, PermGroupsMembersSpawnAll,
+	PermGroupsOwnersManage, PermGroupsAdmin, PermSandboxProfilesManage, PermSandboxHarnessConfig,
+	PermPermissionsGrant, PermPermissionsRevoke,
+}
 
 // permissionRegistry is the single source of truth for known slugs. It's
 // what `permissions slugs` returns and what the validators consult when
@@ -1854,6 +1876,7 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	endStoredStewardPermission(target.Key, body.Slug)
 	slugs, _ := db.ListAgentPermissionsForConv(target.Key)
 	writeJSON(w, http.StatusOK, permissionsMutateResp{
 		Target:    body.Target,
@@ -1907,6 +1930,7 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
+		endStoredStewardPermission(target.Key, body.Slug)
 		resp.TargetKey = target.Key
 		resp.AgentID = target.AgentID
 		resp.Title = target.ConvTitle

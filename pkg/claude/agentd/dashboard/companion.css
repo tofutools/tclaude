@@ -69,6 +69,8 @@
   box-shadow: 0 18px 44px rgba(0, 0, 0, .6); transform-origin: 0 0;
 }
 .companion-window:focus-within { border-color: var(--cmp-blue); }
+/* Minimized but still attached: keeps its size so the terminal stays fitted. */
+.companion-window-warm { visibility: hidden; pointer-events: none; }
 .companion-window.snapped { border-radius: 0; box-shadow: 0 0 24px rgba(0, 0, 0, .5); }
 .companion-titlebar {
   flex: none; display: flex; align-items: center; gap: 4px; height: 34px; padding: 0 6px 0 8px;
@@ -396,4 +398,10 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 
 /* The dialogs the window opens must not land behind it. Other plain modals
    stay under it, so an agent can be used beside the editor it is helping with. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show, #sudo-grant-modal.show) .companion-window { z-index: 90; }
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show) .companion-window { z-index: 90; }
+
+/* The title bar sizes its buttons as icons; the shut-down confirmation hanging
+   off it holds ordinary ones. */
+.companion-controls .steward-shutdown-actions button { width: auto; height: auto; min-width: 0; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+.companion-controls .steward-shutdown-actions button.danger { background: #8e1f1f; border: 1px solid #da3633; color: #fff; }
+.companion-controls .steward-shutdown-actions button:not(.danger) { background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; }

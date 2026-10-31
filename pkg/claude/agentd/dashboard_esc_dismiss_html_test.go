@@ -45,7 +45,7 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must("const cleanup = registerClose?.(close);", "ManagementOverlay publishes its guarded close transaction")
 	must("return { requestClose, registerClose };", "the shared adapter exposes request and registration wiring")
 	must("registerClose=${registerClose}", "dirty form owners register explicit controls with ManagementOverlay")
-	must(`id="perm-edit-modal" dialogClass="perm-edit-modal"`, "the permission editor uses the shared Preact overlay")
+	must(`id="perm-edit-modal" dialogClass=`, "the permission editor uses the shared Preact overlay")
 	must("onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact permission editor confirms before discarding")
 	must("dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard}", "the Preact template editor confirms before discarding")
 	must("const discard = await state.confirmDiscard();", "the shared Preact overlay awaits discard confirmation")

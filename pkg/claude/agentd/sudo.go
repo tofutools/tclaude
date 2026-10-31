@@ -3,8 +3,10 @@ package agentd
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -221,6 +223,8 @@ type sudoGrantJSON struct {
 	GrantedBy        string `json:"granted_by"`
 	Reason           string `json:"reason,omitempty"`
 	RemainingSeconds int64  `json:"remaining_seconds,omitempty"`
+	UsesLimit        int64  `json:"uses_limit,omitempty"`
+	UsesLeft         int64  `json:"uses_left,omitempty"`
 }
 
 func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +351,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	// Re-snapshot the timestamps post-popup so the window is measured
 	// from approval time, not request time — fairer to the agent if
 	// the human took 30 seconds to click.
-	out, status := insertSudoBundle(agentID, p.ConvID, title, body.Slugs, dur, reason,
+	out, status := insertSudoBundle(agentID, p.ConvID, title, body.Slugs, nil, nil, dur, reason,
 		"human:popup-id="+req.id)
 	writeJSON(w, status, out)
 }
@@ -400,8 +404,118 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 	if !ok {
 		return
 	}
-	out, status := insertSudoBundle(targetAgentID, targetConv, title, body.Slugs, dur, strings.TrimSpace(body.Reason), granter)
+	out, status := insertSudoBundle(targetAgentID, targetConv, title, body.Slugs, nil, nil, dur, strings.TrimSpace(body.Reason), granter)
 	writeJSON(w, status, out)
+}
+
+// countableSudoSlugs are the slugs a sudo grant can limit by uses. Each names one
+// discrete action with one place to count it: a spawn. Adding a slug means
+// adding takeSudoUse to its handler, and refusing the grant on any path that
+// cannot count (spawnAuthorityIsCounted). A peer-scoped grant takes no limit:
+// remote spawns do not pass the reservation, so POST /api/sudo refuses the pair.
+var countableSudoSlugs = []string{PermAgentSpawn, PermGroupsMembersSpawn}
+
+// maxSudoUses bounds a use limit. A larger one is no limit at all.
+const maxSudoUses = 1000
+
+// sudoUse is one use of a counted grant, reserved before the action. Release is
+// deferred by the handler and gives it back unless keep ran, so every way of
+// not spawning returns the use.
+type sudoUse struct {
+	grantID int64
+	kept    bool
+}
+
+func (u *sudoUse) keep() { u.kept = true }
+
+func (u *sudoUse) release() {
+	if u.kept || u.grantID == 0 {
+		return
+	}
+	if err := db.ReturnSudoUse(u.grantID); err != nil {
+		slog.Warn("sudo: return unused use failed", "grant", u.grantID, "error", err)
+	}
+}
+
+// takeSudoUse reserves a use of the grant behind this request, when that grant
+// is limited. Grant 0 (standing authority) and an unlimited grant need nothing.
+// It answers the request and returns false when none is left.
+func takeSudoUse(w http.ResponseWriter, grantID int64) (*sudoUse, bool) {
+	if grantID == 0 {
+		return &sudoUse{}, true
+	}
+	limited, taken, err := db.TakeSudoUse(grantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return nil, false
+	}
+	if !limited {
+		return &sudoUse{}, true
+	}
+	if !taken {
+		writeError(w, http.StatusForbidden, "sudo_uses_exhausted", "this sudo grant has no uses left")
+		return nil, false
+	}
+	return &sudoUse{grantID: grantID}, true
+}
+
+// spawnAuthorityIsCounted reports whether a use-limited sudo grant is what
+// allows this spawn. Triggers and schedules spawn without passing a person's
+// request, so they cannot count a use and refuse rather than let the limit be
+// walked past. Either spawn slug held standing means the grant is not needed.
+func spawnAuthorityIsCounted(r *http.Request, convID, slug string, actx ActionContext) bool {
+	if standingPermissionAllows(convID, PermAgentSpawn, actx) || standingPermissionAllows(convID, PermGroupsMembersSpawn, actx) {
+		return false
+	}
+	id := loadBearingSudoGrantID(r, convID, slug, actx)
+	if id == 0 {
+		return false
+	}
+	grant, err := db.GetSudoGrant(id)
+	return err != nil || (grant != nil && grant.UsesLimit > 0)
+}
+
+// sudoPolicyJSON is what the sudo editor shows before anything is submitted:
+// the limits the server will hold it to for this agent, so a config override
+// of the blocklist or the cap reads correctly in the dialog. The server still
+// decides on every grant and extension.
+type sudoPolicyJSON struct {
+	MaxSeconds     int64 `json:"max_seconds"`
+	DefaultSeconds int64 `json:"default_seconds"`
+	// Refused maps each slug that cannot be elevated to why.
+	Refused map[string]string `json:"refused"`
+}
+
+func sudoPolicyWire(policy resolvedSudo) sudoPolicyJSON {
+	out := sudoPolicyJSON{
+		MaxSeconds:     int64(policy.MaxDuration.Seconds()),
+		DefaultSeconds: int64(policy.DefaultDuration.Seconds()),
+		Refused:        map[string]string{},
+	}
+	for _, slug := range policy.Blocklist {
+		out.Refused[slug] = sudoRefusalReason(slug)
+	}
+	return out
+}
+
+func sudoRefusalReason(slug string) string {
+	if slices.Contains(sudoDefaultBlocklist, slug) {
+		return "Refused: it hands out permissions itself, so a grant made during the window would outlive it."
+	}
+	return "Refused by agent.sudo.blocklist in your config."
+}
+
+// extendedSudoExpiry works out a grant's new expiry and holds it to the same
+// cap as a fresh grant, measured from now: repeated extensions cannot turn a
+// bounded elevation into a standing one. On failure it returns a non-empty
+// error message.
+func extendedSudoExpiry(current, now time.Time, by time.Duration, policy resolvedSudo) (time.Time, string) {
+	next := current.Add(by)
+	if left := next.Sub(now); left > policy.MaxDuration {
+		return time.Time{}, fmt.Sprintf("that would leave %s on the grant, over the max %s",
+			left.Round(time.Second), policy.MaxDuration)
+	}
+	return next, ""
 }
 
 // blockedSlugs returns every entry of want that's also in blocklist,
@@ -465,7 +579,10 @@ type sudoBundleResponse struct {
 // in audit views. Returns the response payload + HTTP status; per-row
 // insert failures are surfaced in the response (non-fatal — sibling
 // rows that landed are still valid).
-func insertSudoBundle(agentID, convID, title string, slugs []string, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
+//
+// scopes narrows individual slugs (slug → canonical scope JSON); a slug it does
+// not name is unscoped, the path every caller but the dashboard takes.
+func insertSudoBundle(agentID, convID, title string, slugs []string, scopes map[string]string, uses map[string]int64, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
 	now := time.Now()
 	expires := now.Add(dur)
 	out := sudoBundleResponse{
@@ -477,6 +594,9 @@ func insertSudoBundle(agentID, convID, title string, slugs []string, dur time.Du
 		id, err := db.InsertSudoGrantForAgent(&db.SudoGrant{
 			AgentID:   agentID,
 			Slug:      slug,
+			ScopeJSON: scopes[slug],
+			UsesLimit: uses[slug],
+			UsesLeft:  uses[slug],
 			GrantedAt: now,
 			ExpiresAt: expires,
 			GrantedBy: granter,
@@ -607,6 +727,8 @@ func sudoGrantsToJSON(rows []*db.SudoGrant, now time.Time) []sudoGrantJSON {
 			ExpiresAt: g.ExpiresAt.Format(time.RFC3339Nano),
 			GrantedBy: g.GrantedBy,
 			Reason:    g.Reason,
+			UsesLimit: g.UsesLimit,
+			UsesLeft:  g.UsesLeft,
 		}
 		if remaining := g.ExpiresAt.Sub(now); remaining > 0 {
 			entry.RemainingSeconds = int64(remaining.Seconds())

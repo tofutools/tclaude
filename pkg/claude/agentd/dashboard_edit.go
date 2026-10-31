@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -1963,18 +1965,28 @@ func dashboardRemoveOwner(w http.ResponseWriter, g *db.AgentGroup, convSelector 
 //
 //	POST   /api/sudo                 → proactive grant (no popup —
 //	                                   the cookie IS the human consent)
+//	POST   /api/sudo/{id}/extend     → push one grant's expiry out
+//	GET    /api/sudo/policy?agent_id=<id> → the limits for that agent
 //	DELETE /api/sudo/{id}            → revoke one
 //	DELETE /api/sudo?agent_id=<id>   → revoke all for one agent
 //	DELETE /api/sudo?all=1           → revoke every active grant
 //
-// Read paths (list / per-conv view) are not surfaced separately —
+// Grant reads (list / per-conv view) are not surfaced separately —
 // the snapshot already exposes per-agent active sudo state, so the
 // dashboard renders off that single round-trip.
 func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/api/sudo/policy" {
+		handleDashboardSudoPolicy(w, r)
+		return
+	}
 	if r.Method == http.MethodPost {
+		if id, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/sudo/"), "/extend"); ok {
+			handleDashboardSudoExtend(w, r, id)
+			return
+		}
 		handleDashboardSudoGrant(w, r)
 		return
 	}
@@ -2039,6 +2051,90 @@ func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "agent_id": actor.AgentID})
 }
 
+// sudoPolicyForAgent resolves the policy for an active agent, or answers the
+// request and returns ok=false.
+func sudoPolicyForAgent(w http.ResponseWriter, agentID string) (*db.Agent, string, resolvedSudo, bool) {
+	actor, err := db.GetAgent(strings.TrimSpace(agentID))
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusInternalServerError)
+		return nil, "", resolvedSudo{}, false
+	}
+	if actor == nil || !actor.Active() {
+		http.Error(w, "active agent not found", http.StatusNotFound)
+		return nil, "", resolvedSudo{}, false
+	}
+	title := ""
+	if row := agent.FreshConvRowResolved(actor.CurrentConvID); row != nil {
+		title = agent.DisplayTitle(row)
+	}
+	cfg, _ := config.Load()
+	return actor, title, resolveSudoConfig(cfg, actor.CurrentConvID, actor.AgentID, title), true
+}
+
+// handleDashboardSudoPolicy tells the sudo editor the limits for one agent.
+func handleDashboardSudoPolicy(w http.ResponseWriter, r *http.Request) {
+	_, _, policy, ok := sudoPolicyForAgent(w, r.URL.Query().Get("agent_id"))
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, sudoPolicyWire(policy))
+}
+
+// handleDashboardSudoExtend adds time to one active grant. A slug put on the
+// blocklist since the grant was made is refused, like a fresh grant.
+func handleDashboardSudoExtend(w http.ResponseWriter, r *http.Request, rawID string) {
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil {
+		http.Error(w, "id must be a positive integer", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Duration string `json:"duration"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	by, err := time.ParseDuration(strings.TrimSpace(body.Duration))
+	if err != nil || by <= 0 {
+		http.Error(w, "duration must be a positive duration such as 15m", http.StatusBadRequest)
+		return
+	}
+	grant, err := db.GetSudoGrant(id)
+	if err != nil {
+		http.Error(w, "read grant: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	if !grant.IsActive(now) {
+		http.Error(w, "no active grant with that id", http.StatusNotFound)
+		return
+	}
+	_, _, policy, ok := sudoPolicyForAgent(w, grant.AgentID)
+	if !ok {
+		return
+	}
+	if blocked := blockedSlugs([]string{grant.Slug}, policy.Blocklist); len(blocked) > 0 {
+		http.Error(w, "slug blocklisted from sudo: "+grant.Slug, http.StatusForbidden)
+		return
+	}
+	expires, refusal := extendedSudoExpiry(grant.ExpiresAt, now, by, policy)
+	if refusal != "" {
+		http.Error(w, refusal, http.StatusBadRequest)
+		return
+	}
+	n, err := db.ExtendSudoGrant(id, expires)
+	if err != nil {
+		http.Error(w, "extend: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		http.Error(w, "no active grant with that id", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "expires_at": expires.Format(time.RFC3339Nano)})
+}
+
 // handleDashboardSudoGrant is the cookie-auth front for proactive
 // sudo grants. The dashboard cookie + Origin pinning is the human-
 // consent layer here; an agent reaching this endpoint would have
@@ -2060,6 +2156,15 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		Slugs    []string `json:"slugs"`
 		Duration string   `json:"duration"`
 		Reason   string   `json:"reason"`
+		// Scopes narrows individual slugs, in the permissions editor's wire
+		// shape. A slug it does not name is granted unscoped.
+		Scopes map[string]json.RawMessage `json:"scopes"`
+		// Carry names the slugs also stored for all future Stewards, with
+		// this grant's expiry. Only a live Steward may name any.
+		Carry []string `json:"carry"`
+		// Uses limits individual slugs to that many uses. It ends the grant at
+		// whichever limit comes first, this or the duration.
+		Uses map[string]int64 `json:"uses"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -2077,22 +2182,26 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	actor, err := db.GetAgent(body.AgentID)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if actor == nil || !actor.Active() {
-		http.Error(w, "active agent not found", http.StatusNotFound)
+	actor, title, policy, ok := sudoPolicyForAgent(w, body.AgentID)
+	if !ok {
 		return
 	}
 	convID := actor.CurrentConvID
-	title := ""
-	if row := agent.FreshConvRowResolved(convID); row != nil {
-		title = agent.DisplayTitle(row)
+	if len(body.Carry) > 0 && !isLiveSteward(convID) {
+		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
+		return
 	}
-	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, convID, actor.AgentID, title)
+	carryCfg, _ := config.Load()
+	for _, slug := range body.Carry {
+		if !slices.Contains(body.Slugs, slug) {
+			http.Error(w, "carry names slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+		if refusal := carryRefusal(carryCfg, slug); refusal != "" {
+			http.Error(w, refusal, http.StatusForbidden)
+			return
+		}
+	}
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		http.Error(w,
@@ -2101,12 +2210,51 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 			http.StatusForbidden)
 		return
 	}
+	scopes := map[string]string{}
+	for slug, raw := range body.Scopes {
+		if !slices.Contains(body.Slugs, slug) {
+			http.Error(w, "scope given for slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+		canonical, err := canonicalPermissionScopeForSlug(slug, string(raw))
+		if err != nil {
+			http.Error(w, "invalid scope for slug "+slug+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		scopes[slug] = canonical
+	}
+	for slug, uses := range body.Uses {
+		if !slices.Contains(body.Slugs, slug) {
+			http.Error(w, "uses given for slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+		if !slices.Contains(countableSudoSlugs, slug) {
+			http.Error(w, slug+" has no action to count, so it takes no use limit", http.StatusBadRequest)
+			return
+		}
+		if uses < 1 || uses > maxSudoUses {
+			http.Error(w, fmt.Sprintf("uses for %s must be between 1 and %d", slug, maxSudoUses), http.StatusBadRequest)
+			return
+		}
+		if scope, err := permissionScopeForEval(scopes[slug]); err != nil || len(scope[ScopeDimPeer]) != 0 {
+			http.Error(w, "a use limit covers local spawns only, so "+slug+" cannot have one with a peer scope", http.StatusBadRequest)
+			return
+		}
+	}
 	dur, ok := resolveSudoDuration(w, body.Duration, policy)
 	if !ok {
 		return
 	}
-	out, status := insertSudoBundle(actor.AgentID, convID, title, body.Slugs, dur,
+	out, status := insertSudoBundle(actor.AgentID, convID, title, body.Slugs, scopes, body.Uses, dur,
 		strings.TrimSpace(body.Reason), dashboardSudoGranter)
+	for _, grant := range out.Grants {
+		if grant.ID > 0 && slices.Contains(body.Carry, grant.Slug) {
+			if err := db.CarrySudoGrant(grant.ID); err != nil {
+				http.Error(w, "save for future Stewards: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
 	writeJSON(w, status, out)
 }
 
@@ -2169,6 +2317,10 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		// empty object is written unscoped, which is how the editor clears a
 		// scope; a slug absent from this map keeps whatever scope is stored.
 		Scopes map[string]json.RawMessage `json:"scopes"`
+		// Carry is the Steward editor's per-grant choice: true stores the slug
+		// for all future Stewards, false stops doing so. Only a live Steward
+		// may name it.
+		Carry map[string]bool `json:"carry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -2224,6 +2376,34 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
 		return
+	}
+	steward := isLiveSteward(res.ConvID)
+	var overridesBefore map[string]db.PermissionOverride
+	if steward {
+		var err error
+		if overridesBefore, err = agentPermissionOverrides(res.ConvID); err != nil {
+			http.Error(w, "read overrides: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if len(body.Carry) > 0 && !steward {
+		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
+		return
+	}
+	cfg, _ := config.Load()
+	for slug, carry := range body.Carry {
+		if !carry {
+			continue
+		}
+		effect, ok := body.Overrides[slug]
+		if !ok || effect == "default" {
+			http.Error(w, "carry names slug "+slug+" which the batch does not grant or deny", http.StatusBadRequest)
+			return
+		}
+		if refusal := carryRefusal(cfg, slug); refusal != "" {
+			http.Error(w, refusal, http.StatusForbidden)
+			return
+		}
 	}
 	currentOverrides, err := agentPermissionOverrides(res.ConvID)
 	if err != nil {
@@ -2286,6 +2466,12 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed++
+	}
+	if steward {
+		if err := saveStewardCarry(res.ConvID, overridesBefore, body.Overrides, body.Carry); err != nil {
+			http.Error(w, "save for future Stewards: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	overrides, _ := db.ListAgentPermissionOverridesForConv(res.ConvID)
 	effective, _ := db.ListAgentPermissionsForConv(res.ConvID)

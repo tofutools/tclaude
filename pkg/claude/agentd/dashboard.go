@@ -1086,6 +1086,8 @@ type snapshotPayload struct {
 	// StewardElevated is what each live Steward holds beyond Config and the
 	// defaults, by agent id. Sent only with Collab on.
 	StewardElevated map[string]stewardElevation `json:"steward_elevated,omitempty"`
+	// StewardAccess is where a live Steward's access comes from, for its editors.
+	StewardAccess *stewardAccess `json:"steward_access,omitempty"`
 	// TriggersEnabled gates the experimental Automations subview and compact
 	// Groups projection. Re-read on every snapshot so Config changes take
 	// effect without restarting agentd, matching triggerRoute.
@@ -2086,6 +2088,10 @@ type dashboardSudoEntry struct {
 	ConvID           string `json:"conv_id,omitempty"`  // omitted on agent[*].active_sudo (caller already knows)
 	ConvTitle        string `json:"conv_title,omitempty"`
 	Slug             string `json:"slug"`
+	ScopeJSON        string `json:"scope_json,omitempty"`
+	Carried          bool   `json:"carried,omitempty"` // also stored for all future Stewards
+	UsesLimit        int64  `json:"uses_limit,omitempty"`
+	UsesLeft         int64  `json:"uses_left,omitempty"`
 	GrantedAt        string `json:"granted_at"`
 	ExpiresAt        string `json:"expires_at"`
 	GrantedBy        string `json:"granted_by,omitempty"`
@@ -3790,6 +3796,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ConvID:           g.ConvID,
 			ConvTitle:        title,
 			Slug:             g.Slug,
+			ScopeJSON:        g.ScopeJSON,
+			Carried:          g.CarriedID > 0,
+			UsesLimit:        g.UsesLimit,
+			UsesLeft:         g.UsesLeft,
 			GrantedAt:        g.GrantedAt.Format(time.RFC3339Nano),
 			ExpiresAt:        g.ExpiresAt.Format(time.RFC3339Nano),
 			GrantedBy:        g.GrantedBy,
@@ -3981,6 +3991,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Grants:    out.Permissions.Grants,
 			Overrides: out.Permissions.Overrides,
 		})
+		out.StewardAccess = stewardAccessView(cfg)
 		out.CompanionCues = activeCompanionCues()
 	}
 	out.Templates = templates

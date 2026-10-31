@@ -4,7 +4,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { approvalSummary, timeLeft } from './companion-model.js';
+import { approvalSummary, stewardSummonBody, timeLeft } from './companion-model.js';
 
 const html = htm.bind(h);
 
@@ -57,12 +57,74 @@ export function StewardAccessControls({ agent, openPermissions, openSudo }) {
       onClick=${() => openPermissions(agent.convId, agent.name)}>🛡</button>`}
     ${openSudo && html`<button type="button" class="companion-steward-sudo" disabled=${!agent.online}
       aria-label=${`Grant ${agent.name} sudo`} title=${agent.online ? 'Sudo: grant a time-bounded elevation' : offline}
-      onClick=${() => openSudo(agent.agentId)}>sudo</button>`}
+      onClick=${() => openSudo(agent.agentId, agent.name)}>sudo</button>`}
   `;
 }
 
+// shutDownAgent retires an agent, with the default clean exit. For a Steward
+// that is the whole lifecycle: its session ends, what it held as an instance
+// goes with it so nothing lingers, and the next summon starts a fresh one
+// because a retired agent is never reused. What the operator stored for all
+// future Stewards stays. Its conversation stays in history.
+export async function shutDownAgent(fetchImpl, agent) {
+  const response = await fetchImpl(`/api/agents/${encodeURIComponent(agent.agentId)}/retire`, { method: 'POST', credentials: 'same-origin' });
+  if (!response.ok) {
+    const text = (await response.text?.()) || '';
+    let message = text;
+    try { message = JSON.parse(text).message || text; } catch (_) { /* plain text error */ }
+    throw new Error(message || `${response.status}`);
+  }
+}
+
+// requestStewardSummon asks for a Steward, from any page. The caller shows it.
+export async function requestStewardSummon(fetchImpl) {
+  const response = await fetchImpl('/api/scribe', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(stewardSummonBody()),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+  return result;
+}
+
+// StewardShutdown is the shut-down control of a Steward's title bar and of its
+// detached window. It asks first, inline: this page and the detached one share
+// no modal host, and the action ends a running conversation.
+export function StewardShutdown({ agent, fetchImpl, onDown }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function confirm() {
+    setBusy(true);
+    setError('');
+    try {
+      await shutDownAgent(fetchImpl, agent);
+      setAsking(false);
+      onDown(agent);
+    } catch (cause) {
+      setError(`Could not shut down: ${cause?.message || cause}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return html`<span class="steward-shutdown">
+    <button type="button" class="steward-shutdown-open" aria-label=${`Shut down ${agent.name}`} aria-expanded=${asking ? 'true' : 'false'}
+      title="Shut down: end this conversation" onClick=${() => { setError(''); setAsking((value) => !value); }}>⏻</button>
+    ${asking && html`<div class="steward-shutdown-confirm" role="alertdialog" aria-label=${`Shut down ${agent.name}?`}
+      onKeyDown=${(event) => { if (event.key === 'Escape') setAsking(false); }}>
+      <p><b>Shut down ${agent.name}?</b> This ends its conversation and what was given to this Steward only. Grants for all future Stewards are kept. You can start a new one afterwards.</p>
+      ${error && html`<p class="steward-shutdown-error" role="alert">${error}</p>`}
+      <div class="steward-shutdown-actions">
+        <button type="button" disabled=${busy} onClick=${() => setAsking(false)}>Cancel</button>
+        <button type="button" class="danger" disabled=${busy} onClick=${confirm}>${busy ? 'Shutting down…' : 'Shut down'}</button>
+      </div>
+    </div>`}
+  </span>`;
+}
+
 // ElevatedBand says an agent holds more than its usual access and ends it in
-// one click. No confirmation: taking access away is safe, and it can ask again.
+// one click. No confirmation: taking access away is safe, and it can ask again,
+// so it reaches stored grants too. The band says which those are.
 export function ElevatedBand({ agent, access, fetchImpl, notify }) {
   const [busy, setBusy] = useState(false);
   async function end() {
@@ -71,7 +133,8 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
       await endElevatedAccess(fetchImpl, agent, access);
       notify(access.inherited.length
         ? `Ended what ${agent.name} held itself. Group access remains: change it in Groups.`
-        : `${agent.name} is back to its usual access.`);
+        : access.anyStored ? `${agent.name} is back to its usual access, and future Stewards no longer get what was stored.`
+          : `${agent.name} is back to its usual access.`);
     } catch (error) {
       notify(`Could not end ${agent.name}'s elevated access: ${error?.message || error}`, true);
     } finally {
@@ -82,11 +145,11 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
     <span aria-hidden="true">🔓</span>
     <div class="companion-elevated-text">
       <b>Elevated access</b>
-      ${access.sudo.map((grant) => html`<span key=${grant.id}><code>${grant.slug}</code> ${timeLeft(grant.remaining_seconds)} left</span>`)}
-      ${access.standing.map((slug) => html`<span key=${slug}><code>${slug}</code> standing</span>`)}
+      ${access.sudo.map((grant) => html`<span key=${grant.id}><code>${grant.slug}</code> ${timeLeft(grant.remaining_seconds)} left${grant.carried ? ', all future Stewards' : ''}</span>`)}
+      ${access.standing.map((slug) => html`<span key=${slug}><code>${slug}</code> ${access.stored?.has(slug) ? 'standing, all future Stewards' : 'standing'}</span>`)}
       ${access.inherited.map((slug) => html`<span key=${slug}><code>${slug}</code> from a group</span>`)}
     </div>
-    ${(access.sudo.length > 0 || access.standing.length > 0) && html`<button type="button" disabled=${busy} onClick=${end}>${busy ? 'Ending…' : 'End now'}</button>`}
+    ${(access.sudo.length > 0 || access.standing.length > 0) && html`<button type="button" disabled=${busy} title=${access.anyStored ? 'Also ends what is kept for all future Stewards' : 'End this access now'} onClick=${end}>${busy ? 'Ending…' : 'End now'}</button>`}
   </div>`;
 }
 

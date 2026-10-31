@@ -1,6 +1,76 @@
 import { openMemberPRs, prReviewState } from './pr-review-model.js';
 
-const SUDO_BLOCKLIST = new Set(['permissions.grant', 'permissions.revoke']);
+// What the sudo editor assumes until GET /api/sudo/policy answers, or when
+// another node's older daemon has no such route. The server decides either way.
+export const DEFAULT_SUDO_POLICY = Object.freeze({
+  max_seconds: 3600, default_seconds: 300,
+  refused: Object.freeze({
+    'permissions.grant': 'Refused: it hands out permissions itself, so a grant made during the window would outlive it.',
+    'permissions.revoke': 'Refused: it hands out permissions itself, so a grant made during the window would outlive it.',
+  }),
+});
+
+export const SUDO_DURATION_PRESETS = Object.freeze(['5m', '15m', '30m', '1h']);
+
+const DURATION_UNITS = { h: 3600, m: 60, s: 1 };
+
+// sudoDurationSeconds reads the Go durations the server accepts, for the
+// editor's own hints. null when it is not one the editor can read.
+export function sudoDurationSeconds(text) {
+  const value = String(text || '').trim();
+  if (!/^(\d+(\.\d+)?[hms])+$/.test(value)) return null;
+  let total = 0;
+  for (const [, amount, unit] of value.matchAll(/(\d+(?:\.\d+)?)([hms])/g)) total += Number(amount) * DURATION_UNITS[unit];
+  return total > 0 ? total : null;
+}
+
+// sudoDurationText writes whole seconds as the shortest Go duration.
+export function sudoDurationText(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  return `${hours ? `${hours}h` : ''}${minutes ? `${minutes}m` : ''}${rest || !total ? `${rest}s` : ''}`;
+}
+
+export function sudoSecondsLeft(grant, now) {
+  const at = Date.parse(grant?.expires_at || '');
+  if (Number.isFinite(at)) return Math.max(0, Math.round((at - now) / 1000));
+  return Math.max(0, Number(grant?.remaining_seconds) || 0);
+}
+
+// sudoGrantScope reads a snapshot row's stored scope: {} when unscoped.
+export function sudoGrantScope(grant) {
+  try { return JSON.parse(grant?.scope_json || '{}') || {}; } catch (_) { return {}; }
+}
+
+const SLUG_AREAS = [
+  ['groups.members', 'Group members'], ['groups.settings', 'Group settings'], ['groups', 'Groups'],
+  ['agents', 'Agents'], ['agent', 'Agents'], ['self', 'The agent itself'],
+  ['human', 'Operator'], ['approvals', 'Operator'], ['message', 'Messaging'],
+  ['node', 'Node and host'], ['host', 'Node and host'], ['jobs', 'Node and host'], ['sessions', 'Sessions'],
+  ['process', 'Processes'], ['templates', 'Processes'], ['triggers', 'Processes'],
+  ['sandbox', 'Sandbox'], ['sandbox-profiles', 'Sandbox'], ['config', 'Config'], ['settings', 'Config'],
+];
+
+export function slugArea(slug) {
+  const text = String(slug || '');
+  const match = SLUG_AREAS.find(([prefix]) => text === prefix || text.startsWith(`${prefix}.`));
+  if (match) return match[1];
+  const head = text.split('.')[0];
+  return head.charAt(0).toUpperCase() + head.slice(1);
+}
+
+// rowsByArea orders the rows area by area, keeping each area alphabetical.
+export function rowsByArea(rows) {
+  const areas = new Map();
+  for (const row of rows) {
+    const area = slugArea(row.slug);
+    if (!areas.has(area)) areas.set(area, []);
+    areas.get(area).push({ ...row, area });
+  }
+  return [...areas.keys()].sort((left, right) => left.localeCompare(right)).flatMap((area) => areas.get(area));
+}
 
 export function snapshotAgents(snapshot) {
   const seen = new Set();
@@ -90,14 +160,21 @@ export function sudoByAgent(snapshot) {
   return out;
 }
 
-export function sudoSlugRows(snapshot) {
-  return (snapshot?.slugs || []).map((slug) => ({
-    ...slug,
-    blocked: SUDO_BLOCKLIST.has(slug.slug),
-  }));
+// stewardAccessFor is where a live Steward's access comes from, for its
+// editors, or null for every other agent. The daemon names the live Stewards,
+// so an agent that merely has the name gets the ordinary editor.
+export function stewardAccessFor(snapshot, conv) {
+  const access = snapshot?.steward_access;
+  if (!conv || !access?.convs?.includes(conv)) return null;
+  return {
+    config: new Set(access.config || []),
+    carried: access.carried || {},
+    notCarryable: new Set(access.not_carryable || []),
+  };
 }
 
 export function permissionSeed(snapshot, descriptor) {
+  if (descriptor.mode === 'sudo') return {};
   if (descriptor.mode === 'agent') {
     return { ...((snapshot?.permissions?.overrides || {})[descriptor.conv] || {}) };
   }
@@ -131,6 +208,7 @@ function permissionOverrideScope(override) {
 // profile override scopes without separate UI implementations.
 export function permissionScopeSeed(snapshot, descriptor) {
   let stored = {};
+  if (descriptor.mode === 'sudo') return {};
   if (descriptor.mode === 'agent') {
     stored = (snapshot?.permissions?.scopes || {})[descriptor.conv] || {};
   } else if (descriptor.mode === 'group') {
@@ -162,7 +240,7 @@ export function unreadableScopeSlugs(snapshot, descriptor) {
 // All three launch modes persist the same scope shape: immediately for agents
 // and groups, or into the buffered birth-time override for spawns/profiles.
 export function scopeSupported(descriptor) {
-  return ['agent', 'group', 'buffer'].includes(descriptor?.mode);
+  return ['agent', 'group', 'buffer', 'sudo'].includes(descriptor?.mode);
 }
 
 // scopeDimOptions answers the picker's "what can I choose here" for ONE
@@ -205,7 +283,7 @@ export function scopeChips(scope) {
 }
 
 function membershipGroups(snapshot, descriptor) {
-  if (descriptor.mode === 'agent') {
+  if (descriptor.mode === 'agent' || descriptor.mode === 'sudo') {
     const agent = (snapshot?.agents || []).find((item) => item.conv_id === descriptor.conv);
     const groups = new Set(agent?.groups || []);
     for (const group of snapshot?.groups || []) {
@@ -227,6 +305,8 @@ export function ownerSource(scopeDims, ownedGroups) {
   return 'owner grant: global';
 }
 
+// In the sudo editor the rows show what the agent holds now, so selection is
+// its standing overrides rather than the slugs being elevated.
 export function permissionRows(snapshot, descriptor, selection) {
   const defaults = new Set(snapshot?.permissions?.defaults || []);
   const groups = membershipGroups(snapshot, descriptor);
@@ -246,7 +326,8 @@ export function permissionRows(snapshot, descriptor, selection) {
       groupGrants.get(slug).push(groupName);
     }
   }
-  const ownedGroups = descriptor.mode === 'agent'
+  const liveAgent = descriptor.mode === 'agent' || descriptor.mode === 'sudo';
+  const ownedGroups = liveAgent
     ? ((snapshot?.agents || []).find((item) => item.conv_id === descriptor.conv)?.owned_groups || [])
     : descriptor.ownsGroup && descriptor.group ? [descriptor.group] : [];
   return [...(snapshot?.slugs || [])].sort((a, b) => a.slug.localeCompare(b.slug)).map((slug) => {
@@ -265,7 +346,7 @@ export function permissionRows(snapshot, descriptor, selection) {
     if (effect === 'default' && slug.owner_implied && ownedGroups.length) {
       sources.push(ownerSource(slug.scope_dims, ownedGroups));
     }
-    if (effect === 'default' && slug.member_implied && descriptor.mode === 'agent' && groups.length) {
+    if (effect === 'default' && slug.member_implied && liveAgent && groups.length) {
       sources.push(`member: ${groups.join(', ')}`);
     }
     const granted = descriptor.mode === 'group' ? effect === 'grant' : effect !== 'deny' && sources.length > 0;
