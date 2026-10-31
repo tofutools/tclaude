@@ -319,7 +319,7 @@ func TestAgentMessageInsertAndList(t *testing.T) {
 	})
 	require.NoError(t, err, "InsertAgentMessage")
 
-	msgs, err := ListAgentMessagesForConv("conv-2", 0)
+	msgs, err := ListAgentMessagesForConv("conv-2", 1000)
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, msgs, 2, "expected 2 messages")
 
@@ -520,7 +520,7 @@ func TestAgentMessageThreading(t *testing.T) {
 	assert.Equal(t, parentID, reply.ParentID, "reply.parent_id")
 
 	// list endpoints should also surface parent_id.
-	inbox, err := ListAgentMessagesForConv("a", 0)
+	inbox, err := ListAgentMessagesForConv("a", 1000)
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	var foundReply *AgentMessage
 	for _, m := range inbox {
@@ -797,7 +797,7 @@ func TestListAgentMessagesFromConv(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	out, err := ListAgentMessagesFromConv("me", 0)
+	out, err := ListAgentMessagesFromConv("me", 1000)
 	require.NoError(t, err, "ListAgentMessagesFromConv")
 	require.Len(t, out, 2, "expected 2 outgoing rows")
 	assert.Equal(t, "second", out[0].Body, "expected most-recent-first")
@@ -828,7 +828,7 @@ func TestListAgentMessages_WholeSecondBoundaryOrdering(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	out, err := ListAgentMessagesFromConv("me", 0)
+	out, err := ListAgentMessagesFromConv("me", 1000)
 	require.NoError(t, err, "ListAgentMessagesFromConv")
 	require.Len(t, out, 2, "expected 2 outgoing rows")
 	assert.Equal(t, "newer", out[0].Body, "newest message must come first despite its created_at sorting lexically before the whole-second one")
@@ -905,9 +905,9 @@ func TestDeleteAgentByConvID_PurgesAllReferencingTables(t *testing.T) {
 	assert.Equal(t, int64(1), counts.SuccessionOld, "SuccessionOld")
 
 	// Tables are actually empty for this conv now.
-	gotMsgs, _ := ListAgentMessagesForConv(target, 0)
+	gotMsgs, _ := ListAgentMessagesForConv(target, 1000)
 	assert.Len(t, gotMsgs, 0, "messages-to remain after delete")
-	gotFrom, _ := ListAgentMessagesFromConv(target, 0)
+	gotFrom, _ := ListAgentMessagesFromConv(target, 1000)
 	assert.Len(t, gotFrom, 0, "messages-from remain after delete")
 	row, _ := GetConvIndex(target)
 	assert.Nil(t, row, "conv_index row remains: %+v", row)
@@ -961,7 +961,7 @@ func TestAgentMessageRecipientsRoundTrip(t *testing.T) {
 	assert.Equal(t, "c2", got.CcRecipients[1], "CcRecipients[1]")
 
 	// List path scans the same columns; check it picks them up too.
-	msgs, err := ListAgentMessagesForConv("primary", 0)
+	msgs, err := ListAgentMessagesForConv("primary", 1000)
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, msgs, 1, "expected 1 inbox row")
 	assert.Len(t, msgs[0].CcRecipients, 2, "list CcRecipients lost: %v", msgs[0].CcRecipients)

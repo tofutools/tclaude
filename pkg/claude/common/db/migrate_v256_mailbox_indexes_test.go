@@ -148,7 +148,7 @@ func TestMailboxSearchUsesFullTextIndex(t *testing.T) {
 
 	search := func(q string) []int64 {
 		t.Helper()
-		rows, err := ListMailboxPage(MailboxFilter{Text: q}, 0, 0)
+		rows, err := ListMailboxPage(MailboxFilter{Text: q}, 1000, 0)
 		require.NoError(t, err)
 		ids := make([]int64, 0, len(rows))
 		for _, m := range rows {

@@ -116,13 +116,13 @@ func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, origin,
 		"tool hooks in the reminder turn retain origin suppression")
-	messagesBefore, err := db.ListAgentMessagesForConv(convID, 0)
+	messagesBefore, err := db.ListAgentMessagesForConv(convID, 1000)
 	require.NoError(t, err)
 	require.NoError(t, session.DispatchHookEvent(context.Background(),
 		session.HookCallbackInput{
 			HookEventName: "PermissionRequest", ConvID: convID, ToolName: "Bash",
 		}, sessionID, session.LocalHookAmbient(), &output))
-	messagesAfter, err := db.ListAgentMessagesForConv(convID, 0)
+	messagesAfter, err := db.ListAgentMessagesForConv(convID, 1000)
 	require.NoError(t, err)
 	assert.Len(t, messagesAfter, len(messagesBefore),
 		"every selectable native hook must retain origin suppression")
@@ -131,7 +131,7 @@ func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
 		session.HookCallbackInput{
 			HookEventName: "Stop", ConvID: convID,
 		}, sessionID, session.LocalHookAmbient(), &output))
-	messagesAfterStop, err := db.ListAgentMessagesForConv(convID, 0)
+	messagesAfterStop, err := db.ListAgentMessagesForConv(convID, 1000)
 	require.NoError(t, err)
 	assert.Len(t, messagesAfterStop, len(messagesBefore),
 		"the terminal native hook keeps callback-local suppression while clearing durable state")

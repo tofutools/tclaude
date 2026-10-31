@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -4015,8 +4016,12 @@ func GetAgentMessage(id int64) (*AgentMessage, error) {
 	return m, err
 }
 
-// ListAgentMessagesForConv returns the most recent messages for a recipient.
-// limit <= 0 means "no limit".
+// errMessageListLimit refuses an unbounded read: agent_messages is never
+// pruned, so a caller without a limit would load an install's whole history.
+var errMessageListLimit = errors.New("agent message list: limit must be positive")
+
+// ListAgentMessagesForConv returns the most recent limit messages for a
+// recipient.
 func ListAgentMessagesForConv(toConv string, limit int) ([]*AgentMessage, error) {
 	return listAgentMessagesByCol("to_conv", toConv, limit)
 }
@@ -4091,6 +4096,9 @@ func actorMatchClause(pairs ...[2]string) (string, []any) {
 // input — they are interpolated into SQL. Ordering by id DESC gives the actor
 // mailbox a stable newest-insertion-first total order.
 func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int) ([]*AgentMessage, error) {
+	if limit <= 0 {
+		return nil, errMessageListLimit
+	}
 	where, args := actorMatchClause([2]string{convCol, conv}, [2]string{agentCol, agent})
 	if where == "" {
 		return nil, nil
@@ -4100,12 +4108,8 @@ func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int)
 		return nil, err
 	}
 	q := `SELECT ` + agentMessageColumns + `
-		FROM agent_messages WHERE ` + where + ` ORDER BY id DESC`
-	if limit > 0 {
-		q += ` LIMIT ?`
-		args = append(args, limit)
-	}
-	rows, err := db.Query(q, args...)
+		FROM agent_messages WHERE ` + where + ` ORDER BY id DESC LIMIT ?`
+	rows, err := db.Query(q, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -4130,18 +4134,16 @@ func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int)
 // first. The autoincrement key supplies a unique total order for LIMIT even
 // when multiple rows have the same created_at instant.
 func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, error) {
+	if limit <= 0 {
+		return nil, errMessageListLimit
+	}
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	q := `SELECT ` + agentMessageColumns + `
-		FROM agent_messages WHERE ` + col + ` = ? ORDER BY id DESC`
-	args := []any{value}
-	if limit > 0 {
-		q += ` LIMIT ?`
-		args = append(args, limit)
-	}
-	rows, err := db.Query(q, args...)
+		FROM agent_messages WHERE ` + col + ` = ? ORDER BY id DESC LIMIT ?`
+	rows, err := db.Query(q, value, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -4181,11 +4183,62 @@ type MailboxCount struct {
 // (to_conv side, read_at == ”) — mirroring an agent's own inbox
 // unread. A conv appears in the map if it is the sender or recipient
 // of at least one message.
+//
+// The map is memoized (see mailboxTally) and shared: callers must not change it.
 func MailboxCounts() (map[string]MailboxCount, error) {
-	db, err := Open()
+	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
+	mailboxTally.Lock()
+	defer mailboxTally.Unlock()
+	mailboxTally.syncGeneration(d)
+	if mailboxTally.counts != nil {
+		return mailboxTally.counts, nil
+	}
+	out, err := scanMailboxCounts(d)
+	if err != nil {
+		return nil, err
+	}
+	mailboxTally.counts = out
+	return out, nil
+}
+
+// mailboxTally memoizes the Messages roster's tallies, which scan all of
+// agent_messages, against mailbox_tally_generation. The generation is read
+// before scanning, so a write racing a scan only costs one more scan.
+var mailboxTally mailboxTallyMemo
+
+type mailboxTallyMemo struct {
+	sync.Mutex
+	d      *sql.DB
+	gen    int64
+	counts map[string]MailboxCount
+	totals map[bool]*mailboxRosterTotals // by excludeRetired
+}
+
+type mailboxRosterTotals struct {
+	all    int
+	groups map[int64]int
+}
+
+// syncGeneration drops the memo unless it still describes this database at its
+// current generation. A failed read leaves nothing memoized, so a broken or
+// partial schema simply scans every time.
+func (m *mailboxTallyMemo) syncGeneration(d *sql.DB) {
+	var gen int64
+	err := d.QueryRow(`SELECT gen FROM mailbox_tally_generation`).Scan(&gen)
+	if err == nil && m.d == d && m.gen == gen {
+		return
+	}
+	m.counts, m.totals = nil, map[bool]*mailboxRosterTotals{}
+	m.d, m.gen = d, gen
+	if err != nil {
+		m.d = nil
+	}
+}
+
+func scanMailboxCounts(db *sql.DB) (map[string]MailboxCount, error) {
 	out := map[string]MailboxCount{}
 
 	// bump records the newest message instant seen for a conversation.
@@ -4487,11 +4540,29 @@ func (f MailboxFilter) where() (string, []any) {
 // in its own statement for every group on every 2s roster refresh; here the
 // surviving rows are filtered once (over the covering
 // idx_agent_messages_parties index) and fanned out to their groups.
+//
+// The groups map is memoized (see mailboxTally) and shared: callers must not
+// change it.
 func MailboxRosterTotals(excludeRetired bool) (all int, groups map[int64]int, err error) {
 	d, err := Open()
 	if err != nil {
 		return 0, nil, err
 	}
+	mailboxTally.Lock()
+	defer mailboxTally.Unlock()
+	mailboxTally.syncGeneration(d)
+	if t := mailboxTally.totals[excludeRetired]; t != nil {
+		return t.all, t.groups, nil
+	}
+	all, groups, err = scanMailboxRosterTotals(d, excludeRetired)
+	if err != nil {
+		return 0, nil, err
+	}
+	mailboxTally.totals[excludeRetired] = &mailboxRosterTotals{all: all, groups: groups}
+	return all, groups, nil
+}
+
+func scanMailboxRosterTotals(d *sql.DB, excludeRetired bool) (all int, groups map[int64]int, err error) {
 	live := `SELECT id, group_id, from_conv, to_conv FROM agent_messages`
 	if where, _ := (MailboxFilter{ExcludeRetired: excludeRetired}).where(); where != "" {
 		live += " WHERE " + where
@@ -4536,11 +4607,13 @@ func sqlPlaceholders(n int) string {
 	return strings.Repeat("?, ", n-1) + "?"
 }
 
-// ListMailboxPage returns one newest-first page of the rows matching f.
-// limit <= 0 means "no limit" (the whole match); offset < 0 is clamped to
-// 0. Ordered by id DESC for stable newest-insertion-first pagination, including
+// ListMailboxPage returns one newest-first page of the rows matching f, at most
+// limit of them; offset < 0 is clamped to 0. Ordered by id DESC for stable newest-insertion-first pagination, including
 // rows that share the same created_at instant.
 func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error) {
+	if limit <= 0 {
+		return nil, errMessageListLimit
+	}
 	d, err := Open()
 	if err != nil {
 		return nil, err
@@ -4551,14 +4624,11 @@ func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error
 	if where != "" {
 		q += " WHERE " + where
 	}
-	q += " ORDER BY id DESC"
-	if limit > 0 {
-		q += " LIMIT ?"
-		args = append(args, limit)
-		if offset > 0 {
-			q += " OFFSET ?"
-			args = append(args, offset)
-		}
+	q += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+	if offset > 0 {
+		q += " OFFSET ?"
+		args = append(args, offset)
 	}
 	rows, err := d.Query(q, args...)
 	if err != nil {

@@ -406,6 +406,12 @@ CREATE TRIGGER agent_messages_fts_au AFTER UPDATE OF subject, body ON agent_mess
 	INSERT INTO agent_messages_fts(rowid, subject, body) VALUES (new.id, new.subject, new.body);
 END;
 
+CREATE TRIGGER mailbox_tally_agent_messages_insert AFTER INSERT ON agent_messages BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
+CREATE TRIGGER mailbox_tally_agent_messages_delete AFTER DELETE ON agent_messages BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
+CREATE TRIGGER mailbox_tally_agent_messages_update AFTER UPDATE OF group_id, from_conv, to_conv, read_at, created_at, subject ON agent_messages BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
 CREATE TABLE "agent_transfer_log" (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
 			kind           TEXT NOT NULL,
@@ -655,6 +661,12 @@ CREATE TRIGGER collab_board_sessions_agent_retired
  DELETE FROM collab_board_sessions WHERE agent_id = NEW.agent_id;
 END;
 
+CREATE TRIGGER mailbox_tally_agents_insert AFTER INSERT ON agents BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
+CREATE TRIGGER mailbox_tally_agents_delete AFTER DELETE ON agents BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
+CREATE TRIGGER mailbox_tally_agents_update AFTER UPDATE OF current_conv_id, retired_at ON agents BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
 			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
@@ -677,6 +689,12 @@ CREATE TABLE "agent_group_members" (
 
 CREATE INDEX idx_agent_group_members_agent
 				ON agent_group_members(agent_id);
+
+CREATE TRIGGER mailbox_tally_agent_group_members_insert AFTER INSERT ON agent_group_members BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
+CREATE TRIGGER mailbox_tally_agent_group_members_delete AFTER DELETE ON agent_group_members BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
+CREATE TRIGGER mailbox_tally_agent_group_members_update AFTER UPDATE OF group_id, agent_id ON agent_group_members BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
 
 CREATE TABLE "agent_group_owners" (
 				group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
@@ -1788,6 +1806,12 @@ CREATE TABLE agent_federation_presence (
  independent_clone TEXT NOT NULL DEFAULT '', arrival_rollback_json TEXT NOT NULL DEFAULT '', continuation_nonce_hash TEXT NOT NULL, transfer_json TEXT NOT NULL, departed_at INTEGER, arrived_at INTEGER, updated_at INTEGER NOT NULL
  ) STRICT;
 
+CREATE TRIGGER mailbox_tally_agent_federation_presence_insert AFTER INSERT ON agent_federation_presence BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
+CREATE TRIGGER mailbox_tally_agent_federation_presence_delete AFTER DELETE ON agent_federation_presence BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
+CREATE TRIGGER mailbox_tally_agent_federation_presence_update AFTER UPDATE OF agent_id, state ON agent_federation_presence BEGIN UPDATE mailbox_tally_generation SET gen = gen + 1; END;
+
 CREATE TABLE federation_agent_locations (
  agent_id TEXT PRIMARY KEY, home_instance TEXT NOT NULL, current_instance TEXT NOT NULL,
  epoch TEXT NOT NULL, hop_count INTEGER NOT NULL, arrival_offer TEXT NOT NULL, updated_at INTEGER NOT NULL
@@ -2198,3 +2222,8 @@ CREATE TABLE steward_carried_sudo (
  reason TEXT NOT NULL DEFAULT '',
  revoked_at INTEGER
 , uses_limit INTEGER NOT NULL DEFAULT 0, uses_left INTEGER NOT NULL DEFAULT 0) STRICT;
+
+CREATE TABLE mailbox_tally_generation (
+		id  INTEGER PRIMARY KEY CHECK (id = 1),
+		gen INTEGER NOT NULL
+	) STRICT;

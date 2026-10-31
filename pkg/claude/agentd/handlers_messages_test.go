@@ -88,7 +88,7 @@ func TestHandleMessages_MultiRecipient_WritesOnePerRecipient(t *testing.T) {
 
 	// Verify the DB landed three rows, each with the same audience arrays.
 	for _, target := range want {
-		msgs, err := db.ListAgentMessagesForConv(target, 0)
+		msgs, err := db.ListAgentMessagesForConv(target, 1000)
 		require.NoError(t, err, "ListAgentMessagesForConv(%s)", target)
 		if !assert.Len(t, msgs, 1, "rows for %s", target) {
 			continue
@@ -132,7 +132,7 @@ func TestHandleMessages_SingleRecipient_StillRecordsToRecipient(t *testing.T) {
 	handleMessages(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "body = %s", w.Body.String())
 
-	msgs, err := db.ListAgentMessagesForConv(targetConv, 0)
+	msgs, err := db.ListAgentMessagesForConv(targetConv, 1000)
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, msgs, 1, "rows")
 	m := msgs[0]
@@ -203,7 +203,7 @@ func TestHandleMessages_UnknownCC_RejectsBeforeAnyInsert(t *testing.T) {
 	require.NotEqual(t, http.StatusOK, w.Code, "expected non-OK; body=%s", w.Body.String())
 	assert.Contains(t, w.Body.String(), "CC", "error body should mention CC")
 	// Crucially: NO row should have landed.
-	msgs, _ := db.ListAgentMessagesForConv(primaryConv, 0)
+	msgs, _ := db.ListAgentMessagesForConv(primaryConv, 1000)
 	assert.Empty(t, msgs, "primary should have 0 rows after a rejected multi-recipient send")
 }
 
