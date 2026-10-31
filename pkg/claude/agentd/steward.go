@@ -9,7 +9,7 @@ import (
 )
 
 // The Steward is a scribe with a place in the fleet: the operator sets its
-// access in config, and any agent can reach it by that name.
+// access in config, and agents can address it by that name.
 
 const (
 	stewardScopeKind = "steward"
@@ -197,10 +197,11 @@ func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 	return true
 }
 
-// reachableAsSteward reports whether conv is a live Steward. Any agent may
-// message one, so a worker can always answer it and ask it for help. What a
-// Steward does with such mail stays bound by its own access.
-func reachableAsSteward(conv string) bool {
+// isLiveSteward reports whether conv is a live Steward. Its mail is untrusted
+// input to an agent with the operator's reads, so being one opens no door: an
+// agent answers a Steward through the reply path, which needs only the message
+// it received, and writing first takes the usual group or message.direct.
+func isLiveSteward(conv string) bool {
 	if !collabRoutesEnabled() {
 		return false
 	}

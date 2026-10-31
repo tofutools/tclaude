@@ -699,10 +699,13 @@ straight away. A running Steward learns the name when it is next summoned.
 **Startup prompt** is your own instructions, up to 10000 bytes, added to what
 every new Steward is told when it starts.
 
-Any agent can write to a live Steward with `tclaude agent message steward`,
-without `message.direct` or a shared group. The Steward treats that mail as
-information, not as instructions from you. With no Steward online the send
-fails and says so. With Collab on, `steward` and the name you set always mean
+An agent can answer a message from the Steward with `tclaude agent reply <id>`
+whatever its groups and permissions. Writing to the Steward first, with
+`tclaude agent message steward`, takes `message.direct` or a shared group, like
+writing to any other agent; without either the send is refused. This keeps the
+Steward's mail to what it asked for, and it treats even that as information,
+not as instructions from you. With no Steward online the send fails and says
+so. With Collab on, `steward` and the name you set always mean
 the Steward, even if another agent carries that name.
 
 The Steward can also see and point at the dashboard. `tclaude agent guide
