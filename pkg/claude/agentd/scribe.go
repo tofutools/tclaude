@@ -613,6 +613,9 @@ func stampScribeProfileFromConfig(g *db.AgentGroup) {
 		return
 	}
 	profile := cfg.ScribeProfileName()
+	if g.Name == stewardGroupName {
+		profile = cfg.StewardProfile()
+	}
 	if g.DefaultProfile == profile {
 		return // already stamped — idempotent, skip the write
 	}

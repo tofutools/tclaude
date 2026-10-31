@@ -38,7 +38,20 @@ function fakeWidgetFactory(mounted) {
   };
 }
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {} } = {}) {
+// A dictation fake: the only way text reaches the draft field, which appears
+// while there is some.
+function fakeDictation() {
+  const fake = { callbacks: null };
+  fake.impl = (cb) => { fake.callbacks = cb; return { supported: true, start: () => cb.onState(true), stop: () => cb.onState(false), abort: () => cb.onState(false) }; };
+  fake.say = async (harness, view, text) => {
+    await harness.act(() => view.container.querySelector('.companion-mic').click());
+    await harness.act(() => fake.callbacks.onText(text));
+    await harness.act(() => view.container.querySelector('.companion-mic').click());
+  };
+  return fake;
+}
+
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {} } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -55,7 +68,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sess
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} sessionPrefs=${sessionPrefs} fetchImpl=${fetchFn} notify=${notify}
-    widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    onComposeMessage=${onComposeMessage} openMorph=${openMorph} detachWindow=${detachWindow} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -126,10 +139,11 @@ test('opening an agent attaches its native terminal stream and the window carrie
 
 test('the message row queues operator mail with the dashboard view attached', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
-  const { view, harness, requests, controller } = await setup(t, { prefs });
+  const dictated = fakeDictation();
+  const { view, harness, requests, controller } = await setup(t, { prefs, dictationImpl: dictated.impl });
   await harness.act(() => controller().open(A));
+  await dictated.say(harness, view, 'what can I do here?');
   const field = view.container.querySelector('input[aria-label="Message alpha"]');
-  await harness.input(field, 'what can I do here?');
   await harness.act(async () => {
     field.closest('form').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
     await new Promise((r) => setTimeout(r, 0));
@@ -332,9 +346,10 @@ test('a cue can open the agent that needs the operator in the companion window',
 
 test('an open cue only pins the agent while the operator is typing to another tab', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
-  const { view, harness, snap, controller } = await setup(t, { prefs });
+  const dictated = fakeDictation();
+  const { view, harness, snap, controller } = await setup(t, { prefs, dictationImpl: dictated.impl });
   await harness.act(() => controller().open(A));
-  await harness.input(view.container.querySelector('input.companion-draft'), 'half a thought');
+  await dictated.say(harness, view, 'half a thought');
   await harness.act(async () => { snap.value = { ...snap.value, companion_cues: [] }; });
   await harness.act(async () => {
     snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };
@@ -347,14 +362,14 @@ test('an open cue only pins the agent while the operator is typing to another ta
 
 test('a draft stays with its agent across tab switches and goes to that agent', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]) });
-  const { view, harness, requests, controller } = await setup(t, { prefs });
+  const dictated = fakeDictation();
+  const { view, harness, requests, controller } = await setup(t, { prefs, dictationImpl: dictated.impl });
   await harness.act(() => controller().open(A));
   const draft = () => view.container.querySelector('input.companion-draft');
-  const sendButton = () => view.container.querySelector('.companion-input button[type="submit"]');
-  await harness.input(draft(), 'for alpha');
+  assert.equal(draft(), null, 'there is no text field until there is text');
+  await dictated.say(harness, view, 'for alpha');
   await harness.act(() => harness.getByRole(view.container, 'tab', { name: /bravo/ }).click());
-  assert.equal(draft().value, '', 'bravo does not inherit the draft');
-  assert.equal(sendButton().disabled, true);
+  assert.equal(draft(), null, 'bravo does not inherit the draft');
   await harness.act(() => harness.getByRole(view.container, 'tab', { name: /alpha/ }).click());
   assert.equal(draft().value, 'for alpha');
   await harness.act(async () => {
@@ -362,7 +377,34 @@ test('a draft stays with its agent across tab switches and goes to that agent', 
     await new Promise((r) => setTimeout(r, 0));
   });
   assert.equal(requests.find((r) => r.url === '/api/operator-message').body.to, A);
-  assert.equal(draft().value, '');
+  assert.equal(draft(), null);
+});
+
+test('sending from the field hands focus to the terminal, and emptying it keeps it', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = fakeDictation();
+  const { view, harness, controller, mounted } = await setup(t, { prefs, dictationImpl: dictated.impl });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const draft = () => view.container.querySelector('input.companion-draft');
+  await dictated.say(harness, view, 'for alpha');
+  await harness.act(async () => { draft().focus(); });
+  await harness.act(async () => {
+    draft().value = '';
+    draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  });
+  assert.ok(draft(), 'emptying the field by hand leaves it under the caret');
+  await harness.act(async () => {
+    draft().value = 'for alpha';
+    draft().dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  });
+  const before = mounted.at(-1).focused;
+  await harness.act(async () => {
+    view.container.querySelector('form.companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(draft(), null);
+  assert.equal(mounted.at(-1).focused, before + 1, 'the keyboard is not left on the page');
 });
 
 test('a finished send leaves text typed after it started', async (t) => {
@@ -371,10 +413,11 @@ test('a finished send leaves text typed after it started', async (t) => {
   const fetchImpl = (url) => (String(url) === '/api/operator-message'
     ? new Promise((resolve) => { finish = () => resolve({ ok: true, status: 202, json: async () => ({ id: 1 }) }); })
     : Promise.resolve({ ok: true, status: 200, json: async () => ({}) }));
-  const { view, harness, controller } = await setup(t, { prefs, fetchImpl });
+  const dictated = fakeDictation();
+  const { view, harness, controller } = await setup(t, { prefs, fetchImpl, dictationImpl: dictated.impl });
   await harness.act(() => controller().open(A));
   const draft = () => view.container.querySelector('input.companion-draft');
-  await harness.input(draft(), 'first');
+  await dictated.say(harness, view, 'first');
   await harness.act(async () => {
     view.container.querySelector('form.companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
     await new Promise((r) => setTimeout(r, 0));
@@ -768,20 +811,6 @@ test('Tab stays inside the annotation layer', async (t) => {
   assert.equal(doc.activeElement, first, 'focus that escaped comes back');
 });
 
-test('the Steward tab offers one-click setup starters that send with the view attached', async (t) => {
-  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([S]) });
-  const { view, harness, requests, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }) });
-  await harness.act(() => controller().open(S));
-  const starter = harness.getByRole(view.container, 'button', { name: 'Set up my repos' });
-  await harness.act(async () => { starter.click(); await new Promise((r) => setTimeout(r, 0)); });
-  const mail = requests.find((r) => r.url === '/api/operator-message');
-  assert.equal(mail.body.to, S);
-  assert.match(mail.body.body, /^Help me set up a group for each of my repos.*\n\n\[dashboard view: Processes \(/s);
-  // Typing hides the starters; other agents never show them.
-  await harness.input(view.container.querySelector('input.companion-draft'), 'x');
-  assert.equal(view.container.querySelector('.companion-starters'), null);
-});
-
 test('voice output speaks a reply when the turn ends and says when the agent needs you', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const spoken = [];
@@ -815,8 +844,15 @@ test('voice output speaks a reply when the turn ends and says when the agent nee
   assert.equal(prefs.store.get('tclaude.dash.companion.voice.said.' + A), '2002', 'the reply is claimed, so other dashboard tabs stay quiet');
   await h.act(async () => { snap.value = snapshotWith({ aStatus: 'awaiting_permission' }); await new Promise((r) => setTimeout(r, 0)); });
   assert.equal(spoken.at(-1), 'alpha needs you: Bash(rm -rf build)');
-  await h.input(view.container.querySelector('input.companion-draft'), 'stop');
-  assert.ok(cancelled >= 1, 'typing stops speech');
+  const keys = h.window.document.createElement('textarea');
+  view.container.querySelector('.companion-term-host').appendChild(keys);
+  const press = (init) => keys.dispatchEvent(Object.assign(new h.window.Event('keydown', { bubbles: true }), init));
+  const before = cancelled;
+  press({ key: 'Shift' });
+  press({ key: 'Tab', altKey: true });
+  assert.equal(cancelled, before, 'a modifier or a window shortcut is not typing');
+  press({ key: 'a' });
+  assert.equal(cancelled, before + 1, 'typing in the terminal stops speech');
 });
 
 test('voice speaks a further decision from an agent already waiting on the operator', async (t) => {
@@ -962,4 +998,102 @@ test('elevated access shows on the agent and ends in one click', async (t) => {
   assert.equal(calls.find((call) => call.method === 'DELETE').url, `/api/sudo?agent_id=${encodeURIComponent(steward.agentId)}`);
   const cleared = calls.find((call) => call.url === '/api/permissions');
   assert.deepEqual(JSON.parse(cleared.body), { conv: steward.convId, overrides: { 'host.read': 'default' } });
+});
+
+test('a click outside closes the add menu, and the + button still toggles it', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const plus = view.container.querySelector('.companion-add');
+  await harness.act(async () => { plus.click(); await new Promise((r) => setTimeout(r, 0)); });
+  const menu = view.container.querySelector('.companion-menu');
+  assert.ok(menu);
+  const press = (node) => harness.act(async () => {
+    node.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await press(menu);
+  await press(plus);
+  assert.ok(view.container.querySelector('.companion-menu'), 'the menu and its button do not count as outside');
+  await press(harness.window.document.body);
+  assert.equal(view.container.querySelector('.companion-menu'), null);
+});
+
+test('every corner of a floating window resizes it, and the opposite corner stays put', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const corners = [...view.container.querySelectorAll('.companion-resize-corner')].map((node) => node.className.split(' ').pop());
+  assert.deepEqual(corners.sort(), ['ne', 'nw', 'sw']);
+  assert.ok(view.container.querySelector('.companion-resize'), 'and the south-east grip');
+  const frame = view.container.querySelector('.companion-window');
+  const box = () => ['left', 'top', 'width', 'height'].map((key) => parseFloat(frame.style[key]));
+  const drag = (corner, dx, dy) => harness.act(async () => {
+    const handle = view.container.querySelector(`.companion-resize-corner.${corner}`);
+    const event = (type, x, y) => Object.assign(new harness.window.Event(type, { bubbles: true }), { button: 0, pointerId: 1, clientX: x, clientY: y });
+    handle.dispatchEvent(event('pointerdown', 300, 300));
+    handle.dispatchEvent(event('pointermove', 300 + dx, 300 + dy));
+    handle.dispatchEvent(event('pointerup', 300 + dx, 300 + dy));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const [x0, y0, w0, h0] = box();
+  await drag('nw', -20, -10);
+  assert.deepEqual(box(), [x0 - 20, y0 - 10, w0 + 20, h0 + 10]);
+  await drag('nw', 0, -5000);
+  const [, top, , height] = box();
+  assert.equal(top, 0, 'the top edge stops at the viewport');
+  assert.equal(top + height, y0 + h0, 'and the bottom edge stays');
+});
+
+test('Ctrl/Cmd+M and the title bar message the active agent; morph opens from the window', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const seeds = [];
+  const morphs = [];
+  const { view, harness, controller } = await setup(t, { prefs, onComposeMessage: (seed) => seeds.push(seed), openMorph: (agent) => morphs.push(agent) });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const host = view.container.querySelector('.companion-term-host');
+  const press = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.assign(press, { key: 'm', code: 'KeyM', ctrlKey: true });
+  await harness.act(async () => { host.dispatchEvent(press); });
+  assert.equal(seeds[0]?.agent, A);
+  assert.equal(press.defaultPrevented, true);
+  await harness.act(async () => { view.container.querySelector('.companion-compose').click(); });
+  assert.equal(seeds.length, 2);
+  await harness.act(async () => { view.container.querySelector('.companion-morph').click(); });
+  assert.equal(morphs[0].agent, A);
+});
+
+test('a detached agent keeps its window until the operator brings it back', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]) });
+  const opened = { closed: false, close() { this.closed = true; } };
+  let result = null;
+  const calls = [];
+  const { view, harness, controller, mounted } = await setup(t, { prefs, detachWindow: (agent) => { calls.push(agent); return result; } });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const detach = () => harness.act(async () => {
+    view.container.querySelector('.companion-detach').click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await detach();
+  assert.equal(mounted[0].disposed, false, 'blocked: the terminal stays');
+  result = opened;
+  await detach();
+  assert.deepEqual(calls, [A, A]);
+  assert.equal(mounted[0].disposed, true, 'the window lets go of the terminal');
+  assert.match(view.container.textContent, /open in its own window/);
+
+  await harness.act(() => harness.getByRole(view.container, 'tab', { name: /bravo/ }).click());
+  await harness.act(() => harness.getByRole(view.container, 'tab', { name: /alpha/ }).click());
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.match(view.container.textContent, /open in its own window/, 'a tab click does not take it back');
+
+  await harness.act(async () => {
+    harness.getByRole(view.container, 'button', { name: 'Bring it back here' }).click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.doesNotMatch(view.container.textContent, /open in its own window/);
 });

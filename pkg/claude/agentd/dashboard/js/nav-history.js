@@ -70,7 +70,7 @@ let ready = false;
 // whether it is reachable.
 function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
-  // Boards is reached through the Collab switch; its nav anchor is hidden.
+  // Boards has no nav anchor: a board is a tab of the Terminals section.
   if (tab === 'boards') return !document.body.classList.contains('hide-collab');
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
@@ -201,12 +201,9 @@ function activeLocationFromDOM() {
     // Which terminal is being viewed is island state the DOM never spells out
     // (the active pane's agent selector), so ask the island — same reasoning as
     // Processes below. Absent island (asset failed to load, no pane ever
-    // opened) degrades to the bare /terminals.
+    // opened) degrades to the bare /terminals. A board tab answers with its
+    // own /boards/<id> location.
     const island = featureState('terminals');
-    if (island) return normalizeLocation(island.location.value);
-  } else if (tab === 'boards') {
-    // The open board is island state, like the viewed terminal above.
-    const island = featureState('boards');
     if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
     // Ask the island directly: an open template editor's id (the
@@ -288,7 +285,9 @@ function activate(loc, { traversal = false } = {}) {
       setFleetAdminPage(loc.subtab || '');
       if (loc.subtab === 'grants') setFleetGrantTarget(loc.selection || '');
     }
-    const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
+    // /boards routes show in the Terminals section, as a tab of its strip.
+    const navTab = loc.tab === 'boards' ? 'terminals' : loc.tab;
+    const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === navTab);
     // A plain Messages click jumps to waiting operator work; a location that
     // names a folder must land there instead.
     if (loc.tab === 'messages' && loc.selection) suppressNextMessagesAttention();
@@ -302,8 +301,8 @@ function activate(loc, { traversal = false } = {}) {
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
     } else if (loc.tab === 'boards') {
-      // Always sent, bare /boards included: Back from an open board must
-      // return the island to its list.
+      // Always sent, bare /boards included: the terminal shell opens the
+      // board's tab, or offers the board list.
       requestBoardsLocation(loc);
     } else if (loc.tab === 'diagnostics') {
       // A bare /diagnostics (hand-typed, or Back onto one) shows the default

@@ -28,6 +28,17 @@ const SHAPES = new Set(['rectangle', 'ellipse', 'diamond']);
 const LINEAR = new Set(['arrow', 'line', 'freedraw']);
 const BOARD_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+// A board open as a tab: the terminal shell's second pane kind. Its seed names
+// the board instead of a socket, and its key is derived from the id, so a board
+// has one tab however it was opened.
+export function boardPaneKey(id) {
+  return `board:${id}`;
+}
+
+export function boardPaneSeed(id, label = '') {
+  return { board: id, key: boardPaneKey(id), label: label || id };
+}
+
 export function isBoardId(value) {
   return typeof value === 'string' && BOARD_ID.test(value);
 }

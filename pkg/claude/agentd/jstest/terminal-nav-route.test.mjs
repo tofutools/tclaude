@@ -239,6 +239,33 @@ test('closing a pane the operator is NOT on is not a location change at all', as
   assert.deepEqual(announced, []);
 });
 
+test('a saved board landing during a terminal restore does not take the reload', async (t) => {
+  // /api/boards usually answers before the cold xterm runtime has loaded, so
+  // the board reaches the empty strip first. Nobody chose it.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let state;
+  const bound = await setup(t, {
+    snapshot: rosterOf(AGENT),
+    openAgentPane: async (agent) => {
+      await gate;
+      return state.openPane(seedFor(agent));
+    },
+  });
+  ({ state } = bound);
+  const { restore, announced, settle } = bound;
+  await settle();
+
+  const inFlight = restore({ tab: 'terminals', selection: AGENT });
+  state.openPane({ board: 'plan', key: 'board:plan', label: 'Plan', restored: true }, { reveal: false, activate: false });
+  release();
+  await inFlight;
+  await settle();
+
+  assert.equal(state.view.value.activeKey, `window:${AGENT}`, 'the terminal named by the URL stays on screen');
+  assert.deepEqual(announced, [], 'and the address bar does not move');
+});
+
 test('a mid-flight operator switch is announced, not swallowed', async (t) => {
   // A cold restore waits on the xterm runtime — a network fetch. If the
   // operator switches terminals during that window, suppressing the

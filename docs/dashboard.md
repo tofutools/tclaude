@@ -547,8 +547,9 @@ this node, then shows the hop to the node without a percentage.
 
 
 The Terminals tab is the in-dashboard terminal multiplexer. It is always
-shown, even with nothing open; its badge counts live panes, plus `+N`
-background sessions. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
+shown, even with nothing open; its badge counts live terminals, plus `+N`
+background sessions. With [Collab](#the-companion-window) on it is called Collab, and
+[boards](#boards) open as tabs in the same strip. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
 drag onto each other to form named, collapsible tab groups. Drag a tab off
 the strip to detach it into its own browser window; drag the pop-out's header
 back to reattach — `⧉ tab` / `↩ dashboard` buttons are the explicit path.
@@ -625,8 +626,9 @@ comes back open when you reload the same browser tab.
   the left, right or bottom edge to snap it into a side panel or drawer. Each
   agent is a tab; **＋** pins another live agent, **×** unpins one (the agent
   keeps running), **⤢** moves it to the Terminals tab and **–** minimizes.
-- **Message row.** Text sent from the row below the terminal is queued to the
-  agent's inbox, with the view you are on attached when **view** is ticked.
+- **Message row.** The row below the terminal holds the mic and ✎. Dictated
+  text is queued to the agent's inbox, with the view you are on attached when
+  **view** is ticked.
 
 With nothing pinned, the companion offers the **Steward**: a helper for all
 of tclaude, summoned like a scribe (it lives in the `steward`
@@ -644,10 +646,19 @@ revokes what the agent holds itself, with no confirmation; it can ask again.
 Access from a group or from owning one is listed but stays, since other
 members share it: change that in Groups.
 
-While the Steward's tab is open and you have not typed anything, one-click
-starters sit above the message row: **Brief me**, **I have an idea**, **What can I do here?**, **Review my
-setup**, **Set up my repos**, **Create a dev flow** and **Sketch on a board**.
-With **I have an idea** the Steward follows the bundled `tclaude-fleet`
+You type to an agent in its terminal. The row under it holds the mic, **view**
+(attach the dashboard view to dictated messages) and ✎. A text field appears
+while you dictate and stays while it holds text, including text kept from a
+send that failed; empty it to discard that text. Typing in the terminal stops
+speech. An agent parked in a chip or detached has no terminal here, so stop it
+with the voice toggle.
+
+In the window, ✉ or Ctrl/Cmd+M sends the active agent a queued message, as in
+the Terminals tab, and ⇄ morphs it onto another harness, model or profile. ⧉
+detaches it into its own browser window. It stays there until you press
+**Bring it back here** or close that window.
+
+Give the Steward an idea and it follows the bundled `tclaude-fleet`
 skill. It restates the idea and asks what it cannot find out itself, sketching
 on a board when the shape matters. It writes a brief, then starts one worker
 or deploys a task force once you approve the plan's permissions. It follows the work
@@ -666,6 +677,9 @@ and agents that have sat idle for ten minutes or more. **Brief me** asks the
 Steward for that, most urgent first. The listing needs `fleet.read`, which
 the Steward is granted when it is summoned and other agents are not;
 `--group <name>` narrows it to one group and `--json` gives the raw brief.
+
+**Config > Steward** appears while Collab is on. Its **Spawn profile** is what
+a new Steward launches with; unset, it uses the global default profile.
 
 What a new Steward may do is set under **Config > Steward**, and the daemon
 grants it: a summon cannot ask for more. **Reads** is `operator` by default
@@ -718,19 +732,19 @@ name is in the open window. Each card there names the agent that asked.
 the current tab (**🔊**). When its turn ends, its last message is read aloud;
 code blocks, tables and links are summarised, and a long reply is cut short
 with a pointer to the window. It also says when the agent needs you. Typing
-in the message row stops speech. Speech uses your browser's built-in voices and
+in the terminal stops speech. Speech uses your browser's built-in voices and
 prefers one that runs locally, so nothing is installed. The reply is read
 from the agent's own transcript, so it works for harnesses whose transcript
 tclaude can decode (Claude Code and Codex).
 
-**Dictation.** **🎤** in the message row dictates into the draft. Pause and
+**Dictation.** **🎤** under the terminal dictates into a draft. Pause and
 say "send" on its own to send it, or press the button again (or start
 typing) to stop and edit first. No reply is spoken while the mic is open. It uses
 the browser's speech recognition (in Chrome the audio is recognised by
 Google's service) and is hidden where the browser has none. Starting to
 dictate stops any reply being spoken.
 
-**Mark up a view.** **✎** in the message row, or **Ctrl+Shift+.**, lays a
+**Mark up a view.** **✎** under the terminal, or **Ctrl+Shift+.**, lays a
 drawing layer over the page you are on. Circle, underline or draw an arrow at
 what you mean, add a note, and **Send**. The agent cannot see your screen, so
 each mark is sent as words: what kind of mark it is and which control or text
@@ -740,8 +754,13 @@ cancels and **Ctrl+Z** undoes the last stroke.
 
 ### Boards
 
-**Collab → Boards** holds shared drawing boards. You draw shapes, arrows,
-text and freehand strokes, and invited agents read the board as shapes and as
+Boards are shared drawing boards. They open as tabs of the Collab view, beside
+the terminals: the **＋** at the right of the tab strip lists them and creates
+new ones, and `/boards/<id>` opens one directly. A board tab reorders, groups
+and detaches like a terminal tab, and comes back after a reload. **Open in
+overlay** floats a board in its own window beside the companion, and **Back to
+a tab** returns it. You draw
+shapes, arrows, text and freehand strokes, and invited agents read the board as shapes and as
 an image and draw back with `tclaude agent board` (see
 [boards.md](boards.md)). An agent's edits flash as they arrive. When your
 edits settle, the board's agents get one short `[board <id>]` message saying

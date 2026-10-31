@@ -18,6 +18,7 @@ export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
 // window attaches its terminal, and that takes over from other views.
 export const COMPANION_OPEN_PREF = 'tclaude.dash.companion.open';
 export const COMPANION_PARKED_PREF = 'tclaude.dash.companion.parked';
+export const COMPANION_DETACHED_PREF = 'tclaude.dash.companion.detached';
 // The scribes and Stewards the operator closed, which stay closed.
 export const COMPANION_CLOSED_PREF = 'tclaude.dash.companion.closed';
 export const COMPANION_ACTIVE_PREF = 'tclaude.dash.companion.active';
@@ -288,24 +289,11 @@ export function composeCompanionMessage(text, context = '') {
   return clipUtf8(body, COMPANION_MESSAGE_MAX_BYTES - new TextEncoder().encode(suffix).length) + suffix;
 }
 
-// STEWARD_STARTERS are one-click prompts shown above the message row while
-// the Steward's tab is open and nothing is typed: the usual ways in to
-// guided setup (tcl-bifqbb).
-export const STEWARD_STARTERS = Object.freeze([
-  { label: 'Brief me', text: 'Brief me on the fleet: what needs me first, then what is moving. Keep it short.' },
-  { label: 'I have an idea', text: 'I have an idea I want built. Help me shape it into a brief and get the right agents working on it. Ask me about it first.' },
-  { label: 'What can I do here?', text: 'What can I do on this page? Point me at the important controls.' },
-  { label: 'Review my setup', text: 'Review my tclaude setup (groups, spawn profiles, sandbox profiles, schedules) and tell me what is missing or worth changing. Do not change anything yet.' },
-  { label: 'Set up my repos', text: 'Help me set up a group for each of my repos, with sensible defaults. Ask me which repos first.' },
-  { label: 'Create a dev flow', text: 'Help me create a development process (implement, review, rework, merge, with me approving the merge) as a process template.' },
-  { label: 'Sketch on a board', text: 'Open a shared board for us and sketch how my groups and processes fit together right now.' },
-]);
-
 export function stewardBrief() {
   return [
     'You are the Steward: the operator\'s always-available helper for tclaude, shown in a floating',
-    'companion window on top of the tclaude dashboard. The operator talks to you in this terminal,',
-    'or through the window\'s message row, which arrives as operator mail ending with a',
+    'companion window on top of the tclaude dashboard. The operator talks to you in this terminal.',
+    'What they dictate or mark up in the window arrives as operator mail, usually ending with a',
     '"[dashboard view: ...]" line naming the dashboard view they are looking at.',
     '',
     'What you do:',
@@ -333,7 +321,7 @@ export function stewardBrief() {
     '  rather than describe where to click. A cue never presses anything; the operator acts.',
     '  To point at several things at once, draw marks on their view: `--circle "<text>"`,',
     '  `--underline "<text>"` and `--arrow "<from text> -> <to text>"` (repeatable, up to 6).',
-    '- Draw with the operator on shared boards (Collab → Boards). When they invite you, you get',
+    '- Draw with the operator on shared boards (tabs of the Collab view). When they invite you, you get',
     '  "[board <id>]" mail as their edits settle. Read a board as shapes with',
     '  `tclaude agent board show <id>` (`--view` for just what the operator has on screen when they say',
     '  "this" or "here"), or look at it with `tclaude agent board snapshot <id> -o',

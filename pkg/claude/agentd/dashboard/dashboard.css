@@ -10699,9 +10699,8 @@ body.hide-processes nav [data-tab="processes"],
 body.hide-processes #tab-processes { display: none; }
 
 /* Collab (companion, boards) is dark-launched the same way. */
-body.hide-collab nav [data-tab="boards"],
-body.hide-collab #tab-boards,
-body.hide-collab #collab-switch-root { display: none; }
+body.hide-collab [data-cfg-panel-link="steward"],
+body.hide-collab [data-cfg-panel="steward"] { display: none; }
 /* Processes is presented as an Automations subtab (the shared sub-nav in
    automations-subnav.js), so its own nav anchor never shows; Automations
    carries the active underline while Processes is open. */
