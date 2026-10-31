@@ -443,13 +443,62 @@ export function detachedLines(map, gone, opts) {
 // drawnElements is the live elements as they are to be drawn: attached ends
 // sit on their shapes, whatever the stored copy of the line says.
 export function drawnElements(map) {
-  const drawn = [];
+  const drawn = new Map();
   for (const el of map.values()) {
     if (el.isDeleted) continue;
     const route = routeConnector(el, map);
-    drawn.push(route ? { ...el, ...route } : el);
+    drawn.set(el.id, route ? { ...el, ...route } : el);
   }
-  return drawn;
+  for (const el of drawn.values()) {
+    const container = el.containerId && drawn.get(el.containerId);
+    if (container && container.type !== 'text') drawn.set(el.id, { ...el, ...textBoxOn(el, container) });
+  }
+  return [...drawn.values()];
+}
+
+// labelPoint is where an element's attached text sits: the middle of a box,
+// or halfway along a line's path.
+export function labelPoint(el) {
+  if (!el.points?.length) return center(el);
+  const lengths = [];
+  let total = 0;
+  for (let i = 1; i < el.points.length; i++) {
+    const [ax, ay] = el.points[i - 1]; const [bx, by] = el.points[i];
+    lengths.push(Math.hypot(bx - ax, by - ay));
+    total += lengths[lengths.length - 1];
+  }
+  let left = total / 2;
+  for (let i = 0; i < lengths.length; i++) {
+    if (left <= lengths[i] && lengths[i] > 0) {
+      const [ax, ay] = el.points[i]; const [bx, by] = el.points[i + 1];
+      const t = left / lengths[i];
+      return { x: el.x + ax + (bx - ax) * t, y: el.y + ay + (by - ay) * t };
+    }
+    left -= lengths[i];
+  }
+  return { x: el.x + el.points[0][0], y: el.y + el.points[0][1] };
+}
+
+function textBoxOn(text, container) {
+  const at = labelPoint(container);
+  const b = elementBounds(text);
+  return { x: round(at.x - b.width / 2), y: round(at.y - b.height / 2) };
+}
+
+// attachedText puts attached text back on its container, for any text or
+// container in `ids`, returning the bumped text elements that moved.
+export function attachedText(map, ids, opts) {
+  const touched = new Set(ids);
+  const out = [];
+  for (const el of map.values()) {
+    if (el.isDeleted || !el.containerId || !(touched.has(el.id) || touched.has(el.containerId))) continue;
+    const container = map.get(el.containerId);
+    if (!container || container.isDeleted || container.type === 'text') continue;
+    const route = routeConnector(container, map);
+    const box = textBoxOn(el, route ? { ...container, ...route } : container);
+    if (box.x !== el.x || box.y !== el.y) out.push(bump(el, box, opts));
+  }
+  return out;
 }
 
 // suggestedShape is the next shape a clicked snap point offers: a blank copy of
@@ -466,7 +515,7 @@ export function suggestedShape(from, fixedPoint, at = null, gap = 80) {
 export function shapeAt(elements, px, py, ignoreId = '') {
   for (let i = elements.length - 1; i >= 0; i--) {
     const el = elements[i];
-    if (el.isDeleted || el.id === ignoreId || (!SHAPES.has(el.type) && el.type !== 'text')) continue;
+    if (el.isDeleted || el.id === ignoreId || el.containerId || (!SHAPES.has(el.type) && el.type !== 'text')) continue;
     const b = elementBounds(el);
     if (px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height) return el;
   }
@@ -492,13 +541,17 @@ function inside(point, box) {
   return point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height;
 }
 
-// labelOwners maps each live text element to the innermost shape its centre
-// sits in: a shape's label, the way agents (`board add --text`) write it.
+// labelOwners maps each live text element to what it labels: the container it
+// names (tcl-jzs3g1), or, for text from before containers, the `<id>` of its
+// `<id>-label` id, or else the innermost shape its centre sits in.
 export function labelOwners(map) {
   const shapes = liveElements(map).filter((el) => SHAPES.has(el.type));
   const out = new Map();
+  const canOwn = (id) => { const el = map.get(id); return !!el && !el.isDeleted && el.type !== 'text'; };
   for (const t of map.values()) {
     if (t.isDeleted || t.type !== 'text') continue;
+    const named = t.containerId || (t.id.endsWith('-label') ? t.id.slice(0, -6) : '');
+    if (named && canOwn(named)) { out.set(t.id, named); continue; }
     const c = center(t);
     let best = null; let area = Infinity;
     for (const s of shapes) {
@@ -526,16 +579,16 @@ export function labelOf(map, shapeId) {
   return null;
 }
 
-// newLabel builds a centred label for a shape, under the CLI's `<id>-label` id.
+// newLabel builds text attached to an element, under the CLI's `<id>-label` id.
 export function newLabel(shape, text, props = {}, opts) {
   const lines = String(text).split('\n');
   const size = 20;
   const width = Math.ceil(Math.max(...lines.map((l) => l.length), 1) * size * 0.6);
   const height = Math.ceil(lines.length * size * 1.25);
-  const c = center(shape);
+  const c = labelPoint(shape);
   const id = `${shape.id}-label`.length <= 64 ? `${shape.id}-label` : undefined;
   return newElement('text', {
-    ...(id ? { id } : {}), text, fontSize: size, textAlign: 'center', strokeColor: shape.strokeColor || '#1e1e1e',
+    ...(id ? { id } : {}), containerId: shape.id, text, fontSize: size, textAlign: 'center', strokeColor: shape.strokeColor || '#1e1e1e',
     x: c.x - width / 2, y: c.y - height / 2, width, height, ...props,
   }, opts);
 }
@@ -657,6 +710,7 @@ export function sanitizeElement(raw) {
     el.text = text;
     el.fontSize = clampNum(raw.fontSize, 4, 200, 20);
     el.textAlign = ['left', 'center', 'right'].includes(raw.textAlign) ? raw.textAlign : 'left';
+    if (typeof raw.containerId === 'string' && ELEMENT_ID.test(raw.containerId)) el.containerId = raw.containerId;
   }
   if (LINEAR.has(raw.type)) {
     for (const key of ['startBinding', 'endBinding']) {
@@ -697,7 +751,7 @@ export function cloneElements(elements, dx, dy, opts = {}) {
   }
   const rebind = (binding) => (binding && ids.has(binding.elementId) ? { ...binding, elementId: ids.get(binding.elementId) } : undefined);
   return elements.map((el) => {
-    const { server_version: _s, customData: _c, startBinding, endBinding, ...rest } = el;
+    const { server_version: _s, customData: _c, startBinding, endBinding, containerId, ...rest } = el;
     const copy = newElement(el.type, {
       ...rest, id: ids.get(el.id),
       x: clampNum(el.x + dx, -MAX_COORD, MAX_COORD, 0), y: clampNum(el.y + dy, -MAX_COORD, MAX_COORD, 0),
@@ -705,6 +759,7 @@ export function cloneElements(elements, dx, dy, opts = {}) {
     const start = rebind(startBinding); const end = rebind(endBinding);
     if (start) copy.startBinding = start;
     if (end) copy.endBinding = end;
+    if (ids.has(containerId)) copy.containerId = ids.get(containerId);
     return copy;
   });
 }
@@ -803,7 +858,22 @@ export function describeChanges(map, changedIds, before) {
   return parts.join('; ');
 }
 
+// excalidrawLinks adds what Excalidraw reads from the other side of a link: a
+// container lists its text and lines in boundElements.
+function excalidrawLinks(elements) {
+  const bound = new Map();
+  const link = (ownerId, id, type) => { if (ownerId) bound.set(ownerId, [...(bound.get(ownerId) || []), { id, type }]); };
+  for (const el of elements) {
+    link(el.containerId, el.id, 'text');
+    if (el.type === 'arrow') { link(el.startBinding?.elementId, el.id, 'arrow'); link(el.endBinding?.elementId, el.id, 'arrow'); }
+  }
+  return elements.map((el) => {
+    const links = bound.get(el.id);
+    return { ...el, ...(links ? { boundElements: links } : {}), ...(el.containerId ? { verticalAlign: 'middle' } : {}) };
+  });
+}
+
 // toExcalidraw wraps elements as an .excalidraw file.
 export function toExcalidraw(elements) {
-  return JSON.stringify({ type: 'excalidraw', version: 2, source: 'tclaude', elements, appState: { viewBackgroundColor: '#ffffff' }, files: {} }, null, 2);
+  return JSON.stringify({ type: 'excalidraw', version: 2, source: 'tclaude', elements: excalidrawLinks(elements), appState: { viewBackgroundColor: '#ffffff' }, files: {} }, null, 2);
 }

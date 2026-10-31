@@ -18,9 +18,9 @@ import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, bindingAt, boardIdFromTitle, bump, center, changeBounds,
+  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardIdFromTitle, bump, changeBounds,
   cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, elementBounds, elementsInBox,
-  labelOf, labelOwners, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
+  labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
   reboundArrows, routeConnector, shapeAt, shapeNear, simplifyStroke, snapHit, snapPoints, suggestedShape, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
 import { companionAgents } from './companion-model.js';
@@ -31,6 +31,8 @@ const html = htm.bind(h);
 // and to a shape to show its snap points.
 const SNAP_RADIUS_PX = 10;
 const SNAP_MARGIN_PX = 16;
+// The canvas colour (--board-paper in board.css).
+const BOARD_PAPER = '#fbfaf7';
 
 export const BOARD_POLL_MS = 1000;
 // With the socket up nothing is polled but a slow check that catches a missed
@@ -123,7 +125,9 @@ function dash(el) {
   return null;
 }
 
-export function BoardElement({ el, flash = false }) {
+const TEXT_ANCHOR = { center: 'middle', right: 'end' };
+
+export function BoardElement({ el, flash = false, onLine = false }) {
   const stroke = safeColor(el.strokeColor, '#1e1e1e');
   const background = safeColor(el.backgroundColor, 'transparent');
   const fill = background !== 'transparent' ? background : 'none';
@@ -159,9 +163,13 @@ export function BoardElement({ el, flash = false }) {
     case 'text': {
       const size = el.fontSize || 20;
       const lines = String(el.text || '').split('\n');
-      return html`<text ...${common} stroke="none" fill=${stroke} x=${x} y=${y + size} font-size=${size}
+      const box = elementBounds(el);
+      const lineX = el.textAlign === 'center' ? x + box.width / 2 : el.textAlign === 'right' ? x + box.width : x;
+      // Text on a line masks the line behind it, so it stays readable.
+      const halo = onLine ? { stroke: BOARD_PAPER, 'stroke-width': 5, 'paint-order': 'stroke' } : { stroke: 'none' };
+      return html`<text ...${common} ...${halo} fill=${stroke} x=${lineX} y=${y + size} font-size=${size} text-anchor=${TEXT_ANCHOR[el.textAlign] || null}
         font-family="'Segoe Print','Comic Sans MS','Chalkboard SE',cursive" xml:space="preserve">
-        ${lines.map((line, i) => html`<tspan key=${i} x=${x} dy=${i ? size * 1.25 : 0}>${line || ' '}</tspan>`)}
+        ${lines.map((line, i) => html`<tspan key=${i} x=${lineX} dy=${i ? size * 1.25 : 0}>${line || ' '}</tspan>`)}
       </text>`;
     }
     default:
@@ -627,7 +635,9 @@ export function BoardEditor({
     for (const el of changed) temp.set(el.id, el);
     // A moved arrow that is also bound to a moved shape is saved once.
     const out = new Map(changed.map((el) => [el.id, el]));
-    for (const arrow of reboundArrows(temp, ids)) out.set(arrow.id, arrow);
+    for (const arrow of reboundArrows(temp, ids)) { out.set(arrow.id, arrow); temp.set(arrow.id, arrow); }
+    // Text attached to anything that moved goes with it, the lines included.
+    for (const text of attachedText(temp, [...out.keys()])) out.set(text.id, text);
     return [...out.values()];
   }
 
@@ -781,7 +791,9 @@ export function BoardEditor({
         beginLine('arrow', p, { startBinding: snap }, true);
         return;
       }
-      const hit = topHit(live, p.x, p.y, 6 / view.zoom);
+      const top = topHit(live, p.x, p.y, 6 / view.zoom);
+      // Attached text is its container, to click on.
+      const hit = (top?.containerId && live.find((el) => el.id === top.containerId)) || top;
       if (!hit) {
         // Empty space: a rubber band; with Shift it adds to the selection.
         if (!event.shiftKey) setSelected([]);
@@ -1059,19 +1071,21 @@ export function BoardEditor({
 
   function beginText(el, p = null) {
     if (el) {
-      setEditingText({ id: el.id, x: el.x, y: el.y, text: el.text || '', size: el.fontSize || 20, color: safeColor(el.strokeColor, '#1e1e1e'), isNew: false });
+      const centred = el.textAlign === 'center';
+      const x = centred ? el.x + elementBounds(el).width / 2 : el.x;
+      setEditingText({ id: el.id, x, y: el.y, text: el.text || '', size: el.fontSize || 20, color: safeColor(el.strokeColor, '#1e1e1e'), isNew: false, centred });
     } else {
       setEditingText({ id: '', x: p.x, y: p.y - 12, text: '', size: 20, color, isNew: true });
     }
   }
 
-  // beginLabel edits a shape's label, or starts one (`<id>-label`, as the
-  // CLI writes labels).
+  // beginLabel edits an element's attached text, or starts it (`<id>-label`, as
+  // the CLI writes labels). `shape` is as drawn: a line's stored path may lag.
   function beginLabel(shape) {
     const label = labelOf(elements.current, shape.id);
-    if (label) { beginText(label); return; }
-    const c = center(shape);
-    setEditingText({ id: '', shapeId: shape.id, x: c.x - 60, y: c.y - 12, text: '', size: 20, color: safeColor(shape.strokeColor, '#1e1e1e'), isNew: true });
+    if (label) { beginText(drawnElements(elements.current).find((el) => el.id === label.id) || label); return; }
+    const c = labelPoint(shape);
+    setEditingText({ id: '', shapeId: shape.id, x: c.x, y: c.y - 12, text: '', size: 20, color: safeColor(shape.strokeColor, '#1e1e1e'), isNew: true, centred: true });
   }
 
   function onDoubleClick(event) {
@@ -1079,8 +1093,9 @@ export function BoardEditor({
     const live = liveElements(elements.current);
     const hit = topHit(live, p.x, p.y);
     if (hit?.type === 'text') { beginText(hit); return; }
-    // Anywhere inside a shape (not only on an unfilled shape's outline).
-    const shape = shapeAt(live, p.x, p.y);
+    // On a line or stroke, or anywhere inside a shape (not only on an unfilled
+    // shape's outline).
+    const shape = hit || shapeAt(live, p.x, p.y);
     if (shape && shape.type !== 'text') beginLabel(shape);
     else if (!hit && tool === 'select') beginText(null, p);
   }
@@ -1094,7 +1109,7 @@ export function BoardEditor({
       if (!text) return;
       const shape = t.shapeId && elements.current.get(t.shapeId);
       if (shape && !shape.isDeleted) {
-        const label = newLabel(shape, text, { strokeColor: t.color });
+        const label = newLabel({ ...shape, ...routeConnector(shape, elements.current) }, text, { strokeColor: t.color });
         // A deleted `<id>-label` outranks a fresh version 1: revive it.
         const old = elements.current.get(label.id);
         commit([old ? bump(old, { ...label, version: old.version, isDeleted: false }) : label]);
@@ -1105,7 +1120,7 @@ export function BoardEditor({
     const cur = elements.current.get(t.id);
     if (!cur) return;
     if (!text) remove([t.id]);
-    else if (text !== cur.text) commit([bump(cur, { text, width: 0, height: 0 })]);
+    else if (text !== cur.text) commit(withArrows([bump(cur, { text, width: 0, height: 0 })]));
   }
 
   // -- keyboard ---------------------------------------------------------------
@@ -1261,11 +1276,12 @@ export function BoardEditor({
   // -- render -------------------------------------------------------------------
 
   const live = drawnElements(elements.current);
-  const sels = selected.map((id) => live.find((el) => el.id === id)).filter(Boolean);
+  const drawnById = new Map(live.map((el) => [el.id, el]));
+  const sels = selected.map((id) => drawnById.get(id)).filter(Boolean);
   const sel = sels.length === 1 ? sels[0] : null;
   const lines = sels.filter((el) => el.type === 'arrow' || el.type === 'line');
   const shownRouting = lines[0]?.routing || (lines.length ? 'straight' : routing);
-  const snapShape = tool !== 'hand' && tool !== 'text' && tool !== 'eraser' ? live.find((el) => el.id === hoverShape) : null;
+  const snapShape = tool !== 'hand' && tool !== 'text' && tool !== 'eraser' ? drawnById.get(hoverShape) : null;
   const offer = suggesting.current ? suggestion() : null;
   const band = gesture.current?.kind === 'band' ? normalizeBox(gesture.current.start.x, gesture.current.start.y, gesture.current.now.x, gesture.current.now.y) : null;
   const arrangeable = (() => {
@@ -1315,7 +1331,7 @@ export function BoardEditor({
         </select>
       </div>
       <button type="button" class="board-export" title="Download as .excalidraw"
-        onClick=${() => import('./board-export.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(liveElements(elements.current))))}>⤓</button>
+        onClick=${() => import('./board-export.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(drawnElements(elements.current))))}>⤓</button>
       ${headActions}
     </header>
     <div class="board-toolbar" role="toolbar" aria-label="Board tools">
@@ -1345,7 +1361,7 @@ export function BoardEditor({
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
         onWheel=${onWheel} onDblClick=${onDoubleClick}>
         <g data-board-viewport transform=${transform}>
-          ${live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} />`)}
+          ${live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} onLine=${!!drawnById.get(el.containerId)?.points} />`)}
           ${(sels.length > 0 || band || snapShape || offer) && html`<g data-board-chrome>
             ${sels.map((el) => {
               const b = elementBounds(el);
@@ -1366,7 +1382,7 @@ export function BoardEditor({
           </g>`}
         </g>
       </svg>
-      ${editingText && html`<textarea class="board-text-input" autoFocus
+      ${editingText && html`<textarea class=${`board-text-input${editingText.centred ? ' centred' : ''}`} autoFocus
         style=${`left:${(editingText.x - view.x) * view.zoom}px;top:${(editingText.y - view.y) * view.zoom}px;font-size:${editingText.size * view.zoom}px;color:${editingText.color}`}
         value=${editingText.text}
         onInput=${(event) => setEditingText({ ...editingText, text: event.currentTarget.value })}

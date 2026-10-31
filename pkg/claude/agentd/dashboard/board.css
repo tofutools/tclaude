@@ -117,6 +117,7 @@
   border: 1px dashed #1971c2; background: transparent; outline: none; line-height: 1.25;
   font-family: 'Segoe Print', 'Comic Sans MS', 'Chalkboard SE', cursive; field-sizing: content;
 }
+.board-text-input.centred { transform: translateX(-50%); text-align: center; }
 .board-empty-hint {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 420px;
   text-align: center; color: #868e96; font-size: 14px; pointer-events: none;
