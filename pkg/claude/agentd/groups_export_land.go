@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -253,20 +254,46 @@ func memberNeutralContext(a *paf.Archive, key string) func(paf.ReadOptions) (*tr
 // landing harness's history import, returning the minted conversation id.
 //
 // An OpenCode member installs into the ambient store, not per-agent state. An
-// import carries no launch posture, so the member's first resume recovers the
-// baseline one: no tclaude sandbox, a managed server on the ambient XDG
-// directories, and a conversation lookup through the ambient `opencode session
-// list`. That is the store this conversation has to be in. Private state only
-// exists for a launch under tclaude's sandbox.
+// import carries no launch posture, so the member resumes at the baseline one
+// (recordOpenCodeLandings): no tclaude sandbox and a managed server on the
+// ambient XDG directories. That is the store this conversation has to be in.
+// Private state only exists for a launch under tclaude's sandbox.
 func installGroupLanding(l *groupMemberLanding, cwd string) (string, func(), error) {
 	if l.dst.Name == harness.OpenCodeName {
 		// The opencode CLI runs in the landing directory, which --into may
-		// only have named so far.
+		// only have named so far, and a resume launches in its physical path.
 		if err := os.MkdirAll(cwd, 0o755); err != nil {
 			return "", nil, err
 		}
+		resolved, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return "", nil, err
+		}
+		cwd = resolved
 	}
 	return importBundleHistory(l.dst, l.history, cwd)
+}
+
+// recordOpenCodeLandings records the resume profile of every member whose
+// conversation landed on OpenCode. A resume cannot recover it from the harness
+// store as it does elsewhere: `opencode session list` shows only the project of
+// its working directory, so the daemon would not find a member landed in a
+// repository. It returns a warning for each member it could not record.
+func recordOpenCodeLandings(ls []*groupMemberLanding, exp *groupexport.Export, convRemap map[string]string, cwd string) []string {
+	var warnings []string
+	for i, l := range ls {
+		if l.history == nil || l.dst == nil || l.dst.Name != harness.OpenCodeName {
+			continue
+		}
+		physical, err := filepath.EvalSymlinks(cwd)
+		if err == nil {
+			_, err = recordBaselineResumeProfile(convRemap[exp.Convs[i].ConvID], harness.OpenCodeName, physical)
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: could not record its resume profile, so it may not resume: %v", l.Title, err))
+		}
+	}
+	return warnings
 }
 
 // landingWarnings flattens the plans' warnings, member by member.

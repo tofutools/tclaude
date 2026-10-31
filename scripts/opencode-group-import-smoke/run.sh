@@ -76,12 +76,10 @@ wait_for() { # wait_for <seconds> <desc> <cmd...>
 	die "timed out waiting for: $desc"
 }
 
-start_daemon() {
-	local name=$1
+start_daemon() { # start_daemon <name> <daemon cwd>
+	local name=$1 cwd=$2
 	mkdir -p "$ROOT/$name/tmux"
-	# The daemon's own cwd is not the landing directory, on purpose: nothing
-	# here may depend on the two matching.
-	(cd "$ROOT/$name" && node "$name" nohup tclaude agentd serve --no-tray \
+	(cd "$cwd" && node "$name" nohup tclaude agentd serve --no-tray \
 		>"$ROOT/$name/agentd.log" 2>&1) &
 	PIDS+=($!)
 	wait_for 60 "$name agentd" node "$name" tclaude agent groups ls
@@ -107,18 +105,22 @@ jq -n --arg id "$SOURCE_ID" --arg msg "$MESSAGE_ID" --arg part "$PART_ID" --arg 
 	}]
 }' >"$ROOT/fixture.json"
 (cd "$SRC_CWD" && node src opencode import "$ROOT/fixture.json" --pure --log-level ERROR)
-node src opencode session list --format json --pure --log-level ERROR | tee "$ROOT/src-sessions.json"
+# `opencode session list` shows only the project of its working directory.
+(cd "$SRC_CWD" && node src opencode session list --format json --pure --log-level ERROR) | tee "$ROOT/src-sessions.json"
 jq -e --arg id "$SOURCE_ID" 'any(.[]; .id == $id)' "$ROOT/src-sessions.json" >/dev/null \
 	|| die "OpenCode did not list the seeded session"
 
-start_daemon src
+# The source daemon runs in the session's project so it can see the fixture.
+start_daemon src "$SRC_CWD"
 log "exporting the group from the source node"
 node src tclaude agent groups create crew
 node src tclaude agent groups add crew "$SOURCE_ID" --role lead
 node src tclaude agent groups export crew --format paf --out "$ROOT/crew.paf"
 test -s "$ROOT/crew.paf" || die "the group export wrote nothing"
 
-start_daemon dst
+# The destination daemon does not run in the landing directory, as a real one
+# would not, so its own `opencode session list` cannot see the landed member.
+start_daemon dst "$ROOT/dst"
 sessions_on_dst() {
 	(cd "$DST_CWD" && node dst opencode session list --format json --pure --log-level ERROR)
 }
