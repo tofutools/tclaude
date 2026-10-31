@@ -650,6 +650,11 @@ CREATE TRIGGER usage_profile_assignments_agent_gone
 				WHERE scope = 'agent' AND scope_id = OLD.agent_id;
 			END;
 
+CREATE TRIGGER collab_board_sessions_agent_retired
+ AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
+ DELETE FROM collab_board_sessions WHERE agent_id = NEW.agent_id;
+END;
+
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
 			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
@@ -2136,3 +2141,13 @@ CREATE TABLE collab_board_history (
 ) STRICT;
 
 CREATE INDEX idx_collab_board_history_stack ON collab_board_history(board_id, actor, stack, id);
+
+CREATE TABLE collab_board_sessions (
+ board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,
+ agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+ started_at INTEGER NOT NULL,
+ last_active_at INTEGER NOT NULL,
+ PRIMARY KEY(board_id, agent_id)
+) STRICT;
+
+CREATE INDEX idx_collab_board_sessions_agent ON collab_board_sessions(agent_id);

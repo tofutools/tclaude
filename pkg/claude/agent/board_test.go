@@ -48,6 +48,28 @@ func fakeBoardDaemonWith(t *testing.T, fixture string) *[]map[string]any {
 	return &patched
 }
 
+func TestBoardOpenAndCloseUseTheCallersSessionRoute(t *testing.T) {
+	var calls []string
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(method, path string, _, out any, _ DaemonOpts) error {
+		calls = append(calls, method+" "+path)
+		if method == http.MethodPost {
+			return json.Unmarshal([]byte(`{"id":"plan","title":"Plan","version":4}`), out)
+		}
+		return nil
+	}
+	var out, errb bytes.Buffer
+	require.Equal(t, rcOK, runBoardOpen("plan", &out, &errb), errb.String())
+	assert.Contains(t, out.String(), `Board session open on plan "Plan", at version 4`)
+	assert.Contains(t, out.String(), "open dashboard", "it says what still needs a dashboard")
+
+	out.Reset()
+	require.Equal(t, rcOK, runBoardClose("plan", &out, &errb), errb.String())
+	assert.Contains(t, out.String(), "Board session on plan closed.")
+	assert.Equal(t, []string{"POST /v1/boards/plan/session", "DELETE /v1/boards/plan/session"}, calls)
+}
+
 func TestBoardShowPrintsOneLinePerElement(t *testing.T) {
 	fakeBoardDaemon(t)
 	var out, errb bytes.Buffer

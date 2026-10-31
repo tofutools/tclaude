@@ -573,6 +573,12 @@ through the peer). Only a
 shell from before shells were filed under their group keeps a locked
 `Attach`.
 
+With Collab on, the counter also has a **Boards** section: boards that agents
+hold a [board session](boards.md#board-sessions) on, each with its title and agents, so
+work done with no tab open is not lost sight of. `Open` opens the board as a
+tab, and `End` removes the sessions and leaves the board. These rows are this
+node's and do not show in a peer's per-node view.
+
 A peer's tclaude shells open here too: on a peer's Groups rows (its own view,
 or a fused view), clicking a member's directory path opens that agent's
 directory shell, and Ctrl/Cmd-clicking the group's default directory (or its

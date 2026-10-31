@@ -39,10 +39,12 @@ func boardCmd() *cobra.Command {
 			"Changing a board makes you a participant, so the operator's board activity reaches you as mail.\n\n" +
 			"Typical loop: `board show <id>` to read it, `board snapshot <id> -o board.png` to see the operator's last " +
 			"rendering, `board add` / `move` / `text` / `rm` to draw, then `board show <id> --since <version>` for " +
-			"what changed since.",
+			"what changed since.\n\n" +
+			"Your first change starts a board session, which keeps the board in the operator's Background terminals " +
+			"menu with no tab open, until `board close`. `board open` restarts one when you come back to a board.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			boardLsCmd(), boardShowCmd(), boardSnapshotCmd(), boardCreateCmd(),
+			boardLsCmd(), boardShowCmd(), boardSnapshotCmd(), boardCreateCmd(), boardOpenCmd(), boardCloseCmd(),
 			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardLayoutCmd(), boardFromProcessCmd(), boardFromFleetCmd(), boardFleetChangesCmd(),
 		},
 	}.ToCobra()
@@ -515,6 +517,60 @@ func runBoardCreate(p *boardCreateParams, id string, stdout, stderr io.Writer) i
 	} else {
 		fmt.Fprintf(stdout, "Created board %s %q.\n", doc.ID, doc.Title)
 	}
+	return rcOK
+}
+
+// ---- open, close ----
+
+func boardOpenCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:   "open <board>",
+		Short: "Start your board session again",
+		Long: "A board session is a durable record that you are working on a board, like a tmux session: it needs no " +
+			"tab open, survives reincarnation and daemon restarts, and has no time limit. While you have one, the " +
+			"operator can resume the board from the dashboard's Background terminals menu. Changing the board starts " +
+			"one too, so this is for coming back to a board later. It also makes you a participant. Needs boards.write.\n\n" +
+			"A session ends with `board close`, when you retire, when the board is deleted, or when the operator ends it. " +
+			"`board show` works without a dashboard; the PNG of `board snapshot` does not, because an open dashboard renders it.",
+		Args:        cobra.ExactArgs(1),
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
+			os.Exit(runBoardOpen(args[0], os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runBoardOpen(id string, stdout, stderr io.Writer) int {
+	var doc boardDoc
+	if err := DaemonRequest(http.MethodPost, boardPath(id, "session"), nil, &doc, DaemonOpts{}); err != nil {
+		return boardErr(stderr, err)
+	}
+	fmt.Fprintf(stdout, "Board session open on %s %q, at version %d. It lasts until `board close`, with or without a tab open.\n",
+		doc.ID, doc.Title, doc.Version)
+	fmt.Fprintln(stdout, "`board show` needs no dashboard, but `board snapshot` only has what an open dashboard last rendered.")
+	return rcOK
+}
+
+func boardCloseCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:   "close <board>",
+		Short: "End your board session",
+		Long: "Ends your own board session, so the board leaves the operator's Background terminals menu unless another " +
+			"agent has one. The board stays, you stay a participant, and your next change starts a new session. " +
+			"Needs boards.write.",
+		Args:        cobra.ExactArgs(1),
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
+			os.Exit(runBoardClose(args[0], os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runBoardClose(id string, stdout, stderr io.Writer) int {
+	if err := DaemonRequest(http.MethodDelete, boardPath(id, "session"), nil, nil, DaemonOpts{}); err != nil {
+		return boardErr(stderr, err)
+	}
+	fmt.Fprintf(stdout, "Board session on %s closed.\n", id)
 	return rcOK
 }
 

@@ -15,14 +15,15 @@ import (
 // no row is killable here.
 //
 //	GET /api/background-terminals
-func servePeerBackgroundTerminals(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
-		servePeerAsLocal(w, r, v, peerViewRule{unrestrictedOnly: true})
-		return
-	}
+func servePeerBackgroundTerminals(w http.ResponseWriter, _ *http.Request, v *peerView, _ peerViewRule) {
 	sessions, err := listBackgroundTmuxSessions()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "tmux", "background terminals unavailable")
+		return
+	}
+	// Not the local handler: that adds the board rows, and boards stay here.
+	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: classifyBackgroundTerminals(sessions)})
 		return
 	}
 	shellGroups, agentConvs := peerBackgroundGrants(v.peer.InstanceID)

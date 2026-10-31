@@ -45,6 +45,8 @@ func TestCollabSurfacesAreAbsentUntilOptedIn(t *testing.T) {
 		{http.MethodGet, "/v1/boards/map"},
 		{http.MethodPatch, "/v1/boards/map"},
 		{http.MethodGet, "/v1/boards/map/snapshot"},
+		{http.MethodPost, "/v1/boards/map/session"},
+		{http.MethodDelete, "/v1/boards/map/session"},
 	}
 	for _, route := range agentRoutes {
 		r := agentd.AsAgentPeer(testharness.JSONRequest(t, route.method, route.path, map[string]any{}), agent)
@@ -57,6 +59,7 @@ func TestCollabSurfacesAreAbsentUntilOptedIn(t *testing.T) {
 		{http.MethodGet, "/api/boards/map"},
 		{http.MethodPatch, "/api/boards/map"},
 		{http.MethodDelete, "/api/boards/map"},
+		{http.MethodDelete, "/api/boards/map/sessions"},
 		{http.MethodPost, "/api/companion/view"},
 		{http.MethodGet, "/api/companion/agt_x/peek"},
 		{http.MethodGet, "/api/companion/agt_x/speech"},
