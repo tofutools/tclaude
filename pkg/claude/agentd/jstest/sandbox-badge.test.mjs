@@ -169,6 +169,67 @@ const CASES = [
     tooltip: 'Status: NOT ENFORCED\nImplementation: Codex\nProfile: None\nWarning: the human operator used the dashboard launch override; closed network access is not enforced and outbound network access remains open',
   },
   {
+    name: 'a launch whose unsupported deny rows were omitted is not a padlock',
+    state: {
+      harness: 'codex', sandbox_mode: 'workspace-write', os_sandbox_state: 'on',
+      sandbox_implementation: 'harness-builtin',
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'network',
+        reason: 'operator_reduced_network_deny_override', effect: 'not_enforced',
+        detail: 'the human operator used the dashboard launch override; the listed unsupported network deny entries are omitted from this launch',
+      }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: NOT ENFORCED\nImplementation: Codex\nProfile: None\nWarning: the human operator used the dashboard launch override; the listed unsupported network deny entries are omitted from this launch',
+  },
+  {
+    name: 'a not-enforced socket rule with a reason the badge has never heard of',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'unix_sockets', reason: 'a_future_reason', effect: 'not_enforced',
+      }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: NOT ENFORCED\nImplementation: tclaude’s built-in sandbox\nProfile: None',
+  },
+  {
+    name: 'the pre-verdict mode fallback loses its padlock the same way',
+    state: {
+      harness: 'codex', sandbox_mode: 'workspace-write',
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'network', reason: 'no_mechanism', effect: 'not_enforced',
+      }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: NOT ENFORCED\nImplementation: Codex\nProfile: None',
+  },
+  {
+    name: 'a waived resource limit leaves the padlock alone',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'resource_limits',
+        reason: 'operator_unenforced_launch_override', effect: 'not_enforced',
+      }],
+    },
+    glyph: '🔒', danger: false,
+    tooltip: 'Status: ON\nImplementation: CC\nProfile: None\nClick to temporarily disable',
+  },
+  {
+    name: 'an off launch stays OFF whatever its notices say',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'off',
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'access_rules',
+        reason: 'unconfined_implementation', effect: 'not_enforced',
+      }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: None',
+  },
+  {
     name: 'filtered launch gate rides the badge why-clause',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
