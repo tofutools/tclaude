@@ -60,7 +60,7 @@ first. Like `add`, it then starts a session in the restored directory unless
 ```bash
 tclaude worktree ls        # path / branch / commit table (-v for more)
 tclaude worktree rm feat/my-feature
-tclaude worktree rm feat/my-feature -D    # also delete the branch
+tclaude worktree rm feat/my-feature -D    # also delete the branch, if merged (-f forces it)
 ```
 
 `rm` accepts a branch name or a path and refuses to remove a worktree with

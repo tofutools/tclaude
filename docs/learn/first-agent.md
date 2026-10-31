@@ -26,14 +26,16 @@ Click **Create group**. The group appears, empty.
 
 ## 2. Start an agent
 
-Under the group's name, click the blue spawn button (a person with a plus
-sign). The spawn dialog opens, joining `hello`, with the group's directory
+Open the group. On its **Agents** line, click the blue spawn button (a person with
+a plus sign). The one a line above it, on **Subgroups**, creates a subgroup instead.
+Once a group has members, the spawn button moves to the top left of the member
+table. The spawn dialog opens, joining `hello`, with the group's directory
 as the agent's working directory. Set:
 
 - **Name**: `alice`;
 - **Initial msg**: `Read this project and tell me in three sentences what it does.`
 
-<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
+<!-- The images on this page are maintained by hand. -->
 ![The spawn dialog, joining group hello. Name is alice, the initial message asks for a three-sentence summary of the project, and Harness and Model are left at their defaults.](../assets/learn-dashboard-spawn.png)
 
 Because the directory is a git repository, the dialog also prepares a new
@@ -111,6 +113,7 @@ Everything above has a CLI equivalent, for scripts:
 
 ```bash
 tclaude agent groups create hello --descr "my first team"
+tclaude agent groups set-default-dir hello ~/code/my-project
 tclaude agent spawn hello --name alice \
   --initial-message "Read this project and tell me in three sentences what it does."
 ```
@@ -124,7 +127,7 @@ covers the spawn options.
     directory. It is for people who run agents in native terminal
     windows (`dashboard.default_terminal` set to `"native"`) and sometimes
     want a browser terminal. See
-    [Zooming into a terminal](../dashboard-terminals.md).
+    [Terminals and Collab](../dashboard-terminals.md).
 
 ## What you learned
 
@@ -135,4 +138,5 @@ covers the spawn options.
   You will use these two all the time.
 - The status dot stops and wakes an agent.
 
-**Next:** [Set up your team](team-setup.md).
+**Next:** [Set up your team](team-setup.md), or try the optional
+[Ask the Steward](steward.md) first.
