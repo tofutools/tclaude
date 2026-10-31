@@ -552,14 +552,7 @@ export function CompanionApp({
       return p.snap ? zoneRect(p.snap, vp, snapTop()) : clampPlacement(p, vp);
     });
     win?.addEventListener?.('resize', onResize);
-    // A page scrollbar appearing changes the usable width without a resize event.
-    const root = win?.document?.documentElement;
-    const observer = root && win?.ResizeObserver ? new win.ResizeObserver(onResize) : null;
-    observer?.observe(root);
-    return () => {
-      win?.removeEventListener?.('resize', onResize);
-      observer?.disconnect();
-    };
+    return () => win?.removeEventListener?.('resize', onResize);
   }, [win]);
 
   function snapTop() {
