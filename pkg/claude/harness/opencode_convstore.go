@@ -132,7 +132,9 @@ func (s openCodeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error)
 // syncOpenCodeConvIndex keeps the common cache useful for dashboard and title
 // readers without making it the source of truth. A successful CLI snapshot
 // inserts/refreshes every OpenCode row and evicts OpenCode rows absent from the
-// snapshot. Cache failures degrade enrichment rather than hiding source CLI
+// snapshot, but only in directories the snapshot covers: `opencode session list`
+// shows just the project of its working directory, so another project's rows
+// are unseen, not gone. Cache failures degrade enrichment rather than hiding source CLI
 // sessions. Timestamp representation failures are logged at error level with
 // the source values and skip the cache row, so the invalid instant stays loud
 // without letting one bad third-party value blank the source listing.
@@ -149,9 +151,11 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, 
 	}
 
 	seen := make(map[string]bool, len(sessions))
+	covered := make(map[string]bool, len(sessions))
 	entries := make([]convops.SessionEntry, 0, len(sessions))
 	for _, session := range sessions {
 		seen[session.ID] = true
+		covered[session.Directory] = true
 		entry := openCodeSessionEntry(session)
 		if row := cached[session.ID]; row != nil {
 			// CustomTitle is a tclaude-local fallback used only when a cold
@@ -182,8 +186,8 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, 
 		}
 		entries = append(entries, entry)
 	}
-	for id := range cached {
-		if !seen[id] {
+	for id, row := range cached {
+		if !seen[id] && covered[filepath.Clean(row.ProjectPath)] {
 			if err := db.DeleteConvIndex(id); err != nil {
 				slog.Warn("opencode convstore: stale conv_index eviction failed",
 					"conv", id, "error", err)
@@ -369,10 +373,8 @@ func (s openCodeConvStore) Exists(convID, _ string) (bool, error) {
 	if convID == "" {
 		return false, nil
 	}
-	// OpenCode session ids are globally indexed: the CLI snapshot contains
-	// every directory, and a ses_… id identifies the same conversation from
-	// any cwd. Ignoring cwd avoids false "absent" results for symlinked or
-	// relocated callers.
+	// The CLI snapshot covers only the project of this process's working
+	// directory, so a conversation in another project reads as absent here.
 	entries, err := s.ListConvs("")
 	if err != nil {
 		return false, err
