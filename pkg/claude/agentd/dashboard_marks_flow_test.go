@@ -124,6 +124,9 @@ func TestDashboardMarks_LimitsRefuseClearly(t *testing.T) {
 	replaced, _ := m.list("?state=replaced")
 	require.Len(t, replaced, 1)
 	assert.Equal(t, first, replaced[0].ID)
+	agentID, err := db.AgentIDForConv(markAgent)
+	require.NoError(t, err)
+	assert.Equal(t, agentID, replaced[0].EndedBy)
 }
 
 func TestDashboardMarks_EverywayToEndOneIsRecorded(t *testing.T) {
@@ -200,6 +203,19 @@ func TestDashboardMarks_ReplyReachesTheAgentNamingTheMark(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, m.operator(fmt.Sprintf("/api/companion/marks/%d/acknowledge", id), nil))
 	assert.Equal(t, http.StatusConflict, m.operator(reply, map[string]any{"text": "late"}))
+
+	// With nobody to tell, the history must not claim an answer.
+	human := testharness.Serve(m.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/dashboard/marks",
+		map[string]any{"kind": "label", "spec": map[string]any{}, "tip": "from the CLI"})))
+	require.Equal(t, http.StatusOK, human.Code, human.Body.String())
+	var drawn struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(human.Body.Bytes(), &drawn))
+	assert.Equal(t, http.StatusConflict, m.operator(fmt.Sprintf("/api/companion/marks/%d/reply", drawn.ID), map[string]any{"text": "hello?"}))
+	marks, _ = m.list("?state=active")
+	require.Len(t, marks, 1)
+	assert.Empty(t, marks[0].Reply)
 }
 
 func TestDashboardMarks_NeedPermissionAndHiddenTabsDrawNothing(t *testing.T) {

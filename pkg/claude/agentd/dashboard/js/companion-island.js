@@ -1012,6 +1012,8 @@ export function CompanionApp({
     const key = marksKey(next);
     if (key === marksSeen.current) return;
     marksSeen.current = key;
+    // The layer leaves with the last mark, so it cannot report that itself.
+    if (!next.length) markReport.current = [];
     setMarks(next);
   }, []);
   const postMark = (path, body) => fetchImpl(`/api/companion/marks/${path}`, {

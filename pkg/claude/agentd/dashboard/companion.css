@@ -245,10 +245,11 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 .companion-mark.blink { animation: companion-mark-blink 1s ease-in-out infinite; }
 @keyframes companion-mark-blink { 50% { opacity: .2; } }
 .companion-mark-tip {
-  position: fixed; z-index: 951; width: 300px; box-sizing: border-box; padding: 7px 9px; pointer-events: auto;
+  position: fixed; z-index: 951; width: 300px; box-sizing: border-box; padding: 7px 9px; pointer-events: none;
   background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 9px;
   box-shadow: 0 10px 26px rgba(0, 0, 0, .5); font-size: 12.5px; line-height: 1.4;
 }
+.companion-mark-tip button, .companion-mark-tip textarea { pointer-events: auto; }
 .companion-mark-tip-head { display: flex; align-items: center; gap: 4px; }
 .companion-mark-tip-head b { margin-right: auto; color: #d2a8ff; font-size: 11.5px; }
 .companion-mark-tip-head button { background: none; border: 0; color: #8b949e; cursor: pointer; font-size: 14px; padding: 0 3px; }

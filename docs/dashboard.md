@@ -780,8 +780,9 @@ other agents do not. A mark is a `highlight`, `circle`, `underline`, `box`,
 (`--target`) or selector (`--ref`), or on a screen region (`--region`). `--blink`
 pulses it, unless your system asks for reduced motion. Marks follow their
 control as the page scrolls and resizes; a region follows the page's scroll.
-They never take a click: only the tip beside a mark, and **Dismiss all marks**,
-respond to the pointer. A mark never lands on an approval control.
+They never take a click: only the buttons on a mark's tip, and **Dismiss all
+marks**, respond to the pointer, and clicks on the rest of a tip reach the page
+under it. Neither a mark nor its tip lands on an approval control.
 
 Every mark has a tip with **✓** (got it), **×** (dismiss) and **Reply**. Reply
 sends your answer to the agent as mail naming the mark and its tip, so you need

@@ -57,6 +57,9 @@ test('a mark never lands on an approval control', async (t) => {
   assert.deepEqual(resolveMark({ kind: 'highlight', spec: { ref: '#a' } }, doc, origin, origin), { why: 'target is an approval control' });
   const region = { kind: 'box', spec: { region: { x: 50, y: 10, width: 10, height: 10 } } };
   assert.deepEqual(resolveMark(region, doc, origin, origin), { why: 'covers an approval control' });
+  const card = { getAttribute: () => null, closest: () => null, matches: () => false, textContent: 'Deploy?', getBoundingClientRect: () => ({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200 }) };
+  const wrapper = { querySelector: () => card, querySelectorAll: () => [approve] };
+  assert.deepEqual(resolveMark({ kind: 'highlight', spec: { ref: '.card' } }, wrapper, origin, origin), { why: 'covers an approval control' }, 'nor on what holds one');
   const clear = { kind: 'box', spec: { region: { x: 500, y: 10, width: 10, height: 10 } } };
   assert.ok(resolveMark(clear, doc, origin, origin).rect);
 });
@@ -92,6 +95,15 @@ test('every mark can be ended and answered at the mark, and clicks pass the draw
   assert.deepEqual(ended, [[7, 'acknowledge'], [7, 'dismiss'], 'all']);
   await harness.act(() => tip.querySelector('.companion-mark-reply').click());
   assert.ok(tip.querySelector('textarea'));
+});
+
+test('a tip stays off an approval control', async (t) => {
+  const { placeTips, rectsOverlap: overlap, tipHeight } = await load(t);
+  const rect = { left: 300, top: 100, right: 400, bottom: 130, width: 100, height: 30 };
+  const approve = { left: 280, top: 120, right: 640, bottom: 400 };
+  const mark = { id: 1, tip: 'near it' };
+  const [place] = placeTips([{ mark, rect }], 1400, 850, [approve]);
+  assert.equal(overlap({ left: place.left, right: place.left + 300, top: place.top, bottom: place.top + tipHeight(mark) }, approve), false);
 });
 
 test('tips never cover each other', async (t) => {

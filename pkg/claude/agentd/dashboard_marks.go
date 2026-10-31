@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,9 +19,9 @@ import (
 
 // Dashboard marks (tcl-s97jr5, tcl-dp9eqk, tcl-gzie3v): what an agent, the
 // Steward by default, draws on the operator's view to get their attention. A
-// mark is a durable row, active until it times out, its agent clears or replaces
-// it, or the operator dismisses or acknowledges it, and the row keeps who ended
-// it and how. Open tabs collect the active marks with their presence ping and
+// mark is a durable row, active until it times out, a permitted agent clears or
+// replaces it, or the operator dismisses or acknowledges it, and the row keeps
+// who ended it and how. Open tabs collect the active marks with their presence ping and
 // draw them; a mark takes no clicks, only its tip does.
 
 const PermDashboardMark = "dashboard.mark"
@@ -324,7 +325,12 @@ func handleDashboardMarkClearAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentID, _ := callerIdentity(convID)
-	// The operator's own CLI has no marks of its own and clears everyone's.
+	// The operator's own CLI has no marks of its own and clears everyone's. An
+	// agent that cannot be named must not fall into that.
+	if convID != "" && agentID == "" {
+		writeError(w, http.StatusConflict, "no_agent", "this conversation has no agent identity, so it owns no marks")
+		return
+	}
 	n, err := db.EndActiveDashboardMarks(agentID, db.MarkStateCleared, markEndedBy(agentID), guideNow())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -416,7 +422,7 @@ func handleDashboardMarkReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("a reply is 1 to %d characters", MarkMaxReply))
 		return
 	}
-	mark, err := db.ReplyDashboardMark(id, text, guideNow())
+	mark, err := db.ActiveDashboardMark(id, guideNow())
 	if err != nil {
 		writeMarkEnd(w, err)
 		return
@@ -430,7 +436,7 @@ func handleDashboardMarkReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "the agent that drew this mark is gone")
 		return
 	}
-	id, _, err = queueRegularAgentMessage(&db.AgentMessage{
+	messageID, _, err := queueRegularAgentMessage(&db.AgentMessage{
 		ToConv: res.ConvID, Subject: fmt.Sprintf("Reply to mark %d", mark.ID), Body: markReplyBody(mark, text),
 		ToRecipients: []string{res.ConvID}, OperatorAuthored: true,
 	})
@@ -442,7 +448,12 @@ func handleDashboardMarkReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"message_id": id})
+	// Recorded once it is on its way, so the history never shows an answer the
+	// agent did not get.
+	if err := db.RecordDashboardMarkReply(mark.ID, text, guideNow()); err != nil {
+		slog.Warn("dashboard mark: record reply", "mark", mark.ID, "error", err)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"message_id": messageID})
 }
 
 // -- saved captures -----------------------------------------------------------
@@ -464,10 +475,9 @@ func saveCapture(convID, label string, image []byte, ctx *captureContext) (*db.D
 		return nil, err
 	}
 	path := captureFilePath(saved.ID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(path, image, 0o600); err != nil {
+	if err := writeCaptureFile(path, image); err != nil {
+		_ = os.Remove(path)
+		_ = db.DeleteDashboardCapture(saved.ID)
 		return nil, err
 	}
 	stale, err := db.PruneDashboardCaptures(CaptureKeepCount, CaptureKeepBytes)
@@ -478,6 +488,13 @@ func saveCapture(convID, label string, image []byte, ctx *captureContext) (*db.D
 		_ = os.Remove(captureFilePath(id))
 	}
 	return saved, nil
+}
+
+func writeCaptureFile(path string, image []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, image, 0o600)
 }
 
 type savedCaptureView struct {

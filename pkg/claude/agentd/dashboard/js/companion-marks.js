@@ -3,8 +3,8 @@
 // (dashboard_marks.go) and open tabs collect the active ones with their
 // presence ping; this draws them.
 //
-// A mark never takes a click: everything here is pointer-events: none except a
-// tip and the dismiss-all control, which the operator uses to answer. A mark
+// A mark never takes a click: everything here is pointer-events: none except
+// the buttons and fields of a tip and the dismiss-all control. A mark
 // follows its control or, for a region or stroke, the page's scroll. Like a cue,
 // it never points at the operator's own consent.
 
@@ -24,6 +24,7 @@ const MARK_TIP_CHROME = 58;
 const MARK_TIP_LINE = 18;
 const MARK_TIP_LINE_CHARS = 44;
 const MARK_TIP_FLOAT_BOTTOM = 96;
+const MARK_TIP_STEP = 24;
 const MARK_REPLY_MAX = 2000;
 const CONSENT_SELECTOR = '.companion-approval, .companion-decision, .mail-decision, .access-btn, button';
 
@@ -64,27 +65,35 @@ export function tipHeight(mark) {
 }
 
 // placeTips gives each tip a spot beside its mark, below it when there is room,
-// moved clear of the tips already placed: a tip on top of another would hide
-// its buttons. A mark with nothing to sit beside floats above the companion.
-export function placeTips(items, vw, vh) {
-  const placed = [];
-  const clash = (box) => placed.find((other) => rectsOverlap(box, other));
+// clear of the tips already placed, whose buttons it would hide, and of the
+// blocked rects: a tip must not sit on the operator's approval controls. A mark
+// with nothing to sit beside floats above the companion.
+export function placeTips(items, vw, vh, blocked = []) {
+  const taken = [...blocked];
+  const free = (left, top, height) => !taken.some((other) => rectsOverlap({ left, right: left + MARK_TIP_WIDTH, top, bottom: top + height }, other));
+  const lowest = (height) => vh - height - MARK_TIP_GAP;
   return items.map(({ mark, rect }) => {
     const height = tipHeight(mark);
     const left = rect ? Math.max(MARK_TIP_GAP, Math.min(vw - MARK_TIP_WIDTH - MARK_TIP_GAP, rect.left)) : vw - MARK_TIP_WIDTH - 16;
-    let top;
-    if (!rect) top = vh - MARK_TIP_FLOAT_BOTTOM - height;
-    else if (rect.bottom + height + MARK_TIP_GAP < vh) top = rect.bottom + MARK_TIP_GAP;
-    else top = Math.max(MARK_TIP_GAP, rect.top - height - MARK_TIP_GAP);
-    const room = rect && rect.bottom + height + MARK_TIP_GAP < vh ? 1 : -1;
-    for (let hit = 0; hit < items.length; hit++) {
-      const other = clash({ left, right: left + MARK_TIP_WIDTH, top, bottom: top + height });
-      if (!other) break;
-      top = room > 0 ? other.bottom + MARK_TIP_GAP : other.top - height - MARK_TIP_GAP;
+    const below = rect && rect.bottom + height + MARK_TIP_GAP < vh;
+    let top = vh - MARK_TIP_FLOAT_BOTTOM - height;
+    if (rect) top = below ? rect.bottom + MARK_TIP_GAP : rect.top - height - MARK_TIP_GAP;
+    top = Math.max(MARK_TIP_GAP, Math.min(lowest(height), top));
+    const place = { left, top };
+    // Walk away from the mark, then try the page's edges.
+    search: for (const x of [left, MARK_TIP_GAP, vw - MARK_TIP_WIDTH - MARK_TIP_GAP]) {
+      for (let step = 0; step * MARK_TIP_STEP < vh; step++) {
+        const offset = step * MARK_TIP_STEP * (below ? 1 : -1);
+        const y = top + offset < MARK_TIP_GAP || top + offset > lowest(height) ? top - offset : top + offset;
+        if (y >= MARK_TIP_GAP && y <= lowest(height) && free(x, y, height)) {
+          place.left = x;
+          place.top = y;
+          break search;
+        }
+      }
     }
-    top = Math.max(MARK_TIP_GAP, Math.min(vh - height - MARK_TIP_GAP, top));
-    placed.push({ left, right: left + MARK_TIP_WIDTH, top, bottom: top + height });
-    return { left, top };
+    taken.push({ left: place.left, right: place.left + MARK_TIP_WIDTH, top: place.top, bottom: place.top + height });
+    return place;
   });
 }
 
@@ -96,32 +105,40 @@ function refTarget(doc, ref) {
   }
 }
 
-// overConsent reports whether a region or stroke lies over a consent control.
-// A control target is refused by the search itself; this covers bare pixels.
-function overConsent(doc, rect) {
+// consentRects are where the operator's approval controls are.
+export function consentRects(doc) {
+  const rects = [];
   for (const el of doc.querySelectorAll(CONSENT_SELECTOR)) {
-    if (consentControl(el) && rectsOverlap(rect, el.getBoundingClientRect())) return true;
+    if (!consentControl(el)) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width && rect.height) rects.push(rect);
   }
-  return false;
+  return rects;
 }
+
+const overConsent = (rect, consent) => consent.some((other) => rectsOverlap(rect, other));
 
 // resolveMark finds what a mark points at now: {element, from}, {rect} for a
 // region or stroke, {} for a label with no anchor, or {why} when it cannot be
-// drawn here.
+// drawn here. Overlap is judged by position, because a mark on a wrapper rings
+// the approval control inside it.
 export function resolveMark(mark, doc, anchor, scroll) {
+  const consent = consentRects(doc);
   const { target, ref, from, region, points } = mark.spec || {};
   if (region || points?.length) {
     const box = region || strokeBounds(points);
     const rect = regionRect(box, anchor, scroll);
-    return overConsent(doc, rect) ? { why: 'covers an approval control' } : { rect };
+    return overConsent(rect, consent) ? { why: 'covers an approval control' } : { rect };
   }
   if (!target && !ref) return {};
   const element = ref ? refTarget(doc, ref) : findGuideTarget(doc, target, { loose: true });
   if (!element) return { why: 'target not on this view' };
   if (consentControl(element)) return { why: 'target is an approval control' };
+  if (overConsent(element.getBoundingClientRect(), consent)) return { why: 'covers an approval control' };
   if (mark.kind !== 'arrow') return { element };
   const start = findGuideTarget(doc, from, { loose: true });
-  return start ? { element, from: start } : { why: 'arrow start not on this view' };
+  if (!start) return { why: 'arrow start not on this view' };
+  return overConsent(start.getBoundingClientRect(), consent) ? { why: 'covers an approval control' } : { element, from: start };
 }
 
 function liveRect(el) {
@@ -239,7 +256,7 @@ export function MarksLayer({ marks, win, onEnd, onDismissAll, onReply, onReport 
     return { mark, rect, from: liveRect(found.from), why: found.why, scrollDelta: { x: anchor.x - at.x, y: anchor.y - at.y } };
   });
   // A bare mark still needs a way to end it, so every mark gets a tip.
-  const places = placeTips(drawn, win.innerWidth, win.innerHeight);
+  const places = placeTips(drawn, win.innerWidth, win.innerHeight, consentRects(doc));
   return html`<svg class="companion-marks" aria-hidden="true">
       ${drawn.filter((d) => !d.why).map((d) => html`<${MarkShape} key=${d.mark.id} ...${d} />`)}
     </svg>

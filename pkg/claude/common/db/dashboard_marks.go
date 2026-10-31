@@ -84,7 +84,11 @@ func CreateDashboardMark(m *DashboardMark, replaces int64, maxActive, keepEnded 
 		return err
 	}
 	if replaces != 0 {
-		if err := endDashboardMarkTx(tx, replaces, MarkStateReplaced, m.AgentID, now); err != nil {
+		by := m.AgentID
+		if by == "" {
+			by = MarkEndedByOperator
+		}
+		if err := endDashboardMarkTx(tx, replaces, MarkStateReplaced, by, now); err != nil {
 			return err
 		}
 	}
@@ -179,36 +183,34 @@ func EndActiveDashboardMarks(agentID, state, by string, now time.Time) (int64, e
 	return n, tx.Commit()
 }
 
-// ReplyDashboardMark keeps the operator's answer on an active mark and returns
-// the mark. The mark stays up: the agent decides what happens next.
-func ReplyDashboardMark(id int64, reply string, now time.Time) (*DashboardMark, error) {
+// ActiveDashboardMark returns a mark that is still up, or says why it is not.
+func ActiveDashboardMark(id int64, now time.Time) (*DashboardMark, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	tx, err := d.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := expireDashboardMarksTx(tx, now); err != nil {
-		return nil, err
-	}
-	m, err := scanDashboardMark(tx.QueryRow(`SELECT `+dashboardMarkColumns+` FROM dashboard_marks WHERE id = ?`, id))
+	m, err := scanDashboardMark(d.QueryRow(`SELECT `+dashboardMarkColumns+` FROM dashboard_marks WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrDashboardMarkNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if m.State != MarkStateActive {
+	if m.State != MarkStateActive || !m.ExpiresAt.After(now) {
 		return nil, ErrDashboardMarkEnded
 	}
-	if _, err := tx.Exec(`UPDATE dashboard_marks SET reply = ?, replied_at = ? WHERE id = ?`, reply, dbTime(now), id); err != nil {
-		return nil, err
+	return m, nil
+}
+
+// RecordDashboardMarkReply keeps the operator's answer on a mark. The mark stays
+// up: the agent decides what happens next.
+func RecordDashboardMarkReply(id int64, reply string, now time.Time) error {
+	d, err := Open()
+	if err != nil {
+		return err
 	}
-	m.Reply, m.RepliedAt = reply, now
-	return m, tx.Commit()
+	_, err = d.Exec(`UPDATE dashboard_marks SET reply = ?, replied_at = ? WHERE id = ?`, reply, dbTime(now), id)
+	return err
 }
 
 // ListDashboardMarks returns marks newest first, optionally of one state,
@@ -311,6 +313,16 @@ func SaveDashboardCapture(c *DashboardCapture, now time.Time) error {
 	return err
 }
 
+// DeleteDashboardCapture removes a kept capture's row.
+func DeleteDashboardCapture(id int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM dashboard_captures WHERE id = ?`, id)
+	return err
+}
+
 // GetDashboardCapture returns one kept capture, or nil.
 func GetDashboardCapture(id int64) (*DashboardCapture, error) {
 	d, err := Open()
@@ -356,7 +368,12 @@ func PruneDashboardCaptures(maxCount int, maxBytes int64) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, size FROM dashboard_captures ORDER BY id DESC`)
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(`SELECT id, size FROM dashboard_captures ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -381,9 +398,9 @@ func PruneDashboardCaptures(maxCount int, maxBytes int64) ([]int64, error) {
 	}
 	_ = rows.Close()
 	for _, id := range stale {
-		if _, err := d.Exec(`DELETE FROM dashboard_captures WHERE id = ?`, id); err != nil {
+		if _, err := tx.Exec(`DELETE FROM dashboard_captures WHERE id = ?`, id); err != nil {
 			return nil, err
 		}
 	}
-	return stale, nil
+	return stale, tx.Commit()
 }
