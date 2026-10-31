@@ -275,7 +275,7 @@ func loadUsageRulesState(now time.Time) (*usageRulesState, error) {
 			st.members[groupID] = append(st.members[groupID], agentID)
 		}
 	}
-	rows, _, _, err := countedCostDailyRows()
+	rows, err := st.spendRows()
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +287,38 @@ func loadUsageRulesState(now time.Time) (*usageRulesState, error) {
 		return nil, fmt.Errorf("list live sessions: %w", err)
 	}
 	return st, nil
+}
+
+// spendRows reads the ledger the loaded rules measure. A day, week or month
+// rule stays inside db.CostReadLimitDays; only a lifetime rule, the one period
+// that reaches further, needs the whole history.
+func (st *usageRulesState) spendRows() ([]db.CostDailyRow, error) {
+	earliest := st.now.Format(costDayKey)
+	lifetime := false
+	measure := func(rules []usagerules.Rule) {
+		for _, r := range rules {
+			if r.Metric == usagerules.MetricWindowPct {
+				continue
+			}
+			if r.Period == usagerules.PeriodLifetime {
+				lifetime = true
+				continue
+			}
+			earliest = min(earliest, usagerules.PeriodStartDay(r.Period, st.now))
+		}
+	}
+	for _, l := range st.limits {
+		measure([]usagerules.Rule{l.Rule})
+	}
+	for _, p := range st.profiles {
+		measure(p.Rules)
+	}
+	if lifetime {
+		rows, _, _, err := countedCostDailyRows()
+		return rows, err
+	}
+	read, err := countedCostRowsForWindow(earliest, "", false)
+	return read.counted, err
 }
 
 // usageLinkedLayer is the layer of an agent's profiles copied from a spawn

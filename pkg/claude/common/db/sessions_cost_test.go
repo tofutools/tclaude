@@ -828,12 +828,12 @@ func TestReplaceSessionCostHistoryForGenerationRealAcrossResume(t *testing.T) {
 	assert.InDelta(t, 4, total, 1e-12)
 }
 
-// TestCostDailyRowsForWindow_MatchesFullWalk pins the windowed read to the full
+// TestCostDailyRowsForWalk_MatchesFullWalk pins the windowed read to the full
 // walk on the histories that make the walk path-dependent: a /clear moving a
 // session between conversations (carry), a resume across sessions (baseline),
 // conversation-less rows and mixed billing. Every window start must produce the
 // same deltas from its day on as walking the whole ledger.
-func TestCostDailyRowsForWindow_MatchesFullWalk(t *testing.T) {
+func TestCostDailyRowsForWalk_MatchesFullWalk(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err, "open db")
@@ -884,7 +884,7 @@ func TestCostDailyRowsForWindow_MatchesFullWalk(t *testing.T) {
 	for start := range days + 2 {
 		from := day(start)
 		for _, to := range []string{"", day(start + 7)} {
-			windowed, err := CostDailyRowsForWindow(from, to, false)
+			windowed, err := costDailyRowsForWalk(from, to, false)
 			require.NoError(t, err)
 			assert.LessOrEqual(t, len(windowed), len(all))
 			assert.Equal(t, since(MixedCostDeltas(all), from, to), since(MixedCostDeltas(windowed), from, to), "mixed from %s to %q", from, to)
@@ -896,7 +896,7 @@ func TestCostDailyRowsForWindow_MatchesFullWalk(t *testing.T) {
 // A long ledger must not ride along with a window that does not touch it: this
 // is the point of the windowed read. An ignored conversation is the exception
 // when asked for, because the Costs view names it from its whole history.
-func TestCostDailyRowsForWindow_SkipsUntouchedHistory(t *testing.T) {
+func TestCostDailyRowsForWalk_SkipsUntouchedHistory(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err, "open db")
@@ -919,11 +919,11 @@ func TestCostDailyRowsForWindow_SkipsUntouchedHistory(t *testing.T) {
 		return out
 	}
 
-	rows, err := CostDailyRowsForWindow("2026-06-01", "", false)
+	rows, err := costDailyRowsForWalk("2026-06-01", "", false)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"long@2026-01-01", "long@2026-06-02"}, sessions(rows), "whole history of the active conversation only")
 
-	rows, err = CostDailyRowsForWindow("2026-06-01", "", true)
+	rows, err = costDailyRowsForWalk("2026-06-01", "", true)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"long@2026-01-01", "long@2026-06-02", "old@2026-01-01"}, sessions(rows), "ignored conversation joins on request")
 }

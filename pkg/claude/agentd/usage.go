@@ -201,10 +201,11 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 	var costHistoryAvailable bool
 	timed("cost_history", func() {
 		now := time.Now()
-		// Every figure here is month-to-date or today, so the walk needs only
-		// this month's conversations, however long the ledger has grown.
+		// Every figure here is month-to-date or today, so this stays inside
+		// db.CostReadLimitDays however long the ledger has grown.
 		monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
-		rows, _, _, err := countedCostRowsForWindow(monthKey, "", false)
+		read, err := countedCostRowsForWindow(monthKey, "", false)
+		rows := read.counted
 		costErr = err
 		costHistoryAvailable = err == nil
 		deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
@@ -228,7 +229,7 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 			hasRealCost, costErr = db.HasAnyRealCost()
 			return
 		}
-		// Costs-tab visibility is about all history, which the window does not
+		// Costs-tab visibility is about all history, which this read does not
 		// load. Any row in hand settles it; only otherwise ask the database.
 		hasRealCost = slices.ContainsFunc(rows, func(row db.CostDailyRow) bool { return row.CostUSD > 0 })
 		if !hasRealCost {

@@ -87,11 +87,11 @@ func localUsageTotals(now time.Time) (usageTotals, error) {
 	for _, p := range usageFleetPeriods {
 		earliest = min(earliest, usagerules.PeriodStartDay(p, now))
 	}
-	rows, _, _, err := countedCostRowsForWindow(earliest, "", false)
+	read, err := countedCostRowsForWindow(earliest, "", false)
 	if err != nil {
 		return nil, err
 	}
-	spend := newUsageSpend(mixedCostDeltasFromRows(rows), nil)
+	spend := newUsageSpend(mixedCostDeltasFromRows(read.counted), nil)
 	out := usageTotals{}
 	for _, p := range usageFleetPeriods {
 		from := usagerules.PeriodStartDay(p, now)

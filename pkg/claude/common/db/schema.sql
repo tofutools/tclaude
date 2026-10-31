@@ -2063,6 +2063,21 @@ CREATE INDEX idx_session_cost_daily_walk
 					COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
 				);
 
+CREATE TRIGGER cost_opening_stale_insert AFTER INSERT ON session_cost_daily
+			WHEN NEW.day < (SELECT day FROM cost_opening_meta)
+			BEGIN UPDATE cost_opening_meta SET stale = 1; END;
+
+CREATE TRIGGER cost_opening_stale_delete AFTER DELETE ON session_cost_daily
+			WHEN OLD.day < (SELECT day FROM cost_opening_meta)
+			BEGIN UPDATE cost_opening_meta SET stale = 1; END;
+
+CREATE TRIGGER cost_opening_stale_update AFTER UPDATE ON session_cost_daily
+			WHEN (OLD.day < (SELECT day FROM cost_opening_meta) OR NEW.day < (SELECT day FROM cost_opening_meta))
+			 AND (OLD.session_id IS NOT NEW.session_id OR OLD.conv_id IS NOT NEW.conv_id OR OLD.day IS NOT NEW.day
+			  OR OLD.cost_usd IS NOT NEW.cost_usd OR OLD.virtual_cost_usd IS NOT NEW.virtual_cost_usd
+			  OR OLD.updated_at IS NOT NEW.updated_at OR OLD.model IS NOT NEW.model OR OLD.harness IS NOT NEW.harness)
+			BEGIN UPDATE cost_opening_meta SET stale = 1; END;
+
 CREATE TABLE agent_retained_group_permissions (
 			agent_id    TEXT NOT NULL,
 			group_id    INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
@@ -2198,3 +2213,26 @@ CREATE TABLE steward_carried_sudo (
  reason TEXT NOT NULL DEFAULT '',
  revoked_at INTEGER
 , uses_limit INTEGER NOT NULL DEFAULT 0, uses_left INTEGER NOT NULL DEFAULT 0) STRICT;
+
+CREATE TABLE cost_opening_meta (
+			id         INTEGER PRIMARY KEY CHECK (id = 1),
+			day        TEXT    NOT NULL,
+			stale      INTEGER NOT NULL,
+			generation INTEGER NOT NULL
+		);
+
+CREATE TABLE cost_opening_convs (
+			walk_key TEXT PRIMARY KEY,
+			state    TEXT NOT NULL
+		) WITHOUT ROWID;
+
+CREATE TABLE cost_opening_sessions (
+			session_id TEXT PRIMARY KEY,
+			state      TEXT NOT NULL
+		) WITHOUT ROWID;
+
+CREATE TABLE cost_opening_spend (
+			conv_id        TEXT PRIMARY KEY,
+			first_real_day TEXT NOT NULL,
+			first_any_day  TEXT NOT NULL
+		) WITHOUT ROWID;
