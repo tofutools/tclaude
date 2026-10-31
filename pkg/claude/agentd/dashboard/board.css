@@ -8,15 +8,15 @@
   --board-text: #e6edf3; --board-muted: #8b949e; --board-blue: #58a6ff;
   --board-paper: #fbfaf7; --board-grid: #e7e3da;
   --board-map-bar: rgba(22, 27, 34, .94); --board-map-line: #30363d; --board-map-text: #e6edf3;
-  --board-map-view: #1f6feb; --board-map-shade: rgba(13, 17, 23, .16);
+  --board-map-view: #1f6feb; --board-map-shade: rgba(13, 17, 23, .07);
 }
 body.wizard {
   --board-map-bar: rgba(26, 19, 48, .95); --board-map-line: #7a5db0; --board-map-text: #e7d9f5;
-  --board-map-view: #a97bd6; --board-map-shade: rgba(18, 12, 36, .2);
+  --board-map-view: #a97bd6; --board-map-shade: rgba(18, 12, 36, .09);
 }
 body.slop, body.vegas {
   --board-map-bar: rgba(74, 10, 10, .95); --board-map-line: #d4a017; --board-map-text: #ffe88c;
-  --board-map-view: #d4a017; --board-map-shade: rgba(42, 8, 8, .2);
+  --board-map-view: #d4a017; --board-map-shade: rgba(42, 8, 8, .09);
 }
 
 /* -- list -- */
