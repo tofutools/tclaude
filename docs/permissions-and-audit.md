@@ -13,10 +13,23 @@ Identity is resolved from the kernel, not from tokens agents could leak or
 forge — see [Agents and groups](agents-and-groups.md). A human caller passes
 every gate; an agent caller is checked against permission slugs.
 
+## Start here
+
+**An agent got a 403.** The refusal names the permission it needed. You can:
+
+- answer once: the agent reruns with `--ask-human <duration>`, and you approve it in
+  the dashboard;
+- grant it for a while: `+ sudo` in the agent's ⚙ menu, or the [Access tab](dashboard-access.md);
+- grant it for good: `tclaude agent permissions grant <agent> <slug>`.
+
+**To see what an agent can do:** `tclaude agent permissions ls <agent>`.
+
+**To see what happened:** [Diagnostics › Audit](dashboard-diagnostics.md#audit).
+
 ## The slug model
 
 Every gated action maps to a named **permission slug**. The live registry —
-about 100 slugs — is the source of truth:
+192 slugs — is the source of truth:
 
 ```bash
 tclaude agent permissions slugs
@@ -117,8 +130,8 @@ evaluation rules:
 
 The registry advertises which dimensions each slug supports (`group`,
 `spawn_profile`, `sandbox_profile`, `process_template`, `target_agent`, and proxy-specific
-dimensions). Two relational matchers exist on `agent.retire` and
-`agent.standdown`: `target_agent=@self-spawned` (agents the grantee spawned)
+dimensions). Two relational matchers exist on `agent.retire`,
+`groups.members.retire` and `agent.standdown`: `target_agent=@self-spawned` (agents the grantee spawned)
 and `@descendants` (its spawn lineage, up to 64 generations). Lineage is
 recorded only for agent-initiated spawns made after the feature existed;
 reincarnation preserves descendants, but a clone is not a child.
@@ -213,7 +226,7 @@ tclaude agent sudo request agent.stop groups.members.spawn \
   --duration 30m --reason "winding down the review team"
 tclaude agent sudo ls          # my active elevations
 tclaude agent sudo ls --all    # everyone's (human view)
-tclaude agent sudo revoke      # end elevations early
+tclaude agent sudo revoke <id> # end one early (or --conv <agent>, or --all)
 ```
 
 Every agent-originated request raises a human-approval popup — there is no
@@ -238,8 +251,8 @@ and is recorded as `sudo.extend`.
 Most mutating commands accept `--ask-human <timeout>` (capped at 300s;
 timeout means deny). When the permission check fails, instead of a flat 403
 the daemon creates an **access request** the operator sees in the
-[dashboard](dashboard.md) Messages tab, with **Approve**, **Deny**, and
-**+5min** actions. The agent's command blocks until the human answers or the
+[dashboard](dashboard.md) Messages tab, with **Approve**, **Decline**, and
+**+5m** actions (**Approve**, **Deny** and **+5 min** in the companion). The agent's command blocks until the human answers or the
 timeout expires.
 
 For exactly two slugs — `human.clipboard` and `human.notify` — the card also
