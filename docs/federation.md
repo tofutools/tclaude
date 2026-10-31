@@ -19,7 +19,7 @@ laptops behind NAT or a corporate network work as-is.
     interactive attach. Everything here is a CLI command; the dashboard shows
     and manages linked nodes too, and its **⚙ Fleet config → Setup guide** joins a
     hub, trusts peers and shares groups without the CLI; see
-    [Fleet UI](dashboard.md#fleet-ui-linked-nodes).
+    [Fleet UI](fleet-ui.md).
 
 For a step-by-step first setup, including the hub's TLS certificate, see
 the [setup walkthrough](federation-setup.md).
@@ -1272,7 +1272,7 @@ is by inspecting the caller's process tree.
 - One hub per instance. Hub-to-hub federation is a later step.
 - Some capabilities are still CLI-only in the dashboard (away cover,
   sending operator mail, spawn requests, remote jobs, offers, moves); see
-  [Fleet UI](dashboard.md#fleet-ui-linked-nodes) for what it covers.
+  [Fleet UI](fleet-ui.md) for what it covers.
 
 ## Portable local setup bundles
 
@@ -1590,7 +1590,7 @@ and admission are rechecked after transfer and immediately before import.
 Agent archives and uncompressed native history default to a 2 GiB limit, with
  ten active offers and at most twice that limit of archived payload per peer
  per direction. Set `federation.agent_transfer_max_bytes` in the node's
- `~/.tclaude/config.json` to raise it (both the source and receiver enforce their
+ `~/.tclaude/data/config.json` to raise it (both the source and receiver enforce their
  own limit). The human-only federation config API accepts
  `{"agent_transfer_max_bytes":4294967296}` for a 4 GiB limit; zero restores the
  default. Individual JSONL records default to 256 MiB, including image and tool
@@ -3271,7 +3271,7 @@ peer) and `groups` rows with `group`, `node`, `node_id`, `members` and
 nonzero.
 
 For a how-to tour of the dashboard side, see
-[Fleet UI](dashboard.md#fleet-ui-linked-nodes).
+[Fleet UI](fleet-ui.md).
 
 The dashboard's **⚙ Fleet config** view (beside Map, or
 "Fleet administration" in the command palette before any peer is trusted)
@@ -3388,7 +3388,7 @@ peer that has not granted you `node.update` says so.
 
 Every machine is kept up to date its own way — OS packages, dotfiles, a
 language toolchain, a harness installed through a package manager. A node's
-operator describes those in `~/.tclaude/config.json`, and the fleet shows and
+operator describes those in `~/.tclaude/data/config.json`, and the fleet shows and
 runs them:
 
 ```json

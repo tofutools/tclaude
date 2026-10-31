@@ -67,7 +67,7 @@ tclaude ask -m haiku -e low "give me the short version"
 ```
 
 To change the default harness for fresh asks, select a saved spawn profile
-in the dashboard (**Config → Ask & scribe defaults**) or set `ask.profile`
+in the dashboard (**Config › Ask & scribe**) or set `ask.profile`
 in `~/.tclaude/data/config.json`. The profile supplies harness, model, and effort defaults. When an ask sandbox
 policy is active, compatible ask/global spawn profiles also supply its sandbox
 implementation, native mode, and approval policy. Identity fields require a
@@ -87,7 +87,7 @@ under another harness; explicit ask values are still validated.
 
 `ask.sandbox` controls sandbox-profile resolution for both captured asks and
 `-i` foreground TUIs. Configure it beside **Ask — agent profile** in the
-dashboard's **Config → Ask & scribe defaults**, or in the config file:
+dashboard's **Config › Ask & scribe**, or in the config file:
 
 ```json
 {"ask": {"sandbox": "global"}}

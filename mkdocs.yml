@@ -45,7 +45,20 @@ nav:
       - Keep agents going: learn/keep-agents-going.md
       - Work in parallel with worktrees: learn/parallel-worktrees.md
       - Link two machines: federation-setup.md
-  - Architecture: architecture.md
+  - Dashboard:
+      - Tour: dashboard.md
+      - Groups: dashboard-groups.md
+      - Library panel: dashboard-library.md
+      - Terminals and Collab: dashboard-terminals.md
+      - Companion and Steward: companion.md
+      - Boards: boards.md
+      - Messages: dashboard-messages.md
+      - Automations and Plugins: dashboard-automations.md
+      - Access: dashboard-access.md
+      - Usage: dashboard-usage.md
+      - Diagnostics: dashboard-diagnostics.md
+      - Config: dashboard-config.md
+      - Fleet UI: fleet-ui.md
   - Everyday use:
       - Harnesses: harnesses.md
       - Sessions: sessions.md
@@ -59,8 +72,6 @@ nav:
       - Permissions and audit: permissions-and-audit.md
       - Teams at scale: teams-at-scale.md
       - Group routes: group-routes.md
-      - Collab boards: boards.md
-      - Dashboard: dashboard.md
       - Operating remotely: remote.md
       - Profiling agentd: profiling.md
       - Federation: federation.md
@@ -74,6 +85,7 @@ nav:
       - Processes: processes.md
       - Task runner: tasks.md
   - Reference:
+      - Architecture: architecture.md
       - Utilities: utilities.md
       - Usage and costs: usage-and-costs.md
       - Host status: host.md

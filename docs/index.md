@@ -155,7 +155,7 @@ Optional extras are additive and idempotent:
 | `--install-agent-skills` | Bundled coordination skills (`agent-*`, `human-*`, `process-templates`) for every coding harness through Claude Code, shared `~/.agents/skills`, and Codex home directories |
 | `--install-proxy-skills` | Skills for the configured [credential proxies](proxies.md) (`proxy-git`, `proxy-linear`, and/or `proxy-awb`); not included by `--install-all` |
 | `--install-utility-skills` | Optional utility skills from the repo's `skills/` directory, such as `demo-recording` (record a narrated demo video of a feature built end to end and send it to the operator); not included by `--install-all` |
-| `--install-default-agent-permissions` | Low-risk permission slugs the bundled skills exercise, as agent defaults in `~/.tclaude/config.json` |
+| `--install-default-agent-permissions` | Low-risk permission slugs the bundled skills exercise, as agent defaults in `~/.tclaude/data/config.json` |
 | `--install-sandbox-hardening` | Append-only sandbox and deny entries in `~/.claude/settings.json` that protect agentd's private state |
 | `--install-resume-threshold-override` | A `claude_resume.threshold_minutes` override that suppresses Claude Code's interactive resume-from-summary prompt for scripted resumes |
 | `--install-all` | All standard extras above, excluding `--install-proxy-skills` and `--install-utility-skills` |

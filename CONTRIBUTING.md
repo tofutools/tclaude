@@ -266,6 +266,58 @@ and do not participate in island cleanup. Moving one behind a component requires
 an explicit lifecycle adapter and behavioural coverage for cleanup, focus/input,
 and reconnect or animation state.
 
+### Imperative boundary markers
+
+Preact is the default owner for operator-facing markup, drafts, validation,
+busy/error state, dialogs, lists, and forms. Static dashboard HTML may provide
+an empty stable host, but it must not contain a second dialog implementation.
+Snapshot polling and reconciliation must not inspect UI draft state or pause
+because an editor is open. Cross-feature `data-act` routing snapshots an
+immutable plain descriptor before starting an operation; DOM attributes are
+not request or application state.
+
+Imperative code remains only at the following explicit boundaries. A module
+that directly creates or injects DOM carries a
+`dashboard-imperative-boundary` marker naming a category; the architecture test
+discovers markers rather than maintaining a filename allowlist. It accepts seven:
+`browser-io`, `config-adapter`, `cost-chart`, `media-effects`, `platform-layout`,
+`preact-compat` and `process-graph`. The xterm core and drag and drop rows below
+are surfaces with the same contract, not markers.
+
+| Marker / surface | Ownership | Lifetime and disposal | Behavioral test expectation |
+|---|---|---|---|
+| xterm terminal core | Preact owns terminal tabs, shells, and stable hosts; xterm owns only the opaque descendants handed to `terminals-core.js`. | Terminal close/unmount disposes the terminal, addons, socket, resize observer, and listeners. Reconciliation may retain or retire a host but never rebuild xterm children. | Mount/close/pop-out and roster reconciliation tests must prove opaque-node identity and teardown. |
+| `process-graph` | Preact owns editor/dialog state; `process-graph.js` and `process-graph-adapter.js` exclusively own their SVG/canvas-like host. The connector-drop `process-node-chooser.js` owns its anchored combobox/listbox subtree. | The adapter removes pointer/key listeners, connection bands, and graph instances on keyed replacement/unmount. Closing or disposing the chooser removes its document listener and subtree; cancellation restores focus, while unmount disposal leaves focus to the next owner. | Graph interaction tests cover selection, drag/connect, rerender identity, and disposal; chooser tests cover selection, cancellation, focus, click-away, and idempotent disposal. |
+| `cost-chart` | Preact owns filters, data derivation, and the chart host; `costs-chart.js` owns the chart's drawing nodes only. | Each effect clears/replaces the chart host and returns cleanup before the next draw or unmount. | Costs tests cover filtered redraw, empty/error states, and chart cleanup without asserting incidental node layout. |
+| drag and drop | Preact emits live keyed producers and semantic `data-*` descriptors; `dnd.js`, `group-reorder.js`, `dock-dnd.js`, and `dock-save-dnd.js` adapt native `DataTransfer` events. | Every binder is idempotent, returns cleanup, resets gesture state on `dragend`/unmount, and rejects detached producers. | DnD tests cover copy/move/delete intent, cancellation, cleanup, and live-source guards. |
+| `media-effects` | The Vegas audio player and slop/wizard cosmetic modules are boot-time, page-lifetime effects that own media elements, particles, and the explicitly opaque reel host. `drop-landing.js` owns the fixed `#drop-landing-layer` and the blip / in-transit overlays it draws over a drop's landing place. They do not own operational state. | Their delegated document listeners intentionally live until navigation and are not `pageCleanups`. Within that page lifetime, transient nodes self-remove, Vegas stops audio and polling timers when inactive, and identity tokens prevent stale timers from overwriting a newer Preact host. | Reduced-motion, stale-timer, inactive-audio, and opaque reel hand-back tests are required. |
+| `platform-layout` | Scoped browser effects own focus traps, resize, horizontal scroll, navigation history, overlay stacking, and stable shell/dock re-homing. The dashboard profile controls are Preact-owned inside named stable hosts; the hosts move between the toolbar and dock while each chip can turn into an inline picker. `island-lifecycle.js` owns only its claimed host's load-failure alert. `peer-view-limits.js` owns one generated `<style>` in the head that greys the controls a peer view refuses. | Effects attach to refs/stable shell nodes and return cleanup. Focus returns to the remounted chip after keyboard cancellation. Island failure rendering replaces only the claimed host; successful cleanup releases host ownership. The peer-view style is recomputed with the snapshot and removed by the limits' disposer. | Binder lifecycle, inline-picker focus, overlay stack, dock identity, refresh-generation, and island rollback/ownership tests cover these contracts; peer-view limit tests cover the generated rule and its removal. |
+| `browser-io` | Operation modules may create a short-lived download anchor, clipboard textarea fallback, or standalone Preact host solely to invoke a browser API. `xterm-loader.js` owns the non-visual script node used to fetch the classic xterm runtime on first valid terminal intent. | Temporary operation nodes and object URLs are removed/revoked in the same operation; no draft or request state is stored on them. The xterm script and installed global intentionally live for the page lifetime, while an in-flight promise deduplicates concurrent opens and a failed load is retryable. An auth-aware HEAD preflight preserves the dashboard's expired-session redirect before script injection. | Payload/download/clipboard tests assert the invoked browser contract and cleanup. The xterm loader test proves imports cause no fetch, auth failure causes no injection, concurrent requests append one script, and a ready runtime is reused; facade tests prove canceled/invalid requests do not prepare it. |
+| `config-adapter` | `config-form-adapter.js` and `remote-admin.js` are bounded adapters for server-described native controls embedded in Preact-owned config surfaces. | Activation is generation-guarded; option/list replacement is scoped to the supplied control, and the Config island owns activation cleanup. | Config activation and retry tests must prove stale loads cannot publish into a replacement control. |
+| `preact-compat` | Preact remains the visual owner. This marker covers trusted legacy readback HTML and standalone process-dialog wrappers used outside the main editor tree, not permission to build new imperative UI. | Injected markup is escaped/trusted at its model boundary; standalone hosts unmount Preact and remove themselves on completion. | Readback escaping and standalone-dialog close/disposal tests are required. New uses need explicit review and documentation here. |
+
+One surface sits just inside that allowance and is worth naming, because it
+reads at a glance like an exception: `menu-filter.js`, the type-to-filter core
+behind the ⚙ cog menus, decides which items a query keeps by **reading the
+rendered menu** rather than from data. It is not new imperative UI — it creates
+no nodes, and Preact still owns the box, the query and every item — but it does
+mark items on a Preact-rendered subtree. Two properties keep that safe. Its
+four `data-menu-*` attributes are declared by no vnode, so Preact never diffs
+them and a snapshot publish cannot fight them; and `ActionMenu` re-applies the
+filter after every render, so items that appear or disappear with the snapshot
+are re-evaluated. Reading the DOM is also the only complete option here: several
+items (`NotifyMenuItem`, `RemoteMenuItem`, `RestartMenuItem`,
+`SandboxRestartMenuItem`) compute their own label inside the component from live
+member state, so no call site knows what they say — and matching the rendered
+text means the filter cannot drift from the labels the operator can see.
+
+The guard intentionally allows ordinary ref-based effects (`focus`, measure,
+scroll, browser APIs) and rejects undocumented DOM ownership. If a new surface
+needs imperative ownership, first prove that Preact cannot own the ordinary UI,
+add a documented category/lifecycle/test contract, and then add the source
+marker. Do not solve a guard failure with a compatibility re-export, static
+dialog markup, or a blanket filename exception.
+
 ### Lists that span fleet nodes
 
 A fleet view that pages one list across several nodes (the fused Messages

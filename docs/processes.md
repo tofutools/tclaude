@@ -344,7 +344,7 @@ show (parallel, wait or subprocess nodes) opens in the graph editor instead.
 
 **Authoring** (Automations › Processes, then open a template). The graph
 editor has the node inspector, live validation, undo/redo, snippets and
-versioned saves; see [Dashboard › Processes](dashboard.md#processes). Three
+versioned saves; see [Dashboard › Processes](dashboard-automations.md#processes). Three
 things there are specific to processes:
 
 - **Co-design with a scribe.** *Edit with agent* docks the template's scribe

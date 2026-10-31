@@ -79,7 +79,7 @@ pick up. Agents lost to a reboot show as offline. Resume them from the
 dashboard or with `tclaude agent resume <agent>`.
 
 **Logs and the token.** `agentd` writes its own rotated log to
-`~/.tclaude/output.log`. The `StandardOutPath` file only catches startup
+`~/.tclaude/data/output.log`. The `StandardOutPath` file only catches startup
 output. Without a terminal, the startup banner leaves the operator token out.
 Do not add `--print-human-token=always`, which would write the bearer token to
 that log file. With `--persist-operator-token` the token goes to a 0600

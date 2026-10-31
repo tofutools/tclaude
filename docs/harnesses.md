@@ -763,7 +763,7 @@ read, the same read-through pattern Copilot uses:
 
 Gemini records no price, so tclaude prices each model call itself at Gemini
 API pay-per-token rates. Whether that estimate counts as real spend or a
-**what-if cost** follows `cost.gemini_billing` (Config tab → Gemini billing):
+**what-if cost** follows `cost.gemini_billing` (Config › Usage & costs › Cost display › Gemini billing):
 under the default `auto`, a session whose Gemini settings select an API key
 (`security.auth.selectedType` `gemini-api-key`) or Vertex AI is shown as real
 API spend, while a Google sign-in, or no readable selection, stays a what-if

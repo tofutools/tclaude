@@ -21,7 +21,7 @@ directory. In **Groups**, click **+ new group** at the top right:
 Click **Create group**. The group appears, empty.
 
 !!! info "Go deeper"
-    [Dashboard → Creating a group workspace](../dashboard.md#creating-a-group-workspace)
+    [Dashboard → Creating a group workspace](../dashboard-groups.md#creating-a-group-workspace)
     shows how to clone a repository for a group instead.
 
 ## 2. Start an agent
@@ -53,7 +53,7 @@ in the **Pending spawns** list in **Groups**; its **focus** button opens the
 same terminal.
 
 !!! info "Go deeper"
-    [Dashboard → The spawn dialog](../dashboard.md#the-spawn-dialog) lists
+    [Dashboard → The spawn dialog](../dashboard-groups.md#the-spawn-dialog) lists
     every field.
 
 ## 3. Watch it work
@@ -75,8 +75,8 @@ Read the row from left to right:
   it opens a pull request.
 
 !!! info "Go deeper"
-    [Dashboard → The member row](../dashboard.md#the-member-row) explains every
-    column, and the [badge glossary](../dashboard.md#badge-glossary) every pill.
+    [Dashboard → The member row](../dashboard-groups.md#the-member-row) explains every
+    column, and the [badge glossary](../dashboard-groups.md#badge-glossary) every pill.
 
 ## 4. Open its terminal
 
@@ -124,7 +124,7 @@ covers the spawn options.
     directory. It is for people who run agents in native terminal
     windows (`dashboard.default_terminal` set to `"native"`) and sometimes
     want a browser terminal. See
-    [Zooming into a terminal](../dashboard.md#zooming-into-a-terminal).
+    [Zooming into a terminal](../dashboard-terminals.md).
 
 ## What you learned
 
