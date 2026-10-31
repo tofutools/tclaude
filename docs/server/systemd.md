@@ -91,7 +91,7 @@ They show as offline. Resume them from the dashboard or with
 
 The unit's stdout and stderr go to the journal
 (`journalctl --user -u tclaude-agentd`). `agentd` keeps its own rotated log
-in `~/.tclaude/output.log` as well, and the dashboard's Diagnostics › Logs view reads that.
+in `~/.tclaude/data/output.log` as well, and the dashboard's Diagnostics › Logs view reads that.
 
 Without a terminal, the startup banner leaves the operator token out
 (`--print-human-token` defaults to `auto`). Do not set

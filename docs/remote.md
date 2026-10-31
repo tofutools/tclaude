@@ -74,7 +74,7 @@ dashboard and could capture the passphrase.
 You get the full desktop dashboard — it is desktop-first, with no PWA or Web
 Push on a self-signed LAN setup.
 
-The Config tab's Remote access panel mirrors the CLI: enable toggle, listen
+The Config › Daemon & network › Remote access mirrors the CLI: enable toggle, listen
 interface, HTTPS port, first-time setup and regenerate, add device (with CA
 download), and non-destructive addition of host SANs. The panel works over
 the remote listener itself (same privilege tier), and admin actions are

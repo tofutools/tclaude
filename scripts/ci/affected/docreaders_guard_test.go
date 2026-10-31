@@ -241,9 +241,9 @@ func TestDocChangesSelectOnlyDeclaredReaders(t *testing.T) {
 		t.Fatalf("newSelector: %v", err)
 	}
 	const agentd = "github.com/tofutools/tclaude/pkg/claude/agentd"
-	got, reason := s.mapChangedFiles([]string{"docs/dashboard.md"})
+	got, reason := s.mapChangedFiles([]string{"CONTRIBUTING.md"})
 	if reason != "" || !got[agentd] {
-		t.Errorf("docs/dashboard.md mapped to (%v, %q), want %s selected", got, reason, agentd)
+		t.Errorf("CONTRIBUTING.md mapped to (%v, %q), want %s selected", got, reason, agentd)
 	}
 	// A doc no test reads selects nothing, rather than the full shard.
 	for _, doc := range []string{"docs/federation.md", "README.md", "mkdocs.yml"} {

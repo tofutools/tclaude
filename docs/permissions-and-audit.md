@@ -229,7 +229,7 @@ with no popup — the operator's own shell is the consent. Agents cannot use
 `--target`.
 
 The dashboard grants through the sudo variant of the permission editor (see
-[dashboard](dashboard.md)). It can also narrow a grant with a scope and extend
+[Access](dashboard-access.md)). It can also narrow a grant with a scope and extend
 one that is running. An extension keeps to the same maximum, measured from now,
 and is recorded as `sudo.extend`.
 
