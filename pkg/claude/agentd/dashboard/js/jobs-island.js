@@ -361,11 +361,11 @@ function EmptyJobs({ kind }) {
   }
   if (kind === 'export') {
     return html`<div class="empty">No export jobs yet. Start one from an agent row's ⚙ menu →
-      <strong>📋 summary…</strong>.
+      <strong>summary…</strong>.
     </div>`;
   }
   return html`<div class="empty">No exports, cron jobs, or standing orders yet. Agent exports appear here
-    when started (an agent row's ⚙ menu → <strong>📋 summary…</strong>); create a cron job with the <strong>
+    when started (an agent row's ⚙ menu → <strong>summary…</strong>); create a cron job with the <strong>
     <span class="cron-open-label-regular">+ new cron job</span>
     <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong> button above.
   </div>`;

@@ -10,9 +10,8 @@
 // the browser's terminals attach through this node's daemon. A fused view, or
 // a peer's per-node view, also lists the shown peers' unattached agents and
 // shells (read through the peer proxy, which serves them only to an
-// unrestricted peer). A peer's agents open as remote terminals; its shells
-// can be ended from here, and attach on that node until the federation
-// stream carries shells.
+// unrestricted peer). A peer's agents and shells open as remote terminals,
+// and its shells can be ended from here.
 //
 // The listing also has a row per board with an agent's board session on it: the
 // agent works with no tab open, and the row is how the operator resumes the

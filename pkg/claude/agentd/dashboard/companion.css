@@ -1,7 +1,7 @@
 /* The dashboard companion (js/companion-island.js, tcl-6i0283): chips, the
    hover peek and the floating window hosting agents' native terminals. It sits
-   above page content and the dock (45) but below modal overlays (100), so a
-   confirmation dialog still covers it. */
+   above page content, the dock (45) and ordinary modal overlays (100) but below
+   the confirmation dialog (1000), which still covers it. */
 
 :root {
   --cmp-bg: #0d1117; --cmp-bar: #161b22; --cmp-line: #30363d; --cmp-edge: #4b5a6e;

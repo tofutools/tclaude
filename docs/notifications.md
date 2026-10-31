@@ -102,10 +102,10 @@ pinged while a subagent is still running.
 
 !!! note "Harness labeling caveat"
     Notification titles are `<Harness>: <Status>`: `Claude: …`, `Codex: …`,
-    `OpenCode: …`, `Copilot: …`, `Gemini: …`, `pi: …` or `Shell: …`. Some
-    notifications always say `Claude: …`, whichever harness is involved: the task
-    runner, rate-limit warnings, agent `notify-human` messages, presented PRs and
-    access requests.
+    `OpenCode: …`, `Copilot: …`, `Gemini: …`, `pi: …` or `Shell: …`. Agent
+    `notify-human` messages, presented PRs and access requests say `tclaude: …`.
+    The task runner and rate-limit warnings always say `Claude: …`, whichever
+    harness is involved.
 
 ## Click-to-focus per platform
 

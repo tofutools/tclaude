@@ -571,7 +571,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermGroupsExport,
-		Description: "Export a whole group to a portable .zip archive — DB rows plus every member's conversation .jsonl (tclaude agent groups export). The archive holds full conversation content; not default-granted (effectively human-only).",
+		Description: "Export a whole group to a portable .paf (or legacy .zip) archive — DB rows plus every member's conversation .jsonl (tclaude agent groups export). The archive holds full conversation content; not default-granted (effectively human-only).",
 	},
 	{
 		Slug:        PermGroupsImport,

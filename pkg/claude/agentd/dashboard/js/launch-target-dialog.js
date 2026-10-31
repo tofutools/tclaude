@@ -460,12 +460,12 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
     : p.phase === 'waiting' ? { text: `⏸ ${agent.name} waits for ${dest} to accept it; it keeps running here until then.` }
     : p.phase === 'failed' ? { text: `${verb} ${p.state}${p.error ? `: ${p.error}` : ''}. ${agent.name} is still here.`, error: true }
     : p.phase === 'returning' ? { text: `${agent.name} is returning to its paused copy on ${home || 'its home'}; its home row shows it back when it runs.` }
-    : p.phase === 'offered' && pullActions ? { text: `${agent.nodeName} offered ${agent.name}'s copy to this node: it starts here once this node takes it in (⚙ Fleet → Offers).` }
-    : p.phase === 'offered' ? { text: `Offered to ${dest}: the copy starts there once ${dest} takes it in (${dest}'s ⚙ Fleet → Offers).` }
-    : p.phase === 'sent' && pullActions ? { text: `${verb}: requested from ${agent.nodeName}. ${agent.name} shows up in ${target.group} here once its copy runs; if it waits for acceptance, see ⚙ Fleet → Offers.` }
+    : p.phase === 'offered' && pullActions ? { text: `${agent.nodeName} offered ${agent.name}'s copy to this node: it starts here once this node takes it in (⚙ Fleet config → Offers).` }
+    : p.phase === 'offered' ? { text: `Offered to ${dest}: the copy starts there once ${dest} takes it in (${dest}'s ⚙ Fleet config → Offers).` }
+    : p.phase === 'sent' && pullActions ? { text: `${verb}: requested from ${agent.nodeName}. ${agent.name} shows up in ${target.group} here once its copy runs; if it waits for acceptance, see ⚙ Fleet config → Offers.` }
     : p.phase === 'sent' ? { text: `${verb}: requested. Its row here turns back into ${agent.name} when it arrives.` }
     : p.phase === 'checking' ? null
-    : { text: `${verb} is still in progress; follow it in ⚙ Fleet → Moves.` };
+    : { text: `${verb} is still in progress; follow it in ⚙ Fleet config → Moves.` };
   const dest = mode === 'home' ? home : pullActions ? 'this node' : target.name;
   const from = pullActions ? `on ${agent.nodeName}` : 'here';
   const verb = mode === 'home' ? (viaPeer ? 'Recall home' : 'Send home') : mode === 'clone' ? `Clone to ${target.name}` : `Teleport to ${target.name}`;

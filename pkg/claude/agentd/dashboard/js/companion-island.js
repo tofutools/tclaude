@@ -1379,7 +1379,7 @@ export function CompanionApp({
           aria-pressed=${voiceAgents.has(activeAgent.agentId) ? 'true' : 'false'} aria-label=${`Speak ${activeAgent.name}'s replies aloud`}
           title=${voiceAgents.has(activeAgent.agentId) ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
           onClick=${() => toggleVoice(activeAgent)}>${voiceAgents.has(activeAgent.agentId) ? '🔊' : '🔈'}</button>`}
-        ${activeAgent && openTerminalsPane && html`<button type="button" aria-label="Open in the Terminals tab" title="Open in the Terminals tab"
+        ${activeAgent && openTerminalsPane && html`<button type="button" aria-label="Open in the Collab tab" title="Open in the Collab tab"
           onClick=${() => moveToTerminals(activeAgent)}>⤢</button>`}
         ${toApprove.length > 0 && html`<button type="button" class="companion-access"
           aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
@@ -1423,7 +1423,7 @@ export function CompanionApp({
         <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
       </div>`}
       ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
-        <p><b>${activeAgent.name}</b> is open ${detached.has(activeAgent.agentId) ? 'in its own window' : 'in the Terminals tab'}.</p>
+        <p><b>${activeAgent.name}</b> is open ${detached.has(activeAgent.agentId) ? 'in its own window' : 'in the Collab tab'}.</p>
         <button type="button" class="companion-primary" onClick=${() => reclaim(activeAgent.agentId)}>Bring it back here</button>
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`

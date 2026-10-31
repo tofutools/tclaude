@@ -217,7 +217,7 @@ async function joinWithCode({ code, preview, name, actions, confirm }) {
 }
 
 // JOIN_HOWTO is the join step's instructions, shown again once joined.
-const JOIN_HOWTO = html`<p>Nodes link through a hub: each one connects out to it, so no machine needs an open port. Your hub admin gives each node a join code — the hub's address, a single-use invite and, for a private certificate, the CA, in one string (⚙ Fleet → Hub on an admin node, or <code>tclaude hub invite --url wss://… --space <i>space</i></code>). Nodes see each other when they join the same space.</p>`;
+const JOIN_HOWTO = html`<p>Nodes link through a hub: each one connects out to it, so no machine needs an open port. Your hub admin gives each node a join code — the hub's address, a single-use invite and, for a private certificate, the CA, in one string (⚙ Fleet config → Hub on an admin node, or <code>tclaude hub invite --url wss://… --space <i>space</i></code>). Nodes see each other when they join the same space.</p>`;
 
 // RunHubStep explains running a hub, for the one node (or server) that hosts
 // it. Nothing here runs it: the hub is its own process on its host.
@@ -253,10 +253,10 @@ function HubAdminStep({ view, status, actions, confirm, toast, onHub, onClaimed 
       <div class="fs-actions"><button type="button" class="primary" id="fleet-setup-claim" onClick=${() => setClaiming(true)}>Claim hub admin…</button></div>`
     // A hub with admins issues no claim token (rotate-claim refuses);
     // only an existing admin can add this node.
-    : html`<p id="fleet-setup-hub-admin-other">This hub already has ${status.admin_count || 'an'} admin${status.admin_count > 1 ? 's' : ''}. An existing admin adds this node from their ⚙ Fleet → Hub. Only on the hub host, as a break-glass, <code>tclaude hub admin reset</code> removes every admin and issues a new claim token.</p>`;
+    : html`<p id="fleet-setup-hub-admin-other">This hub already has ${status.admin_count || 'an'} admin${status.admin_count > 1 ? 's' : ''}. An existing admin adds this node from their ⚙ Fleet config → Hub. Only on the hub host, as a break-glass, <code>tclaude hub admin reset</code> removes every admin and issues a new claim token.</p>`;
   return html`<div class="fs-body" data-setup-step="hubadmin">
     <h3>Become hub admin <span class="muted">(optional)</span></h3>
-    <p>A hub admin admits and revokes nodes, makes invites, changes hub settings and adds other admins, all from ⚙ Fleet → Hub instead of the hub host's shell. It gives no access to any node's content: the hub only relays what nodes encrypt for each other. Usually the operator who runs the hub claims it, once.</p>
+    <p>A hub admin admits and revokes nodes, makes invites, changes hub settings and adds other admins, all from ⚙ Fleet config → Hub instead of the hub host's shell. It gives no access to any node's content: the hub only relays what nodes encrypt for each other. Usually the operator who runs the hub claims it, once.</p>
     ${body}
     ${claiming && html`<${ClaimDialog} self=${self} actions=${actions} confirm=${confirm} onClose=${() => setClaiming(false)} onDone=${(msg) => { setClaiming(false); toast(msg, false); onClaimed(); }} />`}
     <${Cli}><code>tclaude federation hub claim TOKEN</code>, <code>tclaude federation hub status</code><//>
