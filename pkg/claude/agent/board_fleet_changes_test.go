@@ -65,6 +65,13 @@ func TestFleetChanges(t *testing.T) {
 	arrow := map[string]any{"id": "ar1", "type": "arrow", "x": 10.0, "y": apiY + fleetCardH + fleetRowGap + 20, "width": webX, "height": 0.0,
 		"points": [][]float64{{0, 0}, {webX, 0}}, "customData": operator}
 	note := map[string]any{"id": "n1", "type": "text", "x": webX + 10, "y": apiY + 400, "width": 100.0, "height": 20.0, "text": " docs writer ", "customData": operator}
+	// Text the operator attached to a line is about that line, not a new agent.
+	onLine := map[string]any{"id": "n4", "type": "text", "x": webX + 10, "y": apiY + 400, "width": 100.0, "height": 20.0, "text": "needs review", "containerId": "ln", "customData": operator}
+	changes, ok = fleetChanges(&fleet, docOf(onLine))
+	require.True(t, ok)
+	for _, c := range changes {
+		assert.NotEqual(t, "add", c.Kind, "the same place as a note, but attached")
+	}
 	stray := map[string]any{"id": "n2", "type": "text", "x": webX + 10, "y": -500.0, "width": 100.0, "height": 20.0, "text": "above the map", "customData": operator}
 	theirs := map[string]any{"id": "n3", "type": "text", "x": webX + 10, "y": apiY + 500, "width": 100.0, "height": 20.0, "text": "steward's own", "customData": map[string]any{"author": "agt_steward"}}
 
