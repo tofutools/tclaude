@@ -36,8 +36,12 @@ The toolbar's tools have keys: **V** select, **H** pan, **R** rectangle, **O** e
 stroke and fill from the swatches. With two or more shapes selected you can align them,
 and with three or more, space them evenly.
 
-- **Text:** double-click for text or a shape's label. Enter finishes, Shift+Enter is a
-  new line.
+- **Move a shape:** drag it from anywhere inside, filled or not. To start a
+  rubber band inside a shape, hold Ctrl or Cmd.
+- **Text:** double-click anywhere inside a shape for its label, or blank board for
+  free text. Enter on a selected shape does the same. Enter finishes, Shift+Enter
+  is a new line.
+- **Right-click** for what applies to what is under the pointer; see below.
 - **Select:** Shift-click or drag a rectangle. Ctrl+A selects everything, Ctrl+D
   duplicates, Del deletes.
 - **Undo:** Ctrl/Cmd+Z, and Ctrl+Shift+Z or Ctrl+Y to redo.
@@ -54,20 +58,37 @@ boards. The group selector files the board under a group, and **⤓** downloads 
 
 ### Connecting shapes
 
-With the select, arrow, line or pen tool, a shape shows four snap points, the
-middle of each side, under the pointer.
+With the select, arrow, line or pen tool, a shape shows four connection points,
+the middle of each side, under the pointer.
 
-- **Drag from a snap point** to draw an arrow. Drop it on a snap point or a
-  shape to attach it, or on blank board to leave that end free.
-- **Click a snap point** for a suggestion: a faint arrow to a copy of the shape.
-  It follows the pointer. Click a shape to connect to it, click blank board to
-  add the copy there, or press Escape.
-- **The arrow and line tools** attach either end the same way. Over a shape but
-  away from a snap point, the end attaches without one and meets the shape
-  wherever the line reaches it.
+- **Drag from a connection point** to draw an arrow. Drop it on or near a shape to
+  attach it at that shape's nearest connection point. The points show while you
+  drag, and the one it would take stands out.
+- **Hold Ctrl (Cmd on a Mac)** while dropping an end to attach it to the shape's
+  border instead: the end meets the shape wherever the line reaches it. On blank
+  board it leaves that end free.
+- **Drop on blank board** and a quick menu asks what shape goes there. Type to
+  search (`box`, `circle` and `decision` work too), and press Enter for the marked
+  row or the number shown beside a row. Shape names hold no digits, so a digit
+  always picks and never searches. Enter alone repeats the last kind, or the
+  source shape's kind at first. Escape or clicking elsewhere cancels and leaves
+  nothing behind, and the click then does what it would have done. The board's
+  own number keys wait until the menu closes.
+- **With a shape selected,** an arrow key opens the same menu from that side, with
+  the new shape a step out and beside anything already there. The new shape is
+  selected, so the next arrow key carries on, and Enter opens its text. A graph
+  needs no toolbar: `→` `Enter` `Enter`, type, `Enter`, `→` and so on.
+- **Click a connection point** for a suggestion: a faint arrow to a copy of the
+  shape. It follows the pointer. Click a shape to connect to it, click blank
+  board to add the copy there, or press Escape.
+- **The arrow and line tools** attach either end the same way. The line tool
+  leaves a free end on blank board and asks nothing.
 - **Select a line** to see its ends, which are filled when attached. Drag an end
   to attach it elsewhere or free it. Dragging the whole line away from a shape
   frees it from that shape.
+
+Lines saved before connection points keep the attachment they have until you
+move an end.
 
 Attached ends follow their shape through moves and resizes, whoever makes them.
 Deleting a shape leaves its lines where they are, free at that end, and undo
@@ -86,6 +107,25 @@ double-click again to change it. Text sits in the middle of a box or halfway
 along a line, moves with its shape, and masks the line behind it. Empty the text
 to remove it. Clicking the text picks its shape. Text does not wrap to fit a
 shape.
+
+### The context menu
+
+Right-click anything on the board. What you click is selected first, unless it
+is already in the selection, in which case the menu acts on the whole selection.
+
+| On | The menu offers |
+| --- | --- |
+| A shape | Edit text, change kind, duplicate, copy, cut, front and back, stroke and fill, delete |
+| A line or arrow | Edit label, routing, arrowhead on or off, duplicate, copy, cut, front and back, stroke, delete |
+| Text or a pen stroke | Edit, duplicate, copy, cut, front and back, stroke, delete |
+| Several | Alignment, duplicate, copy, cut, front and back, stroke and fill, delete |
+| Blank board | Add a shape or text there, paste there, select all, fit the board to the view, undo and redo |
+
+Arrow keys, Home and End move through it and Enter runs a row. Escape or clicking
+away closes it. Bring to front and send to back hold across reloads and for
+everyone on the board. Anything you add lands on top; what an agent adds lands
+above ordinary elements but under what was brought to front. Where the browser refuses to read the clipboard, Paste uses the
+last copy made on this page.
 
 ### Picking a tool
 
@@ -205,7 +245,7 @@ The server keeps only the element keys it knows and bounds each of them:
 `text`), geometry (`x`, `y`, `width`, `height`, `angle`, `points`), style
 (`strokeColor`, `backgroundColor`, `fillStyle`, `strokeWidth`, `strokeStyle`,
 `roughness`, `opacity`), text (`text`, `fontSize`, `textAlign`, `containerId`),
-connectors (`startBinding`, `endBinding`, `routing`), and `version`,
+connectors (`startBinding`, `endBinding`, `routing`), `z` for an element sent to the front or back, and `version`,
 `versionNonce`, `isDeleted` and `updated`. `customData.author` is always set by the server: to
 `operator` for the dashboard, and to the calling agent's id for an agent.
 `version` is at most 2^53-1 and `versionNonce` a 32-bit integer. A board holds

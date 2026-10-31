@@ -33,6 +33,20 @@ export const BOARD_FILLS = Object.freeze(['transparent', '#ffc9c9', '#b2f2bb', '
 const BOARD_GRID = 20; // board units between the paper's dots
 const BOARD_GRID_MIN_PX = 12; // closer than this they turn into a texture
 
+// What quick connect can make. Search reads the words as well as the label, and
+// digits pick a row, so no name here may hold a digit.
+export const QUICK_SHAPES = Object.freeze([
+  { id: 'rectangle', label: 'Rectangle', words: 'box square process', digit: '1' },
+  { id: 'ellipse', label: 'Ellipse', words: 'circle oval round', digit: '2' },
+  { id: 'diamond', label: 'Diamond', words: 'rhombus decision', digit: '3' },
+]);
+
+// quickShapes is the shapes a search leaves, each keeping its digit.
+export function quickShapes(query = '') {
+  const wanted = query.trim().toLowerCase();
+  return QUICK_SHAPES.filter(({ label, words }) => `${label} ${words}`.toLowerCase().includes(wanted));
+}
+
 const SHAPES = new Set(['rectangle', 'ellipse', 'diamond']);
 const LINEAR = new Set(['arrow', 'line', 'freedraw']);
 const BOARD_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -111,8 +125,35 @@ export function mergeElements(map, incoming, skip = null) {
   return changed;
 }
 
+// Stacking: elements draw in the order the board stores them. One sent to the
+// front or back carries a `z`, above or below all those without one, so nothing
+// else is rewritten and every client sorts alike. Attached text stands with its
+// container. boardTopZ says what an editor's new element needs to land on top; an
+// agent's goes among those without a `z`, under anything sent to the front.
+function stacked(map) {
+  const all = [...map.values()];
+  if (!all.some((el) => Number.isFinite(el.z))) return all;
+  const key = (el) => el.z ?? map.get(el.containerId)?.z ?? 0;
+  return all.sort((a, b) => key(a) - key(b));
+}
+
+// boardTopZ is the highest `z` on the board, 0 when nothing is above the rest.
+export function boardTopZ(map) {
+  return Math.max(0, ...[...map.values()].map((el) => (Number.isFinite(el.z) ? el.z : 0)));
+}
+
+// liveElements lists the elements in stacking order, bottom first.
 export function liveElements(map) {
-  return [...map.values()].filter((el) => !el.isDeleted);
+  return stacked(map).filter((el) => !el.isDeleted);
+}
+
+// stackOrder sends elements (with their labels) to the front or back, keeping
+// their order among themselves, and returns the bumped elements.
+export function stackOrder(map, ids, where, opts) {
+  const moving = new Set(withLabels(map, ids));
+  const low = Math.min(0, ...[...map.values()].map((el) => (Number.isFinite(el.z) ? el.z : 0)));
+  const start = where === 'front' ? boardTopZ(map) + 1 : low - moving.size;
+  return stacked(map).filter((el) => moving.has(el.id) && !el.isDeleted).map((el, i) => bump(el, { z: start + i }, opts));
 }
 
 // normalizeBox turns a drag from (x0,y0) to (x1,y1) into a positive box.
@@ -184,6 +225,11 @@ export function hitTest(el, px, py, tol = 6) {
     const d = Math.sqrt(((px - cx) / rx) ** 2 + ((py - cy) / ry) ** 2);
     return Math.abs(d - 1) * Math.min(rx, ry) <= tol;
   }
+  if (el.type === 'diamond') {
+    const cx = b.x + b.width / 2; const cy = b.y + b.height / 2;
+    const corners = [[cx, b.y], [b.x + b.width, cy], [cx, b.y + b.height], [b.x, cy]];
+    return corners.some(([ax, ay], i) => distToSegment(px, py, ax, ay, ...corners[(i + 1) % 4]) <= tol);
+  }
   return nearEdge <= tol;
 }
 
@@ -250,7 +296,7 @@ function liveTarget(map, binding) {
   return el && !el.isDeleted ? el : null;
 }
 
-function sideOf([fx, fy]) {
+export function sideOf([fx, fy]) {
   const dx = fx - 0.5; const dy = fy - 0.5;
   return Math.abs(dx) >= Math.abs(dy) ? [dx < 0 ? -1 : 1, 0] : [0, dy < 0 ? -1 : 1];
 }
@@ -300,13 +346,17 @@ export function snapHit(elements, px, py, tol, ignoreId = '') {
   return null;
 }
 
-// bindingAt is what an end dropped on the point attaches to: a snap point near
-// it, or else the shape under it, met wherever the line reaches it.
-export function bindingAt(elements, px, py, tol, ignoreId = '') {
-  const snap = snapHit(elements, px, py, tol, ignoreId);
-  if (snap) return snap;
-  const shape = shapeAt(elements, px, py, ignoreId);
-  return shape ? { elementId: shape.id } : null;
+// bindingAt is what an end dropped on the point attaches to: the shape under it
+// or within `margin`, at the snap point nearest the end. With `border` it takes
+// no snap point and meets the shape wherever the line reaches it. Text has no
+// snap points, so it always attaches that way.
+export function bindingAt(elements, px, py, margin, ignoreId = '', border = false) {
+  const under = shapeAt(elements, px, py, ignoreId);
+  const shape = shapeNear(elements, px, py, 0, ignoreId) || under || shapeNear(elements, px, py, margin, ignoreId);
+  if (!shape) return null;
+  if (border || !SHAPES.has(shape.type)) return { elementId: shape.id };
+  const nearest = (a, b) => (Math.hypot(px - a.x, py - a.y) <= Math.hypot(px - b.x, py - b.y) ? a : b);
+  return { elementId: shape.id, fixedPoint: [...snapPoints(shape).reduce(nearest).fixedPoint] };
 }
 
 function facing(from, to) {
@@ -473,7 +523,7 @@ export function drawnElements(map) {
     const container = el.containerId && drawn.get(el.containerId);
     if (container && container.type !== 'text') drawn.set(el.id, { ...el, ...textBoxOn(el, container) });
   }
-  return [...drawn.values()];
+  return liveElements(map).map((el) => drawn.get(el.id));
 }
 
 // labelPoint is where an element's attached text sits: the middle of a box,
@@ -521,14 +571,59 @@ export function attachedText(map, ids, opts) {
   return out;
 }
 
-// suggestedShape is the next shape a clicked snap point offers: a blank copy of
-// `from`, a step out from that side, or centred on the pointer once it moves.
-export function suggestedShape(from, fixedPoint, at = null, gap = 80) {
+const NEXT_GAP = 80;
+
+// snapPosition is where a snap point lies on the board.
+export function snapPosition(el, fixedPoint) {
+  const b = elementBounds(el);
+  return { x: b.x + b.width * fixedPoint[0], y: b.y + b.height * fixedPoint[1] };
+}
+
+// suggestedShape is the next shape a snap point offers: a blank copy of `from`,
+// a step out from that side, or centred on the pointer once it moves. Given a
+// direction it is what a dragged connector was aiming for instead: its near side
+// on `at`, so the connector ends where it was dropped.
+export function suggestedShape(from, fixedPoint, at = null, { kind = from.type, dir = null } = {}) {
   const b = elementBounds(from);
   const [dx, dy] = sideOf(fixedPoint);
-  const x = at ? at.x - b.width / 2 : b.x + dx * (b.width + gap);
-  const y = at ? at.y - b.height / 2 : b.y + dy * (b.height + gap);
-  return { type: from.type, x, y, width: b.width, height: b.height, strokeColor: from.strokeColor, backgroundColor: from.backgroundColor };
+  let x = at ? at.x - b.width / 2 : b.x + dx * (b.width + NEXT_GAP);
+  let y = at ? at.y - b.height / 2 : b.y + dy * (b.height + NEXT_GAP);
+  if (at && dir?.[0]) x = dir[0] > 0 ? at.x : at.x - b.width;
+  if (at && dir?.[1]) y = dir[1] > 0 ? at.y : at.y - b.height;
+  return { type: kind, x, y, width: b.width, height: b.height, strokeColor: from.strokeColor, backgroundColor: from.backgroundColor };
+}
+
+// dropDirection is the way a connector dragged from a snap point to `at` runs.
+export function dropDirection(from, fixedPoint, at) {
+  return facing(snapPosition(from, fixedPoint), at);
+}
+
+// entryPoint is the snap point of `shape` that a connector arrives at from `start`.
+export function entryPoint(shape, start) {
+  const [dx, dy] = facing(start, center(shape));
+  return [0.5 - dx / 2, 0.5 - dy / 2];
+}
+
+function overlaps(a, b) {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+// nextShapeSpot is where a shape added from the keyboard goes: a step out of the
+// snap point, or beside that spot when something is there, so branching from one
+// shape does not stack its branches. Returns the drop point and direction.
+export function nextShapeSpot(from, fixedPoint, elements) {
+  const b = elementBounds(from);
+  const dir = sideOf(fixedPoint);
+  const start = snapPosition(from, fixedPoint);
+  const across = (dir[0] ? b.height : b.width) + NEXT_GAP / 2;
+  const base = { x: start.x + dir[0] * NEXT_GAP, y: start.y + dir[1] * NEXT_GAP };
+  const taken = elements.filter((el) => !el.isDeleted && SHAPES.has(el.type)).map(elementBounds);
+  for (const step of [0, 1, -1, 2, -2, 3, -3, 4, -4]) {
+    const at = { x: base.x + (dir[1] ? step * across : 0), y: base.y + (dir[0] ? step * across : 0) };
+    const box = suggestedShape(from, fixedPoint, at, { dir });
+    if (!taken.some((other) => overlaps(other, box))) return { at, dir };
+  }
+  return { at: base, dir };
 }
 
 // shapeAt finds the shape (not a line) under a point, for arrow binding.
@@ -538,6 +633,24 @@ export function shapeAt(elements, px, py, ignoreId = '') {
     if (el.isDeleted || el.id === ignoreId || el.containerId || (!SHAPES.has(el.type) && el.type !== 'text')) continue;
     const b = elementBounds(el);
     if (px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height) return el;
+  }
+  return null;
+}
+
+// shapeInside is the topmost shape whose outline encloses the point, filled or
+// not, which is where a drag or a double-click takes the shape. Ellipses and
+// diamonds leave out the corners of their box, so what lies there stays reachable.
+export function shapeInside(elements, px, py) {
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (el.isDeleted || !SHAPES.has(el.type)) continue;
+    const b = elementBounds(el);
+    const dx = (px - (b.x + b.width / 2)) / Math.max(b.width / 2, 1e-6);
+    const dy = (py - (b.y + b.height / 2)) / Math.max(b.height / 2, 1e-6);
+    const enclosed = el.type === 'ellipse' ? dx * dx + dy * dy <= 1
+      : el.type === 'diamond' ? Math.abs(dx) + Math.abs(dy) <= 1
+        : Math.abs(dx) <= 1 && Math.abs(dy) <= 1;
+    if (enclosed) return el;
   }
   return null;
 }
@@ -771,7 +884,7 @@ export function cloneElements(elements, dx, dy, opts = {}) {
   }
   const rebind = (binding) => (binding && ids.has(binding.elementId) ? { ...binding, elementId: ids.get(binding.elementId) } : undefined);
   return elements.map((el) => {
-    const { server_version: _s, customData: _c, startBinding, endBinding, containerId, ...rest } = el;
+    const { server_version: _s, customData: _c, startBinding, endBinding, containerId, z: _z, ...rest } = el;
     const copy = newElement(el.type, {
       ...rest, id: ids.get(el.id),
       x: clampNum(el.x + dx, -MAX_COORD, MAX_COORD, 0), y: clampNum(el.y + dy, -MAX_COORD, MAX_COORD, 0),

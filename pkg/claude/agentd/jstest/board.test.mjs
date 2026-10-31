@@ -786,7 +786,10 @@ test('board model: snap points hold a line to its shape and each routing draws i
   assert.deepEqual(m.snapPoints(m.newElement('text', { text: 'x' })), [], 'only shapes show snap points');
   assert.deepEqual(m.snapHit([a], 98, 31, 10), { elementId: 'a', fixedPoint: [1, 0.5] });
   assert.equal(m.snapHit([a], 80, 31, 10), null);
-  assert.deepEqual(m.bindingAt([a], 20, 20, 10), { elementId: 'a' }, 'anywhere else on a shape binds without a snap point');
+  assert.deepEqual(m.bindingAt([a], 20, 20, 10), { elementId: 'a', fixedPoint: [0, 0.5] }, 'anywhere on a shape takes its nearest snap point');
+  assert.deepEqual(m.bindingAt([a], 50, 66, 10), { elementId: 'a', fixedPoint: [0.5, 1] }, 'so does the margin around it');
+  assert.deepEqual(m.bindingAt([a], 20, 20, 10, '', true), { elementId: 'a' }, 'the border binds without one');
+  assert.deepEqual(m.bindingAt([m.newElement('text', { id: 't', x: 0, y: 0, text: 'hi' })], 5, 5, 10), { elementId: 't' }, 'text has no snap points');
   assert.equal(m.bindingAt([a], 200, 200, 10), null);
 
   const line = add(m.newElement('line', {
@@ -985,7 +988,7 @@ test('the editor attaches lines at snap points, offers a next shape, and routes 
   const link = offered.find((el) => el.type === 'arrow');
   assert.deepEqual([next.width, next.height, next.x, next.y], [100, 60, 610, 430], 'a same-sized shape, centred on the click');
   assert.deepEqual(link.startBinding, { elementId: 'b', fixedPoint: [0.5, 1] });
-  assert.deepEqual(link.endBinding, { elementId: next.id });
+  assert.deepEqual(link.endBinding, { elementId: next.id, fixedPoint: [0.5, 0] }, 'at the snap point facing where it came from');
 
   // Deleting a shape frees the lines on it, in one step with the deletion.
   await harness.act(() => pointer(harness, svg, 'pointerdown', 660, 470));
