@@ -1,5 +1,6 @@
 // Tests for finding your way around a board: the number keys that pick a tool
-// (tcl-3nn1up), the minimap (tcl-9tax7h) and its own zoom (tcl-h3e5p8).
+// (tcl-3nn1up), the minimap (tcl-9tax7h), its own zoom (tcl-h3e5p8) and the
+// paper's grid (tcl-1jai7s).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -66,6 +67,30 @@ async function layOut(harness, root) {
   sized(root.querySelector('.board-minimap-frame'), 800, 400, 200, 120);
   await fire(harness, root.querySelector('svg.board-canvas'), 'wheel', { deltaX: 40, deltaY: 0, clientX: 0, clientY: 0 });
 }
+
+test('the grid scrolls and zooms with the board', async (t) => {
+  const { harness, mount } = await setup(t);
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const root = await mount(boardFetch({ version: 1, elements: [] }));
+  const svg = root.querySelector('svg.board-canvas');
+  const wrap = root.querySelector('.board-canvas-wrap');
+  sized(svg, 0, 0, 1000, 600);
+  const paper = () => [wrap.style.backgroundSize, wrap.style.backgroundPosition];
+
+  // The view starts at (-40, -40), so the board's origin is 40px in, and the
+  // tile's middle, where its dot is, lands there.
+  assert.deepEqual(paper(), ['20px 20px', '30px 30px']);
+  await fire(harness, svg, 'wheel', { deltaX: 15, deltaY: 7, clientX: 0, clientY: 0 });
+  assert.deepEqual(paper(), ['20px 20px', '15px 23px'], 'a scroll moves the dots as far as the shapes');
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: -Math.log(2) / 0.002, clientX: 0, clientY: 0, ctrlKey: true });
+  assert.equal(wrap.style.backgroundSize, '40px 40px', 'a zoom scales them');
+  assert.equal(parseFloat(wrap.style.backgroundPosition), 30, 'keeping the board origin under its dot');
+
+  // Zoomed out a dot stays on a board multiple of the grid.
+  const far = m.boardGrid({ x: 100, y: 50, zoom: 0.2 });
+  assert.equal(far.size, 16);
+  assert.deepEqual([far.x, far.y], [-20, -10]);
+});
 
 test('each tool has its number key, shown in the menu, in keyboard order', async (t) => {
   const { harness, mount } = await setup(t);

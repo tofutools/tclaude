@@ -18,7 +18,7 @@ import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardIdFromTitle, bump, changeBounds,
+  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardIdFromTitle, bump, changeBounds,
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, elementBounds, elementsInBox,
   labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
   reboundArrows, routeConnector, shapeAt, shapeNear, simplifyStroke, snapHit, snapPoints, suggestedShape, toExcalidraw, topHit, withLabels,
@@ -181,6 +181,13 @@ export function BoardElement({ el, flash = false, onLine = false }) {
     default:
       return null;
   }
+}
+
+// gridStyle lays the paper's dots on the board, so they stay put under what is
+// drawn however the view moves. A dot sits in the middle of its tile.
+function gridStyle(view) {
+  const { size, x, y } = boardGrid(view);
+  return `background-size:${size}px ${size}px;background-position:${x - size / 2}px ${y - size / 2}px`;
 }
 
 // -- the editor ---------------------------------------------------------------
@@ -1350,6 +1357,7 @@ export function BoardEditor({
   })();
   const pad = 6 / view.zoom;
   const transform = `scale(${view.zoom}) translate(${-view.x} ${-view.y})`;
+  const paper = gridStyle(view);
   const drawing = [...presence].filter(([, state]) => state === 'drawing').map(([id]) => agents.get(id)?.name || id.slice(0, 12));
   const groupNames = [...new Set([meta.group, ...(snapshot.value?.groups || []).filter((g) => g?.name && !g.scribe && !g.archived).map((g) => g.name)].filter(Boolean))].sort();
   const candidates = [...agents.values()].filter((a) => a.online && !meta.participants.includes(a.agentId) && !meta.groupMembers.includes(a.agentId)).sort((a, b) => (b.steward - a.steward) || a.name.localeCompare(b.name));
@@ -1422,7 +1430,7 @@ export function BoardEditor({
         title=${a.label} aria-label=${a.label} onClick=${() => align(a.id)}>${a.icon}</button>`)}`}
       <span class="board-zoom">${Math.round(view.zoom * 100)}%</span>
     </div>
-    <div class="board-canvas-wrap">
+    <div class="board-canvas-wrap" style=${paper}>
       <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`} data-board-id=${boardId}
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
         onPointerLeave=${() => setHoverShape('')}
