@@ -23,7 +23,7 @@ const (
 // stewardBaseSlugs are what talking to the operator takes, at every level:
 // seeing what they see, pointing at it, drawing with them and asking them.
 var stewardBaseSlugs = []string{
-	PermFleetRead, PermDashboardViewRead, PermDashboardGuide, PermBoardsRead, PermBoardsWrite, PermHumanNotify,
+	PermFleetRead, PermDashboardViewRead, PermDashboardCapture, PermDashboardGuide, PermBoardsRead, PermBoardsWrite, PermHumanNotify,
 }
 
 // stewardOperatorReadSlugs bring a Steward to what the operator reads, on top
@@ -118,9 +118,9 @@ func stewardExtraSlugs(cfg *config.Config) []string {
 
 // stewardAccessNote tells a Steward what it was born with, for its brief.
 func stewardAccessNote(cfg *config.Config) string {
-	reads := "every agent and group, boards and the dashboard view"
+	reads := "every agent and group, boards, the dashboard view and captures of the operator's screen"
 	if cfg.StewardReads() == config.StewardReadsOperator {
-		reads = "what the operator reads across tclaude, including every agent and group whether or not you share one with them"
+		reads = "what the operator reads across tclaude, including every agent and group whether or not you share one with them, and captures of their screen"
 	}
 	writes := "drawing on boards and notifying the operator"
 	switch cfg.StewardWrites() {

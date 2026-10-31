@@ -366,6 +366,8 @@ var peerViewLocalRoutes = []string{
 var peerViewOwnNodeRoutes = []string{
 	// The local operator's current dashboard view, read by this node's companion agents.
 	"POST /api/companion/view",
+	// Presence and captures belong to the local operator's own open tabs.
+	"POST /api/companion/presence", "POST /api/companion/capture/{id}",
 	// The companion's hover preview and voice read this node's own panes and transcripts.
 	"GET /api/companion/{agent}/peek", "GET /api/companion/{agent}/speech",
 	// Collab boards are this node's operator workspace with its own agents.

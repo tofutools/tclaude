@@ -751,6 +751,27 @@ only points: it never presses anything, and it plays once, then fades after a
 few seconds or when you dismiss it. Both slugs are granted to the Steward when
 it is summoned and are not default-granted to other agents.
 
+**Capture.** `tclaude agent guide capture -o view.png` shows the Steward what
+you see, with `dashboard.capture`, which it gets when summoned and other agents
+do not. It saves an image of your dashboard and prints the cursor position and
+what is under it, the focused control, any selected text, the viewport, and the
+open board with the region on screen. `--json` gives the same as data.
+
+The tab renders its own page, so a capture holds only that dashboard page,
+never another window or your desktop, and needs no browser prompt. Terminals are
+rendered as their real text. Every capture shows you a notice naming the agent,
+which is left out of the image. With several tabs open it takes the focused
+one, else the visible one heard from last. A hidden tab is never captured,
+because you would not see the notice, so the command then fails and says so; it
+also fails when no dashboard is open. Nothing is stored by the daemon.
+
+A capture shows whatever is on screen, including open messages and terminal
+output, which reaches the Steward even though it cannot read agents' mail
+through the API. Password fields are masked. Hover styles are not reproduced,
+and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
+in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
+command fails there. It needs Collab, like the rest of the Steward.
+
 **Decisions.** When an agent asks you to choose (`notify-human --option`),
 its tab shows the question, any attached mock and one button per option,
 with the agent's recommendation highlighted. A pinned agent's pill reads

@@ -55,6 +55,7 @@ tclaude agent sandbox-profiles ls          # needs sandbox-profiles.manage for p
 tclaude agent cron ls
 tclaude agent permissions ls               # your effective slugs
 tclaude agent guide view                   # which dashboard view the operator is on
+tclaude agent guide capture -o /tmp/v.png  # what their dashboard shows right now
 ```
 
 ## Groups for repos
