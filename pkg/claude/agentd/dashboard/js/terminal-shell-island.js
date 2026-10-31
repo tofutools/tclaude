@@ -1640,8 +1640,10 @@ function TerminalTabs({
     widget.focus();
   }, [current.revealRequest, solo]);
 
+  // A board pop-out goes away by script after ↩ dashboard, which must not prompt.
+  const confirmsReload = solo ? current.panes.some((pane) => !pane.seed.board) : hasPanes;
   useEffect(() => {
-    if (!hasPanes) return undefined;
+    if (!confirmsReload) return undefined;
     let armed = true;
     const confirmUnload = (event) => {
       event.preventDefault();
@@ -1658,7 +1660,7 @@ function TerminalTabs({
       window.removeEventListener('tclaude:auth-expired', disarmForAuth);
       window.removeEventListener('beforeunload', confirmUnload);
     };
-  }, [hasPanes]);
+  }, [confirmsReload]);
 
   // The last open tab closing leaves an empty section behind; move on to
   // Groups unless config says to stay (terminal-close-nav.js). Only the
