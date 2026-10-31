@@ -74,9 +74,9 @@ described in [Spawning and lifecycle](spawning-and-lifecycle.md).
 
 ```bash
 tclaude session new --harness codex
-tclaude agent spawn --group crew --name worker --harness opencode
+tclaude agent spawn crew --name worker --harness opencode
 tclaude session new --harness copilot --model gpt-5.4
-tclaude agent spawn --group crew --non-interactive --harness shell \
+tclaude agent spawn crew --non-interactive --harness shell \
   --initial-message 'go test ./...'
 ```
 
@@ -108,9 +108,9 @@ warning. Model and effort are remembered by the harness itself.
 | Clone with conversation copy | ✅ native copy | ✅ rollout JSONL; app-server forks the thread | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ✅ native session JSONL | ❌ |
 | [Cross-harness history translation](#cross-harness-history-translation) | ✅ | ✅ | ✅ | ✅ images by path | ✅ | ✅ | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ send-keys only | ⚠️ durable inbox only; never injected into the shell |
+| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ send-keys; experimental `--pi-drive` | ⚠️ durable inbox only; never injected into the shell |
 | Automatic prompt-based name refinement | ✅ contained one-shot | ✅ read-only one-shot | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ✅ read-only-tools ephemeral one-shot | ❌ no model |
-| Standing-order native hook selectors | ✅ inline or next-turn | ✅ inline or next-turn | ✅ observed events, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ installed baseline only, next-turn | ❌ not yet exercised | ❌ no hook source |
+| Standing-order native hook selectors | ✅ inline or next-turn | ✅ inline or next-turn | ✅ observed events, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ next-turn | ❌ no hook source |
 | Account quota spawn gate | ✅ cached quota windows | ✅ cached quota windows | ❌ no single account quota | ✅ cached quota windows | ❌ account quota is not captured in session logs | ❌ no single account quota | ❌ no model |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ✅ in-pane `/name` | ❌ |
 | Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ✅ in-pane `/compact`; pinned auto-compact window | ❌ |
@@ -123,8 +123,8 @@ warning. Model and effort are remembered by the harness itself.
 | Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ❌ no proxy carriage smoke; filtered launches use the packet gateway | ❌ no shell carriage smoke |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ | ❌ |
 | [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ the only boundary | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ✅ what-if cost | ✅ pi's catalog price; what-if under a subscription login | ❌ |
-| Bundled skills via `setup --install-agent-skills` | ✅ `~/.claude/skills` | ✅ shared `~/.agents/skills` + `$CODEX_HOME/skills` | ✅ shared roots; external skills must be enabled | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ❌ | ❌ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, derived virtual USD | ✅ what-if cost; real spend on API-key or Vertex | ✅ pi's catalog price; what-if under a subscription login | ❌ |
+| Bundled skills via `setup --install-agent-skills` | ✅ `~/.claude/skills` | ✅ shared `~/.agents/skills` + `$CODEX_HOME/skills` | ✅ shared roots; external skills must be enabled | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ❌ |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | — per-launch extension, no setup | ❌ |
 | Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | ✅ | — |
 | Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ⚠️ approval posture picks the tool set | ❌ |
@@ -273,7 +273,7 @@ override with three modes:
 - `inherit` *(default)* — no override; the agent runs under whatever your
   `settings.json` configures.
 - `on` — forces the sandbox on for this session, with the agentd socket
-  reachable and `~/.tclaude` hidden.
+  reachable and `~/.tclaude/data` and `~/.claude/sessions` hidden.
 - `off` — forces Claude Code's own sandbox off. Under
   `--sandbox-impl tclaude-layer` this is what tclaude itself sets, because its
   own wall is enforcing — see [Sandboxing](sandboxing.md) for the two-axis
@@ -395,8 +395,8 @@ to `xhigh` for models without a max tier.
 - `tclaude-agent` *(daemon default)* — not a raw Codex mode but a
   tclaude-managed **permission profile** (`codex -p tclaude-agent-<launch>`),
   giving `workspace-write` containment plus an allow-listed agentd socket so
-  the sandboxed agent can still run `tclaude agent …`, while `~/.tclaude` is
-  denied entirely. When launched inside a Git repo it also grants the minimal
+  the sandboxed agent can still run `tclaude agent …`, while `~/.tclaude/data` is
+  denied. When launched inside a Git repo it also grants the minimal
   repository root needed to create and commit in sibling worktrees.
 - `workspace-write` / `read-only` — raw confined Codex modes, passed through.
   No agentd-socket grant, so agents under these cannot reach `tclaude agent`.
@@ -537,9 +537,9 @@ never reaches its first turn. `--trust-dir` seeds the entry in
   group agents in exactly **one launch topology**:
   `--sandbox-impl tclaude-layer` with sandbox mode `off` — tclaude's wall
   enforcing, Copilot's own sandbox asserted down, so the launch has exactly
-  one claimed boundary. Every other spelling is refused as
-  `sandbox_restricted`. Interactive human sessions are not restricted this
-  way.
+  one claimed boundary. Agents spawning any other spelling are
+  refused with `sandbox_restricted`. Spawns started by a human are not
+  restricted this way.
 - **Usage in AI credits.** Cost is carried in the nano-AI-credit units
   Copilot emits; the dashboard derives a *virtual* USD value from the fixed
   1 credit = $0.01 gross subscription rate (labeled as derived, not billed).
@@ -614,7 +614,7 @@ records. Import remints session and message IDs, maps the receiver project, and 
 through Gemini’s own session store. Legacy JSON sessions are converted to JSONL.
 Settings, trust decisions, credentials and filesystem checkpoints do not travel.
 
-**Ask.** `tclaude ask --harness gemini` runs headless `gemini --prompt` and
+**Ask.** `tclaude ask`, with a Gemini `ask.profile`, runs headless `gemini --prompt` and
 returns the buffered answer. In headless mode Gemini denies any tool call
 that would need approval. Live streaming is not supported.
 

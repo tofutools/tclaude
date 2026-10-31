@@ -4,8 +4,8 @@ Processes are reusable, versioned workflow templates — task chains, decisions,
 parallel fan-out, retries, human approvals — authored once and executed as
 daemon-owned runs with durable state and an auditable evidence trail. The
 feature is experimental and off by default: enable it with the
-`features.processes` config flag (in the [dashboard's](dashboard.md) Config tab
-or in config.json). While the flag is off, every process route in the daemon
+`features.processes` config flag (**Processes** under
+[Config › Experimental](dashboard-config.md#experimental), or in config.json). While the flag is off, every process route in the daemon
 returns 404 with the code `processes_disabled` and a message pointing at the
 flag.
 
@@ -18,6 +18,16 @@ which half is which.
     from a task-force template — a checklist for coordination, never enforced.
     That is a different feature; see [Teams at scale](teams-at-scale.md). This
     page is about `tclaude process`: executable templates run by the daemon.
+
+## Start here
+
+1. Turn on **Processes** under [Config › Experimental](dashboard-config.md#experimental).
+2. Create a template under **Automations › Processes**, or let **Edit with agent** draft it.
+3. Start a run with the **Group process** button on a group's Processes section.
+4. Follow it in [Groups](dashboard-groups.md#agents-and-processes).
+
+[In the dashboard](#in-the-dashboard) covers all of this. The next sections are
+reference for the format, the engine and the CLI.
 
 ## Authoring templates
 
@@ -140,9 +150,8 @@ its count over with each round of the loop around it.
 Two worked examples live in the repo under `docs/examples/`
 (`code-change-with-review.yaml`, `parallel-any-review.yaml`). They are valid
 authoring-shape templates and pass template validation, but note that they use
-agent and human performers, `approvalRetry`, and same-session retry feedback —
-features the current engine does not execute yet (see below) — so run creation
-refuses them today. Read them as illustrations of the full authoring format,
+human task performers and `plan.approvalRetry`, which the current engine does not
+execute yet (see below), so run creation refuses them today. Read them as illustrations of the full authoring format,
 not as templates you can run unmodified.
 
 ## Running
@@ -170,7 +179,7 @@ tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
     --action retry|skip|cancel [--note "why"]
 tclaude process report succeeded|failed [--run <run-id> --node <node> \
     --attempt <n>] [--verdict <verdict>] [--note "summary"]   # agent performers only
-tclaude process templates ls
+tclaude agent process-templates ls
 ```
 
 Creating a run pins the exact saved template head and its parameters; later
@@ -381,9 +390,11 @@ things there are specific to processes:
   *⇲ unwrap* inlines a body again.
 
 **Starting a run.** In Groups, in the **Both** or **Processes** focus, use
-*+ start process* on a group: pick a template, fill its params, and tick the
-program profiles you authorize it to run under (never pre-ticked). The run is
-group-scoped (⌂). Agent-scoped runs (◉) start from the CLI with `--agent`.
+the **Group process** button on a group's Processes section, or **Agent process**
+for a run bound to one agent: pick a template, fill its params, and tick the
+program profiles you authorize it to run under (never pre-ticked). A group process
+is group-scoped (⌂) and an agent process is agent-scoped (◉). The CLI equivalent
+for an agent is `--agent`.
 
 **Following it.**
 
