@@ -108,6 +108,12 @@ An open editor holds a socket (`GET /api/boards/{id}/live`) that says when the
 board changed, and reads the change with `GET ?since=`. The socket carries no
 board content. Without it, as in a peer's view, the editor polls every second.
 
+Undo and redo in the dashboard are the operator's own, one step per action, and
+are kept by the daemon, up to 100 steps per board. They survive a reload and work
+from any editor open on the board. An undo writes new versions, which other
+editors merge. A shape an agent changed since is left alone, and the editor says
+so. Agents have no undo of their own.
+
 The board's own version goes up once for every patch that changed at least one
 element, and each changed element records that version as its
 `server_version`. A plain read returns the live elements; a read with

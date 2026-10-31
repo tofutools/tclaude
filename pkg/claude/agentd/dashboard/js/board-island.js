@@ -41,7 +41,8 @@ export const BOARD_SNAPSHOT_IDLE_MS = 2500;
 export const BOARD_VIEW_REFRESH_MS = 30000;
 // The daemon's limit for an event image (boardMaxRegionBytes).
 const BOARD_EVENT_IMAGE_MAX = 2 << 20;
-const HISTORY_MAX = 100;
+// Past this a batch goes without its undo steps rather than be refused.
+const BOARD_MAX_STEPS_BODY = 12 * 1024 * 1024 - 1024;
 
 // Keys aimed at nothing in particular (focus on the body, as after clicking the
 // canvas) go to the editor last used, so two open editors never both act.
@@ -180,7 +181,11 @@ export function BoardEditor({
   // that loses the merge to them says nothing.
   const resent = useRef(new WeakSet());
   const active = useRef(new Set()); // ids being manipulated right now
-  const history = useRef({ undo: [], redo: [] });
+  // Undo steps made since the last PATCH. History lives on the daemon, so it
+  // survives a reload and is shared by every editor the operator has open.
+  const pendingSteps = useRef([]);
+  const saved = useRef(Promise.resolve());
+  const undoing = useRef(Promise.resolve());
   const eventBatch = useRef({ ids: [], before: new Map() });
   const timers = useRef({});
   const gesture = useRef(null);
@@ -349,17 +354,29 @@ export function BoardEditor({
     } catch { /* presence is best-effort */ }
   }
 
-  async function flush() {
+  // One PATCH at a time, so steps reach the history in the order they were made.
+  function flush() {
     clearTimeout(timers.current.flush);
+    saved.current = saved.current.then(saveBatch, saveBatch);
+    return saved.current;
+  }
+
+  async function saveBatch() {
     if (!pending.current.size) return;
     const batch = [...pending.current.values()];
     pending.current.clear();
-    const keep = () => { for (const el of batch) if (!pending.current.has(el.id)) pending.current.set(el.id, el); };
+    const steps = pendingSteps.current;
+    pendingSteps.current = [];
+    const keep = () => {
+      for (const el of batch) if (!pending.current.has(el.id)) pending.current.set(el.id, el);
+      pendingSteps.current = [...steps, ...pendingSteps.current];
+    };
+    const body = JSON.stringify({ elements: batch, steps });
     saving.current += 1;
     try {
       const result = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}`, {
         method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Board-Client': viewClient.current },
-        body: JSON.stringify({ elements: batch }),
+        body: body.length > BOARD_MAX_STEPS_BODY ? JSON.stringify({ elements: batch }) : body,
       }));
       // The poll cursor is not advanced from here: agent edits that landed
       // before this PATCH have versions below result.version.
@@ -397,6 +414,7 @@ export function BoardEditor({
         forgetEdits([dropped]);
         if (!disposed.current) notify(`The board refused an edit: ${error.message}`, true);
         for (const el of batch) if (el.id !== dropped && !pending.current.has(el.id)) pending.current.set(el.id, el);
+        pendingSteps.current = [...steps, ...pendingSteps.current];
         if (pending.current.size) void flush();
         return;
       }
@@ -472,14 +490,14 @@ export function BoardEditor({
     } catch { /* events are best-effort */ }
   }
 
-  // commit records operator edits: the merged map, the undo history, the
-  // PATCH batch, the agents' event batch and the snapshot.
-  function commit(next, { record = true } = {}) {
+  // commit records operator edits: the merged map, the undo step, the PATCH
+  // batch, the agents' event batch and the snapshot.
+  function commit(next) {
     if (!next.length) return;
-    const undoEntry = [];
+    const step = [];
     for (const el of next) {
       const prev = elements.current.get(el.id);
-      undoEntry.push({ id: el.id, before: prev || null });
+      step.push({ id: el.id, before: prev || null });
       if (!eventBatch.current.before.has(el.id)) eventBatch.current.before.set(el.id, prev);
       eventBatch.current.ids.push(el.id);
       // server_version is the daemon's read stamp, not element data.
@@ -488,11 +506,7 @@ export function BoardEditor({
       elements.current.set(el.id, authored);
       pending.current.set(el.id, authored);
     }
-    if (record) {
-      history.current.undo.push(undoEntry);
-      if (history.current.undo.length > HISTORY_MAX) history.current.undo.shift();
-      history.current.redo = [];
-    }
+    pendingSteps.current.push(step);
     clearTimeout(timers.current.flush);
     timers.current.flush = setTimeout(() => void flush(), BOARD_FLUSH_MS);
     scheduleEvent();
@@ -510,20 +524,41 @@ export function BoardEditor({
     return [...out.values()];
   }
 
+  // Presses run in turn, each after everything before it has been saved.
   function undo(redo = false) {
-    const from = redo ? history.current.redo : history.current.undo;
-    const to = redo ? history.current.undo : history.current.redo;
-    const entry = from.pop();
-    if (!entry) return;
-    const inverse = [];
-    const next = entry.map(({ id, before }) => {
-      const cur = elements.current.get(id);
-      inverse.push({ id, before: cur || null });
-      if (before) return bump(cur || before, { ...before, version: cur?.version || before.version });
-      return cur ? bump(cur, { isDeleted: true }) : null;
-    }).filter(Boolean);
-    to.push(inverse);
-    commit(next, { record: false });
+    undoing.current = undoing.current.then(() => undoStep(redo));
+    return undoing.current;
+  }
+
+  async function undoStep(redo) {
+    await flush();
+    if (disposed.current) return;
+    if (pending.current.size) {
+      notify('Your latest edits are not saved yet, so undo has to wait.', true);
+      return;
+    }
+    try {
+      const result = await jsonOrThrow(await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/undo`, {
+        method: 'POST', credentials: 'same-origin', body: JSON.stringify({ redo }),
+        headers: { 'Content-Type': 'application/json', 'X-Board-Client': viewClient.current },
+      }));
+      if (disposed.current) return;
+      const incoming = result.elements || [];
+      for (const el of incoming) {
+        if (!eventBatch.current.before.has(el.id)) eventBatch.current.before.set(el.id, elements.current.get(el.id));
+        eventBatch.current.ids.push(el.id);
+      }
+      if (mergeElements(elements.current, incoming).length) {
+        scheduleEvent();
+        scheduleSnapshot();
+        redraw();
+      }
+      if (result.skipped) {
+        notify(`Left ${result.skipped === 1 ? 'a shape' : `${result.skipped} shapes`} alone: an agent changed ${result.skipped === 1 ? 'it' : 'them'} since.`, false);
+      }
+    } catch (error) {
+      if (!disposed.current) notify(`Could not ${redo ? 'redo' : 'undo'}: ${error?.message || error}`, true);
+    }
   }
 
   // remove deletes elements; a deleted shape takes its label with it.

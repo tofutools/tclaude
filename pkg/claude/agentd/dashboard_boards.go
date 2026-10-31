@@ -49,19 +49,22 @@ const (
 )
 
 const (
-	boardAuthorOperator   = "operator"
-	boardMaxLiveElements  = 5000
-	boardMaxStoredRows    = 20000 // live elements plus tombstones
-	boardMaxBoards        = 500
-	boardMaxVersion       = 1<<53 - 1 // stays exact in JavaScript numbers
-	boardMaxRequestBody   = 4 << 20
-	boardMaxSnapshotBytes = 8 << 20
-	boardMaxCoordinate    = 1e6
-	boardMaxPoints        = 5000
-	boardMaxTextBytes     = 4000
-	boardMaxTitleBytes    = 200
-	boardMaxEventBytes    = 2000
-	boardEventInterval    = 3 * time.Second
+	boardAuthorOperator  = "operator"
+	boardMaxLiveElements = 5000
+	boardMaxStoredRows   = 20000 // live elements plus tombstones
+	boardMaxBoards       = 500
+	boardMaxVersion      = 1<<53 - 1 // stays exact in JavaScript numbers
+	boardMaxRequestBody  = 4 << 20
+	// A dashboard edit also carries what its undo steps put back. Keep in
+	// step with BOARD_MAX_STEPS_BODY in board-island.js.
+	boardMaxRequestBodyWithSteps = 12 << 20
+	boardMaxSnapshotBytes        = 8 << 20
+	boardMaxCoordinate           = 1e6
+	boardMaxPoints               = 5000
+	boardMaxTextBytes            = 4000
+	boardMaxTitleBytes           = 200
+	boardMaxEventBytes           = 2000
+	boardEventInterval           = 3 * time.Second
 )
 
 var (
@@ -490,15 +493,24 @@ func serveBoardRead(w http.ResponseWriter, r *http.Request, id string) {
 
 // serveBoardPatch merges elements authored by author; participant (an agent
 // id, or empty) joins the board in the same transaction.
-func serveBoardPatch(w http.ResponseWriter, r *http.Request, id, author, participant string) {
-	r.Body = http.MaxBytesReader(w, r.Body, boardMaxRequestBody)
+//
+// historyActor, when set, takes the request's undo steps into that actor's
+// history. A step's before values are stored as sent and only normalized when
+// an undo uses them, so a bad step costs that undo and never the edit.
+func serveBoardPatch(w http.ResponseWriter, r *http.Request, id, author, participant, historyActor string) {
+	limit := int64(boardMaxRequestBody)
+	if historyActor != "" {
+		limit = boardMaxRequestBodyWithSteps
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	var req struct {
-		Elements []json.RawMessage `json:"elements"`
+		Elements []json.RawMessage             `json:"elements"`
+		Steps    [][]db.CollabBoardStepElement `json:"steps"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "request body is larger than 4 MiB")
+			writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("request body is larger than %d MiB", limit>>20))
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid patch: "+err.Error())
@@ -513,7 +525,11 @@ func serveBoardPatch(w http.ResponseWriter, r *http.Request, id, author, partici
 		}
 		elems = append(elems, e)
 	}
-	version, accepted, err := db.ApplyCollabBoardElements(id, author, participant, elems, boardMaxLiveElements, boardMaxStoredRows)
+	var history *db.CollabBoardHistory
+	if historyActor != "" {
+		history = &db.CollabBoardHistory{Actor: historyActor, Steps: validBoardSteps(req.Steps)}
+	}
+	version, accepted, err := db.ApplyCollabBoardEdit(id, author, participant, elems, history, boardMaxLiveElements, boardMaxStoredRows)
 	if err != nil {
 		writeBoardStoreError(w, err)
 		return
@@ -577,6 +593,7 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/boards/{id}/view", collabRoute(handleDashboardBoardView))
 	mux.HandleFunc("POST /api/boards/{id}/group", collabRoute(handleDashboardBoardGroup))
 	mux.HandleFunc("GET /api/boards/{id}/live", collabRoute(handleDashboardBoardLive))
+	mux.HandleFunc("POST /api/boards/{id}/undo", collabRoute(handleDashboardBoardUndo))
 }
 
 // POST /api/boards/{id}/group {group} — link the board to a group ("" unlinks).
@@ -643,7 +660,7 @@ func handleDashboardBoardPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id, ok := boardPathID(w, r); ok {
-		serveBoardPatch(w, r, id, boardAuthorOperator, "")
+		serveBoardPatch(w, r, id, boardAuthorOperator, "", boardAuthorOperator)
 	}
 }
 
@@ -1030,5 +1047,5 @@ func handleBoardPatch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	serveBoardPatch(w, r, id, author, participant)
+	serveBoardPatch(w, r, id, author, participant, "")
 }

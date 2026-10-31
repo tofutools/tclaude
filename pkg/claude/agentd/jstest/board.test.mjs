@@ -109,7 +109,11 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
   const { BoardEditor, BOARD_FLUSH_MS, BOARD_EVENT_IDLE_MS } = await harness.importDashboardModule('js/board-island.js');
   const requests = [];
   const fetchImpl = async (url, init = {}) => {
-    requests.push({ url: String(url), method: init.method || 'GET', body: init.body && typeof init.body === 'string' ? JSON.parse(init.body) : null });
+    requests.push({ url: String(url), method: init.method || 'GET', raw: init.body, body: init.body && typeof init.body === 'string' ? JSON.parse(init.body) : null });
+    if (String(url).endsWith('/undo')) {
+      const drawn = JSON.parse(requests.find((r) => r.method === 'PATCH').raw).elements[0];
+      return ok({ version: 3, skipped: 0, elements: [{ ...drawn, version: drawn.version + 1, isDeleted: true }] });
+    }
     if (init.method === 'PATCH') return ok({ version: 2, accepted: 1 });
     if (init.method === 'POST') return ok({ sent: 1 }, 202);
     return ok({ id: 'plan', title: 'Plan', version: 1, participants: [A], elements: [] });
@@ -143,13 +147,18 @@ test('drawing a rectangle PATCHes it as the operator and tells participating age
   assert.equal(atob(event.body.image), 'PNG-region');
   // The rectangle is at board (60, 60) 120x60 (the view starts at -40,-40).
   assert.deepEqual(boxes[0], { x: -20, y: -20, width: 280, height: 220 });
-  // Undo is a new version that deletes it.
+  assert.deepEqual(patch.body.steps, [[{ id: patch.body.elements[0].id, before: null }]], 'the drawing is one undo step, saved with it');
   // Board keys do nothing while another tab shows.
   section.classList.remove('active');
   await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'z', ctrlKey: true }));
   assert.equal(svg.querySelectorAll('rect.board-el').length, 1);
   section.classList.add('active');
-  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'z', ctrlKey: true }));
+  // Undo happens on the daemon, as a new version that deletes it.
+  await harness.act(async () => {
+    harness.fireEvent(harness.window.document.body, 'keydown', { key: 'z', ctrlKey: true });
+    await wait();
+  });
+  assert.equal(requests.find((r) => r.url === '/api/boards/plan/undo').body.redo, false);
   assert.equal(svg.querySelectorAll('rect.board-el').length, 0, 'Ctrl+Z undoes the drawing');
 });
 
@@ -270,6 +279,26 @@ test('a retry that loses to its own unanswered first attempt is not reported', a
   assert.deepEqual(notes, []);
   await settle();
   assert.equal(events().length, 1);
+});
+
+test('undo saves what is pending first, and says when it left an agent\'s change alone', async (t) => {
+  const order = [];
+  const answer = async (url, init) => {
+    if (init.method === 'PATCH') order.push('save');
+    if (url.endsWith('/undo')) {
+      order.push('undo');
+      return ok({ version: 3, elements: [], skipped: 2 });
+    }
+    return null;
+  };
+  const { harness, notes, view } = await drawnBoard(t, { answer });
+  await harness.act(async () => {
+    harness.fireEvent(harness.window.document.body, 'keydown', { key: 'z', ctrlKey: true });
+    await wait();
+  });
+  assert.deepEqual(order, ['save', 'undo']);
+  assert.match(notes.at(-1).text, /Left 2 shapes alone/);
+  await view.unmount();
 });
 
 test('with a socket the editor reads on a signal instead of polling, and polls again without one', async (t) => {

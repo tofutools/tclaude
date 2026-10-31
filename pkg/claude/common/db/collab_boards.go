@@ -250,6 +250,12 @@ func ListCollabBoardElements(id string, since int64) ([]CollabBoardElement, erro
 // that would leave more than maxLive live elements, or more than maxStored
 // rows including tombstones, changes nothing.
 func ApplyCollabBoardElements(id, by, participant string, elems []CollabBoardElement, maxLive, maxStored int) (version int64, accepted int, err error) {
+	return ApplyCollabBoardEdit(id, by, participant, elems, nil, maxLive, maxStored)
+}
+
+// ApplyCollabBoardEdit is ApplyCollabBoardElements that also records history,
+// in the same transaction, so a step cannot outlive or miss its edit.
+func ApplyCollabBoardEdit(id, by, participant string, elems []CollabBoardElement, history *CollabBoardHistory, maxLive, maxStored int) (version int64, accepted int, err error) {
 	collabBoardWriteMu.Lock()
 	defer collabBoardWriteMu.Unlock()
 	d, err := Open()
@@ -267,6 +273,28 @@ func ApplyCollabBoardElements(id, by, participant string, elems []CollabBoardEle
 		}
 		return 0, 0, err
 	}
+	version, accepted, err = applyCollabBoardElementsTx(tx, id, by, version, elems, maxLive, maxStored)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := recordCollabBoardStepsTx(tx, id, history); err != nil {
+		return 0, 0, err
+	}
+	if participant != "" {
+		if err := addCollabBoardParticipantTx(tx, id, participant); err != nil {
+			return 0, 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return version, accepted, nil
+}
+
+// applyCollabBoardElementsTx is the merge. version is the board's current
+// version; the caller holds collabBoardWriteMu.
+func applyCollabBoardElementsTx(tx *sql.Tx, id, by string, version int64, elems []CollabBoardElement, maxLive, maxStored int) (int64, int, error) {
+	accepted := 0
 	next := version + 1
 	// The last occurrence of an id in one patch is the one that counts, as if
 	// the patch had been sent element by element.
@@ -323,14 +351,6 @@ func ApplyCollabBoardElements(id, by, participant string, elems []CollabBoardEle
 			return 0, 0, err
 		}
 		version = next
-	}
-	if participant != "" {
-		if err := addCollabBoardParticipantTx(tx, id, participant); err != nil {
-			return 0, 0, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, 0, err
 	}
 	return version, accepted, nil
 }
