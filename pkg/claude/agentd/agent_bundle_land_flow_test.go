@@ -177,3 +177,38 @@ func TestAgentImportRescansNeutralContext(t *testing.T) {
 	assert.Equal(t, "github-token", preview.Findings[0].Kind)
 	assert.Contains(t, preview.Findings[0].Locations[0], "context/transcript.jsonl")
 }
+
+// Scenario: an agent exported from Claude Code lands on Codex, then the landed
+// agent is exported again.
+//
+// Expected: the new file's report describes the last step, and its prior holds
+// the earlier ones oldest first, so no conversion goes unrecorded.
+func TestAgentExportChainsPriorLossReports(t *testing.T) {
+	f := newFlow(t)
+	t.Setenv("CODEX_HOME", "")
+	f.HaveGroup("receiver")
+	const source = "0f0e0d0c-0b0a-4908-8706-050403020a0c"
+	cwd := testutil.CanonicalTempDir(t)
+	seedClaudeConversation(t, f, source, "chain-src", cwd)
+	rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	dest := testutil.CanonicalTempDir(t)
+	applied := importAgentArchive(t, f, rec.Body.Bytes(), url.Values{"harness": {"codex"}, "model": {"gpt-5.5"}, "cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"landed"}})
+	require.True(t, applied.Applied)
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+applied.Spawn.ConvID+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	a, err := paf.Open(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()), paf.Options{Purpose: paf.PurposeInspect})
+	require.NoError(t, err)
+	losses, ok := a.Losses(a.Manifest.Agents[0])
+	require.True(t, ok)
+	assert.Equal(t, "codex", losses.Source)
+	require.Len(t, losses.Prior, 2)
+	assert.Equal(t, "claude", losses.Prior[0].Source)
+	assert.Empty(t, losses.Prior[0].Target, "the first export landed nowhere")
+	assert.Equal(t, "claude", losses.Prior[1].Source)
+	assert.Equal(t, "codex", losses.Prior[1].Target)
+	assert.Equal(t, paf.RungTranslated, losses.Prior[1].LandingRung)
+	assert.Empty(t, losses.Prior[1].Prior, "prior entries are flat")
+}

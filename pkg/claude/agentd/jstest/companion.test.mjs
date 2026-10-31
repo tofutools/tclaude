@@ -1178,7 +1178,7 @@ test('the Steward goes by the name the operator gave it', async () => {
   assert.equal(agents.get(B).name, 'worker', 'only the Steward');
 });
 
-test('elevated access shows on the agent and ends in one click', async (t) => {
+test('elevated access shows on the agent, and End ends only its sudo', async (t) => {
   const snapshot = snapshotWith({ steward: true });
   const prefs = memoryPrefs();
   const calls = [];
@@ -1208,9 +1208,24 @@ test('elevated access shows on the agent and ends in one click', async (t) => {
     band.querySelector('button').click();
     await new Promise((r) => setTimeout(r, 0));
   });
-  assert.equal(calls.find((call) => call.method === 'DELETE').url, `/api/sudo?agent_id=${encodeURIComponent(steward.agentId)}`);
-  const cleared = calls.find((call) => call.url === '/api/permissions');
-  assert.deepEqual(JSON.parse(cleared.body), { conv: steward.convId, overrides: { 'host.read': 'default' } });
+  assert.deepEqual(calls.map((call) => `${call.method} ${call.url}`).filter((line) => line.includes('/api/sudo') || line.includes('/api/permissions')),
+    [`DELETE /api/sudo?agent_id=${encodeURIComponent(steward.agentId)}`], 'End touches sudo and nothing permanent');
+
+  await harness.act(async () => { snap.value = { ...snap.value, sudo: [{ id: 7, agent_id: steward.agentId, slug: 'agent.spawn', remaining_seconds: 700, carried: true }, { id: 9, agent_id: steward.agentId, slug: 'agent.stop', remaining_seconds: 700 }] }; });
+  const stored = view.container.querySelector('.companion-elevated');
+  assert.match(stored.textContent, /agent\.spawn 12 min left, all future Stewards: ending it ends it for them too/);
+  assert.doesNotMatch(stored.textContent, /agent\.stop 12 min left, all/, 'an instance grant says nothing about Stewards');
+  assert.match(stored.querySelector('button').title, /stored for future Stewards/);
+  const deletes = () => calls.filter((call) => call.method === 'DELETE').length;
+  const before = deletes();
+  await harness.act(async () => { stored.querySelector('button').click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(deletes(), before + 1);
+  assert.equal(calls.filter((call) => call.url === '/api/permissions').length, 0);
+
+  await harness.act(async () => { snap.value = { ...snap.value, sudo: [] }; });
+  const left = view.container.querySelector('.companion-elevated');
+  assert.match(left.textContent, /host\.read standing/);
+  assert.equal(left.querySelector('button'), null, 'no temporary sudo, nothing to end');
 });
 
 test('a click outside closes the add menu, and the + button still toggles it', async (t) => {

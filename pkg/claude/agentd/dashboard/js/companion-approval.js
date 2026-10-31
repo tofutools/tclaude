@@ -28,22 +28,11 @@ function secondsLeft(deadline, now) {
 // tab: a whole plan's temporary permissions (`tclaude agent sudo`) or one
 // --ask-human command. Approve and Deny decide it the same way the Messages
 // tab does. The request body is agent-supplied text and is rendered as text.
-// endElevatedAccess revokes what an agent holds itself. One failure must not
-// leave the other live, so both are tried.
-export async function endElevatedAccess(fetchImpl, agent, access) {
-  const send = async (url, options) => {
-    const response = await fetchImpl(url, { credentials: 'same-origin', ...options });
-    if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
-  };
-  const results = await Promise.allSettled([
-    access.sudo.length && send(`/api/sudo?agent_id=${encodeURIComponent(agent.agentId)}`, { method: 'DELETE' }),
-    access.standing.length && send('/api/permissions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conv: agent.convId, overrides: Object.fromEntries(access.standing.map((slug) => [slug, 'default'])) }),
-    }),
-  ]);
-  const failed = results.find((result) => result.status === 'rejected');
-  if (failed) throw failed.reason;
+// endSudoAccess ends an agent's temporary sudo grants and nothing else: what it
+// holds permanently is changed in the permissions editor.
+export async function endSudoAccess(fetchImpl, agent) {
+  const response = await fetchImpl(`/api/sudo?agent_id=${encodeURIComponent(agent.agentId)}`, { method: 'DELETE', credentials: 'same-origin' });
+  if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
 }
 
 // StewardAccessControls open the dashboard's own permissions editor and sudo
@@ -124,21 +113,19 @@ export function StewardShutdown({ agent, fetchImpl, onDown }) {
   </span>`;
 }
 
-// ElevatedBand says an agent holds more than its usual access and ends it in
-// one click. No confirmation: taking access away is safe, and it can ask again,
-// so it reaches stored grants too. The band says which those are.
+// ElevatedBand says an agent holds more than its usual access. End ends its sudo
+// in one click, with no confirmation: it is temporary and the agent can ask again.
+// Everything else on the band is listed only, and stays.
 export function ElevatedBand({ agent, access, fetchImpl, notify }) {
   const [busy, setBusy] = useState(false);
   async function end() {
     setBusy(true);
     try {
-      await endElevatedAccess(fetchImpl, agent, access);
-      notify(access.inherited.length
-        ? `Ended what ${agent.name} held itself. Group access remains: change it in Groups.`
-        : access.anyStored ? `${agent.name} is back to its usual access, and future Stewards no longer get what was stored.`
-          : `${agent.name} is back to its usual access.`);
+      await endSudoAccess(fetchImpl, agent);
+      notify(access.sudoStored ? `Ended ${agent.name}'s sudo, and future Stewards no longer get the stored sudo.`
+        : `Ended ${agent.name}'s sudo.`);
     } catch (error) {
-      notify(`Could not end ${agent.name}'s elevated access: ${error?.message || error}`, true);
+      notify(`Could not end ${agent.name}'s sudo: ${error?.message || error}`, true);
     } finally {
       setBusy(false);
     }
@@ -147,11 +134,11 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
     <span aria-hidden="true">🔓</span>
     <div class="companion-elevated-text">
       <b>Elevated access</b>
-      ${access.sudo.map((grant) => html`<span key=${grant.id}><code>${grant.slug}</code> ${timeLeft(grant.remaining_seconds)} left${grant.carried ? ', all future Stewards' : ''}</span>`)}
+      ${access.sudo.map((grant) => html`<span key=${grant.id}><code>${grant.slug}</code> ${timeLeft(grant.remaining_seconds)} left${grant.carried ? ', all future Stewards: ending it ends it for them too' : ''}</span>`)}
       ${access.standing.map((slug) => html`<span key=${slug}><code>${slug}</code> ${access.stored?.has(slug) ? 'standing, all future Stewards' : 'standing'}</span>`)}
       ${access.inherited.map((slug) => html`<span key=${slug}><code>${slug}</code> from a group</span>`)}
     </div>
-    ${(access.sudo.length > 0 || access.standing.length > 0) && html`<button type="button" disabled=${busy} title=${access.anyStored ? 'Also ends what is kept for all future Stewards' : 'End this access now'} onClick=${end}>${busy ? 'Ending…' : 'End now'}</button>`}
+    ${access.sudo.length > 0 && html`<button type="button" disabled=${busy} title=${access.sudoStored ? 'Ends its temporary sudo, including what is stored for future Stewards. Permanent permissions stay.' : 'Ends its temporary sudo. Permanent permissions stay.'} onClick=${end}>${busy ? 'Ending…' : 'End sudo'}</button>`}
   </div>`;
 }
 

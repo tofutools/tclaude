@@ -506,8 +506,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	// direct is a file import by the caller, as opposed to a federation
 	// offer, move or teleport handing over an already decoded bundle.
 	direct := b == nil
-	// handoff is the agent-written summary a PAF may carry.
+	// handoff is the agent-written summary a PAF may carry, and fileLosses
+	// its own loss report.
 	var handoff string
+	var fileLosses *paf.Losses
 	if b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
@@ -527,7 +529,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() { _ = b.Close() }()
-		neutral, rescan, handoff = info.Context, info.Scan, info.Handoff
+		neutral, rescan, handoff, fileLosses = info.Context, info.Scan, info.Handoff, info.Losses
 	}
 	arrival, _ := r.Context().Value(arrivalContextKey{}).(*arrivalContext)
 	if arrival == nil {
@@ -863,6 +865,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if landing.full != nil {
 		saveLandedHistory(spawned, landing, group)
+	}
+	if landing.history != nil {
+		recordConvLosses(spawned.ConvID, fileLosses, landing.Losses)
 	}
 	preview.Applied = true
 	preview.Offline = noStart

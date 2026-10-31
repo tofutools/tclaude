@@ -656,11 +656,13 @@ func (r *redactor) agent(key string) error {
 			if err := r.context(tmp, key, paf.ScopeEffective); err != nil {
 				return err
 			}
-			l := paf.LossesFromReport(t.Losses)
+			l := paf.ChainLosses(srcLosses, paf.LossesFromReport(t.Losses))
 			srcLosses, effective = &l, true
 		}
 	}
-	if effective {
+	// A report with no context to go with it describes a conversion the file
+	// still records, so it stays too.
+	if effective || srcLosses != nil {
 		if err := r.losses(key, srcLosses); err != nil {
 			return err
 		}

@@ -192,6 +192,9 @@ func runInspect(out io.Writer, p *inspectParams) error {
 		for _, l := range ag.Losses {
 			fmt.Fprintf(out, "  %-19s %s\n", "Loss:", termSafe(render.LossLine(l)))
 		}
+		if ag.PriorReports > 0 {
+			fmt.Fprintf(out, "  %-19s %d\n", "Earlier reports:", ag.PriorReports)
+		}
 	}
 	return nil
 }
