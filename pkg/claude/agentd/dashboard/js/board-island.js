@@ -19,11 +19,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import htm from 'htm';
 import {
   ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardIdFromTitle, bump, changeBounds,
-  boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, elementBounds, elementsInBox,
-  labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, normalizeBox, parseClipboard,
-  reboundArrows, routeConnector, shapeAt, shapeNear, simplifyStroke, snapHit, snapPoints, suggestedShape, toExcalidraw, topHit, withLabels,
+  boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
+  entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
+  reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, suggestedShape, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
 import { BoardMinimap } from './board-minimap.js';
+import { BoardQuickMenu, QUICK_MENU_SIZE } from './board-quick-menu.js';
 import { companionAgents } from './companion-model.js';
 import { useDismissablePopover } from './hover-popover.js';
 
@@ -35,6 +36,10 @@ const SNAP_RADIUS_PX = 10;
 const SNAP_MARGIN_PX = 16;
 // A press that wanders less than this is a click, not a drag.
 const DRAG_THRESHOLD_PX = 4;
+// A second press this soon on a clicked snap point is a double-click on the shape.
+const DOUBLE_CLICK_MS = 400;
+// An arrow key connects from the selected shape's snap point on that side.
+const ARROW_SIDES = { ArrowUp: [0.5, 0], ArrowRight: [1, 0.5], ArrowDown: [0.5, 1], ArrowLeft: [0, 0.5] };
 // The canvas colour (--board-paper in board.css).
 const BOARD_PAPER = '#fbfaf7';
 
@@ -102,6 +107,11 @@ async function jsonOrThrow(response) {
   }
   return body;
 }
+
+// Holding this attaches a line's end to a shape's border instead of a snap
+// point: Ctrl, or Cmd on a Mac, where Ctrl+click is a right click.
+const borderHeld = (event) => !!(event.ctrlKey || event.metaKey);
+const borderKeyName = (win) => (/mac/i.test(win?.navigator?.platform || '') ? 'Cmd' : 'Ctrl');
 
 // -- rendering ---------------------------------------------------------------
 
@@ -247,8 +257,10 @@ export function BoardEditor({
   const eventBatch = useRef({ ids: [], before: new Map() });
   const timers = useRef({});
   const gesture = useRef(null);
-  // A clicked snap point's offer: {from, fixedPoint, at}, see suggestion().
+  // A snap point's offer: {from, fixedPoint, at}, see suggestion(). With `menu`
+  // it stays at `at` while the quick menu picks its `kind`.
   const suggesting = useRef(null);
+  const lastKind = useRef(''); // the kind quick connect last made
   const disposed = useRef(false);
   // Timer callbacks read the latest participants, not their render's.
   const metaRef = useRef(meta);
@@ -267,12 +279,12 @@ export function BoardEditor({
   useEffect(() => {
     if (onScreen) lastEditor = editorToken;
   }, [onScreen]);
-  // Another tool takes back a snap point's offer.
+  // Another tool, or leaving the board, takes back a snap point's offer.
   useEffect(() => {
     if (!suggesting.current) return;
     suggesting.current = null;
     redraw();
-  }, [tool]);
+  }, [tool, onScreen]);
   useEffect(() => () => {
     if (lastEditor === editorToken) lastEditor = null;
   }, []);
@@ -817,8 +829,14 @@ export function BoardEditor({
       gesture.current = { kind: 'pan', sx: event.clientX, sy: event.clientY, view };
       return;
     }
-    if (suggesting.current) { acceptSuggestion(p); return; }
+    if (suggesting.current) {
+      const { clicked } = suggesting.current;
+      const again = clicked && event.timeStamp - clicked.at < DOUBLE_CLICK_MS && Math.hypot(p.x - clicked.x, p.y - clicked.y) * view.zoom < SNAP_RADIUS_PX;
+      if (again) { suggesting.current = null; redraw(); } else acceptSuggestion(p);
+      return;
+    }
     const snapTol = SNAP_RADIUS_PX / view.zoom;
+    const border = borderHeld(event);
     if (tool === 'select') {
       const line = selected.length === 1 && live.find((el) => el.id === selected[0] && (el.type === 'arrow' || el.type === 'line'));
       const end = line && lineEndAt(line, p, snapTol);
@@ -830,12 +848,14 @@ export function BoardEditor({
       const snap = !event.shiftKey && shownSnap(live, p, snapTol);
       if (snap) {
         // A drag draws a line from the snap point; a click offers one.
-        beginLine('arrow', p, { startBinding: snap }, true);
+        beginLine('arrow', p, { startBinding: border ? { elementId: snap.elementId } : snap }, true);
         return;
       }
       const top = topHit(live, p.x, p.y, 6 / view.zoom);
-      // Attached text is its container, to click on.
-      const hit = (top?.containerId && live.find((el) => el.id === top.containerId)) || top;
+      // Attached text is its container, to click on. Inside an unfilled shape
+      // nothing is hit, but the shape is there to take; holding the border key
+      // leaves the press to the rubber band, for what is drawn inside a frame.
+      const hit = (top?.containerId && live.find((el) => el.id === top.containerId)) || top || (!border && shapeInside(live, p.x, p.y));
       if (!hit) {
         // Empty space: a rubber band; with Shift it adds to the selection.
         if (!event.shiftKey) setSelected([]);
@@ -869,8 +889,9 @@ export function BoardEditor({
       return;
     }
     if (tool === 'arrow' || tool === 'line') {
-      const start = bindingAt(live, p.x, p.y, snapTol);
-      beginLine(tool, p, start ? { startBinding: start } : {});
+      const start = bindingAt(live, p.x, p.y, snapTol, '', border);
+      const fromPoint = tool === 'arrow' && !!shownSnap(live, p, snapTol);
+      beginLine(tool, p, start ? { startBinding: start } : {}, fromPoint);
       return;
     }
     const el = newElement(tool, {
@@ -903,6 +924,26 @@ export function BoardEditor({
     redraw();
   }
 
+  // aimLine points the line being drawn, or the end being dragged, at p: at what
+  // it would attach to there, which it shows by doing so.
+  function aimLine(g, p, border) {
+    const el = elements.current.get(g.id);
+    if (!el) return;
+    g.at = p;
+    g.border = border;
+    const ignore = g.kind === 'end' ? g.orig[g.end === 'start' ? 'endBinding' : 'startBinding']?.elementId : el.startBinding?.elementId;
+    g.target = bindingAt(liveElements(elements.current), p.x, p.y, SNAP_MARGIN_PX / view.zoom, ignore, border);
+    setHoverShape(g.target?.elementId || '');
+    if (g.kind === 'end') {
+      elements.current.set(g.id, { ...lineWithEnd(g, p), [g.end === 'start' ? 'startBinding' : 'endBinding']: g.target || undefined });
+      g.moved = true;
+    } else {
+      const dx = p.x - g.start.x; const dy = p.y - g.start.y;
+      elements.current.set(g.id, { ...el, points: [[0, 0], [dx, dy]], width: Math.abs(dx), height: Math.abs(dy), endBinding: g.target || undefined });
+    }
+    redraw();
+  }
+
   // lineEndAt says which end of a drawn line is under the point.
   function lineEndAt(line, p, tol) {
     const first = line.points[0]; const last = line.points[line.points.length - 1];
@@ -923,28 +964,28 @@ export function BoardEditor({
     };
   }
 
-  // suggestion draws a clicked snap point's offer: a line from it, to the shape
-  // under the pointer, or to a ghost of the next shape.
+  // suggestion draws a snap point's offer: a line from it, to the shape under
+  // the pointer, or to a ghost of the next shape.
   function suggestion() {
     const offer = suggesting.current;
     const from = offer && elements.current.get(offer.from);
-    if (!from || from.isDeleted) return null;
-    const live = drawnElements(elements.current);
+    if (!from || from.isDeleted) { suggesting.current = null; return null; }
     const start = { elementId: from.id, fixedPoint: offer.fixedPoint };
-    const end = offer.at && bindingAt(live, offer.at.x, offer.at.y, SNAP_RADIUS_PX / view.zoom, from.id);
+    const end = !offer.menu && offer.at && bindingAt(liveElements(elements.current), offer.at.x, offer.at.y, SNAP_MARGIN_PX / view.zoom, from.id);
     const map = new Map(elements.current);
-    const ghost = end ? null : { id: 'suggested', ...suggestedShape(from, offer.fixedPoint, offer.at) };
+    const ghost = end ? null : { id: 'suggested', ...suggestedShape(from, offer.fixedPoint, offer.at, offer) };
     if (ghost) map.set(ghost.id, ghost);
     const line = {
       id: 'suggested-line', type: 'arrow', x: 0, y: 0, points: [[0, 0], [0, 0]], strokeColor: from.strokeColor, routing,
-      startBinding: start, endBinding: end || { elementId: ghost.id },
+      startBinding: start, endBinding: end || { elementId: ghost.id, fixedPoint: entryPoint(ghost, snapPosition(from, offer.fixedPoint)) },
     };
     return { ghost, line: { ...line, ...routeConnector(line, map, true) } };
   }
 
   function acceptSuggestion(p) {
-    suggesting.current.at = p;
+    if (p) suggesting.current.at = p;
     const offer = suggestion();
+    if (suggesting.current?.menu && offer?.ghost) lastKind.current = offer.ghost.type;
     suggesting.current = null;
     if (!offer) { redraw(); return; }
     const { id: _ghostId, ...ghostProps } = offer.ghost || {};
@@ -952,10 +993,33 @@ export function BoardEditor({
     const { id: _lineId, routing: lineRouting, ...lineProps } = offer.line;
     const connector = newElement('arrow', {
       ...lineProps, ...(lineRouting !== 'straight' ? { routing: lineRouting } : {}),
-      ...(shape ? { endBinding: { elementId: shape.id } } : {}),
+      ...(shape ? { endBinding: { ...lineProps.endBinding, elementId: shape.id } } : {}),
     });
     commit(shape ? [shape, connector] : [connector]);
     setSelected([(shape || connector).id]);
+    // The next connection starts here, with the pointer or the keyboard.
+    if (shape) setHoverShape(shape.id);
+  }
+
+  // openQuickMenu asks what shape to make at the end of a connector.
+  function openQuickMenu(from, fixedPoint, at, dir) {
+    suggesting.current = { from: from.id, fixedPoint, at, dir, menu: true, kind: lastKind.current || from.type };
+    redraw();
+  }
+
+  function closeQuickMenu() {
+    if (!suggesting.current) return;
+    suggesting.current = null;
+    redraw();
+  }
+
+  // quickConnect offers a shape on that side of `from`, for the keyboard.
+  function quickConnect(from, fixedPoint) {
+    const { at, dir } = nextShapeSpot(from, fixedPoint, liveElements(elements.current));
+    openQuickMenu(from, fixedPoint, at, dir);
+    const rect = svgRef.current?.getBoundingClientRect?.();
+    const sx = (at.x - view.x) * view.zoom; const sy = (at.y - view.y) * view.zoom;
+    if (rect?.width && (sx < 0 || sy < 0 || sx > rect.width - QUICK_MENU_SIZE.width || sy > rect.height - QUICK_MENU_SIZE.height)) centerOn(at.x, at.y);
   }
 
   // chooseRouting sets the routing of the selected lines, and of the next.
@@ -980,24 +1044,23 @@ export function BoardEditor({
     const p = toBoard(event);
     pointerAt.current = p;
     const g = gesture.current;
-    if (tool !== 'hand' && tool !== 'text' && tool !== 'eraser' && !['move', 'resize', 'band', 'pan', 'erase'].includes(g?.kind)) {
+    const aiming = g?.kind === 'end' || (g?.kind === 'draw' && ['arrow', 'line'].includes(elements.current.get(g.id)?.type));
+    if (!aiming && tool !== 'hand' && tool !== 'text' && tool !== 'eraser' && !['move', 'resize', 'band', 'pan', 'erase'].includes(g?.kind)) {
       const near = shapeNear(liveElements(elements.current), p.x, p.y, SNAP_MARGIN_PX / view.zoom);
       setHoverShape(near?.id || '');
     }
-    if (suggesting.current) { suggesting.current.at = p; redraw(); return; }
+    if (suggesting.current) {
+      if (!suggesting.current.menu) { suggesting.current.at = p; redraw(); }
+      return;
+    }
     if (!g) return;
+    if (aiming) { aimLine(g, p, borderHeld(event)); return; }
     if (g.kind === 'band') { g.now = p; redraw(); return; }
     if (g.kind === 'pan') {
       setView({ ...g.view, x: g.view.x - (event.clientX - g.sx) / g.view.zoom, y: g.view.y - (event.clientY - g.sy) / g.view.zoom });
       return;
     }
     if (g.kind === 'erase') { eraseAt(p); return; }
-    if (g.kind === 'end') {
-      elements.current.set(g.id, lineWithEnd(g, p));
-      g.moved = true;
-      redraw();
-      return;
-    }
     const el = elements.current.get(g.id);
     if (!el) return;
     if (g.kind === 'move' || g.kind === 'resize') {
@@ -1019,8 +1082,6 @@ export function BoardEditor({
       if (el.type === 'freedraw') {
         g.raw.push([dx, dy]);
         elements.current.set(g.id, { ...el, points: g.raw.slice() });
-      } else if (el.type === 'arrow' || el.type === 'line') {
-        elements.current.set(g.id, { ...el, points: [[0, 0], [dx, dy]], width: Math.abs(dx), height: Math.abs(dy) });
       } else {
         elements.current.set(g.id, { ...el, ...normalizeBox(g.start.x, g.start.y, p.x, p.y) });
       }
@@ -1033,6 +1094,7 @@ export function BoardEditor({
     gesture.current = null;
     active.current = new Set();
     if (!g) return;
+    if (g.target) setHoverShape('');
     if (g.kind === 'band') {
       const box = normalizeBox(g.start.x, g.start.y, g.now.x, g.now.y);
       const inside = box.width > 2 || box.height > 2 ? elementsInBox(liveElements(elements.current), box).map((el) => el.id) : [];
@@ -1069,7 +1131,7 @@ export function BoardEditor({
       const key = g.end === 'start' ? 'startBinding' : 'endBinding';
       const other = g.orig[g.end === 'start' ? 'endBinding' : 'startBinding']?.elementId;
       const p = toBoard(event);
-      const binding = bindingAt(drawnElements(elements.current), p.x, p.y, SNAP_RADIUS_PX / view.zoom, other);
+      const binding = bindingAt(liveElements(elements.current), p.x, p.y, SNAP_MARGIN_PX / view.zoom, other, borderHeld(event));
       const next = { ...now, [key]: binding || undefined };
       commit(withArrows([bump(g.orig, { ...next, ...routeConnector(next, elements.current, true) })]));
       return;
@@ -1088,12 +1150,24 @@ export function BoardEditor({
     } else if (el.type === 'arrow' || el.type === 'line') {
       const [, [dx, dy]] = el.points;
       if (Math.hypot(dx, dy) < 6) {
-        if (g.fromSnap) suggesting.current = { from: el.startBinding.elementId, fixedPoint: el.startBinding.fixedPoint, at: null };
+        if (g.fromSnap && el.startBinding?.fixedPoint) {
+          const { elementId, fixedPoint } = el.startBinding;
+          suggesting.current = { from: elementId, fixedPoint, at: null, clicked: { at: event.timeStamp, x: p.x, y: p.y } };
+        }
         redraw();
         return;
       }
-      const to = bindingAt(drawnElements(elements.current), p.x, p.y, SNAP_RADIUS_PX / view.zoom, el.startBinding?.elementId);
-      if (to) done = { ...done, endBinding: to };
+      const border = borderHeld(event);
+      const to = bindingAt(liveElements(elements.current), p.x, p.y, SNAP_MARGIN_PX / view.zoom, el.startBinding?.elementId, border);
+      const from = el.startBinding && elements.current.get(el.startBinding.elementId);
+      // Dropped on blank board from a snap point: what goes there? With the
+      // border key it is just a line with a free end.
+      if (!to && !border && g.fromSnap && from && el.startBinding.fixedPoint) {
+        const { fixedPoint } = el.startBinding;
+        openQuickMenu(from, fixedPoint, p, dropDirection(from, fixedPoint, p));
+        return;
+      }
+      done = { ...done, endBinding: to || undefined };
       done = { ...done, ...routeConnector(done, elements.current, true) };
     } else if (el.width < 6 && el.height < 6) {
       redraw();
@@ -1151,9 +1225,9 @@ export function BoardEditor({
     if (hit?.type === 'text') { beginText(hit); return; }
     // On a line or stroke, or anywhere inside a shape (not only on an unfilled
     // shape's outline).
-    const shape = hit || shapeAt(live, p.x, p.y);
-    if (shape && shape.type !== 'text') beginLabel(shape);
-    else if (!hit && tool === 'select') beginText(null, p);
+    const shape = hit || shapeInside(live, p.x, p.y);
+    if (shape) beginLabel(shape);
+    else if (tool === 'select') beginText(null, p);
   }
 
   function finishText() {
@@ -1194,6 +1268,8 @@ export function BoardEditor({
   }, [win, editorToken]);
 
   useEffect(() => {
+    // Enter on a focused button is that button's.
+    const onButton = (event) => event.target?.closest?.('button');
     const ours = (event) => {
       const target = event.target;
       // Typing belongs to whatever holds the focus: a field, a terminal (xterm
@@ -1202,8 +1278,19 @@ export function BoardEditor({
       if (!shown()) return false;
       return !!rootRef.current?.contains?.(target) || (target === win?.document?.body && lastEditor === editorToken);
     };
+    // Holding or letting go of the border key mid-drag shows at once.
+    const onBorderKey = (event) => {
+      const g = gesture.current;
+      if ((event.key === 'Control' || event.key === 'Meta') && g?.at) aimLine(g, g.at, borderHeld(event));
+    };
     const onKey = (event) => {
+      onBorderKey(event);
       if (!ours(event)) return;
+      // The quick menu's field holds the keys; should it lose them, no more.
+      if (suggesting.current?.menu) {
+        if (event.key === 'Escape') closeQuickMenu();
+        return;
+      }
       const key = event.key.toLowerCase();
       const mod = event.ctrlKey || event.metaKey;
       if (mod && key === 'z') {
@@ -1225,7 +1312,12 @@ export function BoardEditor({
       }
       if (mod || event.altKey) return;
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length) { event.preventDefault(); remove(selected); return; }
-      if (event.key === 'Escape') { suggesting.current = null; setSelected([]); setTool('select'); return; }
+      if (event.key === 'Escape') { suggesting.current = null; setSelected([]); setTool('select'); redraw(); return; }
+      if (selected.length === 1 && !onButton(event)) {
+        const el = drawnElements(elements.current).find(({ id }) => id === selected[0]);
+        if (ARROW_SIDES[event.key] && snapPoints(el || {}).length) { event.preventDefault(); quickConnect(el, ARROW_SIDES[event.key]); return; }
+        if (event.key === 'Enter' && el) { event.preventDefault(); if (el.type === 'text') beginText(el); else beginLabel(el); return; }
+      }
       const t = BOARD_TOOLS.find((candidate, index) => candidate.key === key || boardToolDigit(index) === key);
       if (t) setTool(t.id);
     };
@@ -1256,11 +1348,13 @@ export function BoardEditor({
       setSelected([el.id]);
     };
     win?.addEventListener?.('keydown', onKey);
+    win?.addEventListener?.('keyup', onBorderKey);
     win?.addEventListener?.('copy', onCopy);
     win?.addEventListener?.('cut', onCopy);
     win?.addEventListener?.('paste', onPaste);
     return () => {
       win?.removeEventListener?.('keydown', onKey);
+      win?.removeEventListener?.('keyup', onBorderKey);
       win?.removeEventListener?.('copy', onCopy);
       win?.removeEventListener?.('cut', onCopy);
       win?.removeEventListener?.('paste', onPaste);
@@ -1349,12 +1443,16 @@ export function BoardEditor({
   const shownRouting = lines[0]?.routing || (lines.length ? 'straight' : routing);
   const snapShape = tool !== 'hand' && tool !== 'text' && tool !== 'eraser' ? drawnById.get(hoverShape) : null;
   const offer = suggesting.current ? suggestion() : null;
+  const menu = offer && suggesting.current?.menu ? suggesting.current : null;
+  const aimed = gesture.current?.target || null;
+  const aimedShape = aimed && drawnById.get(aimed.elementId);
   const band = gesture.current?.kind === 'band' ? normalizeBox(gesture.current.start.x, gesture.current.start.y, gesture.current.now.x, gesture.current.now.y) : null;
   const arrangeable = (() => {
     const owners = labelOwners(elements.current);
     const chosen = new Set(selected);
     return sels.filter((el) => el.type !== 'arrow' && !chosen.has(owners.get(el.id))).length;
   })();
+  const aiming = !!gesture.current?.at;
   const pad = 6 / view.zoom;
   const transform = `scale(${view.zoom}) translate(${-view.x} ${-view.y})`;
   const paper = gridStyle(view);
@@ -1449,7 +1547,14 @@ export function BoardEditor({
             ${band && html`<rect class="board-band" x=${band.x} y=${band.y} width=${band.width} height=${band.height} />`}
             ${sel && (sel.type === 'arrow' || sel.type === 'line') && [sel.points[0], sel.points[sel.points.length - 1]].map(([px, py], i) => html`<circle key=${i}
               class=${`board-line-end${(i ? sel.endBinding : sel.startBinding) ? ' on' : ''}`} cx=${sel.x + px} cy=${sel.y + py} r=${5 / view.zoom} />`)}
-            ${snapShape && snapPoints(snapShape).map(({ x, y }, i) => html`<circle key=${i} class="board-snap" cx=${x} cy=${y} r=${5 / view.zoom} />`)}
+            ${aimedShape && !aimed.fixedPoint && (() => {
+              const b = elementBounds(aimedShape);
+              return html`<rect class="board-aim" x=${b.x - pad} y=${b.y - pad} width=${b.width + pad * 2} height=${b.height + pad * 2} />`;
+            })()}
+            ${snapShape && !(aimed && !aimed.fixedPoint) && snapPoints(snapShape).map(({ x, y, fixedPoint }, i) => {
+              const taken = aimed?.fixedPoint?.[0] === fixedPoint[0] && aimed.fixedPoint[1] === fixedPoint[1];
+              return html`<circle key=${i} class=${`board-snap${taken ? ' on' : ''}`} cx=${x} cy=${y} r=${(taken ? 7 : 5) / view.zoom} />`;
+            })}
             ${offer && html`<g class="board-suggestion">
               ${offer.ghost && html`<${BoardElement} el=${{ ...offer.ghost, strokeWidth: 2 }} />`}
               <${BoardElement} el=${offer.line} />
@@ -1465,6 +1570,15 @@ export function BoardEditor({
           if (event.key === 'Escape' || (event.key === 'Enter' && !event.shiftKey)) { event.preventDefault(); finishText(); }
         }}
         onBlur=${finishText}></textarea>`}
+      ${menu && (() => {
+        const rect = svgRef.current?.getBoundingClientRect?.();
+        const fit = (value, room, size) => Math.max(4, room ? Math.min(value, room - size - 4) : value);
+        const x = fit((menu.at.x - view.x) * view.zoom + 8, rect?.width, QUICK_MENU_SIZE.width);
+        const y = fit((menu.at.y - view.y) * view.zoom + 8, rect?.height, QUICK_MENU_SIZE.height);
+        return html`<${BoardQuickMenu} x=${x} y=${y} kind=${menu.kind} onPreview=${(kind) => { if (suggesting.current) { suggesting.current.kind = kind; redraw(); } }}
+          onPick=${(kind) => { suggesting.current.kind = kind; acceptSuggestion(); }} onCancel=${closeQuickMenu} />`;
+      })()}
+      ${aiming && html`<div class="board-hint" role="status">Hold ${borderKeyName(win)} to attach to the border instead of a connection point</div>`}
       ${drawing.length > 0 && html`<div class="board-drawing-note" role="status">✎ ${drawing.join(', ')} ${drawing.length === 1 ? 'is' : 'are'} drawing…</div>`}
       ${!live.length && status === 'ready' && html`<div class="board-empty-hint">Pick a tool and draw. Invite an agent to draw with you; it reads the board as shapes and as an image.</div>`}
       <${BoardMinimap} elements=${drawnMap.current} tick=${tick} view=${view} svgRef=${svgRef} onScreen=${onScreen} win=${win} onNavigate=${centerOn} />
