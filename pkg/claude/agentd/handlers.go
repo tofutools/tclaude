@@ -235,9 +235,9 @@ func peerStateFromAgentState(state agentState) peerState {
 // Two passes:
 //
 //  1. **Group members.** Agent caller → members of every group the
-//     caller is in. Human caller → members of every known group
-//     (humans aren't scoped by group membership — they see the full
-//     picture and can reach anyone).
+//     caller is in. Human caller, or an agent holding fleet.read → members
+//     of every known group (they aren't scoped by group membership and see
+//     the full picture; what an agent can reach is still decided at send).
 //  2. **Ungrouped agents.** Every active enrolled agent not already
 //     surfaced by pass 1, online or offline. Caller (when known) is
 //     excluded. Being an agent is an explicit, durable fact now, so
@@ -258,7 +258,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 
 	var groups []*db.AgentGroup
 	var err error
-	if isHuman {
+	if isHuman || readsWholeFleet(r, myID) {
 		groups, err = db.ListAgentGroups()
 	} else {
 		groups, err = db.ListGroupsForConv(myID)
@@ -3535,8 +3535,12 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		// hand it filesystem layout it has no way to guess (the terminal
 		// console gates its Tab-completion for exactly this reason), so it
 		// goes to a human caller only — who configured it and reads it back
-		// in the dashboard and `groups ls` anyway.
-		human := classify(peerFromContext(r.Context())) == classHuman
+		// in the dashboard and `groups ls` anyway. The directory also goes to a
+		// fleet reader, whose setup help starts from it; the environment, which
+		// can carry private values, stays with the human.
+		caller := peerFromContext(r.Context())
+		human := classify(caller) == classHuman
+		showDirs := human || (caller != nil && readsWholeFleet(r, caller.ConvID))
 		// One tmux ls for the listing — per-member online checks below
 		// are map lookups against this snapshot.
 		aliveSessions, _ := cachedLiveTmuxSessions()
@@ -3556,8 +3560,10 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			attachment := groupAttachmentViewFor(g)
 			defaultCwd := ""
 			var environment []sandboxpolicy.EnvironmentEntry
-			if human {
+			if showDirs {
 				defaultCwd = g.DefaultCwd
+			}
+			if human {
 				environment = append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...)
 			}
 			out = append(out, groupSummary{
