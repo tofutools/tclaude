@@ -1191,8 +1191,6 @@ function TerminalTabs({
   const composeMessageAvailable = Boolean(onComposeMessage) &&
     (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
-  // A board keeps nothing in the page that a reload would lose.
-  const hasTerminals = current.panes.some((pane) => !pane.seed.board);
   // Sessions still running in tmux with no terminal attached. The dashboard
   // tab lists them; a pop-out window shows only its own panes.
   const backgroundRows = solo ? [] : visibleBackgroundTerminals(backgroundTerminals.value, current.panes);
@@ -1643,7 +1641,7 @@ function TerminalTabs({
   }, [current.revealRequest, solo]);
 
   useEffect(() => {
-    if (!hasTerminals) return undefined;
+    if (!hasPanes) return undefined;
     let armed = true;
     const confirmUnload = (event) => {
       event.preventDefault();
@@ -1660,7 +1658,7 @@ function TerminalTabs({
       window.removeEventListener('tclaude:auth-expired', disarmForAuth);
       window.removeEventListener('beforeunload', confirmUnload);
     };
-  }, [hasTerminals]);
+  }, [hasPanes]);
 
   // The last open tab closing leaves an empty section behind; move on to
   // Groups unless config says to stay (terminal-close-nav.js). Only the
