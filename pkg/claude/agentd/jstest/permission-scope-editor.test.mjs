@@ -572,3 +572,65 @@ test('HTTP proxy permission can be granted and scoped to a configured instance',
   assert.equal(saved[0].selection['proxy.http'], 'grant');
   assert.deepEqual(saved[0].scopes, { 'proxy.http': { http_proxy: ['inventory'] } });
 });
+
+test('the scope control says it adds scopes and appears only on a grant that has them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({ slugs: [SPAWN, CLIPBOARD] }), noopActions);
+  const twisty = () => host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty');
+  assert.equal(twisty().getAttribute('aria-expanded'), 'false');
+  assert.equal(twisty().getAttribute('aria-label'), 'Add or edit scopes for groups.members.spawn');
+  assert.match(twisty().title, /^Add or edit scopes/);
+  assertAbsent(host.querySelector('[data-slug="human.clipboard"] button.perm-scope-twisty'));
+  await harness.act(() => { twisty().click(); });
+  assert.equal(twisty().getAttribute('aria-expanded'), 'true');
+  assert.equal(twisty().getAttribute('aria-label'), 'Hide scopes for groups.members.spawn');
+  await mounted.unmount();
+});
+
+test('the filter\'s clear keeps selections, and the reset keeps the filter', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({ slugs: [SPAWN, CLIPBOARD] }), {
+    ...noopActions,
+    savePermissions: async (descriptor, selection) => { saved.push(selection); },
+  });
+  const filter = () => host.querySelector('#perm-edit-filter');
+  const reset = () => host.querySelector('#perm-edit-reset');
+  const slugs = () => [...host.querySelectorAll('.perm-row')].map((row) => row.dataset.slug);
+  const granted = (slug) => host.querySelector(`[data-slug="${slug}"] [data-effect="grant"]`).classList.contains('active');
+
+  assertAbsent(host.querySelector('#perm-edit-filter-clear'), 'nothing to clear yet');
+  assert.equal(reset().querySelector('.pe-btn-regular').textContent, 'Reset all to Default');
+  assert.equal(reset().querySelector('.pe-btn-wizard').textContent, 'unbind all');
+  assertAbsent(host.querySelector('.perm-edit-toolbar #perm-edit-reset'), 'not beside the search box');
+
+  await harness.input(filter(), 'clip');
+  assert.deepEqual(slugs(), ['human.clipboard']);
+  await harness.act(() => { host.querySelector('#perm-edit-filter-clear').click(); });
+  assert.equal(filter().value, '');
+  assert.deepEqual(slugs(), ['groups.members.spawn', 'human.clipboard']);
+  assert.ok(granted('groups.members.spawn') && granted('human.clipboard'), 'clearing the filter keeps every selection');
+
+  await harness.input(filter(), 'clip');
+  assert.equal(reset().disabled, false);
+  await harness.act(() => { reset().click(); });
+  assert.equal(filter().value, 'clip', 'resetting keeps the filter');
+  assert.equal(reset().disabled, true, 'nothing left to clear, hidden rows included');
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(saved[0]['groups.members.spawn'], 'default');
+  assert.equal(saved[0]['human.clipboard'], 'default');
+  await mounted.unmount();
+});
+
+test('Escape empties a non-empty filter first and closes the editor only after that', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({ slugs: [SPAWN, CLIPBOARD] }), noopActions);
+  const filter = () => host.querySelector('#perm-edit-filter');
+  await harness.input(filter(), 'clip');
+  await harness.act(() => harness.fireEvent(filter(), 'keydown', { key: 'Escape' }));
+  assert.equal(filter().value, '');
+  assert.ok(host.querySelector('#perm-edit-modal'), 'the first Escape leaves the editor open');
+  await harness.act(async () => { harness.fireEvent(filter(), 'keydown', { key: 'Escape' }); await Promise.resolve(); });
+  assertAbsent(host.querySelector('#perm-edit-modal'), 'the next Escape closes it');
+  await mounted.unmount();
+});
