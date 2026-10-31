@@ -2120,3 +2120,9 @@ CREATE TABLE collab_board_participants (
 ) STRICT;
 
 CREATE INDEX idx_collab_board_participants_agent ON collab_board_participants(agent_id);
+
+CREATE TABLE held_context_reinjections (
+		session_id        TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+		conv_id           TEXT NOT NULL,
+		transcript_offset INTEGER NOT NULL
+	);

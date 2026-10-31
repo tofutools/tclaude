@@ -3,11 +3,14 @@ package session
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/startupctx"
@@ -195,4 +198,151 @@ func TestContextReinjection_GroupModeIdentityAndOff(t *testing.T) {
 	QueueContextReinjection(sessionStart("compact"), "sess-1")
 	QueueContextReinjection(sessionStart("clear"), "sess-1")
 	assert.Empty(t, reinjectedMessages(t))
+}
+
+// claudeTranscriptFixture gives the fixture session a launch directory and
+// returns the main-thread transcript Claude Code would be appending to.
+func claudeTranscriptFixture(t *testing.T) string {
+	t.Helper()
+	state, err := LoadSessionState("sess-1")
+	require.NoError(t, err)
+	state.Cwd = filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, SaveSessionState(state))
+	path := filepath.Join(convops.GetClaudeProjectPath(state.Cwd), "conv-1.jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(`{"type":"user"}`+"\n"), 0o644))
+	return path
+}
+
+func appendCompactBoundary(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	_, err = f.WriteString(`{"type":"system","subtype":"compact_boundary"}` + "\n")
+	require.NoError(t, err)
+}
+
+func fireHook(t *testing.T, input HookCallbackInput) {
+	t.Helper()
+	input.ConvID = "conv-1"
+	var buf bytes.Buffer
+	require.NoError(t, DispatchHookEvent(context.Background(), input, "sess-1", LocalHookAmbient(), &buf))
+}
+
+// autoCompactionHooks is what Claude Code 2.1.314 fires for an automatic
+// compaction, in order. A subagent's compaction fires exactly these too, with
+// the main session_id and no agent_id: nothing in them says whose it was.
+func autoCompactionHooks(t *testing.T) {
+	t.Helper()
+	fireHook(t, HookCallbackInput{HookEventName: "PreCompact", Trigger: "auto"})
+	fireHook(t, HookCallbackInput{HookEventName: "SessionStart", Source: "compact"})
+	fireHook(t, HookCallbackInput{HookEventName: "PostCompact", Trigger: "auto"})
+}
+
+func TestContextReinjection_SubagentCompactionDoesNotReachMainAgent(t *testing.T) {
+	reinjectionFixture(t)
+	claudeTranscriptFixture(t)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1", AgentType: "general-purpose"})
+	autoCompactionHooks(t)
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStop", AgentID: "sub-1", AgentType: "general-purpose"})
+	fireHook(t, HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Agent"})
+
+	assert.Empty(t, reinjectedMessages(t))
+}
+
+func TestContextReinjection_MainCompactionBesideSubagentQueuesAtNextMainHook(t *testing.T) {
+	reinjectionFixture(t)
+	transcript := claudeTranscriptFixture(t)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	autoCompactionHooks(t)
+	assert.Empty(t, reinjectedMessages(t), "the hooks alone cannot say whose compaction this was")
+	appendCompactBoundary(t, transcript)
+
+	// A subagent's own activity is no evidence about the main thread.
+	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read", AgentID: "sub-1"})
+	assert.Empty(t, reinjectedMessages(t))
+
+	fireHook(t, HookCallbackInput{HookEventName: "UserPromptSubmit", Prompt: "next"})
+	assert.Empty(t, reinjectedMessages(t), "a prompt does not prove the compaction finished")
+
+	fireHook(t, HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
+	assert.Len(t, reinjectedMessages(t), 1)
+}
+
+func TestContextReinjection_ForeignHookDoesNotSettleAHold(t *testing.T) {
+	reinjectionFixture(t)
+	transcript := claudeTranscriptFixture(t)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	autoCompactionHooks(t)
+	appendCompactBoundary(t, transcript)
+
+	QueueContextReinjection(HookCallbackInput{HookEventName: "Stop", ConvID: "conv-child"}, "sess-1")
+	assert.Empty(t, reinjectedMessages(t))
+
+	fireHook(t, HookCallbackInput{HookEventName: "Stop"})
+	assert.Len(t, reinjectedMessages(t), 1)
+}
+
+func TestContextReinjection_ManualCompactBesideSubagentQueuesOnce(t *testing.T) {
+	reinjectionFixture(t)
+	claudeTranscriptFixture(t)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	fireHook(t, HookCallbackInput{HookEventName: "SessionStart", Source: "compact"})
+	fireHook(t, HookCallbackInput{HookEventName: "PostCompact", Trigger: "manual"})
+	assert.Len(t, reinjectedMessages(t), 1)
+
+	held, err := db.PeekHeldContextReinjection("sess-1")
+	require.NoError(t, err)
+	assert.Nil(t, held, "the manual compaction answered the hold")
+}
+
+func TestContextReinjection_UnreadableTranscriptStillQueues(t *testing.T) {
+	reinjectionFixture(t)
+	transcript := claudeTranscriptFixture(t)
+	require.NoError(t, os.Remove(transcript))
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	autoCompactionHooks(t)
+
+	assert.Len(t, reinjectedMessages(t), 1, "a spurious reminder beats a lost briefing")
+}
+
+func TestContextReinjection_TranscriptLostWhileHeldStillQueues(t *testing.T) {
+	reinjectionFixture(t)
+	transcript := claudeTranscriptFixture(t)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	autoCompactionHooks(t)
+	require.NoError(t, os.Remove(transcript))
+	fireHook(t, HookCallbackInput{HookEventName: "Stop"})
+
+	assert.Len(t, reinjectedMessages(t), 1)
+}
+
+func TestContextReinjection_SubagentCompactionKeepsTheSubagentLedger(t *testing.T) {
+	reinjectionFixture(t)
+	claudeTranscriptFixture(t)
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	autoCompactionHooks(t)
+
+	state, err := LoadSessionState("sess-1")
+	require.NoError(t, err)
+	assert.True(t, state.Subagents.Has("sub-1"))
+}
+
+func TestContextReinjection_OtherHarnessesStillResetTheLedgerOnCompact(t *testing.T) {
+	standingOrderFixture(t, "codex")
+
+	fireHook(t, HookCallbackInput{HookEventName: "SubagentStart", AgentID: "sub-1"})
+	fireHook(t, HookCallbackInput{HookEventName: "SessionStart", Source: "compact"})
+
+	state, err := LoadSessionState("sess-1")
+	require.NoError(t, err)
+	assert.False(t, state.Subagents.Has("sub-1"))
 }

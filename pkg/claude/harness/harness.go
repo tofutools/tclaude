@@ -119,6 +119,10 @@ type Harness struct {
 	// Transcript converts History's wire format to and from the neutral
 	// transcript for cross-harness morph. nil = no translation support.
 	Transcript TranscriptCodec
+	// Compaction proves whose compaction a hook announced, for a harness whose
+	// in-harness subagents fire compaction hooks indistinguishable from the
+	// main thread's. nil = the hooks attribute themselves.
+	Compaction CompactionProof
 	// Hooks installs/checks/repairs the tclaude callback in the harness's
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.

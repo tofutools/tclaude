@@ -1355,8 +1355,13 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		// (e.g. sub-agents that died with a previous process). A /clear
 		// or /resume transition lands here too; a background sub-agent
 		// that somehow survives one re-adds itself via Sight() on its
-		// next hook.
-		state.Subagents = nil
+		// next hook. The exception is a harness that fires this very event
+		// for a subagent's own compaction, with no agent_id: there it says
+		// nothing about the main thread, and the re-injection needs to know
+		// a subagent is running.
+		if input.Source != "compact" || !subagentsShareCompactionHooks(state.Harness) {
+			state.Subagents = nil
+		}
 		// Background shells are children of the harness PROCESS, and
 		// monitors belong to it, which a /clear or /resume does not
 		// restart — so unlike sub-agents both can genuinely outlive this
@@ -1497,8 +1502,8 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		// Auto-compaction happens inside an active turn, so the eager
 		// compacting-detail clear above intentionally leaves it working.
 		// A manual /compact returns the human to an idle prompt instead.
-		// SessionStart(source=compact), which follows this hook, preserves
-		// whichever status this boundary selected.
+		// SessionStart(source=compact) fires just before this hook on Claude
+		// Code 2.1.314, and preserves the status either way round.
 		// PostCompact is exempt from the mismatched-conversation guard
 		// because a legitimate compaction can rotate the conv-id before its
 		// SessionStart(compact) announces that rotation. Do not let that
