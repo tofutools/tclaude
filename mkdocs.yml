@@ -108,6 +108,10 @@ nav:
           - Ansible: server/ansible.md
       - Adding a harness: adding-a-harness.md
 
+# The Go file that embeds these pages in the binary is not a page.
+exclude_docs: |
+  /embed.go
+
 # Pages built but deliberately left out of the nav: a contributor runbook,
 # and preliminary v2 designs that are not user guidance.
 not_in_nav: |

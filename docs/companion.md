@@ -18,7 +18,7 @@ it up.
 | Companion and its shortcuts | Absent | Available |
 | Access banner's **Review** | Opens Messages | Opens the [approval panel](#answering-permission-requests) |
 | Boards, Config › Steward | Hidden | Shown |
-| `tclaude agent board`, `fleet`, `guide` | Refused with `collab_disabled` | Work |
+| `tclaude agent board`, `fleet`, `guide`, `knowledge` | Refused with `collab_disabled` | Work |
 | `notify-human --option` | Refused with `collab_disabled` | Sends a [decision](#decisions) |
 
 The companion isn't available in a peer's per-node view or in pop-out windows.
@@ -148,6 +148,13 @@ in your companion window. A cue only points. It never presses anything, and it
 can't mark approval or decision controls. It plays once and fades after about 14
 seconds. While you're typing or dictating, a hand-over only pins the agent, so your
 words still go where you meant them.
+
+### What it knows
+
+The Steward has a [knowledge base](#knowledge-base) of tclaude's docs and source,
+pinned to the build you are running, and uses it before guessing. Its answers match
+your version, not whatever it remembers. If your build has uncommitted changes or
+names no commit, the knowledge base says so.
 
 ### What the Steward may do
 
@@ -300,6 +307,48 @@ Marks are stored, so `tclaude agent guide marks` (paged, with `--state`) lists
 active, expired, dismissed, acknowledged, cleared and replaced marks, with who
 ended each and how. The newest 1000 ended marks are kept. Captures show marks
 and report whether each was drawn, so the Steward can confirm one landed.
+
+### Knowledge base
+
+`tclaude agent knowledge` reads the docs and source of the build the daemon is
+running, with `knowledge.read`, which a Steward gets when summoned and other
+agents do not.
+
+```bash
+tclaude agent knowledge status                     # the pin, and how exact it is
+tclaude agent knowledge search "guide mark" -i     # docs first, then source
+tclaude agent knowledge read companion.md#capture  # a page, or one section of it
+tclaude agent knowledge read pkg/claude/agentd/steward.go --lines 100-160
+tclaude agent knowledge ls pkg/claude/agentd
+```
+
+A docs page ends with the pages it links to and those linking to it, so the links
+work as a graph: read a link's `page.md#section` to follow it. Every command takes
+`--json`, which gives the links as data. A long file comes back in part and says
+which lines to ask for next.
+
+Every answer starts with how far it can be trusted:
+
+| Label | Meaning |
+|---|---|
+| `exact` | A clean build of a known commit, or a release. Docs and any source there is match what is running. |
+| `dirty` | A commit plus uncommitted changes. Docs are as built. Source is that commit without the changes. |
+| `unknown` | The build names no commit, such as `go build` from an extracted tree. Docs are as built, and there is no source. |
+
+The docs are built into the binary, so they work with no checkout and offline. The
+source would add many megabytes, so it isn't. The daemon downloads it once from
+GitHub, by commit, when a Steward is summoned or starts up after an upgrade, and
+keeps only the running build's copy, about 65 MiB, under
+`~/.tclaude/data/knowledge`. A download for a commit must name that commit; one for
+a release tag trusts the tag. Offline, or for a commit that was never pushed, docs
+still work, `knowledge status` says why source is missing, and the download is
+tried again on use. Nothing is downloaded
+with Collab off or until a Steward needs it.
+
+The daemon holds the copy and only answers reads, so an agent can't change it. It
+needs no new filesystem access, whatever the sandbox. It holds what ships with
+tclaude and nothing of your setup: no config, startup prompts, messages or
+credentials. Screenshots and the preliminary v2 designs are left out.
 
 ### Saved captures
 

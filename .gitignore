@@ -85,3 +85,6 @@ excalidraw.log
 # Claude Code runtime write-journal (a real directory, created in-repo
 # by sandboxed sessions; empty today but never a project file).
 /.claude/.cc-writes/
+
+# GoReleaser output. Untracked here, it marks every release build as modified.
+/dist/

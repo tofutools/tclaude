@@ -38,6 +38,8 @@ func TestCollabSurfacesAreAbsentUntilOptedIn(t *testing.T) {
 	}
 	agentRoutes := []struct{ method, path string }{
 		{http.MethodGet, "/v1/fleet"},
+		{http.MethodGet, "/v1/knowledge/status"},
+		{http.MethodGet, "/v1/knowledge/read?path=index.md"},
 		{http.MethodGet, "/v1/dashboard/view"},
 		{http.MethodPost, "/v1/dashboard/cue"},
 		{http.MethodGet, "/v1/boards"},

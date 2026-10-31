@@ -66,7 +66,7 @@ var laterWorkSudoSlugs = []string{PermSelfSchedule, PermAgentSchedule, PermGroup
 
 // chattySudoSlugs are checked again and again within one task, so a count would
 // not mean anything a person asked for.
-var chattySudoSlugs = []string{PermBoardsWrite, PermDashboardMark, PermDashboardGuide, PermDashboardCapture,
+var chattySudoSlugs = []string{PermBoardsWrite, PermDashboardMark, PermDashboardGuide, PermDashboardCapture, PermKnowledgeRead,
 	PermHTTP, PermModelsProxy, PermSessionsAttach, PermSessionsShell, PermSessionsTakeover, PermSessionsWatch,
 	PermRoutesConsume, PermRoutesPublish, PermRoutesPublishHost}
 

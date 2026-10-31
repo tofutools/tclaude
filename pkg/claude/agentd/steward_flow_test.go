@@ -808,6 +808,7 @@ func TestSteward_ReconcileAddsANewSlugAndKeepsRemovalsAndDenies(t *testing.T) {
 	assert.Contains(t, mail[0].Body, agentd.PermRolesManage)
 	assert.NotContains(t, mail[0].Body, agentd.PermPromptsManage)
 	assert.Contains(t, mail[0].Body, "guide capture -o /tmp/view.png")
+	assert.Contains(t, mail[0].Body, "tclaude agent knowledge search")
 
 	// Taken off after it arrived, and nothing further to say.
 	_, err = db.RevokeAgentPermission(conv, agentd.PermRolesManage)
@@ -827,7 +828,7 @@ func TestSteward_ReconcileOfAStewardFromBeforeTheRecord(t *testing.T) {
 	require.NoError(t, err)
 	_, err = d.Exec(`DELETE FROM steward_offered_permissions WHERE slug <> ?`, db.StewardRecordOpened)
 	require.NoError(t, err)
-	for _, slug := range []string{agentd.PermDashboardCapture, agentd.PermDashboardMark, agentd.PermHumanNotify} {
+	for _, slug := range []string{agentd.PermDashboardCapture, agentd.PermDashboardMark, agentd.PermKnowledgeRead, agentd.PermHumanNotify} {
 		_, err = db.RevokeAgentPermission(conv, slug)
 		require.NoError(t, err)
 	}
@@ -835,6 +836,8 @@ func TestSteward_ReconcileOfAStewardFromBeforeTheRecord(t *testing.T) {
 	agentd.ReconcileStewardAccessForTest()
 
 	effect, _ := stewardOverrideHeld(t, conv, agentd.PermDashboardCapture)
+	assert.Equal(t, db.PermEffectGrant, effect)
+	effect, _ = stewardOverrideHeld(t, conv, agentd.PermKnowledgeRead)
 	assert.Equal(t, db.PermEffectGrant, effect)
 	effect, _ = stewardOverrideHeld(t, conv, agentd.PermDashboardMark)
 	assert.Equal(t, db.PermEffectGrant, effect)
