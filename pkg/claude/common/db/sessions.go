@@ -3137,8 +3137,8 @@ const (
 // open-ended. The walk is path-dependent, so a day window alone would be wrong:
 // a conversation's baseline comes from its whole history, and a row's carry
 // comes from every earlier row of its session. So this loads the full history
-// of each conversation with a row in the window, plus the full history of each
-// session those conversations ran in.
+// of each session that ran in a conversation with a row in the window, which
+// covers those conversations' own full histories.
 //
 // That last step can pull in rows of a conversation with nothing in the window.
 // Their deltas are computed from a partial history and all fall before fromDay,
@@ -3161,7 +3161,6 @@ func CostDailyRowsForWindow(fromDay, toDay string, withIgnored bool) ([]CostDail
 			WHERE `+costConvKey+` IN (SELECT conv FROM convs))
 		SELECT `+costDailyColumns+` FROM session_cost_daily
 		WHERE session_id IN (SELECT session_id FROM walked)
-			OR `+costConvKey+` IN (SELECT conv FROM convs)
 		ORDER BY `+costWalkOrder, args...)
 }
 
