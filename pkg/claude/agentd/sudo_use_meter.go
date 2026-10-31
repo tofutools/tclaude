@@ -43,6 +43,12 @@ var countableSudoSlugs = []string{
 	PermGroupsCreate, PermGroupsDelete, PermGroupsRename, PermGroupsClone, PermGroupsArchive, PermGroupsNest,
 	PermGroupsAttachment, PermGroupsImport, PermGroupsOwnersManage, PermGroupsLinkAdd, PermGroupsLinkRemove,
 
+	// One save spends one use of each slug it changes: each is its own grant.
+	PermGroupsSettingsDescription, PermGroupsSettingsDefaultDir, PermGroupsSettingsDefaultContext,
+	PermGroupsSettingsEnvironment, PermGroupsSettingsDefaultSpawnTarget, PermGroupsSettingsDefaultProfile,
+	PermGroupsSettingsMaxMembers, PermGroupsSettingsNotifications, PermGroupsSettingsRemoteControlPolicy,
+	PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes,
+
 	PermMessageDirect, PermHumanNotify, PermHumanClipboard,
 
 	PermTemplatesManage, PermTemplatesUse, PermProfilesManage, PermRolesManage, PermPromptsManage,
@@ -65,7 +71,7 @@ var chattySudoSlugs = []string{PermBoardsWrite, PermDashboardMark, PermDashboard
 	PermRoutesConsume, PermRoutesPublish, PermRoutesPublishHost}
 
 // peerSudoSlugs are spent across a peer link, where this node's count does not reach.
-var peerSudoSlugs = []string{PermAgentMove, PermSelfTeleport, PermSelfTeleportPermissions, PermJobsRun}
+var peerSudoSlugs = []string{PermGroupsSettings, PermAgentMove, PermSelfTeleport, PermSelfTeleportPermissions, PermJobsRun}
 
 // sudoUseLimitRefusal says why a slug takes no use limit, and is empty when it
 // can have one. The editor shows it on the row.

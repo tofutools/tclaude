@@ -304,6 +304,8 @@ func TestSudoUses_EverySlugCountsOrSaysWhyNot(t *testing.T) {
 	}
 	assert.Equal(t, "It only reads, so there is no action to count.", slugs[agentd.PermUsageRead])
 	assert.Contains(t, slugs[agentd.PermGroupsMembersSpawnCwd], "groups.members.spawn")
+	assert.Empty(t, slugs[agentd.PermGroupsSettingsOwnerScopes])
+	assert.Contains(t, slugs[agentd.PermGroupsSettings], "peer")
 }
 
 func stopGroup(t *testing.T, f *testharness.Flow, conv, group string) int {
@@ -367,4 +369,62 @@ func TestSudoUses_ScopeTimeAndLimitCombine(t *testing.T) {
 	assert.JSONEq(t, scope, stored[0].ScopeJSON)
 	assert.Equal(t, int64(5), stored[0].UsesLimit)
 	assert.WithinDuration(t, now.Add(10*time.Minute), stored[0].ExpiresAt, time.Second)
+}
+
+func patchGroupAs(t *testing.T, f *testharness.Flow, conv, group string, body map[string]any) int {
+	t.Helper()
+	return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/groups/"+group, body), conv)).Code
+}
+
+// The limit stops a settings save at N, and a refused or failed save gives its
+// use back.
+func TestSudoUses_GroupSettingsStopAtTheLimit(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	id := haveLimitedSudo(t, worker, agentd.PermGroupsSettingsDefaultContext, 2)
+	save := func(reinject string) int {
+		return patchGroupAs(t, f, worker, "alpha", map[string]any{"reinject_after_compact": reinject})
+	}
+
+	require.Equal(t, http.StatusOK, save("identity"))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id))
+
+	assert.Equal(t, http.StatusBadRequest, save("bogus"), "failed")
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id), "a failed save gives its use back")
+
+	refused := patchGroupAs(t, f, worker, "alpha", map[string]any{"reinject_after_compact": "off", "max_members": 9})
+	assert.Equal(t, http.StatusForbidden, refused, "max_members needs a grant it does not have")
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id), "a refused save gives its use back")
+
+	require.Equal(t, http.StatusOK, save("off"))
+	assert.Equal(t, int64(0), sudoUsesLeft(t, id))
+	assert.Equal(t, http.StatusForbidden, save("contexts"))
+}
+
+// Each setting is its own grant, so a save changing two spends one of each, and
+// if either has none left neither is spent.
+func TestSudoUses_BulkSettingsSaveSpendsEachSlugOnce(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	descr := haveLimitedSudo(t, worker, agentd.PermGroupsSettingsDescription, 2)
+	max := haveLimitedSudo(t, worker, agentd.PermGroupsSettingsMaxMembers, 1)
+	both := map[string]any{"descr": "new", "max_members": 9}
+
+	require.Equal(t, http.StatusOK, patchGroupAs(t, f, worker, "alpha", both))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, descr))
+	assert.Equal(t, int64(0), sudoUsesLeft(t, max))
+
+	assert.Equal(t, http.StatusForbidden, patchGroupAs(t, f, worker, "alpha", both))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, descr), "the half that had a use gets it back")
+}
+
+// groups.admin held standing already allows the save, so the grant is not spent.
+func TestSudoUses_StandingGroupsAdminLeavesASettingsGrantUnspent(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	id := haveLimitedSudo(t, worker, agentd.PermGroupsSettingsDescription, 1)
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermGroupsAdmin, db.PermEffectGrant, "test"))
+	require.Equal(t, http.StatusOK, patchGroupAs(t, f, worker, "alpha", map[string]any{"descr": "new"}))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, id))
 }

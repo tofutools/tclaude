@@ -268,6 +268,11 @@ These count:
   `groups.archive`, `groups.nest`, `groups.attachment`, `groups.import`,
   `groups.owners.manage`, `groups.link.add`, `groups.link.remove`,
   `groups.members.add`, `groups.members.remove`, `groups.members.update`.
+- group settings: every `groups.settings.*` slug, from `groups.settings.description`
+  to `groups.settings.owner-scopes`. One save spends one use of each setting it
+  changes, so a save of the description and the default directory spends one of each
+  grant, and gives both back if it fails. Reads spend nothing. An agent that also
+  holds `groups.admin` or owns the group is covered by that, and spends nothing.
 - `message.direct`, `human.notify`, `human.clipboard`.
 - `templates.manage`, `templates.instantiate`, `profiles.manage`, `roles.manage`,
   `prompts.manage`, `process.templates.manage`, `process.runs.start`,
