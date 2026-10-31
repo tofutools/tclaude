@@ -2,11 +2,11 @@ package db
 
 import "database/sql"
 
-// migrateV290toV291 adds a use limit to sudo grants. uses_limit 0 means no
+// migrateV291toV292 adds a use limit to sudo grants. uses_limit 0 means no
 // limit, and a grant with a limit ends when uses_left reaches 0 or its time
 // runs out, whichever comes first. The stored copy keeps its own count, so a
 // new Steward never refills one.
-func migrateV290toV291(d *sql.DB) error {
+func migrateV291toV292(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -27,7 +27,7 @@ func migrateV290toV291(d *sql.DB) error {
 			}
 		}
 	}
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 291`); err != nil {
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 292`); err != nil {
 		return err
 	}
 	return tx.Commit()
