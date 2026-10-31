@@ -7,7 +7,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 async function watched(t, markup = '<button id="trigger"></button><div id="panel"></div>', options = {}) {
   const harness = await createPreactHarness(t);
-  const { HOVER_CLOSE_MS, watchPopover } = await harness.importDashboardModule('js/hover-popover.js');
+  const { CLICK_CLOSE_MS, watchPopover } = await harness.importDashboardModule('js/hover-popover.js');
   const root = harness.document.body.appendChild(harness.document.createElement('div'));
   root.innerHTML = markup;
   const closed = [];
@@ -15,7 +15,7 @@ async function watched(t, markup = '<button id="trigger"></button><div id="panel
   t.after(() => stop());
   const leave = () => root.dispatchEvent(new harness.window.Event('mouseleave'));
   const enter = () => root.dispatchEvent(new harness.window.Event('mouseenter'));
-  const wait = () => new Promise((resolve) => setTimeout(resolve, HOVER_CLOSE_MS + 40));
+  const wait = () => new Promise((resolve) => setTimeout(resolve, CLICK_CLOSE_MS + 40));
   return { harness, root, closed, stop, leave, enter, wait };
 }
 
@@ -47,6 +47,25 @@ test('the pointer staying away closes, coming back in time keeps it', async (t) 
   assert.deepEqual(closed, []);
   leave();
   await wait();
+  assert.deepEqual(closed, ['away']);
+});
+
+let hovering = false;
+test('a click-opened popover outlasts the hover delay, a hover-opened one does not', async (t) => {
+  const { harness, closed, leave } = await watched(t, undefined, { hoverOpened: () => hovering });
+  const { HOVER_CLOSE_MS, CLICK_CLOSE_MS } = await harness.importDashboardModule('js/hover-popover.js');
+  assert.ok(CLICK_CLOSE_MS > HOVER_CLOSE_MS);
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  leave();
+  await pause(HOVER_CLOSE_MS + 40);
+  assert.deepEqual(closed, [], 'a slipped pointer keeps a clicked menu');
+  await pause(CLICK_CLOSE_MS - HOVER_CLOSE_MS + 40);
+  assert.deepEqual(closed, ['away']);
+
+  hovering = true;
+  closed.length = 0;
+  leave();
+  await pause(HOVER_CLOSE_MS + 40);
   assert.deepEqual(closed, ['away']);
 });
 
