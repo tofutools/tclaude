@@ -2162,6 +2162,9 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		// Carry names the slugs also stored for all future Stewards, with
 		// this grant's expiry. Only a live Steward may name any.
 		Carry []string `json:"carry"`
+		// Uses limits individual slugs to that many uses. It ends the grant at
+		// whichever limit comes first, this or the duration.
+		Uses map[string]int64 `json:"uses"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -2220,11 +2223,25 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		}
 		scopes[slug] = canonical
 	}
+	for slug, uses := range body.Uses {
+		if !slices.Contains(body.Slugs, slug) {
+			http.Error(w, "uses given for slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+		if !slices.Contains(countableSudoSlugs, slug) {
+			http.Error(w, slug+" has no action to count, so it takes no use limit", http.StatusBadRequest)
+			return
+		}
+		if uses < 1 || uses > maxSudoUses {
+			http.Error(w, fmt.Sprintf("uses for %s must be between 1 and %d", slug, maxSudoUses), http.StatusBadRequest)
+			return
+		}
+	}
 	dur, ok := resolveSudoDuration(w, body.Duration, policy)
 	if !ok {
 		return
 	}
-	out, status := insertSudoBundle(actor.AgentID, convID, title, body.Slugs, scopes, dur,
+	out, status := insertSudoBundle(actor.AgentID, convID, title, body.Slugs, scopes, body.Uses, dur,
 		strings.TrimSpace(body.Reason), dashboardSudoGranter)
 	for _, grant := range out.Grants {
 		if grant.ID > 0 && slices.Contains(body.Carry, grant.Slug) {

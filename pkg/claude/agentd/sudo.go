@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -222,6 +223,8 @@ type sudoGrantJSON struct {
 	GrantedBy        string `json:"granted_by"`
 	Reason           string `json:"reason,omitempty"`
 	RemainingSeconds int64  `json:"remaining_seconds,omitempty"`
+	UsesLimit        int64  `json:"uses_limit,omitempty"`
+	UsesLeft         int64  `json:"uses_left,omitempty"`
 }
 
 func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +351,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	// Re-snapshot the timestamps post-popup so the window is measured
 	// from approval time, not request time — fairer to the agent if
 	// the human took 30 seconds to click.
-	out, status := insertSudoBundle(agentID, p.ConvID, title, body.Slugs, nil, dur, reason,
+	out, status := insertSudoBundle(agentID, p.ConvID, title, body.Slugs, nil, nil, dur, reason,
 		"human:popup-id="+req.id)
 	writeJSON(w, status, out)
 }
@@ -401,8 +404,70 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 	if !ok {
 		return
 	}
-	out, status := insertSudoBundle(targetAgentID, targetConv, title, body.Slugs, nil, dur, strings.TrimSpace(body.Reason), granter)
+	out, status := insertSudoBundle(targetAgentID, targetConv, title, body.Slugs, nil, nil, dur, strings.TrimSpace(body.Reason), granter)
 	writeJSON(w, status, out)
+}
+
+// countableSudoSlugs are the slugs a sudo grant can limit by uses. Each names one
+// discrete action with one place to count it: a spawn. Adding a slug means
+// adding takeSudoUse to its handler, and refusing the grant on any path that
+// cannot count (spawnAuthorityIsCounted).
+var countableSudoSlugs = []string{PermAgentSpawn, PermGroupsMembersSpawn}
+
+// maxSudoUses bounds a use limit. A larger one is no limit at all.
+const maxSudoUses = 1000
+
+// sudoUse is one use of a counted grant, reserved before the action. Release is
+// deferred by the handler and gives it back unless keep ran, so every way of
+// not spawning returns the use.
+type sudoUse struct {
+	grantID int64
+	kept    bool
+}
+
+func (u *sudoUse) keep() { u.kept = true }
+
+func (u *sudoUse) release() {
+	if u.kept || u.grantID == 0 {
+		return
+	}
+	if err := db.ReturnSudoUse(u.grantID); err != nil {
+		slog.Warn("sudo: return unused use failed", "grant", u.grantID, "error", err)
+	}
+}
+
+// takeSudoUse reserves a use of the grant behind this request, when that grant
+// is limited. Grant 0 (standing authority) and an unlimited grant need nothing.
+// It answers the request and returns false when none is left.
+func takeSudoUse(w http.ResponseWriter, grantID int64) (*sudoUse, bool) {
+	if grantID == 0 {
+		return &sudoUse{}, true
+	}
+	limited, taken, err := db.TakeSudoUse(grantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return nil, false
+	}
+	if !limited {
+		return &sudoUse{}, true
+	}
+	if !taken {
+		writeError(w, http.StatusForbidden, "sudo_uses_exhausted", "this sudo grant has no uses left")
+		return nil, false
+	}
+	return &sudoUse{grantID: grantID}, true
+}
+
+// spawnAuthorityIsCounted reports whether a use-limited sudo grant is what
+// allows this spawn. Paths that spawn without going through handleGroupSpawn
+// cannot count a use, so they refuse rather than let the limit be walked past.
+func spawnAuthorityIsCounted(r *http.Request, convID, slug string, actx ActionContext) bool {
+	id := loadBearingSudoGrantID(r, convID, slug, actx)
+	if id == 0 {
+		return false
+	}
+	grant, err := db.GetSudoGrant(id)
+	return err != nil || (grant != nil && grant.UsesLimit > 0)
 }
 
 // sudoPolicyJSON is what the sudo editor shows before anything is submitted:
@@ -512,7 +577,7 @@ type sudoBundleResponse struct {
 //
 // scopes narrows individual slugs (slug → canonical scope JSON); a slug it does
 // not name is unscoped, the path every caller but the dashboard takes.
-func insertSudoBundle(agentID, convID, title string, slugs []string, scopes map[string]string, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
+func insertSudoBundle(agentID, convID, title string, slugs []string, scopes map[string]string, uses map[string]int64, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
 	now := time.Now()
 	expires := now.Add(dur)
 	out := sudoBundleResponse{
@@ -525,6 +590,8 @@ func insertSudoBundle(agentID, convID, title string, slugs []string, scopes map[
 			AgentID:   agentID,
 			Slug:      slug,
 			ScopeJSON: scopes[slug],
+			UsesLimit: uses[slug],
+			UsesLeft:  uses[slug],
 			GrantedAt: now,
 			ExpiresAt: expires,
 			GrantedBy: granter,
@@ -655,6 +722,8 @@ func sudoGrantsToJSON(rows []*db.SudoGrant, now time.Time) []sudoGrantJSON {
 			ExpiresAt: g.ExpiresAt.Format(time.RFC3339Nano),
 			GrantedBy: g.GrantedBy,
 			Reason:    g.Reason,
+			UsesLimit: g.UsesLimit,
+			UsesLeft:  g.UsesLeft,
 		}
 		if remaining := g.ExpiresAt.Sub(now); remaining > 0 {
 			entry.RemainingSeconds = int64(remaining.Seconds())

@@ -3548,6 +3548,7 @@ func ambientSandboxProfileName(g *db.AgentGroup) string {
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	timing := config.StartupTiming("spawn_request")
 	defer timing("return")
+	spawnUse := &sudoUse{}
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
 	// the human resolves to "". It is the default reply-to target for
@@ -3619,6 +3620,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		if !ok {
 			return
 		}
+		// Reserved here, while the gate's decision is on the request, and
+		// given back by every exit below that does not spawn.
+		use, ok := takeSudoUse(w, authorizedSudoGrantIDForRequest(r))
+		if !ok {
+			return
+		}
+		spawnUse = use
+		defer spawnUse.release()
 	}
 	// Whether the grant that admitted this spawn was CONDITIONED on the sandbox
 	// profile, as opposed to merely being evaluated alongside it. Only that
@@ -5221,6 +5230,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
 			return
 		}
+		spawnUse.keep()
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -5234,6 +5244,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	spawnUse.keep()
 
 	// executeSpawn intentionally re-reads default profiles as a safety net for
 	// non-HTTP callers. If state changed after the handler snapshot, report the

@@ -2090,6 +2090,8 @@ type dashboardSudoEntry struct {
 	Slug             string `json:"slug"`
 	ScopeJSON        string `json:"scope_json,omitempty"`
 	Carried          bool   `json:"carried,omitempty"` // also stored for all future Stewards
+	UsesLimit        int64  `json:"uses_limit,omitempty"`
+	UsesLeft         int64  `json:"uses_left,omitempty"`
 	GrantedAt        string `json:"granted_at"`
 	ExpiresAt        string `json:"expires_at"`
 	GrantedBy        string `json:"granted_by,omitempty"`
@@ -3796,6 +3798,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Slug:             g.Slug,
 			ScopeJSON:        g.ScopeJSON,
 			Carried:          g.CarriedID > 0,
+			UsesLimit:        g.UsesLimit,
+			UsesLeft:         g.UsesLeft,
 			GrantedAt:        g.GrantedAt.Format(time.RFC3339Nano),
 			ExpiresAt:        g.ExpiresAt.Format(time.RFC3339Nano),
 			GrantedBy:        g.GrantedBy,

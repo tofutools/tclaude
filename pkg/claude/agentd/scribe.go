@@ -148,6 +148,11 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	if !ok {
 		return
 	}
+	spawnUse, ok := takeSudoUse(w, authorizedSudoGrantIDForRequest(r))
+	if !ok {
+		return
+	}
+	defer spawnUse.release()
 
 	var body scribeSummonRequest
 	if r.ContentLength != 0 {
@@ -306,6 +311,9 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
+	}
+	if !reused {
+		spawnUse.keep()
 	}
 
 	resp := map[string]any{

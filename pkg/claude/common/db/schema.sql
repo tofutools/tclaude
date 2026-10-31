@@ -712,7 +712,7 @@ CREATE TABLE "agent_sudo_grants" (
 				reason      TEXT NOT NULL DEFAULT '',
 				revoked_at  INTEGER
 			, scope_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144), carried_id INTEGER NOT NULL DEFAULT 0) STRICT;
+			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144), carried_id INTEGER NOT NULL DEFAULT 0, uses_limit INTEGER NOT NULL DEFAULT 0, uses_left INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE INDEX idx_sudo_active
 				ON agent_sudo_grants(agent_id, expires_at) WHERE revoked_at IS NULL;
@@ -2197,4 +2197,4 @@ CREATE TABLE steward_carried_sudo (
  granted_by TEXT NOT NULL,
  reason TEXT NOT NULL DEFAULT '',
  revoked_at INTEGER
-) STRICT;
+, uses_limit INTEGER NOT NULL DEFAULT 0, uses_left INTEGER NOT NULL DEFAULT 0) STRICT;

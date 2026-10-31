@@ -114,10 +114,16 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 	if fromConv != "" {
 		actx := ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: req.Group}
 		global, _, _ := permissionAllowsAction(r, fromConv, PermAgentSpawn, actx)
+		slug := PermAgentSpawn
 		if !global {
+			slug = PermGroupsMembersSpawn
 			if _, ok := requirePermission(w, r, PermGroupsMembersSpawn, actx); !ok {
 				return
 			}
+		}
+		if spawnAuthorityIsCounted(r, fromConv, slug, actx) {
+			writeError(w, http.StatusForbidden, "sudo_uses_local", "a use-limited sudo grant covers local spawns only")
+			return
 		}
 		via = req.Group
 	}
