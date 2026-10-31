@@ -91,7 +91,7 @@ host endpoints and active connections. Host listeners remain ephemeral across da
 
 ## Open a published route on the host
 
-In the dashboard, enable **Config → Experimental features → Groups Route map**,
+In the dashboard, enable **Config › Experimental › Feature flags › Groups Route map**,
 select a local route under **Groups → Route map**, and click **Open on host**.
 The detail panel shows the host endpoint. For HTTP services, use its preview
 link: a unique hostname in the [reserved `.localhost` namespace](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)

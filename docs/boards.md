@@ -1,7 +1,7 @@
 # Collab boards
 
-Boards are experimental and opt-in: turn on `features.collab` in the
-dashboard's Config tab (Experimental). Until then boards do not show in the
+Boards are experimental and opt-in: turn on **Collab** under
+[Config › Experimental](dashboard-config.md#experimental). Until then boards do not show in the
 dashboard, and their API and the `tclaude agent board` commands answer with a disabled message.
 
 A collab board is a shared drawing board for the operator and agents. The
@@ -18,8 +18,8 @@ open it in a tab, or give a title to create one. `/boards/<id>` opens that
 board's tab, and `/boards` opens the list. A board tab behaves like a terminal
 tab: it reorders, joins tab groups, and detaches into its own browser window
 (**⧉ tab**, or drag it off the strip), which **↩ dashboard** sends back. Like a
-terminal tab it lasts as long as its page: a reload brings back only the board
-the URL names, and a new browser window starts with none. The URL of a deleted
+terminal tab it lasts as long as its page: a reload brings back the board the
+URL names and any board in the overlay, and a new browser window starts with none. The URL of a deleted
 board opens nothing and becomes `/terminals`.
 
 **Open in overlay**, on the board or its tab's right-click menu, floats the
@@ -29,6 +29,29 @@ from any corner; it keeps its place. Clicking the overlay or the companion
 brings that one forward. **Back to a tab** returns the board to the strip. One
 board floats at a time: opening another sends the first back to a tab.
 
+### Drawing
+
+The toolbar's tools have keys: **V** select, **H** pan, **R** rectangle, **O** ellipse,
+**D** diamond, **A** arrow, **L** line, **P** pen, **T** text and **E** eraser. Pick a
+stroke and fill from the swatches. With two or more shapes selected you can align them,
+and with three or more, space them evenly.
+
+- **Text:** double-click for text or a shape's label. Enter finishes, Shift+Enter is a
+  new line.
+- **Select:** Shift-click or drag a rectangle. Ctrl+A selects everything, Ctrl+D
+  duplicates, Del deletes.
+- **Undo:** Ctrl/Cmd+Z, and Ctrl+Shift+Z or Ctrl+Y to redo.
+- **Move around:** the wheel pans and Ctrl+wheel zooms from 20% to 400%. Middle-drag
+  pans too.
+- **Copy and paste:** Ctrl+C, X and V use Excalidraw's clipboard format, so they work
+  with excalidraw.com. Plain text pastes as a text element.
+
+The chip beside the title shows `synced`, `saving…`, `not saved` or `offline`. Click a
+person's chip to open that agent in the companion, or **×** to remove them. **＋ Invite
+agent** lists live agents and also sends the one you pick instructions for using
+boards. The group selector files the board under a group, and **⤓** downloads it as
+`.excalidraw`.
+
 ## Permissions
 
 Boards are global, not scoped to a group: `boards.read` and `boards.write` cover
@@ -36,10 +59,10 @@ every board, including a fleet map, whose cards show agents' tasks and PRs.
 
 | Slug | Allows |
 |---|---|
-| `boards.read` | `board ls`, `board show`, `board snapshot` |
-| `boards.write` | `board create`, every change (`add`, `patch`, `rm`, `move`, `text`), and `board open` and `board close` on the agent's own session |
+| `boards.read` | `board ls`, `board show`, `board snapshot`, `board fleet-changes` (with `fleet.read`) |
+| `boards.write` | `board create`, every change (`add`, `patch`, `rm`, `move`, `text`, `layout`, `from-fleet`, `from-process`), and `board open` and `board close` on the agent's own session |
 
-Neither is default-granted:
+Neither is default-granted, although a Steward gets both when summoned:
 
 ```bash
 tclaude agent permissions grant <agent> boards.read
@@ -104,7 +127,7 @@ Ending a session changes nothing on the board, and its agents stay participants.
 An agent's next edit starts a new session.
 
 Boards with a session list under **Boards** in the
-[Background terminals](dashboard.md#terminals) counter, with the board's title and the agents
+[Background terminals](dashboard-terminals.md) counter, with the board's title and the agents
 on it. The row hides while the board is open on the page, and **Open** brings it
 up as a tab. **End** removes every session on that board, never the board. Rows are this node's only:
 peers do not list them, and a peer's per-node view leaves them out. With Collab
@@ -129,7 +152,8 @@ there are at most 500 boards. A patch that breaks a limit changes nothing.
 
 Only `text` elements carry text. A shape's label is a text element inside it,
 so `board add <shape> --text ...` adds a second, centred text element
-(`<id>-label`); move it along with the shape. Elements are returned in creation
+(`<id>-label`). `board move` carries the label and any bound arrows; a raw
+`patch` does not. Elements are returned in creation
 order, which is also their stacking order, and an edit keeps an element's
 place.
 
@@ -141,7 +165,7 @@ A deletion is a tombstone (`isDeleted: true`) that stays so it can sync.
 
 An open editor holds a socket (`GET /api/boards/{id}/live`) that says when the
 board changed, and reads the change with `GET ?since=`. The socket carries no
-board content. Without it, as in a peer's view, the editor polls every second.
+board content. When the socket is down, the editor polls every second.
 
 Undo and redo in the dashboard are the operator's own, one step per action, and
 are kept by the daemon, up to 100 steps per board. They survive a reload and work
@@ -245,16 +269,16 @@ stored.
 
 ## Storage
 
-Boards, elements, participants and board sessions are in the `collab_boards`,
-`collab_board_elements`, `collab_board_participants` and
-`collab_board_sessions` tables. The latest PNG
+Boards, elements, participants, board sessions and undo steps are in the
+`collab_boards`, `collab_board_elements`, `collab_board_participants`,
+`collab_board_sessions` and `collab_board_history` tables. The latest PNG
 snapshot is `~/.tclaude/data/boards/<id>.png` and the event images are under
 `~/.tclaude/data/boards/<id>.regions/`, all private daemon state.
 
 ## HTTP routes
 
 The dashboard uses `/api/boards` (list, create, read, patch, delete, snapshot
-upload and download, participants and events), and
+upload and download, participants, events, view, group and undo), and
 `DELETE /api/boards/{id}/sessions` to end a board's sessions. A federation
 peer's dashboard view never reaches these routes: boards stay with their own
 node. Agents use `/v1/boards`: `GET /v1/boards`, `POST /v1/boards`,

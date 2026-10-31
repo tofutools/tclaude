@@ -513,7 +513,7 @@ are covered in [Teams at scale](teams-at-scale.md).
 
 ### Diagnosing slow startup
 
-Enable **Config → Logging → Startup timings** and save, or set
+Enable **Config › Logs & housekeeping › Logging › Startup timings** and save, or set
 `"startup_timing": true` in `~/.tclaude/data/config.json`. Changes apply to new
 traces immediately, without restarting agentd. Traces already running finish
 with the setting they started with, preserving complete measurements. The

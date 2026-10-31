@@ -23,7 +23,7 @@ name and groups, and the group's startup context from
 long-lived lead keeps working the way you want.
 
 !!! info "Go deeper"
-    [Dashboard → The context meter](../dashboard.md#the-context-meter) and
+    [Dashboard → The context meter](../dashboard-groups.md#the-context-meter) and
     [Agents and groups → Re-injection after compaction](../agents-and-groups.md#re-injection-after-compaction-and-clear).
 
 ## 2. Schedule check-ins

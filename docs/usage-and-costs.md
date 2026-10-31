@@ -212,7 +212,7 @@ top, so the pick is there before the first profile exists.
   fleet limits with their readings. A card's ⚙ edits, clones or deletes the
   limit and its alert ladder; ＋ adds a limit.
 
-**Usage limits & budgets** (the Usage tab's Limits section, Config → Costs,
+**Usage limits & budgets** (the Usage tab's Limits section, Config › Usage & costs,
 the command palette, the limit banner, or any of the above) has four tabs:
 
 - **Limits**: global and group limits with their live readings, an enable
