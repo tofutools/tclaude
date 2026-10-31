@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -661,4 +662,92 @@ func TestSudo_ConfigBlocklist_ReplacesDefaults(t *testing.T) {
 		"groups.owners.manage newly blocked by config body=%s", denyRec.Body.String())
 	assert.Contains(t, denyRec.Body.String(), "groups.owners.manage",
 		"error must name the blocked slug")
+}
+
+// Scenario: a sudo grant overlaps a permission the agent also holds permanently.
+// However it is revoked, the permanent one is untouched and still in force.
+func TestSudo_RevokingLeavesPermanentPermissionsInForce(t *testing.T) {
+	const conv = "sudo-end-aaaa-bbbb-cccc-000000000001"
+	routes := []struct {
+		name string
+		mux  func(f *testharness.Flow) http.Handler
+		path func(id int64, agentID string) string
+	}{
+		{"cli one", flowMux, func(id int64, _ string) string { return fmt.Sprintf("/v1/sudo/%d", id) }},
+		{"cli by agent", flowMux, func(int64, string) string { return "/v1/sudo?conv=" + conv }},
+		{"cli all", flowMux, func(int64, string) string { return "/v1/sudo?all=1" }},
+		{"dialog revoke", dashMux(t), func(id int64, _ string) string { return fmt.Sprintf("/api/sudo/%d", id) }},
+		{"End", dashMux(t), func(_ int64, agentID string) string { return "/api/sudo?agent_id=" + agentID }},
+		{"dialog revoke all", dashMux(t), func(int64, string) string { return "/api/sudo?all=1" }},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveConvWithTitle(conv, "worker")
+			f.HaveAliveSession(conv, "lbl-end", "tmux-end", f.TestCwd("end"))
+			require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermMessageDirect, db.PermEffectGrant, "test"))
+			require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermHumanNotify}}}))
+			defaults := func() []string {
+				cfg, err := config.Load()
+				require.NoError(t, err)
+				return cfg.Agent.DefaultPermissions
+			}
+			agentID, _, err := db.EnsureAgentForConv(conv, "test")
+			require.NoError(t, err)
+			var last int64
+			for _, slug := range []string{agentd.PermMessageDirect, agentd.PermHumanNotify} {
+				now := time.Now()
+				last, err = db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: slug,
+					GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test"})
+				require.NoError(t, err)
+			}
+
+			revoke := testharness.Serve(route.mux(f), agentd.AsHumanPeer(testharness.JSONRequest(t,
+				http.MethodDelete, route.path(last, agentID), nil)))
+			require.Equalf(t, http.StatusOK, revoke.Code, "body=%s", revoke.Body.String())
+
+			overrides, err := db.ListAgentPermissionOverrideRowsForConv(conv)
+			require.NoError(t, err)
+			require.Len(t, overrides, 1)
+			assert.Equal(t, agentd.PermMessageDirect, overrides[0].Slug)
+			assert.Equal(t, db.PermEffectGrant, overrides[0].Effect)
+			assert.Equal(t, []string{agentd.PermHumanNotify}, defaults())
+			assert.True(t, agentd.HoldsPermissionForTest(conv, agentd.PermMessageDirect), "standing permission still in force")
+			assert.True(t, agentd.HoldsPermissionForTest(conv, agentd.PermHumanNotify), "default permission still in force")
+		})
+	}
+}
+
+func flowMux(f *testharness.Flow) http.Handler { return f.Mux }
+
+func dashMux(t *testing.T) func(*testharness.Flow) http.Handler {
+	return func(*testharness.Flow) http.Handler { return dashMessageMux(t) }
+}
+
+// End ends a carried sudo for later Stewards too, since it is temporary. A
+// standing permission stored for them stays.
+func TestSudo_EndKeepsStoredStandingAndEndsStoredSudo(t *testing.T) {
+	f := newFlow(t)
+	const conv = "sudo-end-aaaa-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(conv, "steward")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermMessageDirect,
+		db.PermissionOverride{Effect: db.PermEffectGrant}, "test"))
+	now := time.Now()
+	id, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: agentd.PermHumanNotify,
+		GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test"})
+	require.NoError(t, err)
+	require.NoError(t, db.CarrySudoGrant(id))
+
+	end := testharness.Serve(dashMessageMux(t), agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodDelete, "/api/sudo?agent_id="+agentID, nil)))
+	require.Equalf(t, http.StatusOK, end.Code, "body=%s", end.Body.String())
+
+	stored, err := db.ListActiveStewardCarriedSudo()
+	require.NoError(t, err)
+	assert.Empty(t, stored)
+	standing, err := db.ListStewardCarriedPermissions()
+	require.NoError(t, err)
+	assert.Contains(t, standing, agentd.PermMessageDirect)
 }
