@@ -182,7 +182,7 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		if dst.Name != src {
 			l.Warnings = append(l.Warnings, fmt.Sprintf("lands on %s instead of %s; receiver defaults apply at its next launch", dst.Name, src))
 		}
-		if l.needsCutConfirm() {
+		if l.needsCutConfirm() && !opts.ConfirmHistoryLoss {
 			l.Warnings = append(l.Warnings, fmt.Sprintf("cutting %d%% of the conversation needs confirmation: --confirm-history-loss", l.cutPercent()))
 		}
 	}
