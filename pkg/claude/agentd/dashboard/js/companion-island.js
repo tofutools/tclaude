@@ -276,7 +276,9 @@ export function CompanionApp({
   const [guide, setGuide] = useState(null);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [shutDown, setShutDown] = useState('');
+  // The Steward just shut down, { agentId, name }. It reads as gone from here
+  // on: the snapshot can still show it online for a poll.
+  const [shutDown, setShutDown] = useState(null);
   const [detached, setDetached] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF))));
   const detachedRef = useRef(detached);
   detachedRef.current = detached;
@@ -446,7 +448,7 @@ export function CompanionApp({
   useEffect(() => registerController({ open: (agentId, options) => showAgent(agentId, options) }), [showAgent]);
 
   const summonSteward = useCallback(async () => {
-    if (steward?.online) {
+    if (steward?.online && steward.agentId !== shutDown?.agentId) {
       showAgent(steward.agentId);
       return;
     }
@@ -454,7 +456,7 @@ export function CompanionApp({
     try {
       const result = await requestStewardSummon(fetchImpl);
       if (!isAgentId(result.agent_id)) throw new Error('the summon returned no agent id');
-      setShutDown('');
+      setShutDown(null);
       notify(`${result.reused ? 'Reopened' : 'Summoned'} ${stewardLabel}.`);
       showAgent(result.agent_id, { starting: true });
     } catch (error) {
@@ -462,7 +464,7 @@ export function CompanionApp({
     } finally {
       setBusy(false);
     }
-  }, [steward, stewardLabel, fetchImpl, notify, showAgent]);
+  }, [steward, shutDown, stewardLabel, fetchImpl, notify, showAgent]);
 
   const closeTab = useCallback((agentId, { keepOpen = false } = {}) => {
     if (agents.get(agentId)?.scribe) setHelperClosed(agentId, true);
@@ -486,7 +488,7 @@ export function CompanionApp({
     setParked((current) => without(current, agent.agentId));
     setDetached((current) => without(current, agent.agentId));
     closeTab(agent.agentId, { keepOpen: true });
-    setShutDown(agent.name);
+    setShutDown({ agentId: agent.agentId, name: agent.name });
     notify(`${agent.name} is shut down.`);
   }
 
@@ -1374,11 +1376,11 @@ export function CompanionApp({
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>
-        ${shutDown && html`<p class="companion-shutdown-note" role="status"><b>${shutDown}</b> is shut down. Its conversation stays in history.</p>`}
+        ${shutDown && html`<p class="companion-shutdown-note" role="status"><b>${shutDown.name}</b> is shut down. Its conversation stays in history.</p>`}
         <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
           groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
         <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, 🛡 and sudo in the title bar change its access.</p>
-        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : shutDown && !steward?.online ? `Start a new ${customName || 'Steward'}` : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
+        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : shutDown ? `Start a new ${customName || 'Steward'}` : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
       ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
