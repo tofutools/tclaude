@@ -40,7 +40,10 @@ import (
 // WriteProofToken carries the answer to a dir write-proof challenge —
 // filled in transparently by DaemonRequestWithWriteProof, never by hand.
 type WorktreePrepareRequest struct {
-	Repo            string `json:"repo,omitempty"`
+	Repo string `json:"repo,omitempty"`
+	// CallerCwd stands in for a blank Repo after the group's default
+	// directory, the same order a blank spawn cwd resolves in.
+	CallerCwd       string `json:"caller_cwd,omitempty"`
 	Group           string `json:"group,omitempty"`
 	Branch          string `json:"branch"`
 	Base            string `json:"base,omitempty"`
@@ -98,7 +101,7 @@ type spawnWorktree struct {
 // up to the repo root. ask carries the caller's --ask-human budget, so a
 // spawn that leans on a human popup for its authority gets the same
 // treatment on the worktree half rather than failing before the popup.
-func resolveSpawnWorktree(group, repoDir, branch, base string, ask time.Duration) (spawnWorktree, error) {
+func resolveSpawnWorktree(group, repoDir, callerCwd, branch, base string, ask time.Duration) (spawnWorktree, error) {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		return spawnWorktree{}, fmt.Errorf("worktree branch name is required")
@@ -106,6 +109,7 @@ func resolveSpawnWorktree(group, repoDir, branch, base string, ask time.Duration
 	mkBody := func(writeProofToken string) any {
 		return WorktreePrepareRequest{
 			Repo:            strings.TrimSpace(repoDir),
+			CallerCwd:       strings.TrimSpace(callerCwd),
 			Group:           strings.TrimSpace(group),
 			Branch:          branch,
 			Base:            strings.TrimSpace(base),

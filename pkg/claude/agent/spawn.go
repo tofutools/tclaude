@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -316,8 +317,13 @@ type SpawnRequest struct {
 	NonInteractive    bool  `json:"non_interactive,omitempty"`
 	RunTimeoutSeconds int64 `json:"run_timeout_seconds,omitempty"`
 	// Cwd is the working directory for the new CC session. Empty falls
-	// back to the group's default_cwd, then the daemon's own cwd.
+	// back to the group's default_cwd, then CallerCwd, then the daemon's
+	// own cwd.
 	Cwd string `json:"cwd,omitempty"`
+	// CallerCwd is where the CLI was run. It is only a fallback, and the
+	// daemon has to apply it: the group's default_cwd comes first, and the
+	// group listing does not show that to an agent caller.
+	CallerCwd string `json:"caller_cwd,omitempty"`
 	// TimeoutSeconds bounds how long the daemon waits for the new
 	// conv-id to materialise. <= 0 falls back to 30s; capped at 300s.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
@@ -831,7 +837,7 @@ type SpawnParams struct {
 	InitialMessage string   `long:"initial-message" short:"m" optional:"true" help:"Task brief for an interactive agent; with --non-interactive, the one-shot prompt or shell command"`
 	File           string   `long:"file" short:"f" optional:"true" help:"Read --initial-message from this file ('-' reads stdin). Mutually exclusive with --initial-message; same 16384-byte cap"`
 	ReplyTo        string   `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
-	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
+	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the group's default directory, then the caller's cwd)"`
 	Timeout        string   `long:"timeout" short:"t" optional:"true" help:"Interactive: conv-id wait (default 30s); non-interactive: entire run (default 1h)"`
 	NonInteractive bool     `long:"non-interactive" help:"Run one prompt to completion using the resolved launch policy (including private per-run directories and pre-launch scripts); model gateways and managed instructions require an interactive worker"`
 	GroupContext   bool     `long:"group-context" help:"Include the group's startup context in a non-interactive prompt (off by default)"`
@@ -852,7 +858,7 @@ type SpawnParams struct {
 	HarnessConfig             string   `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
 	IUnderstandBreakGlassRisk bool     `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 
-	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
+	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd (or the group's default directory, then the caller's cwd), unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
 	WorktreeRepo string `long:"worktree-repo" optional:"true" help:"Repo to create the --worktree in when it differs from --cwd (the monorepo sub-repo case): the agent still launches in --cwd and the worktree path/branch ride into its welcome. Default: the repo containing --cwd, with the agent launched inside the worktree"`
 
@@ -1714,11 +1720,12 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			return nil, rcInvalidArg
 		}
 	}
+	// A blank cwd stays blank: only the daemon can see the group's default.
+	callerCwd, _ := os.Getwd()
 	cwd := p.Cwd
-	if cwd == "" {
-		if wd, err := os.Getwd(); err == nil {
-			cwd = wd
-		}
+	if cwd != "" && !filepath.IsAbs(cwd) && !strings.HasPrefix(cwd, "~") {
+		// The daemon would read this against its own cwd, not the caller's.
+		cwd = filepath.Join(callerCwd, cwd)
 	}
 
 	environment, err := parseEnvironmentFlags(p.Environment)
@@ -1746,6 +1753,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		InitialMessage:         initialMessage,
 		ReplyTo:                strings.TrimSpace(p.ReplyTo),
 		Cwd:                    cwd,
+		CallerCwd:              callerCwd,
 		TimeoutSeconds:         timeoutSeconds,
 		AutoFocus:              merged.AutoFocus,
 		Effort:                 effort,
@@ -1865,7 +1873,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		if worktreeRepo == "" {
 			worktreeRepo = cwd
 		}
-		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, wt, p.WorktreeBase, ask)
+		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, callerCwd, wt, p.WorktreeBase, ask)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
 			// The failure now comes off the wire, so it carries the
@@ -1880,8 +1888,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 		// Clean both sides before comparing: a trailing slash or "/."
 		// on --worktree-repo must not mis-classify an in-place worktree
-		// (worktree-repo == cwd) as the monorepo case.
-		if filepath.Clean(worktreeRepo) != filepath.Clean(cwd) {
+		// (worktree-repo == cwd) as the monorepo case. A blank repo is the
+		// daemon's choice of launch dir, so that is in-place too.
+		launchDir := cmp.Or(cwd, callerCwd)
+		if worktreeRepo != "" && filepath.Clean(worktreeRepo) != filepath.Clean(launchDir) {
 			// Monorepo sub-repo case: the agent launches in --cwd (the
 			// parent) and the worktree path/branch ride into its welcome.
 			req.WorktreePath = wtPath

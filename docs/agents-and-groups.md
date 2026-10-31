@@ -271,7 +271,8 @@ target.
 ### Default directory and auto-join
 
 `groups set-default-dir` pre-fills the spawn form, is substituted
-server-side when a spawn leaves the working directory blank, and powers
+server-side when a spawn leaves the working directory blank (so `agent spawn`
+without `--cwd` lands there rather than in your current directory), and powers
 **directory auto-join**: a bare `tclaude` launched in a directory that
 exactly matches an active group's default dir (after absolute/clean/symlink
 resolution) spawns into that group through the same daemon spawn

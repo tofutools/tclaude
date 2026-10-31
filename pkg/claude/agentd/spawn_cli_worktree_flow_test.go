@@ -172,6 +172,33 @@ func TestSpawnCLI_WorktreeCreatesAndLaunchesInIt(t *testing.T) {
 		"spawned agent's cwd should be the worktree, not the repo")
 }
 
+// Scenario: with no --cwd, --worktree is cut from the group's default directory,
+// the same place a plain spawn into the group lands, whatever repo the command
+// was run from.
+func TestSpawnCLI_WorktreeCutFromGroupDefaultDir(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+
+	repo, parent := initRepoOnMain(t)
+	_, err := db.SetAgentGroupDefaultCwd("alpha", repo)
+	require.NoError(t, err)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", Worktree: "feat-x"},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equalf(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+
+	rows, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+	assert.Equal(t, resolveSym(t, filepath.Join(parent, "repo-feat-x")), resolveSym(t, rows[0].Cwd),
+		"the agent should launch in a worktree of the group's repo")
+}
+
 // Scenario: a human spawns an agent whose launch dir is a "virtual
 // monorepo" (a plain folder, not a git repo) while the code work
 // belongs in a git worktree of a nested sub-repo. `--worktree-repo`

@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -227,7 +228,7 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	root, status, err := spawnWorktreeRepoRoot(body.Repo)
+	root, status, err := spawnWorktreeRepoRoot(cmp.Or(strings.TrimSpace(body.Repo), blankWorktreeRepo(body.Group, body.CallerCwd)))
 	if err != nil {
 		writeError(w, status, "invalid_worktree", err.Error())
 		return
@@ -379,6 +380,15 @@ func handleWorktreeDiscard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, agent.WorktreeDiscardResponse{Removed: removed, BranchDeleted: branchDeleted})
+}
+
+// blankWorktreeRepo is where a prepare naming no repo is cut: the directory the
+// spawn it precedes would land in, the group's default before the caller's cwd.
+func blankWorktreeRepo(group, callerCwd string) string {
+	if g, err := db.GetAgentGroupByName(strings.TrimSpace(group)); err == nil && g != nil && g.DefaultCwd != "" {
+		return g.DefaultCwd
+	}
+	return strings.TrimSpace(callerCwd)
 }
 
 // spawnWorktreeRepoRoot resolves any path inside the target repo up to
