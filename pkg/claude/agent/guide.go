@@ -25,10 +25,11 @@ func guideCmd() *cobra.Command {
 		Long: "Dashboard guidance for companion agents such as the Steward.\n\n" +
 			"`guide view` reports which dashboard view the operator is looking at (needs dashboard.view.read). " +
 			"`guide capture` saves an image of what their dashboard shows right now, with cursor, focus and board context (needs dashboard.capture). " +
+			"`guide mark` draws on their view to get their attention, `guide marks` lists marks and how they ended, and `guide unmark` takes one down (needs dashboard.mark). " +
 			"`guide show` moves the operator's dashboard to a view and/or highlights a control there with a short note " +
 			"(needs dashboard.guide). A cue never presses anything or changes state: the operator acts.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds:     []*cobra.Command{guideViewCmd(), guideCaptureCmd(), guideShowCmd()},
+		SubCmds:     []*cobra.Command{guideViewCmd(), guideCaptureCmd(), guideCapturesCmd(), guideShowCmd(), guideMarkCmd(), guideMarksCmd(), guideUnmarkCmd()},
 	}.ToCobra()
 }
 
@@ -85,6 +86,8 @@ func runGuideView(p *guideViewParams, stdout, stderr io.Writer) int {
 
 type guideCaptureParams struct {
 	Output string `short:"o" long:"output" optional:"true" help:"File to write the PNG to (default: a new file in the temp directory)"`
+	Save   bool   `long:"save" help:"Also keep the capture on the daemon, to recover later with guide captures"`
+	Label  string `long:"label" optional:"true" help:"What this saved capture shows"`
 	JSON   bool   `long:"json" help:"Output the context as JSON, with the image path as \"image\""`
 }
 
@@ -94,6 +97,7 @@ type guideCaptureElement struct {
 	Label        string `json:"label,omitempty"`
 	Text         string `json:"text,omitempty"`
 	ID           string `json:"id,omitempty"`
+	Ref          string `json:"ref,omitempty"`
 	BoardElement string `json:"board_element,omitempty"`
 }
 
@@ -116,7 +120,12 @@ type guideCaptureContext struct {
 	} `json:"cursor,omitempty"`
 	Focus     *guideCaptureElement `json:"focus,omitempty"`
 	Selection string               `json:"selection,omitempty"`
-	Board     *struct {
+	Marks     []struct {
+		ID    int64  `json:"id"`
+		Drawn bool   `json:"drawn"`
+		Why   string `json:"why,omitempty"`
+	} `json:"marks,omitempty"`
+	Board *struct {
 		ID     string  `json:"id"`
 		Zoom   float64 `json:"zoom,omitempty"`
 		Region *struct {
@@ -154,8 +163,9 @@ func runGuideCapture(p *guideCaptureParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		PNG     string               `json:"png"`
 		Context *guideCaptureContext `json:"context"`
+		SavedID int64                `json:"saved_id"`
 	}
-	if err := DaemonRequest(http.MethodPost, "/v1/dashboard/capture", map[string]any{}, &resp, DaemonOpts{Timeout: guideCaptureTimeout}); err != nil {
+	if err := DaemonRequest(http.MethodPost, "/v1/dashboard/capture", map[string]any{"save": p.Save, "label": p.Label}, &resp, DaemonOpts{Timeout: guideCaptureTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -173,12 +183,16 @@ func runGuideCapture(p *guideCaptureParams, stdout, stderr io.Writer) int {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(struct {
-			Image string `json:"image"`
+			Image   string `json:"image"`
+			SavedID int64  `json:"saved_id,omitempty"`
 			*guideCaptureContext
-		}{output, resp.Context})
+		}{output, resp.SavedID, resp.Context})
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "image:     %s\n", output)
+	if resp.SavedID != 0 {
+		fmt.Fprintf(stdout, "saved:     capture %d\n", resp.SavedID)
+	}
 	if resp.Context != nil {
 		printGuideCaptureContext(stdout, resp.Context)
 	}
@@ -240,6 +254,13 @@ func printGuideCaptureContext(w io.Writer, c *guideCaptureContext) {
 	}
 	if c.Selection != "" {
 		fmt.Fprintf(w, "selection: %q\n", c.Selection)
+	}
+	for _, mark := range c.Marks {
+		if mark.Drawn {
+			fmt.Fprintf(w, "mark %d:    drawn\n", mark.ID)
+		} else {
+			fmt.Fprintf(w, "mark %d:    not drawn (%s)\n", mark.ID, mark.Why)
+		}
 	}
 	if c.Board != nil {
 		fmt.Fprintf(w, "board:     %s", c.Board.ID)

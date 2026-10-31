@@ -2151,3 +2151,31 @@ CREATE TABLE collab_board_sessions (
 ) STRICT;
 
 CREATE INDEX idx_collab_board_sessions_agent ON collab_board_sessions(agent_id);
+
+CREATE TABLE dashboard_marks (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ agent_id TEXT NOT NULL,
+ agent_name TEXT NOT NULL DEFAULT '',
+ kind TEXT NOT NULL,
+ spec TEXT NOT NULL,
+ tip TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL,
+ ended_by TEXT NOT NULL DEFAULT '',
+ reply TEXT NOT NULL DEFAULT '',
+ replied_at INTEGER,
+ created_at INTEGER NOT NULL,
+ expires_at INTEGER NOT NULL,
+ ended_at INTEGER
+) STRICT;
+
+CREATE INDEX idx_dashboard_marks_state ON dashboard_marks(state, id);
+
+CREATE TABLE dashboard_captures (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ agent_id TEXT NOT NULL,
+ agent_name TEXT NOT NULL DEFAULT '',
+ label TEXT NOT NULL DEFAULT '',
+ context TEXT NOT NULL DEFAULT '',
+ size INTEGER NOT NULL,
+ created_at INTEGER NOT NULL
+) STRICT;

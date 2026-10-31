@@ -234,6 +234,35 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
   padding: 6px 14px; border-radius: 999px; pointer-events: none;
   background: #1f6feb; color: #fff; font-size: 13px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
+.companion-marks { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 950; pointer-events: none; overflow: visible; }
+.companion-mark { fill: none; stroke: var(--mark, #a371f7); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.companion-mark.filled { fill: var(--mark, #a371f7); fill-opacity: .16; }
+.companion-mark.mark-red { --mark: #ff4d4f; }
+.companion-mark.mark-yellow { --mark: #ffd43b; }
+.companion-mark.mark-blue { --mark: #4dabf7; }
+.companion-mark.mark-green { --mark: #69db7c; }
+.companion-mark.mark-purple { --mark: #a371f7; }
+.companion-mark.blink { animation: companion-mark-blink 1s ease-in-out infinite; }
+@keyframes companion-mark-blink { 50% { opacity: .2; } }
+.companion-mark-tip {
+  position: fixed; z-index: 951; width: 300px; box-sizing: border-box; padding: 7px 9px; pointer-events: auto;
+  background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 9px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .5); font-size: 12.5px; line-height: 1.4;
+}
+.companion-mark-tip-head { display: flex; align-items: center; gap: 4px; }
+.companion-mark-tip-head b { margin-right: auto; color: #d2a8ff; font-size: 11.5px; }
+.companion-mark-tip-head button { background: none; border: 0; color: #8b949e; cursor: pointer; font-size: 14px; padding: 0 3px; }
+.companion-mark-tip-head button:hover { color: #e6edf3; }
+.companion-mark-tip small { display: block; color: #8b949e; margin-top: 2px; }
+.companion-mark-tip-text { overflow-wrap: anywhere; }
+.companion-mark-reply { margin-top: 4px; background: none; border: 0; padding: 0; color: #d2a8ff; cursor: pointer; font-size: 12px; }
+.companion-mark-tip form { display: flex; gap: 6px; align-items: flex-end; margin-top: 5px; }
+.companion-mark-tip textarea { flex: 1; min-width: 0; resize: vertical; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; padding: 3px 5px; }
+.companion-marks-clear {
+  position: fixed; z-index: 951; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%);
+  padding: 4px 11px; pointer-events: auto; cursor: pointer;
+  background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 999px; font-size: 12px;
+}
 .companion-guide-float { position: fixed; z-index: 953; right: 16px; bottom: calc(var(--footer-h, 29px) + 58px); }
 .companion-guide-note {
   display: flex; align-items: flex-start; gap: 8px; max-width: 330px; padding: 8px 10px;
@@ -247,6 +276,7 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 .companion-guide-note button:hover { color: #e6edf3; }
 @media (prefers-reduced-motion: reduce) {
   .companion-guide-ring, .companion-guide-note { animation: none; }
+  .companion-mark.blink { animation: none; stroke-width: 5; }
 }
 
 @media (prefers-reduced-motion: reduce) {

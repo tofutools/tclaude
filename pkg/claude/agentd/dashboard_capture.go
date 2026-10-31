@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -30,7 +31,7 @@ import (
 // The tab renders its own document, so a capture can only ever show a dashboard
 // page, never the operator's other windows. It shows the operator a cue, and a
 // hidden tab is never captured, because that cue would go unseen. Nothing is
-// stored: the image goes to the waiting caller and is forgotten.
+// stored unless the caller asks to keep it (dashboard_marks.go).
 
 const PermDashboardCapture = "dashboard.capture"
 
@@ -92,6 +93,7 @@ type captureElement struct {
 	Label        string `json:"label,omitempty"`
 	Text         string `json:"text,omitempty"`
 	ID           string `json:"id,omitempty"`
+	Ref          string `json:"ref,omitempty"`
 	BoardElement string `json:"board_element,omitempty"`
 }
 
@@ -132,6 +134,14 @@ type captureContext struct {
 	Focus     *captureElement `json:"focus,omitempty"`
 	Selection string          `json:"selection,omitempty"`
 	Board     *captureBoard   `json:"board,omitempty"`
+	// Marks says which marks this tab drew, so an agent can confirm one landed.
+	Marks []captureMark `json:"marks,omitempty"`
+}
+
+type captureMark struct {
+	ID    int64  `json:"id"`
+	Drawn bool   `json:"drawn"`
+	Why   string `json:"why,omitempty"`
 }
 
 // clean bounds what the page sent and strips control bytes: terminal text can
@@ -145,6 +155,7 @@ func (e *captureElement) clean() {
 	e.Label = guideText(e.Label, captureMaxText)
 	e.Text = guideText(e.Text, captureMaxText)
 	e.ID = guideText(e.ID, 120)
+	e.Ref = guideText(e.Ref, guideMaxTarget)
 	e.BoardElement = guideText(e.BoardElement, 120)
 }
 
@@ -159,6 +170,12 @@ func (c *captureContext) clean() {
 	}
 	if c.Board != nil {
 		c.Board.ID = guideText(c.Board.ID, 120)
+	}
+	if len(c.Marks) > MarkMaxActive {
+		c.Marks = c.Marks[:MarkMaxActive]
+	}
+	for i := range c.Marks {
+		c.Marks[i].Why = guideText(c.Marks[i].Why, 80)
 	}
 }
 
@@ -221,6 +238,15 @@ func handleDashboardCompanionPresence(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "presence needs a client id")
 		return
 	}
+	// Only a tab on screen draws, so a hidden one costs no query.
+	var marks []markView
+	if req.Visible && !req.Gone {
+		var err error
+		if marks, err = activeMarkViews(); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+	}
 	captureState.Lock()
 	defer captureState.Unlock()
 	if req.Gone {
@@ -228,20 +254,34 @@ func handleDashboardCompanionPresence(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if _, known := captureState.clients[req.Client]; !known && len(captureState.clients) >= captureMaxClients {
+	resp := presenceResponse(w, req.Client, req.Focused, req.Visible)
+	if resp == nil {
+		return
+	}
+	if req.Visible {
+		resp["marks"] = marks
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// presenceResponse records a tab and collects what is aimed at it. It answers
+// the request itself, and returns nil, when the tab cannot be recorded. The
+// caller holds the lock.
+func presenceResponse(w http.ResponseWriter, client string, focused, visible bool) map[string]any {
+	if _, known := captureState.clients[client]; !known && len(captureState.clients) >= captureMaxClients {
 		captureTarget(guideNow())
 		if len(captureState.clients) >= captureMaxClients {
 			writeError(w, http.StatusTooManyRequests, "too_many", "too many dashboard tabs")
-			return
+			return nil
 		}
 	}
-	captureState.clients[req.Client] = captureClient{Focused: req.Focused, Visible: req.Visible, Seen: guideNow()}
+	captureState.clients[client] = captureClient{Focused: focused, Visible: visible, Seen: guideNow()}
 	resp := map[string]any{}
-	if p := captureState.pending; p != nil && p.client == req.Client && !p.delivered {
+	if p := captureState.pending; p != nil && p.client == client && !p.delivered {
 		p.delivered = true
 		resp["capture"] = p.captureRequest
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp
 }
 
 // POST /api/companion/capture/{id} — the tab hands in its render, or says why
@@ -300,6 +340,15 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var req struct {
+		Save  bool   `json:"save"`
+		Label string `json:"label"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, capturePresenceMaxBody)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid capture request: "+err.Error())
+		return
+	}
 	id, err := newCaptureID()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -351,6 +400,14 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{"png": base64.StdEncoding.EncodeToString(result.image)}
 		if result.context != nil {
 			resp["context"] = result.context
+		}
+		if req.Save {
+			saved, err := saveCapture(convID, guideText(req.Label, guideMaxTitle), result.image, result.context)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", "save capture: "+err.Error())
+				return
+			}
+			resp["saved_id"] = saved.ID
 		}
 		writeJSON(w, http.StatusOK, resp)
 	case <-ctx.Done():

@@ -17,7 +17,7 @@ function element(tag, { attrs = {}, text = '', parent = null, classes = [] } = {
 
 test('a field is named but its value never is', () => {
   const field = element('input', { attrs: { 'aria-label': 'Token' }, text: 'ignored' });
-  assert.deepEqual(describeElement(field), { tag: 'input', role: '', label: 'Token', text: '', id: '', board_element: '' });
+  assert.deepEqual(describeElement(field), { tag: 'input', role: '', label: 'Token', text: '', id: '', ref: '', board_element: '' });
 });
 
 test('a board element under the cursor is named', () => {

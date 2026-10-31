@@ -368,6 +368,7 @@ var peerViewOwnNodeRoutes = []string{
 	"POST /api/companion/view",
 	// Presence and captures belong to the local operator's own open tabs.
 	"POST /api/companion/presence", "POST /api/companion/capture/{id}",
+	"POST /api/companion/marks/dismiss", "POST /api/companion/marks/{id}/dismiss", "POST /api/companion/marks/{id}/acknowledge", "POST /api/companion/marks/{id}/reply",
 	// The companion's hover preview and voice read this node's own panes and transcripts.
 	"GET /api/companion/{agent}/peek", "GET /api/companion/{agent}/speech",
 	// Collab boards are this node's operator workspace with its own agents.

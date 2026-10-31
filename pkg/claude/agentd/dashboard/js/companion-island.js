@@ -29,6 +29,7 @@ import {
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js';
+import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { ApprovalCard, ElevatedBand, StewardAccessControls, openAccessPanel } from './companion-approval.js';
@@ -1004,11 +1005,41 @@ export function CompanionApp({
   // Stay reachable for `tclaude agent guide capture`, and tell the operator
   // each time their view is captured.
   const [captureNotice, setCaptureNotice] = useState('');
+  const [marks, setMarks] = useState([]);
+  const marksSeen = useRef('');
+  const markReport = useRef([]);
+  const receiveMarks = useCallback((next) => {
+    const key = marksKey(next);
+    if (key === marksSeen.current) return;
+    marksSeen.current = key;
+    setMarks(next);
+  }, []);
+  const postMark = (path, body) => fetchImpl(`/api/companion/marks/${path}`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+  });
+  const endMark = useCallback(async (mark, action) => {
+    receiveMarks(marks.filter((each) => each.id !== mark.id));
+    try { await postMark(`${mark.id}/${action}`); } catch { notify?.('Could not end that mark', 'error'); }
+  }, [marks]);
+  const dismissAllMarks = useCallback(async () => {
+    receiveMarks([]);
+    try { await postMark('dismiss'); } catch { notify?.('Could not dismiss the marks', 'error'); }
+  }, []);
+  const replyToMark = useCallback(async (mark, text) => {
+    try {
+      const response = await postMark(`${mark.id}/reply`, { text });
+      if (response?.ok) return true;
+      const data = await response?.json?.().catch(() => null);
+      notify?.(data?.error || 'Could not send that reply', 'error');
+    } catch { notify?.('Could not send that reply', 'error'); }
+    return false;
+  }, []);
   useEffect(() => {
     if (!win?.document || !win.crypto?.randomUUID) return undefined;
     return startCapturePresence({
       win, fetchImpl, tab: () => activeTab.value,
       onCapture: (request) => setCaptureNotice(request.agent_name || 'An agent'),
+      onMarks: receiveMarks, marks: () => markReport.current,
     });
   }, [win, fetchImpl]);
   useEffect(() => {
@@ -1373,6 +1404,8 @@ export function CompanionApp({
     ${annotating && html`<${AnnotateOverlay} agentName=${annotating.name} win=${win}
       onSend=${sendAnnotation} onCancel=${() => setAnnotating(null)} />`}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
+    ${marks.length > 0 && win && html`<${MarksLayer} marks=${marks} win=${win} onEnd=${endMark} onDismissAll=${dismissAllMarks}
+      onReply=${replyToMark} onReport=${(report) => { markReport.current = report; }} />`}
     ${captureNotice && html`<div class="companion-capture-notice" role="status" data-capture-skip>${captureNotice} captured this view</div>`}
     ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} marks=${guideCue.marks} onDismiss=${dismissGuide} win=${win} />`}
     ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
