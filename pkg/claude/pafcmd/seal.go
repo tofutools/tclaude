@@ -32,7 +32,7 @@ type encryptParams struct {
 
 func encryptCmd() *cobra.Command {
 	return boa.CmdT[encryptParams]{
-		Use:   "encrypt <file>",
+		Use:   "encrypt",
 		Short: "Encrypt a PAF to named recipients with age",
 		Long: "Encrypt a whole PAF with age (https://age-encryption.org) to one or more\n" +
 			"recipients. A federation peer is addressed by the age key derived from its\n" +
@@ -138,7 +138,7 @@ type decryptParams struct {
 
 func decryptCmd() *cobra.Command {
 	return boa.CmdT[decryptParams]{
-		Use:   "decrypt <file>",
+		Use:   "decrypt",
 		Short: "Decrypt a PAF addressed to this node",
 		Long: "Decrypt an age-encrypted PAF with this node's federation identity and verify\n" +
 			"the result. validate, inspect, render and redact also read an encrypted PAF\n" +

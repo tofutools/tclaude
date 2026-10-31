@@ -41,6 +41,19 @@ type hubResourceParams struct {
 	MaxEntries   int      `long:"max-entries" optional:"true" help:"Bound the list or log response"`
 }
 
+// hubResourceActions lists what runHubResource accepts for each resource.
+var hubResourceActions = map[string]string{
+	"boards":     "list, set, delete",
+	"admins":     "list, add, remove",
+	"admissions": "list, admit, revoke",
+	"invites":    "list, create, revoke",
+	"spaces":     "list, set",
+	"settings":   "get, set, reset",
+	"identity":   "recover, revoke-old",
+	"logs":       "tail",
+	"audit":      "list",
+}
+
 func hubCmd() *cobra.Command {
 	sub := []*cobra.Command{
 		hubRunCmd(), hubUpdateCmd(), hubStaleCmd(),
@@ -54,7 +67,7 @@ func hubCmd() *cobra.Command {
 		}}.ToCobra())
 	}
 	for _, resource := range []string{"admins", "admissions", "invites", "spaces", "settings", "identity", "logs", "audit", "boards"} {
-		sub = append(sub, boa.CmdT[hubResourceParams]{Use: resource, Short: "Manage hub " + resource + " (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubResourceParams, _ *cobra.Command, _ []string) {
+		sub = append(sub, boa.CmdT[hubResourceParams]{Use: resource, Short: "Manage hub " + resource + " (operator only)", Long: "Manage hub " + resource + " (operator only). Actions: " + hubResourceActions[resource] + ".", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubResourceParams, _ *cobra.Command, _ []string) {
 			os.Exit(runHubResource(resource, p, os.Stdout, os.Stderr))
 		}}.ToCobra())
 	}

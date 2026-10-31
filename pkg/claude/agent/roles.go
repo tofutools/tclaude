@@ -105,7 +105,7 @@ type rolesShowParams struct {
 
 func rolesShowCmd() *cobra.Command {
 	return boa.CmdT[rolesShowParams]{
-		Use:         "show <name>",
+		Use:         "show",
 		Short:       "Show one role in detail",
 		Long:        "Prints a role's brief and default permissions. With --json, emits the raw wire JSON — the same shape 'create' / 'edit' accept via --file.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -214,7 +214,7 @@ type rolesEditParams struct {
 
 func rolesEditCmd() *cobra.Command {
 	return boa.CmdT[rolesEditParams]{
-		Use:   "edit <name> --file <path>",
+		Use:   "edit --file <path>",
 		Short: "Replace a role from a JSON file",
 		Long: "Replaces the named role wholesale with the JSON in --file (or --file - for stdin) — a full replace, not " +
 			"a field merge, so post the role's complete desired state. The body's `name` may differ from <name> to " +
@@ -285,7 +285,7 @@ type rolesRmParams struct {
 
 func rolesRmCmd() *cobra.Command {
 	return boa.CmdT[rolesRmParams]{
-		Use:   "rm <name>",
+		Use:   "rm",
 		Short: "Delete a role",
 		Long: "Removes a role from the library. Roles resolve at deploy time, so a delete is REFUSED while any template " +
 			"still references the role — the error lists the referencing templates; edit them to drop or repoint the " +

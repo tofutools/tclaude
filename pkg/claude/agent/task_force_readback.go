@@ -302,13 +302,13 @@ func runTaskForceLs(p *taskForceLsParams, stdout, stderr io.Writer) int {
 
 type taskForceStatusParams struct {
 	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
-	Name    string `pos:"true" optional:"true" help:"The task force (group) to inspect. Inferred when you are in exactly one group."`
+	Name    string `pos:"true" name:"group" optional:"true" help:"The task force (group) to inspect. Inferred when you are in exactly one group."`
 	JSON    bool   `long:"json" help:"Output the composed force status as JSON."`
 }
 
 func taskForceStatusCmd() *cobra.Command {
 	return boa.CmdT[taskForceStatusParams]{
-		Use:   "status [group]",
+		Use:   "status",
 		Short: "Show a deployed force's mission, phase, liveness, waves and rhythms",
 		Long: "The CLI twin of the dashboard force block. Shows a deployed task force's mission + provenance (source " +
 			"template), its process phase / phase map / recent transitions, a per-role liveness rollup (working / idle / " +

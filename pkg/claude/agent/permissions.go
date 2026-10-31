@@ -33,7 +33,7 @@ func permissionsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "permissions",
 		Short: "Inspect and manage agent permission slugs",
-		Long: "List, grant, deny, and revoke agent permission slugs without hand-editing ~/.tclaude/config.json. " +
+		Long: "List, grant, deny, and revoke agent permission slugs without hand-editing ~/.tclaude/data/config.json. " +
 			"`ls` and `slugs` are open to anyone; `grant`, `deny`, and `revoke` are gated on permissions.grant / permissions.revoke. " +
 			"Use the magic target `default` to modify the global defaults list, or pass a conv selector (UUID/prefix/title) to set per-conv overrides. " +
 			"`grant` adds a slug, `deny` blocks an otherwise-default slug for one agent, and `revoke` clears either back to the inherited default.",
