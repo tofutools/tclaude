@@ -32,7 +32,7 @@ cd "$root"
 (cd scripts/e2e/drive && go build -o "$work/docshots" ./docshots)
 # The first build recompiles everything above package time and takes minutes;
 # later ones reuse the build cache while the frozen time stays the same.
-"$work/docshots" -manifest scripts/docs/shots.json -write-overlay "$work"
+"$work/docshots" -root "$root" -manifest scripts/docs/shots.json -write-overlay "$work"
 go test -c -overlay "$work/overlay.json" -o "$work/agentd.test" ./pkg/claude/agentd/
 
 # Nothing below may see the operator's home: the server, Chrome and the driver

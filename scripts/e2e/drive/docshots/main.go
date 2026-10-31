@@ -39,19 +39,17 @@ const changedShare = 0.0005
 // Step is one setup action. Exactly one verb field is set; Text narrows the
 // verb's CSS selector to elements containing that text.
 type Step struct {
-	Click   string `json:"click,omitempty"`
-	Wait    string `json:"wait,omitempty"`
-	Fill    string `json:"fill,omitempty"`
-	Check   string `json:"check,omitempty"`
-	Scroll  string `json:"scroll,omitempty"`
-	Hide    string `json:"hide,omitempty"`
-	Remove  string `json:"remove,omitempty"`
-	Open    string `json:"open,omitempty"`
-	Key     string `json:"key,omitempty"`
-	Eval    string `json:"eval,omitempty"`
-	Text    string `json:"text,omitempty"`
-	Value   string `json:"value,omitempty"`
-	Comment string `json:"comment,omitempty"`
+	Click  string `json:"click,omitempty"`
+	Wait   string `json:"wait,omitempty"`
+	Fill   string `json:"fill,omitempty"`
+	Check  string `json:"check,omitempty"`
+	Scroll string `json:"scroll,omitempty"`
+	Hide   string `json:"hide,omitempty"`
+	Remove string `json:"remove,omitempty"`
+	Open   string `json:"open,omitempty"`
+	Eval   string `json:"eval,omitempty"`
+	Text   string `json:"text,omitempty"`
+	Value  string `json:"value,omitempty"`
 }
 
 // Shot is one image in the manifest.
@@ -63,8 +61,6 @@ type Shot struct {
 	Target  string `json:"target"`
 	Width   int    `json:"width"`
 	Height  int    `json:"height"`
-	// Element, when set, clips the image to that element.
-	Element string `json:"element,omitempty"`
 	Steps   []Step `json:"steps"`
 }
 
@@ -73,7 +69,9 @@ type manifest struct {
 	FrozenTime string `json:"frozenTime"`
 	Width      int    `json:"width"`
 	Height     int    `json:"height"`
-	Shots      []Shot `json:"shots"`
+	// CSS applies to every shot, for chrome that only reflects the fake host.
+	CSS   string `json:"css"`
+	Shots []Shot `json:"shots"`
 }
 
 // initScript freezes everything that would differ between two runs, before any
@@ -130,7 +128,7 @@ func main() {
 	overlay := flag.String("write-overlay", "", "write a go build overlay freezing time.Now into this directory, then exit")
 	flag.Parse()
 	if *overlay != "" {
-		if err := writeOverlay(*manifestPath, *overlay); err != nil {
+		if err := writeOverlay(*manifestPath, *root, *overlay); err != nil {
 			fmt.Fprintln(os.Stderr, "docshots:", err)
 			os.Exit(1)
 		}
@@ -156,11 +154,13 @@ func loadManifest(path string) (manifest, error) {
 	return m, nil
 }
 
-// writeOverlay patches a copy of the toolchain's time.Now so its wall clock
-// stands still at the manifest's frozenTime. The monotonic reading stays real, so
-// time.Since, timeouts and timers behave normally. The server binary alone is
-// built with it (`go test -c -overlay`); no code path in tclaude changes.
-func writeOverlay(manifestPath, dir string) error {
+// writeOverlay patches copies of the two sources of run-to-run drift the seeded
+// server cannot avoid. The wall clock of time.Now stands still at the manifest's
+// frozenTime; its monotonic reading stays real, so time.Since, timeouts and timers
+// behave normally. Agent ids come from a fixed sequence instead of crypto/rand.
+// Only the server binary is built with it (`go test -c -overlay`), so no shipped
+// code changes. A source that moved fails here rather than drifting quietly.
+func writeOverlay(manifestPath, root, dir string) error {
 	m, err := loadManifest(manifestPath)
 	if err != nil {
 		return err
@@ -173,21 +173,41 @@ func writeOverlay(manifestPath, dir string) error {
 	if err != nil {
 		return err
 	}
-	src := filepath.Join(strings.TrimSpace(string(goroot)), "src", "time", "time.go")
-	raw, err := os.ReadFile(src)
-	if err != nil {
-		return err
+	replace := map[string]string{}
+	for _, patch := range []struct{ src, name, anchor, with, appendix string }{
+		{
+			src:    filepath.Join(strings.TrimSpace(string(goroot)), "src", "time", "time.go"),
+			name:   "time.go",
+			anchor: "func Now() Time {\n\tsec, nsec, mono := runtimeNow()\n",
+			with:   fmt.Sprintf("func Now() Time {\n\tsec, nsec, mono := runtimeNow()\n\tsec, nsec = %d, 0\n", at.Unix()),
+		},
+		{
+			src:      filepath.Join(root, "pkg", "claude", "common", "db", "agents.go"),
+			name:     "agents.go",
+			anchor:   "if _, err := rand.Read(b[:]); err != nil {",
+			with:     "if _, err := docshotsRead(b[:]); err != nil {",
+			appendix: "\nvar _ = rand.Reader\n\nvar docshotsSeed uint32 = 1\n\nfunc docshotsRead(b []byte) (int, error) {\n\tfor i := range b {\n\t\tdocshotsSeed = docshotsSeed*1664525 + 1013904223\n\t\tb[i] = byte(docshotsSeed >> 24)\n\t}\n\treturn len(b), nil\n}\n",
+		},
+	} {
+		raw, err := os.ReadFile(patch.src)
+		if err != nil {
+			return err
+		}
+		if !bytes.Contains(raw, []byte(patch.anchor)) {
+			return fmt.Errorf("%s has no %q: update writeOverlay", patch.src, patch.anchor)
+		}
+		patched := append(bytes.Replace(raw, []byte(patch.anchor), []byte(patch.with), 1), patch.appendix...)
+		copyPath := filepath.Join(dir, patch.name)
+		if err := os.WriteFile(copyPath, patched, 0o644); err != nil {
+			return err
+		}
+		abs, err := filepath.Abs(patch.src)
+		if err != nil {
+			return err
+		}
+		replace[abs] = copyPath
 	}
-	const anchor = "func Now() Time {\n\tsec, nsec, mono := runtimeNow()\n"
-	if !bytes.Contains(raw, []byte(anchor)) {
-		return fmt.Errorf("%s has no %q: the Go toolchain changed time.Now, update writeOverlay", src, anchor)
-	}
-	patched := bytes.Replace(raw, []byte(anchor), fmt.Appendf(nil, "%ssec, nsec = %d, 0\n", anchor, at.Unix()), 1)
-	copyPath := filepath.Join(dir, "time.go")
-	if err := os.WriteFile(copyPath, patched, 0o644); err != nil {
-		return err
-	}
-	overlay, err := json.Marshal(map[string]map[string]string{"Replace": {src: copyPath}})
+	overlay, err := json.Marshal(map[string]map[string]string{"Replace": replace})
 	if err != nil {
 		return err
 	}
@@ -366,6 +386,9 @@ func capture(browser *rod.Browser, url string, m manifest, s Shot, out string) e
 			waitFor(p, fmt.Sprintf(`nav [data-tab=%q].active`, s.Tab), "")
 		}
 		p.MustEval(`() => document.fonts.load('14px ui-sans-serif').then(a => document.fonts.load('14px ui-monospace').then(b => { if (!a.length || !b.length) throw new Error('Noto Sans / DejaVu Sans Mono not installed'); }))`)
+		if err := addCSS(p, m.CSS); err != nil {
+			panic(err)
+		}
 		for i, st := range s.Steps {
 			if err := runStep(p, st); err != nil {
 				panic(fmt.Errorf("step %d: %w", i+1, err))
@@ -378,13 +401,7 @@ func capture(browser *rod.Browser, url string, m manifest, s Shot, out string) e
 		if err := scrub(p); err != nil {
 			panic(err)
 		}
-		var clip *proto.PageViewport
-		if s.Element != "" {
-			waitFor(p, s.Element, "")
-			box := p.MustEval(`(s) => { const r = document.querySelector(s).getBoundingClientRect(); return {x: r.x, y: r.y, w: r.width, h: r.height}; }`, s.Element)
-			clip = &proto.PageViewport{X: box.Get("x").Num(), Y: box.Get("y").Num(), Width: box.Get("w").Num(), Height: box.Get("h").Num(), Scale: 1}
-		}
-		img, err := p.Screenshot(false, &proto.PageCaptureScreenshot{Format: proto.PageCaptureScreenshotFormatPng, Clip: clip})
+		img, err := p.Screenshot(false, &proto.PageCaptureScreenshot{Format: proto.PageCaptureScreenshotFormatPng})
 		if err != nil {
 			panic(err)
 		}
@@ -463,16 +480,13 @@ func runStep(p *rod.Page, st Step) error {
 	case st.Scroll != "":
 		return act(st.Scroll, `e => e.scrollIntoView({block: 'center'})`)
 	case st.Hide != "":
-		return act(st.Hide, `e => { (e.closest('[data-docshots-keep]') || e).style.setProperty('display', 'none', 'important'); }`)
+		return act(st.Hide, `e => e.style.setProperty('display', 'none', 'important')`)
 	case st.Remove != "":
-		// Hide every match: the selector is added as a stylesheet rule so the
-		// dashboard's own repaints cannot bring the element back.
+		// A stylesheet rule hides every match, and the dashboard's repaints
+		// cannot bring it back.
 		return addCSS(p, st.Remove+` { display: none !important; }`)
 	case st.Open != "":
 		_, err := p.Eval(`(s) => document.querySelectorAll(s).forEach(d => { d.open = true; })`, st.Open)
-		return err
-	case st.Key != "":
-		_, err := p.Eval(`(k) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {key: k, bubbles: true}))`, st.Key)
 		return err
 	case st.Eval != "":
 		_, err := p.Eval(`async () => { ` + st.Eval + ` }`)

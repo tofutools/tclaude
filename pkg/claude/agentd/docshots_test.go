@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,8 +30,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -71,6 +75,41 @@ type learnAgent struct {
 	age, last                          time.Duration
 }
 
+// TestDocShotsManifest runs in CI: each manifest target must exist, and each
+// dashboard image the docs embed must come from the manifest. Terminal images
+// (term-*.png) are drawn by hand.
+func TestDocShotsManifest(t *testing.T) {
+	raw, err := os.ReadFile("../../../scripts/docs/shots.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Shots []struct {
+			Target string `json:"target"`
+		} `json:"shots"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	targets := map[string]bool{}
+	for _, s := range manifest.Shots {
+		targets[filepath.Base(s.Target)] = true
+		if _, err := os.Stat(filepath.Join("../../..", s.Target)); err != nil {
+			t.Errorf("manifest target: %v", err)
+		}
+	}
+	assets, err := filepath.Glob("../../../docs/assets/*.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets {
+		name := filepath.Base(a)
+		if !targets[name] && !strings.HasPrefix(name, "term-") {
+			t.Errorf("docs/assets/%s is not in scripts/docs/shots.json, so it cannot be regenerated", name)
+		}
+	}
+}
+
 // TestDocShotsServe seeds the fixture named by TCLAUDE_DOCSHOTS_FIXTURE, writes
 // the server's URL to <TCLAUDE_DOCSHOTS_SERVE>/url and serves until a file named
 // stop appears there.
@@ -79,7 +118,9 @@ func TestDocShotsServe(t *testing.T) {
 	if dir == "" {
 		t.Skip("docs screenshot server: run scripts/docs/screenshots.sh")
 	}
-	if before := time.Now(); func() bool { time.Sleep(20 * time.Millisecond); return time.Now().Round(0).Equal(before.Round(0)) }() == false {
+	before := time.Now()
+	time.Sleep(20 * time.Millisecond)
+	if !time.Now().Round(0).Equal(before.Round(0)) {
 		t.Fatal("the wall clock is not frozen: build through scripts/docs/screenshots.sh")
 	}
 	f := newFlow(t)
@@ -197,7 +238,8 @@ func seedDocFleet(t *testing.T, f *testharness.Flow) {
 	// operator opts in; do so, as most fleet operators running the dashboard do.
 	if err := config.Save(&config.Config{
 		Cost:       &config.CostConfig{ShowOnSubscription: true},
-		Federation: &config.FederationConfig{Name: "dev@workstation"},
+		Federation: &config.FederationConfig{Name: "dev@box"},
+		Features:   &config.FeaturesConfig{Processes: true},
 	}); err != nil {
 		t.Fatalf("cost config: %v", err)
 	}
@@ -215,6 +257,152 @@ func seedDocFleet(t *testing.T, f *testharness.Flow) {
 	t.Cleanup(clearLogin)
 	seedDocUsageHistory(t) // the Usage tab only appears once history exists
 	seedDocProfiles(t)
+	seedDocCostHistory(t, agents)
+	seedDocMail(t, f, main.ID, agents)
+	seedDocAudit(t, agents)
+	seedDocSandboxProfile(t)
+	seedDocTemplate(t)
+	seedDocProcess(t, f)
+}
+
+// seedDocCostHistory backfills two weeks of spend, so the month chart has a
+// shape. Daily rows carry a cumulative cost per session: each earlier day holds
+// a growing share of the agent's total, and today's row is the seeded total.
+func seedDocCostHistory(t *testing.T, agents []docAgent) {
+	t.Helper()
+	d, err := db.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range agents {
+		for back := 14; back > 0; back-- {
+			day := time.Now().AddDate(0, 0, -back)
+			share := float64(15-back) / 15 * float64(15-back) / 15
+			if _, err := d.Exec(`INSERT INTO session_cost_daily
+				(session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
+				SELECT session_id, ?, conv_id, ?, ?, model, agent_id, harness
+				FROM session_cost_daily WHERE session_id = ? AND day = ?`,
+				day.Format("2006-01-02"), a.cost*share, day.UnixNano(), "lbl-"+a.title, time.Now().Format("2006-01-02")); err != nil {
+				t.Fatalf("cost history %s: %v", a.title, err)
+			}
+		}
+	}
+}
+
+// seedDocMail fills the Messages tab with a short exchange in the group and one
+// notification to the operator.
+func seedDocMail(t *testing.T, f *testharness.Flow, groupID int64, agents []docAgent) {
+	t.Helper()
+	lead, ui, search := agents[0].conv, agents[1].conv, agents[2].conv
+	base := time.Now().Add(-47 * time.Minute)
+	for i, m := range []db.AgentMessage{
+		{GroupID: groupID, FromConv: lead, ToConv: ui, Subject: "Checkout redesign: scope for today",
+			Body: "Please finish the address step and open a PR. Keep the payment step unchanged; payments-fix is working there."},
+		{GroupID: groupID, FromConv: lead, ToConv: search, Subject: "Reranker experiment",
+			Body: "Try click signals on top of the v2 index. A draft PR is fine while the numbers are still moving."},
+		{GroupID: groupID, FromConv: ui, ToConv: lead, Subject: "Re: Checkout redesign: scope for today",
+			Body: "The address step is done and PR #1482 is up. CI is green, 14 of 14 checks.\n\nThe review should take about ten minutes. It adds one new component and changes no payment code."},
+		{GroupID: groupID, FromConv: search, ToConv: lead, Subject: "Re: Reranker experiment",
+			Body: "Draft PR #1491 is up. Click signals lift the top-three hit rate by four points on the sample queries."},
+	} {
+		m.CreatedAt = base.Add(time.Duration(i) * 9 * time.Minute)
+		if _, err := db.InsertAgentMessage(&m); err != nil {
+			t.Fatalf("message: %v", err)
+		}
+	}
+	if _, err := db.InsertHumanMessageWithAttachments(&db.HumanMessage{
+		FromConv: lead, FromTitle: "lead", GroupName: "webshop",
+		Subject:   "Ready for your review: PR #1482",
+		Body:      "The checkout redesign is green and reviewed. Merge it when you have a minute.",
+		CreatedAt: time.Now().Add(-6 * time.Minute),
+	}, nil); err != nil {
+		t.Fatalf("notification: %v", err)
+	}
+}
+
+// seedDocAudit writes the rows the audit trail shows, led by a refused spawn.
+func seedDocAudit(t *testing.T, agents []docAgent) {
+	t.Helper()
+	for _, e := range []db.AuditLogEntry{
+		{At: time.Now().Add(-38 * time.Minute), ActorKind: db.AuditActorHuman, Verb: "spawn", TargetLabel: "cold-reviewer", GroupName: "webshop",
+			Detail: "profile=sol-opencode", Method: "POST", Path: "/api/agents/spawn", Status: 200, Source: db.AuditSourceDashboard},
+		{At: time.Now().Add(-21 * time.Minute), ActorKind: db.AuditActorAgent, ActorConv: agents[0].conv, ActorLabel: "lead", Verb: "message", TargetLabel: "checkout-ui", GroupName: "webshop",
+			Detail: "Checkout redesign: scope for today", Method: "POST", Path: "/v1/agent/messages", Status: 200},
+		{At: time.Now().Add(-9 * time.Minute), ActorKind: db.AuditActorAgent, ActorConv: agents[5].conv, ActorLabel: "cold-reviewer", Verb: "spawn", GroupName: "webshop",
+			Detail: "denied: agent.spawn not granted", Method: "POST", Path: "/v1/agent/spawn", Status: 403},
+	} {
+		if _, err := db.InsertAuditLog(e); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	}
+}
+
+// seedDocSandboxProfile adds a profile whose network section reads like a real
+// egress policy. Destinations use the documentation address ranges.
+func seedDocSandboxProfile(t *testing.T) {
+	t.Helper()
+	if _, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "no-telemetry",
+		Network: &sandboxpolicy.NetworkRules{Baseline: sandboxpolicy.NetworkBaselineAllow, Deny: []sandboxpolicy.NetworkAllowEntry{
+			{Domain: "telemetry.example", IncludeSubdomains: true, Ports: []int{443}},
+			{Domain: "metrics.example", Ports: []int{443}},
+			{Host: "crash-reports.example.net", Ports: []int{443}},
+			{CIDR: "192.0.2.0/28", Ports: []int{443}},
+			{CIDR: "203.0.113.0/28"},
+			{Loopback: true, Ports: []int{5432}},
+		}},
+	}); err != nil {
+		t.Fatalf("sandbox profile: %v", err)
+	}
+}
+
+func seedDocTemplate(t *testing.T) {
+	t.Helper()
+	if _, err := db.CreateGroupTemplate(&db.GroupTemplate{
+		Name: "feature-squad", Descr: "A lead with two developers and a cold reviewer", PerAgentWorktrees: true,
+		Agents: []db.GroupTemplateAgent{
+			{Ordinal: 0, Name: "lead", Role: "lead", Descr: "Plans and merges", IsOwner: true},
+			{Ordinal: 1, Name: "dev-1", Role: "dev", Descr: "Implements"},
+			{Ordinal: 2, Name: "dev-2", Role: "dev", Descr: "Implements"},
+			{Ordinal: 3, Name: "reviewer", Role: "reviewer", Descr: "Reviews diffs cold"},
+		},
+	}); err != nil {
+		t.Fatalf("group template: %v", err)
+	}
+}
+
+// seedDocProcess stores a template with a decision fanning out to two tasks that
+// join before the end.
+func seedDocProcess(t *testing.T, f *testharness.Flow) {
+	t.Helper()
+	root := filepath.Join(f.World.HomeDir, ".tclaude", "processes")
+	t.Cleanup(agentd.SetProcessStoreRootForTest(root))
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatalf("process store: %v", err)
+	}
+	check := &model.Performer{Kind: model.PerformerProgram, Profile: "safe", Run: "true"}
+	if _, err := fs.PutTemplate(t.Context(), &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind,
+		ID: "release-train", Name: "Release train",
+		Description: "Check a release candidate, then ship it or fix the findings.",
+		Start:       "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": "checks-pass"}},
+			"checks-pass": {
+				Type:      model.NodeTypeDecision,
+				Name:      "Checks pass?",
+				Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Do the release checks pass?"},
+				Next:      model.Next{"yes": "ship-change", "no": "fix-findings"},
+			},
+			"ship-change":    {Type: model.NodeTypeTask, Name: "Ship change", Performer: check, Next: model.Next{"next": "record-outcome"}},
+			"fix-findings":   {Type: model.NodeTypeTask, Name: "Fix findings", Performer: check, Next: model.Next{"next": "record-outcome"}},
+			"record-outcome": {Type: model.NodeTypeTask, Name: "Record outcome", Performer: check, Next: model.Next{"next": "end"}},
+			"end":            {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	}); err != nil {
+		t.Fatalf("process template: %v", err)
+	}
 }
 
 func seedDocAgent(t *testing.T, f *testharness.Flow, groupID int64, group string, a docAgent) {
@@ -312,8 +500,8 @@ func seedDocUsage(t *testing.T) {
 	t.Helper()
 	now := time.Now()
 	blob, err := json.Marshal(usageapi.CachedUsage{
-		FiveHour:      &usageapi.CachedBucket{Pct: 34, ResetsAt: now.Add(2*time.Hour + 41*time.Minute)},
-		SevenDay:      &usageapi.CachedBucket{Pct: 58, ResetsAt: now.Add(3*24*time.Hour + 5*time.Hour)},
+		FiveHour:      &usageapi.CachedBucket{Pct: 62, ResetsAt: now.Add(2*time.Hour + 41*time.Minute)},
+		SevenDay:      &usageapi.CachedBucket{Pct: 46, ResetsAt: now.Add(3*24*time.Hour + 5*time.Hour)},
 		FetchedAt:     now,
 		LastAttemptAt: now,
 	})
@@ -388,17 +576,20 @@ func itoa(n int) string {
 
 func seedDocUsageHistory(t *testing.T) {
 	t.Helper()
-	base := time.Now().UTC().Add(-time.Hour).Truncate(15 * time.Minute)
-	claudeFiveHour := []float64{72, 18, 25, 31}
-	claudeWeekly := []float64{40, 42, 45, 48}
-	codexWeekly := []float64{55, 59, 62, 66}
-	for i := range claudeFiveHour {
-		observedAt := base.Add(time.Duration(i) * 15 * time.Minute)
+	now := time.Now().UTC()
+	fiveHourReset, sevenDayReset := now.Add(2*time.Hour+41*time.Minute), now.Add(3*24*time.Hour+5*time.Hour)
+	codexReset := now.Add(5*24*time.Hour + 2*time.Hour)
+	// Claude's five-hour window burns fast enough to run dry before it resets;
+	// the other two stay on course, so the forecast has something to contrast.
+	const samples = 8
+	for i := range samples {
+		observedAt := now.Add(-time.Duration(samples-1-i) * 20 * time.Minute)
+		f := float64(i)
 		if _, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
 			Provider: db.SubscriptionProviderAnthropic, ObservedAt: observedAt, Source: "docshots",
 			Windows: []db.SubscriptionUsageWindow{
-				{Name: "five_hour", Duration: 5 * time.Hour, UsedPercent: claudeFiveHour[i], ResetsAt: base.Add(5 * time.Hour)},
-				{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: claudeWeekly[i], ResetsAt: base.Add(6 * 24 * time.Hour)},
+				{Name: "five_hour", Duration: 5 * time.Hour, UsedPercent: 20 + 6*f, ResetsAt: fiveHourReset},
+				{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 44 + 0.1*f, ResetsAt: sevenDayReset},
 			},
 		}); err != nil {
 			t.Fatalf("seed Claude usage history: %v", err)
@@ -406,7 +597,7 @@ func seedDocUsageHistory(t *testing.T) {
 		if _, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
 			Provider: db.SubscriptionProviderOpenAI, ObservedAt: observedAt, Source: "docshots",
 			Windows: []db.SubscriptionUsageWindow{
-				{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: codexWeekly[i], ResetsAt: base.Add(5 * 24 * time.Hour)},
+				{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 25 + 0.1*f, ResetsAt: codexReset},
 			},
 		}); err != nil {
 			t.Fatalf("seed Codex usage history: %v", err)
@@ -421,7 +612,7 @@ func seedDocUsageHistory(t *testing.T) {
 func seedLearnTeam(t *testing.T, f *testharness.Flow) {
 	t.Helper()
 	// The header's node chip defaults to the real user@host; pin a fake one.
-	if err := config.Save(&config.Config{Federation: &config.FederationConfig{Name: "dev@workstation"}}); err != nil {
+	if err := config.Save(&config.Config{Federation: &config.FederationConfig{Name: "dev@box"}}); err != nil {
 		t.Fatalf("node name: %v", err)
 	}
 	g := f.HaveGroup("hello")
