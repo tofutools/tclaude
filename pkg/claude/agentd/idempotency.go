@@ -46,9 +46,9 @@ var idempotencyOwnerID = uuid.NewString()
 // response is BULK, and the JSON reads are bounded at 16 KiB, where the
 // durable copy is cheap enough not to be worth reasoning about.
 //
-// A dashboard capture changes nothing either, and its response is an image of
-// the operator's screen, which must not sit in the database at all. A retry
-// simply takes a fresh one.
+// A dashboard capture's response is an image of the operator's screen, which
+// must not sit in the database at all. A retry simply takes a fresh one; with
+// --save that can keep a second copy, which retention bounds like any other.
 var bulkReadRoutes = map[string]bool{
 	"/v1/github/pr/comments":    true,
 	"/v1/github/run/log-failed": true,

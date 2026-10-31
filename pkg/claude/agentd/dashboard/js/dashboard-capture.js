@@ -36,6 +36,7 @@ export function describeElement(el, y = null) {
     label: clip(control.getAttribute?.('aria-label') || control.getAttribute?.('title') || control.getAttribute?.('placeholder')),
     text: field ? '' : clip(terminalRow(el, y)?.textContent ?? control.innerText ?? control.textContent),
     id: control.id || '',
+    ref: control.id ? `#${control.id}` : '',
     board_element: el.closest?.('[data-element]')?.getAttribute?.('data-element') || '',
   };
   return out;
@@ -73,7 +74,7 @@ export function boardContext(doc) {
   return board;
 }
 
-export function captureContext({ win, tab, pointer, now = Date.now() }) {
+export function captureContext({ win, tab, pointer, marks = [], now = Date.now() }) {
   const doc = win.document;
   const context = {
     tab: String(tab || ''),
@@ -95,6 +96,7 @@ export function captureContext({ win, tab, pointer, now = Date.now() }) {
   if (selection) context.selection = selection;
   const board = boardContext(doc);
   if (board) context.board = board;
+  if (marks.length) context.marks = marks;
   return context;
 }
 
@@ -121,7 +123,7 @@ export function trackPointer(win, now = Date.now) {
 // startCapturePresence tells the daemon this tab is open and whether it is on
 // screen, and answers a capture aimed at it. It returns a stop function.
 export function startCapturePresence({
-  win, fetchImpl, tab, onCapture, render = renderPage, randomId = () => win.crypto.randomUUID(),
+  win, fetchImpl, tab, onCapture, onMarks, marks = () => [], render = renderPage, randomId = () => win.crypto.randomUUID(),
   setTimeoutImpl = (fn, ms) => win.setTimeout(fn, ms), clearTimeoutImpl = (id) => win.clearTimeout(id),
 }) {
   const doc = win.document;
@@ -142,7 +144,7 @@ export function startCapturePresence({
       // Let the cue paint first, so the operator sees it before the page
       // stalls for the render.
       await new Promise((resolve) => setTimeoutImpl(resolve, 60));
-      const context = captureContext({ win, tab: tab(), pointer: tracker.pointer });
+      const context = captureContext({ win, tab: tab(), pointer: tracker.pointer, marks: marks() });
       const png = await render({ win, fetchImpl, pointer: tracker.pointer?.inside ? tracker.pointer : null });
       body = { png: await blobToBase64(png, win), context };
     } catch (err) {
@@ -165,6 +167,7 @@ export function startCapturePresence({
     try {
       const response = await send({ client, focused: !!doc.hasFocus?.(), visible: !hidden() });
       const data = response?.ok ? await response.json() : null;
+      if (Array.isArray(data?.marks)) onMarks?.(data.marks);
       if (data?.capture?.id) await answer(data.capture);
     } catch { /* the next ping retries */ }
     inFlight = false;
