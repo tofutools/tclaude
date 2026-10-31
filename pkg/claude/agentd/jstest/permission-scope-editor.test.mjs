@@ -634,3 +634,24 @@ test('Escape empties a non-empty filter first and closes the editor only after t
   assertAbsent(host.querySelector('#perm-edit-modal'), 'the next Escape closes it');
   await mounted.unmount();
 });
+
+test('the reset clears a buffered draft\'s unknown slug, which has no row of its own', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({ slugs: [CLIPBOARD] }), {
+    ...noopActions,
+    savePermissions: async (descriptor, selection, scopes) => saved.push({ selection, scopes }),
+  }, {
+    mode: 'buffer', grantOnly: true, subject: 'role', label: 'future-role',
+    overrides: { 'future.permission': { effect: 'grant', scope: { future_dimension: ['narrow'] } } },
+  });
+  const reset = host.querySelector('#perm-edit-reset');
+  assert.equal(reset.querySelector('.pe-btn-regular').textContent, 'Clear all grants');
+  assert.equal(reset.disabled, false, 'the unknown grant is something to clear');
+  await harness.act(() => { reset.click(); });
+  assert.equal(host.querySelector('#perm-edit-reset').disabled, true);
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.notEqual(saved[0].selection['future.permission'], 'grant');
+  assert.equal(saved[0].scopes?.['future.permission'], undefined);
+  await mounted.unmount();
+});

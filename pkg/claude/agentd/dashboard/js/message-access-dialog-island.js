@@ -845,9 +845,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   const scopeOf = (slug) => scopes[slug] || {};
   const scopeJSON = (scope) => JSON.stringify(scopeChips(scope));
   const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
-  // The rows the reset button changes: config-granted Steward slugs are not
-  // this editor's to clear.
-  const resettable = rows.filter((row) => currentEffect(row.slug) !== 'default' && !stewardAccess?.config.has(row.slug));
+  // Whether the reset button has anything to do: config-granted Steward slugs
+  // are not this editor's to clear, and a buffered draft's unknown legacy slugs
+  // have no row but are cleared too, so read the selection rather than the rows.
+  const resettable = Object.entries(selection).some(([slug, effect]) => effect !== 'default' && !stewardAccess?.config.has(slug));
   const scopesDirty = rows.some((row) => scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}));
   const groupMode = descriptor.mode === 'group';
   const grantOnly = descriptor.mode === 'buffer' && !!descriptor.grantOnly;
@@ -1150,9 +1151,9 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       maxSeconds=${policy.max_seconds} submit=${submit} />`}
     <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
       ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${usesBad ? 'A use limit is a whole number from 1 to 1000' : sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
-      <button id="perm-edit-reset" type="button" disabled=${busy || !resettable.length}
+      <button id="perm-edit-reset" type="button" disabled=${busy || !resettable}
         title=${`Set every slug back to Default (${sudoMode ? 'not picked' : 'inherit'}), including any the filter hides`}
-        onClick=${() => setSelection((current) => ({ ...current, ...Object.fromEntries(resettable.map((row) => [row.slug, 'default'])) }))}><span class="pe-btn-regular">${sudoMode ? 'Clear selections' : groupMode || grantOnly ? 'Clear all grants' : 'Reset all to Default'}</span><span class="pe-btn-wizard">unbind all</span></button>
+        onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'Clear selections' : groupMode || grantOnly ? 'Clear all grants' : 'Reset all to Default'}</span><span class="pe-btn-wizard">unbind all</span></button>
       <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
       <button id="perm-edit-submit" class="primary" type="button" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</button>
     </div>

@@ -6705,6 +6705,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 4px 10px; font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
 }
 .perm-edit-toolbar button:hover { background: #2d333b; }
+#perm-edit-reset:disabled { opacity: .45; cursor: default; }
 .perm-edit-list {
   display: flex; flex-direction: column;
   border: 1px solid #2a3340; border-radius: 4px;
@@ -6882,7 +6883,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   #perm-edit-modal .perm-row { flex-wrap: wrap; }
   #perm-edit-modal .perm-row > .perm-scope-chips {
     order: 5; flex-basis: 100%; max-width: 100%;
-    justify-content: flex-start; padding-left: 22px;
+    justify-content: flex-start; padding-left: 36px;
   }
   #perm-edit-modal .perm-row > .perm-scope-chips .perm-scope-chip { display: inline-flex; }
 }
@@ -16303,6 +16304,8 @@ body.wizard #context-features-modal .perm-edit-toolbar button {
 }
 body.wizard #perm-edit-modal .perm-edit-toolbar button:hover,
 body.wizard #context-features-modal .perm-edit-toolbar button:hover { background: #3a2a63; }
+body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button { background: none; border: none; }
+body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button:hover { background: #3a2a63; }
 /* Slug list: violet frame + dividers, gilt slug label, violet description. */
 body.wizard #perm-edit-modal .perm-edit-list,
 body.wizard #context-features-modal .perm-edit-list { border-color: rgba(122, 93, 176, 0.4); }
