@@ -26,10 +26,9 @@ Click **Create group**. The group appears, empty.
 
 ## 2. Start an agent
 
-Open the group. On its **Agents** line, click the blue spawn button (a person with
-a plus sign). The one a line above it, on **Subgroups**, creates a subgroup instead.
-Once a group has members, the spawn button moves to the top left of the member
-table. The spawn dialog opens, joining `hello`, with the group's directory
+Open the group. Under its **Subgroups** line, click the blue spawn button (a person
+with a plus sign). The similar button on the **Subgroups** line creates a subgroup
+instead. The spawn dialog opens, joining `hello`, with the group's directory
 as the agent's working directory. Set:
 
 - **Name**: `alice`;
