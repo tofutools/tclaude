@@ -567,6 +567,12 @@ export function CompanionApp({
     writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
   }
 
+  // A click on the title bar or other empty space focuses nothing by itself.
+  // Give focus back to the terminal, so typing works and the border returns.
+  function onWindowClick() {
+    if (!windowRef.current?.contains(win?.document?.activeElement)) setFocusToken((n) => n + 1);
+  }
+
   function onTitlePointerDown(event) {
     if (event.button !== 0 || event.target.closest?.('button, input, [role="tab"]')) return;
     const node = windowRef.current;
@@ -1248,7 +1254,7 @@ export function CompanionApp({
 
   const windowView = open && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}`}
-    style=${style} role="dialog" aria-label="Companion" aria-modal="false">
+    style=${style} role="dialog" aria-label="Companion" aria-modal="false" onClick=${onWindowClick}>
     <header class="companion-titlebar" onPointerDown=${onTitlePointerDown}>
       <span class="companion-grip" aria-hidden="true">⋮⋮</span>
       <div class="companion-tabs" role="tablist" aria-label="Companion agents">
