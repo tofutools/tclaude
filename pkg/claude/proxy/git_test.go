@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -274,4 +275,27 @@ func TestRunGitRemotes_RendersRefusalReasons(t *testing.T) {
 	assert.Contains(t, out, "not on the operator's allow-list")
 	assert.Contains(t, out, "main, master", "the agent should see what it may not push to")
 	assert.Contains(t, out, "force-push disabled")
+}
+
+func TestRunGitRemotes_ForwardsAskHuman(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"repo_path":"/repo"}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runGitRemotes(&gitRemotesParams{AskHuman: "60s"}, &stdout, &stderr)
+
+	assert.Equal(t, rcOK, rc)
+	require.Len(t, calls, 1)
+	assert.Equal(t, 60*time.Second, calls[0].opts.AskHuman)
+}
+
+func TestRunGitRemotes_ValidatesAskHumanBeforeReachingTheDaemon(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runGitRemotes(&gitRemotesParams{AskHuman: "banana"}, &stdout, &stderr)
+
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Empty(t, calls)
 }

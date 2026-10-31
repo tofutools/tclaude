@@ -183,7 +183,7 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
   const s = review?.summary;
   return html`<div class="snap-panel" id="snapshot-share">
     <div class="paf-sec">Share ${snap.name} on a Board</div>
-    ${boards && !boards.length ? html`<div class="paf-hint">This node is on no Board. Join or create one in ⚙ Fleet → Boards.</div>` : html`
+    ${boards && !boards.length ? html`<div class="paf-hint">This node is on no Board. Join or create one in ⚙ Fleet config → Boards.</div>` : html`
     <${Field} label="Board"><select id="snapshot-share-board" value=${board} disabled=${!!busy} onChange=${(e) => { changed(); setBoard(e.currentTarget.value); }}>
       ${(boards || []).map((b) => html`<option key=${b.id} value=${b.id}>${b.name || b.id}</option>`)}</select></${Field}>
     <div class="cron-create-row"><span class="cron-create-label">Recipients</span><span class="snap-recipients" id="snapshot-share-to">

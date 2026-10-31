@@ -6,6 +6,7 @@ import {
   MENU_FILTER_PLACEHOLDER, MENU_FILTER_WIZARD_PLACEHOLDER,
 } from './menu-filter.js';
 import { isWizardActive } from './slop.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 const GroupsInteractions = createContext(null);
@@ -47,25 +48,18 @@ export function GroupsInteractionProvider({ children }) {
   };
 
   useEffect(() => {
-    const onClick = (event) => {
-      const key = openMenuKeyRef.current;
-      if (!key) return;
-      const entry = menus.current.get(key);
-      if (entry?.button?.contains(event.target) || entry?.menu?.contains(event.target)) return;
-      closeMenu();
-    };
     const onKeyDown = (event) => {
       if (event.key !== 'Escape' || !openMenuKeyRef.current) return;
       event.preventDefault();
       closeMenu(true);
     };
-    document.addEventListener('click', onClick);
     document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('click', onClick);
-      document.removeEventListener('keydown', onKeyDown);
-    };
+    return () => document.removeEventListener('keydown', onKeyDown);
   }, []);
+  useDismissablePopover(() => {
+    const entry = menus.current.get(openMenuKeyRef.current);
+    return [entry?.button, entry?.menu];
+  }, openMenuKey, () => closeMenu(), { escape: false });
 
   const value = useMemo(() => ({
     openMenuKey,

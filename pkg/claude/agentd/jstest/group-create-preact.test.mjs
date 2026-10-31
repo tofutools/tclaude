@@ -300,7 +300,7 @@ test('a clone dropped in the fused view lands beside its anchor in the fused ord
 async function mountGroupCreate(
   t,
   actionOverrides = {},
-  snapshot = { templates, groups },
+  snapshot = { templates, groups, group_attachments_mode: 'float' },
   confirmDiscard = async () => false,
 ) {
   const harness = await createPreactHarness(t);
@@ -665,4 +665,23 @@ test("group-create on another node, or on a peer's page, locks this machine's fo
   await flush(harness);
   assert.equal(host.querySelector('#group-create-cwd-browse').disabled, true, "a peer's page has no folder picker of its own");
   await mounted.cleanup();
+});
+
+test('the link fields follow the group attachments feature', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createGroupCreateState } = await harness.importDashboardModule('js/group-create-state.js');
+  for (const [mode, shown] of [['off', false], [undefined, false], ['float', true], ['fixed', true]]) {
+    const state = createGroupCreateState({ getSnapshot: () => ({ templates: [], groups: [], group_attachments_mode: mode }) });
+    state.open();
+    assert.equal(state.dialog.value.showAttachment, shown, `new group, mode ${mode}`);
+    state.close();
+  }
+
+  // The setting is this node's, and a peer's snapshot leaves it out.
+  const nodeApi = await harness.importDashboardModule('js/node-api.js');
+  const release = nodeApi.setNodeSnapshotSource((id) => (id === 'inst_forge' ? { templates: [], groups: [{ name: 'build' }] } : null));
+  const state = createGroupCreateState({ getSnapshot: () => ({ templates: [], groups: [], group_attachments_mode: 'float' }) });
+  state.open('', 'build', 'inst_forge');
+  assert.equal(state.dialog.value.showAttachment, true, 'on a peer');
+  release();
 });

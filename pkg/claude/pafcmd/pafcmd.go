@@ -57,7 +57,7 @@ type validateParams struct {
 
 func validateCmd() *cobra.Command {
 	return boa.CmdT[validateParams]{
-		Use:   "validate <file>",
+		Use:   "validate",
 		Short: "Verify a PAF's structure, schemas, hashes and signatures",
 		Long: "Verify a PAF completely: ZIP layout, manifest, schemas, entry hashes and\n" +
 			"sizes, semantic rules and signatures. Exits 1 when the file is invalid.\n" +
@@ -132,7 +132,7 @@ type inspectParams struct {
 
 func inspectCmd() *cobra.Command {
 	return boa.CmdT[inspectParams]{
-		Use:   "inspect <file>",
+		Use:   "inspect",
 		Short: "Verify a PAF and describe it without showing the conversation",
 		Long: "Verify a PAF, then show what it holds: format and producer, signatures,\n" +
 			"extensions, privacy findings, and for each agent its harness, model,\n" +
@@ -208,7 +208,7 @@ type renderParams struct {
 
 func renderCmd() *cobra.Command {
 	return boa.CmdT[renderParams]{
-		Use:   "render <file>",
+		Use:   "render",
 		Short: "Render a PAF as a readable Markdown or HTML document",
 		Long: "Verify a PAF and render it for reading: the archive facts, each agent's\n" +
 			"definition, environment and losses, and its conversation. This is the\n" +

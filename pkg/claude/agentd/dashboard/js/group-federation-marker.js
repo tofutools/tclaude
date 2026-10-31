@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -54,14 +55,7 @@ export function GroupFederationMarker({ group, openNode = openNodeView }) {
   const view = markerView(group.federation_links);
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
-    const onKey = (event) => { if (event.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [open]);
+  useDismissablePopover(rootRef, open, () => setOpen(false));
   if (!view) return null;
   // The marker sits inside the group's <summary>: swallow clicks so opening
   // the popover never toggles the group open or closed.

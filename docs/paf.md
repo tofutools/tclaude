@@ -401,11 +401,12 @@ tclaude paf import --file big.paf --cwd "$PWD" --model sonnet --group team --app
 
   `agent spawn --from-snapshot`, `snapshot board import` and `agent
   recover` take `--confirm-history-loss` too; the dashboard's import and
-  snapshot spawn have a checkbox for it. Group import shows the cut per
-  member in its dry run but neither asks for confirmation nor saves the full
-  history beside each member.
+  snapshot spawn have a checkbox for it. Group import takes the same flag and
+  its dry run shows the cut per member. The dashboard's group import has the
+  checkbox too, and without it the whole import is refused, naming each member
+  and its cut.
 - **Where the full history is.** It is never lost. It stays in the PAF,
-  which `tclaude paf render` reads whole. When an agent import cuts it, it
+  which `tclaude paf render` reads whole. When an agent or group import cuts it, it
   is also saved beside the landed agent as `transcript.md` and `transcript.jsonl` (a PAF context file), in
   its morph artifact directory, and the agent gets an inbox message naming
   both, so it can read what was cut instead of guessing.

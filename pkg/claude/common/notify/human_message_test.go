@@ -10,13 +10,13 @@ import (
 func TestFormatHumanMessage(t *testing.T) {
 	t.Run("subject present: title carries subject, body leads with sender", func(t *testing.T) {
 		title, body := formatHumanMessage("tclaude-PO", "tclaude-dev", "status", "build is green")
-		assert.Equal(t, "Claude: status", title)
+		assert.Equal(t, "tclaude: status", title)
 		assert.Equal(t, "tclaude-PO: build is green\n— tclaude-dev", body)
 	})
 
 	t.Run("no subject: title carries the sender attribution", func(t *testing.T) {
 		title, body := formatHumanMessage("tclaude-PO", "tclaude-dev", "", "ping")
-		assert.Equal(t, "Claude: tclaude-PO messaged you", title)
+		assert.Equal(t, "tclaude: tclaude-PO messaged you", title)
 		// Sender is in the title, so the body is just message + group.
 		assert.Equal(t, "ping\n— tclaude-dev", body)
 	})
@@ -28,19 +28,19 @@ func TestFormatHumanMessage(t *testing.T) {
 
 	t.Run("empty sender title falls back to a generic phrase", func(t *testing.T) {
 		title, _ := formatHumanMessage("", "", "", "ping")
-		assert.Equal(t, "Claude: An agent messaged you", title)
+		assert.Equal(t, "tclaude: An agent messaged you", title)
 	})
 
 	t.Run("surrounding whitespace is trimmed", func(t *testing.T) {
 		title, body := formatHumanMessage("  PO  ", "  dev  ", "  subj  ", "  hi  ")
-		assert.Equal(t, "Claude: subj", title)
+		assert.Equal(t, "tclaude: subj", title)
 		assert.Equal(t, "PO: hi\n— dev", body)
 	})
 
 	// A notification whose subject and attachment are the whole message.
 	t.Run("no body: the banner names the sender without a dangling colon", func(t *testing.T) {
 		title, body := formatHumanMessage("tclaude-PO", "tclaude-dev", "dashboard mock", "")
-		assert.Equal(t, "Claude: dashboard mock", title)
+		assert.Equal(t, "tclaude: dashboard mock", title)
 		assert.Equal(t, "tclaude-PO\n— tclaude-dev", body)
 	})
 

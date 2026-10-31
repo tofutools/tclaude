@@ -23,7 +23,7 @@ import {
 } from './template-management-model.js';
 import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
-import { AgentImportPreview, MemberLandings, agentImportParams, historyCutNeedsConfirm, offlineImportBlocker } from './paf-dialogs.js';
+import { AgentImportPreview, MemberLandings, agentImportParams, historyCutNeedsConfirm, memberCutsToConfirm, offlineImportBlocker } from './paf-dialogs.js';
 
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -868,6 +868,9 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
   const [into, setInto] = useState('');
   const [as, setAs] = useState('');
   const [landing, setLanding] = useState({ harness: '', model: '', members: {} });
+  const [confirmCut, setConfirmCut] = useState(false);
+  // A new landing choice is a new cut: its confirmation is asked afresh.
+  useEffect(() => setConfirmCut(false), [landing, file]);
   const [kind, setKind] = useState('');
   const [inspection, setInspection] = useState(null);
   const [agentPreview, setAgentPreview] = useState(null);
@@ -960,7 +963,8 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     kind === 'group' &&
     inspection?.target_name_valid &&
     !inspection?.group_name_taken &&
-    !!into.trim();
+    !!into.trim() &&
+    (confirmCut || memberCutsToConfirm(inspection?.landings).length === 0);
   const agentReady =
     kind === 'agent' &&
     !!agentPreview &&
@@ -976,7 +980,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     setPhase('importing');
     try {
       if (kind === 'agent') await actions.importAgentPAF(file, agentImportParams(choices, true, start));
-      else await actions.importGroup(file, into.trim(), as.trim(), landing);
+      else await actions.importGroup(file, into.trim(), as.trim(), { ...landing, confirmHistoryLoss: confirmCut });
     } catch (err) {
       setError(
         kind === 'agent'
@@ -1053,7 +1057,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         </div>
       </div>`}${kind === 'group' && inspection &&
       html`<${GroupImportPreview} inspection=${inspection} into=${into} />
-        <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} />`}${kind === 'agent' && agentPreview &&
+        <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} confirmCut=${confirmCut} setConfirmCut=${setConfirmCut} />`}${kind === 'agent' && agentPreview &&
       html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} />`}
       <div class="cron-create-error" id="group-import-error" role="alert">
         ${phase === 'error' ? '' : error}

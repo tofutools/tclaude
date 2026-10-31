@@ -36,7 +36,7 @@ type pafConsentParams struct {
 // PAFConsentCmd is `tclaude paf consent`: a human's recorded confirmation
 // that a PAF may go to an audience.
 func PAFConsentCmd() *cobra.Command {
-	return boa.CmdT[pafConsentParams]{Use: "consent <file>", Short: "Record your consent to sharing a PAF with an audience",
+	return boa.CmdT[pafConsentParams]{Use: "consent", Short: "Record your consent to sharing a PAF with an audience",
 		Long: "Show what a PAF would share (size, conversation time range and turn count, this node's credential scan " +
 			"and the recorded redactions), then, once you confirm, record your consent in its privacy.json, bound to the " +
 			"content digest. The content is copied byte for byte and the file is re-signed by this node. Changing the " +

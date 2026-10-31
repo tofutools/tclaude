@@ -22,7 +22,7 @@ var networkPackRegistry = []NetworkPack{
 		ID: "net-local", Label: "Local access",
 		Entries: []NetworkAllowEntry{{Loopback: true}},
 		Note:    "Host-loopback model servers and local development services.",
-		Warning: "OpenCode local-provider launches remain refused: they name no explicit provider endpoint to resolve.",
+		Warning: "OpenCode local-provider launches proceed without model-endpoint coverage validation: the authored rules are the entire egress authority.",
 	},
 	{
 		ID: "net-anthropic", Label: "Anthropic API", Group: "Cloud model APIs",

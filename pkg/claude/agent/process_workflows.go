@@ -33,7 +33,7 @@ type processTemplatesExportParams struct {
 
 func processTemplatesExportCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesExportParams]{
-		Use:         "export <id>",
+		Use:         "export",
 		Short:       "Export a process as a shareable .pwf workflow file",
 		Long:        "Packs the template and every stored template its subprocess steps reference into a Portable Workflow Format file, signed with this node's federation key when it has one. Requires process.templates.read.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -132,7 +132,7 @@ type processTemplatesInspectParams struct {
 
 func processTemplatesInspectCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesInspectParams]{
-		Use:         "inspect <file.pwf>",
+		Use:         "inspect",
 		Short:       "Verify and summarize a .pwf workflow file offline",
 		Long:        "Checks the file's integrity, templates and signatures and prints what the workflow needs: params, roles, the commands it would run, and steps naming a specific agent. Needs no daemon and changes nothing.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -233,7 +233,7 @@ type processTemplatesImportParams struct {
 
 func processTemplatesImportCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesImportParams]{
-		Use:         "import <file.pwf>",
+		Use:         "import",
 		Short:       "Review and import a .pwf workflow file",
 		Long:        "Shows who signed the workflow, what it needs and every command it would run, and what importing changes here. Without --yes it stops at that review. Importing stores templates only and never starts a run; starting one later asks you to authorize its program profiles. Requires process.templates.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),

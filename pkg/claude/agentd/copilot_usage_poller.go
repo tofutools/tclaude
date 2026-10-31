@@ -211,6 +211,11 @@ func sweepCopilotUsage(ctx context.Context) {
 	for home, rows := range byHome {
 		sweepCopilotUsageHome(ctx, home, rows)
 	}
+	// The dashboard's read-through alone would leave a compaction unnoticed
+	// until somebody opened it, and re-injection cannot wait for that.
+	for _, sess := range sessions {
+		refreshCopilotContextSnapshotOnRead(sess, true)
+	}
 }
 
 // noteCopilotUsageLiveCount reports how many live Copilot panes matched the

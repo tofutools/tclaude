@@ -51,10 +51,6 @@ instead of mutating twice.
 Daemon-side configuration lives under `agent.*` keys in
 `~/.tclaude/data/config.json`.
 
-!!! note
-    Some CLI help text still points at `~/.tclaude/config.json`. The real
-    path is `~/.tclaude/data/config.json`.
-
 For the full architectural model — what state lives where and how the
 pieces relate — see [Architecture](architecture.md).
 
@@ -204,6 +200,10 @@ running tclaude holds the message until the agent's next turn event and sends
 it only if the main transcript recorded a compaction. If the transcript can't
 be read it sends the message anyway.
 
+Claude Code, Codex, OpenCode, pi and Copilot all report compactions. Gemini CLI
+does not, so a Gemini agent gets nothing after one; see
+[Startup-context re-injection](harnesses.md#startup-context-re-injection).
+
 The rest of tclaude waits for the same answer. A compaction that might be a
 subagent's skips the pre-compact guard and the "compacting" status. The agent's
 context figures and nudge state are reset only once the compaction is proven to
@@ -271,7 +271,8 @@ target.
 ### Default directory and auto-join
 
 `groups set-default-dir` pre-fills the spawn form, is substituted
-server-side when a spawn leaves the working directory blank, and powers
+server-side when a spawn leaves the working directory blank (so `agent spawn`
+without `--cwd` lands there rather than in your current directory), and powers
 **directory auto-join**: a bare `tclaude` launched in a directory that
 exactly matches an active group's default dir (after absolute/clean/symlink
 resolution) spawns into that group through the same daemon spawn

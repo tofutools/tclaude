@@ -25,6 +25,7 @@ import { isVegasActive } from './slop.js';
 import { setEffectsVolume } from './slop-audio.js';
 import { setMusicVolume } from './vegas.js';
 import { toast } from './refresh.js';
+import { watchPopover } from './hover-popover.js';
 
 const PERSIST_DEBOUNCE_MS = 500;
 
@@ -103,12 +104,16 @@ async function loadVolumes() {
   }
 }
 
+let unwatchPopover = null;
+
 function setPopoverOpen(open) {
   const pop = document.getElementById('slop-volume-pop');
   const btn = document.getElementById('slop-volume-btn');
   if (!pop || !btn) return;
   pop.classList.toggle('open', open);
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  unwatchPopover?.();
+  unwatchPopover = open ? watchPopover({ roots: () => [btn, pop], close: () => setPopoverOpen(false) }) : null;
 }
 
 export function bindSlopVolume() {
@@ -118,16 +123,6 @@ export function bindSlopVolume() {
 
   btn.addEventListener('click', () => {
     setPopoverOpen(!pop.classList.contains('open'));
-  });
-  // Close on a click outside the popover/button, or on Escape — the
-  // same dismissal manners as the filter-bar view menus.
-  document.addEventListener('pointerdown', (e) => {
-    if (!pop.classList.contains('open')) return;
-    if (pop.contains(e.target) || btn.contains(e.target)) return;
-    setPopoverOpen(false);
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && pop.classList.contains('open')) setPopoverOpen(false);
   });
 
   const m = document.getElementById('slop-vol-music');

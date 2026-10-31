@@ -1338,3 +1338,52 @@ test('a detached agent keeps its window until the operator brings it back', asyn
   });
   assert.doesNotMatch(view.container.textContent, /open in its own window/);
 });
+
+test('the tools float over the terminal, and the text field shows only while there is something to say', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictation = fakeDictation();
+  const { view, harness, controller } = await setup(t, { prefs, dictationImpl: dictation.impl });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const tools = view.container.querySelector('.companion-floating');
+  assert.ok(tools.querySelector('.companion-mic') && tools.querySelector('.companion-annotate') && tools.querySelector('.companion-context'));
+  assert.equal(view.container.querySelector('form.companion-input'), null, 'no bar at rest');
+  const order = [...view.container.querySelectorAll('.companion-floating, .companion-term-host')];
+  assert.equal(order[0], tools, 'reachable by Tab before the terminal');
+
+  await harness.act(() => view.container.querySelector('.companion-mic').click());
+  assert.ok(view.container.querySelector('form.companion-input.listening input.companion-draft'));
+  assert.ok(view.container.querySelector('form.companion-input button[type="submit"]'));
+  assert.ok(tools.classList.contains('listening'), 'never dimmed while the mic is open');
+});
+
+test('the draft strip leaves room for an approval, and the status pill clears the tools', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictation = fakeDictation();
+  const snapshot = snapshotWith();
+  snapshot.access_requests = [{ id: 'r1', perm: 'groups.create', agent_id: A, conv_id: 'conv-a', status: 'pending' }];
+  const { view, harness, controller } = await setup(t, { prefs, snapshot, dictationImpl: dictation.impl });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const body = view.container.querySelector('.companion-body');
+  assert.equal(body.classList.contains('clear-strip'), false);
+  await harness.act(() => view.container.querySelector('.companion-mic').click());
+  assert.ok(view.container.querySelector('.companion-approval'));
+  assert.ok(body.classList.contains('clear-strip'));
+  const anchor = view.container.querySelector('.companion-floating-anchor');
+  assert.ok(anchor.querySelector('.companion-floating'), 'the pill is placed from the same anchor as the tools');
+});
+
+test('the + menu opens with the cursor in its search field, and Escape goes back to +', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const plus = view.container.querySelector('.companion-add');
+  await harness.act(async () => { plus.click(); await new Promise((r) => setTimeout(r, 0)); });
+  const filter = view.container.querySelector('.companion-menu-filter');
+  assert.equal(harness.document.activeElement, filter);
+  await harness.act(() => harness.fireEvent(filter, 'keydown', { key: 'Escape' }));
+  assert.equal(view.container.querySelector('.companion-menu'), null);
+  assert.equal(harness.document.activeElement, plus);
+});

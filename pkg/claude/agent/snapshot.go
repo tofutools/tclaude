@@ -44,7 +44,7 @@ type snapshotCreateParams struct {
 }
 
 func snapshotCreateCmd() *cobra.Command {
-	return boa.CmdT[snapshotCreateParams]{Use: "create <agent>", Short: "Capture a named snapshot of an agent",
+	return boa.CmdT[snapshotCreateParams]{Use: "create", Short: "Capture a named snapshot of an agent",
 		Long: "Capture the agent's definition, environment and conversation (native history plus a harness-neutral\n" +
 			"context) as a PAF in the local library. An idle agent is captured whole; a busy one up to its last\n" +
 			"complete turn. Credential findings are recorded, since a snapshot stays on this node. Needs\n" +
@@ -170,7 +170,7 @@ type snapshotNameParams struct {
 }
 
 func snapshotShowCmd() *cobra.Command {
-	return boa.CmdT[snapshotNameParams]{Use: "show <name>", Short: "Show a snapshot", ParamEnrich: common.DefaultParamEnricher(),
+	return boa.CmdT[snapshotNameParams]{Use: "show", Short: "Show a snapshot", ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *snapshotNameParams, _ *cobra.Command, _ []string) { os.Exit(runSnapshotShow(p, os.Stdout, os.Stderr)) }}.ToCobra()
 }
 
@@ -199,7 +199,7 @@ func runSnapshotShow(p *snapshotNameParams, stdout, stderr io.Writer) int {
 }
 
 func snapshotRemoveCmd() *cobra.Command {
-	return boa.CmdT[snapshotNameParams]{Use: "rm <name>", Short: "Remove a snapshot (human only)", ParamEnrich: common.DefaultParamEnricher(),
+	return boa.CmdT[snapshotNameParams]{Use: "rm", Short: "Remove a snapshot (human only)", ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *snapshotNameParams, _ *cobra.Command, _ []string) {
 			if rc := RequireDaemonOrExit(os.Stderr); rc != rcOK {
 				os.Exit(rc)
@@ -218,7 +218,7 @@ type snapshotExportParams struct {
 }
 
 func snapshotExportCmd() *cobra.Command {
-	return boa.CmdT[snapshotExportParams]{Use: "export <name>", Short: "Write a snapshot's PAF to a file",
+	return boa.CmdT[snapshotExportParams]{Use: "export", Short: "Write a snapshot's PAF to a file",
 		Long:        "Write the snapshot's PAF to a file. It holds the agent's conversation: redact and consent before sharing it (tclaude paf redact, tclaude paf consent).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *snapshotExportParams, _ *cobra.Command, _ []string) {

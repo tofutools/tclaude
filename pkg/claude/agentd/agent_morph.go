@@ -744,6 +744,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	}
 
 	if req.DryRun {
+		giveBackSudoUses(r)
 		resp.Result = "dry_run"
 		writeJSON(w, http.StatusOK, resp)
 		return

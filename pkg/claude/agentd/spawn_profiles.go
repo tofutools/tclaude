@@ -1117,6 +1117,7 @@ func handleSpawnProfilesImportInspect(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 		return
 	}
+	giveBackSudoUses(r)
 	var env profileExportEnvelope
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid spawn-profile JSON: "+err.Error())

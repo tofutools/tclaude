@@ -28,7 +28,7 @@ type Params struct {
 }
 
 func Cmd(kind string) *cobra.Command {
-	return boa.CmdT[Params]{Use: map[string]string{"skill": "skills", "rule": "rules"}[kind], Short: "Manage operator " + kind + " instructions without installing into harness HOME", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *Params, _ *cobra.Command, _ []string) { os.Exit(run(kind, p)) }}.ToCobra()
+	return boa.CmdT[Params]{Use: map[string]string{"skill": "skills", "rule": "rules"}[kind], Short: "Manage operator " + kind + " instructions without installing into harness HOME", Long: "Manage operator " + kind + " instructions without installing into harness HOME. Actions: ls, show, add, import, rm.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *Params, _ *cobra.Command, _ []string) { os.Exit(run(kind, p)) }}.ToCobra()
 }
 func run(kind string, p *Params) int {
 	if (p.Group == "") == !p.User {

@@ -425,10 +425,13 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 	resp, status, err := runGroupImport(archive, into, asName, caller, landing)
 	if err != nil {
 		code := "io"
-		switch status {
-		case http.StatusBadRequest:
+		var cut *groupHistoryCutError
+		switch {
+		case errors.As(err, &cut):
+			code = "history_confirmation_required"
+		case status == http.StatusBadRequest:
 			code = "invalid_arg"
-		case http.StatusConflict:
+		case status == http.StatusConflict:
 			code = "exists"
 		}
 		writeError(w, status, code, err.Error())
@@ -614,6 +617,7 @@ func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermGroupsImport); !ok {
 		return
 	}
+	giveBackSudoUses(r)
 	archive, into, asName, ok := readImportUpload(w, r)
 	if !ok {
 		return
@@ -849,6 +853,9 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	defer closeGroupLandings(landings)
+	if err := unconfirmedCuts(landings, landing.ConfirmHistoryLoss); err != nil {
+		return nil, http.StatusConflict, err
+	}
 	installed := map[string]bool{}
 	var uninstall []func()
 	defer func() {
@@ -1078,6 +1085,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		}
 		recordConvLosses(convRemap[c.ConvID], earlier, l.Losses)
 	}
+	saveCutMemberHistories(landings, exp, convRemap, result.GroupName)
 	slog.Info("group import complete",
 		"group", result.GroupName, "agents", result.AgentCount,
 		"messages", result.MessageCount, "remapped", len(collidedOnly),

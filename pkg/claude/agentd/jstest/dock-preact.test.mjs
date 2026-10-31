@@ -88,7 +88,7 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   await harness.act(() => harness.fireEvent(cog, 'click'));
   assert.ok(menu.classList.contains('open'));
   getByRole(menu, 'menuitem', { name: 'Edit' }).focus();
-  await harness.act(() => harness.fireEvent(harness.document.body, 'click'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
   await Promise.resolve();
   assert.equal(cog.getAttribute('aria-expanded'), 'false', 'outside click closes the menu');
   assertSameNode(harness.document.activeElement, cog, 'outside click restores focus when it remained in the hidden menu');
@@ -257,9 +257,11 @@ test('Dock removes its document listeners when the island unmounts', async (t) =
       setSectionOpen=${() => {}}
     />
   `, host);
+  await harness.act(() => state.publish({ profiles: [{ name: 'review' }] }));
+  await harness.act(() => harness.fireEvent(host.querySelector('.dock-card-manage'), 'click'));
 
   await mounted.unmount();
-  for (const type of ['click', 'keydown']) {
+  for (const type of ['pointerdown', 'keydown']) {
     const installed = added.find(([candidate]) => candidate === type);
     assert.ok(installed, `${type} listener installed`);
     assert.ok(removed.some(([candidate, listener]) =>

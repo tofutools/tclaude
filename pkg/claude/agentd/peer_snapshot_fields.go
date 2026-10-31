@@ -12,7 +12,7 @@ import (
 // projection. Denied fields keep their typed zero/empty values.
 var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[snapshotPayload](): classifyPeerFields(map[string]string{
-		"public":    "GeneratedAt Version AssetsVersion ActivityBots HScrollFollow GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
+		"public":    "GeneratedAt Version AssetsVersion ActivityBots HScrollFollow OverlayBackdrop GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
 		"defaults":  "SpawnProfileDefault SandboxProfileDefault",
 		"catalogs":  "Templates Profiles Roles SavedPrompts SandboxProfiles SandboxProfilesRev",
 		"projected": "Groups Agents AgentRosterAuthoritative StaticVersion",

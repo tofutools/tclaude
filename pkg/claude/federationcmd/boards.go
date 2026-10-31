@@ -39,7 +39,7 @@ type boardCommandParams struct {
 	Token              string   `long:"token" optional:"true" help:"One-time board invitation (keep private)"`
 	TokenID            string   `long:"token-id" optional:"true" help:"Invitation hash to revoke"`
 	Instance           string   `long:"instance" optional:"true" help:"Member instance ID"`
-	Role               string   `long:"role" optional:"true" help:"reader, publisher or owner"`
+	Role               string   `long:"role" optional:"true" help:"reader or publisher when inviting; reader, publisher or owner when setting a member role"`
 	TTL                string   `long:"ttl" optional:"true" help:"Invitation lifetime (default 1h; 1m to 7d)"`
 	Cursor             string   `long:"cursor" optional:"true" help:"Opaque page cursor"`
 	Notify             string   `long:"notify" optional:"true" help:"on or off: leave a Messages note when a kept item gets a newer version"`
@@ -86,6 +86,9 @@ func boardsCmd() *cobra.Command {
 		for _, name := range a.flags {
 			addBoardFlag(cmd, p, name)
 		}
+		if a.name == "invite" {
+			cmd.Flags().Lookup("role").Usage = "reader or publisher (default reader)"
+		}
 		for _, name := range a.required {
 			cmd.Flags().Lookup(name).Usage += " (required)"
 			if err := cmd.MarkFlagRequired(name); err != nil {
@@ -105,7 +108,7 @@ func addBoardFlag(cmd *cobra.Command, p *boardCommandParams, name string) {
 	}{
 		"board": {&p.Board, "Immutable board ID"}, "name": {&p.Name, "Display name (required for a new publication unless republishing)"},
 		"token": {&p.Token, "Private one-time invitation"}, "token-id": {&p.TokenID, "Invitation hash to revoke"}, "instance": {&p.Instance, "Member instance ID"},
-		"role": {&p.Role, "reader, publisher or owner (invite defaults to reader)"}, "ttl": {&p.TTL, "Invitation lifetime, default 1h (1m to 168h)"}, "cursor": {&p.Cursor, "Opaque page cursor"},
+		"role": {&p.Role, "reader, publisher or owner"}, "ttl": {&p.TTL, "Invitation lifetime, default 1h (1m to 168h)"}, "cursor": {&p.Cursor, "Opaque page cursor"},
 		"item": {&p.Item, "Item ID"}, "version": {&p.Version, "Exact version ID"}, "parent": {&p.Parent, "Latest parent version when updating an item"},
 		"from-board": {&p.FromBoard, "Republish an original signed item from this board"}, "from-item": {&p.FromItem, "Original item ID"}, "from-version": {&p.FromVersion, "Original version ID"},
 		"custom-dir":    {&p.CustomDir, "Human-only existing absolute skill root; select --skill-target custom (no symlinks or parent traversal)"},

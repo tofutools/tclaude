@@ -61,6 +61,8 @@ type PermSlug struct {
 	Risky bool `json:"risky,omitempty"`
 	// Countable marks a slug a sudo grant can limit by uses: see countableSudoSlugs.
 	Countable bool `json:"countable,omitempty"`
+	// NotCountableWhy says why it cannot, for the editor to show.
+	NotCountableWhy string `json:"not_countable_why,omitempty"`
 }
 
 func initPermissionRegistry() {
@@ -71,6 +73,7 @@ func initPermissionRegistryEntries(registry []PermSlug) {
 	for i := range registry {
 		registry[i].Risky = slices.Contains(riskySlugs, registry[i].Slug)
 		registry[i].Countable = slices.Contains(countableSudoSlugs, registry[i].Slug)
+		registry[i].NotCountableWhy = sudoUseLimitRefusal(registry[i].Slug)
 	}
 	seenSlugs := map[string]bool{}
 	for i := range registry {
@@ -571,7 +574,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermGroupsExport,
-		Description: "Export a whole group to a portable .zip archive — DB rows plus every member's conversation .jsonl (tclaude agent groups export). The archive holds full conversation content; not default-granted (effectively human-only).",
+		Description: "Export a whole group to a portable .paf (or legacy .zip) archive — DB rows plus every member's conversation .jsonl (tclaude agent groups export). The archive holds full conversation content; not default-granted (effectively human-only).",
 	},
 	{
 		Slug:        PermGroupsImport,

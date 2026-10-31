@@ -47,7 +47,7 @@ type pafExportParams struct {
 
 // PAFExportCmd is `tclaude paf export`: agent bundle export writing PAF.
 func PAFExportCmd() *cobra.Command {
-	return boa.CmdT[pafExportParams]{Use: "export <agent>", Short: "Export an agent as a PAF file",
+	return boa.CmdT[pafExportParams]{Use: "export", Short: "Export an agent as a PAF file",
 		Long: "Export an agent's definition, environment and, with --history, its conversation as a Portable Agent Format file. " +
 			"The conversation travels as the native history plus a harness-neutral copy, so it can land on any harness. " +
 			"Credential-shaped text refuses the export unless --allow-flagged. Needs agent.bundle.export.",

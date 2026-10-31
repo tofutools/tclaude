@@ -250,3 +250,18 @@ test('a library manager is in the URL (?manage=): opening announces it, Back clo
   state.dialog.value = null;
   await harness.act(() => state.closeManager());
 });
+
+test('a group import cut needs confirmation only for a member that lands cut', async (t) => {
+  const harness = await createPreactHarness(t);
+  const dialogs = await harness.importDashboardModule('js/paf-dialogs.js');
+  const model = await harness.importDashboardModule('js/paf-model.js');
+  const rows = [
+    { conv_id: 'a', title: 'alice', rung: 'translated', losses: { needs_summary: true, dropped_percent: 60 } },
+    { conv_id: 'b', title: 'bob', rung: 'translated', losses: { needs_summary: false } },
+    { conv_id: 'c', title: 'carol', rung: 'none', losses: { needs_summary: true } },
+  ];
+  assert.deepEqual(dialogs.memberCutsToConfirm(rows).map((row) => row.title), ['alice']);
+  assert.deepEqual(dialogs.memberCutsToConfirm(undefined), []);
+  assert.match(model.queryString(model.landingParams({ confirmHistoryLoss: true })), /confirm_history_loss=true/);
+  assert.doesNotMatch(model.queryString(model.landingParams({})), /confirm_history_loss/);
+});

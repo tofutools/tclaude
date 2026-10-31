@@ -37,7 +37,7 @@ type snapshotPolicySetParams struct {
 }
 
 func snapshotPolicySetCmd() *cobra.Command {
-	return boa.CmdT[snapshotPolicySetParams]{Use: "set <agent|group:name>", Short: "Add a resilience snapshot policy",
+	return boa.CmdT[snapshotPolicySetParams]{Use: "set", Short: "Add a resilience snapshot policy",
 		Long: "Adding a policy is your consent to send the agents' conversations, encrypted, to that peer. Suspected\n" +
 			"credentials are not removed: they are counted in policy ls and you are told once per policy.\n\n" +
 			"  tclaude agent snapshot policy set reviewer --every 1h --to peer:bob --keep 5\n" +
@@ -169,7 +169,7 @@ type snapshotPolicyIDParams struct {
 }
 
 func snapshotPolicyRemoveCmd() *cobra.Command {
-	return boa.CmdT[snapshotPolicyIDParams]{Use: "rm <policy>", Short: "Remove a resilience policy",
+	return boa.CmdT[snapshotPolicyIDParams]{Use: "rm", Short: "Remove a resilience policy",
 		Long:        "Stops the schedule. Snapshots the peer already holds stay there until its retention removes them.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotPolicyIDParams, _ *cobra.Command, _ []string) {
 			if rc := RequireDaemonOrExit(os.Stderr); rc != rcOK {
@@ -184,7 +184,7 @@ func snapshotPolicyRemoveCmd() *cobra.Command {
 }
 
 func snapshotPolicyRunCmd() *cobra.Command {
-	return boa.CmdT[snapshotPolicyIDParams]{Use: "run <policy>", Short: "Snapshot a policy's idle agents now",
+	return boa.CmdT[snapshotPolicyIDParams]{Use: "run", Short: "Snapshot a policy's idle agents now",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotPolicyIDParams, _ *cobra.Command, _ []string) {
 			os.Exit(runSnapshotPolicyList(p.ID, p.JSON, os.Stdout, os.Stderr))
 		}}.ToCobra()

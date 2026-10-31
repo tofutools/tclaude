@@ -25,13 +25,11 @@ const LABELS = {
   [PROCESSES_SUBTAB]: 'Processes',
 };
 
-// automationsSubnavEntries lists the visible entries in display order. A
-// snapshot that has not arrived yet (null) shows Triggers but not Processes:
-// Triggers is the established default, while Processes is dark-launched and
-// must not flash before the server confirms its flag.
+// automationsSubnavEntries lists the visible entries in display order.
+// Triggers and Processes default off, so a snapshot that has not arrived yet
+// (null) shows neither: they must not flash before the server confirms a flag.
 export function automationsSubnavEntries(snapshot) {
-  const known = snapshot != null;
-  const kinds = !known || snapshot.triggers_enabled === true
+  const kinds = snapshot?.triggers_enabled === true
     ? JOBS_KINDS : JOBS_KINDS.filter((kind) => kind !== 'trigger');
   return snapshot?.processes_enabled ? [...kinds, PROCESSES_SUBTAB] : kinds;
 }
