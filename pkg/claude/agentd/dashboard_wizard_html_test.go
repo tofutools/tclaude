@@ -785,8 +785,8 @@ func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
 	}
 
 	// Title copy: a pure-CSS span swap, "Edit permanent permissions" → "📕 The Grimoire".
-	must(`<span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
-	must(`<span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
+	must(`<span class="perm-edit-title-regular">${sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
+	must(`<span class="perm-edit-title-wizard">${sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
 	must("body.wizard #perm-edit-title .perm-edit-title-regular", "wizard hides the default title")
 	must("body.wizard #perm-edit-title .perm-edit-title-wizard", "wizard shows the Grimoire title")
 
@@ -1942,7 +1942,7 @@ func TestDashboardHTML_WizardCogNomenclature(t *testing.T) {
 	must(`<span class="theme-copy-wizard">Invite hero into party</span>`, "add-member dialog names hero and party")
 	must(`Burns the conversation scroll (.jsonl) and erases every party membership`, "delete-agent warning uses wizard nouns")
 	must(`Open a scrying portal for this hero.`, "terminal picker targets a hero")
-	must(`Bestow a bounded sudo boon on a hero.`, "sudo dialog targets a hero")
+	must(`<strong>A BOUNDED BOON</strong>`, "sudo dialog targets a hero")
 	must(`Hero: ${descriptor.label || shortConv} · ${shortConv}`, "permission subtitle names the hero")
 	must(`plain="Solo agent" wizard="Solo hero"`, "shared target picker swaps agent noun")
 	must(`plain="Group (multicast)" wizard="Party (multicast)"`, "shared target picker swaps group noun")

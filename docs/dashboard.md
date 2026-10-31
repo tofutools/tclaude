@@ -648,9 +648,15 @@ are what its Writes setting gives it at birth, which need no prompt:
 `message.direct` under `messaging`, and `message.direct`, `agent.spawn` and
 `agent.task` under `workers`, plus any **Default permissions** you set.
 On a Steward's tab, 🛡 in the title bar opens the agent permissions editor and
-**sudo** opens the Grant sudo dialog, so you can change its access directly.
+**sudo** opens its sudo variant, so you can change its access directly.
 They are dashboard actions only, and are disabled while the Steward is not
 running.
+⏻ shuts the Steward down, after asking: it ends the conversation and retires
+the agent, so its grants and sudo end with it, and the window then offers
+**Start a new Steward**. A new one is a fresh agent; the old conversation stays
+in history. A detached Steward window has the same ⏻ in its header; its
+**Start a new Steward** closes the window and the new one opens in the
+companion.
 While an agent in the window holds elevated access, its tab and chip show 🔓
 and a band above its terminal lists it: sudo grants with their time left and,
 for a live Steward, anything else beyond what Config gives it. **End now**
@@ -926,8 +932,16 @@ Three subtabs:
 - **Slug registry** — a read-only list of every registered capability with
   slug, owner, and description, plus ownership badges.
 - **Sudo** — active time-bounded grants with live expiry countdowns, reason,
-  granted-by, and revoke, plus a proactive "+ Grant sudo" dialog (default
-  5 minutes; permissions.grant/revoke are blocklisted from sudo).
+  granted-by, and revoke. **+ Grant sudo** opens the sudo variant of the
+  permission editor, the same one as **+ sudo** on an agent row and **sudo** on
+  a Steward. It groups permissions by area, keeps its search above the list and
+  the duration and Grant button below it, marks risky permissions, and says why
+  a slug is refused. Picked permissions can be narrowed with scopes like any
+  grant, except one the agent already holds: a scoped sudo would replace what
+  it has for the whole window. **Active now** lists what the agent already holds, with time left,
+  **+duration** to extend and **Revoke**. Limits are the server's: the default
+  is 5 minutes, the maximum 1 hour counted from now (extensions included), and
+  permissions.grant/revoke are blocklisted. `agent.sudo` in config changes them.
 
 Pending permission requests are not here — they live in Messages under
 🔐 Access requests. The model behind all of this is documented in

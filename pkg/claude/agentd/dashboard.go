@@ -2086,6 +2086,7 @@ type dashboardSudoEntry struct {
 	ConvID           string `json:"conv_id,omitempty"`  // omitted on agent[*].active_sudo (caller already knows)
 	ConvTitle        string `json:"conv_title,omitempty"`
 	Slug             string `json:"slug"`
+	ScopeJSON        string `json:"scope_json,omitempty"`
 	GrantedAt        string `json:"granted_at"`
 	ExpiresAt        string `json:"expires_at"`
 	GrantedBy        string `json:"granted_by,omitempty"`
@@ -3790,6 +3791,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ConvID:           g.ConvID,
 			ConvTitle:        title,
 			Slug:             g.Slug,
+			ScopeJSON:        g.ScopeJSON,
 			GrantedAt:        g.GrantedAt.Format(time.RFC3339Nano),
 			ExpiresAt:        g.ExpiresAt.Format(time.RFC3339Nano),
 			GrantedBy:        g.GrantedBy,

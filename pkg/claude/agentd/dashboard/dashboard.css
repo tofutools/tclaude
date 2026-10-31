@@ -6059,7 +6059,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .sandbox-impl-tag.warn { color: #e3a008; border-color: #6b4f1d; }
 .sandbox-impl-hint { margin: 8px 0 0; font-size: 11px; color: #7d8590; line-height: 1.45; }
 .sandbox-impl-warn { color: #e3a008; }
-/* .primary is styled per modal family (.cron-create-modal, .sudo-grant-modal,
+/* .primary is styled per modal family (.cron-create-modal, .perm-edit-modal,
    …) rather than globally, and this dialog renders the plain .modal skin — so
    it carries its own rule instead of inheriting a call-to-action treatment that
    does not reach it. */
@@ -6642,67 +6642,11 @@ body.wizard .group-pending-title-wizard { display: inline; }
   color: #ffa657;
 }
 .sudo-badge:hover { color: #ffd47a; }
-.sudo-grant-modal {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
-  padding: 18px 22px; min-width: 460px; max-width: 560px;
-  display: flex; flex-direction: column; gap: 12px;
-  color: #c9d1d9;
-}
-.sudo-grant-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
-.sudo-grant-hint { margin: 0; font-size: 11px; color: #7d8590; line-height: 1.4; }
-.sudo-grant-hint code {
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px;
-  padding: 1px 4px; font-size: 10px;
-}
-.sudo-grant-row {
-  display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
-}
-.sudo-grant-row .sudo-grant-label {
-  flex: 0 0 64px; color: #7d8590; padding-top: 6px;
-}
-.sudo-grant-row input[type=text] {
-  flex: 1;
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
-  padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
-}
-.sudo-grant-row input[type=text]:focus { outline: none; border-color: #58a6ff; }
-.sudo-grant-slugs-wrap { flex: 1; display: flex; flex-direction: column; gap: 6px; }
-.sudo-grant-slugs-toolbar { display: flex; gap: 6px; }
-.sudo-grant-slugs-toolbar button {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
-  padding: 2px 8px; font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
-}
-.sudo-grant-slugs-toolbar button:hover { background: #2d333b; }
-.sudo-grant-slugs {
-  display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 4px 0;
-}
-.sudo-grant-slugs label {
-  display: inline-flex; align-items: center; gap: 4px;
-  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
-  padding: 2px 8px; font-size: 11px; cursor: pointer; color: #c9d1d9;
-}
-.sudo-grant-slugs label.checked { background: #1f6feb; border-color: #388bfd; color: white; }
-.sudo-grant-slugs label.blocked { color: #7d8590; cursor: not-allowed; opacity: 0.5; }
-.sudo-grant-slugs label input { display: none; }
 .sudo-grant-error { color: #f85149; font-size: 12px; min-height: 14px; }
-.sudo-grant-modal .modal-buttons {
-  display: flex; justify-content: flex-end; gap: 8px;
-  border-top: 1px solid #2a3340; padding-top: 10px;
-}
-.sudo-grant-modal .modal-buttons button {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
-  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
-}
-.sudo-grant-modal .modal-buttons button.primary {
-  background: #1f6feb; border-color: #1f6feb; color: white;
-}
-.sudo-grant-modal .modal-buttons button.primary:disabled {
-  background: #6e7681; border-color: #6e7681; cursor: default;
-}
-/* Permanent-permission editor — the per-agent tri-state modal. Reuses
-   the .sudo-grant-modal dialog/buttons shape but is taller (one row per
-   registry slug, so it scrolls) and its banner deliberately contrasts
-   with the orange "+ sudo" affordance: these overrides are PERMANENT. */
+/* Permanent-permission editor — the per-agent tri-state modal. It is taller
+   than the other plain dialogs (one row per registry slug, so it scrolls) and
+   its banner deliberately contrasts with the orange sudo variant below: these
+   overrides are PERMANENT. */
 .perm-edit-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 18px 22px; min-width: 560px; max-width: 680px;
@@ -6779,6 +6723,71 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
    editor's defaults give them. */
 #context-features-modal .perm-row-eff { flex: 0 0 108px; }
 #context-features-modal .perm-tristate { flex: 0 0 auto; }
+/* The sudo variant of the permission editor. The list takes whatever height is
+   left, so the title stays above it and the duration and Grant below it however
+   many slugs there are and however short the window is. */
+.sudo-edit-modal .perm-edit-list { flex: 1 1 auto; min-height: 120px; max-height: none; }
+.sudo-edit-modal .perm-edit-banner { color: #f0c674; background: #2a2212; border-color: #5c4a1e; border-left-color: #d29922; }
+.sudo-edit-modal .perm-edit-banner strong { color: #ffe2a0; }
+.perm-area-head {
+  position: sticky; top: 0; z-index: 1; padding: 4px 10px; font-size: 11px; font-weight: 600;
+  color: #8b949e; background: #1c2128; border-bottom: 1px solid #21262d;
+}
+/* Not holding a slug is the normal state here, not a failure. */
+.sudo-edit-modal .perm-row-eff.denied { color: #7d8590; }
+.perm-row.risky { box-shadow: inset 3px 0 0 #d29922; }
+.perm-risk-badge { font-size: 10px; color: #e3b341; white-space: nowrap; }
+.perm-refused-why { color: #e3b341; white-space: normal; }
+.perm-refused, .perm-sudo-held { flex: 0 0 auto; font-size: 11px; white-space: nowrap; }
+.perm-refused { color: #7d8590; border: 1px dashed #3a4553; border-radius: 3px; padding: 2px 8px; }
+.perm-sudo-held { color: #e3b341; }
+.sudo-active { display: flex; flex-direction: column; border-bottom: 2px solid #5c4a1e; background: #1e1a10; }
+.sudo-active-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 11px; color: #f0c674; }
+.sudo-active-head .spacer { flex: 1; }
+.sudo-active-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 10px; font-size: 12px; border-top: 1px solid #2d2615; }
+.sudo-active-slug { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.sudo-active-left { color: #e3b341; font-variant-numeric: tabular-nums; }
+.sudo-active button, .sudo-presets button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px; padding: 2px 8px;
+  font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.sudo-active button:disabled { opacity: .5; cursor: not-allowed; }
+.sudo-limits { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+.sudo-limits-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.sudo-limits-label { flex: 0 0 56px; font-size: 11px; color: #8b949e; }
+.sudo-limits input[type=text] {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 4px 8px; font-size: 12px; color: #c9d1d9; font-family: inherit;
+}
+#sudo-duration { width: 72px; }
+#sudo-reason { flex: 1; min-width: 160px; }
+.sudo-presets { display: flex; gap: 4px; }
+.sudo-presets button.active { background: #9e6a03; border-color: #d29922; color: #fff; }
+.sudo-limits-hint { font-size: 11px; color: #7d8590; }
+.sudo-limits-hint.bad { color: #f85149; }
+.sudo-picked { margin-right: auto; align-self: center; font-size: 11px; color: #8b949e; }
+/* Shutting a Steward down: the title bar of the companion and of its detached
+   window. The confirmation hangs off the button because neither has room. */
+.steward-shutdown { position: relative; display: inline-flex; }
+.steward-shutdown-confirm {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 280px; padding: 10px 12px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; color: #c9d1d9;
+  font-size: 12px; line-height: 1.45; text-align: left; white-space: normal;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+}
+.steward-shutdown-confirm p { margin: 0 0 8px; }
+.steward-shutdown-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.steward-shutdown-actions button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px; padding: 3px 10px;
+  font-size: 12px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.steward-shutdown-actions button.danger { background: #8e1f1f; border-color: #da3633; color: #fff; }
+.steward-shutdown-error { color: #f85149; }
+.steward-down-notice {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 12px;
+  background: #1e1a10; border-bottom: 1px solid #5c4a1e; color: #f0c674; font-size: 13px;
+}
+.companion-shutdown-note { color: #e3b341; }
 /* Scope chips + drawer (TCL-1072). The chips ride ON the tristate line, just
    left of the buttons, so a row reads "slug — narrowed to this — granted".
    The effective-source column moves into the drawer for scopable rows: the row
@@ -6948,7 +6957,7 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .perm-edit-modal .modal-buttons button.primary:disabled {
   background: #6e7681; border-color: #6e7681; cursor: default;
 }
-/* Cron-create modal — reuses .sudo-grant-modal CSS shape for the
+/* Cron-create modal — shares the plain dialog shape for the
    outer dialog/buttons. Cron form has more rows (name, owner, target
    radio, schedule presets, subject, body, enabled), so we widen
    slightly and let the body textarea grow. */

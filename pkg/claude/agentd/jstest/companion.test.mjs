@@ -111,6 +111,31 @@ test('a Steward that stopped keeps the access controls disabled, with the reason
   assert.match(permissions.title, /not running/);
 });
 
+test('shutting a Steward down asks first, retires it, and offers a new one', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
+  const retires = () => calls.filter(([, url]) => url.endsWith('/retire'));
+  assert.deepEqual(retires(), [], 'nothing happens before the confirmation');
+  assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /ends its conversation/);
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await Promise.resolve(); await Promise.resolve(); });
+  assert.deepEqual(retires(), [['POST', `/api/agents/${encodeURIComponent(S)}/retire`]]);
+  assert.match(view.container.querySelector('.companion-shutdown-note').textContent, /is shut down/);
+  assert.match(view.container.textContent, /Start a new Steward/);
+});
+
+test('a refused shut-down stays on the Steward and says why', async (t) => {
+  const fetchImpl = async () => ({ ok: false, status: 409, text: async () => '{"message":"nothing to retire"}', json: async () => ({}) });
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await Promise.resolve(); await Promise.resolve(); });
+  assert.match(view.container.querySelector('.steward-shutdown-error').textContent, /nothing to retire/);
+  assert.equal(view.container.querySelector('.companion-shutdown-note'), null);
+});
+
 test('the access controls are the Steward\'s alone', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }), openPermissions: () => {}, openSudo: () => {} });
@@ -118,6 +143,7 @@ test('the access controls are the Steward\'s alone', async (t) => {
   assert.ok(harness.getByRole(view.container, 'tab', { name: /alpha/ }));
   assert.equal(view.container.querySelector('.companion-steward-perms'), null);
   assert.equal(view.container.querySelector('.companion-steward-sudo'), null);
+  assert.equal(view.container.querySelector('.steward-shutdown-open'), null);
 });
 
 test('with no Steward running the empty window says where its access controls will be', async (t) => {

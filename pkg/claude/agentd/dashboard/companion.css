@@ -396,4 +396,10 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 
 /* The dialogs the window opens must not land behind it. Other plain modals
    stay under it, so an agent can be used beside the editor it is helping with. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show, #sudo-grant-modal.show) .companion-window { z-index: 90; }
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show) .companion-window { z-index: 90; }
+
+/* The title bar sizes its buttons as icons; the shut-down confirmation hanging
+   off it holds ordinary ones. */
+.companion-controls .steward-shutdown-actions button { width: auto; height: auto; min-width: 0; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+.companion-controls .steward-shutdown-actions button.danger { background: #8e1f1f; border: 1px solid #da3633; color: #fff; }
+.companion-controls .steward-shutdown-actions button:not(.danger) { background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; }

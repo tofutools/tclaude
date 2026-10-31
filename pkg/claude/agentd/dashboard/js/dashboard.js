@@ -47,7 +47,7 @@ import { bindDockSaveDnd } from './dock-save-dnd.js';
 import { bindGroupsCleanupButtons } from './modal-message.js';
 import {
   activeMessageAccessDialogKind, openOperatorMessageDialog,
-  openPermEditModal, openSudoGrantModal, openSpawnPermEditor, openContextFeaturesEditor, pickAgent,
+  openPermEditModal, openSudoEditModal, openSpawnPermEditor, openContextFeaturesEditor, pickAgent,
 } from './message-access-dialog-controller.js';
 import {
   bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal, summonTemplateScribe,
@@ -173,7 +173,7 @@ async function settleInitialLayout() {
       notify: toast,
       onComposeMessage: (seed) => openOperatorMessageDialog(seed),
       openPermissions: (conv, label) => openPermEditModal(conv, label),
-      openSudo: (agentID) => openSudoGrantModal(agentID),
+      openSudo: (agentID, label) => openSudoEditModal(agentID, label),
     }),
     () => mountAccessPanelFeature({ notify: toast }),
     () => mountBoardOverlayFeature({ notify: toast }),
@@ -196,7 +196,7 @@ async function settleInitialLayout() {
           title: 'Grant sudo to', identity: 'agent', showSudo: true,
           includeOfflineHint: 'Include offline / archived agents (the daemon will still grant; the agent sees the slug on next wake)',
         });
-        if (agentID) openSudoGrantModal(agentID);
+        if (agentID) openSudoEditModal(agentID);
       },
     }),
     () => mountLogsFeature(),

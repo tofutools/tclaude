@@ -280,6 +280,7 @@ var auditRoutes = []auditRoute{
 
 	// Sudo (time-bounded elevation).
 	{method: http.MethodPost, segs: []string{"sudo"}, verb: "sudo.grant", describe: describeSudo},
+	{method: http.MethodPost, segs: []string{"sudo", "{id}", "extend"}, verb: "sudo.extend"},
 	{method: http.MethodDelete, segs: []string{"sudo", "{id}"}, verb: "sudo.revoke"},
 
 	// Human notification channel.

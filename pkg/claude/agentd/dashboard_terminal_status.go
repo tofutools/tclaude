@@ -25,10 +25,12 @@ type dashboardTerminalStatusState struct {
 }
 
 type dashboardTerminalAgentStatus struct {
-	AgentID string                       `json:"agent_id,omitempty"`
-	ConvID  string                       `json:"conv_id"`
-	Online  bool                         `json:"online"`
-	Waking  bool                         `json:"waking,omitempty"`
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Online  bool   `json:"online"`
+	Waking  bool   `json:"waking,omitempty"`
+	// Steward marks a live Steward, whose detached window offers shutting it down.
+	Steward bool                         `json:"steward,omitempty"`
 	State   dashboardTerminalStatusState `json:"state"`
 }
 
@@ -138,6 +140,7 @@ func writeDashboardTerminalAgentStatus(w http.ResponseWriter, selector string) {
 		ConvID:  resolved.ConvID,
 		Online:  online,
 		Waking:  isConvWaking(resolved.ConvID),
+		Steward: isLiveSteward(resolved.ConvID),
 		State:   state,
 	})
 }
