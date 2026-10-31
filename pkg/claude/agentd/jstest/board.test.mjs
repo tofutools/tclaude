@@ -170,7 +170,7 @@ async function drawnBoard(t, { answer, board = {} } = {}) {
   const requests = [];
   const notes = [];
   const fetchImpl = async (url, init = {}) => {
-    requests.push({ url: String(url), method: init.method || 'GET', body: init.body && typeof init.body === 'string' ? JSON.parse(init.body) : null });
+    requests.push({ url: String(url), method: init.method || 'GET', keepalive: init.keepalive, body: init.body && typeof init.body === 'string' ? JSON.parse(init.body) : null });
     const answered = await answer?.(String(url), init);
     if (answered) return answered;
     if (init.method === 'PATCH') return ok({ version: 2, accepted: 1 });
@@ -192,6 +192,177 @@ async function drawnBoard(t, { answer, board = {} } = {}) {
   const events = () => requests.filter((r) => r.url === '/api/boards/plan/events');
   return { harness, view, requests, notes, settle, patches, events, svg, island };
 }
+
+const pageHide = (harness) => harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+
+test('an edit still waiting for its save goes out on pagehide, keepalive and once', async (t) => {
+  const { harness, patches, settle } = await drawnBoard(t);
+  assert.equal(patches().length, 0, 'the debounce holds it');
+  pageHide(harness);
+  assert.equal(patches().length, 1, 'sent during the event: nothing after it is sure to run');
+  assert.equal(patches()[0].keepalive, true);
+  assert.equal(patches()[0].body.steps.length, 1);
+  await settle();
+  assert.equal(patches().length, 1, 'neither the debounce nor the unmount saves it again');
+});
+
+test('an ordinary save goes keepalive too, so one in flight survives the page', async (t) => {
+  const { patches, settle } = await drawnBoard(t);
+  await settle();
+  assert.equal(patches().length, 1);
+  assert.equal(patches()[0].keepalive, true);
+});
+
+test('pagehide with nothing pending sends nothing', async (t) => {
+  const { harness, patches, settle } = await drawnBoard(t);
+  await settle();
+  pageHide(harness);
+  await settle();
+  assert.equal(patches().length, 1);
+});
+
+test('a failed save on pagehide is kept for a page that comes back', async (t) => {
+  let down = true;
+  const { harness, patches } = await drawnBoard(t, {
+    answer: async (_url, init) => {
+      if (init.method === 'PATCH' && down) { down = false; throw new TypeError('network'); }
+      return null;
+    },
+  });
+  pageHide(harness);
+  await harness.act(() => wait(2100));
+  assert.equal(patches().length, 2, 'the usual retry resends it');
+});
+
+test('an open text edit is finished and saved on pagehide', async (t) => {
+  const { harness, view, patches } = await drawnBoard(t);
+  pageHide(harness);
+  const svg = view.container.querySelector('svg.board-canvas');
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Text' }).click());
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 400, 400));
+  const input = view.container.querySelector('textarea.board-text-input');
+  await harness.input(input, 'typed just before closing');
+  pageHide(harness);
+  const texts = patches().flatMap((patch) => patch.body.elements).filter((el) => el.type === 'text');
+  assert.deepEqual(texts.map((el) => el.text), ['typed just before closing']);
+});
+
+test('an open text edit is saved when its editor unmounts', async (t) => {
+  const { harness, view, patches } = await drawnBoard(t);
+  const svg = view.container.querySelector('svg.board-canvas');
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Text' }).click());
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 400, 400));
+  await harness.input(view.container.querySelector('textarea.board-text-input'), 'closed mid-word');
+  await harness.act(() => { view.unmount(); });
+  await harness.act(() => wait());
+  const texts = patches().flatMap((patch) => patch.body.elements).filter((el) => el.type === 'text');
+  assert.deepEqual(texts.map((el) => el.text), ['closed mid-word']);
+});
+
+// A filled box with `pad` bytes of baggage, dragged, so a save holds it twice:
+// once as the edit and once as its undo step.
+async function draggedHeavyBox(t, pad, answer) {
+  const box = {
+    id: 'heavy', type: 'rectangle', x: 0, y: 0, width: 100, height: 100, version: 1, versionNonce: 1,
+    backgroundColor: '#ffc9c9', strokeColor: '#1e1e1e', isDeleted: false, customData: { pad: 'x'.repeat(pad) },
+  };
+  const env = await drawnBoard(t, { answer, board: { elements: [box] } });
+  await env.settle();
+  env.requests.length = 0;
+  await env.harness.act(() => env.harness.getByRole(env.view.container, 'button', { name: 'Select' }).click());
+  await env.harness.act(() => pointer(env.harness, env.svg, 'pointerdown', 90, 90));
+  await env.harness.act(() => pointer(env.harness, env.svg, 'pointermove', 120, 120));
+  await env.harness.act(() => pointer(env.harness, env.svg, 'pointerup', 120, 120));
+  return env;
+}
+
+test('past the keepalive limit pagehide drops the undo steps if that fits', async (t) => {
+  const { harness, patches } = await draggedHeavyBox(t, 40 * 1024);
+  pageHide(harness);
+  assert.equal(patches().length, 1);
+  assert.equal(patches()[0].keepalive, true);
+  assert.equal(patches()[0].body.steps, undefined);
+  assert.equal(patches()[0].body.elements[0].id, 'heavy');
+});
+
+test('an edit past the limit on its own goes as a plain request on pagehide', async (t) => {
+  const { harness, patches } = await draggedHeavyBox(t, 70 * 1024);
+  pageHide(harness);
+  assert.equal(patches().length, 1);
+  assert.equal(patches()[0].keepalive, false);
+});
+
+test('a normal save past the limit keeps its undo steps and goes plain', async (t) => {
+  const { harness, patches, island } = await draggedHeavyBox(t, 40 * 1024);
+  await harness.act(() => wait(island.BOARD_FLUSH_MS + 20));
+  assert.equal(patches().length, 1);
+  assert.equal(patches()[0].keepalive, false);
+  assert.equal(patches()[0].body.steps.length, 1);
+});
+
+test('the keepalive allowance is shared with a save still in flight', async (t) => {
+  let release = null;
+  const { harness, patches, svg } = await draggedHeavyBox(t, 25 * 1024, async (_url, init) => {
+    if (init.method === 'PATCH' && !release) await new Promise((resolve) => { release = resolve; });
+    return null;
+  });
+  pageHide(harness);
+  assert.equal(patches()[0].keepalive, true, 'with its steps dropped it fits on its own');
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 120, 120));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 150, 150));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 150, 150));
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 150, 150));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 170, 170));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 170, 170));
+  pageHide(harness);
+  assert.equal(patches().length, 2);
+  assert.equal(patches()[1].keepalive, true);
+  await harness.act(async () => { release(); await wait(); });
+});
+
+test('settleBoardEdits waits for the save, and says when it failed', async (t) => {
+  let release = null;
+  const { island, patches, harness } = await drawnBoard(t, {
+    answer: async (_url, init) => {
+      if (init.method === 'PATCH') await new Promise((resolve) => { release = resolve; });
+      return null;
+    },
+  });
+  let settled = null;
+  const settling = island.settleBoardEdits('plan').then((value) => { settled = value; });
+  await harness.act(() => wait());
+  assert.equal(patches().length, 1, 'it does not wait for the debounce');
+  assert.equal(settled, null, 'not while the PATCH is out');
+  await harness.act(async () => { release(); await settling; });
+  assert.equal(settled, true);
+  assert.equal(await island.settleBoardEdits('elsewhere'), true, 'no editor holds that board');
+});
+
+test('settleBoardEdits answers false for an edit it could not save', async (t) => {
+  const { island, harness } = await drawnBoard(t, {
+    answer: async (_url, init) => {
+      if (init.method === 'PATCH') throw new TypeError('network');
+      return null;
+    },
+  });
+  let result = null;
+  await harness.act(async () => { result = await island.settleBoardEdits('plan'); });
+  assert.equal(result, false);
+});
+
+test('settleBoardEdits gives up on a daemon that does not answer', async (t) => {
+  let release = null;
+  const { island, harness } = await drawnBoard(t, {
+    answer: async (_url, init) => {
+      if (init.method === 'PATCH') await new Promise((resolve) => { release = resolve; });
+      return null;
+    },
+  });
+  let result = null;
+  await harness.act(async () => { result = await island.settleBoardEdits('plan', 10); });
+  assert.equal(result, false);
+  await harness.act(async () => { release(); await wait(); });
+});
 
 test('a linked-group board with no invited agents still gets events', async (t) => {
   const { settle, events } = await drawnBoard(t, { board: { participants: [], group: 'team', group_members: [A] } });

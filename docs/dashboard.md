@@ -509,12 +509,14 @@ experimental Copilot API and Codex app-server drives.
 
 ## Terminals
 
-When the last open terminal closes while the Terminals tab is showing, the
-dashboard moves to the Groups tab. That includes a terminal the dashboard
-closes itself because its agent retired. Terminals that close while another
+When the last open terminal or board tab closes while the Terminals tab is
+showing, the dashboard moves to the Groups tab. That includes a terminal the
+dashboard closes itself because its agent retired. Tabs that close while another
 tab is showing never switch tabs. Set `dashboard.stay_on_terminals_after_last_close: true`
 (Config › Terminals & windows › **Stay after last close**) to stay on the
-empty Terminals tab instead.
+empty Terminals tab instead. Moving the last board to the overlay stays there
+too. Either way the URL becomes `/terminals`, so a reload does not reopen the
+tab that closed.
 
 The 💲 toggle after the last terminal tab shows or hides session costs next to
 agent names. It is independent of the Groups tab's 💲 (until first used it
@@ -781,7 +783,8 @@ cancels and **Ctrl+Z** undoes the last stroke.
 Boards are shared drawing boards. They open as tabs of the Collab view, beside
 the terminals: the **＋** at the right of the tab strip lists them and creates
 new ones, and `/boards/<id>` opens one directly. A board tab reorders, groups
-and detaches like a terminal tab, and comes back after a reload. **Open in
+and detaches like a terminal tab. After a reload only the board the URL names
+comes back. **Open in
 overlay** floats a board in its own window beside the companion, and **Back to
 a tab** returns it. You draw
 shapes, arrows, text and freehand strokes, and invited agents read the board as shapes and as

@@ -1,4 +1,4 @@
-import { computed, signal } from '@preact/signals';
+import { batch, computed, signal } from '@preact/signals';
 import { dashPrefs } from './prefs.js';
 import { normalizeSeed } from './terminals-core.js';
 import { findTerminalAgent } from './terminal-tab-status.js';
@@ -323,8 +323,10 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     if (!removed.length) return [];
     const next = current.filter((candidate) => !wanted.has(candidate.key));
     const previousActive = activeKey.value;
-    panes.value = next;
-    if (!next.some((candidate) => candidate.key === previousActive)) {
+    // In one step: between the two writes the location would read as a bare tab.
+    batch(() => {
+      panes.value = next;
+      if (next.some((candidate) => candidate.key === previousActive)) return;
       const previousIndex = current.findIndex((candidate) => candidate.key === previousActive);
       // Closing a tab is not a request to open a stack the operator collapsed
       // to get it out of the way, so succession prefers a tab that is already
@@ -339,7 +341,7 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
       const heir = search(visible) || next.find(visible) || search(survives) || next[0];
       activeKey.value = heir?.key || null;
       if (activeKey.value) expandGroupFor(activeKey.value);
-    }
+    });
     return removed;
   }
 
@@ -690,17 +692,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     return changed;
   }
 
-  // arrangeBoardPanes puts board tabs in the given order, in the positions board
-  // tabs hold now: a board a deep link opened first must not take the lead for
-  // good after a reload. Other tabs, and tab groups, stay where they are.
-  function arrangeBoardPanes(ids) {
-    const rank = new Map(ids.map((id, index) => [id, index]));
-    const boards = panes.value.filter((pane) => pane.seed.board)
-      .sort((a, b) => (rank.get(a.seed.board) ?? ids.length) - (rank.get(b.seed.board) ?? ids.length));
-    let next = 0;
-    commitPaneOrder(panes.value.map((pane) => (pane.seed.board ? boards[next++] : pane)));
-  }
-
   // setPaneLabel follows a board's title, as syncAgentLabels follows an agent's.
   function setPaneLabel(key, label) {
     const pane = panes.peek().find((candidate) => candidate.key === key);
@@ -751,7 +742,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     findPaneKey,
     syncAgentLabels,
     setPaneLabel,
-    arrangeBoardPanes,
     requestReveal,
     boardMenuRequest,
     requestBoardMenu,

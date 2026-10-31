@@ -6,7 +6,7 @@ import { dashboardState } from './snapshot-store.js';
 import { configPanel, setConfigPanel } from './config-panel.js';
 
 // applyCollabVisibility shows or hides the Collab surfaces (features.collab).
-// The Terminals tab stays; the shell drops its board tabs (terminal-board-tabs.js).
+// The Terminals tab stays; the shell drops its board tabs (mountTerminalShell).
 export function applyCollabVisibility(data) {
   const visible = data?.collab_enabled === true;
   document.body.classList.toggle('hide-collab', !visible);

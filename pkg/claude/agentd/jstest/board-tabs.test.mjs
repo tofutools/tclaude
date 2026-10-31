@@ -57,6 +57,7 @@ function fakeDaemon(t, boards = BOARD_LIST) {
     requests.push(`${init.method || 'GET'} ${path}`);
     const id = /^\/api\/boards\/([^/?]+)/.exec(path)?.[1];
     const board = boards.find((b) => b.id === id);
+    if (id && !board) return { ok: false, status: 404, json: async () => ({}) };
     let body = {};
     if (path === '/api/boards') body = { boards };
     else if (board) body = { ...board, version: 1, participants: [], elements: [] };
@@ -70,19 +71,18 @@ async function mountShell(t, snapshotValue) {
   const harness = await createPreactHarness(t);
   const hosts = installHosts(harness);
   const fake = fakeWidgets(harness);
-  const [{ mountTerminalsFeature }, controller, { openBoardPane }, { dashboardState }, { dashPrefs }, { terminalShellState }, tabs] = await Promise.all([
+  const [{ mountTerminalsFeature }, controller, { openBoardPane }, { dashboardState }, { terminalShellState }, closeNav] = await Promise.all([
     harness.importDashboardModule('js/preact-loader.js'),
     harness.importDashboardModule('js/terminals-tab.js'),
     harness.importDashboardModule('js/board-overlay-state.js'),
     harness.importDashboardModule('js/snapshot-store.js'),
-    harness.importDashboardModule('js/prefs.js'),
     harness.importDashboardModule('js/terminal-shell-state.js'),
-    harness.importDashboardModule('js/terminal-board-tabs.js'),
+    harness.importDashboardModule('js/terminal-close-nav.js'),
   ]);
   const setSnapshot = (value) => dashboardState.publishLocalEdit(value);
   setSnapshot(snapshotValue);
-  dashPrefs.removeItem(tabs.BOARD_TABS_PREF);
-  return { t, harness, ...hosts, fake, mountTerminalsFeature, controller, openBoardPane, dashboardState, dashPrefs, state: terminalShellState, tabs, setSnapshot };
+  closeNav.setStayOnTerminalsAfterLastClose(false);
+  return { t, harness, ...hosts, fake, mountTerminalsFeature, controller, openBoardPane, dashboardState, state: terminalShellState, closeNav, setSnapshot };
 }
 
 async function start(env) {
@@ -165,40 +165,93 @@ test('the + menu lists boards and opens one in a tab', async (t) => {
   cleanup();
 });
 
-test('board tabs come back after a reload, minus boards deleted since', async (t) => {
-  fakeDaemon(t);
+test('a new page opens only the board its URL names', async (t) => {
+  const requests = fakeDaemon(t);
   const env = await mountShell(t, COLLAB_ON);
-  const { harness, host, dashPrefs, tabs } = env;
-  dashPrefs.setItem(tabs.BOARD_TABS_PREF, JSON.stringify([
-    { id: 'plan', label: 'Old title' }, { id: 'map', label: 'Team map' }, { id: 'gone', label: 'Deleted' }, { id: 'BAD ID', label: 'x' },
-  ]));
-  const announced = [];
-  harness.document.addEventListener('tclaude:navigated', (event) => announced.push(event.detail));
-  const groups = harness.document.querySelector('nav [data-tab="groups"]');
-  harness.fireEvent(groups, 'click');
   const cleanup = await start(env);
+  const { harness, host, state } = env;
   await harness.act(() => wait());
-  assert.deepEqual(tabLabels(host), ['Release plan', 'Team map'], 'the daemon has the current title, and only live boards return');
-  assert.ok(harness.document.getElementById('tab-groups').classList.contains('active'), 'restoring does not pull the operator here');
-  assert.deepEqual(announced, [], 'a restore is no navigation');
-  assert.equal(host.querySelectorAll('svg.board-canvas').length, 1, 'a tab behind the active one loads when it is looked at');
-  await harness.act(async () => { env.state.activatePane('board:map'); await wait(); });
-  assert.equal(host.querySelectorAll('svg.board-canvas').length, 2);
-  assert.deepEqual(JSON.parse(dashPrefs.getItem(tabs.BOARD_TABS_PREF)).map((tab) => tab.id), ['plan', 'map'], 'the deleted board is forgotten');
+  assert.deepEqual(tabLabels(host), [], 'no saved list: nothing opens by itself');
+  assert.deepEqual(requests.filter((r) => r.includes('/api/boards')), []);
+  await harness.act(async () => {
+    harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', { detail: { location: { tab: 'boards', selection: 'plan' } } }));
+    await wait();
+  });
+  await harness.act(() => wait());
+  assert.deepEqual(tabLabels(host), ['Release plan']);
+  assert.equal(state.activeKey.value, 'board:plan');
   cleanup();
-  assert.equal(JSON.parse(dashPrefs.getItem(tabs.BOARD_TABS_PREF)).length, 2, 'unmounting the page forgets nothing');
 });
 
-test('a reload keeps the saved tab order when a deep link opened one board first', async (t) => {
+test('the URL of a deleted board opens nothing and corrects itself to the bare tab', async (t) => {
   fakeDaemon(t);
   const env = await mountShell(t, COLLAB_ON);
-  env.dashPrefs.setItem(env.tabs.BOARD_TABS_PREF, JSON.stringify([{ id: 'plan', label: 'Plan' }, { id: 'map', label: 'Map' }]));
-  env.state.openPane({ board: 'map', label: 'Team map' });
-  env.state.openPane({ ws: '/one', key: 'one', label: 'one' }, { activate: false });
   const cleanup = await start(env);
-  await env.harness.act(() => wait());
-  assert.deepEqual(tabLabels(env.host), ['Release plan', 'one', 'Team map'], 'boards take the saved order, around the terminal');
-  assert.equal(env.state.activeKey.value, 'board:map', 'the deep link stays the active tab');
+  const { harness, host } = env;
+  const announced = [];
+  harness.document.addEventListener('tclaude:navigated', (event) => announced.push(event.detail));
+  await harness.act(async () => {
+    harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', { detail: { location: { tab: 'boards', selection: 'gone' } } }));
+    await wait();
+  });
+  await harness.act(() => wait());
+  assert.deepEqual(tabLabels(host), []);
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }]);
+  cleanup();
+});
+
+// The strip's own close, on the tab showing, and what the router is told.
+async function closeLastBoard(env) {
+  const announced = [];
+  env.harness.document.addEventListener('tclaude:navigated', (event) => announced.push(event.detail));
+  await env.harness.act(async () => {
+    env.harness.fireEvent(env.host.querySelector('.mux-tab[data-agent-status="board"] .mux-tab-close'), 'click');
+    await wait();
+  });
+  await env.harness.act(() => wait(5));
+  return announced;
+}
+
+async function openBoardTab(env) {
+  await env.harness.act(async () => { await env.openBoardPane('plan', 'Release plan'); await wait(); });
+  env.harness.fireEvent(env.harness.document.querySelector('nav [data-tab="terminals"]'), 'click');
+}
+
+test('closing the last board leaves for Groups, with the entry behind it on the bare tab', async (t) => {
+  fakeDaemon(t);
+  const env = await mountShell(t, COLLAB_ON);
+  const cleanup = await start(env);
+  await openBoardTab(env);
+  const announced = await closeLastBoard(env);
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }]);
+  assert.ok(env.harness.document.getElementById('tab-groups').classList.contains('active'));
+  cleanup();
+});
+
+test('configured to stay, closing the last board stays and the URL stops naming it', async (t) => {
+  fakeDaemon(t);
+  const env = await mountShell(t, COLLAB_ON);
+  env.closeNav.setStayOnTerminalsAfterLastClose(true);
+  t.after(() => env.closeNav.setStayOnTerminalsAfterLastClose(false));
+  const cleanup = await start(env);
+  await openBoardTab(env);
+  const announced = await closeLastBoard(env);
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }]);
+  assert.ok(env.harness.document.getElementById('tab-terminals').classList.contains('active'));
+  cleanup();
+});
+
+test('a last board that goes while another section shows leaves the URL alone', async (t) => {
+  fakeDaemon(t);
+  const env = await mountShell(t, COLLAB_ON);
+  const cleanup = await start(env);
+  await openBoardTab(env);
+  const announced = [];
+  env.harness.document.addEventListener('tclaude:navigated', (event) => announced.push(event.detail));
+  env.harness.fireEvent(env.harness.document.querySelector('nav [data-tab="groups"]'), 'click');
+  await env.harness.act(async () => { env.state.removePanes(['board:plan']); await wait(5); });
+  assert.deepEqual(announced, [], 'the URL already names the section on screen');
+  assert.ok(env.harness.document.getElementById('tab-groups').classList.contains('active'));
   cleanup();
 });
 
@@ -250,14 +303,12 @@ test('the router keeps the /boards routes and shows them in the Terminals sectio
   assert.equal(core.toPath({ tab: 'boards', selection: 'plan' }), '/boards/plan');
 });
 
-test('with features.collab off there is no board menu, nothing restored, and no board tab stays', async (t) => {
+test('with features.collab off there is no board menu and no board tab stays', async (t) => {
   const requests = fakeDaemon(t);
   const env = await mountShell(t, { collab_enabled: false, agents: [] });
-  const { harness, host, dashPrefs, tabs, setSnapshot } = env;
-  dashPrefs.setItem(tabs.BOARD_TABS_PREF, JSON.stringify([{ id: 'plan', label: 'Release plan' }]));
+  const { harness, host, setSnapshot } = env;
   const cleanup = await start(env);
   assertAbsent(host.querySelector('.mux-board-add'), 'no board menu');
-  assert.deepEqual(tabLabels(host), [], 'no board panes restored');
   assert.deepEqual(requests.filter((r) => r.includes('/api/boards')), [], 'the daemon is not asked for what it refuses');
 
   // A handoff can still carry a board seed in: it does not stay.
@@ -265,15 +316,14 @@ test('with features.collab off there is no board menu, nothing restored, and no 
   assertAbsent(host.querySelector('svg.board-canvas'), 'the editor stays out');
   await harness.act(async () => { setSnapshot({ collab_enabled: false, agents: [], generated_at: 'x' }); await wait(); });
   assert.deepEqual(tabLabels(host), []);
-  assert.equal(JSON.parse(dashPrefs.getItem(tabs.BOARD_TABS_PREF)).length, 1, 'the remembered tabs wait for the flag');
 
   // Turning it on needs no reload; turning it off takes the tabs away again.
   await harness.act(async () => { setSnapshot(COLLAB_ON); await wait(); });
-  assert.deepEqual(tabLabels(host), ['Release plan']);
   assert.ok(host.querySelector('.mux-board-add'));
+  await harness.act(async () => { await env.openBoardPane('plan', 'Release plan'); await wait(); });
+  assert.deepEqual(tabLabels(host), ['Release plan']);
   await harness.act(async () => { setSnapshot({ collab_enabled: false }); await wait(); });
   assert.deepEqual(tabLabels(host), []);
-  assert.equal(JSON.parse(dashPrefs.getItem(tabs.BOARD_TABS_PREF)).length, 1);
   cleanup();
 });
 
@@ -311,4 +361,70 @@ test('detaching a board carries it to the solo page, which renders it and sends 
   assert.ok([...host.querySelectorAll('button')].some((b) => b.textContent.includes('↩ dashboard')));
   assert.ok(requests.includes('/api/snapshot'), 'it reads the roster, to name the agents on the board');
   page.dispose();
+});
+
+// A pop-out with one board on it, a shape drawn and its save still to go.
+async function soloWithEdit(t, patchAnswer) {
+  fakeDaemon(t);
+  const daemon = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'PATCH') {
+      await patchAnswer();
+      return { ok: true, status: 200, json: async () => ({ version: 2, accepted: 1 }) };
+    }
+    return daemon(url, init);
+  };
+  const harness = await createPreactHarness(t);
+  const { createStandaloneTerminalsPage } = await harness.importDashboardModule('js/terminal-standalone.js');
+  const { encodeTerminalOpenHash } = await harness.importDashboardModule('js/terminal-handoff.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const replaced = [];
+  const location = {
+    hash: encodeTerminalOpenHash({ board: 'plan', label: 'Release plan' }), pathname: '/terminals', search: '?solo=1', origin: 'http://x',
+    replace(url) { replaced.push(url); },
+  };
+  const page = createStandaloneTerminalsPage({
+    host, initPrefs: async () => {}, initThemeSync: () => {},
+    widgetFactory: () => { throw new Error('a board mounts no widget'); },
+    fetchImpl: async () => ({ ok: true, json: async () => COLLAB_ON }),
+    locationRef: location, historyRef: { replaceState() {} },
+    mountMessageDialogs: async () => () => {},
+  });
+  await harness.act(async () => { await page.start(); await wait(); });
+  await harness.act(() => wait());
+  await harness.act(() => harness.getByRole(host, 'button', { name: 'Rectangle' }).click());
+  const svg = host.querySelector('svg.board-canvas');
+  const pointer = (type, x, y) => harness.act(() => harness.fireEvent(svg, `on${type.toLowerCase()}` in svg ? type.toLowerCase() : type, { button: 0, pointerId: 1, clientX: x, clientY: y }));
+  await pointer('PointerDown', 100, 100);
+  await pointer('PointerMove', 220, 160);
+  await pointer('PointerUp', 220, 160);
+  const back = [...host.querySelectorAll('button')].find((b) => b.textContent.includes('↩ dashboard'));
+  return { harness, page, replaced, back };
+}
+
+test('a pop-out going back to the dashboard waits for the board to be saved', async (t) => {
+  let release = null;
+  const { harness, page, replaced, back } = await soloWithEdit(t, () => new Promise((resolve) => { release = resolve; }));
+  try {
+    await harness.act(async () => { harness.fireEvent(back, 'click'); await wait(5); });
+    assert.ok(release, 'the save is out, without waiting for the debounce');
+    assert.deepEqual(replaced, [], 'the window stays while it is');
+    assert.equal(page.state.panes.value.length, 1);
+    await harness.act(async () => { release(); await wait(5); await wait(5); });
+    assert.equal(replaced.length, 1, 'then it goes');
+    assert.equal(page.state.panes.value.length, 0);
+  } finally {
+    page.dispose();
+  }
+});
+
+test('a pop-out whose board could not be saved stays open', async (t) => {
+  const { harness, page, replaced, back } = await soloWithEdit(t, async () => { throw new TypeError('network'); });
+  try {
+    await harness.act(async () => { harness.fireEvent(back, 'click'); await wait(5); await wait(5); });
+    assert.deepEqual(replaced, []);
+    assert.equal(page.state.panes.value.length, 1, 'the edit still exists here');
+  } finally {
+    page.dispose();
+  }
 });

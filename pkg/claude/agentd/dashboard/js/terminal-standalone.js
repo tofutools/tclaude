@@ -14,6 +14,7 @@ import {
   decodeTerminalOpenHash, requestTerminalReattach, terminalDashboardURL,
 } from './terminal-handoff.js';
 import { normalizeSeed } from './terminals-core.js';
+import { settleBoardEdits } from './board-island.js';
 import { SNAPSHOT_HIDDEN_POLL_MS, SNAPSHOT_POLL_MS } from './snapshot-poll.js';
 
 export { decodeTerminalOpenHash };
@@ -171,6 +172,10 @@ export function createStandaloneTerminalsPage({
 
   async function reattachPane(pane) {
     if (disposed || !pane) return false;
+    // This window is about to close, which would cut a save off. An edit that
+    // could not be saved keeps the board here, where it still exists.
+    if (pane.seed.board && !(await settleBoardEdits(pane.seed.board))) return false;
+    if (!state.panes.value.some((candidate) => candidate.key === pane.key)) return false;
     const seed = {
       ...pane.seed,
       label: pane.label,

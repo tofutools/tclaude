@@ -42,17 +42,15 @@ async function setup(t, snapshotValue = COLLAB_ON) {
   };
   t.after(() => { globalThis.fetch = previous; });
 
-  const [loader, overlayState, island, { dashboardState }, { dashPrefs }, { terminalShellState }, { BOARD_TABS_PREF }] = await Promise.all([
+  const [loader, overlayState, island, { dashboardState }, { dashPrefs }, { terminalShellState }] = await Promise.all([
     harness.importDashboardModule('js/preact-loader.js'),
     harness.importDashboardModule('js/board-overlay-state.js'),
     harness.importDashboardModule('js/board-overlay.js'),
     harness.importDashboardModule('js/snapshot-store.js'),
     harness.importDashboardModule('js/prefs.js'),
     harness.importDashboardModule('js/terminal-shell-state.js'),
-    harness.importDashboardModule('js/terminal-board-tabs.js'),
   ]);
   dashboardState.publishLocalEdit(snapshotValue);
-  dashPrefs.removeItem(BOARD_TABS_PREF);
   dashPrefs.removeItem(island.BOARD_OVERLAY_PLACEMENT_PREF);
   overlayState.boardOverlay.value = null;
   const cleanups = [
@@ -88,8 +86,12 @@ const tabLabels = (host) => [...host.querySelectorAll('.mux-tab .mux-tab-label')
 
 scenario('a board moves from its tab into the overlay and back', async ({ harness, host, overlayHost, overlayState, state, click, button }) => {
   await harness.act(async () => { await overlayState.openBoardPane('plan', 'Release plan'); await wait(); await wait(); });
+  const announced = [];
+  harness.document.addEventListener('tclaude:navigated', (event) => announced.push(event.detail));
   await click(button(host, 'Open in overlay'));
+  await harness.act(() => wait(5));
 
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }], 'a reload must not reopen it as a tab');
   assert.deepEqual(tabLabels(host), [], 'the tab left: a board opens in one place');
   const win = overlayHost.querySelector('.board-overlay');
   assert.ok(win.querySelector('svg.board-canvas'), 'the overlay shows the editor');
@@ -107,6 +109,19 @@ scenario('a board moves from its tab into the overlay and back', async ({ harnes
   assert.deepEqual(tabLabels(host), ['Release plan']);
   assert.equal(state.activeKey.value, 'board:plan');
   assert.ok(harness.document.getElementById('tab-terminals').classList.contains('active'), 'the tab is shown');
+});
+
+scenario('a URL naming the board the overlay shows opens no tab and corrects itself', async ({ harness, host, overlayState }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  const announced = [];
+  harness.document.addEventListener('tclaude:navigated', (event) => announced.push(event.detail));
+  await harness.act(async () => {
+    harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', { detail: { location: { tab: 'boards', selection: 'plan' } } }));
+    await wait();
+    await wait();
+  });
+  assert.deepEqual(tabLabels(host), []);
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }]);
 });
 
 scenario('the tab context menu offers the overlay for a board', async ({ harness, host, overlayHost, overlayState, click, button }) => {

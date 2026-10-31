@@ -17,8 +17,10 @@ The **＋** at the right of the Collab tab strip lists the boards: pick one to
 open it in a tab, or give a title to create one. `/boards/<id>` opens that
 board's tab, and `/boards` opens the list. A board tab behaves like a terminal
 tab: it reorders, joins tab groups, and detaches into its own browser window
-(**⧉ tab**, or drag it off the strip), which **↩ dashboard** sends back. Board
-tabs come back after a reload, except for boards deleted since.
+(**⧉ tab**, or drag it off the strip), which **↩ dashboard** sends back. Like a
+terminal tab it lasts as long as its page: a reload brings back only the board
+the URL names, and a new browser window starts with none. The URL of a deleted
+board opens nothing and becomes `/terminals`.
 
 **Open in overlay**, on the board or its tab's right-click menu, floats the
 board in its own window over every dashboard view, apart from the companion

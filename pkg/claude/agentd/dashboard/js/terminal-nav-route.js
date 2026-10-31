@@ -251,9 +251,6 @@ export function bindTerminalNavRouting({
     previousActiveKey = activeKey;
     if (!primed) { primed = true; seenSelection = selection; return; }
     if (selection === seenSelection) return;
-    // A board tab restored after a reload lands by itself into an empty strip:
-    // nobody navigated, even when the URL has to follow it.
-    const restored = !wasOn && state.panes.value.find((pane) => pane.key === activeKey)?.seed?.restored;
     // A restore drives this same signal. Track the new value as seen (the URL
     // already names it) but say nothing: reconcileAfterRestore has the last
     // word once the attach settles, and it is the only thing that can tell an
@@ -262,19 +259,20 @@ export function bindTerminalNavRouting({
       seenSelection = selection;
       // Anything that is NOT the restore arriving at its own target is the
       // operator moving underneath it — remember it so the landing can defer.
-      if (selection && selection !== restoreTarget && !restored && classifyChange(wasOn) === 'navigate') {
+      if (selection && selection !== restoreTarget && classifyChange(wasOn) === 'navigate') {
         interrupted = { selection, key: activeKey };
       }
       return;
     }
     seenSelection = selection;
-    // Losing the last agent pane leaves the bare tab, which the router's own
-    // snapshot reconcile already corrects (and the tab may be auto-leaving
-    // entirely). Announcing it would forge an entry for a move nobody made.
-    if (!selection) return;
+    // Losing the last pane is the island's to answer once it knows whether the
+    // pane really went (terminal-close-nav.js): a reattach closes and reopens
+    // it, and the tab may be auto-leaving entirely. An open pane with no agent
+    // is a place of its own, and the URL must stop naming the tab it replaced.
+    if (!selection && !state.panes.value.length) return;
     const kind = classifyChange(wasOn);
     if (kind === 'silent') return;
-    announce(location, kind === 'correct' || !!restored);
+    announce(location, kind === 'correct');
   });
 
   const unbind = () => {

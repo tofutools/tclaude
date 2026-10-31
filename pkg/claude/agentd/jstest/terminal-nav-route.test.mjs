@@ -239,33 +239,6 @@ test('closing a pane the operator is NOT on is not a location change at all', as
   assert.deepEqual(announced, []);
 });
 
-test('a saved board landing during a terminal restore does not take the reload', async (t) => {
-  // /api/boards usually answers before the cold xterm runtime has loaded, so
-  // the board reaches the empty strip first. Nobody chose it.
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
-  let state;
-  const bound = await setup(t, {
-    snapshot: rosterOf(AGENT),
-    openAgentPane: async (agent) => {
-      await gate;
-      return state.openPane(seedFor(agent));
-    },
-  });
-  ({ state } = bound);
-  const { restore, announced, settle } = bound;
-  await settle();
-
-  const inFlight = restore({ tab: 'terminals', selection: AGENT });
-  state.openPane({ board: 'plan', key: 'board:plan', label: 'Plan', restored: true }, { reveal: false, activate: false });
-  release();
-  await inFlight;
-  await settle();
-
-  assert.equal(state.view.value.activeKey, `window:${AGENT}`, 'the terminal named by the URL stays on screen');
-  assert.deepEqual(announced, [], 'and the address bar does not move');
-});
-
 test('a mid-flight operator switch is announced, not swallowed', async (t) => {
   // A cold restore waits on the xterm runtime — a network fetch. If the
   // operator switches terminals during that window, suppressing the
@@ -383,6 +356,32 @@ test('unbinding stops both announcing and restoring', async (t) => {
 
   assert.deepEqual(announced, []);
   assert.deepEqual(opened, []);
+});
+
+test('a pane without an agent taking over stops the URL naming the tab it replaced', async (t) => {
+  const { state, announced, settle } = await setup(t);
+  state.openPane({ ws: '/api/group-term-ws/tclaude', key: 'groupterm:tclaude', label: 'tclaude' });
+  state.openPane({ board: 'plan', key: 'board:plan', label: 'Plan' });
+  await settle();
+  announced.length = 0;
+
+  state.removePane('board:plan');
+  await settle();
+
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }]);
+});
+
+test('switching to a pane without an agent is a navigation to the bare tab', async (t) => {
+  const { state, announced, settle } = await setup(t);
+  state.openPane({ ws: '/api/group-term-ws/tclaude', key: 'groupterm:tclaude', label: 'tclaude' });
+  state.openPane({ board: 'plan', key: 'board:plan', label: 'Plan' });
+  await settle();
+  announced.length = 0;
+
+  state.activatePane('groupterm:tclaude');
+  await settle();
+
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: false }]);
 });
 
 test('a pane without an agent is not addressable', async (t) => {
