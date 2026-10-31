@@ -2241,3 +2241,9 @@ CREATE TABLE cost_opening_spend (
 			first_real_day TEXT NOT NULL,
 			first_any_day  TEXT NOT NULL
 		) WITHOUT ROWID;
+
+CREATE TABLE steward_offered_permissions (
+		agent_id TEXT NOT NULL,
+		slug     TEXT NOT NULL,
+		PRIMARY KEY (agent_id, slug)
+	) STRICT;

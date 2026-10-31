@@ -469,6 +469,9 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
 		}
 	}
+	if scopeKey == stewardScopeKind+"/" {
+		recordStewardOffer(outcome.ConvID, overrides)
+	}
 	// Sudo stands on the operator's approval, so only the operator's own summon
 	// passes it on: an agent could otherwise write a brief for a Steward holding
 	// what it does not hold itself.

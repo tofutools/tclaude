@@ -3018,6 +3018,7 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	if !ok {
 		return
 	}
+	reconcileResumingSteward(targetConv)
 	trustRoot := caller == "" || hasHumanApprovalContinuation(r, PermAgentResume, targetConv)
 	sendKeys := r.URL.Query().Get("send_keys") == "1"
 	if sendKeys && !trustRoot {

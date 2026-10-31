@@ -162,3 +162,50 @@ func endCarriedSudo(tx *sql.Tx, where string, args ...any) error {
 		append([]any{dbTime(time.Now())}, args...)...)
 	return err
 }
+
+// StewardRecordOpened is the row every Steward's record starts with. Alone, it
+// is a record with nothing in it yet.
+const StewardRecordOpened = ""
+
+// OfferStewardPermissions records that a Steward's levels have given it these
+// slugs, once and all together. What the operator does with them afterwards is
+// theirs.
+func OfferStewardPermissions(agentID string, slugs ...string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, slug := range slugs {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO steward_offered_permissions (agent_id, slug) VALUES (?, ?)`, agentID, slug); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListStewardOfferedPermissions returns what a Steward's levels have given it.
+func ListStewardOfferedPermissions(agentID string) (map[string]bool, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT slug FROM steward_offered_permissions WHERE agent_id = ?`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		out[slug] = true
+	}
+	return out, rows.Err()
+}
