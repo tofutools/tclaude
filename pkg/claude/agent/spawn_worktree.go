@@ -40,7 +40,10 @@ import (
 // WriteProofToken carries the answer to a dir write-proof challenge —
 // filled in transparently by DaemonRequestWithWriteProof, never by hand.
 type WorktreePrepareRequest struct {
-	Repo            string `json:"repo,omitempty"`
+	Repo string `json:"repo,omitempty"`
+	// CallerCwd stands in for a blank Repo after the group's default
+	// directory, the same order a blank spawn cwd resolves in.
+	CallerCwd       string `json:"caller_cwd,omitempty"`
 	Group           string `json:"group,omitempty"`
 	Branch          string `json:"branch"`
 	Base            string `json:"base,omitempty"`
@@ -57,6 +60,10 @@ type WorktreePrepareResponse struct {
 	Branch       string `json:"branch"`
 	Created      bool   `json:"created"`
 	DiscardToken string `json:"discard_token,omitempty"`
+	// LaunchDir is where a spawn into the request's group with a blank cwd
+	// would land, so the caller can tell an in-place worktree from a
+	// monorepo sub-repo without reading the group's default directory.
+	LaunchDir string `json:"launch_dir,omitempty"`
 }
 
 // WorktreeDiscardRequest takes back a worktree prepared earlier in this
@@ -87,6 +94,7 @@ type spawnWorktree struct {
 	Path         string
 	Created      bool
 	DiscardToken string
+	LaunchDir    string
 }
 
 // resolveSpawnWorktree turns a `--worktree <branch>` request into a
@@ -98,7 +106,7 @@ type spawnWorktree struct {
 // up to the repo root. ask carries the caller's --ask-human budget, so a
 // spawn that leans on a human popup for its authority gets the same
 // treatment on the worktree half rather than failing before the popup.
-func resolveSpawnWorktree(group, repoDir, branch, base string, ask time.Duration) (spawnWorktree, error) {
+func resolveSpawnWorktree(group, repoDir, callerCwd, branch, base string, ask time.Duration) (spawnWorktree, error) {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		return spawnWorktree{}, fmt.Errorf("worktree branch name is required")
@@ -106,6 +114,7 @@ func resolveSpawnWorktree(group, repoDir, branch, base string, ask time.Duration
 	mkBody := func(writeProofToken string) any {
 		return WorktreePrepareRequest{
 			Repo:            strings.TrimSpace(repoDir),
+			CallerCwd:       strings.TrimSpace(callerCwd),
 			Group:           strings.TrimSpace(group),
 			Branch:          branch,
 			Base:            strings.TrimSpace(base),
@@ -126,7 +135,7 @@ func resolveSpawnWorktree(group, repoDir, branch, base string, ask time.Duration
 	if strings.TrimSpace(resp.Path) == "" {
 		return spawnWorktree{}, fmt.Errorf("daemon returned no worktree path for branch %s", branch)
 	}
-	return spawnWorktree{Path: resp.Path, Created: resp.Created, DiscardToken: resp.DiscardToken}, nil
+	return spawnWorktree{Path: resp.Path, Created: resp.Created, DiscardToken: resp.DiscardToken, LaunchDir: resp.LaunchDir}, nil
 }
 
 // discardSpawnWorktree tears down a worktree resolveSpawnWorktree just
