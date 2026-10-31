@@ -1252,13 +1252,15 @@ export function BoardEditor({
     }
   }
 
-  // sendInvite tells an agent how to use the board.
+  // sendInvite tells an agent how to use the board. This mail is
+  // operator-authored, so like the board event it quotes nothing agents wrote:
+  // not the title, which any agent with boards.write can set, nor a group name.
   function sendInvite(agentId, why = "You're invited to") {
     return fetchImpl('/api/operator-message', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         to: agentId, subject: `[board ${boardId}] you're invited`,
-        body: `${why} the shared board "${meta.title}" (${boardId}). The operator draws there; you get a short event when their edits settle.\n`
+        body: `${why} the shared board ${boardId}. The operator draws there; you get a short event when their edits settle.\n`
           + `Look: \`tclaude agent board show ${boardId}\` (elements as text; \`--view\` for what the operator has on screen) or \`tclaude agent board snapshot ${boardId} -o /tmp/${boardId}.png\` (an image to view).\n`
           + `Draw: \`tclaude agent board add ${boardId} rectangle --x 100 --y 100 --w 160 --h 80 --text "Idea"\`, arrows with --from/--to element ids (--from-side/--to-side for a snap point, --routing elbow or curved); build a flow with \`--right-of <id> --link\` and tidy it with \`board layout ${boardId}\`; \`board rm\`, \`board move\`, \`board text\` (any element), \`board connect\`. See \`tclaude agent board --help\`.`,
       }),
@@ -1278,7 +1280,7 @@ export function BoardEditor({
       const before = new Set([...meta.participants, ...meta.groupMembers]);
       setMeta((m) => ({ ...m, group: result.group || '', groupMembers: members }));
       const fresh = members.filter((id) => !before.has(id) && agents.get(id)?.online);
-      await Promise.allSettled(fresh.map((id) => sendInvite(id, `Your group "${result.group}" now has`)));
+      await Promise.allSettled(fresh.map((id) => sendInvite(id, 'Your group now has')));
       notify(result.group ? `This is now ${result.group}'s board${fresh.length ? `; told ${fresh.length} online member${fresh.length === 1 ? '' : 's'}` : ''}.` : 'The board no longer belongs to a group.');
     } catch (error) {
       // The select shows the old group again.
