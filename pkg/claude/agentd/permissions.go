@@ -1934,6 +1934,7 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		endStoredStewardPermission(target.Key, body.Slug)
+		withholdStewardPermission(target.Key, body.Slug)
 		resp.TargetKey = target.Key
 		resp.AgentID = target.AgentID
 		resp.Title = target.ConvTitle

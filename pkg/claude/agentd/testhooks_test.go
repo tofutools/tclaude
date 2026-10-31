@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	clconfig "github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"net/http"
 	"slices"
@@ -2341,3 +2342,9 @@ func IsCountableForTest(slug string) bool {
 
 // SweepCopilotUsageForTest runs one tick of the daemon's Copilot poller.
 func SweepCopilotUsageForTest() { sweepCopilotUsage(context.Background()) }
+
+// ReconcileStewardAccessForTest runs what a daemon start runs.
+func ReconcileStewardAccessForTest() {
+	cfg, _ := clconfig.Load()
+	reconcileStewardAccess(cfg)
+}

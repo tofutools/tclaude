@@ -19,6 +19,8 @@ const (
 	// stewardAddress is what agents write to reach the Steward, whatever its
 	// generated name is.
 	stewardAddress = "steward"
+	// stewardReconcileGranter audits a grant made to bring a Steward up to its levels.
+	stewardReconcileGranter = "system:steward-levels"
 )
 
 // stewardBaseSlugs are what talking to the operator takes, at every level:
@@ -251,6 +253,9 @@ func saveStewardCarry(convID string, before map[string]db.PermissionOverride, ef
 		return err
 	}
 	for slug, effect := range effects {
+		if effect == "default" && holdsOverride(before, slug) {
+			withholdStewardPermission(convID, slug)
+		}
 		_, wasStored := stored[slug]
 		keep, chosen := carry[slug]
 		if !chosen {
@@ -290,10 +295,18 @@ func endStoredStewardPermission(convID, slug string) {
 	}
 }
 
+// stewardCaptureGuide is how a Steward sees the operator's screen. It sits in
+// the brief so that needs no skill loaded first.
+const stewardCaptureGuide = "To see the operator's screen, run `tclaude agent guide capture -o /tmp/view.png`, then view the image. " +
+	"Try it before saying it cannot be done. If it fails: a refused permission means you do not hold dashboard.capture, so ask for it with " +
+	"`tclaude agent sudo request dashboard.capture`; \"not on screen\" means their tab is hidden, so ask them to bring it up; " +
+	"\"no dashboard is open\" means ask them to open it; a timeout means the tab may have closed or be busy, so try again. " +
+	"The age `guide view` prints is how long they have been on that view, not whether the tab is still open."
+
 // stewardBrief adds to the summon's brief what the daemon owns: the access
 // note and the operator's own startup prompt, last so it has the final word.
 func stewardBrief(brief string, cfg *config.Config) string {
-	brief = strings.TrimRight(brief, "\n") + "\n\n" + stewardAccessNote(cfg)
+	brief = strings.TrimRight(brief, "\n") + "\n\n" + stewardAccessNote(cfg) + "\n\n" + stewardCaptureGuide
 	if name := cfg.StewardName(); name != "" {
 		brief += "\n\nThe operator calls you " + name + ". Use that name."
 	}
@@ -324,6 +337,17 @@ func tellStewardsNewName(before, after *config.Config) {
 
 // liveStewardConvs lists the running Stewards' conversations, newest last.
 func liveStewardConvs() []string {
+	var convs []string
+	for _, conv := range stewardConvs() {
+		if pickAliveSession(conv) != nil {
+			convs = append(convs, conv)
+		}
+	}
+	return convs
+}
+
+// stewardConvs lists every Steward not retired, running or not.
+func stewardConvs() []string {
 	g, err := db.GetAgentGroupByName(stewardGroupName)
 	if err != nil || !isScribeGroup(g) {
 		return nil
@@ -335,7 +359,7 @@ func liveStewardConvs() []string {
 	descr := scribeScopeDescr(stewardScopeKind + "/")
 	var convs []string
 	for _, member := range members {
-		if member.Descr != descr || pickAliveSession(member.ConvID) == nil {
+		if member.Descr != descr {
 			continue
 		}
 		if state, err := db.AgentState(member.ConvID); err == nil && state == db.AgentStateActive {
@@ -343,6 +367,82 @@ func liveStewardConvs() []string {
 		}
 	}
 	return convs
+}
+
+// reconcileStewardAccess brings Stewards up to what their levels give, since
+// they are only granted it at summon and outlive upgrades. It runs when the
+// daemon starts and when a Steward resumes.
+// It only adds. An override of either kind stands, and so does a slug the
+// operator took off that Steward. It tells each Steward what changed, as its
+// brief cannot, and a message to one not running waits for its resume.
+func reconcileStewardAccess(cfg *config.Config) {
+	if !collabRoutesEnabled() {
+		return
+	}
+	for _, conv := range stewardConvs() {
+		added := reconcileStewardConv(conv, cfg)
+		if len(added) == 0 {
+			continue
+		}
+		body := "You now also hold: " + strings.Join(added, ", ") + ".\n\n" + stewardAccessNote(cfg) + "\n\n" + stewardCaptureGuide
+		if _, err := queueAgentMessage(&db.AgentMessage{ToConv: conv, Subject: "Your access changed", Body: body}); err != nil {
+			slog.Warn("steward: access change message failed", "conv", short8(conv), "error", err)
+		}
+	}
+}
+
+// reconcileResumingSteward catches a Steward up as it comes back: it may have
+// missed a Config change while it was down.
+func reconcileResumingSteward(conv string) {
+	if slices.Contains(stewardConvs(), conv) {
+		cfg, _ := config.Load()
+		reconcileStewardAccess(cfg)
+	}
+}
+
+func reconcileStewardConv(conv string, cfg *config.Config) []string {
+	agentID, err := db.AgentIDForConv(conv)
+	if err != nil || agentID == "" {
+		slog.Warn("steward: resolve agent for access reconcile failed", "conv", short8(conv), "error", err)
+		return nil
+	}
+	overrides, err := agentPermissionOverrides(conv)
+	if err != nil {
+		slog.Warn("steward: read overrides for access reconcile failed", "conv", short8(conv), "error", err)
+		return nil
+	}
+	withheld, err := db.ListStewardWithheldPermissions(agentID)
+	if err != nil {
+		slog.Warn("steward: read withheld permissions failed", "conv", short8(conv), "error", err)
+		return nil
+	}
+	var added []string
+	for _, slug := range stewardSlugs(cfg) {
+		if holdsOverride(overrides, slug) || withheld[slug] || slices.Contains(added, slug) {
+			continue
+		}
+		if err := db.SetAgentPermissionOverride(conv, slug, db.PermEffectGrant, stewardReconcileGranter); err != nil {
+			slog.Warn("steward: add permission failed", "conv", short8(conv), "slug", slug, "error", err)
+			continue
+		}
+		added = append(added, slug)
+	}
+	return added
+}
+
+// withholdStewardPermission remembers that the operator took a slug off a
+// Steward, so a later reconcile leaves it off.
+func withholdStewardPermission(convID, slug string) {
+	if !slices.Contains(stewardConvs(), convID) {
+		return
+	}
+	agentID, err := db.AgentIDForConv(convID)
+	if err == nil && agentID != "" {
+		err = db.WithholdStewardPermission(agentID, slug)
+	}
+	if err != nil {
+		slog.Warn("steward: record removed permission failed", "conv", short8(convID), "slug", slug, "error", err)
+	}
 }
 
 // stewardElevation is what a Steward holds beyond Config and the defaults,

@@ -167,6 +167,9 @@ func runGuideCapture(p *guideCaptureParams, stdout, stderr io.Writer) int {
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/dashboard/capture", map[string]any{"save": p.Save, "label": p.Label}, &resp, DaemonOpts{Timeout: guideCaptureTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
+		if de, ok := err.(*DaemonError); ok && de.Code == "permission" {
+			fmt.Fprintln(stderr, "Capture exists, but you do not hold dashboard.capture. Ask for it: tclaude agent sudo request dashboard.capture")
+		}
 		return MapDaemonErrorToRC(err)
 	}
 	image, err := base64.StdEncoding.DecodeString(resp.PNG)

@@ -757,3 +757,55 @@ func TestSteward_RunningStewardHearsANewName(t *testing.T) {
 	saveName("")
 	assert.Len(t, nameMail(), 2, "and clearing it is a change too")
 }
+
+// Scenario: a Steward summoned before a slug joined the base set gets it from
+// the next reconcile and hears about it, while what the operator took off stays off.
+func TestSteward_ReconcileAddsWhatLevelsGiveAndNothingRemoved(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	conv := c.summon()
+	slugHeld := func(slug string) (db.PermissionOverride, bool) {
+		overrides, err := db.ListAgentPermissionOverrideRowsForConv(conv)
+		require.NoError(t, err)
+		for _, row := range overrides {
+			if row.Slug == slug {
+				return db.PermissionOverride{Effect: row.Effect}, true
+			}
+		}
+		return db.PermissionOverride{}, false
+	}
+	// Born before these joined the base set: nothing records them as removed.
+	_, err := db.RevokeAgentPermission(conv, agentd.PermDashboardCapture)
+	require.NoError(t, err)
+	_, err = db.RevokeAgentPermission(conv, agentd.PermDashboardMark)
+	require.NoError(t, err)
+	// The operator's own choices.
+	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermBoardsWrite, db.PermEffectDeny, "test"))
+	revoke := testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/permissions/revoke",
+		map[string]any{"slug": agentd.PermHumanNotify, "target": conv})))
+	require.Equalf(t, http.StatusOK, revoke.Code, "body=%s", revoke.Body.String())
+
+	agentd.ReconcileStewardAccessForTest()
+
+	capture, held := slugHeld(agentd.PermDashboardCapture)
+	require.True(t, held, "a slug that is simply new arrives")
+	assert.Equal(t, db.PermEffectGrant, capture.Effect)
+	_, held = slugHeld(agentd.PermDashboardMark)
+	assert.True(t, held)
+	denied, held := slugHeld(agentd.PermBoardsWrite)
+	require.True(t, held)
+	assert.Equal(t, db.PermEffectDeny, denied.Effect, "a deny stays")
+	_, held = slugHeld(agentd.PermHumanNotify)
+	assert.False(t, held, "a slug the operator took off stays off")
+
+	messages, err := db.ListUndeliveredAgentMessagesFor(conv)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "Your access changed", messages[0].Subject)
+	assert.Contains(t, messages[0].Body, agentd.PermDashboardCapture)
+	assert.Contains(t, messages[0].Body, "guide capture -o /tmp/view.png")
+
+	agentd.ReconcileStewardAccessForTest()
+	again, err := db.ListUndeliveredAgentMessagesFor(conv)
+	require.NoError(t, err)
+	assert.Len(t, again, 1, "nothing changed, so nothing to say")
+}

@@ -162,3 +162,36 @@ func endCarriedSudo(tx *sql.Tx, where string, args ...any) error {
 		append([]any{dbTime(time.Now())}, args...)...)
 	return err
 }
+
+// WithholdStewardPermission notes that the operator took a permission off a
+// Steward. Its levels giving the slug does not bring it back.
+func WithholdStewardPermission(agentID, slug string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT OR IGNORE INTO steward_withheld_permissions (agent_id, slug) VALUES (?, ?)`, agentID, slug)
+	return err
+}
+
+// ListStewardWithheldPermissions returns what was taken off a Steward.
+func ListStewardWithheldPermissions(agentID string) (map[string]bool, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT slug FROM steward_withheld_permissions WHERE agent_id = ?`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		out[slug] = true
+	}
+	return out, rows.Err()
+}
