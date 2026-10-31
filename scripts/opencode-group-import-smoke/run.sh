@@ -80,9 +80,10 @@ start_daemon() { # start_daemon <name> <daemon cwd>
 	local name=$1 cwd=$2
 	mkdir -p "$ROOT/$name/tmux"
 	(cd "$cwd" && node "$name" nohup tclaude agentd serve --no-tray \
-		>"$ROOT/$name/agentd.log" 2>&1) &
+		--persist-operator-token --no-print-human-token >"$ROOT/$name/agentd.log" 2>&1) &
 	PIDS+=($!)
-	wait_for 60 "$name agentd" node "$name" tclaude agent groups ls
+	wait_for 60 "$name agentd socket" test -S "$ROOT/$name/.tclaude/api/agentd-socket/agentd.sock"
+	wait_for 60 "$name operator token" test -s "$ROOT/$name/.tclaude/data/operator_token"
 }
 
 SRC_CWD=$ROOT/src/project

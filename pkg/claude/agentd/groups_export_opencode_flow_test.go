@@ -180,3 +180,22 @@ func TestGroupImport_OpenCodeMemberWithoutOpenCodeImportsConfigOnly(t *testing.T
 	assert.Equal(t, "none", landings[0].Rung)
 	assert.Contains(t, strings.Join(landings[0].Warnings, " "), "not installed")
 }
+
+// A zip carries no OpenCode history and names no harness. Its member still
+// imports as configuration on OpenCode, not as a Claude Code stub.
+func TestGroupImport_OpenCodeMemberInZipKeepsItsHarness(t *testing.T) {
+	f := newFlow(t)
+	store := fakeOpenCodeStore(t)
+	const source = "ses_0123456789abcdefghijklmnor"
+	cwd := testutil.CanonicalTempDir(t)
+	seedOpenCodeSession(t, store, source, "scout", cwd)
+	f.HaveGroup("crew")
+	f.HaveMember("crew", source)
+	archive := exportGroupAs(t, f, "crew", "zip")
+
+	rec, landings := importGroupWith(t, f, archive, url.Values{"into": {f.TestCwd("dst")}, "as": {"crew-zip"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, landings, 1)
+	assert.Equal(t, "opencode", landings[0].Harness)
+	assert.Equal(t, "none", landings[0].Rung)
+}

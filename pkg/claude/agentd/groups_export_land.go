@@ -115,7 +115,11 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		c := &exp.Convs[i]
 		src := c.Harness
 		if src == "" {
+			// A zip names no harness; only OpenCode's ids say so themselves.
 			src = harness.DefaultName
+			if harness.ValidOpenCodeConvID(c.ConvID) {
+				src = harness.OpenCodeName
+			}
 		}
 		format := c.HistoryFormat
 		if format == "" && src == harness.DefaultName && c.Content != nil {
