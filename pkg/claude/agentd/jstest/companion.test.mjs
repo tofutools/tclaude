@@ -216,6 +216,15 @@ test('Ctrl+. toggles the window and unpinning the last tab closes it', async (t)
   assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.tabs')), []);
 });
 
+test('viewportOf leaves out page scrollbars', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  const win = { innerWidth: 1280, innerHeight: 800, document: { documentElement: { clientWidth: 1265, clientHeight: 785 } } };
+  assert.deepEqual(m.viewportOf(win), { width: 1265, height: 785 });
+  assert.deepEqual(m.viewportOf({ innerWidth: 1000, innerHeight: 700 }), { width: 1000, height: 700 });
+  assert.deepEqual(m.viewportOf(null), { width: 1280, height: 800 });
+});
+
 test('placement model: clamping, snap zones and status folding', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/companion-model.js');
