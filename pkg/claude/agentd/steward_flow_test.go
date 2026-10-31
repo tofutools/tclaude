@@ -808,6 +808,7 @@ func TestSteward_ReconcileAddsANewSlugAndKeepsRemovalsAndDenies(t *testing.T) {
 	assert.Contains(t, mail[0].Body, agentd.PermRolesManage)
 	assert.NotContains(t, mail[0].Body, agentd.PermPromptsManage)
 	assert.Contains(t, mail[0].Body, "guide capture -o /tmp/view.png")
+	assert.Contains(t, mail[0].Body, "tclaude agent knowledge search")
 
 	// Taken off after it arrived, and nothing further to say.
 	_, err = db.RevokeAgentPermission(conv, agentd.PermRolesManage)
