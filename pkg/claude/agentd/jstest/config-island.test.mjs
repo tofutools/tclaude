@@ -785,6 +785,16 @@ test('Config search filters individual settings across panels', async (t) => {
   assert.equal(root.querySelector('[data-cfg-hits="terminals"]').textContent, '1');
   assert.match(root.querySelector('#cfg-filter-count').textContent, /^1 matching setting$/);
 
+  // With Collab off the Steward panel is hidden, so it adds no matches.
+  harness.document.body.classList.add('hide-collab');
+  await search('steward.name');
+  assert.equal(root.querySelector('[data-cfg-hits="steward"]').textContent, '');
+  assert.equal(root.querySelector('#cfg-filter-count').textContent, '0 matching settings');
+  assert.equal(root.querySelector('#cfg-filter-empty').hidden, false);
+  harness.document.body.classList.remove('hide-collab');
+  await search('steward.name');
+  assert.match(root.querySelector('#cfg-filter-count').textContent, /^1 matching setting$/);
+
   // Keys and folded "More…" guidance are searchable too.
   await search('notifications.delivery');
   assert.equal(rowFor('cfg-notif-delivery').hidden, false);

@@ -27,7 +27,8 @@ import {
   stewardSummonBody, parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { registerCompanionController } from './companion-facade.js';
-import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
+import { elementScreenPoint } from './terminal-drag-out.js';
+import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { ApprovalCard, ElevatedBand, openAccessPanel } from './companion-approval.js';
 import { hasShownOverlay } from './overlay-stack.js';
@@ -244,6 +245,7 @@ export function CompanionApp({
   closeTerminalPanes = () => {},
   openTerminalsPane = null,
   win = globalThis.window,
+  locks = win?.navigator?.locks,
   onComposeMessage = null,
   openMorph = null,
   detachWindow = null,
@@ -915,7 +917,7 @@ export function CompanionApp({
   function detachToWindow(agent) {
     const rect = windowRef.current?.getBoundingClientRect?.();
     const size = rect ? { width: rect.width, height: rect.height } : null;
-    const opened = detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: { x: win?.screenX, y: win?.screenY } });
+    const opened = detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: elementScreenPoint(win, rect) });
     if (!opened) {
       notify('Could not detach: allow pop-ups for this dashboard.', true);
       return;
@@ -1092,17 +1094,19 @@ export function CompanionApp({
 
   // A hand-over that lands while this dashboard tab is hidden waits for the
   // operator to come back to it. One tab acts on each hand-over: the first
-  // to claim it in shared prefs.
+  // to take its Web Lock, which every open tab shares at once. Shared prefs
+  // are a per-page cache, so they only stop a tab that loaded after the claim,
+  // and they are the whole claim where Web Locks are missing.
   const heldOpen = useRef([]);
   const handOver = (cue) => {
-    const take = () => {
-      const stored = readPref(prefs, COMPANION_CUE_OPEN_PREF);
-      if (!claimCueOpen(stored, cue)) return;
-      writePref(prefs, COMPANION_CUE_OPEN_PREF, cueOpenClaimed(stored, cue));
+    const take = async () => {
+      if (!claimCueOpen(readPref(prefs, COMPANION_CUE_OPEN_PREF), cue)) return;
+      if (!(await claimCueLock(locks, cue))) return;
+      writePref(prefs, COMPANION_CUE_OPEN_PREF, cueOpenClaimed(readPref(prefs, COMPANION_CUE_OPEN_PREF), cue));
       openForCueRef.current(cue);
     };
     const focused = win?.document?.hasFocus?.() ?? true;
-    if (focused) take();
+    if (focused) void take();
     else setTimeout(take, CUE_OPEN_UNFOCUSED_DELAY_MS);
   };
   // An agent the Steward hands over opens in the window, in the dashboard
@@ -1275,7 +1279,7 @@ export function CompanionApp({
           ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${composeToActive}>✉</button>`}
           ${detachWindow && !parked.has(activeAgent.agentId) && html`<button type="button" class="companion-detach" aria-label=${`Detach ${activeAgent.name} into its own window`} title="Detach into its own browser window" onClick=${() => detachToWindow(activeAgent)}>⧉</button>`}
           ${openMorph && html`<button type="button" class="companion-morph" aria-label=${`Morph ${activeAgent.name}`} title="Morph: relaunch on another harness, model or profile"
-            onClick=${() => openMorph({ agent: activeAgent.agentId, conv: activeAgent.convId, label: activeAgent.name, harness: activeAgent.harness })}>⇄</button>`}
+            onClick=${() => openMorph(activeAgent)}>⇄</button>`}
         `}
         <button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>
       </div>
