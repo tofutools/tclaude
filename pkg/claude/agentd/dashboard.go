@@ -1130,7 +1130,7 @@ type snapshotPayload struct {
 	// because whether this machine can run the tclaude layer has nothing to do
 	// with which harness was selected — the per-harness half of the question is
 	// dashboardHarness.CanTclaudeLayer.
-	SandboxImpl dashboardSandboxImpl `json:"sandbox_impl"`
+	SandboxImpl dashboardSandboxImpl `json:"sandbox_impl,omitzero"`
 	PopupBase   string               `json:"popup_base"` // for tray-shareable display
 	// NotificationsEnabled mirrors config.notifications.enabled — the
 	// master OS-notification switch above the per-group / per-agent
@@ -4048,6 +4048,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.Roles = nil
 		out.SavedPrompts = nil
 		out.PluginsCatalog = nil
+		out.Harnesses = nil
+		out.SandboxImpl = dashboardSandboxImpl{}
+		out.Permissions.ScopeDimOptions = nil
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -4070,13 +4073,17 @@ func sandboxProfileNamesRev(profiles []*db.SandboxProfile) ([]string, string) {
 // JSON deterministic; each collector already returns a deterministic slice.
 func snapshotStaticVersion(out snapshotPayload) string {
 	static := struct {
-		Slugs          []PermSlug         `json:"slugs"`
-		Templates      []templateJSON     `json:"templates"`
-		Profiles       []spawnProfileJSON `json:"profiles"`
-		Roles          []roleJSON         `json:"roles"`
-		SavedPrompts   []db.SavedPrompt   `json:"saved_prompts"`
-		PluginsCatalog []Plugin           `json:"plugins_catalog"`
-	}{out.Slugs, out.Templates, out.Profiles, out.Roles, out.SavedPrompts, out.PluginsCatalog}
+		Slugs           []PermSlug                           `json:"slugs"`
+		Templates       []templateJSON                       `json:"templates"`
+		Profiles        []spawnProfileJSON                   `json:"profiles"`
+		Roles           []roleJSON                           `json:"roles"`
+		SavedPrompts    []db.SavedPrompt                     `json:"saved_prompts"`
+		PluginsCatalog  []Plugin                             `json:"plugins_catalog"`
+		Harnesses       []dashboardHarness                   `json:"harnesses"`
+		SandboxImpl     dashboardSandboxImpl                 `json:"sandbox_impl"`
+		ScopeDimOptions map[ScopeDim]snapshotScopeDimOptions `json:"scope_dim_options"`
+	}{out.Slugs, out.Templates, out.Profiles, out.Roles, out.SavedPrompts, out.PluginsCatalog,
+		out.Harnesses, out.SandboxImpl, out.Permissions.ScopeDimOptions}
 	b, _ := json.Marshal(static) // all fields are JSON-native wire structs
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])

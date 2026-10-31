@@ -317,9 +317,11 @@ func TestDashboardSnapshot_StaticVersionSkipsUnchangedBlobs(t *testing.T) {
 	var version string
 	require.NoError(t, json.Unmarshal(initial["static_version"], &version))
 	require.NotEmpty(t, version)
-	for _, key := range []string{"slugs", "templates", "profiles", "roles", "plugins_catalog"} {
+	for _, key := range []string{"slugs", "templates", "profiles", "roles", "plugins_catalog", "harnesses"} {
 		require.NotEqual(t, "null", string(initial[key]), "initial %s must carry its complete value", key)
 	}
+	require.Contains(t, initial, "sandbox_impl")
+	require.Contains(t, string(initial["permissions"]), "scope_dim_options")
 
 	secondPath := "/api/snapshot?static_version=" + version
 	second := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, secondPath, nil))
@@ -332,9 +334,11 @@ func TestDashboardSnapshot_StaticVersionSkipsUnchangedBlobs(t *testing.T) {
 	var unchanged map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &unchanged))
 	assert.JSONEq(t, "true", string(unchanged["static_unchanged"]))
-	for _, key := range []string{"slugs", "templates", "profiles", "roles", "plugins_catalog"} {
+	for _, key := range []string{"slugs", "templates", "profiles", "roles", "plugins_catalog", "harnesses"} {
 		assert.Equal(t, "null", string(unchanged[key]), "unchanged %s should not be re-shipped", key)
 	}
+	assert.NotContains(t, unchanged, "sandbox_impl", "an unchanged catalog is left out, not sent empty")
+	assert.NotContains(t, string(unchanged["permissions"]), "scope_dim_options")
 }
 
 func TestDashboardSnapshot_GzipTransport(t *testing.T) {
