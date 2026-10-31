@@ -784,7 +784,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
 
       <${Group} title="Security">
-        <${Setting} title="Persist operator token" k="agent.persist_operator_token" badges=${['restart']}
+        <${Setting} title="Persist operator token" k="agent.persist_operator_token" badges=${['restart']} wide
           summary="Keep the same operator token across agentd restarts, in a private file or the OS keychain."
           more=${html`Default off: a fresh token is minted every <code>agentd serve</code>. File persistence stores it at <code>0600 ~/.tclaude/data/operator_token</code>, which the human CLI reads automatically and agent sandboxes deny. Keychain storage is an explicit opt-in because keychain access is platform-dependent and may prompt; the CLI does not retrieve it automatically. Existing tokens are not copied between stores. The secret is never written to <code>config.json</code>. Takes effect on the next <code>agentd serve</code>.`}>
           <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-persisttoken" /> keep the same operator token across restarts in the private file (same as <code>--persist-operator-token</code>)</label>
@@ -882,7 +882,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </${Panel}>
 
     <${Panel} id="steward" active=${active}>
-      <${Group} title="Access" lede="Set when a Steward is summoned, so a running Steward keeps what it was born with: retire it to apply a change. Anything beyond this asks you first. Agents can always message a live Steward.">
+      <${Group} title="Access" lede="Set when a Steward is summoned, so a running Steward keeps what it was born with: retire it to apply a change. Anything beyond this asks you first. Agents can reply to a Steward that wrote to them; writing to it first needs message.direct or a shared group.">
         <${Setting} title="Reads" forId="cfg-steward-reads" k="steward.reads"
           summary="What a Steward can read."
           more="Every level lists all agents and groups, as you see them, and reads boards and the dashboard view. Operator level adds processes, triggers, usage, costs, host load, federation activity and agents' context state. Reads never include other agents' mail through the API, private setup text, or GitHub, Linear and AWB through your credentials. At every level a Steward can capture your dashboard, so it sees what is on screen, including any open messages, and you see a notice each time.">
