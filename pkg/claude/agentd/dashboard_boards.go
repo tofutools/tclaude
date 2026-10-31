@@ -80,6 +80,7 @@ var (
 	boardFillStyles   = map[string]bool{"solid": true, "hachure": true, "none": true}
 	boardStrokeStyles = map[string]bool{"solid": true, "dashed": true, "dotted": true}
 	boardTextAligns   = map[string]bool{"left": true, "center": true, "right": true}
+	boardRoutings     = map[string]bool{"straight": true, "elbow": true, "curved": true}
 )
 
 // boardElement is the stored Excalidraw subset. Decoding into it drops every
@@ -103,8 +104,10 @@ type boardElement struct {
 	Text            *string           `json:"text,omitempty"`
 	FontSize        *float64          `json:"fontSize,omitempty"`
 	TextAlign       string            `json:"textAlign,omitempty"`
+	ContainerID     string            `json:"containerId,omitempty"`
 	StartBinding    *boardBinding     `json:"startBinding,omitempty"`
 	EndBinding      *boardBinding     `json:"endBinding,omitempty"`
+	Routing         string            `json:"routing,omitempty"`
 	Version         int64             `json:"version"`
 	VersionNonce    int64             `json:"versionNonce"`
 	IsDeleted       bool              `json:"isDeleted"`
@@ -112,8 +115,12 @@ type boardElement struct {
 	CustomData      *boardElementMeta `json:"customData,omitempty"`
 }
 
+// boardBinding attaches one end of a line to an element. FixedPoint is the
+// snap point as Excalidraw stores it, [x, y] fractions of the element's box;
+// without one the end meets the element wherever the line reaches it.
 type boardBinding struct {
-	ElementID string `json:"elementId"`
+	ElementID  string    `json:"elementId"`
+	FixedPoint []float64 `json:"fixedPoint,omitempty"`
 }
 
 type boardElementMeta struct {
@@ -198,13 +205,38 @@ func normalizeBoardElement(raw json.RawMessage, author string) (db.CollabBoardEl
 			return fail("text must be printable (newlines allowed)")
 		}
 	}
-	if e.Type != "arrow" {
+	if !boardLinearTypes[e.Type] {
 		e.StartBinding, e.EndBinding = nil, nil
 	}
 	for _, b := range []*boardBinding{e.StartBinding, e.EndBinding} {
-		if b != nil && !elementIDPattern.MatchString(b.ElementID) {
+		if b == nil {
+			continue
+		}
+		if !elementIDPattern.MatchString(b.ElementID) {
 			return fail("binding elementId must be 1-64 characters of [A-Za-z0-9_-]")
 		}
+		if b.FixedPoint == nil {
+			continue
+		}
+		if len(b.FixedPoint) != 2 || !boardFinite(b.FixedPoint[0], boardMaxCoordinate) || !boardFinite(b.FixedPoint[1], boardMaxCoordinate) {
+			return fail("binding fixedPoint must be [x, y] fractions")
+		}
+		// Excalidraw can store a point just off the box; the editor clamps too.
+		for i, v := range b.FixedPoint {
+			b.FixedPoint[i] = min(1, max(0, v))
+		}
+	}
+	if e.Type != "arrow" && e.Type != "line" {
+		e.Routing = ""
+	}
+	if e.Routing != "" && !boardRoutings[e.Routing] {
+		return fail("routing must be straight, elbow or curved")
+	}
+	if e.Type != "text" {
+		e.ContainerID = ""
+	}
+	if e.ContainerID != "" && !elementIDPattern.MatchString(e.ContainerID) {
+		return fail("containerId must be 1-64 characters of [A-Za-z0-9_-]")
 	}
 	if e.Updated < 0 || e.Updated > boardMaxVersion {
 		return fail("updated must be a millisecond epoch")

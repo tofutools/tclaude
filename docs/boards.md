@@ -29,6 +29,41 @@ from any corner; it keeps its place. Clicking the overlay or the companion
 brings that one forward. **Back to a tab** returns the board to the strip. One
 board floats at a time: opening another sends the first back to a tab.
 
+### Connecting shapes
+
+With the select, arrow, line or pen tool, a shape shows four snap points, the
+middle of each side, under the pointer.
+
+- **Drag from a snap point** to draw an arrow. Drop it on a snap point or a
+  shape to attach it, or on blank board to leave that end free.
+- **Click a snap point** for a suggestion: a faint arrow to a copy of the shape.
+  It follows the pointer. Click a shape to connect to it, click blank board to
+  add the copy there, or press Escape.
+- **The arrow and line tools** attach either end the same way. Over a shape but
+  away from a snap point, the end attaches without one and meets the shape
+  wherever the line reaches it.
+- **Select a line** to see its ends, which are filled when attached. Drag an end
+  to attach it elsewhere or free it. Dragging the whole line away from a shape
+  frees it from that shape.
+
+Attached ends follow their shape through moves and resizes, whoever makes them.
+Deleting a shape leaves its lines where they are, free at that end, and undo
+reattaches them. A pen stroke started on a snap point moves with that shape,
+without changing its form.
+
+Arrows and lines can run **straight**, **elbow** or **curved**. The three buttons
+appear on the toolbar for a selected line or with the arrow and line tools. They
+change the selection and the next line drawn. Elbow and curved lines do not
+steer around other shapes.
+
+### Text on shapes and lines
+
+Double-click any shape, line, arrow or pen stroke to give it text, and
+double-click again to change it. Text sits in the middle of a box or halfway
+along a line, moves with its shape, and masks the line behind it. Empty the text
+to remove it. Clicking the text picks its shape. Text does not wrap to fit a
+shape.
+
 ### Picking a tool
 
 Each tool in the board's menu has a number key, shown on its button: `1` to `9`
@@ -60,7 +95,7 @@ every board, including a fleet map, whose cards show agents' tasks and PRs.
 | Slug | Allows |
 |---|---|
 | `boards.read` | `board ls`, `board show`, `board snapshot` |
-| `boards.write` | `board create`, every change (`add`, `patch`, `rm`, `move`, `text`), and `board open` and `board close` on the agent's own session |
+| `boards.write` | `board create`, every change (`add`, `patch`, `rm`, `move`, `text`, `connect`), and `board open` and `board close` on the agent's own session |
 
 Neither is default-granted:
 
@@ -89,19 +124,23 @@ tclaude agent board close plan                # end your board session
 tclaude agent board add plan rectangle --x 100 --y 80 --w 160 --h 80 --text API
 tclaude agent board add plan text --x 100 --y 200 --text "Owned by the platform team"
 tclaude agent board add plan arrow --from <elemA> --to <elemB>
+tclaude agent board add plan arrow --from api --from-side right --to db --to-side left --routing elbow --text calls
 tclaude agent board add plan rectangle --right-of api --link --text DB --id db   # beside api, with an arrow from it
-tclaude agent board move plan <elem> --x 300 --y 80   # its label and bound arrows follow
+tclaude agent board move plan <elem> --x 300 --y 80   # its text and attached lines follow; a moved line detaches
 tclaude agent board layout plan [--direction down]    # arrange the shapes along their arrows
 tclaude agent board from-process flow review          # draw process template "review" as a flowchart
 tclaude agent board from-fleet fleet                  # draw the fleet: a column per group, a card per agent
 tclaude agent board fleet-changes fleet               # read the operator's edits on that map as staffing proposals
-tclaude agent board text plan <elem> --text "API v2"
-tclaude agent board rm plan <elem> [<elem>...]
+tclaude agent board text plan <elem> --text "API v2"   # any element; adds attached text if it has none
+tclaude agent board connect plan <line> --routing curved
+tclaude agent board connect plan <line> --to cache --to-side top   # or --free-to, --free-from
+tclaude agent board rm plan <elem> [<elem>...]         # attached text goes too; lines stay, free at that end
 tclaude agent board patch plan --file elements.json   # - reads stdin
 ```
 
 `show` prints the board version; pass it as `--since` next time to read only
-the changes. `snapshot` says how far the PNG lags the board, because the
+the changes. It lists a line's attached ends as `api:right -> db:left`, with its
+routing, and attached text as `on <element>`. `snapshot` says how far the PNG lags the board, because the
 dashboard renders it and an agent's own changes appear in it only after the
 operator's editor saves a new one.
 
@@ -142,19 +181,34 @@ The server keeps only the element keys it knows and bounds each of them:
 `id`, `type` (`rectangle`, `ellipse`, `diamond`, `arrow`, `line`, `freedraw`,
 `text`), geometry (`x`, `y`, `width`, `height`, `angle`, `points`), style
 (`strokeColor`, `backgroundColor`, `fillStyle`, `strokeWidth`, `strokeStyle`,
-`roughness`, `opacity`), text (`text`, `fontSize`, `textAlign`), arrow
-bindings (`startBinding`, `endBinding`), and `version`, `versionNonce`,
-`isDeleted` and `updated`. `customData.author` is always set by the server: to
+`roughness`, `opacity`), text (`text`, `fontSize`, `textAlign`, `containerId`),
+connectors (`startBinding`, `endBinding`, `routing`), and `version`,
+`versionNonce`, `isDeleted` and `updated`. `customData.author` is always set by the server: to
 `operator` for the dashboard, and to the calling agent's id for an agent.
 `version` is at most 2^53-1 and `versionNonce` a 32-bit integer. A board holds
 at most 5000 live elements and 20000 stored ones (tombstones included), and
 there are at most 500 boards. A patch that breaks a limit changes nothing.
 
-Only `text` elements carry text. A shape's label is a text element inside it,
-so `board add <shape> --text ...` adds a second, centred text element
-(`<id>-label`); move it along with the shape. Elements are returned in creation
-order, which is also their stacking order, and an edit keeps an element's
-place.
+Only `text` elements draw text. Text on a shape or line is a second element
+(`<id>-label`) whose `containerId` names what it sits on, as in Excalidraw. The
+stored `x` and `y` are kept up to date, but the editor places it from its
+container. Text without a `containerId` belongs to the shape it was drawn in or
+to the `<id>` of its `<id>-label` id; it moves with that element and stays where
+it was put on it. Deleting an element deletes its text. Elements are returned in
+creation order, which is also their stacking order, and an edit keeps an
+element's place.
+
+`startBinding` and `endBinding` attach the ends of an `arrow`, `line` or
+`freedraw` to another element by `elementId`. An optional `fixedPoint` is the
+snap point as `[x, y]` fractions of that element's box, Excalidraw's form: `[1,
+0.5]` is the middle of the right side. `routing` is `straight` (the default when
+absent), `elbow` or `curved`, on arrows and lines. `points` always hold the path
+as drawn, so a client that does not know these fields still draws the line, and
+keeps the fields when it writes the element back. The editor works out an
+attached end from its binding, so a line stays on its shape after a raw `patch`
+or a merge of two edits, without anyone saving the line. A binding to a deleted
+element reads as a free end. A bound line with bends and no `routing`, as
+`board from-process` draws rework, keeps its path until an end moves.
 
 Each element merges on its own, as Excalidraw reconciles: an incoming element
 replaces the stored one when there is none, when its `version` is higher, or
