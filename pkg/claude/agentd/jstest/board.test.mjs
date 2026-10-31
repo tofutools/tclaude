@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const A = `agt_${'a'.repeat(32)}`;
@@ -677,12 +678,12 @@ test('the editor rubber-band selects, aligns, labels a shape on double-click and
   assert.ok(label, 'the label was saved');
   assert.equal(label.text, 'DB');
 
-  // A label deleted on its own and written again revives its tombstone, so
-  // the new text outranks the deletion.
+  // A label emptied away and written again revives its tombstone, so the new
+  // text outranks the deletion.
   patches.length = 0;
-  await harness.act(() => pointer(harness, svg, 'pointerdown', 165, 260));
-  await harness.act(() => pointer(harness, svg, 'pointerup', 165, 260));
-  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
+  await harness.act(() => harness.fireEvent(svg, dbl, { clientX: 180, clientY: 260 }));
+  await harness.input(view.container.querySelector('textarea.board-text-input'), '');
+  await harness.act(() => harness.fireEvent(view.container.querySelector('textarea.board-text-input'), 'keydown', { key: 'Enter' }));
   await harness.act(() => wait(BOARD_FLUSH_MS + 20));
   await harness.act(() => harness.fireEvent(svg, dbl, { clientX: 180, clientY: 260 }));
   await harness.input(view.container.querySelector('textarea.board-text-input'), 'Store');
@@ -719,6 +720,258 @@ test('the editor rubber-band selects, aligns, labels a shape on double-click and
   await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
   await harness.act(() => wait(BOARD_FLUSH_MS + 20));
   assert.deepEqual(patches.filter((el) => el.isDeleted), [], 'Delete was aimed at the page');
+  await view.unmount();
+});
+
+test('board model: snap points hold a line to its shape and each routing draws its path', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const map = new Map();
+  const add = (el) => { map.set(el.id, el); return el; };
+  const a = add(m.newElement('rectangle', { id: 'a', x: 0, y: 0, width: 100, height: 60 }));
+  const b = add(m.newElement('diamond', { id: 'b', x: 300, y: 200, width: 100, height: 60 }));
+  assert.deepEqual(m.snapPoints(a).map(({ x, y }) => [x, y]), [[50, 0], [100, 30], [50, 60], [0, 30]]);
+  assert.deepEqual(m.snapPoints(m.newElement('text', { text: 'x' })), [], 'only shapes show snap points');
+  assert.deepEqual(m.snapHit([a], 98, 31, 10), { elementId: 'a', fixedPoint: [1, 0.5] });
+  assert.equal(m.snapHit([a], 80, 31, 10), null);
+  assert.deepEqual(m.bindingAt([a], 20, 20, 10), { elementId: 'a' }, 'anywhere else on a shape binds without a snap point');
+  assert.equal(m.bindingAt([a], 200, 200, 10), null);
+
+  const line = add(m.newElement('line', {
+    id: 'l', x: 0, y: 0, points: [[0, 0], [10, 10]], routing: 'elbow',
+    startBinding: { elementId: 'a', fixedPoint: [1, 0.5] }, endBinding: { elementId: 'b', fixedPoint: [0, 0.5] },
+  }));
+  const path = (el) => el.points.map(([x, y]) => [el.x + x, el.y + y]);
+  const elbow = m.drawnElements(map).find((el) => el.id === 'l');
+  assert.deepEqual(path(elbow), [[104, 30], [200, 30], [200, 230], [296, 230]], 'an elbow leaves and arrives along the sides');
+  map.set('a', { ...a, x: 40 });
+  const moved = m.drawnElements(map).find((el) => el.id === 'l');
+  assert.equal(moved.x, 144, 'a moved shape brings the line along without anyone saving it');
+  assert.equal(map.get('l').x, 0, 'drawing changes nothing stored');
+  map.set('a', a);
+
+  const curved = m.routeConnector({ ...line, routing: 'curved' }, map, true);
+  assert.equal(curved.points.length, 25);
+  assert.deepEqual(curved.points[0], [0, 0]);
+  assert.deepEqual(curved.points[24], [192, 200]);
+  const straight = m.routeConnector({ ...line, routing: 'straight' }, map, true);
+  assert.deepEqual(straight.points, [[0, 0], [192, 200]]);
+
+  // Without a snap point an end is clipped to the edge, as before snap points.
+  const plain = add(m.newElement('arrow', { id: 'p', points: [[0, 0], [1, 1]], startBinding: { elementId: 'a' }, endBinding: { elementId: 'b' } }));
+  const { x, y, points } = m.connectArrow(a, b);
+  assert.deepEqual(m.routeConnector(plain, map), { ...m.routeConnector(plain, map), x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 });
+  assert.equal(m.routeConnector(plain, map).points.length, points.length);
+
+  // Hand-placed bends on a line with no routing stay, until an end moves.
+  const bent = m.newElement('arrow', { id: 'k', points: [[0, 0], [5, 90], [20, 0]], startBinding: { elementId: 'a' } });
+  assert.equal(m.routeConnector(bent, map), null);
+  // A free line stays where it is drawn; deleting a shape frees that end.
+  assert.equal(m.routeConnector(m.newElement('arrow', { points: [[0, 0], [9, 9]] }), map), null);
+  const freed = m.detachedLines(map, new Set(['b']));
+  assert.deepEqual(freed.map((el) => el.id).sort(), ['l', 'p']);
+  const l = freed.find((el) => el.id === 'l');
+  assert.equal(l.endBinding, undefined);
+  assert.equal(l.version, line.version + 1);
+  assert.deepEqual(path(l), path(elbow), 'the freed line stays exactly where it was');
+  assert.deepEqual(l.startBinding, line.startBinding);
+  // A binding to a tombstone reads as a free end, and comes back with its shape.
+  map.set('b', { ...b, isDeleted: true });
+  assert.deepEqual(path(m.drawnElements(map).find((el) => el.id === 'l')).pop(), [296, 230].map((v, i) => [line.x + 10, line.y + 10][i]));
+  map.set('b', b);
+  assert.deepEqual(path(m.drawnElements(map).find((el) => el.id === 'l')).pop(), [296, 230]);
+
+  // A pen stroke started on a snap point keeps its shape and follows.
+  const stroke = m.newElement('freedraw', { points: [[0, 0], [5, 5], [9, 0]], startBinding: { elementId: 'a', fixedPoint: [0.5, 0] } });
+  assert.deepEqual(m.routeConnector(stroke, map), { x: 50, y: -4 });
+
+  // Copies keep snap points and routing; pasted ones are bounded.
+  const [ca, cl] = m.cloneElements([a, line], 10, 10);
+  assert.deepEqual(cl.startBinding, { elementId: ca.id, fixedPoint: [1, 0.5] });
+  assert.equal(cl.routing, 'elbow');
+  const [pasted] = m.parseClipboard(m.clipboardText([{ ...line, routing: 'wiggly', startBinding: { elementId: 'a', fixedPoint: [7, 0.5] } }]));
+  assert.equal(pasted.routing, undefined);
+  assert.deepEqual(pasted.startBinding, { elementId: 'a', fixedPoint: [1, 0.5] });
+  assert.equal(m.parseClipboard(m.clipboardText([line]))[0].routing, 'elbow');
+});
+
+test('board model routes the cases the CLI is held to', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const cases = JSON.parse(readFileSync(new URL('../../agent/testdata/board_routes.json', import.meta.url)));
+  assert.ok(cases.length >= 30);
+  const rounded = (path) => path.map((point) => point.map((v) => Math.round(v * 100) / 100));
+  for (const { routing, start, end, path } of cases) {
+    assert.deepEqual(rounded(m.routePath(routing, start, end)), path, `${routing} ${JSON.stringify([start, end])}`);
+  }
+});
+
+test('board model: text attached to a shape or line sits on it, and goes with it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const map = new Map();
+  const add = (el) => { map.set(el.id, el); return el; };
+  const box = add(m.newElement('ellipse', { id: 'box', x: 0, y: 0, width: 200, height: 100 }));
+  const line = add(m.newElement('line', { id: 'ln', x: 300, y: 0, points: [[0, 0], [100, 0], [100, 100]] }));
+  const onBox = add(m.newLabel(box, 'API'));
+  const onLine = add(m.newLabel(line, 'hop'));
+  assert.equal(onBox.containerId, 'box');
+  assert.deepEqual(m.labelPoint(line), { x: 400, y: 0 }, 'halfway along the path, not the middle of its box');
+  assert.equal(m.labelOwners(map).get('ln-label'), 'ln');
+  assert.deepEqual(m.withLabels(map, ['ln']).sort(), ['ln', 'ln-label']);
+  assert.equal(m.labelOf(map, 'ln').id, 'ln-label');
+  assert.equal(m.shapeAt([box, onBox], 100, 50).id, 'box', 'a line dropped on a label attaches to its shape');
+
+  // Stored positions lag, and the drawing does not.
+  map.set('box', { ...box, x: 500, width: 400 });
+  const drawn = m.drawnElements(map).find((el) => el.id === 'box-label');
+  assert.equal(drawn.x + drawn.width / 2, 700, 'recentred after a move and a resize');
+  const [moved] = m.attachedText(map, ['box']);
+  assert.equal(moved.id, 'box-label');
+  assert.equal(moved.x, drawn.x);
+  assert.equal(moved.version, onBox.version + 1);
+  assert.deepEqual(m.attachedText(new Map([['box', box], ['box-label', onBox]]), ['box']), [], 'nothing to save when it is in place');
+
+  // A container that is gone leaves the text where it is, attached to nothing.
+  map.set('ln', { ...line, isDeleted: true });
+  assert.equal(m.drawnElements(map).find((el) => el.id === 'ln-label').x, onLine.x);
+  assert.equal(m.labelOwners(map).get('ln-label'), undefined);
+
+  const [cb, cl] = m.cloneElements([box, onBox], 5, 5);
+  assert.equal(cl.containerId, cb.id);
+  assert.equal(m.cloneElements([onBox], 5, 5)[0].containerId, undefined, 'a copy without its container stands alone');
+  assert.equal(m.parseClipboard(m.clipboardText([onBox]))[0].containerId, 'box');
+
+  const file = JSON.parse(m.toExcalidraw([box, onBox]));
+  assert.deepEqual(file.elements[0].boundElements, [{ id: 'box-label', type: 'text' }]);
+  assert.equal(file.elements[1].verticalAlign, 'middle');
+});
+
+test('the editor attaches lines at snap points, offers a next shape, and routes per line', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardEditor, BOARD_FLUSH_MS } = await harness.importDashboardModule('js/board-island.js');
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const a = m.newElement('rectangle', { id: 'a', x: 100, y: 100, width: 100, height: 60 });
+  const b = m.newElement('rectangle', { id: 'b', x: 400, y: 100, width: 100, height: 60 });
+  const patches = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (init.method === 'PATCH') { patches.push(...JSON.parse(init.body).elements); return ok({ version: 2, accepted: 1 }); }
+    if (init.method === 'POST') return ok({}, 202);
+    return ok({ id: 'plan', title: 'Plan', version: 1, participants: [], elements: String(url).includes('since') ? [] : [a, b] });
+  };
+  boardsSection(harness);
+  const view = await harness.mount(harness.html`<${BoardEditor} boardId="plan" visible=${inSection(harness)} rasterize=${null} snapshot=${harness.signals.signal({ groups: [] })} fetchImpl=${fetchImpl} win=${harness.window} />`);
+  await harness.act(() => wait());
+  const svg = view.container.querySelector('svg.board-canvas');
+  const saved = async () => { await harness.act(() => wait(BOARD_FLUSH_MS + 20)); const out = [...patches]; patches.length = 0; return out; };
+  const drag = async (from, to) => {
+    await harness.act(() => pointer(harness, svg, 'pointerdown', from[0] + 40, from[1] + 40));
+    await harness.act(() => pointer(harness, svg, 'pointermove', to[0] + 40, to[1] + 40));
+    await harness.act(() => pointer(harness, svg, 'pointerup', to[0] + 40, to[1] + 40));
+  };
+
+  // The view starts at (-40, -40): client = board + 40.
+  await harness.act(() => pointer(harness, svg, 'pointermove', 300 + 40, 400 + 40));
+  assert.equal(svg.querySelectorAll('.board-snap').length, 0, 'away from any shape none show');
+  await harness.act(() => pointer(harness, svg, 'pointermove', 205 + 40, 130 + 40));
+  assert.equal(svg.querySelectorAll('.board-snap').length, 4, 'near a shape its snap points show');
+
+  // Dragging from a snap point to another draws an attached line.
+  await drag([200, 130], [400, 130]);
+  const [line] = await saved();
+  assert.equal(line.type, 'arrow');
+  assert.deepEqual(line.startBinding, { elementId: 'a', fixedPoint: [1, 0.5] });
+  assert.deepEqual(line.endBinding, { elementId: 'b', fixedPoint: [0, 0.5] });
+  assert.deepEqual([line.x, line.y, ...line.points[1]], [204, 130, 192, 0]);
+  assert.equal(line.routing, undefined, 'straight is the default and goes unsaid');
+
+  // Choosing a routing applies to the selected line and is saved on it.
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: 'Elbow line' }).click());
+  const [elbowed] = await saved();
+  assert.equal(elbowed.routing, 'elbow');
+  assert.equal(elbowed.id, line.id);
+
+  // Moving the shape brings the line along in the same edit; undo sees both.
+  await drag([120, 100], [120, 300]);
+  const moved = await saved();
+  assert.deepEqual(moved.map((el) => el.id).sort(), ['a', line.id].sort());
+  assert.equal(moved.find((el) => el.id === line.id).y, 330);
+
+  // A click that wobbles a pixel selects a line and leaves it attached.
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 300 + 40, 230 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 301 + 40, 231 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 301 + 40, 231 + 40));
+  assert.deepEqual(await saved(), [], 'no edit');
+  assert.equal(svg.querySelectorAll('.board-line-end.on').length, 2, 'both ends still attached');
+
+  // Clicking a snap point offers the next shape; a click on blank takes it.
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 340, 480));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 340, 480));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 450 + 40, 165 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 450 + 40, 160 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 450 + 40, 160 + 40));
+  assert.ok(svg.querySelector('.board-suggestion'), 'the offer shows');
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Escape' }));
+  assert.equal(svg.querySelector('.board-suggestion'), null, 'Escape takes it back');
+  await harness.act(() => pointer(harness, svg, 'pointermove', 450 + 40, 165 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 450 + 40, 160 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 450 + 40, 160 + 40));
+  // A number key picks another tool, which takes the offer back too.
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: '3' }));
+  await harness.act(() => wait(20));
+  assert.equal(svg.querySelector('.board-suggestion'), null, 'a number key takes it back');
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: '1' }));
+  await harness.act(() => wait(20));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 450 + 40, 165 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 450 + 40, 160 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 450 + 40, 160 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointermove', 700, 500));
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 700, 500));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 700, 500));
+  const offered = await saved();
+  const next = offered.find((el) => el.type === 'rectangle');
+  const link = offered.find((el) => el.type === 'arrow');
+  assert.deepEqual([next.width, next.height, next.x, next.y], [100, 60, 610, 430], 'a same-sized shape, centred on the click');
+  assert.deepEqual(link.startBinding, { elementId: 'b', fixedPoint: [0.5, 1] });
+  assert.deepEqual(link.endBinding, { elementId: next.id });
+
+  // Deleting a shape frees the lines on it, in one step with the deletion.
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 660, 470));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 660, 470));
+  await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
+  const deleted = await saved();
+  assert.deepEqual(deleted.filter((el) => el.isDeleted).map((el) => el.id), [next.id]);
+  const freed = deleted.find((el) => el.id === link.id);
+  assert.equal(freed.endBinding, undefined);
+  assert.deepEqual(freed.startBinding, link.startBinding);
+
+  // Double-clicking a line attaches text at its middle; the text moves with it.
+  await harness.act(() => pointer(harness, svg, 'pointermove', 300 + 40, 230 + 40));
+  const dbl = 'ondblclick' in svg ? 'dblclick' : 'DblClick';
+  await harness.act(() => harness.fireEvent(svg, dbl, { clientX: 300 + 40, clientY: 230 + 40 }));
+  await harness.input(view.container.querySelector('textarea.board-text-input'), 'calls');
+  await harness.act(() => harness.fireEvent(view.container.querySelector('textarea.board-text-input'), 'keydown', { key: 'Enter' }));
+  const [lineText] = await saved();
+  assert.equal(lineText.containerId, line.id);
+  assert.equal(lineText.x + lineText.width / 2, 300);
+  assert.equal(lineText.y + lineText.height / 2, 230);
+  assert.ok(view.container.querySelector('text[paint-order="stroke"]'), 'text on a line masks the line');
+  // Dragging a selected line's end frees it over blank board, and attaches it
+  // again over a shape. The other end stays put.
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 300 + 40, 230 + 40));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 300 + 40, 230 + 40));
+  assert.equal(svg.querySelectorAll('.board-line-end').length, 2, 'a selected line shows its ends');
+  await drag([396, 130], [350, 500]);
+  const [loose, followed] = await saved();
+  assert.equal(loose.id, line.id);
+  assert.equal(followed.id, lineText.id, 'its text goes with it, in the same edit');
+  assert.notEqual(followed.y, lineText.y);
+  assert.equal(loose.endBinding, undefined);
+  assert.deepEqual(loose.startBinding, line.startBinding);
+  await drag([350, 500], [450, 100]);
+  const [fixed] = await saved();
+  assert.deepEqual(fixed.endBinding, { elementId: 'b', fixedPoint: [0.5, 0] });
+  assert.equal(fixed.routing, 'elbow', 'its routing stays');
   await view.unmount();
 });
 

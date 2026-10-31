@@ -50,9 +50,9 @@ func isBoardShape(t string) bool {
 	return t == "rectangle" || t == "ellipse" || t == "diamond"
 }
 
-// labelOwners maps each text element that labels something to its owner:
-// an explicit `<id>-label` text belongs to <id>; otherwise a text belongs to
-// the smallest shape containing its centre (so a label inside a shape inside
+// labelOwners maps each text element that labels something to its owner: the
+// container it names, or an explicit `<id>-label` text's <id>; otherwise a text
+// belongs to the smallest shape containing its centre (so a label inside a shape inside
 // a group box belongs to the shape, not the box), or failing that to an arrow
 // whose midpoint it sits on.
 func (s *boardScene) labelOwners() map[string]string {
@@ -60,6 +60,10 @@ func (s *boardScene) labelOwners() map[string]string {
 	for _, id := range s.order {
 		v := s.view[id]
 		if v.Type != "text" {
+			continue
+		}
+		if c, exists := s.view[v.ContainerID]; exists && c.Type != "text" {
+			owners[id] = v.ContainerID
 			continue
 		}
 		if owner, ok := strings.CutSuffix(id, "-label"); ok {
@@ -114,7 +118,7 @@ func (s *boardScene) labelOf(id string) (string, bool) {
 }
 
 // moveBy shifts elements (and the labels they own) by their deltas, then
-// re-runs every arrow bound to a moved element: between both ends when both
+// re-runs every line bound to a moved element: between both ends when both
 // are bound, else from the bound end with the free tip kept where it was. It
 // returns the ids it changed, in board order.
 func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
@@ -145,52 +149,28 @@ func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
 	}
 	arrowLabels := map[string][]string{}
 	for label, owner := range owners {
-		if s.view[owner].Type == "arrow" {
+		if isBoardLine(s.view[owner].Type) {
 			arrowLabels[owner] = append(arrowLabels[owner], label)
 		}
 	}
 	for _, id := range s.order {
 		v := s.view[id]
-		if v.Type != "arrow" || changed[id] {
+		if !isBoardLine(v.Type) || changed[id] {
 			continue
 		}
-		var from, to boardElementView
-		var okFrom, okTo bool
-		if v.StartBinding != nil {
-			from, okFrom = s.view[v.StartBinding.ElementID]
-		}
-		if v.EndBinding != nil {
-			to, okTo = s.view[v.EndBinding.ElementID]
-		}
+		from, okFrom := s.bindingTarget(v.StartBinding)
+		to, okTo := s.bindingTarget(v.EndBinding)
 		if (!okFrom || !changed[from.ID]) && (!okTo || !changed[to.ID]) {
 			continue
 		}
 		oldMidX, oldMidY := arrowMid(v)
-		var sx, sy, ex, ey float64
-		switch {
-		case okFrom && okTo:
-			sx, sy, ex, ey = arrowBetween(from, to)
-		case okFrom:
-			// The free tip stays; the tail leaves the moved shape's edge.
-			ex, ey = arrowEnd(v)
-			sx, sy, _, _ = arrowBetween(from, boardElementView{X: ex, Y: ey})
-		default:
-			sx, sy = v.X, v.Y
-			_, _, ex, ey = arrowBetween(boardElementView{X: sx, Y: sy}, to)
-		}
-		v.X, v.Y = sx, sy
-		v.Points = [][]float64{{0, 0}, {ex - sx, ey - sy}}
-		v.Width, v.Height = math.Abs(ex-sx), math.Abs(ey-sy)
-		s.view[id] = v
-		r := s.raw[id]
-		r["x"], r["y"] = sx, sy
-		r["points"] = v.Points
-		r["width"], r["height"] = v.Width, v.Height
+		s.followLine(id)
+		v = s.view[id]
 		changed[id] = true
 		// An arrow's label rides at its midpoint.
 		midX, midY := arrowMid(v)
 		for _, label := range arrowLabels[id] {
-			if changed[label] {
+			if changed[label] || s.view[label].ContainerID != "" {
 				continue
 			}
 			lv := s.view[label]
@@ -201,6 +181,12 @@ func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
 			changed[label] = true
 		}
 	}
+	// Attached text sits on its container, whatever moved it.
+	for _, id := range s.order {
+		if changed[s.view[id].ContainerID] && s.placeAttachedText(id) {
+			changed[id] = true
+		}
+	}
 	var out []string
 	for _, id := range s.order {
 		if changed[id] {
@@ -208,6 +194,11 @@ func (s *boardScene) moveBy(deltas map[string][2]float64) []string {
 		}
 	}
 	return out
+}
+
+// isBoardLine says an element has points and can attach to others.
+func isBoardLine(t string) bool {
+	return t == "arrow" || t == "line" || t == "freedraw"
 }
 
 func arrowEnd(v boardElementView) (float64, float64) {
