@@ -40,7 +40,9 @@ sandbox. See [Symptom → cause](#symptom-cause).
 **To get unstuck:**
 
 - Give the profile a rule for just that path.
-- For one fresh launch, tick **Allow launch with unenforced rules** in the spawn dialog.
+- If the refusal is about network rules or resource limits, tick **Allow launch with
+  unenforced rules** in the spawn dialog, for one fresh launch. It doesn't help with
+  masked or protected paths.
 - On a running agent, use **⚠ restart without sandbox** in its ⚙ menu, or click the
   sandbox badge. **🔒 restore sandbox + restart** puts it back.
 - `tclaude agent debug-export <agent>` shows what really ran, as does
@@ -399,7 +401,10 @@ without the floor tclaude’s sandbox was *weaker* than the harness's own
 default.
 
 Only directories are created. A file the host doesn't have is left out of the
-floor and never written. Existing content is never touched.
+floor and never written, so **an absent file stays writable**: an agent can create
+it, and it takes effect in your next unsandboxed session. The table lists
+candidates, not a guarantee. To close the gap, create the file yourself, since a
+file that exists is bound read-only. Existing content is never touched.
 
 **Symlinked entries are skipped**, with a warning naming the path. Dotfile
 managers commonly point `~/.claude/skills` at a repo, and there is no faithful
@@ -800,6 +805,10 @@ exact socket deny, and the overlay is skipped in mode `off`.
 
 ### Honestly residual holes
 
+- **Settings files you don't have aren't floored.** An agent can create an absent
+  `settings.json`, `CLAUDE.md`, `AGENTS.md` or similar file in the harness config
+  directory, and your next unsandboxed session reads it. See
+  [the harness-config floor](#the-harness-config-floor).
 - **`~/.claude/.claude.json` stays writable, and it carries `mcpServers`.**
   Under tclaude’s sandbox the harness-config floor cannot cover it: Claude Code
   writes that file continuously (project records, directory trust, history),
@@ -1030,17 +1039,21 @@ that cannot enforce it, the launch normally refuses with:
 ```
 
 The human operator may explicitly check that named dashboard escape hatch for
-one fresh launch. This also drops network deny rows the target can't enforce, and admits pi `auto`
-outside the wall, each with a recorded notice. For a closed-network gap, network
+one fresh launch. This also drops network deny rows the target can't enforce and
+waives resource limits the host can't apply, each with a recorded notice. It admits
+pi `auto` outside the wall too, which shows up only in the spawn audit. For a
+closed-network gap, network
 access becomes open, while enforceable filesystem and Unix-socket rules
 keep their planned posture. Protected-root checks, filtered model-transport
-gates, implementation availability, and every other launch refusal remain
+gates, implementation availability, and other launch refusals remain
 non-overridable. Raw API callers, including agents and human-class credentials,
 cannot set the override; an authorized federated spawn can.
 
-The authorization is deliberately neither saved nor inherited. Resume,
+The network authorization is deliberately neither saved nor inherited. Resume,
 reincarnate, and clone of an overridden agent do not carry it forward and refuse
-again unless a future fresh spawn is explicitly authorized in the dashboard.
+again unless a future fresh spawn is explicitly authorized in the dashboard. Two
+things differ: a pi `auto` agent's resume, reincarnation or no-copy clone keeps its
+posture, and a waived resource limit's notice stays on the launch record.
 The launch snapshot records a degradation notice with network reason
 `operator_unenforced_launch_override` and effect `not_enforced`; the dashboard
 renders a warning badge and the exact notice rather than claiming a sandbox

@@ -148,11 +148,13 @@ entered only at its target, left only through decisions, holds no
 its count over with each round of the loop around it.
 
 Two worked examples live in the repo under `docs/examples/`
-(`code-change-with-review.yaml`, `parallel-any-review.yaml`). They are valid
-authoring-shape templates and pass template validation, but note that they use
-human task performers and `plan.approvalRetry`, which the current engine does not
-execute yet (see below), so run creation refuses them today. Read them as illustrations of the full authoring format,
-not as templates you can run unmodified.
+(`code-change-with-review.yaml`, `parallel-any-review.yaml`). Both pass template
+validation. `parallel-any-review.yaml` also passes the engine's eligibility check,
+and needs its `reviewer` and `codex-reviewer` profiles to exist. Run creation
+refuses `code-change-with-review.yaml` today, because it uses stage retries,
+`plan.approvalRetry`, a human review stage and two routes out of a task, which the
+engine does not execute yet (see below). Read that one as an illustration of the
+full authoring format.
 
 ## Running
 
