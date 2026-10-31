@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -134,6 +135,132 @@ func stewardAccessNote(cfg *config.Config) string {
 		return note + ". The operator also granted you these permissions: " + strings.Join(extra, ", ") + ". Everything else needs approval."
 	}
 	return note + "; everything else needs approval."
+}
+
+// A Steward's access has three sources, and the operator keeps them apart: what
+// Config gives every Steward (stewardSlugs), what was given to one running
+// instance (its own overrides and sudo, which end with it), and what the
+// operator chose to store for all future Stewards (the steward_carried_*
+// tables). The last is read here, at the summon, and nowhere else: being in the
+// steward scope is what makes an agent a Steward, so an ordinary agent that is
+// merely named "steward" never comes near it.
+
+// stewardCarriedGranter labels what a new Steward inherited.
+const stewardCarriedGranter = "steward-carried"
+
+// stewardAccess tells the editors where a live Steward's access comes from.
+type stewardAccess struct {
+	// Convs are the live Stewards; other agents get the ordinary editor.
+	Convs []string `json:"convs"`
+	// Config is what Config > Steward gives. It is changed there, not here.
+	Config []string `json:"config"`
+	// Carried is what is stored for all future Stewards, slug → effect.
+	Carried map[string]string `json:"carried"`
+	// NotCarryable are slugs that may not be stored: see carryRefusal.
+	NotCarryable []string `json:"not_carryable"`
+}
+
+func stewardAccessView(cfg *config.Config) *stewardAccess {
+	carried, err := db.ListStewardCarriedPermissions()
+	if err != nil {
+		slog.Warn("steward: read carried permissions failed", "error", err)
+	}
+	view := &stewardAccess{
+		Convs: liveStewardConvs(), Config: stewardSlugs(cfg),
+		Carried: map[string]string{}, NotCarryable: sudoDefaultBlocklist,
+	}
+	for slug, override := range carried {
+		view.Carried[slug] = override.Effect
+	}
+	return view
+}
+
+// carryRefusal says why a slug cannot be stored for future Stewards. What Config
+// gives is managed in Config, and standing grant authority is refused on a
+// Steward's birth for the same reason as in steward.default_permissions.
+func carryRefusal(cfg *config.Config, slug string) string {
+	if slices.Contains(stewardSlugs(cfg), slug) {
+		return slug + " comes from Config > Steward; change it there"
+	}
+	if slices.Contains(sudoDefaultBlocklist, slug) {
+		return slug + " cannot be given to future Stewards: it hands out permissions itself"
+	}
+	return ""
+}
+
+// mergeStewardCarried adds the stored grants to a new Steward's birth grants.
+// Config wins a slug both name. A slug a later version dropped is left out, as
+// in stewardDefaultSlugs, and so is one the rules no longer let through.
+func mergeStewardCarried(in map[string]db.PermissionOverride) {
+	carried, err := db.ListStewardCarriedPermissions()
+	if err != nil {
+		slog.Warn("steward: read carried permissions failed", "error", err)
+		return
+	}
+	for slug, override := range carried {
+		if _, config := in[slug]; config || !IsKnownPermSlug(slug) || slices.Contains(sudoDefaultBlocklist, slug) {
+			continue
+		}
+		in[slug] = override
+	}
+}
+
+// inheritStewardCarriedSudo gives a new Steward the stored temporary grants
+// with their original expiry. A failure leaves it with less access, never more,
+// so it logs and the summon stands.
+func inheritStewardCarriedSudo(convID string) {
+	grants, err := db.ListActiveStewardCarriedSudo()
+	if err != nil {
+		slog.Warn("steward: read carried sudo failed", "error", err)
+		return
+	}
+	agentID, err := db.AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		slog.Warn("steward: resolve agent for carried sudo failed", "conv", short8(convID), "error", err)
+		return
+	}
+	cfg, _ := config.Load()
+	blocklist := resolveSudoConfig(cfg, convID, agentID, "").Blocklist
+	for _, grant := range grants {
+		if !IsKnownPermSlug(grant.Slug) || slices.Contains(blocklist, grant.Slug) {
+			continue
+		}
+		if _, err := db.InheritStewardCarriedSudo(agentID, grant, stewardCarriedGranter); err != nil {
+			slog.Warn("steward: inherit carried sudo failed", "slug", grant.Slug, "error", err)
+		}
+	}
+}
+
+// saveStewardCarry applies the editor's choices to what is stored. A slug set
+// back to Default is revoked for later Stewards too, whether or not the batch
+// said so; what stays stored takes the instance's current scope.
+func saveStewardCarry(convID string, effects map[string]string, carry map[string]bool) error {
+	current, err := agentPermissionOverrides(convID)
+	if err != nil {
+		return err
+	}
+	stored, err := db.ListStewardCarriedPermissions()
+	if err != nil {
+		return err
+	}
+	for slug, effect := range effects {
+		_, wasStored := stored[slug]
+		keep, chosen := carry[slug]
+		if !chosen {
+			keep = wasStored
+		}
+		switch {
+		case effect != "default" && keep:
+			if err := db.SetStewardCarriedPermission(slug, current[slug], dashboardGranter); err != nil {
+				return err
+			}
+		case wasStored:
+			if err := db.DeleteStewardCarriedPermission(slug); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // stewardBrief adds to the summon's brief what the daemon owns: the access

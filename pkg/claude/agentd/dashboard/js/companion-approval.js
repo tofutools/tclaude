@@ -62,9 +62,10 @@ export function StewardAccessControls({ agent, openPermissions, openSudo }) {
 }
 
 // shutDownAgent retires an agent, with the default clean exit. For a Steward
-// that is the whole lifecycle: its session ends, its grants and sudo go with it
-// so nothing it held lingers, and the next summon starts a fresh one because a
-// retired agent is never reused. Its conversation stays in history.
+// that is the whole lifecycle: its session ends, what it held as an instance
+// goes with it so nothing lingers, and the next summon starts a fresh one
+// because a retired agent is never reused. What the operator stored for all
+// future Stewards stays. Its conversation stays in history.
 export async function shutDownAgent(fetchImpl, agent) {
   const response = await fetchImpl(`/api/agents/${encodeURIComponent(agent.agentId)}/retire`, { method: 'POST', credentials: 'same-origin' });
   if (!response.ok) {
@@ -111,7 +112,7 @@ export function StewardShutdown({ agent, fetchImpl, onDown }) {
       title="Shut down: end this conversation" onClick=${() => { setError(''); setAsking((value) => !value); }}>⏻</button>
     ${asking && html`<div class="steward-shutdown-confirm" role="alertdialog" aria-label=${`Shut down ${agent.name}?`}
       onKeyDown=${(event) => { if (event.key === 'Escape') setAsking(false); }}>
-      <p><b>Shut down ${agent.name}?</b> This ends its conversation and any access it was given. You can start a new one afterwards.</p>
+      <p><b>Shut down ${agent.name}?</b> This ends its conversation and what was given to this Steward only. Grants for all future Stewards are kept. You can start a new one afterwards.</p>
       ${error && html`<p class="steward-shutdown-error" role="alert">${error}</p>`}
       <div class="steward-shutdown-actions">
         <button type="button" disabled=${busy} onClick=${() => setAsking(false)}>Cancel</button>

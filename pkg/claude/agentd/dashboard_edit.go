@@ -2159,6 +2159,9 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		// Scopes narrows individual slugs, in the permissions editor's wire
 		// shape. A slug it does not name is granted unscoped.
 		Scopes map[string]json.RawMessage `json:"scopes"`
+		// Carry names the slugs also stored for all future Stewards, with
+		// this grant's expiry. Only a live Steward may name any.
+		Carry []string `json:"carry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -2181,6 +2184,16 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	convID := actor.CurrentConvID
+	if len(body.Carry) > 0 && !isLiveSteward(convID) {
+		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
+		return
+	}
+	for _, slug := range body.Carry {
+		if !slices.Contains(body.Slugs, slug) {
+			http.Error(w, "carry names slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+	}
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		http.Error(w,
@@ -2208,6 +2221,14 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	out, status := insertSudoBundle(actor.AgentID, convID, title, body.Slugs, scopes, dur,
 		strings.TrimSpace(body.Reason), dashboardSudoGranter)
+	for _, grant := range out.Grants {
+		if grant.ID > 0 && slices.Contains(body.Carry, grant.Slug) {
+			if err := db.CarrySudoGrant(grant.ID); err != nil {
+				http.Error(w, "save for future Stewards: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
 	writeJSON(w, status, out)
 }
 
@@ -2270,6 +2291,10 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		// empty object is written unscoped, which is how the editor clears a
 		// scope; a slug absent from this map keeps whatever scope is stored.
 		Scopes map[string]json.RawMessage `json:"scopes"`
+		// Carry is the Steward editor's per-grant choice: true stores the slug
+		// for all future Stewards, false stops doing so. Only a live Steward
+		// may name it.
+		Carry map[string]bool `json:"carry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -2325,6 +2350,26 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
 		return
+	}
+	steward := isLiveSteward(res.ConvID)
+	if len(body.Carry) > 0 && !steward {
+		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
+		return
+	}
+	cfg, _ := config.Load()
+	for slug, carry := range body.Carry {
+		if !carry {
+			continue
+		}
+		effect, ok := body.Overrides[slug]
+		if !ok || effect == "default" {
+			http.Error(w, "carry names slug "+slug+" which the batch does not grant or deny", http.StatusBadRequest)
+			return
+		}
+		if refusal := carryRefusal(cfg, slug); refusal != "" {
+			http.Error(w, refusal, http.StatusForbidden)
+			return
+		}
 	}
 	currentOverrides, err := agentPermissionOverrides(res.ConvID)
 	if err != nil {
@@ -2387,6 +2432,12 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed++
+	}
+	if steward {
+		if err := saveStewardCarry(res.ConvID, body.Overrides, body.Carry); err != nil {
+			http.Error(w, "save for future Stewards: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	overrides, _ := db.ListAgentPermissionOverridesForConv(res.ConvID)
 	effective, _ := db.ListAgentPermissionsForConv(res.ConvID)

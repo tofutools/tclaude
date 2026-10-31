@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -460,4 +461,191 @@ func TestSteward_ListsEveryAgentAndGroup(t *testing.T) {
 	require.NoError(t, config.Save(cfg))
 	_, convs = peers(steward, "")
 	assert.NotContains(t, convs, worker)
+}
+
+// stewardCarryFlow is a Steward's lifecycle as the dashboard drives it.
+type stewardCarryFlow struct {
+	t    *testing.T
+	f    *testharness.Flow
+	dash http.Handler
+}
+
+func newStewardCarryFlow(t *testing.T) *stewardCarryFlow {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	return &stewardCarryFlow{t: t, f: f, dash: dashMessageMux(t)}
+}
+
+func (c *stewardCarryFlow) summon() string {
+	c.t.Helper()
+	rec := testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(c.t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equalf(c.t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	return decodeScribeResp(c.t, rec).ConvID
+}
+
+func (c *stewardCarryFlow) post(path string, body any) *httptest.ResponseRecorder {
+	c.t.Helper()
+	return testharness.Serve(c.dash, testharness.JSONRequest(c.t, http.MethodPost, path, body))
+}
+
+func (c *stewardCarryFlow) shutDown(conv string) {
+	c.t.Helper()
+	rec := c.post("/api/agents/"+conv+"/retire", nil)
+	require.Equalf(c.t, http.StatusOK, rec.Code, "retire body=%s", rec.Body.String())
+}
+
+func (c *stewardCarryFlow) agentID(conv string) string {
+	c.t.Helper()
+	id, err := db.AgentIDForConv(conv)
+	require.NoError(c.t, err)
+	return id
+}
+
+func (c *stewardCarryFlow) sudoSlugs(conv string) map[string]*db.SudoGrant {
+	c.t.Helper()
+	rows, err := db.ListActiveSudoGrants(conv)
+	require.NoError(c.t, err)
+	out := map[string]*db.SudoGrant{}
+	for _, row := range rows {
+		out[row.Slug] = row
+	}
+	return out
+}
+
+func stewardOverride(t *testing.T, conv, slug string) string {
+	t.Helper()
+	effect, ok, err := db.AgentPermissionOverride(conv, slug)
+	require.NoError(t, err)
+	if !ok {
+		return ""
+	}
+	return effect
+}
+
+// The operator's choice per grant: instance-only ends with the Steward, stored
+// reaches the next one, denies and scopes included.
+func TestSteward_CarriedPermissionsReachOnlyTheChosenGrants(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	first := c.summon()
+	rec := c.post("/api/permissions", map[string]any{
+		"conv": first,
+		"overrides": map[string]string{
+			agentd.PermNodeExec: "grant", agentd.PermAgentStop: "grant", agentd.PermAgentDelete: "deny",
+			agentd.PermGroupsMembersSpawn: "grant",
+		},
+		"scopes": map[string]any{agentd.PermGroupsMembersSpawn: map[string]any{"group": []string{"dev"}}},
+		"carry":  map[string]bool{agentd.PermAgentStop: true, agentd.PermAgentDelete: true, agentd.PermGroupsMembersSpawn: true},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	c.shutDown(first)
+
+	second := c.summon()
+	require.NotEqual(t, first, second, "a shut-down Steward is not reused")
+	assert.Equal(t, "", stewardOverride(t, second, agentd.PermNodeExec), "this Steward only ends with it")
+	assert.Equal(t, "grant", stewardOverride(t, second, agentd.PermAgentStop))
+	assert.Equal(t, "deny", stewardOverride(t, second, agentd.PermAgentDelete))
+	rows, err := db.ListAgentPermissionOverrideRowsForConv(second)
+	require.NoError(t, err)
+	var scope string
+	for _, row := range rows {
+		if row.Slug == agentd.PermGroupsMembersSpawn {
+			scope = row.ScopeJSON
+		}
+	}
+	assert.Contains(t, scope, `"dev"`, "the scope comes along")
+
+	// Revoking from a later instance holds for the ones after it.
+	rec = c.post("/api/permissions", map[string]any{"conv": second, "overrides": map[string]string{agentd.PermAgentStop: "default"}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	c.shutDown(second)
+	third := c.summon()
+	assert.Equal(t, "", stewardOverride(t, third, agentd.PermAgentStop))
+	assert.Equal(t, "deny", stewardOverride(t, third, agentd.PermAgentDelete), "the others stay")
+
+	// Taking the choice back keeps the grant here and stops storing it.
+	rec = c.post("/api/permissions", map[string]any{
+		"conv": third, "overrides": map[string]string{agentd.PermAgentDelete: "deny"}, "carry": map[string]bool{agentd.PermAgentDelete: false},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "deny", stewardOverride(t, third, agentd.PermAgentDelete))
+	c.shutDown(third)
+	assert.Equal(t, "", stewardOverride(t, c.summon(), agentd.PermAgentDelete))
+}
+
+func TestSteward_CarriedSudoKeepsItsExpiry(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	first := c.summon()
+	rec := c.post("/api/sudo", map[string]any{
+		"agent_id": c.agentID(first), "slugs": []string{agentd.PermNodeExec, agentd.PermAgentStop}, "duration": "45s",
+		"carry": []string{agentd.PermNodeExec},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	original := c.sudoSlugs(first)[agentd.PermNodeExec].ExpiresAt
+	c.shutDown(first)
+
+	second := c.summon()
+	held := c.sudoSlugs(second)
+	require.Contains(t, held, agentd.PermNodeExec)
+	assert.NotContains(t, held, agentd.PermAgentStop, "this Steward only ends with it")
+	assert.True(t, original.Equal(held[agentd.PermNodeExec].ExpiresAt), "a new Steward never restarts the clock")
+
+	// Extending reaches the stored grant, and running out ends it for good.
+	require.Greater(t, mustExtend(t, held[agentd.PermNodeExec].ID, time.Now().Add(150*time.Millisecond)), int64(0))
+	c.shutDown(second)
+	time.Sleep(200 * time.Millisecond)
+	assert.Empty(t, c.sudoSlugs(c.summon()), "an expired grant is not handed on")
+}
+
+func mustExtend(t *testing.T, id int64, to time.Time) int64 {
+	t.Helper()
+	n, err := db.ExtendSudoGrant(id, to)
+	require.NoError(t, err)
+	return n
+}
+
+func TestSteward_RevokingCarriedSudoHoldsForLaterStewards(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	first := c.summon()
+	rec := c.post("/api/sudo", map[string]any{
+		"agent_id": c.agentID(first), "slugs": []string{agentd.PermNodeExec}, "duration": "30m", "carry": []string{agentd.PermNodeExec},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	c.shutDown(first)
+	second := c.summon()
+	grant := c.sudoSlugs(second)[agentd.PermNodeExec]
+	require.NotNil(t, grant)
+	revoke := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodDelete, fmt.Sprintf("/api/sudo/%d", grant.ID), nil))
+	require.Equalf(t, http.StatusOK, revoke.Code, "body=%s", revoke.Body.String())
+	c.shutDown(second)
+	assert.Empty(t, c.sudoSlugs(c.summon()))
+}
+
+// Storing is for real Stewards, and what Config gives stays in Config.
+func TestSteward_CarryIsRefusedOutsideItsRules(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	steward := c.summon()
+	const named = "stwd-aaaa-bbbb-cccc-000000000002"
+	c.f.HaveGroup("team")
+	c.f.HaveMember("team", named)
+	c.f.HaveAliveSession(named, "steward", "tclaude-named", c.f.TestCwd("work"))
+	namedAgent := c.agentID(named)
+
+	for name, tc := range map[string]struct {
+		path string
+		body map[string]any
+		want int
+	}{
+		"an agent named steward": {"/api/permissions", map[string]any{"conv": named, "overrides": map[string]string{agentd.PermAgentStop: "grant"}, "carry": map[string]bool{agentd.PermAgentStop: true}}, http.StatusForbidden},
+		"its sudo":               {"/api/sudo", map[string]any{"agent_id": namedAgent, "slugs": []string{agentd.PermAgentStop}, "carry": []string{agentd.PermAgentStop}}, http.StatusForbidden},
+		"a Config slug":          {"/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermFleetRead: "grant"}, "carry": map[string]bool{agentd.PermFleetRead: true}}, http.StatusForbidden},
+		"grant authority":        {"/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermPermissionsGrant: "grant"}, "carry": map[string]bool{agentd.PermPermissionsGrant: true}}, http.StatusForbidden},
+	} {
+		assert.Equal(t, tc.want, c.post(tc.path, tc.body).Code, name)
+	}
+	c.shutDown(steward)
+	assert.Equal(t, "", stewardOverride(t, c.summon(), agentd.PermAgentStop))
 }

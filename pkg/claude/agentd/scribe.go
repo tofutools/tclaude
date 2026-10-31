@@ -159,7 +159,8 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 
 	titleBase := "" // the group's name, unless the operator named this agent
 	// The Steward is a Collab surface; other scribes are not.
-	if body.Scope != nil && strings.TrimSpace(body.Scope.Kind) == stewardScopeKind {
+	isSteward := body.Scope != nil && strings.TrimSpace(body.Scope.Kind) == stewardScopeKind
+	if isSteward {
 		if !collabRoutesEnabled() {
 			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
 			return
@@ -207,6 +208,9 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 		if s = strings.TrimSpace(s); s != "" {
 			in[s] = db.Grant()
 		}
+	}
+	if isSteward {
+		mergeStewardCarried(in)
 	}
 	for _, s := range body.DenySlugs {
 		if s = strings.TrimSpace(s); s != "" {
@@ -446,6 +450,9 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 			return nil, false, &spawnFailure{http.StatusInternalServerError, "permission",
 				"capability-reducing scribe stopped after permission override failure: " + err.Error()}
 		}
+	}
+	if scopeKey == stewardScopeKind+"/" {
+		inheritStewardCarriedSudo(outcome.ConvID)
 	}
 	out := &scribeOutcome{Name: p.Name, ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}
 	if outcome.FocusMode == "browser" {

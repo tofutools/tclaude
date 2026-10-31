@@ -25,6 +25,9 @@ type SudoGrant struct {
 	GrantedBy string
 	Reason    string
 	RevokedAt time.Time
+	// CarriedID is the steward_carried_sudo row this grant goes with, 0 for a
+	// grant that belongs to this agent alone.
+	CarriedID int64
 }
 
 // IsActive returns true when the grant is still in force at `now`:
@@ -104,13 +107,13 @@ func InsertSudoGrantForAgent(g *SudoGrant) (int64, error) {
 
 func insertSudoGrantForAgent(d *sql.DB, g *SudoGrant, agentID string) (int64, error) {
 	res, err := d.Exec(`INSERT INTO agent_sudo_grants
-		(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL`,
+		(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json, carried_id)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL`,
 		agentID, g.Slug,
 		dbTime(g.GrantedAt),
 		dbTime(g.ExpiresAt),
 		g.GrantedBy, g.Reason,
-		formatTimeOrEmpty(g.RevokedAt), g.ScopeJSON, agentID)
+		formatTimeOrEmpty(g.RevokedAt), g.ScopeJSON, g.CarriedID, agentID)
 	if err != nil {
 		return 0, err
 	}
@@ -127,7 +130,7 @@ func GetSudoGrant(id int64) (*SudoGrant, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := d.QueryRow(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	row := d.QueryRow(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.carried_id
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.id = ?`, id)
 	g, err := scanSudoGrant(row)
@@ -235,7 +238,7 @@ func ListActiveSudoGrantsByAgent(agentID string) ([]*SudoGrant, error) {
 		return nil, err
 	}
 	cutoff := dbTime(time.Now())
-	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.carried_id
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.agent_id = ? AND s.revoked_at IS NULL AND s.expires_at > ?
 		ORDER BY s.expires_at ASC`, agentID, cutoff)
@@ -264,7 +267,7 @@ func ListAllActiveSudoGrants() ([]*SudoGrant, error) {
 		return nil, err
 	}
 	cutoff := dbTime(time.Now())
-	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.carried_id
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.revoked_at IS NULL AND s.expires_at > ?
 		ORDER BY ag.current_conv_id ASC, s.expires_at ASC`, cutoff)
@@ -283,22 +286,35 @@ func ListAllActiveSudoGrants() ([]*SudoGrant, error) {
 	return out, rows.Err()
 }
 
-// RevokeSudoGrant marks one grant as revoked-now. Returns the number
-// of rows updated (0 when the id doesn't exist or was already
-// revoked).
-func RevokeSudoGrant(id int64) (int64, error) {
+// revokeSudoGrants ends the active rows matching where, and the stored grants
+// behind them: an operator's revoke holds for later Stewards too.
+func revokeSudoGrants(where string, args ...any) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	now := dbTime(time.Now())
-	res, err := d.Exec(`UPDATE agent_sudo_grants SET revoked_at = ?
-		WHERE id = ? AND revoked_at IS NULL`, now, id)
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := endCarriedSudo(tx, where, args...); err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`UPDATE agent_sudo_grants SET revoked_at = ?
+		WHERE revoked_at IS NULL AND `+where, append([]any{dbTime(time.Now())}, args...)...)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	return n, nil
+	return n, tx.Commit()
+}
+
+// RevokeSudoGrant marks one grant as revoked-now. Returns the number
+// of rows updated (0 when the id doesn't exist or was already
+// revoked).
+func RevokeSudoGrant(id int64) (int64, error) {
+	return revokeSudoGrants(`id = ?`, id)
 }
 
 // ExtendSudoGrant moves one still-active grant's expiry. Returns the rows
@@ -309,14 +325,26 @@ func ExtendSudoGrant(id int64, expiresAt time.Time) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`UPDATE agent_sudo_grants SET expires_at = ?
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE agent_sudo_grants SET expires_at = ?
 		WHERE id = ? AND revoked_at IS NULL AND expires_at > ?`,
 		dbTime(expiresAt), id, dbTime(time.Now()))
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	return n, nil
+	if n > 0 {
+		if _, err := tx.Exec(`UPDATE steward_carried_sudo SET expires_at = ?
+			WHERE revoked_at IS NULL AND id = (SELECT carried_id FROM agent_sudo_grants WHERE id = ?)`,
+			dbTime(expiresAt), id); err != nil {
+			return 0, err
+		}
+	}
+	return n, tx.Commit()
 }
 
 // RevokeSudoGrantsByConv stamps revoked_at on every still-active row
@@ -342,43 +370,21 @@ func RevokeSudoGrantsByAgent(agentID string) (int64, error) {
 	if agentID == "" {
 		return 0, errors.New("RevokeSudoGrantsByAgent: agent_id required")
 	}
-	d, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	now := dbTime(time.Now())
-	res, err := d.Exec(`UPDATE agent_sudo_grants SET revoked_at = ?
-		WHERE agent_id = ? AND revoked_at IS NULL`, now, agentID)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	return revokeSudoGrants(`agent_id = ?`, agentID)
 }
 
 // RevokeAllActiveSudoGrants is the nuclear option — marks every
 // still-active row revoked-now. Returns the row count for the human
 // to verify before they nuke prod.
 func RevokeAllActiveSudoGrants() (int64, error) {
-	d, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	now := dbTime(time.Now())
-	res, err := d.Exec(`UPDATE agent_sudo_grants SET revoked_at = ?
-		WHERE revoked_at IS NULL`, now)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	return revokeSudoGrants(`1 = 1`)
 }
 
 func scanSudoGrant(s rowScanner) (*SudoGrant, error) {
 	var g SudoGrant
 	var grantedAt, expiresAt, revokedAt dbTimestamp
 	if err := s.Scan(&g.ID, &g.AgentID, &g.ConvID, &g.Slug, &g.ScopeJSON,
-		&grantedAt, &expiresAt, &g.GrantedBy, &g.Reason, &revokedAt); err != nil {
+		&grantedAt, &expiresAt, &g.GrantedBy, &g.Reason, &revokedAt, &g.CarriedID); err != nil {
 		return nil, err
 	}
 	g.GrantedAt = grantedAt.Time()
