@@ -2,6 +2,7 @@
 // without one. A dashboard opened over plain http on a LAN or tailnet address
 // is a supported setup and has neither crypto.randomUUID nor
 // navigator.clipboard, so call these rather than the APIs themselves.
+// dashboard-imperative-boundary: browser-io
 
 // randomUUID is crypto.randomUUID, built from getRandomValues (available in
 // every context) when that is missing.
@@ -29,10 +30,10 @@ function legacyCopy(text) {
 }
 
 // clipboardFailure is the operator's explanation of a failed writeClipboard.
-export function clipboardFailure() {
+export function clipboardFailure(secureReason = 'the clipboard is not available here') {
   return globalThis.isSecureContext === false
     ? 'the browser refused it; the clipboard is limited over plain HTTP except on localhost'
-    : 'the clipboard is not available here';
+    : secureReason;
 }
 
 // writeClipboard puts text on the clipboard and says whether it got there. Call

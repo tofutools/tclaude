@@ -479,7 +479,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"'/v1/process/template-heads'",
 		"export function processActorPresentation(",
 		"`/api/open-window/${encodeURIComponent(agentId)}`",
-		"mintAttemptID = mintUUID",
+		"mintAttemptID = randomUUID",
 	)
 
 	css := read("dashboard.css")

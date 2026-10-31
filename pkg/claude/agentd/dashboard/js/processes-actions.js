@@ -52,7 +52,7 @@ export function createProcessesActions({
   dispatchNavigated = (location, { correction = false } = {}) => document.dispatchEvent(
     new CustomEvent('tclaude:navigated', location ? { detail: { location, correction } } : undefined),
   ),
-  mintAttemptID = mintUUID,
+  mintAttemptID = randomUUID,
 } = {}) {
   let listedHeadsSignature = null;
   let headObservationPending = false;

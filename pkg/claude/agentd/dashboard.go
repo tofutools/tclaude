@@ -3004,7 +3004,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	if !isPeerSnapshot(r) {
+	// A popped-out board polls too but has no presence loop, so it is no sign of
+	// a dashboard that capture could reach.
+	if !isPeerSnapshot(r) && r.URL.Query().Get("standalone") == "" {
 		noteDashboardPoll()
 	}
 	// This response is dynamic even when static_version remains unchanged: the

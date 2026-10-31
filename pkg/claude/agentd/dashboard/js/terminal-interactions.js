@@ -7,7 +7,7 @@ import {
   isCommandPaletteShortcut,
   requestCommandPalette,
 } from './command-registry.js';
-import { writeClipboard } from './insecure-origin.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 
 const IMAGE_TYPES = new Map([
   ['image/png', 'png'],
@@ -625,7 +625,7 @@ export function attachTerminalInteractions({
     if (token.timer) clearTimeout(token.timer);
     pendingTmuxCopy = null;
     if (activeTmuxClipboardCopy === token) activeTmuxClipboardCopy = null;
-    flash(token.result ? 'copied' : 'tmux copied; browser clipboard permission denied');
+    flash(token.result ? 'copied' : `tmux copied; ${clipboardFailure('browser clipboard permission denied')}`);
   }
 
   function armTmuxClipboardFromGesture(selection = null) {
@@ -721,7 +721,7 @@ export function attachTerminalInteractions({
       return;
     }
     if (await writeClipboard(selected)) flash('copied');
-    else flash('copy failed — clipboard permission denied');
+    else flash(`copy failed — ${clipboardFailure('clipboard permission denied')}`);
     term.focus();
   }
 

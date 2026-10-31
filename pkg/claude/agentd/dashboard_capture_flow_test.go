@@ -88,6 +88,12 @@ func TestDashboardCapture_APollingPageIsNotCalledClosed(t *testing.T) {
 	rec := <-c.request()
 	assert.Contains(t, rec.Body.String(), "no dashboard has connected since the daemon started")
 
+	// A popped-out board polls but can never be captured.
+	board := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot?standalone=1", nil))
+	require.Equal(t, http.StatusOK, board.Code)
+	rec = <-c.request()
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
 	// A page polling its snapshot exists even if its presence loop never ran.
 	polled := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
 	require.Equal(t, http.StatusOK, polled.Code)
