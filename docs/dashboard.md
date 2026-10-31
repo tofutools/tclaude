@@ -691,14 +691,20 @@ and agents that have sat idle for ten minutes or more. **Brief me** asks the
 Steward for that, most urgent first. The listing needs `fleet.read`, which
 the Steward is granted when it is summoned and other agents are not;
 `--group <name>` narrows it to one group and `--json` gives the raw brief.
+With Collab on, `fleet.read` also lifts the group scoping on `tclaude agent ls`
+and shows group default directories in `tclaude agent groups ls`, so the
+Steward can name any agent or group you have open. It changes only what is
+listed: who it can message is still decided at send, and group environment
+values stay with you.
 
 **Config > Steward** appears while Collab is on. Its **Spawn profile** is what
 a new Steward launches with; unset, it uses the global default profile.
 
 What a new Steward may do is set under **Config > Steward**, and the daemon
 grants it: a summon cannot ask for more. **Reads** is `operator` by default
-(fleet, boards, processes, triggers, usage, costs and host) or `fleet` for the
-fleet and boards alone. **Writes** is `messaging` by default (reach any agent),
+(fleet, boards, processes, triggers, usage, costs, host and federation
+activity) or `fleet` for the fleet and boards alone. Both list every agent and
+group. **Writes** is `messaging` by default (reach any agent),
 `none`, or `workers`, which also lets it start workers. **Default permissions**
 (`steward.default_permissions`, empty by default) lists extra slugs a new
 Steward is born with on top of those levels, with the same list editor as the

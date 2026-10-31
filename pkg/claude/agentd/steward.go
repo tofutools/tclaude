@@ -26,13 +26,16 @@ var stewardBaseSlugs = []string{
 	PermFleetRead, PermDashboardViewRead, PermDashboardGuide, PermBoardsRead, PermBoardsWrite, PermHumanNotify,
 }
 
-// stewardOperatorReadSlugs bring a Steward to what the operator reads. Left out
-// on purpose: reading other agents' mail (agent.inbox-watch), private setup text
+// stewardOperatorReadSlugs bring a Steward to what the operator reads, on top
+// of the whole fleet that fleet.read already lists. Reads are safe to give by
+// default because injected text in a worker's reply can only look with them;
+// writing stays with the levels below, steward.default_permissions and sudo.
+// Left out on purpose: reading other agents' mail (agent.inbox-watch), private setup text
 // (config export), and the proxy.* reads, which spend the operator's GitHub,
 // Linear and AWB credentials outside tclaude.
 var stewardOperatorReadSlugs = []string{
 	PermProcessTemplatesRead, PermProcessRunsRead, PermTriggersRead, PermUsageRead, PermHostRead, PermCostsRead,
-	PermAgentContextInfo,
+	PermAgentContextInfo, PermFederationAuditRead,
 }
 
 // stewardSlugs is the access a Steward is born with under this config: its
@@ -115,9 +118,9 @@ func stewardExtraSlugs(cfg *config.Config) []string {
 
 // stewardAccessNote tells a Steward what it was born with, for its brief.
 func stewardAccessNote(cfg *config.Config) string {
-	reads := "the fleet, boards and the dashboard view"
+	reads := "every agent and group, boards and the dashboard view"
 	if cfg.StewardReads() == config.StewardReadsOperator {
-		reads = "what the operator reads across tclaude"
+		reads = "what the operator reads across tclaude, including every agent and group whether or not you share one with them"
 	}
 	writes := "drawing on boards and notifying the operator"
 	switch cfg.StewardWrites() {

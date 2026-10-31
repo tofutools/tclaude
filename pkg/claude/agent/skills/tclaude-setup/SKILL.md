@@ -47,7 +47,7 @@ so every setup follows the same loop:
 ```bash
 tclaude agent groups ls                    # groups, members, default profile
 tclaude agent groups members <group>
-tclaude agent ls                           # agents you can see
+tclaude agent ls                           # agents you can see (all of them, with fleet.read)
 tclaude agent profiles ls                  # spawn profiles
 tclaude agent profiles show <name> --json  # one profile's full JSON
 tclaude agent profiles default show        # the global default profile

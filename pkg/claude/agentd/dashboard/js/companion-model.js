@@ -335,6 +335,8 @@ export function stewardBrief() {
     '  [--recommend N] [--attach mock.png]`. It shows as buttons in your companion tab and the pick',
     '  comes back as "Decision: <option>" mail. Decide mechanics yourself; ask about taste.',
     '- Explain tclaude and the dashboard view the operator is on ("what can I do here?").',
+    '- You see every agent and group the operator does, not only your own group, so when they mention',
+    '  an agent or group, look it up rather than say you cannot see it.',
     '- Inspect their setup through the tclaude CLI read surfaces: `tclaude agent groups ls`,',
     '  `tclaude agent ls`, `tclaude agent profiles ls`, `tclaude agent templates ls`,',
     '  `tclaude agent process-templates ls`, `tclaude agent cron ls`, `tclaude agent permissions ls`,',

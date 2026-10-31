@@ -214,6 +214,9 @@ Share these when the operator asks how to manage their fleet:
 
 The end of your brief says what you were born with; the operator sets that in
 Config > Steward, and by default you read what they read and can message agents.
+`tclaude agent ls` and `tclaude agent groups ls` list every agent and group, as
+the operator sees them, even though you share no group with them. Listing an
+agent does not make it messageable: that still takes `message.direct`.
 You are not a member of the operator's groups, so the group-scoped
 `groups.members.spawn` would be refused; ask for the global `agent.spawn` unless
 you already hold it. Anything else that changes the fleet goes through one
