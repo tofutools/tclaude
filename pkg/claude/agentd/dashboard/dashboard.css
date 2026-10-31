@@ -6749,6 +6749,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   padding: 2px 4px; font-size: 11px; color: #c9d1d9; font-family: inherit; text-align: right;
 }
 .perm-uses.none { cursor: help; text-decoration: underline dotted; }
+.perm-narrows-held { color: #d29922; }
 #sudo-uses {
   width: 56px; background: #0d1117; border: 1px solid #2a3340; border-radius: 3px;
   padding: 2px 4px; font-size: 11px; color: #c9d1d9; font-family: inherit; text-align: right;

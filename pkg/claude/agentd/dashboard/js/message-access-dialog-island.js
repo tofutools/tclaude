@@ -1069,10 +1069,14 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     // exactly that and left alone: it authorizes nothing today, and the one
     // thing the editor must not do is quietly rewrite it into a blanket grant.
     const unreadableScope = unreadable.has(row.slug) && currentEffect(row.slug) === 'grant';
-    // A scoped sudo replaces what a slug already gives at the gate, so on a slug
-    // the agent holds it would narrow it for the whole window, not elevate it.
     const scopable = !unreadableScope && scopesEditable && !!row.scope_dims?.length
-      && currentEffect(row.slug) === 'grant' && !(sudoMode && row.granted);
+      && currentEffect(row.slug) === 'grant';
+    // A scoped sudo takes the place of a held slug's own, group and default
+    // access here. Ownership, membership and groups.admin are consulted after
+    // it, and a peer-scoped grant never speaks to a local action at all.
+    const heldNote = !(sudoMode && picked && row.granted && Object.keys(scopeOf(row.slug)).length) ? ''
+      : scopeOf(row.slug).peer?.length ? 'This scope only covers work on that peer. What it holds here does not change.'
+        : 'It already holds this. Until this grant ends, this scope replaces its own, group and default access. Ownership, membership and groups.admin still apply.';
     const stewardSource = stewardAccess && (fromConfig ? 'Config defaults'
       : stewardAccess.carried[row.slug] !== undefined ? 'all future Stewards' : 'this Steward only');
     const effText = sudoMode
@@ -1088,7 +1092,8 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
         toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.risky ? html` <span class="perm-risk-badge" title="Reaches the host or credentials, destroys work, or widens what an agent can hand itself">⚠ risky</span>` : null}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span>
-        ${refusedWhy ? html`<span class="perm-row-desc perm-refused-why">${refusedWhy}</span>` : null}</div>
+        ${refusedWhy ? html`<span class="perm-row-desc perm-refused-why">${refusedWhy}</span>` : null}
+        ${heldNote ? html`<span class="perm-row-desc perm-narrows-held">${heldNote}</span>` : null}</div>
       ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
       ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
         title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
