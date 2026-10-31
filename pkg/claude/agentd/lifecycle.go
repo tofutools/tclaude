@@ -3787,7 +3787,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// The briefing is from this actor, so its child could answer a Steward
 		// the spawner may not write to.
 		if spawnerConvID != "" && res.ConvID != spawnerConvID && isLiveSteward(res.ConvID) {
-			if _, _, ok := resolveMessageRouting(w, spawnerConvID, res.ConvID); !ok {
+			if _, _, ok := resolveMessageRouting(w, r, spawnerConvID, res.ConvID); !ok {
 				return
 			}
 		}

@@ -190,6 +190,9 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		}
 	}
 	if allowed, matched, _ := permissionAllowsAction(r, p.ConvID, perm, scopeContext); allowed {
+		if !standingSiblingCovers(p.ConvID, perm, scopeContext) && !spendSudoUse(w, r, p.ConvID, perm, scopeContext) {
+			return "", false
+		}
 		recordAuditPermissionScope(r, perm, matched)
 		recordAuthorizedPermission(r, perm, loadBearingSudoGrantID(r, p.ConvID, perm, scopeContext))
 		return p.ConvID, true
@@ -210,6 +213,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		} else if len(groups) > 0 {
 			covered := true
 			var sudoGrantID int64
+			var limited *ActionContext
 			for _, group := range groups {
 				candidate := scopeContext
 				candidate.Group = group
@@ -221,8 +225,14 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 				if sudoGrantID == 0 {
 					sudoGrantID = loadBearingSudoGrantID(r, p.ConvID, sibling, candidate)
 				}
+				if _, ok := limitedSudoSource(r, p.ConvID, sibling, candidate); ok && limited == nil {
+					limited = &candidate
+				}
 			}
 			if covered {
+				if limited != nil && !spendSudoUse(w, r, p.ConvID, sibling, *limited) {
+					return "", false
+				}
 				recordAuditPermissionScope(r, sibling, "group="+strings.Join(groups, ","))
 				recordAuthorizedPermission(r, sibling, sudoGrantID)
 				return p.ConvID, true
