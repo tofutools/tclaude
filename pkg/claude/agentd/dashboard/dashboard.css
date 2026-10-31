@@ -1993,7 +1993,6 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
    overlay stack, Escape routing, and refresh suspension all see it. */
 .image-preview-overlay {
   padding: 16px; background: rgba(0, 0, 0, .82);
-  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .image-preview-dialog {
   position: relative;
@@ -2198,7 +2197,6 @@ body.slop .attachment-preview-position { color: #c9a86b; }
    refresh suspension all see it. */
 .markdown-preview-overlay {
   padding: 16px; background: rgba(0, 0, 0, .82);
-  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .markdown-preview-dialog {
   position: relative;
@@ -5474,8 +5472,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   display: none; align-items: center; justify-content: center;
   padding: 24px;
   background: rgba(0,0,0,0.72);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
 }
 .disconnect-overlay.show { display: flex; }
 .disconnect-card {

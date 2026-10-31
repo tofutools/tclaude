@@ -420,8 +420,6 @@ body.hide-costs .mux-cost-toggle { display: none; }
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
   background: rgba(13, 17, 23, 0.78);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
 }
 .mux-terminal-disconnect-card {
   width: min(440px, calc(100% - 48px));

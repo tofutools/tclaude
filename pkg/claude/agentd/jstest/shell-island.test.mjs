@@ -157,7 +157,7 @@ test('disconnect overlay is removed on reconnect so its compositor layers cannot
 
   await harness.act(() => state.setConnection('connected'));
   assertAbsent(mounted.container.querySelector('#disconnect-overlay'),
-    'reconnect destroys the backdrop-filter and animation subtree');
+    'reconnect destroys the overlay and animation subtree');
   await mounted.unmount();
 });
 
