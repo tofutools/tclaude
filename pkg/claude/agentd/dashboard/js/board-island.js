@@ -47,6 +47,8 @@ const BOARD_LIVE_RETRY_MS = 1000;
 const BOARD_LIVE_RETRY_MAX_MS = 30000;
 export const BOARD_FLUSH_MS = 250;
 export const BOARD_EVENT_IDLE_MS = 1500;
+// The daemon's limit: one event per board in this long (boardEventInterval).
+export const BOARD_EVENT_RETRY_MS = 3000;
 export const BOARD_SNAPSHOT_IDLE_MS = 2500;
 export const BOARD_VIEW_REFRESH_MS = 30000;
 // The daemon's limit for an event image (boardMaxRegionBytes).
@@ -607,12 +609,32 @@ export function BoardEditor({
         if (png && png.size <= BOARD_EVENT_IMAGE_MAX) event.image = await (await import('./board-export.js')).blobToBase64(png);
       } catch { /* text only */ }
     }
+    if (await postEvent(event) !== 429) return;
+    // The daemon is still limiting this board's last event. A closed editor can
+    // only send this one again, drawn image and all. An open one puts the edits
+    // back in with any newer ones, so the retry describes them together.
+    if (disposed.current) {
+      setTimeout(() => void postEvent(event), BOARD_EVENT_RETRY_MS);
+      return;
+    }
+    const newer = eventBatch.current;
+    eventBatch.current = { ids: [...ids, ...newer.ids], before: new Map([...newer.before, ...before]) };
+    clearTimeout(timers.current.event);
+    timers.current.event = setTimeout(sendEvent, BOARD_EVENT_RETRY_MS);
+  }
+
+  // postEvent answers the response status, or 0 if none came. Other than a 429,
+  // events are best-effort.
+  async function postEvent(event) {
     try {
-      await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/events`, {
+      const response = await fetchImpl(`/api/boards/${encodeURIComponent(boardId)}/events`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(event),
       });
-    } catch { /* events are best-effort */ }
+      return response.status;
+    } catch {
+      return 0;
+    }
   }
 
   // commit records operator edits: the merged map, the undo step, the PATCH
