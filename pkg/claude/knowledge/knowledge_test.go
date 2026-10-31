@@ -43,6 +43,8 @@ func TestIdentify(t *testing.T) {
 	cases := []struct {
 		name     string
 		info     debug.BuildInfo
+		version  string
+		release  bool
 		state    BuildState
 		commit   string
 		ref      string
@@ -57,11 +59,17 @@ func TestIdentify(t *testing.T) {
 			state: StateExact, ref: "v1.2.3", inLabel: "v1.2.3"},
 		{name: "go install of a commit", info: debug.BuildInfo{Main: debug.Module{Version: "v0.0.2475-0.20261031200100-6e63f4ec14c9"}},
 			state: StateExact, commit: "6e63f4ec14c9", ref: "6e63f4ec14c9", inLabel: "6e63f4ec14c9"},
+		{name: "release, whose pipeline dirties the checkout", release: true, version: "v0.0.2480",
+			info:  debug.BuildInfo{Main: debug.Module{Version: "v0.0.2480-0.20261031230534-2a6427f46afc+dirty"}, Settings: settings("vcs.revision", testCommit, "vcs.modified", "true")},
+			state: StateExact, commit: testCommit, ref: testCommit, inLabel: "exact", notLabel: "uncommitted"},
+		{name: "stamped release tarball", version: "v0.0.2480", info: debug.BuildInfo{Main: debug.Module{Version: "(devel)"}},
+			state: StateExact, ref: "v0.0.2480", inLabel: "v0.0.2480"},
+		{name: "stamped non-release", version: "dev", info: debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, state: StateUnknown, inLabel: "no commit"},
 		{name: "plain build", info: debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, state: StateUnknown, inLabel: "no commit"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			build := identify(&tc.info, "v9")
+			build := identify(&tc.info, tc.version, tc.release)
 			assert.Equal(t, tc.state, build.State)
 			assert.Equal(t, tc.commit, build.Commit)
 			assert.Equal(t, tc.ref, build.Ref)
@@ -131,6 +139,20 @@ func TestReadLimits(t *testing.T) {
 
 	_, err = base.Read(ReadRequest{Path: "long.md", From: maxReadLines + 7})
 	require.ErrorIs(t, err, ErrBadRequest)
+}
+
+func TestReadShowsTheStartOfAnEnormousLine(t *testing.T) {
+	base := New(Build{}, fstest.MapFS{"min.md": {Data: []byte(strings.Repeat("x", maxReadBytes+9) + "\nnext\n")}}, t.TempDir())
+	page, err := base.Read(ReadRequest{Path: "min.md"})
+	require.NoError(t, err)
+	assert.True(t, page.LineCut)
+	assert.True(t, page.Truncated)
+	assert.Equal(t, 1, page.ToLine)
+	assert.Len(t, page.Content, maxReadBytes+1)
+
+	rest, err := base.Read(ReadRequest{Path: "min.md", From: page.ToLine + 1})
+	require.NoError(t, err)
+	assert.Equal(t, "next\n", rest.Content)
 }
 
 type tarFile struct {

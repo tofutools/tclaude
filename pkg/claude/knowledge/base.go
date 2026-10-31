@@ -249,6 +249,7 @@ type Page struct {
 	ToLine     int    `json:"to_line"`
 	TotalLines int    `json:"total_lines"`
 	Truncated  bool   `json:"truncated,omitempty"`
+	LineCut    bool   `json:"line_cut,omitempty"` // ToLine itself is shown only in part
 	Links      []Link `json:"links,omitempty"`
 	LinkedFrom []Link `json:"linked_from,omitempty"`
 }
@@ -302,6 +303,14 @@ func (b *Base) Read(req ReadRequest) (*Page, error) {
 	for i := start; i < end; i++ {
 		if i-start >= maxReadLines || content.Len()+len(lines[i])+1 > maxReadBytes {
 			page.Truncated = true
+			if i == start {
+				// One line over the cap, as in a minified asset: show its start,
+				// or no range of lines could ever reach it.
+				content.WriteString(strings.ToValidUTF8(lines[i][:maxReadBytes], ""))
+				content.WriteByte('\n')
+				page.LineCut = true
+				i++
+			}
 			end = i
 			break
 		}

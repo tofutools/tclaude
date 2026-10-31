@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
@@ -48,7 +49,7 @@ func (b Build) Label() string {
 	}
 	switch b.State {
 	case StateExact:
-		return "exact: docs and source match " + shortRef(id) + ", the running build"
+		return "exact: pinned to " + shortRef(id) + ", the running build"
 	case StateDirty:
 		return "dirty: built from " + shortRef(id) + " with uncommitted changes. Docs are as built; source is that commit without the changes, so it may differ from what is running"
 	}
@@ -68,14 +69,19 @@ func CurrentBuild(version string) Build {
 	if !ok {
 		return Build{Version: version, State: StateUnknown}
 	}
-	return identify(bi, version)
+	return identify(bi, version, buildversion.InstallMethod == "release")
 }
 
 // identify reads what the Go toolchain stamped. A build from a checkout carries
 // VCS settings; `go install module@version` carries only the module version, a
 // tag or a pseudo-version with the commit in it. Anything else is unknown: a
 // guess at `main` would present another build's code as this one's.
-func identify(bi *debug.BuildInfo, version string) Build {
+//
+// A release is built from a tagged commit by the release pipeline, and its
+// modified bit has been set by the pipeline's own output, not by changes to the
+// code, so it is not read. A semver version stamped into a build with no VCS
+// settings, as a formula building a release tarball does, names that tag.
+func identify(bi *debug.BuildInfo, version string, release bool) Build {
 	var revision, modified string
 	for _, setting := range bi.Settings {
 		switch setting.Key {
@@ -88,13 +94,16 @@ func identify(bi *debug.BuildInfo, version string) Build {
 	build := Build{Version: version, State: StateUnknown}
 	if revision != "" {
 		build.Commit, build.Ref, build.State = revision, revision, StateDirty
-		if modified == "false" {
+		if modified == "false" || release {
 			build.State = StateExact
 		}
 		return build
 	}
 	moduleVersion, dirty := strings.CutSuffix(bi.Main.Version, "+dirty")
 	if !semver.IsValid(moduleVersion) {
+		if semver.IsValid(version) {
+			build.State, build.Ref = StateExact, version
+		}
 		return build
 	}
 	build.State = StateExact

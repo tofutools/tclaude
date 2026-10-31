@@ -331,7 +331,7 @@ Every answer starts with how far it can be trusted:
 
 | Label | Meaning |
 |---|---|
-| `exact` | A clean build of a known commit or release. Docs and source match what is running. |
+| `exact` | A clean build of a known commit, or a release. Docs and any source there is match what is running. |
 | `dirty` | A commit plus uncommitted changes. Docs are as built. Source is that commit without the changes. |
 | `unknown` | The build names no commit, such as `go build` from an extracted tree. Docs are as built, and there is no source. |
 
@@ -339,9 +339,10 @@ The docs are built into the binary, so they work with no checkout and offline. T
 source would add many megabytes, so it isn't. The daemon downloads it once from
 GitHub, by commit, when a Steward is summoned or starts up after an upgrade, and
 keeps only the running build's copy, about 65 MiB, under
-`~/.tclaude/data/knowledge`. The download is checked against the commit. Offline,
-or for a commit that was never pushed, docs still work, `knowledge status` says why
-source is missing, and the download is tried again on use. Nothing is downloaded
+`~/.tclaude/data/knowledge`. A download for a commit must name that commit; one for
+a release tag trusts the tag. Offline, or for a commit that was never pushed, docs
+still work, `knowledge status` says why source is missing, and the download is
+tried again on use. Nothing is downloaded
 with Collab off or until a Steward needs it.
 
 The daemon holds the copy and only answers reads, so an agent can't change it. It

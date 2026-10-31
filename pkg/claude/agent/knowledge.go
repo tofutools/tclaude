@@ -211,6 +211,7 @@ func runKnowledgeRead(p *knowledgeReadParams, stdout, stderr io.Writer) int {
 		ToLine     int             `json:"to_line"`
 		TotalLines int             `json:"total_lines"`
 		Truncated  bool            `json:"truncated"`
+		LineCut    bool            `json:"line_cut"`
 		Links      []knowledgeLink `json:"links"`
 		LinkedFrom []knowledgeLink `json:"linked_from"`
 	}
@@ -227,7 +228,10 @@ func runKnowledgeRead(p *knowledgeReadParams, stdout, stderr io.Writer) int {
 	}
 	printKnowledgeHeader(stdout, &resp.knowledgeHeader)
 	fmt.Fprintf(stdout, "[%s, lines %d-%d of %d]\n\n%s", resp.Path, resp.FromLine, resp.ToLine, resp.TotalLines, resp.Content)
-	if resp.Truncated {
+	if resp.LineCut {
+		fmt.Fprintf(stdout, "\n[line %d is too long to show whole]\n", resp.ToLine)
+	}
+	if resp.Truncated && resp.ToLine < resp.TotalLines {
 		fmt.Fprintf(stdout, "\n[cut at line %d: continue with --lines %d-%d]\n", resp.ToLine, resp.ToLine+1, min(resp.ToLine+2000, resp.TotalLines))
 	}
 	if len(resp.Links) > 0 {

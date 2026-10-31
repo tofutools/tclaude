@@ -72,7 +72,7 @@ func TestKnowledge_StewardReadsPinnedDocs(t *testing.T) {
 	link := links[0].(map[string]any)
 	assert.Equal(t, "docs/companion.md", link["path"])
 
-	code, section := get(steward, "/v1/knowledge/read?path="+url.QueryEscape("docs/companion.md#"+link["section"].(string)))
+	code, section := get(steward, "/v1/knowledge/read?path="+url.QueryEscape(link["path"].(string)+"#"+link["section"].(string)))
 	require.Equal(t, http.StatusOK, code)
 	assert.Contains(t, section["content"], "See the screen.")
 	assert.NotContains(t, section["content"], "Draw on it.")
@@ -85,7 +85,7 @@ func TestKnowledge_StewardReadsPinnedDocs(t *testing.T) {
 	code, _ = get(steward, "/v1/knowledge/ls?path=docs")
 	assert.Equal(t, http.StatusOK, code)
 
-	code, _ = get(steward, "/v1/knowledge/read?path="+url.QueryEscape("../../config.json"))
+	code, _ = get(steward, "/v1/knowledge/read?path="+url.QueryEscape("../config.json"))
 	assert.Equal(t, http.StatusBadRequest, code, "the base is the whole world")
 	code, _ = get(steward, "/v1/knowledge/read?path=nope.md")
 	assert.Equal(t, http.StatusNotFound, code)

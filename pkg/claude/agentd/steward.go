@@ -375,10 +375,10 @@ func stewardConvs() []string {
 	return convs
 }
 
-// stewardSlugsBeforeRecords joined the levels before Stewards had a record of
-// what they were offered, so one summoned earlier may simply not have them. For
-// any other slug it lacks, a Steward without a record lost it on purpose.
-var stewardSlugsBeforeRecords = []string{PermDashboardCapture, PermDashboardMark, PermFederationAuditRead}
+// stewardSlugsBeforeRecords joined the levels after the last Steward summoned
+// without a record of what it was offered, so one of those may simply not have
+// them. For any other slug it lacks, a Steward without a record lost it on purpose.
+var stewardSlugsBeforeRecords = []string{PermDashboardCapture, PermDashboardMark, PermFederationAuditRead, PermKnowledgeRead}
 
 // reconcileStewardAccess brings every Steward up to what its levels give, since
 // they are only granted it at summon and outlive upgrades. It runs when the
