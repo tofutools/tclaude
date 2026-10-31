@@ -323,7 +323,7 @@ func TestDashboardSnapshot_StaticVersionSkipsUnchangedBlobs(t *testing.T) {
 	require.Contains(t, initial, "sandbox_impl")
 	require.Contains(t, string(initial["permissions"]), "scope_dim_options")
 
-	secondPath := "/api/snapshot?static_version=" + version
+	secondPath := "/api/snapshot?static_catalogs=1&static_version=" + version
 	second := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, secondPath, nil))
 	require.Equal(t, http.StatusOK, second.Code, "second snapshot body=%s", second.Body.String())
 	assert.Equal(t, "no-store", second.Header().Get("Cache-Control"),
@@ -339,6 +339,17 @@ func TestDashboardSnapshot_StaticVersionSkipsUnchangedBlobs(t *testing.T) {
 	}
 	assert.NotContains(t, unchanged, "sandbox_impl", "an unchanged catalog is left out, not sent empty")
 	assert.NotContains(t, string(unchanged["permissions"]), "scope_dim_options")
+
+	// A page from an older build echoes static_version but restores only the
+	// original registries, so it must keep getting the newer catalogs.
+	older := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot?static_version="+version, nil))
+	require.Equal(t, http.StatusOK, older.Code)
+	var olderBody map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(older.Body.Bytes(), &olderBody))
+	assert.Equal(t, "null", string(olderBody["slugs"]))
+	assert.NotEqual(t, "null", string(olderBody["harnesses"]))
+	assert.Contains(t, olderBody, "sandbox_impl")
+	assert.Contains(t, string(olderBody["permissions"]), "scope_dim_options")
 }
 
 func TestDashboardSnapshot_GzipTransport(t *testing.T) {

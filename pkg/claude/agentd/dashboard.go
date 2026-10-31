@@ -4048,9 +4048,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.Roles = nil
 		out.SavedPrompts = nil
 		out.PluginsCatalog = nil
-		out.Harnesses = nil
-		out.SandboxImpl = dashboardSandboxImpl{}
-		out.Permissions.ScopeDimOptions = nil
+		// Page JS comes from the viewing node and this snapshot may go to a peer's
+		// older page, which restores only the fields above. A page that restores
+		// these too says so.
+		if r.URL.Query().Get("static_catalogs") == "1" {
+			out.Harnesses = nil
+			out.SandboxImpl = dashboardSandboxImpl{}
+			out.Permissions.ScopeDimOptions = nil
+		}
 	}
 
 	writeJSON(w, http.StatusOK, out)
