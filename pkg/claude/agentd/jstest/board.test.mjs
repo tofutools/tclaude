@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const A = `agt_${'a'.repeat(32)}`;
@@ -792,6 +793,17 @@ test('board model: snap points hold a line to its shape and each routing draws i
   assert.equal(pasted.routing, undefined);
   assert.deepEqual(pasted.startBinding, { elementId: 'a', fixedPoint: [1, 0.5] });
   assert.equal(m.parseClipboard(m.clipboardText([line]))[0].routing, 'elbow');
+});
+
+test('board model routes the cases the CLI is held to', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const cases = JSON.parse(readFileSync(new URL('../../agent/testdata/board_routes.json', import.meta.url)));
+  assert.ok(cases.length >= 30);
+  const rounded = (path) => path.map((point) => point.map((v) => Math.round(v * 100) / 100));
+  for (const { routing, start, end, path } of cases) {
+    assert.deepEqual(rounded(m.routePath(routing, start, end)), path, `${routing} ${JSON.stringify([start, end])}`);
+  }
 });
 
 test('board model: text attached to a shape or line sits on it, and goes with it', async (t) => {

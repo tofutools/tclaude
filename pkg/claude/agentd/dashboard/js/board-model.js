@@ -363,7 +363,8 @@ export function routePath(routing, start, end) {
   return routing === 'elbow' ? elbowPath(s, e) : curvedPath(s, e);
 }
 
-function pathGeometry(path) {
+function pathGeometry(route) {
+  const path = route.length > 1 ? route : [route[0], route[0]]; // ends that meet
   const [ox, oy] = path[0];
   const points = path.map(([px, py]) => [round(px - ox), round(py - oy)]);
   const b = elementBounds({ x: 0, y: 0, points });
