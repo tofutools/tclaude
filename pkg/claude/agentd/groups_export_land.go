@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 
@@ -163,10 +164,12 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		}
 		l.dst, l.Harness = dst, dst.Name
 		if dst.Name == harness.OpenCodeName {
-			// OpenCode keeps history in per-agent state that only a spawn
-			// prepares; installing into the shared store would strand it.
-			l.Warnings = append(l.Warnings, "group import cannot install OpenCode history yet; importing config only")
-			continue
+			// The history installs through the opencode CLI, so unlike a
+			// file landing it needs the binary on this host.
+			if _, err := harness.OpenCodeExecutable(); err != nil {
+				l.Warnings = append(l.Warnings, "OpenCode is not installed here, so its history cannot be installed; importing config only")
+				continue
+			}
 		}
 		b := &agentbundle.Bundle{}
 		b.Manifest.Agent.Harness = src
@@ -248,7 +251,21 @@ func memberNeutralContext(a *paf.Archive, key string) func(paf.ReadOptions) (*tr
 
 // installGroupLanding installs a planned non-file landing through the
 // landing harness's history import, returning the minted conversation id.
+//
+// An OpenCode member installs into the ambient store, not per-agent state. An
+// import carries no launch posture, so the member's first resume recovers the
+// baseline one: no tclaude sandbox, a managed server on the ambient XDG
+// directories, and a conversation lookup through the ambient `opencode session
+// list`. That is the store this conversation has to be in. Private state only
+// exists for a launch under tclaude's sandbox.
 func installGroupLanding(l *groupMemberLanding, cwd string) (string, func(), error) {
+	if l.dst.Name == harness.OpenCodeName {
+		// The opencode CLI runs in the landing directory, which --into may
+		// only have named so far.
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			return "", nil, err
+		}
+	}
 	return importBundleHistory(l.dst, l.history, cwd)
 }
 

@@ -1122,9 +1122,12 @@ func groupImportPromptWarnings(result *db.GroupImportResult) []string {
 
 func validateImportedConvIDs(exp *groupexport.Export) error {
 	for _, convID := range importedIdentityConvIDs(exp) {
+		if harness.ValidOpenCodeConvID(convID) {
+			continue
+		}
 		parsed, err := uuid.Parse(convID)
 		if err != nil || parsed == uuid.Nil || parsed.String() != convID {
-			return fmt.Errorf("conversation id %q is not a canonical UUID", convID)
+			return fmt.Errorf("conversation id %q is not a canonical UUID or OpenCode session id", convID)
 		}
 	}
 	return nil

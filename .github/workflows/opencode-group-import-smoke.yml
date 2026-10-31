@@ -1,0 +1,106 @@
+# Real-OpenCode proof that a group member landing on OpenCode keeps its
+# conversation. Two isolated tclaude nodes export, dry-run, import and resume a
+# group against the pinned binary; see the script for what passes.
+#
+# Credential-free and model-free: nothing here has a provider key, and no check
+# depends on a model turn. A real failure fails the job. So does an install
+# problem: the script has no skip path, and neither does this file.
+name: OpenCode group import smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/opencode-group-import-smoke.yml'
+      - 'scripts/opencode-group-import-smoke/**'
+      - 'pkg/claude/agent/groups_export.go'
+      - 'pkg/claude/agentd/agent_bundle*.go'
+      - 'pkg/claude/agentd/groups_export*.go'
+      - 'pkg/claude/agentd/opencode_*.go'
+      - 'pkg/claude/common/db/group_export.go'
+      - 'pkg/claude/common/db/relaunch_profiles.go'
+      - 'pkg/claude/common/groupexport/**'
+      - 'pkg/claude/harness/opencode*.go'
+      - 'pkg/claude/harness/transcript_opencode.go'
+      - 'pkg/paf/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: OpenCode group import (real binary)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The same pin as reusable-sandbox-v2-smoke.yml's opencode-ai install.
+      OPENCODE_VERSION: 1.18.6
+      # npm's dist.integrity for opencode-linux-x64@1.18.6, re-read when bumping.
+      OPENCODE_SHA512: Eo2z6FUZcmsOzprI7OIjBXD0tiztAhNjNHhcfX/LtXC3SYmENLRckvYV72ugOMwVz3eqximBoU201I+Ir7cNaA==
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # The job runs a third-party CLI, which has no business seeing a
+          # persisted git credential.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install tmux
+        shell: bash
+        run: |
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          smoke::apt_update
+          sudo apt-get install -y tmux jq
+
+      - name: Install pinned OpenCode
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/opencode"
+          mkdir -p "$dir"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$dir/opencode.tgz" \
+            "https://registry.npmjs.org/opencode-linux-x64/-/opencode-linux-x64-$OPENCODE_VERSION.tgz"
+          actual="$(openssl dgst -sha512 -binary "$dir/opencode.tgz" | base64 -w0)"
+          if [[ "$actual" != "$OPENCODE_SHA512" ]]; then
+            echo "::error::OpenCode tarball checksum mismatch: $actual"
+            exit 1
+          fi
+          tar -xzf "$dir/opencode.tgz" -C "$dir" package/bin/opencode
+          chmod +x "$dir/package/bin/opencode"
+          echo "$dir/package/bin" >> "$GITHUB_PATH"
+
+      - name: Require the pinned version
+        shell: bash
+        run: |
+          version="$(opencode --version)"
+          echo "opencode $version"
+          if [[ "$version" != "$OPENCODE_VERSION" ]]; then
+            echo "::error::expected OpenCode $OPENCODE_VERSION, got $version"
+            exit 1
+          fi
+
+      - name: Import then open
+        shell: bash
+        run: scripts/opencode-group-import-smoke/run.sh "$RUNNER_TEMP/smoke"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: opencode-group-import-smoke
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/smoke/*.txt
+            ${{ runner.temp }}/smoke/*.json
+            ${{ runner.temp }}/smoke/*/agentd.log
