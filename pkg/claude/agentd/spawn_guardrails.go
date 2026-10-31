@@ -158,7 +158,7 @@ func claimSpawnRateSlot(w http.ResponseWriter, spawnerConvID string) bool {
 		if errors.Is(err, db.ErrSpawnRateLimited) {
 			writeError(w, http.StatusTooManyRequests, "rate_limited",
 				fmt.Sprintf("spawn rate limit reached for agent %s: at most %d spawns per %s. "+
-					"A human can raise it via agent.spawn_max_per_hour in ~/.tclaude/config.json.",
+					"A human can raise it via agent.spawn_max_per_hour in ~/.tclaude/data/config.json.",
 					short8(spawnerConvID), SpawnMaxPerWindow, SpawnRateWindow))
 			return false
 		}
@@ -221,7 +221,7 @@ func checkSpawnGroupRestriction(w http.ResponseWriter, g *db.AgentGroup, spawner
 		fmt.Sprintf("agent %s may only spawn into a group it is a member or owner of, "+
 			"and it is neither for group %q. A human can widen this with "+
 			"agent.spawn_allowed_groups, or disable it with "+
-			"agent.spawn_group_restriction, in ~/.tclaude/config.json.",
+			"agent.spawn_group_restriction, in ~/.tclaude/data/config.json.",
 			short8(spawnerConvID), g.Name))
 	return false
 }

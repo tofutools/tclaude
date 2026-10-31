@@ -189,7 +189,7 @@ type profilesDefaultSetParams struct {
 
 func profilesDefaultSetCmd() *cobra.Command {
 	return boa.CmdT[profilesDefaultSetParams]{
-		Use:         "set <name>",
+		Use:         "set",
 		Short:       "Set the global default spawn profile",
 		Long:        "Set the profile whose fields fill spawn parameters left blank by explicit flags, an explicit --profile and the target group's default profile. Gated on profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -349,7 +349,7 @@ type profilesShowParams struct {
 
 func profilesShowCmd() *cobra.Command {
 	return boa.CmdT[profilesShowParams]{
-		Use:         "show <name>",
+		Use:         "show",
 		Short:       "Show one spawn profile in detail",
 		Long:        "Prints a spawn profile's launch shape, identity defaults and birth-time access. With --json, emits the raw wire JSON.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -456,7 +456,7 @@ type profilesEditParams struct {
 
 func profilesEditCmd() *cobra.Command {
 	return boa.CmdT[profilesEditParams]{
-		Use:   "edit <name> --file <path>",
+		Use:   "edit --file <path>",
 		Short: "Replace a spawn profile from a JSON file",
 		Long: "Replaces the named profile wholesale with the JSON in --file (or --file - for stdin) — a full replace, " +
 			"not a field merge, so post the profile's complete desired state. The body's `name` may differ from <name> " +
@@ -535,7 +535,7 @@ type profilesDisableParams struct {
 
 func profilesDisableCmd() *cobra.Command {
 	return boa.CmdT[profilesDisableParams]{
-		Use:         "disable <name> [--reason <text>]",
+		Use:         "disable [--reason <text>]",
 		Short:       "Disable a spawn profile without deleting it",
 		Long:        "Keeps the profile listed, editable, exportable and referenced, but makes every spawn that would use it fail with the stored reason. Omit --reason to reuse the profile's remembered reason. Gated on profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -555,7 +555,7 @@ type profilesEnableParams struct {
 
 func profilesEnableCmd() *cobra.Command {
 	return boa.CmdT[profilesEnableParams]{
-		Use:         "enable <name>",
+		Use:         "enable",
 		Short:       "Re-enable a disabled spawn profile",
 		Long:        "Clears the disabled switch so existing references can spawn with the profile again. The reason is retained for a future disable. Gated on profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -680,7 +680,7 @@ type profilesRmParams struct {
 
 func profilesRmCmd() *cobra.Command {
 	return boa.CmdT[profilesRmParams]{
-		Use:   "rm <name>",
+		Use:   "rm",
 		Short: "Delete a spawn profile",
 		Long: "Removes a spawn profile from the library. A group or the dashboard that names it as a default falls back " +
 			"to blank spawn fields until re-pointed; agents already spawned are untouched. Gated on profiles.manage.",

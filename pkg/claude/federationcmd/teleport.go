@@ -14,8 +14,12 @@ import (
 
 func teleportControlCmd() *cobra.Command {
 	children := []*cobra.Command{}
-	for _, mode := range []string{"status", "on", "off"} {
-		children = append(children, boa.CmdT[struct{}]{Use: mode, Short: "Inspect or set this instance's teleport freeze", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
+	for mode, short := range map[string]string{
+		"status": "Show whether teleports are frozen on this instance",
+		"on":     "Allow teleports on this instance",
+		"off":    "Freeze teleports on this instance",
+	} {
+		children = append(children, boa.CmdT[struct{}]{Use: mode, Short: short, ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
 			os.Exit(runTeleportControl(mode, os.Stdout, os.Stderr))
 		}}.ToCobra())
 	}

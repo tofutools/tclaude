@@ -276,8 +276,14 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		return "", false
 	}
 
+	if GroupSiblingForSlug(perm) == "" {
+		writeError(w, http.StatusForbidden, "permission",
+			fmt.Sprintf("caller is not granted %q for target %s (grant via `tclaude agent permissions grant %s %s`)",
+				perm, short8(targetConv), perm, short8(p.ConvID)))
+		return "", false
+	}
 	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of any group containing it (grant via `tclaude agent permissions grant %s %s`, add caller as owner of a shared group, or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)",
+		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of every active group containing it (grant via `tclaude agent permissions grant %s %s`, or add caller as owner of each of those groups)",
 			perm, short8(targetConv), perm, short8(p.ConvID)))
 	return "", false
 }

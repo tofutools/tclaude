@@ -45,8 +45,9 @@ Flow:
   7. agents: tclaude federation spawn-request <group>@bob --brief "..."
      (needs the groups.members.spawn scoped with peer=bob/group, or agent.spawn scoped with peer=bob; bob's operator approves or denies)
 
-Every federation command is human-only except nodes (node.read), spawn-request, sessions (sessions.read),
-and attach (sessions.watch or sessions.attach). Remote action permissions need the matching peer= scope; audit is an unscoped local read permission.`
+Federation commands are for the operator, except that agents holding the permission may call nodes (node.read), spawn-request,
+sessions (sessions.read), attach (sessions.watch or sessions.attach), share-agent (agent.share), move-agent (agent.move) and job runs (jobs.run).
+Remote action permissions need the matching peer= scope; audit is an unscoped local read permission.`
 
 // Cmd returns `tclaude federation`.
 func Cmd() *cobra.Command {

@@ -55,11 +55,6 @@ tclaude remote-access status             # config + issued devices
 
 Material lives as 0600 files under `~/.tclaude/data/remote-access/`.
 
-!!! note
-    Some CLI help strings still print the legacy `~/.tclaude/remote-access/`
-    path, which is only read as a fallback. The real location is
-    `~/.tclaude/data/remote-access/`.
-
 Client private keys exist only inside the one-time `.p12` you install on the
 device — the host keeps no copy.
 

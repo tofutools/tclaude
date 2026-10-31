@@ -30,7 +30,7 @@ import (
 
 type stopParams struct {
 	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
-	Force    bool   `long:"force" short:"f" help:"Use tmux kill-session instead of soft-stop /exit (drops unsubmitted input)"`
+	Force    bool   `long:"force" short:"f" help:"Skip the soft /exit and run the kill ladder (drops unsubmitted input)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
@@ -39,7 +39,8 @@ func stopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop another agent's tmux session",
 		Long: "Soft-stops the target agent's tmux pane by injecting `/exit`. " +
-			"With --force, falls back to tmux kill-session — last resort, " +
+			"A target that does not exit escalates through pane kill, SIGTERM and SIGKILL. " +
+			"--force skips the soft exit and goes straight to that ladder — last resort, " +
 			"drops any unsubmitted input the agent hadn't sent yet. " +
 			"\n\n" +
 			"Idempotent: agents already offline come back as " +

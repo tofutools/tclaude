@@ -51,10 +51,6 @@ instead of mutating twice.
 Daemon-side configuration lives under `agent.*` keys in
 `~/.tclaude/data/config.json`.
 
-!!! note
-    Some CLI help text still points at `~/.tclaude/config.json`. The real
-    path is `~/.tclaude/data/config.json`.
-
 For the full architectural model — what state lives where and how the
 pieces relate — see [Architecture](architecture.md).
 

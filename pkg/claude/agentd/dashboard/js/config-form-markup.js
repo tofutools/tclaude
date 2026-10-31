@@ -255,7 +255,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     <div class="cfg-main">
 
     <p class="cfg-intro">
-      Editing <code id="cfg-path">~/.tclaude/config.json</code>. Edits stay in this form until you
+      Editing <code id="cfg-path">~/.tclaude/data/config.json</code>. Edits stay in this form until you
       press <strong>Save changes</strong>, which shows a diff before anything is written. Most
       settings apply on next use; ones marked <${Badge} kind="restart" /> apply after an agentd restart.
     </p>
@@ -855,7 +855,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
       <${Group} title="Log rotation">
         <${Setting} title="Max log size" forId="cfg-logrot-maxsize" k="log_rotation.max_size" badges=${['restart']}
-          summary=${html`Size cap for <code>~/.tclaude/output.log</code> before <code>agentd</code> rotates it (<code>10MiB</code>, <code>50m</code>, <code>500k</code>). Empty = built-in default (10 MiB). <code>0</code> disables rotation.`}>
+          summary=${html`Size cap for <code>~/.tclaude/data/output.log</code> before <code>agentd</code> rotates it (<code>10MiB</code>, <code>50m</code>, <code>500k</code>). Empty = built-in default (10 MiB). <code>0</code> disables rotation.`}>
           <${ConfigInput} type="text" id="cfg-logrot-maxsize" placeholder="10MiB" aria-label="Log rotation max size" autocomplete="off" spellcheck="false" style="min-width:110px" />
         </${Setting}>
         <${Setting} title="Keep" k="log_rotation.keep" badges=${['restart']}
