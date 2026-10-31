@@ -1338,3 +1338,17 @@ test('a detached agent keeps its window until the operator brings it back', asyn
   });
   assert.doesNotMatch(view.container.textContent, /open in its own window/);
 });
+
+test('the + menu opens with the cursor in its search field, and Escape goes back to +', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const plus = view.container.querySelector('.companion-add');
+  await harness.act(async () => { plus.click(); await new Promise((r) => setTimeout(r, 0)); });
+  const filter = view.container.querySelector('.companion-menu-filter');
+  assert.equal(harness.document.activeElement, filter);
+  await harness.act(() => harness.fireEvent(filter, 'keydown', { key: 'Escape' }));
+  assert.equal(view.container.querySelector('.companion-menu'), null);
+  assert.equal(harness.document.activeElement, plus);
+});

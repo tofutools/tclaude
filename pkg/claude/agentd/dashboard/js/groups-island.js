@@ -12,6 +12,7 @@ import {
 } from './groups-focus.js';
 import { GroupsProcessesFocus } from './groups-processes.js';
 import { processContext } from './process-context.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -82,22 +83,21 @@ export function GroupsControls({ state, actions }) {
       state.viewOpen.value = false;
       if (focusButton) buttonRef.current?.focus();
     };
-    const onClick = (event) => {
-      if (!menuRef.current?.parentElement?.contains(event.target)) close();
-    };
     const onKeyDown = (event) => {
       if (event.key !== 'Escape' || !state.viewOpen.value) return;
       event.preventDefault();
       close(true);
     };
-    document.addEventListener('click', onClick);
     document.addEventListener('keydown', onKeyDown);
     return () => {
       clearTimeout(refreshTimer.current);
-      document.removeEventListener('click', onClick);
       document.removeEventListener('keydown', onKeyDown);
     };
   }, []);
+
+  useDismissablePopover(() => menuRef.current?.parentElement, state.viewOpen.value, () => {
+    state.viewOpen.value = false;
+  }, { escape: false });
 
   // The match count and × live inside the search box, shown only while
   // filtering. The count's live region stays mounted (hidden, empty) so the

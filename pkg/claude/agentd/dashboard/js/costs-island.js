@@ -12,6 +12,7 @@ import {
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 import { fromPath } from './nav-history-core.js';
 import { shellToast } from './shell-state.js';
+import { watchPopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -186,14 +187,26 @@ export function positionCostFilter(menu) {
   popover.style.visibility = 'visible';
 }
 
+// watchedFilters maps each open filter to the end of its watchPopover. The
+// <details> keeps its own open state, so the toggle event starts and ends it.
+const watchedFilters = new Map();
+
+function unwatchCostFilter(menu) {
+  watchedFilters.get(menu)?.();
+  watchedFilters.delete(menu);
+}
+
 function toggleCostFilter(event) {
   const menu = event.currentTarget;
   const popover = menu.querySelector(':scope > .cost-filter-popover');
+  unwatchCostFilter(menu);
   if (!menu.open && !menu.hasAttribute('open')) {
     if (popover) popover.style.visibility = 'hidden';
     return;
   }
+  watchedFilters.set(menu, watchPopover({ roots: () => menu, close: () => { menu.open = false; } }));
   positionCostFilter(menu);
+  menu.querySelector(':scope > .cost-filter-popover input[type="search"]')?.focus({ preventScroll: true });
 }
 
 function useCostFilterPosition() {
@@ -294,20 +307,12 @@ function BreakdownFilter({ state, current }) {
 
 function CostFilters({ state, current }) {
   useEffect(() => {
-    const close = (event) => {
-      if (event.type === 'pointerdown' && event.target.closest?.('.cost-filter-menu')) return;
-      document.querySelectorAll('.cost-filter-menu[open]').forEach((menu) => { menu.open = false; });
-    };
-    const escape = (event) => { if (event.key === 'Escape') close(event); };
     const reposition = () => document.querySelectorAll('.cost-filter-menu[open]')
       .forEach((menu) => positionCostFilter(menu));
-    document.addEventListener('pointerdown', close);
-    document.addEventListener('keydown', escape);
     window.addEventListener?.('resize', reposition);
     window.addEventListener?.('scroll', reposition, true);
     return () => {
-      document.removeEventListener('pointerdown', close);
-      document.removeEventListener('keydown', escape);
+      [...watchedFilters.keys()].forEach(unwatchCostFilter);
       window.removeEventListener?.('resize', reposition);
       window.removeEventListener?.('scroll', reposition, true);
     };

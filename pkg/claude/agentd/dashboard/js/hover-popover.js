@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'preact/hooks';
 
 // The one place the dashboard's hover popovers take their close timing from,
-// and the registry that keeps at most one of them on screen.
+// the registry that keeps at most one of them on screen, and the close rule of
+// the popovers a click opens (watchPopover).
 //
 // Every hover popover outlives the pointer leaving it by HOVER_CLOSE_MS, so a
 // cursor that slips off the trigger or the panel for a moment does not drop
@@ -60,4 +61,130 @@ export function useLeaveGrace(onExpire) {
   };
   useEffect(() => cancel, []);
   return { schedule, cancel };
+}
+
+// isTextField is a control that takes typing. A checkbox or a range slider
+// holds nothing that hover-away could lose.
+function isTextField(el) {
+  if (el?.isContentEditable) return true;
+  const tag = el?.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  return tag === 'INPUT' && !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(el.type || '');
+}
+
+// holdsText says a popover has text in it that closing would throw away.
+export function holdsText(root) {
+  const fields = root?.querySelectorAll?.('input, textarea') || [];
+  return [...fields].some((field) => isTextField(field) && field.value);
+}
+
+// Open watched popovers, oldest first: Escape takes the newest only, so it
+// closes one layer of a popover opened from inside another.
+const watched = [];
+
+// watchPopover is the one close rule for popovers opened by a click: a press
+// outside closes at once, Escape closes, and the pointer staying away for
+// HOVER_CLOSE_MS closes. Text in the popover, a field the operator is using, or
+// hold() keeps it through hover-away, and the check repeats while the pointer
+// is away, so it closes once the reason ends. A press or Escape still closes.
+//
+// A cog menu focuses its filter as it opens, which is why focus alone does not
+// count: the field counts once the operator pressed it or used the keyboard.
+//
+// roots() gives the elements that are the popover, usually one holding both the
+// trigger and the panel; a pointer moving between separate ones is not away.
+// close(why) gets 'outside', 'escape' or 'away'. keep(event) leaves a press or
+// a key alone, for a confirmation that sits above the popover. escape: false
+// is for a menu whose Escape does something first, like clearing its filter.
+// The returned function stops watching.
+export function watchPopover({ roots, close, hold = null, keep = null, escape = true, doc = null }) {
+  const parts = () => [roots()].flat().filter(Boolean);
+  const within = (target) => parts().some((root) => root.contains?.(target));
+  const owner = doc || parts()[0]?.ownerDocument || globalThis.document;
+  const entry = {};
+  let timer = 0;
+  let away = false;
+  let pressed = false;
+  let engaged = false;
+  const cancel = () => {
+    if (timer) globalThis.clearTimeout(timer);
+    timer = 0;
+  };
+  const held = () => {
+    if (pressed || hold?.()) return true;
+    const active = owner?.activeElement;
+    return (engaged && isTextField(active) && within(active)) || parts().some(holdsText);
+  };
+  const schedule = () => {
+    cancel();
+    timer = globalThis.setTimeout(() => {
+      timer = 0;
+      if (!away) return;
+      if (held()) schedule();
+      else close('away');
+    }, HOVER_CLOSE_MS);
+  };
+  const onLeave = () => { away = true; schedule(); };
+  const onEnter = () => { away = false; cancel(); };
+  const onPointerDown = (event) => {
+    if (keep?.(event)) return;
+    if (within(event.target)) {
+      pressed = true;
+      if (isTextField(event.target)) engaged = true;
+    } else {
+      close('outside');
+    }
+  };
+  // A drag that starts inside can end anywhere, a slider's or a selection's.
+  const onPointerUp = () => { pressed = false; };
+  const onKeyDown = (event) => {
+    if (within(event.target)) engaged = true;
+    if (!escape || event.key !== 'Escape' || watched.at(-1) !== entry || keep?.(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    close('escape');
+  };
+  const listening = parts();
+  for (const root of listening) {
+    root.addEventListener?.('mouseleave', onLeave);
+    root.addEventListener?.('mouseenter', onEnter);
+  }
+  owner?.addEventListener?.('pointerdown', onPointerDown, true);
+  owner?.addEventListener?.('pointerup', onPointerUp, true);
+  owner?.addEventListener?.('keydown', onKeyDown, true);
+  watched.push(entry);
+  return () => {
+    cancel();
+    watched.splice(watched.indexOf(entry), 1);
+    for (const root of listening) {
+      root.removeEventListener?.('mouseleave', onLeave);
+      root.removeEventListener?.('mouseenter', onEnter);
+    }
+    owner?.removeEventListener?.('pointerdown', onPointerDown, true);
+    owner?.removeEventListener?.('pointerup', onPointerUp, true);
+    owner?.removeEventListener?.('keydown', onKeyDown, true);
+  };
+}
+
+// useDismissablePopover runs watchPopover while open is set. A changed open
+// value is a different popover, so a keyed menu moves the watch along with it.
+// roots is a ref, a list of refs, or a function returning elements.
+export function useDismissablePopover(roots, open, close, options = {}) {
+  const latest = useRef(null);
+  latest.current = { roots, close, options };
+  useEffect(() => {
+    if (!open) return undefined;
+    const resolve = () => {
+      const given = latest.current.roots;
+      if (typeof given === 'function') return given();
+      return [given].flat().map((ref) => ref?.current);
+    };
+    return watchPopover({
+      ...options,
+      roots: resolve,
+      close: (why) => latest.current.close(why),
+      hold: () => !!latest.current.options.hold?.(),
+      keep: (event) => !!latest.current.options.keep?.(event),
+    });
+  }, [open]);
 }

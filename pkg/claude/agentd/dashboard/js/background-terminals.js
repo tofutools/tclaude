@@ -33,7 +33,7 @@ import { terminalTabStatus } from './terminal-tab-status.js';
 import { tickedNodes } from './fleet-scope.js';
 import { remoteSessionAgents } from './remote-session-status.js';
 import { LockReason } from './lock-reason.js';
-import { useExclusivePopover, useLeaveGrace } from './hover-popover.js';
+import { useDismissablePopover, useExclusivePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -397,29 +397,17 @@ function BackgroundIcon() {
 }
 
 // BackgroundTerminalsChip is the right-aligned counter beside the tab strip.
-// Hover peeks the breakdown; a click pins it open so the attach buttons are
-// reachable without holding the pointer still.
+// Hover peeks the breakdown; a click opens it too. Either way it goes when the
+// pointer stays away, on a press outside, or on Escape.
 export function BackgroundTerminalsChip({ rows, snapshot = null }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
   const count = rows.length;
 
-  const leave = useLeaveGrace(() => setOpen(false));
-  const close = () => { leave.cancel(); setOpen(false); setPinned(false); };
-  const scheduleClose = () => { if (!pinned) leave.schedule(); };
+  const close = () => { setOpen(false); setPinned(false); };
   useExclusivePopover(rootRef, open, close, pinned);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (event) => { if (!rootRef.current?.contains(event.target)) close(); };
-    const onKey = (event) => { if (event.key === 'Escape') close(); };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
+  useDismissablePopover(rootRef, open, close);
   useEffect(() => { if (!count) close(); }, [count]);
   if (!count) return null;
 
@@ -437,7 +425,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
 
   return html`
     <div ref=${rootRef} class=${`mux-bg${open ? ' open' : ''}`}
-      onMouseEnter=${() => { leave.cancel(); setOpen(true); }} onMouseLeave=${scheduleClose}>
+      onMouseEnter=${() => setOpen(true)}>
       <button type="button" class="mux-bg-trigger" aria-expanded=${open ? 'true' : 'false'} aria-haspopup="dialog"
         aria-label=${`${count} tclaude ${noun} running in the background without a terminal`}
         title=${`${count} tclaude ${noun} still running with no terminal attached`}

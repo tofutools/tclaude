@@ -6,6 +6,7 @@ import { LockReason } from './lock-reason.js';
 import { NodeSelect } from './node-select.js';
 import { Pager } from './pager.js';
 import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, targetTitle, verbClass } from './audit-model.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h); const REPOLL_MS = 30000;
 
@@ -36,26 +37,18 @@ function SpawnDetails({ entry }) {
     setOpen(false);
     if (restoreFocus) triggerRef.current?.focus();
   };
-  const closeOnEscape = (event) => {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); }
-  };
   useEffect(() => {
-    if (!open || !details) return undefined;
-    closeRef.current?.focus();
-    const closeOnOutsidePointer = (event) => {
-      if (!popoverRef.current?.contains(event.target) && !triggerRef.current?.contains(event.target)) dismiss(false);
-    };
-    document.addEventListener('pointerdown', closeOnOutsidePointer);
-    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer);
+    if (open && details) closeRef.current?.focus();
   }, [open, details]);
+  useDismissablePopover([popoverRef, triggerRef], open && !!details, (why) => dismiss(why === 'escape'));
   if (!details) return null;
   return html`<span class="audit-spawn-info">
     <button type="button" class="spawn-field-help-trigger audit-spawn-info-trigger"
       ref=${triggerRef}
       aria-label="Show spawn request, resolved parameters, and response"
       aria-controls=${open ? panelID : undefined} aria-expanded=${open ? 'true' : 'false'} title="Show spawn request, resolved parameters, and response"
-      onKeyDown=${closeOnEscape} onClick=${() => open ? dismiss() : setOpen(true)}>?</button>
-    ${open && html`<div id=${panelID} ref=${popoverRef} class="audit-spawn-popover" role="dialog" aria-label="Spawn details" tabIndex="-1" onKeyDown=${closeOnEscape}>
+      onClick=${() => open ? dismiss() : setOpen(true)}>?</button>
+    ${open && html`<div id=${panelID} ref=${popoverRef} class="audit-spawn-popover" role="dialog" aria-label="Spawn details" tabIndex="-1">
       <div class="audit-spawn-popover-head"><strong>Spawn details</strong><button ref=${closeRef} type="button" class="audit-spawn-popover-close" aria-label="Close spawn details" title="Close" onClick=${() => dismiss()}>×</button></div>
       ${details.snapshot_truncated && html`<div class="audit-spawn-popover-note">The request snapshot exceeded the audit size limit; the resolved values and response are retained where possible.</div>`}
       <section><h4>Request input</h4><pre>${prettyAuditValue(details.input, details.input_raw)}</pre></section>
