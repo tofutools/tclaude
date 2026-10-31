@@ -1061,6 +1061,12 @@ lock or changing the recorded OS-sandbox verdict. The same goes for any other
 degradation notice with that effect, such as `operator_reduced_network_deny_override`
 for omitted deny entries; only a `resource_limits` notice leaves the lock.
 
+A sandbox that is on but enforces a rule more loosely than configured, recorded
+as a notice with effect `enforced_wider`, gets the same warning badge. Its hover
+says `PARTLY ENFORCED`, confirms the sandbox is on and names what is loose. This
+is display only: the launch and its enforcement are unchanged, and the badge
+keeps the click that temporarily disables the sandbox.
+
 ### An untrusted `bwrap`
 
 **Symptom.** Every launch with tclaude’s sandbox refuses with `tclaude’s sandbox could not
