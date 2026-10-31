@@ -1607,3 +1607,48 @@ func TestBackfillOpenCodeCostExcludesInheritedHistory(t *testing.T) {
 		})
 	}
 }
+
+// OpenCode reprojects a conversation's whole history on every flush. Its old
+// days must come out bit for bit the same each time, or a live conversation
+// older than the cost read limit spends the stored opening on every flush and
+// default reads fall back to the full history.
+func TestOpenCodeVirtualCostHistoryIsStableAcrossFlushes(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, convID = "oc-stable", "ses-stable"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":0.37,"output":1.13,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(catalog.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: catalog.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	now := time.Now()
+	old := now.AddDate(0, 0, -db.CostReadLimitDays-20)
+	for i := range 60 {
+		applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+			MessageID: fmt.Sprintf("msg-%02d", i), ProviderID: "openai", ModelID: "gpt-a",
+			ReportedCost: float64ptr(0), Input: int64(1000 + i*137), Output: int64(100 + i*53),
+			CreatedAt: old.Add(time.Duration(i) * time.Minute),
+		})
+	}
+	require.NoError(t, db.RefreshCostOpening(now))
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	for i := range 30 {
+		applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+			MessageID: fmt.Sprintf("new-%02d", i), ProviderID: "openai", ModelID: "gpt-a",
+			ReportedCost: float64ptr(0), Input: 500, Output: 50, CreatedAt: now,
+		})
+		var stale bool
+		require.NoError(t, d.QueryRow(`SELECT stale FROM cost_opening_meta`).Scan(&stale))
+		require.False(t, stale, "flush %d rewrote an old day", i)
+	}
+}

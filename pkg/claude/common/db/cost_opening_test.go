@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"strings"
 	"testing"
@@ -417,4 +418,43 @@ func TestCostOpening_RollsWithTheLimit(t *testing.T) {
 
 func TestCostOpeningDay_CoversTheLongestDefaultPeriod(t *testing.T) {
 	require.Greater(t, CostReadLimitDays, 31+1, "a month to date plus the day of margin must fit the limit")
+}
+
+// The rewrite guard compares the exact stored value: a difference in the last
+// bit is a change, because the opening holds the exact baseline.
+func TestCostOpening_RewriteGuardSeesTheLastBit(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	require.NoError(t, SaveSession(&SessionRow{ID: "sess-h", TmuxSession: "tmux-h", ConvID: "conv-h", Harness: "codex", Cwd: "/tmp", Status: "idle"}))
+	observed := costTestNow(0)
+	cost := 0.1 + 0.2
+	snapshots := []VirtualCostDailySnapshot{{Day: costTestDay(10), CostUSD: cost, UpdatedAt: observed, Model: "m"}}
+	require.NoError(t, ReplaceSessionVirtualCostHistory("sess-h", cost, snapshots))
+	require.NoError(t, RefreshCostOpening(costTestNow(60)))
+
+	require.NoError(t, ReplaceSessionVirtualCostHistory("sess-h", cost, snapshots))
+	assert.False(t, costOpeningStale(t, d))
+	snapshots[0].CostUSD = math.Nextafter(cost, 1)
+	require.NoError(t, ReplaceSessionVirtualCostHistory("sess-h", cost, snapshots))
+	assert.True(t, costOpeningStale(t, d))
+}
+
+// A window read counts where it was served from.
+func TestCostReadCounts(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	seedRandomCostLedger(t, d, 37, 100)
+	TakeCostReadCounts()
+	_, err = CostLedgerWindow(costTestDay(70), "", false)
+	require.NoError(t, err)
+	assert.Equal(t, CostReadCounts{FullHistory: 1}, TakeCostReadCounts())
+
+	require.NoError(t, RefreshCostOpening(costTestNow(60)))
+	_, err = CostLedgerWindow(costTestDay(70), "", false)
+	require.NoError(t, err)
+	_, err = CostLedgerWindow(costTestDay(30), "", false)
+	require.NoError(t, err)
+	assert.Equal(t, CostReadCounts{FromOpening: 1, OlderRange: 1}, TakeCostReadCounts())
 }

@@ -321,10 +321,13 @@ func (st *usageRulesState) spendRows() (rows []db.CostDailyRow, olderSpend []str
 	for _, l := range st.limits {
 		measure([]usagerules.Rule{l.Rule})
 	}
-	for _, p := range st.profiles {
-		measure(p.Rules)
+	// Only an assigned profile is ever evaluated.
+	for _, a := range st.assignments {
+		if p := st.profiles[a.ProfileID]; p != nil {
+			measure(p.Rules)
+		}
 	}
-	if !lifetime {
+	if !lifetime && db.CostOpeningServes(earliest) {
 		read, err := countedCostRowsForWindow(earliest, "", false)
 		if err != nil {
 			return nil, nil, err
@@ -335,6 +338,9 @@ func (st *usageRulesState) spendRows() (rows []db.CostDailyRow, olderSpend []str
 			}
 			slog.Warn("cost opening balance unusable; reading the full cost history", "error", err)
 		}
+	}
+	if !lifetime {
+		requestCostOpeningRefresh()
 	}
 	rows, _, _, err = countedCostDailyRows()
 	return rows, nil, err

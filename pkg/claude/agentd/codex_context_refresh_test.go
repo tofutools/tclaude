@@ -969,3 +969,69 @@ func appendCodexRefreshEnvelopeAt(t *testing.T, path string, at time.Time, typ s
 	require.NoError(t, writeErr)
 	require.NoError(t, file.Close())
 }
+
+// A live Codex conversation older than the cost read limit rewrites its whole
+// history on every flush. Those flushes, and a daemon restart that rebuilds the
+// follower, must leave the old days as they were, or the stored cost opening is
+// spent on every flush and default reads fall back to the full history.
+func TestCodexHistoryFlushesKeepTheCostOpening(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+	const (
+		sessionID = "codex-old-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354f9"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	now := time.Now()
+	old := now.AddDate(0, 0, -db.CostReadLimitDays-20)
+	appendCodexRefreshEnvelopeAt(t, path, old, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshEnvelopeAt(t, path, old, "turn_context", map[string]any{"model": "gpt-5.6-terra", "effort": "high"})
+	tokenCount := func(at time.Time, total int64) {
+		usage := map[string]any{"input_tokens": total, "output_tokens": 100, "total_tokens": total + 100}
+		appendCodexRefreshEnvelopeAt(t, path, at, "event_msg", map[string]any{
+			"type": "token_count",
+			"info": map[string]any{"total_token_usage": usage, "last_token_usage": usage, "model_context_window": 200000},
+		})
+	}
+	tokenCount(old, 1000)
+	tokenCount(old.Add(time.Minute), 3000)
+
+	sess := &db.SessionRow{ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: now}
+	require.NoError(t, db.SaveSession(sess))
+	refresh := func() {
+		time.Sleep(codexContextRefreshMinInterval + 50*time.Millisecond)
+		refreshCodexContextSnapshotOnRead(sess, true)
+	}
+	refresh()
+	rows, err := db.AllCostDailyRows()
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "the old day is recorded")
+	require.Positive(t, rows[0].VirtualCostUSD)
+	require.NoError(t, db.RefreshCostOpening(now))
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	stale := func() (out bool) {
+		require.NoError(t, d.QueryRow(`SELECT stale FROM cost_opening_meta`).Scan(&out))
+		return out
+	}
+	total := int64(3000)
+	for i := range 4 {
+		total += 2000
+		tokenCount(now.Add(time.Duration(i)*time.Second), total)
+		refresh()
+		assert.False(t, stale(), "flush %d", i)
+		if i == 1 {
+			resetCodexContextRefreshStateForTest() // A daemon restart.
+		}
+	}
+	rows, err = db.AllCostDailyRows()
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "today's flushes reached the ledger")
+	assert.Greater(t, rows[1].VirtualCostUSD, rows[0].VirtualCostUSD)
+}
