@@ -631,7 +631,9 @@ test('sudo on a Steward stays instance-only unless the operator stores it', asyn
   const expires = new Date(Date.now() + 600000).toISOString();
   const held = [{ id: 7, agent_id: 'agt_s', slug: 'fleet.read', expires_at: expires, carried: true }];
   const { host, mounted } = await mountSudo(harness, actions, stewardSnapshot(held));
-  assert.match(host.querySelector('.sudo-active-row').textContent, /all future Stewards/);
+  assert.match(host.querySelector('.sudo-active-row').textContent, /all future Stewards: revoking ends it for them too/);
+  assert.match(host.querySelector('.sudo-revoke').title, /all future Stewards/);
+  assert.match(host.querySelector('#sudo-revoke-all').title, /stored for future Stewards/);
   await pickSudo(harness, host, 'agent.stop');
   await pickSudo(harness, host, 'node.exec');
   const carry = sudoRow(host, 'node.exec').querySelector('.perm-carry');
