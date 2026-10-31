@@ -4,7 +4,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { approvalSummary, timeLeft } from './companion-model.js';
+import { approvalSummary, stewardSummonBody, timeLeft } from './companion-model.js';
 
 const html = htm.bind(h);
 
@@ -57,8 +57,68 @@ export function StewardAccessControls({ agent, openPermissions, openSudo }) {
       onClick=${() => openPermissions(agent.convId, agent.name)}>🛡</button>`}
     ${openSudo && html`<button type="button" class="companion-steward-sudo" disabled=${!agent.online}
       aria-label=${`Grant ${agent.name} sudo`} title=${agent.online ? 'Sudo: grant a time-bounded elevation' : offline}
-      onClick=${() => openSudo(agent.agentId)}>sudo</button>`}
+      onClick=${() => openSudo(agent.agentId, agent.name)}>sudo</button>`}
   `;
+}
+
+// shutDownAgent retires an agent, with the default clean exit. For a Steward
+// that is the whole lifecycle: its session ends, its grants and sudo go with it
+// so nothing it held lingers, and the next summon starts a fresh one because a
+// retired agent is never reused. Its conversation stays in history.
+export async function shutDownAgent(fetchImpl, agent) {
+  const response = await fetchImpl(`/api/agents/${encodeURIComponent(agent.agentId)}/retire`, { method: 'POST', credentials: 'same-origin' });
+  if (!response.ok) {
+    const text = (await response.text?.()) || '';
+    let message = text;
+    try { message = JSON.parse(text).message || text; } catch (_) { /* plain text error */ }
+    throw new Error(message || `${response.status}`);
+  }
+}
+
+// requestStewardSummon asks for a Steward, from any page. The caller shows it.
+export async function requestStewardSummon(fetchImpl) {
+  const response = await fetchImpl('/api/scribe', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(stewardSummonBody()),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+  return result;
+}
+
+// StewardShutdown is the shut-down control of a Steward's title bar and of its
+// detached window. It asks first, inline: this page and the detached one share
+// no modal host, and the action ends a running conversation.
+export function StewardShutdown({ agent, fetchImpl, onDown }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function confirm() {
+    setBusy(true);
+    setError('');
+    try {
+      await shutDownAgent(fetchImpl, agent);
+      setAsking(false);
+      onDown(agent);
+    } catch (cause) {
+      setError(`Could not shut down: ${cause?.message || cause}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return html`<span class="steward-shutdown">
+    <button type="button" class="steward-shutdown-open" aria-label=${`Shut down ${agent.name}`} aria-expanded=${asking ? 'true' : 'false'}
+      title="Shut down: end this conversation" onClick=${() => { setError(''); setAsking((value) => !value); }}>⏻</button>
+    ${asking && html`<div class="steward-shutdown-confirm" role="alertdialog" aria-label=${`Shut down ${agent.name}?`}
+      onKeyDown=${(event) => { if (event.key === 'Escape') setAsking(false); }}>
+      <p><b>Shut down ${agent.name}?</b> This ends its conversation and any access it was given. You can start a new one afterwards.</p>
+      ${error && html`<p class="steward-shutdown-error" role="alert">${error}</p>`}
+      <div class="steward-shutdown-actions">
+        <button type="button" disabled=${busy} onClick=${() => setAsking(false)}>Cancel</button>
+        <button type="button" class="danger" disabled=${busy} onClick=${confirm}>${busy ? 'Shutting down…' : 'Shut down'}</button>
+      </div>
+    </div>`}
+  </span>`;
 }
 
 // ElevatedBand says an agent holds more than its usual access and ends it in
