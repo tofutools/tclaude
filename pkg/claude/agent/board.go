@@ -38,14 +38,14 @@ func boardCmd() *cobra.Command {
 			"Reading (ls, show, snapshot) needs boards.read; create and every change need boards.write. " +
 			"Changing a board makes you a participant, so the operator's board activity reaches you as mail.\n\n" +
 			"Typical loop: `board show <id>` to read it, `board snapshot <id> -o board.png` to see the operator's last " +
-			"rendering, `board add` / `move` / `text` / `rm` to draw, then `board show <id> --since <version>` for " +
+			"rendering, `board add` / `move` / `text` / `connect` / `rm` to draw, then `board show <id> --since <version>` for " +
 			"what changed since.\n\n" +
 			"Your first change starts a board session, which keeps the board in the operator's Background terminals " +
 			"menu with no tab open, until `board close`. `board open` restarts one when you come back to a board.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			boardLsCmd(), boardShowCmd(), boardSnapshotCmd(), boardCreateCmd(), boardOpenCmd(), boardCloseCmd(),
-			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardLayoutCmd(), boardFromProcessCmd(), boardFromFleetCmd(), boardFleetChangesCmd(),
+			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardConnectCmd(), boardLayoutCmd(), boardFromProcessCmd(), boardFromFleetCmd(), boardFleetChangesCmd(),
 		},
 	}.ToCobra()
 }
@@ -91,25 +91,30 @@ type boardPresence struct {
 	} `json:"operator_view"`
 }
 
+// boardViewBinding is one attached end of a line: an element, and the snap
+// point on it when one was chosen.
+type boardViewBinding struct {
+	ElementID  string    `json:"elementId"`
+	FixedPoint []float64 `json:"fixedPoint"`
+}
+
 // boardElementView is the part of an element the CLI reads.
 type boardElementView struct {
-	ID           string      `json:"id"`
-	Type         string      `json:"type"`
-	X            float64     `json:"x"`
-	Y            float64     `json:"y"`
-	Width        float64     `json:"width"`
-	Height       float64     `json:"height"`
-	Text         string      `json:"text"`
-	Points       [][]float64 `json:"points"`
-	Version      int64       `json:"version"`
-	IsDeleted    bool        `json:"isDeleted"`
-	StartBinding *struct {
-		ElementID string `json:"elementId"`
-	} `json:"startBinding"`
-	EndBinding *struct {
-		ElementID string `json:"elementId"`
-	} `json:"endBinding"`
-	CustomData *struct {
+	ID           string            `json:"id"`
+	Type         string            `json:"type"`
+	X            float64           `json:"x"`
+	Y            float64           `json:"y"`
+	Width        float64           `json:"width"`
+	Height       float64           `json:"height"`
+	Text         string            `json:"text"`
+	ContainerID  string            `json:"containerId"`
+	Points       [][]float64       `json:"points"`
+	Routing      string            `json:"routing"`
+	Version      int64             `json:"version"`
+	IsDeleted    bool              `json:"isDeleted"`
+	StartBinding *boardViewBinding `json:"startBinding"`
+	EndBinding   *boardViewBinding `json:"endBinding"`
+	CustomData   *struct {
 		Author string `json:"author"`
 	} `json:"customData"`
 }
@@ -244,7 +249,7 @@ func boardShowCmd() *cobra.Command {
 		Use:   "show <board>",
 		Short: "Show a board's elements",
 		Long: "Prints the board version and one line per live element: type, id, rounded x,y,w,h, a text excerpt, " +
-			"and for arrows their bound endpoints. With --since N only the elements changed after version N are " +
+			"for arrows and lines their attached ends (element:side) and routing, and for attached text its container. With --since N only the elements changed after version N are " +
 			"listed, deletions included. Remember the printed version and pass it as --since next time. " +
 			"With --view only the elements the operator currently has on screen are listed (\"this\", \"here\").",
 		Args:        cobra.ExactArgs(1),
@@ -394,14 +399,13 @@ func formatBoardElement(e boardElementView) string {
 	line := fmt.Sprintf("%-9s %s  x=%d y=%d w=%d h=%d", e.Type, e.ID,
 		int64(math.Round(e.X)), int64(math.Round(e.Y)), int64(math.Round(e.Width)), int64(math.Round(e.Height)))
 	if e.StartBinding != nil || e.EndBinding != nil {
-		from, to := "-", "-"
-		if e.StartBinding != nil {
-			from = e.StartBinding.ElementID
-		}
-		if e.EndBinding != nil {
-			to = e.EndBinding.ElementID
-		}
-		line += fmt.Sprintf("  %s -> %s", from, to)
+		line += fmt.Sprintf("  %s -> %s", describeBoardEnd(e.StartBinding), describeBoardEnd(e.EndBinding))
+	}
+	if e.Routing != "" && e.Routing != "straight" {
+		line += "  " + e.Routing
+	}
+	if e.ContainerID != "" {
+		line += "  on " + e.ContainerID
 	}
 	if t := strings.TrimSpace(e.Text); t != "" {
 		t = strings.Join(strings.Fields(t), " ")
@@ -581,12 +585,16 @@ type boardAddParams struct {
 	Y     *float64 `long:"y" help:"Top edge (default 0)"`
 	W     *float64 `long:"w" help:"Width (default 160 for shapes; arrows and lines: the x extent)"`
 	H     *float64 `long:"h" help:"Height (default 80 for shapes; arrows and lines: the y extent)"`
-	Text  string   `long:"text" optional:"true" help:"Text (required for text elements); on a shape or arrow it adds a centred text label element"`
+	Text  string   `long:"text" optional:"true" help:"Text (required for text elements); on a shape, arrow or line it attaches centred text"`
 	Color string   `long:"color" optional:"true" help:"Stroke color: #rrggbb, #rgb or transparent (default #1e1e1e)"`
 	Bg    string   `long:"bg" optional:"true" help:"Fill color: #rrggbb, #rgb or transparent (default transparent)"`
-	From  string   `long:"from" optional:"true" help:"Arrow: element id to start from (points are computed between the element centers)"`
-	To    string   `long:"to" optional:"true" help:"Arrow: element id to point at"`
+	From  string   `long:"from" optional:"true" help:"Arrow or line: element id to start from (points are computed between the element centers)"`
+	To    string   `long:"to" optional:"true" help:"Arrow or line: element id to end at"`
 	ID    string   `long:"id" optional:"true" help:"Element id (default: generated)"`
+
+	FromSide string `long:"from-side" optional:"true" help:"With --from: snap point to attach to: top, right, bottom or left (default: wherever the line meets it)"`
+	ToSide   string `long:"to-side" optional:"true" help:"With --to: snap point to attach to: top, right, bottom or left"`
+	Routing  string `long:"routing" optional:"true" help:"Arrow or line: straight (default), elbow or curved; with --link, the linking arrow"`
 
 	RightOf string   `long:"right-of" optional:"true" help:"Place the shape to the right of this element id (centred on it), instead of --x/--y"`
 	LeftOf  string   `long:"left-of" optional:"true" help:"Place the shape to the left of this element id"`
@@ -603,13 +611,15 @@ func boardAddCmd() *cobra.Command {
 		Use:   "add <board> <rectangle|ellipse|diamond|text|arrow|line>",
 		Short: "Add an element to a board",
 		Long: "Adds one element and prints its id. Shapes take --x --y --w --h; text takes --text (and --x --y); " +
-			"--text on a shape or arrow adds a second, centred text element as its label (move it with the shape); " +
-			"an arrow either connects two elements (--from and --to, by element id) or spans --x --y by --w --h.\n\n" +
+			"--text on a shape, arrow or line attaches centred text, a second element that stays on it; " +
+			"an arrow or line either connects two elements (--from and --to, by element id, with --from-side and --to-side " +
+			"for a snap point) or spans --x --y by --w --h, and --routing picks straight, elbow or curved.\n\n" +
 			"Place a shape relative to another with --right-of, --left-of, --below or --above <id> (centred on it, --gap " +
 			"apart); --link also draws an arrow from that element to the new one, so a flow is built step by step.\n\n" +
 			"Example: tclaude agent board add plan rectangle --x 100 --y 80 --text 'API' --id api\n" +
 			"         tclaude agent board add plan rectangle --right-of api --link --text 'DB' --id db\n" +
-			"         tclaude agent board add plan arrow --from <idA> --to <idB>",
+			"         tclaude agent board add plan arrow --from <idA> --to <idB>\n" +
+			"         tclaude agent board add plan arrow --from <idA> --from-side right --to <idB> --to-side left --routing elbow",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardAddParams, _ *cobra.Command, args []string) {
@@ -634,13 +644,28 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		fmt.Fprintln(stderr, "Error: a text element needs --text")
 		return rcInvalidArg
 	}
-	if (p.From != "" || p.To != "") && typ != "arrow" {
-		fmt.Fprintln(stderr, "Error: --from and --to only apply to arrows")
+	isLine := typ == "arrow" || typ == "line"
+	if (p.From != "" || p.To != "") && !isLine {
+		fmt.Fprintln(stderr, "Error: --from and --to only apply to arrows and lines")
 		return rcInvalidArg
 	}
 	if (p.From == "") != (p.To == "") {
 		fmt.Fprintln(stderr, "Error: give both --from and --to")
 		return rcInvalidArg
+	}
+	if (p.FromSide != "" && p.From == "") || (p.ToSide != "" && p.To == "") {
+		fmt.Fprintln(stderr, "Error: --from-side needs --from, and --to-side needs --to")
+		return rcInvalidArg
+	}
+	if p.Routing != "" && !isLine && !p.Link {
+		fmt.Fprintln(stderr, "Error: --routing only applies to arrows and lines, or with --link")
+		return rcInvalidArg
+	}
+	for _, err := range []error{checkBoardRouting(p.Routing), checkBoardSide("--from-side", p.FromSide), checkBoardSide("--to-side", p.ToSide)} {
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcInvalidArg
+		}
 	}
 	relDir, relRef, err := relativeTarget(p)
 	if err != nil {
@@ -694,8 +719,11 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		}
 		x, y = placeRelative(ref, w, h, relDir, floatOr(p.Gap, boardDefaultGap))
 	}
-	// A shape's or arrow's label is its own text element centred on it, the
-	// way the board editor reads and draws labels.
+	if isLine && p.Routing != "" {
+		e["routing"] = p.Routing
+	}
+	// Attached text is its own text element naming its container, the way the
+	// board editor reads and draws it.
 	var labelX, labelY float64
 	switch typ {
 	case "text":
@@ -704,30 +732,27 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		e["x"], e["y"] = x, y
 		e["width"], e["height"] = floatOr(p.W, w), floatOr(p.H, h)
 	case "arrow", "line":
+		line := boardElementView{ID: elemID, Type: typ, X: x, Y: y, Routing: p.Routing}
+		scene := &boardScene{raw: map[string]map[string]any{elemID: e}, view: map[string]boardElementView{}}
 		if p.From != "" {
 			doc, err := fetchBoard(id, -1)
 			if err != nil {
 				return boardErr(stderr, err)
 			}
-			from, to, ok := findBoardElements(doc, p.From, p.To)
-			if !ok {
+			if _, _, ok := findBoardElements(doc, p.From, p.To); !ok {
 				fmt.Fprintf(stderr, "Error: board %s has no live element %s or %s\n", id, p.From, p.To)
 				return rcNotFound
 			}
-			sx, sy, ex, ey := arrowBetween(from, to)
-			x, y = sx, sy
-			e["points"] = [][2]float64{{0, 0}, {ex - sx, ey - sy}}
-			e["width"], e["height"] = math.Abs(ex-sx), math.Abs(ey-sy)
-			e["startBinding"] = map[string]string{"elementId": p.From}
-			e["endBinding"] = map[string]string{"elementId": p.To}
+			scene = loadBoardScene(doc)
+			scene.raw[elemID] = e
+			e["startBinding"], line.StartBinding = boardBindingFor(p.From, p.FromSide)
+			e["endBinding"], line.EndBinding = boardBindingFor(p.To, p.ToSide)
 		} else {
-			w, h := floatOr(p.W, 160), floatOr(p.H, 0)
-			e["points"] = [][2]float64{{0, 0}, {w, h}}
-			e["width"], e["height"] = math.Abs(w), math.Abs(h)
+			line.Points = [][]float64{{0, 0}, {floatOr(p.W, 160), floatOr(p.H, 0)}}
 		}
-		e["x"], e["y"] = x, y
-		end := e["points"].([][2]float64)[1]
-		labelX, labelY = x+end[0]/2, y+end[1]/2
+		scene.view[elemID] = line
+		scene.setPath(elemID, scene.routeLine(line))
+		labelX, labelY = labelPoint(scene.view[elemID])
 	default:
 		w, h := floatOr(p.W, 160), floatOr(p.H, 80)
 		e["x"], e["y"] = x, y
@@ -745,7 +770,7 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		elems = append(elems, map[string]any{
 			"id": labelID, "type": "text", "version": 1, "versionNonce": boardRandomNonce(), "isDeleted": false,
 			"updated": e["updated"], "strokeColor": stroke, "backgroundColor": "transparent", "opacity": 100, "angle": 0,
-			"text": p.Text, "fontSize": boardFontSize, "textAlign": "center",
+			"text": p.Text, "fontSize": boardFontSize, "textAlign": "center", "containerId": elemID,
 			"x": labelX - w/2, "y": labelY - h/2, "width": w, "height": h,
 		})
 	}
@@ -755,15 +780,21 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		self := boardElementView{ID: elemID, Type: typ, X: e["x"].(float64), Y: e["y"].(float64)}
 		self.Width, _ = e["width"].(float64)
 		self.Height, _ = e["height"].(float64)
-		sx, sy, ex, ey := arrowBetween(ref, self)
-		elems = append(elems, map[string]any{
+		link := map[string]any{
 			"id": linkID, "type": "arrow", "version": 1, "versionNonce": boardRandomNonce(), "isDeleted": false,
 			"updated": e["updated"], "strokeColor": stroke, "backgroundColor": "transparent",
 			"fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "solid", "roughness": 1, "opacity": 100, "angle": 0,
-			"x": sx, "y": sy, "width": math.Abs(ex - sx), "height": math.Abs(ey - sy),
-			"points":       [][2]float64{{0, 0}, {ex - sx, ey - sy}},
 			"startBinding": map[string]string{"elementId": relRef}, "endBinding": map[string]string{"elementId": elemID},
-		})
+		}
+		if p.Routing != "" {
+			link["routing"] = p.Routing
+		}
+		scene := &boardScene{raw: map[string]map[string]any{linkID: link}, view: map[string]boardElementView{relRef: ref, elemID: self}}
+		arrow := boardElementView{ID: linkID, Type: "arrow", Routing: p.Routing,
+			StartBinding: &boardViewBinding{ElementID: relRef}, EndBinding: &boardViewBinding{ElementID: elemID}}
+		scene.view[linkID] = arrow
+		scene.setPath(linkID, scene.routeLine(arrow))
+		elems = append(elems, link)
 	}
 	raws := make([]json.RawMessage, 0, len(elems))
 	for _, el := range elems {
@@ -909,63 +940,70 @@ func parseBoardElements(data []byte) ([]json.RawMessage, error) {
 
 // ---- rm / move / text: read, bump the version, patch ----
 
-// editBoardElements reads the board's live elements, applies edit to each
-// named one (as a generic JSON object), bumps its version and nonce, and
-// patches the result.
-func editBoardElements(id string, elemIDs []string, edit func(map[string]any), stdout, stderr io.Writer) int {
+func boardRmCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:   "rm <board> <element>...",
+		Short: "Delete elements from a board",
+		Long: "Writes a tombstone (isDeleted, version + 1) for each named element and its attached text (containerId or " +
+			"`<id>-label`); other text inside a shape stays. " +
+			"An arrow or line attached to a deleted element stays where it is, with that end free.",
+		Args:        cobra.MinimumNArgs(2),
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
+			os.Exit(runBoardRm(args[0], args[1:], os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runBoardRm(id string, elemIDs []string, stdout, stderr io.Writer) int {
 	doc, err := fetchBoard(id, -1)
 	if err != nil {
 		return boardErr(stderr, err)
 	}
-	byID := map[string]map[string]any{}
-	for _, raw := range doc.Elements {
-		var m map[string]any
-		if json.Unmarshal(raw, &m) != nil {
-			continue
-		}
-		if s, ok := m["id"].(string); ok {
-			byID[s] = m
-		}
-	}
-	out := make([]json.RawMessage, 0, len(elemIDs))
+	s := loadBoardScene(doc)
+	gone := map[string]bool{}
 	for _, elemID := range elemIDs {
-		m, ok := byID[elemID]
-		if !ok {
+		if _, ok := s.view[elemID]; !ok {
 			fmt.Fprintf(stderr, "Error: board %s has no live element %s\n", id, elemID)
 			return rcNotFound
 		}
-		version, _ := m["version"].(float64)
-		delete(m, "server_version")
-		edit(m)
-		m["version"] = int64(version) + 1
-		m["versionNonce"] = boardRandomNonce()
-		m["updated"] = time.Now().UnixMilli()
-		raw, err := json.Marshal(m)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return rcIOFailure
+		gone[elemID] = true
+	}
+	// Only text named as attached: there is no undo here to bring back a note
+	// that merely lay inside a deleted box.
+	for _, textID := range s.order {
+		v := s.view[textID]
+		owner, labelled := strings.CutSuffix(textID, "-label")
+		if v.Type == "text" && (gone[v.ContainerID] || (labelled && v.ContainerID == "" && gone[owner])) {
+			gone[textID] = true
 		}
-		out = append(out, raw)
 	}
-	resp, err := patchBoard(id, out)
-	if err != nil {
-		return boardErr(stderr, err)
+	var changed []string
+	for _, elemID := range s.order {
+		v := s.view[elemID]
+		if gone[elemID] {
+			s.raw[elemID]["isDeleted"] = true
+			changed = append(changed, elemID)
+			continue
+		}
+		start := v.StartBinding != nil && gone[v.StartBinding.ElementID]
+		end := v.EndBinding != nil && gone[v.EndBinding.ElementID]
+		if !start && !end {
+			continue
+		}
+		// The line stays as it is drawn now, free at that end.
+		if v.Type != "freedraw" && !handBent(v) {
+			s.setPath(elemID, s.routeLine(v))
+		}
+		if start {
+			delete(s.raw[elemID], "startBinding")
+		}
+		if end {
+			delete(s.raw[elemID], "endBinding")
+		}
+		changed = append(changed, elemID)
 	}
-	reportPatch(stdout, id, resp, len(out))
-	return rcOK
-}
-
-func boardRmCmd() *cobra.Command {
-	return boa.CmdT[struct{}]{
-		Use:         "rm <board> <element>...",
-		Short:       "Delete elements from a board",
-		Long:        "Writes a tombstone (isDeleted, version + 1) for each named element.",
-		Args:        cobra.MinimumNArgs(2),
-		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
-			os.Exit(editBoardElements(args[0], args[1:], func(m map[string]any) { m["isDeleted"] = true }, os.Stdout, os.Stderr))
-		},
-	}.ToCobra()
+	return patchScene(id, s, changed, stdout, stderr)
 }
 
 type boardMoveParams struct {
@@ -976,7 +1014,7 @@ type boardMoveParams struct {
 func boardMoveCmd() *cobra.Command {
 	return boa.CmdT[boardMoveParams]{
 		Use:         "move <board> <element> [--x X] [--y Y]",
-		Short:       "Move an element (its label and bound arrows follow)",
+		Short:       "Move an element (its text and attached lines follow); a moved line detaches",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardMoveParams, _ *cobra.Command, args []string) {
@@ -1000,6 +1038,20 @@ func runBoardMove(p *boardMoveParams, id, elemID string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "Error: board %s has no live element %s\n", id, elemID)
 		return rcNotFound
 	}
+	if v.ContainerID != "" {
+		if _, attached := s.view[v.ContainerID]; attached {
+			fmt.Fprintf(stderr, "Error: %s is attached to %s and sits on it; move %s instead\n", elemID, v.ContainerID, v.ContainerID)
+			return rcInvalidArg
+		}
+	}
+	// A line moved away is pulled off what it was attached to, as a drag in the
+	// dashboard does: an attached end stays on its shape otherwise.
+	if isBoardLine(v.Type) {
+		v.StartBinding, v.EndBinding = nil, nil
+		s.view[elemID] = v
+		delete(s.raw[elemID], "startBinding")
+		delete(s.raw[elemID], "endBinding")
+	}
 	// The shape's label and the arrows bound to it move with it.
 	d := [2]float64{floatOr(p.X, v.X) - v.X, floatOr(p.Y, v.Y) - v.Y}
 	return patchScene(id, s, s.moveBy(map[string][2]float64{elemID: d}), stdout, stderr)
@@ -1012,7 +1064,7 @@ type boardTextParams struct {
 func boardTextCmd() *cobra.Command {
 	return boa.CmdT[boardTextParams]{
 		Use:         "text <board> <element> --text <text>",
-		Short:       "Change a text element, or the label of a shape or arrow",
+		Short:       "Change a text element, or set the text attached to any other element",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardTextParams, _ *cobra.Command, args []string) {
@@ -1022,9 +1074,10 @@ func boardTextCmd() *cobra.Command {
 }
 
 // runBoardText writes the element the board shows the text of: only text
-// elements draw theirs, so a shape's text lives on its label element.
+// elements draw theirs, so a shape's text lives on its attached element, which
+// this adds if there is none yet.
 func runBoardText(p *boardTextParams, id, elemID string, stdout, stderr io.Writer) int {
-	doc, err := fetchBoard(id, -1)
+	doc, err := fetchBoard(id, boardWithTombstones)
 	if err != nil {
 		return boardErr(stderr, err)
 	}
@@ -1034,13 +1087,59 @@ func runBoardText(p *boardTextParams, id, elemID string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "Error: board %s has no live element %s\n", id, elemID)
 		return rcNotFound
 	}
+	if strings.TrimSpace(p.Text) == "" {
+		fmt.Fprintln(stderr, "Error: --text is empty; `board rm` deletes text")
+		return rcInvalidArg
+	}
 	target := elemID
 	if v.Type != "text" {
 		if target, ok = s.labelOf(elemID); !ok {
-			fmt.Fprintf(stderr, "Error: %s %s on board %s has no label to change; add one with `tclaude agent board add %s text`\n", v.Type, elemID, id, id)
-			return rcNotFound
+			target = s.addAttachedText(doc, elemID, p.Text)
 		}
 	}
 	s.raw[target]["text"] = p.Text
+	if t := s.view[target]; t.ContainerID != "" {
+		t.Text = p.Text
+		t.Width, t.Height = boardTextSize(p.Text)
+		s.view[target] = t
+		s.raw[target]["width"], s.raw[target]["height"] = t.Width, t.Height
+		s.placeAttachedText(target)
+	}
 	return patchScene(id, s, []string{target}, stdout, stderr)
+}
+
+// addAttachedText adds an empty text element attached to elemID and returns
+// its id. An `<id>-label` deleted earlier is written over at a higher version,
+// or its tombstone would win the merge.
+func (s *boardScene) addAttachedText(doc *boardDoc, elemID, text string) string {
+	textID := elemID + "-label"
+	if len(textID) > 64 {
+		textID = boardRandomID()
+	}
+	stroke, _ := s.raw[elemID]["strokeColor"].(string)
+	if stroke == "" {
+		stroke = "#1e1e1e"
+	}
+	w, h := boardTextSize(text)
+	s.raw[textID] = map[string]any{
+		"id": textID, "type": "text", "version": float64(boardElementVersion(doc, textID)), "isDeleted": false,
+		"strokeColor": stroke, "backgroundColor": "transparent", "opacity": 100, "angle": 0,
+		"fontSize": boardFontSize, "textAlign": "center", "containerId": elemID, "x": 0.0, "y": 0.0, "width": w, "height": h,
+	}
+	s.view[textID] = boardElementView{ID: textID, Type: "text", Text: text, ContainerID: elemID, Width: w, Height: h}
+	s.order = append(s.order, textID)
+	s.placeAttachedText(textID)
+	return textID
+}
+
+// boardElementVersion is the version doc holds of an element, tombstones
+// included; 0 when it has none.
+func boardElementVersion(doc *boardDoc, id string) int64 {
+	for _, raw := range doc.Elements {
+		var e boardElementView
+		if json.Unmarshal(raw, &e) == nil && e.ID == id {
+			return e.Version
+		}
+	}
+	return 0
 }

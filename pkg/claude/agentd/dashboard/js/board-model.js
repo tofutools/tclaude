@@ -202,39 +202,327 @@ export function connectArrow(from, to) {
   return { x: a.x, y: a.y, width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y), points: [[0, 0], [b.x - a.x, b.y - a.y]] };
 }
 
-// reboundArrows recomputes every arrow bound to one of `movedIds`, returning
-// the bumped arrows to save.
+// ---- connectors (tcl-n023fi, tcl-umx796) ----
+//
+// A line's `points` always hold the path it draws, so a client that knows
+// nothing of routing still draws it, and hit tests need no special case.
+// `routing` says how to work that path out again when an end moves. Bindings
+// are the truth for an attached end: the editor draws from them (drawnElements),
+// which puts a line back on its shape whoever moved the shape and however two
+// edits merged. A binding to a deleted element is read as a free end, so
+// undoing that delete, anywhere, attaches the line again.
+//
+// pkg/claude/agent/board_routing.go keeps these paths for the CLI, checked
+// against the same cases in testdata/board_routes.json.
+
+export const LINE_ROUTES = Object.freeze([
+  { id: 'straight', label: 'Straight line', icon: '╱' },
+  { id: 'elbow', label: 'Elbow line', icon: '└' },
+  { id: 'curved', label: 'Curved line', icon: '∿' },
+]);
+
+// The middle of each side, which lies on the outline of all three shapes, as
+// Excalidraw fixedPoints: fractions of the element's box.
+export const SNAP_POINTS = Object.freeze([[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]]);
+
+const ROUTED = new Set(['arrow', 'line']);
+const END_GAP = 4; // keeps an arrowhead readable against the outline
+const ELBOW_STUB = 24; // how far a path leaves a shape before it turns
+const CURVE_STEPS = 24;
+
+const round = (v) => Math.round(v * 100) / 100;
+
+function liveTarget(map, binding) {
+  const el = binding && map.get(binding.elementId);
+  return el && !el.isDeleted ? el : null;
+}
+
+function sideOf([fx, fy]) {
+  const dx = fx - 0.5; const dy = fy - 0.5;
+  return Math.abs(dx) >= Math.abs(dy) ? [dx < 0 ? -1 : 1, 0] : [0, dy < 0 ? -1 : 1];
+}
+
+function snapAt(el, fixedPoint) {
+  const b = elementBounds(el);
+  const dir = sideOf(fixedPoint);
+  return { x: b.x + b.width * fixedPoint[0] + dir[0] * END_GAP, y: b.y + b.height * fixedPoint[1] + dir[1] * END_GAP, dir };
+}
+
+// facingSnap is the snap point on the side of `el` that faces (tx,ty).
+function facingSnap(el, tx, ty) {
+  const b = elementBounds(el);
+  const dx = (tx - (b.x + b.width / 2)) / Math.max(b.width, 1);
+  const dy = (ty - (b.y + b.height / 2)) / Math.max(b.height, 1);
+  if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? [0, 0.5] : [1, 0.5];
+  return dy < 0 ? [0.5, 0] : [0.5, 1];
+}
+
+// snapPoints lists a shape's snap points in board units, for drawing them.
+export function snapPoints(el) {
+  if (!SHAPES.has(el.type)) return [];
+  const b = elementBounds(el);
+  return SNAP_POINTS.map((fixedPoint) => ({ fixedPoint, x: b.x + b.width * fixedPoint[0], y: b.y + b.height * fixedPoint[1] }));
+}
+
+// shapeNear is the topmost shape within `margin` of the point: whose snap
+// points to show.
+export function shapeNear(elements, px, py, margin, ignoreId = '') {
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (el.isDeleted || el.id === ignoreId || !SHAPES.has(el.type)) continue;
+    const b = elementBounds(el);
+    if (px >= b.x - margin && px <= b.x + b.width + margin && py >= b.y - margin && py <= b.y + b.height + margin) return el;
+  }
+  return null;
+}
+
+// snapHit is the binding for the snap point within `tol` of the point, or null.
+export function snapHit(elements, px, py, tol, ignoreId = '') {
+  for (let i = elements.length - 1; i >= 0; i--) {
+    if (elements[i].isDeleted || elements[i].id === ignoreId) continue;
+    for (const { fixedPoint, x, y } of snapPoints(elements[i])) {
+      if (Math.hypot(px - x, py - y) <= tol) return { elementId: elements[i].id, fixedPoint: [...fixedPoint] };
+    }
+  }
+  return null;
+}
+
+// bindingAt is what an end dropped on the point attaches to: a snap point near
+// it, or else the shape under it, met wherever the line reaches it.
+export function bindingAt(elements, px, py, tol, ignoreId = '') {
+  const snap = snapHit(elements, px, py, tol, ignoreId);
+  if (snap) return snap;
+  const shape = shapeAt(elements, px, py, ignoreId);
+  return shape ? { elementId: shape.id } : null;
+}
+
+function facing(from, to) {
+  const dx = to.x - from.x; const dy = to.y - from.y;
+  return Math.abs(dx) >= Math.abs(dy) ? [dx < 0 ? -1 : 1, 0] : [0, dy < 0 ? -1 : 1];
+}
+
+// dropBends leaves out repeated points and points in the middle of a run.
+function dropBends(path) {
+  const out = [];
+  for (const point of path) {
+    if (out.length && out[out.length - 1][0] === point[0] && out[out.length - 1][1] === point[1]) continue;
+    while (out.length >= 2) {
+      const [ax, ay] = out[out.length - 2]; const [bx, by] = out[out.length - 1];
+      if ((bx - ax) * (point[1] - ay) !== (by - ay) * (point[0] - ax)) break;
+      out.pop();
+    }
+    out.push(point);
+  }
+  return out;
+}
+
+// elbowPath leaves each end along its side, then joins the two stubs with
+// horizontal and vertical runs. It does not steer around other shapes.
+function elbowPath(start, end) {
+  const stub = Math.min(ELBOW_STUB, Math.hypot(end.x - start.x, end.y - start.y) / 3);
+  const a = [start.x + start.dir[0] * stub, start.y + start.dir[1] * stub];
+  const b = [end.x + end.dir[0] * stub, end.y + end.dir[1] * stub];
+  const along = start.dir[0] !== 0 ? 0 : 1; // the axis the path leaves on
+  const across = 1 - along;
+  const at = (main, side) => (along === 0 ? [main, side] : [side, main]);
+  let bends;
+  if ((end.dir[0] !== 0) === (start.dir[0] !== 0)) {
+    const sd = start.dir[along]; const ed = end.dir[along];
+    if (sd === ed) {
+      const turn = sd > 0 ? Math.max(a[along], b[along]) : Math.min(a[along], b[along]);
+      bends = [at(turn, a[across]), at(turn, b[across])];
+    } else if ((b[along] - a[along]) * sd >= 0) {
+      const mid = (a[along] + b[along]) / 2;
+      bends = [at(mid, a[across]), at(mid, b[across])];
+    } else {
+      const mid = (a[across] + b[across]) / 2;
+      bends = [at(a[along], mid), at(b[along], mid)];
+    }
+  } else {
+    const corner = at(b[along], a[across]);
+    const ahead = (corner[along] - a[along]) * start.dir[along] >= 0 && (corner[across] - b[across]) * end.dir[across] >= 0;
+    bends = [ahead ? corner : at(a[along], b[across])];
+  }
+  return dropBends([[start.x, start.y], a, ...bends, b, [end.x, end.y]]);
+}
+
+// curvedPath is a cubic leaving each end along its side, sampled into points.
+function curvedPath(start, end) {
+  const reach = Math.max(30, Math.hypot(end.x - start.x, end.y - start.y) * 0.4);
+  const c1 = [start.x + start.dir[0] * reach, start.y + start.dir[1] * reach];
+  const c2 = [end.x + end.dir[0] * reach, end.y + end.dir[1] * reach];
+  const path = [];
+  for (let i = 0; i <= CURVE_STEPS; i++) {
+    const t = i / CURVE_STEPS; const u = 1 - t;
+    const mix = (s, p1, p2, e) => u * u * u * s + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * e;
+    path.push([mix(start.x, c1[0], c2[0], end.x), mix(start.y, c1[1], c2[1], end.y)]);
+  }
+  return path;
+}
+
+// routePath is the path between two ends. An end's `dir` is the way it leaves
+// its shape; a free end has none and faces the other end.
+export function routePath(routing, start, end) {
+  if (routing !== 'elbow' && routing !== 'curved') return [[start.x, start.y], [end.x, end.y]];
+  const s = { ...start, dir: start.dir || facing(start, end) };
+  const e = { ...end, dir: end.dir || facing(end, start) };
+  return routing === 'elbow' ? elbowPath(s, e) : curvedPath(s, e);
+}
+
+function pathGeometry(route) {
+  const path = route.length > 1 ? route : [route[0], route[0]]; // ends that meet
+  const [ox, oy] = path[0];
+  const points = path.map(([px, py]) => [round(px - ox), round(py - oy)]);
+  const b = elementBounds({ x: 0, y: 0, points });
+  return { x: round(ox), y: round(oy), width: b.width, height: b.height, points };
+}
+
+// endOf places one end of a line. `toward` is where the other end points it.
+function endOf(binding, target, toward, routed) {
+  if (binding.fixedPoint) return snapAt(target, binding.fixedPoint);
+  if (routed) return snapAt(target, facingSnap(target, toward.x, toward.y));
+  return edgePoint(target, toward.x, toward.y);
+}
+
+// routeConnector is where a line belongs now, or null when it stays as stored:
+// a free line keeps its path, and so does a bound one with hand-placed bends
+// and no routing (`board from-process` draws rework that way). `force` works
+// the path out regardless, for a line whose ends or routing just changed.
+export function routeConnector(el, map, force = false) {
+  const from = liveTarget(map, el.startBinding);
+  const to = liveTarget(map, el.endBinding);
+  if (el.type === 'freedraw') {
+    if (!from || !el.startBinding.fixedPoint) return null;
+    const at = snapAt(from, el.startBinding.fixedPoint);
+    return { x: round(at.x - el.points[0][0]), y: round(at.y - el.points[0][1]) };
+  }
+  if (!ROUTED.has(el.type) || !el.points?.length) return null;
+  const routed = el.routing === 'elbow' || el.routing === 'curved';
+  // Still being drawn: a free line of two points has no route stored yet.
+  const unrouted = routed && el.points.length === 2;
+  if (!force && !unrouted && (!(from || to) || (!el.routing && el.points.length > 2))) return null;
+  const first = el.points[0]; const last = el.points[el.points.length - 1];
+  const a = { x: el.x + first[0], y: el.y + first[1] };
+  const b = { x: el.x + last[0], y: el.y + last[1] };
+  const aim = (binding, target, free) => {
+    if (!target) return free;
+    return binding.fixedPoint ? snapAt(target, binding.fixedPoint) : center(target);
+  };
+  const start = from ? endOf(el.startBinding, from, aim(el.endBinding, to, b), routed) : a;
+  const end = to ? endOf(el.endBinding, to, aim(el.startBinding, from, a), routed) : b;
+  return pathGeometry(routePath(el.routing, start, end));
+}
+
+// reboundArrows recomputes every line bound to one of `movedIds`, returning the
+// bumped lines to save.
 export function reboundArrows(map, movedIds, opts) {
   const moved = new Set(movedIds);
   const out = [];
   for (const el of map.values()) {
-    if (el.isDeleted || el.type !== 'arrow') continue;
+    if (el.isDeleted || !LINEAR.has(el.type)) continue;
     const fromId = el.startBinding?.elementId;
     const toId = el.endBinding?.elementId;
     if (!moved.has(fromId) && !moved.has(toId)) continue;
-    const from = fromId && map.get(fromId);
-    const to = toId && map.get(toId);
-    if (from && !from.isDeleted && to && !to.isDeleted) {
-      out.push(bump(el, connectArrow(from, to), opts));
-    } else if (from && !from.isDeleted) {
-      const end = el.points[el.points.length - 1];
-      const tip = { x: el.x + end[0], y: el.y + end[1] };
-      const a = edgePoint(from, tip.x, tip.y);
-      out.push(bump(el, { x: a.x, y: a.y, points: [[0, 0], [tip.x - a.x, tip.y - a.y]] }, opts));
-    } else if (to && !to.isDeleted) {
-      const start = { x: el.x, y: el.y };
-      const b = edgePoint(to, start.x, start.y);
-      out.push(bump(el, { points: [[0, 0], [b.x - start.x, b.y - start.y]] }, opts));
-    }
+    if (!liveTarget(map, el.startBinding) && !liveTarget(map, el.endBinding)) continue;
+    const route = routeConnector(el, map, true);
+    if (route) out.push(bump(el, route, opts));
   }
   return out;
+}
+
+// detachedLines frees the ends of lines bound to elements being deleted, each
+// where it is drawn now. Saved in one step with the deletion, undo reattaches.
+export function detachedLines(map, gone, opts) {
+  const out = [];
+  for (const el of map.values()) {
+    if (el.isDeleted || gone.has(el.id) || !LINEAR.has(el.type)) continue;
+    const start = gone.has(el.startBinding?.elementId);
+    const end = gone.has(el.endBinding?.elementId);
+    if (!start && !end) continue;
+    const changes = { ...routeConnector(el, map) };
+    if (start) changes.startBinding = undefined;
+    if (end) changes.endBinding = undefined;
+    out.push(bump(el, changes, opts));
+  }
+  return out;
+}
+
+// drawnElements is the live elements as they are to be drawn: attached ends
+// sit on their shapes, whatever the stored copy of the line says.
+export function drawnElements(map) {
+  const drawn = new Map();
+  for (const el of map.values()) {
+    if (el.isDeleted) continue;
+    const route = routeConnector(el, map);
+    drawn.set(el.id, route ? { ...el, ...route } : el);
+  }
+  for (const el of drawn.values()) {
+    const container = el.containerId && drawn.get(el.containerId);
+    if (container && container.type !== 'text') drawn.set(el.id, { ...el, ...textBoxOn(el, container) });
+  }
+  return [...drawn.values()];
+}
+
+// labelPoint is where an element's attached text sits: the middle of a box,
+// or halfway along a line's path.
+export function labelPoint(el) {
+  if (!el.points?.length) return center(el);
+  const lengths = [];
+  let total = 0;
+  for (let i = 1; i < el.points.length; i++) {
+    const [ax, ay] = el.points[i - 1]; const [bx, by] = el.points[i];
+    lengths.push(Math.hypot(bx - ax, by - ay));
+    total += lengths[lengths.length - 1];
+  }
+  let left = total / 2;
+  for (let i = 0; i < lengths.length; i++) {
+    if (left <= lengths[i] && lengths[i] > 0) {
+      const [ax, ay] = el.points[i]; const [bx, by] = el.points[i + 1];
+      const t = left / lengths[i];
+      return { x: el.x + ax + (bx - ax) * t, y: el.y + ay + (by - ay) * t };
+    }
+    left -= lengths[i];
+  }
+  return { x: el.x + el.points[0][0], y: el.y + el.points[0][1] };
+}
+
+function textBoxOn(text, container) {
+  const at = labelPoint(container);
+  const b = elementBounds(text);
+  return { x: round(at.x - b.width / 2), y: round(at.y - b.height / 2) };
+}
+
+// attachedText puts attached text back on its container, for any text or
+// container in `ids`, returning the bumped text elements that moved.
+export function attachedText(map, ids, opts) {
+  const touched = new Set(ids);
+  const out = [];
+  for (const el of map.values()) {
+    if (el.isDeleted || !el.containerId || !(touched.has(el.id) || touched.has(el.containerId))) continue;
+    const container = map.get(el.containerId);
+    if (!container || container.isDeleted || container.type === 'text') continue;
+    const route = routeConnector(container, map);
+    const box = textBoxOn(el, route ? { ...container, ...route } : container);
+    if (box.x !== el.x || box.y !== el.y) out.push(bump(el, box, opts));
+  }
+  return out;
+}
+
+// suggestedShape is the next shape a clicked snap point offers: a blank copy of
+// `from`, a step out from that side, or centred on the pointer once it moves.
+export function suggestedShape(from, fixedPoint, at = null, gap = 80) {
+  const b = elementBounds(from);
+  const [dx, dy] = sideOf(fixedPoint);
+  const x = at ? at.x - b.width / 2 : b.x + dx * (b.width + gap);
+  const y = at ? at.y - b.height / 2 : b.y + dy * (b.height + gap);
+  return { type: from.type, x, y, width: b.width, height: b.height, strokeColor: from.strokeColor, backgroundColor: from.backgroundColor };
 }
 
 // shapeAt finds the shape (not a line) under a point, for arrow binding.
 export function shapeAt(elements, px, py, ignoreId = '') {
   for (let i = elements.length - 1; i >= 0; i--) {
     const el = elements[i];
-    if (el.isDeleted || el.id === ignoreId || (!SHAPES.has(el.type) && el.type !== 'text')) continue;
+    if (el.isDeleted || el.id === ignoreId || el.containerId || (!SHAPES.has(el.type) && el.type !== 'text')) continue;
     const b = elementBounds(el);
     if (px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height) return el;
   }
@@ -260,13 +548,17 @@ function inside(point, box) {
   return point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height;
 }
 
-// labelOwners maps each live text element to the innermost shape its centre
-// sits in: a shape's label, the way agents (`board add --text`) write it.
+// labelOwners maps each live text element to what it labels: the container it
+// names (tcl-jzs3g1), or, for text from before containers, the `<id>` of its
+// `<id>-label` id, or else the innermost shape its centre sits in.
 export function labelOwners(map) {
   const shapes = liveElements(map).filter((el) => SHAPES.has(el.type));
   const out = new Map();
+  const canOwn = (id) => { const el = map.get(id); return !!el && !el.isDeleted && el.type !== 'text'; };
   for (const t of map.values()) {
     if (t.isDeleted || t.type !== 'text') continue;
+    const named = t.containerId || (t.id.endsWith('-label') ? t.id.slice(0, -6) : '');
+    if (named && canOwn(named)) { out.set(t.id, named); continue; }
     const c = center(t);
     let best = null; let area = Infinity;
     for (const s of shapes) {
@@ -294,16 +586,16 @@ export function labelOf(map, shapeId) {
   return null;
 }
 
-// newLabel builds a centred label for a shape, under the CLI's `<id>-label` id.
+// newLabel builds text attached to an element, under the CLI's `<id>-label` id.
 export function newLabel(shape, text, props = {}, opts) {
   const lines = String(text).split('\n');
   const size = 20;
   const width = Math.ceil(Math.max(...lines.map((l) => l.length), 1) * size * 0.6);
   const height = Math.ceil(lines.length * size * 1.25);
-  const c = center(shape);
+  const c = labelPoint(shape);
   const id = `${shape.id}-label`.length <= 64 ? `${shape.id}-label` : undefined;
   return newElement('text', {
-    ...(id ? { id } : {}), text, fontSize: size, textAlign: 'center', strokeColor: shape.strokeColor || '#1e1e1e',
+    ...(id ? { id } : {}), containerId: shape.id, text, fontSize: size, textAlign: 'center', strokeColor: shape.strokeColor || '#1e1e1e',
     x: c.x - width / 2, y: c.y - height / 2, width, height, ...props,
   }, opts);
 }
@@ -425,13 +717,18 @@ export function sanitizeElement(raw) {
     el.text = text;
     el.fontSize = clampNum(raw.fontSize, 4, 200, 20);
     el.textAlign = ['left', 'center', 'right'].includes(raw.textAlign) ? raw.textAlign : 'left';
+    if (typeof raw.containerId === 'string' && ELEMENT_ID.test(raw.containerId)) el.containerId = raw.containerId;
   }
-  if (raw.type === 'arrow') {
+  if (LINEAR.has(raw.type)) {
     for (const key of ['startBinding', 'endBinding']) {
       const id = raw[key]?.elementId;
-      if (typeof id === 'string' && ELEMENT_ID.test(id)) el[key] = { elementId: id };
+      if (typeof id !== 'string' || !ELEMENT_ID.test(id)) continue;
+      el[key] = { elementId: id };
+      const point = raw[key].fixedPoint;
+      if (Array.isArray(point) && point.length === 2 && point.every(Number.isFinite)) el[key].fixedPoint = point.map((v) => clampNum(v, 0, 1, 0.5));
     }
   }
+  if (ROUTED.has(raw.type) && LINE_ROUTES.some(({ id }) => id === raw.routing)) el.routing = raw.routing;
   return el;
 }
 
@@ -459,9 +756,9 @@ export function cloneElements(elements, dx, dy, opts = {}) {
       if (owner.length <= 64) ids.set(el.id, owner);
     }
   }
-  const rebind = (binding) => (binding && ids.has(binding.elementId) ? { elementId: ids.get(binding.elementId) } : undefined);
+  const rebind = (binding) => (binding && ids.has(binding.elementId) ? { ...binding, elementId: ids.get(binding.elementId) } : undefined);
   return elements.map((el) => {
-    const { server_version: _s, customData: _c, startBinding, endBinding, ...rest } = el;
+    const { server_version: _s, customData: _c, startBinding, endBinding, containerId, ...rest } = el;
     const copy = newElement(el.type, {
       ...rest, id: ids.get(el.id),
       x: clampNum(el.x + dx, -MAX_COORD, MAX_COORD, 0), y: clampNum(el.y + dy, -MAX_COORD, MAX_COORD, 0),
@@ -469,6 +766,7 @@ export function cloneElements(elements, dx, dy, opts = {}) {
     const start = rebind(startBinding); const end = rebind(endBinding);
     if (start) copy.startBinding = start;
     if (end) copy.endBinding = end;
+    if (ids.has(containerId)) copy.containerId = ids.get(containerId);
     return copy;
   });
 }
@@ -567,7 +865,22 @@ export function describeChanges(map, changedIds, before) {
   return parts.join('; ');
 }
 
+// excalidrawLinks adds what Excalidraw reads from the other side of a link: a
+// container lists its text and lines in boundElements.
+function excalidrawLinks(elements) {
+  const bound = new Map();
+  const link = (ownerId, id, type) => { if (ownerId) bound.set(ownerId, [...(bound.get(ownerId) || []), { id, type }]); };
+  for (const el of elements) {
+    link(el.containerId, el.id, 'text');
+    if (el.type === 'arrow') { link(el.startBinding?.elementId, el.id, 'arrow'); link(el.endBinding?.elementId, el.id, 'arrow'); }
+  }
+  return elements.map((el) => {
+    const links = bound.get(el.id);
+    return { ...el, ...(links ? { boundElements: links } : {}), ...(el.containerId ? { verticalAlign: 'middle' } : {}) };
+  });
+}
+
 // toExcalidraw wraps elements as an .excalidraw file.
 export function toExcalidraw(elements) {
-  return JSON.stringify({ type: 'excalidraw', version: 2, source: 'tclaude', elements, appState: { viewBackgroundColor: '#ffffff' }, files: {} }, null, 2);
+  return JSON.stringify({ type: 'excalidraw', version: 2, source: 'tclaude', elements: excalidrawLinks(elements), appState: { viewBackgroundColor: '#ffffff' }, files: {} }, null, 2);
 }
