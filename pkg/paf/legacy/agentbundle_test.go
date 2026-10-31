@@ -1,6 +1,7 @@
 package legacy
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -142,4 +143,17 @@ func TestAgentKey(t *testing.T) {
 	assert.Equal(t, "fix-worker", AgentKey("Fix Worker"))
 	assert.Equal(t, "agent", AgentKey("!!!"))
 	assert.Equal(t, "a-b", AgentKey("--a__b--"))
+}
+
+// The fallback that leaves the neutral context out must not bring the text back.
+func TestWriteAgentBundleLossCountsOnlyWithoutContext(t *testing.T) {
+	earlier := &paf.Losses{Source: "codex", ContextWindowSource: "text", Items: []paf.LossItem{{Kind: "unknown_record", Severity: "warn", Count: 1, Detail: "text"}}}
+	var out bytes.Buffer
+	require.NoError(t, WriteAgentBundle(sampleBundle(t), &out, WriteOptions{Producer: paf.Producer{Name: "tclaude"}, EarlierLosses: earlier, LossCountsOnly: true}))
+	a, err := paf.Open(bytes.NewReader(out.Bytes()), int64(out.Len()), paf.Options{Purpose: paf.PurposeInspect})
+	require.NoError(t, err)
+	got, ok := a.Losses(a.Manifest.Agents[0])
+	require.True(t, ok)
+	assert.Equal(t, []paf.LossItem{{Kind: "unknown_record", Severity: "warn", Count: 1}}, got.Items)
+	assert.Empty(t, got.ContextWindowSource)
 }

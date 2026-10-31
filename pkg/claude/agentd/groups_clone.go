@@ -344,6 +344,9 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			})
 			continue
 		}
+		if !body.NoCopyConv {
+			recordConvLosses(spawned.NewConv, storedConvLosses(m.ConvID), nil)
+		}
 		// Each clone's launch claim is held until this handler returns, by
 		// which time every member has been enrolled — see
 		// cloneSpawnResult.ReleaseLaunchClaim. Released as a batch rather than
