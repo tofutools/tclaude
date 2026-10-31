@@ -1994,6 +1994,19 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 .image-preview-overlay {
   padding: 16px; background: rgba(0, 0, 0, .82);
 }
+/* dashboard.overlay_backdrop: dim is the plain rule above. */
+:root[data-overlay-backdrop="blur"] .image-preview-overlay,
+:root[data-overlay-backdrop="blur"] .markdown-preview-overlay { background: transparent; }
+:root[data-overlay-backdrop="none"] .image-preview-overlay,
+:root[data-overlay-backdrop="none"] .markdown-preview-overlay { background: transparent; }
+:root[data-overlay-backdrop="blur"] .image-preview-overlay,
+:root[data-overlay-backdrop="blur"] .markdown-preview-overlay,
+:root[data-overlay-backdrop="blur"] .disconnect-overlay,
+:root[data-overlay-backdrop="both"] .image-preview-overlay,
+:root[data-overlay-backdrop="both"] .markdown-preview-overlay,
+:root[data-overlay-backdrop="both"] .disconnect-overlay {
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}
 .image-preview-dialog {
   position: relative;
   width: min(var(--dialog-w, 1100px), calc(100vw - 32px));
