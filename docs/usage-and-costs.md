@@ -281,7 +281,7 @@ grants, all off by default, decide what a peer gets from this node:
 
 A **fleet limit** is a limit over spend summed across nodes. Its target is
 `all` (every trusted peer), `pool:<node pool>` (a [local node
-pool](federation.md#local-node-pools) as a sub-fleet) or `peer:<peer>`, and by
+pool](federation-peers.md#local-node-pools) as a sub-fleet) or `peer:<peer>`, and by
 default it counts this node too. Only members sharing `usage.read` count,
 and each reading says how many did. A member's total counts while it is
 under ten minutes old, so an unreachable member keeps its last reading for a
@@ -329,7 +329,7 @@ limits with presets and an editor, each limit's reading per member (counted,
 shares no usage, stale) and whether its steps act on that member's agents, a
 nodes table with each peer's totals, limits and the grants it shares, and the
 peers' fleet limits in force here. The palette opens it as **Fleet usage
-limits…**, and Fleet → Usage sharing links to it. Where a peer granted
+limits…**, and ⚙ Fleet config › Usage sharing links to it. Where a peer granted
 `usage-rules.manage`, its row has **manage its rules…**, which opens the full
 usage dialog against that peer; the same is reachable from the peer's popup in
 the fleet strip and from the **💰 usage rules** button on its peer view. The

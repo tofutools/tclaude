@@ -33,7 +33,7 @@ native log means it can only ever continue in that vendor's tool.
 tclaude already moves running agents around: morph switches model or
 harness in place, clone forks a sibling, move and teleport send an agent to
 another node, and recall brings it home. Each of these grew its own
-carrier: the [agent bundle](federation.md#portable-local-agent-bundles)
+carrier: the [agent bundle](federation-moving.md#portable-local-agent-bundles)
 (native history only), the [group export](agents-and-groups.md) archive, the
 neutral transcript used by
 [cross-harness translation](harnesses.md#cross-harness-history-translation),
@@ -100,13 +100,13 @@ receiving side.
 
 | Operation | What PAF carries | Carrier in this release |
 |---|---|---|
-| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF by default, from [`tclaude paf export`](#exporting-and-importing-an-agent) or `agent bundle export`; [agent bundle v1](federation.md#portable-local-agent-bundles) with `--format v1` |
+| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF by default, from [`tclaude paf export`](#exporting-and-importing-an-agent) or `agent bundle export`; [agent bundle v1](federation-moving.md#portable-local-agent-bundles) with `--format v1` |
 | **Group export / import** | A group PAF: group configuration plus every member. | A [group PAF](#exporting-and-importing-a-group) by default; group export v5 with `--format zip` |
 | **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | PAF in the [snapshot library](#snapshots) |
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
-| **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
+| **Sharing** with a peer or on a [Board](federation-boards.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
 | **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots), [recovered](#recovering-an-agent) under its agent id |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
@@ -258,8 +258,8 @@ With only the `agents.receive` grant, the teleport arrives on `laptop` as an
 ordinary offer. Accept it with `federation offers import` as in step 3.
 Automatic landing needs extra setup on the receiver.
 
-See [Moving an agent](federation.md#moving-an-agent) and
-[Teleport yourself to another node](federation.md#teleport-yourself-to-another-node).
+See [Moving an agent](federation-moving.md#moving-an-agent) and
+[Teleport yourself to another node](federation-moving.md#teleport-yourself-to-another-node).
 
 !!! note "Sharing snapshots on a Board"
     `tclaude agent snapshot share` shares a snapshot, encrypted to named
@@ -518,7 +518,7 @@ tclaude agent snapshot board import --board BOARD --item ITEM --version VERSION 
 tclaude agent snapshot board rm --board BOARD --item ITEM --version VERSION [--local]
 ```
 
-A snapshot goes on a [Board](federation.md#content-board-membership) as an
+A snapshot goes on a [Board](federation-boards.md#content-board-membership) as an
 `agent-snapshot` item, encrypted to named members only.
 
 - **Recipients.** `--to` names board members by instance id or by the label
@@ -1728,11 +1728,11 @@ agent bundle for peers that do not advertise PAF support.
 
 ## Related pages
 
-- [Federation: portable local agent bundles](federation.md#portable-local-agent-bundles)
-  and [sharing an agent with a peer](federation.md#sharing-an-agent-with-a-peer)
+- [Federation: portable local agent bundles](federation-moving.md#portable-local-agent-bundles)
+  and [sharing an agent with a peer](federation-moving.md#sharing-an-agent-with-a-peer)
 - [Harnesses: cross-harness history translation](harnesses.md#cross-harness-history-translation)
 - [Spawning and lifecycle: morph and clone](spawning-and-lifecycle.md#morph)
-- [Federation: content boards](federation.md#content-board-membership)
+- [Federation: content boards](federation-boards.md#content-board-membership)
 
 ### Managed instructions
 

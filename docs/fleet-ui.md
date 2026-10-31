@@ -181,7 +181,7 @@ shut down and power on buttons under `groups.members.stop` and
 settings dialog sends only what you changed and disables the fields the peer
 keeps. The default directory, default saved prompts and sandbox profile also
 need the matching spawn grant, and the
-profile pickers the peer's `node.spawn.read` ([Changing a peer's groups](federation.md#changing-a-peers-groups)).
+profile pickers the peer's `node.spawn.read` ([Changing a peer's groups](federation-peers.md#changing-a-peers-groups)).
 
 Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
 They stay in place so the layout does not jump; hover or click one to see why,
@@ -221,7 +221,7 @@ worktree) only where the peer allows it (an unrestricted peer, which gets the
 dialog as a local spawn, or its `groups.members.spawn.*` grants). With
 `node.spawn.read` the dialog pre-fills and shows what the peer applies, and
 offers the peer's and this node's profiles and saved prompts (see
-[The remote spawn dialog](federation.md#the-remote-spawn-dialog)). Without a spawn grant the
+[The remote spawn dialog](federation-work.md#the-remote-spawn-dialog)). Without a spawn grant the
 request waits for the peer's operator, who decides those settings when
 approving. The
 directory is typed as a path on the peer — the folder browser reads this
@@ -244,7 +244,7 @@ page; type the path instead.
 The Groups toolbar's global default spawn profile, global sandbox profile and
 **+ new group** controls work on a peer view the peer shares them in
 (`node.spawn.defaults.manage`, `node.groups.create`; unrestricted trust holds
-both), and are greyed with the reason otherwise. See [Federation](federation.md), Managing a peer's node.
+both), and are greyed with the reason otherwise. See [Managing a peer's node](federation-work.md#managing-a-peers-node).
 
 In a fused view those three controls act on one of the listed nodes, which a
 chip in front of them names in the node's colour. It starts on the page's own
@@ -644,7 +644,7 @@ sharing**, **Profiles & pools**, **Offers**, **Jobs & repos**, **Moves**,
   outcome; refused or failed requests in red. Filter by peer and time window.
 - **Hub** — for hub admins: claim, admins, admissions, invites, settings, health,
   logs, scripts and updates. See
-  [Federation](federation.md#running-a-hub).
+  [Federation](federation-hub.md#running-a-hub).
 
 The full federation model, grants and CLI are in
 [Federation](federation.md).
