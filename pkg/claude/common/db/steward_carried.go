@@ -15,6 +15,8 @@ type CarriedSudoGrant struct {
 	ExpiresAt time.Time
 	GrantedBy string
 	Reason    string
+	UsesLimit int64
+	UsesLeft  int64
 }
 
 // ListStewardCarriedPermissions returns the standing grants and denies stored
@@ -77,8 +79,8 @@ func CarrySudoGrant(grantID int64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.Exec(`INSERT INTO steward_carried_sudo (slug, scope_json, granted_at, expires_at, granted_by, reason)
-		SELECT slug, scope_json, granted_at, expires_at, granted_by, reason
+	res, err := tx.Exec(`INSERT INTO steward_carried_sudo (slug, scope_json, granted_at, expires_at, granted_by, reason, uses_limit, uses_left)
+		SELECT slug, scope_json, granted_at, expires_at, granted_by, reason, uses_limit, uses_left
 		FROM agent_sudo_grants WHERE id = ? AND revoked_at IS NULL`, grantID)
 	if err != nil {
 		return err
@@ -100,8 +102,8 @@ func ListActiveStewardCarriedSudo() ([]*CarriedSudoGrant, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, slug, scope_json, granted_at, expires_at, granted_by, reason
-		FROM steward_carried_sudo WHERE revoked_at IS NULL AND expires_at > ?
+	rows, err := d.Query(`SELECT id, slug, scope_json, granted_at, expires_at, granted_by, reason, uses_limit, uses_left
+		FROM steward_carried_sudo WHERE revoked_at IS NULL AND expires_at > ? AND (uses_limit = 0 OR uses_left > 0)
 		ORDER BY expires_at ASC`, dbTime(time.Now()))
 	if err != nil {
 		return nil, err
@@ -111,7 +113,7 @@ func ListActiveStewardCarriedSudo() ([]*CarriedSudoGrant, error) {
 	for rows.Next() {
 		var g CarriedSudoGrant
 		var grantedAt, expiresAt dbTimestamp
-		if err := rows.Scan(&g.ID, &g.Slug, &g.ScopeJSON, &grantedAt, &expiresAt, &g.GrantedBy, &g.Reason); err != nil {
+		if err := rows.Scan(&g.ID, &g.Slug, &g.ScopeJSON, &grantedAt, &expiresAt, &g.GrantedBy, &g.Reason, &g.UsesLimit, &g.UsesLeft); err != nil {
 			return nil, err
 		}
 		g.GrantedAt, g.ExpiresAt = grantedAt.Time(), expiresAt.Time()
@@ -146,7 +148,7 @@ func InheritStewardCarriedSudo(agentID string, g *CarriedSudoGrant, by string) (
 	}
 	return insertSudoGrantForAgent(d, &SudoGrant{
 		Slug: g.Slug, ScopeJSON: g.ScopeJSON, GrantedAt: g.GrantedAt, ExpiresAt: g.ExpiresAt,
-		GrantedBy: by, Reason: g.Reason, CarriedID: g.ID,
+		GrantedBy: by, Reason: g.Reason, CarriedID: g.ID, UsesLimit: g.UsesLimit, UsesLeft: g.UsesLeft,
 	}, agentID)
 }
 

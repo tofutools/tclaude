@@ -391,7 +391,7 @@ test('a notification on another node is answered through that node, text only', 
 
 const sudoSlugs = [
   { slug: 'agent.stop', description: 'stop agents' },
-  { slug: 'groups.members.spawn', description: 'spawn', scope_dims: ['group'] },
+  { slug: 'groups.members.spawn', description: 'spawn', scope_dims: ['group'], countable: true },
   { slug: 'node.exec', description: 'run commands', risky: true },
   { slug: 'permissions.grant', description: 'grant', risky: true },
 ];
@@ -590,6 +590,28 @@ test('sudo on a Steward stays instance-only unless the operator stores it', asyn
   await chooseAllStewards(harness, carry);
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(payloads[0].carry, ['node.exec']);
+  await mounted.unmount();
+});
+
+test('a countable slug takes a use limit, sent with the grant and shown beside the time left', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const expires = new Date(Date.now() + 600000).toISOString();
+  const held = [{ id: 7, agent_id: 'agt_s', slug: 'agent.stop', expires_at: expires, uses_limit: 5, uses_left: 2 }];
+  const { host, mounted } = await mountSudo(harness, actions, sudoSnapshot(held));
+  assert.match(host.querySelector('.sudo-active-row').textContent, /2 of 5 uses left/);
+
+  await pickSudo(harness, host, 'node.exec');
+  await pickSudo(harness, host, 'groups.members.spawn');
+  assert.equal(!!sudoRow(host, 'node.exec').querySelector('.perm-uses'), false, 'nothing to count');
+  const uses = () => sudoRow(host, 'groups.members.spawn').querySelector('.perm-uses input');
+  await harness.input(uses(), '0');
+  assert.equal(host.querySelector('#perm-edit-submit').disabled, true);
+  assert.match(host.querySelector('#sudo-picked').textContent, /whole number from 1 to 1000/);
+  await harness.input(uses(), '3');
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(payloads[0].uses, { 'groups.members.spawn': 3 });
   await mounted.unmount();
 });
 

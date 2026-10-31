@@ -59,6 +59,8 @@ type PermSlug struct {
 	AutoGrantable bool `json:"auto_grantable,omitempty"`
 	// Risky marks a slug the editors call out: see riskySlugs.
 	Risky bool `json:"risky,omitempty"`
+	// Countable marks a slug a sudo grant can limit by uses: see countableSudoSlugs.
+	Countable bool `json:"countable,omitempty"`
 }
 
 func initPermissionRegistry() {
@@ -68,6 +70,7 @@ func initPermissionRegistry() {
 func initPermissionRegistryEntries(registry []PermSlug) {
 	for i := range registry {
 		registry[i].Risky = slices.Contains(riskySlugs, registry[i].Slug)
+		registry[i].Countable = slices.Contains(countableSudoSlugs, registry[i].Slug)
 	}
 	seenSlugs := map[string]bool{}
 	for i := range registry {

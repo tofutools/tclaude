@@ -143,10 +143,10 @@ export function createMessageAccessDialogActions({
   const on = (node) => nodeFetch(node || '', { fetchImpl });
   const changedOn = (node) => { if (node) announceNodeChanged(node); return refresh(); };
 
-  async function grantSudo({ agentID, slugs, duration, reason, scopes = {}, carry = [], node = '' }) {
+  async function grantSudo({ agentID, slugs, duration, reason, scopes = {}, carry = [], uses = {}, node = '' }) {
     const response = await requestJSON(on(node), '/api/sudo', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_id: agentID, slugs, duration, reason, ...(Object.keys(scopes).length ? { scopes } : {}), ...(carry.length ? { carry } : {}) }),
+      body: JSON.stringify({ agent_id: agentID, slugs, duration, reason, ...(Object.keys(scopes).length ? { scopes } : {}), ...(carry.length ? { carry } : {}), ...(Object.keys(uses).length ? { uses } : {}) }),
     });
     const ok = (response.grants || []).filter((grant) => grant.id > 0).length;
     const failed = (response.grants || []).length - ok;

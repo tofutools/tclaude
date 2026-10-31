@@ -302,10 +302,23 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	if body.Background {
 		focus = scribeFocusNone
 	}
+	// requirePermission records no decision on the request, so ask directly.
+	var spawnSudoGrant int64
+	if spawnerConvID != "" {
+		spawnSudoGrant = loadBearingSudoGrantID(r, spawnerConvID, PermGroupsMembersSpawn, ActionContext{})
+	}
+	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
+	if !ok {
+		return
+	}
+	defer spawnUse.release()
 	out, reused, fail := summonScribe(name, titleBase, overrides, brief, body.Exclusive, focus, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
+	}
+	if !reused {
+		spawnUse.keep()
 	}
 
 	resp := map[string]any{
