@@ -135,7 +135,7 @@ log "dry run on the destination node"
 mkdir -p "$DST_CWD"
 git -C "$DST_CWD" init -q
 git -C "$DST_CWD" -c user.name=smoke -c user.email=smoke@example.invalid commit -q --allow-empty -m init
-node dst tclaude agent groups import "$ROOT/crew.paf" --dry-run --as crew-landed | tee "$ROOT/dry-run.txt"
+node dst tclaude agent groups import "$ROOT/crew.paf" --dry-run --into "$DST_CWD" --as crew-landed | tee "$ROOT/dry-run.txt"
 grep -qE 'opencode, history native' "$ROOT/dry-run.txt" \
 	|| die "the dry run does not report a native OpenCode landing"
 if grep -qiE 'config only|cannot install' "$ROOT/dry-run.txt"; then
