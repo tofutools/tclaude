@@ -127,6 +127,12 @@ func TestSteward_AccessFromConfigAndAddress(t *testing.T) {
 	viaCc := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": teammate, "cc": []string{"steward"}, "body": "copy"}), worker)
 	assert.Equal(t, http.StatusForbidden, testharness.Serve(f.Mux, viaCc).Code, "nor as a copy")
 
+	// Naming the Steward as a child's reply target would hand the child a
+	// briefing "from" it to answer.
+	require.NoError(t, db.GrantAgentPermission(worker, agentd.PermGroupsMembersSpawn, "test"))
+	forged := f.AsAgent(worker).SpawnWith("team", map[string]any{"name": "child", "initial_message": "Task", "reply_to": conv})
+	assert.Equal(t, http.StatusForbidden, forged.Code, "spawn body=%s", forged.Raw)
+
 	// The Steward wrote first, so the worker can answer, and the answer lands.
 	asked := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": worker, "body": "how is it going?"}), conv))
 	require.Lessf(t, asked.Code, 300, "steward send body=%s", asked.Body.String())
