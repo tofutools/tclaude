@@ -2126,3 +2126,13 @@ CREATE TABLE held_context_reinjections (
 		conv_id           TEXT NOT NULL,
 		transcript_offset INTEGER NOT NULL
 	);
+
+CREATE TABLE collab_board_history (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ board_id TEXT NOT NULL REFERENCES collab_boards(id) ON DELETE CASCADE,
+ actor TEXT NOT NULL,
+ stack TEXT NOT NULL CHECK (stack IN ('undo', 'redo')),
+ body TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX idx_collab_board_history_stack ON collab_board_history(board_id, actor, stack, id);

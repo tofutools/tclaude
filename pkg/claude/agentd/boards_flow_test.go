@@ -173,8 +173,8 @@ func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 	assert.Equal(t, int64(3), after.Version)
 	assert.Len(t, after.Elements, 2, "nothing of the refused patch is applied")
 
-	// A body over 4 MiB is refused outright.
-	big := []map[string]any{{"id": "big", "type": "text", "version": 1, "text": strings.Repeat("x", 5<<20)}}
+	// A body over the limit is refused outright.
+	big := []map[string]any{{"id": "big", "type": "text", "version": 1, "text": strings.Repeat("x", 13<<20)}}
 	require.Equal(t, http.StatusRequestEntityTooLarge, serve(http.MethodPatch, "/api/boards/plan-a", map[string]any{"elements": big}).Code)
 
 	// List, then delete.
@@ -599,4 +599,119 @@ func TestBoardsLiveSocketSignalsChangesWithoutContent(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, testharness.Serve(dash, boardDashReq(t, http.MethodDelete, "/api/boards/plan", nil)).Code)
 	assert.Equal(t, map[string]any{"type": "changed"}, next(), "deleting the board is a change too")
+}
+
+func TestBoardsUndoIsPerActorAndServerSide(t *testing.T) {
+	f := newFlow(t)
+	enableCollab(t)
+	const conv = "board-undo-conv"
+	f.HaveConvWithTitle(conv, "undo")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermBoardsWrite, "test"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+	}
+	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]string{"id": "plan"}).Code)
+	edit := func(after, before map[string]any) {
+		t.Helper()
+		id := after["id"]
+		var was any
+		if before != nil {
+			was = before
+		}
+		rec := serve(http.MethodPatch, "/api/boards/plan", map[string]any{
+			"elements": []map[string]any{after},
+			"steps":    [][]map[string]any{{{"id": id, "before": was}}},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	}
+	type undone struct {
+		Elements []boardElemOut `json:"elements"`
+		Skipped  int            `json:"skipped"`
+		Empty    bool           `json:"empty"`
+	}
+	undo := func(redo bool) undone {
+		t.Helper()
+		rec := serve(http.MethodPost, "/api/boards/plan/undo", map[string]bool{"redo": redo})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var out undone
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+	stored := func(id string) boardElemOut {
+		t.Helper()
+		for _, e := range decodeBoard(t, serve(http.MethodGet, "/api/boards/plan", nil)).Elements {
+			if e.ID == id {
+				return e
+			}
+		}
+		t.Fatalf("no element %s", id)
+		return boardElemOut{}
+	}
+
+	assert.True(t, undo(false).Empty, "nothing to undo yet")
+
+	created := rect("a", 1, 1, 10)
+	edit(created, nil)
+	moved := rect("a", 2, 2, 50)
+	edit(moved, created)
+
+	// A handler built afresh stands in for a reloaded editor: only the daemon
+	// holds the history.
+	dash = agentd.BuildDashboardHandlerForTest()
+	got := undo(false)
+	require.Len(t, got.Elements, 1)
+	assert.Equal(t, 10.0, got.Elements[0].X, "the move is undone")
+	assert.Greater(t, got.Elements[0].Version, int64(2), "as a new version, so other editors merge it")
+	assert.Equal(t, 10.0, stored("a").X)
+
+	assert.Equal(t, 50.0, undo(true).Elements[0].X, "redo puts it back")
+	undo(false)
+	assert.True(t, undo(false).Elements[0].IsDeleted, "undoing the creation deletes it")
+	assert.False(t, undo(true).Elements[0].IsDeleted, "and redo brings it back")
+	assert.Equal(t, 10.0, stored("a").X)
+
+	// New work ends what could be redone.
+	undo(true)
+	undo(false)
+	edit(rect("a", stored("a").Version+1, 3, 70), created)
+	assert.True(t, undo(true).Empty)
+
+	// An element an agent changed since is the agent's: undo leaves it, and
+	// says so.
+	agentEdit := rect("a", stored("a").Version+1, 4, 90)
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch, "/v1/boards/plan",
+		map[string]any{"elements": []map[string]any{agentEdit}, "steps": [][]map[string]any{{{"id": "a", "before": nil}}}}), conv))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	skipped := undo(false)
+	assert.Empty(t, skipped.Elements)
+	assert.Equal(t, 1, skipped.Skipped)
+	assert.Equal(t, 90.0, stored("a").X, "the agent's edit stands")
+
+	// An agent's change stays safe from a later undo too, even once the
+	// operator's own undo has written the same shape back.
+	base := stored("a")
+	mine := rect("a", base.Version+1, 5, 100)
+	edit(mine, rect("a", base.Version, 1, base.X))
+	theirs := rect("a", stored("a").Version+1, 6, 110)
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch, "/v1/boards/plan",
+		map[string]any{"elements": []map[string]any{theirs}}), conv))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	again := rect("a", stored("a").Version+1, 7, 120)
+	edit(again, theirs)
+	assert.Equal(t, 110.0, undo(false).Elements[0].X, "undoing my last edit puts the agent's back")
+	chained := undo(false)
+	assert.Empty(t, chained.Elements)
+	assert.Equal(t, 1, chained.Skipped, "my earlier step would revert the agent's edit, so it stays")
+	assert.Equal(t, 110.0, stored("a").X)
+
+	// A resend of a saved batch, or an edit that lost, adds no step.
+	lost := rect("a", 1, 1, 130)
+	edit(lost, nil)
+	assert.Empty(t, undo(false).Elements, "the lost edit left nothing to undo")
+
+	// An agent's patch adds nothing to the operator's history.
+	for undo(false).Skipped > 0 {
+	}
+	assert.True(t, undo(false).Empty, "the agent's steps were not recorded")
 }
