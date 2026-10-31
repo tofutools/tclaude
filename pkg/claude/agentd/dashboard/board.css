@@ -152,6 +152,13 @@ body.slop, body.vegas {
   color: var(--board-muted); font: inherit; font-size: 10px; text-align: center;
 }
 .board-quick-none { padding: 6px 8px; color: var(--board-muted); font-size: 12px; }
+/* The context menu (js/board-context-menu.js) wears the tab menu's rows. */
+.board-context { position: fixed; z-index: 960; max-height: calc(100vh - 16px); overflow: auto; min-width: 210px; }
+.board-context .mux-tab-menu-item { display: flex; justify-content: space-between; gap: 18px; }
+.board-context .mux-tab-menu-item:disabled { opacity: .45; cursor: default; }
+.board-context kbd { color: var(--board-muted); font: inherit; font-size: 11px; white-space: nowrap; }
+.board-context-swatches { display: flex; gap: 5px; padding: 4px 10px; }
+.board-context-swatches .board-swatch:focus-visible { outline: 2px solid var(--board-blue); outline-offset: 1px; }
 .board-hint {
   position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); pointer-events: none; white-space: nowrap;
   padding: 3px 10px; border-radius: 999px; background: var(--board-bar); color: var(--board-text); font-size: 12px;

@@ -21,8 +21,9 @@ import {
   ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardIdFromTitle, bump, changeBounds,
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
   entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
-  reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, suggestedShape, toExcalidraw, topHit, withLabels,
+  QUICK_SHAPES, reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, stackOrder, suggestedShape, toExcalidraw, topHit, withLabels,
 } from './board-model.js';
+import { BoardContextMenu } from './board-context-menu.js';
 import { BoardMinimap } from './board-minimap.js';
 import { BoardQuickMenu, QUICK_MENU_SIZE } from './board-quick-menu.js';
 import { companionAgents } from './companion-model.js';
@@ -261,6 +262,8 @@ export function BoardEditor({
   // it stays at `at` while the quick menu picks its `kind`.
   const suggesting = useRef(null);
   const lastKind = useRef(''); // the kind quick connect last made
+  const [contextMenu, setContextMenu] = useState(null); // {x, y, p}: page and board point
+  const copied = useRef(''); // the last copy, for a paste the browser will not read
   const disposed = useRef(false);
   // Timer callbacks read the latest participants, not their render's.
   const metaRef = useRef(meta);
@@ -281,6 +284,7 @@ export function BoardEditor({
   }, [onScreen]);
   // Another tool, or leaving the board, takes back a snap point's offer.
   useEffect(() => {
+    setContextMenu(null);
     if (!suggesting.current) return;
     suggesting.current = null;
     redraw();
@@ -805,6 +809,38 @@ export function BoardEditor({
     setSelected(copies.map((el) => el.id));
   }
 
+  // pasteText adds what the clipboard holds. Plain text becomes a text element.
+  function pasteText(text) {
+    const source = parseClipboard(text);
+    if (source) { pasteElements(source); return; }
+    const clean = cleanText(text);
+    if (!clean.trim()) return;
+    const at = pointerAt.current || { x: view.x + 40, y: view.y + 40 };
+    const el = newElement('text', { x: at.x, y: at.y, text: clean, fontSize: 20, strokeColor: color });
+    commit([el]);
+    setSelected([el.id]);
+  }
+
+  function duplicate() {
+    const source = selectionWithLabels();
+    if (!source.length) return;
+    const copies = cloneElements(source, 20, 20);
+    commit(copies);
+    setSelected(copies.map((el) => el.id));
+  }
+
+  const selectAll = () => setSelected(liveElements(elements.current).map((el) => el.id));
+
+  function chooseColor(c, chosen) {
+    setColor(c);
+    if (chosen.length) commit(chosen.map((el) => bump(el, { strokeColor: c })));
+  }
+
+  function chooseFill(c, chosen) {
+    setFill(c);
+    commit(chosen.filter((el) => ['rectangle', 'ellipse', 'diamond'].includes(el.type)).map((el) => bump(el, { backgroundColor: c })));
+  }
+
   function selectionWithLabels() {
     return withLabels(elements.current, selected).map((id) => elements.current.get(id)).filter((el) => el && !el.isDeleted);
   }
@@ -851,11 +887,9 @@ export function BoardEditor({
         beginLine('arrow', p, { startBinding: border ? { elementId: snap.elementId } : snap }, true);
         return;
       }
-      const top = topHit(live, p.x, p.y, 6 / view.zoom);
-      // Attached text is its container, to click on. Inside an unfilled shape
-      // nothing is hit, but the shape is there to take; holding the border key
-      // leaves the press to the rubber band, for what is drawn inside a frame.
-      const hit = (top?.containerId && live.find((el) => el.id === top.containerId)) || top || (!border && shapeInside(live, p.x, p.y));
+      // Holding the border key leaves the inside of a frame to the rubber band,
+      // for what is drawn in it.
+      const hit = pressTarget(live, p, !border);
       if (!hit) {
         // Empty space: a rubber band; with Shift it adds to the selection.
         if (!event.shiftKey) setSelected([]);
@@ -905,6 +939,13 @@ export function BoardEditor({
     elements.current.set(el.id, el);
     gesture.current = { kind: 'draw', id: el.id, start: p, raw: [[0, 0]] };
     redraw();
+  }
+
+  // pressTarget is what a press at p takes. Attached text is its container, and
+  // inside an unfilled shape nothing is hit, but the shape is there to take.
+  function pressTarget(live, p, inside = true) {
+    const top = topHit(live, p.x, p.y, 6 / view.zoom);
+    return (top?.containerId && live.find((el) => el.id === top.containerId)) || top || (inside && shapeInside(live, p.x, p.y)) || null;
   }
 
   // shownSnap is the snap point under the pointer, of the shape showing them.
@@ -1177,6 +1218,112 @@ export function BoardEditor({
     if (el.type !== 'freedraw') setSelected([done.id]);
   }
 
+  // -- the context menu ---------------------------------------------------------
+
+  function onContextMenu(event) {
+    event.preventDefault();
+    // A Mac's Ctrl+click arrives as a press first.
+    const g = gesture.current;
+    if (g?.kind === 'draw') elements.current.delete(g.id);
+    if (g?.origs) for (const [id, orig] of g.origs) elements.current.set(id, orig);
+    if (g?.kind === 'end') elements.current.set(g.id, g.orig);
+    gesture.current = null;
+    active.current = new Set();
+    suggesting.current = null;
+    if (editingText) finishText();
+    const p = toBoard(event);
+    pointerAt.current = p;
+    const hit = pressTarget(drawnElements(elements.current), p);
+    if (!hit) setSelected([]);
+    else if (!selected.includes(hit.id)) setSelected([hit.id]);
+    setContextMenu({ x: event.clientX, y: event.clientY, p, empty: !hit });
+  }
+
+  function copySelection() {
+    copied.current = clipboardText(selectionWithLabels());
+    // Runs the copy handler, which reaches the system clipboard on any origin.
+    win?.document?.execCommand?.('copy');
+  }
+
+  async function pasteAt(p) {
+    let text = '';
+    try { text = await win.navigator.clipboard.readText(); } catch { /* the browser said no: our own copy will do */ }
+    pointerAt.current = p;
+    pasteText(text || copied.current);
+  }
+
+  function addShape(kind, p) {
+    const shape = newElement(kind, { x: p.x - 80, y: p.y - 40, width: 160, height: 80, strokeColor: color, backgroundColor: fill });
+    commit([shape]);
+    setSelected([shape.id]);
+  }
+
+  // fitView shows everything, never closer than actual size.
+  function fitView() {
+    const box = contentBounds(liveElements(elements.current));
+    const rect = svgRef.current?.getBoundingClientRect?.();
+    if (!box || !rect?.width) return;
+    const zoom = Math.max(0.2, Math.min(1, rect.width / (box.width + 80), rect.height / (box.height + 80)));
+    setView({ zoom, x: box.x + box.width / 2 - rect.width / 2 / zoom, y: box.y + box.height / 2 - rect.height / 2 / zoom });
+  }
+
+  // contextItems offers what applies to what was clicked, through the same
+  // actions as the toolbar and the keys.
+  function contextItems(menu, sels) {
+    const mod = /mac/i.test(win?.navigator?.platform || '') ? 'Cmd' : 'Ctrl';
+    const history = [{ label: 'Undo', keys: `${mod}+Z`, run: () => undo(false) }, { label: 'Redo', keys: `${mod}+Shift+Z`, run: () => undo(true) }];
+    if (menu.empty || !sels.length) {
+      return [
+        ...QUICK_SHAPES.map(({ id, label }) => ({ label: `Add ${label.toLowerCase()} here`, run: () => addShape(id, menu.p) })),
+        { label: 'Add text here', keys: 'Double-click', run: () => beginText(null, menu.p) },
+        'separator',
+        { label: 'Paste here', keys: `${mod}+V`, disabled: !win?.navigator?.clipboard?.readText && !copied.current, run: () => pasteAt(menu.p) },
+        { label: 'Select all', keys: `${mod}+A`, disabled: !live.length, run: selectAll },
+        { label: 'Fit board to view', disabled: !live.length, run: fitView },
+        'separator',
+        ...history,
+      ];
+    }
+    const items = [];
+    const one = sels.length === 1 ? sels[0] : null;
+    if (one) items.push({ label: one.points ? 'Edit label' : 'Edit text', keys: 'Enter', run: () => (one.type === 'text' ? beginText(one) : beginLabel(one)) }, 'separator');
+    const shapes = sels.filter((el) => ['rectangle', 'ellipse', 'diamond'].includes(el.type));
+    if (shapes.length === sels.length) {
+      for (const { id, label } of QUICK_SHAPES) {
+        if (shapes.some((el) => el.type !== id)) {
+          items.push({ label: `Change to ${label.toLowerCase()}`, run: () => commit(withArrows(shapes.filter((el) => el.type !== id).map((el) => bump(elements.current.get(el.id), { type: id })))) });
+        }
+      }
+      items.push('separator');
+    }
+    const routed = sels.filter((el) => el.type === 'arrow' || el.type === 'line');
+    if (routed.length === sels.length) {
+      for (const route of LINE_ROUTES) {
+        items.push({ label: route.label, checked: routed.every((el) => (el.routing || 'straight') === route.id), run: () => chooseRouting(route.id, routed) });
+      }
+      const heads = routed.some((el) => el.type === 'line');
+      items.push({ label: heads ? 'Add arrowhead' : 'Remove arrowhead', run: () => commit(routed.map((el) => bump(elements.current.get(el.id), { type: heads ? 'arrow' : 'line' }))) }, 'separator');
+    }
+    if (arrangeable >= 2) {
+      items.push(...ALIGNMENTS.filter((a) => arrangeable >= (a.min || 2)).map((a) => ({ label: a.label, run: () => align(a.id) })), 'separator');
+    }
+    items.push(
+      { label: 'Duplicate', keys: `${mod}+D`, run: duplicate },
+      { label: 'Copy', keys: `${mod}+C`, run: copySelection },
+      { label: 'Cut', keys: `${mod}+X`, run: () => { copySelection(); remove(selected); } },
+      'separator',
+      { label: 'Bring to front', run: () => commit(stackOrder(elements.current, selected, 'front')) },
+      { label: 'Send to back', run: () => commit(stackOrder(elements.current, selected, 'back')) },
+      'separator',
+      { swatches: BOARD_COLORS.map((c) => ({ color: c, label: `Stroke ${c}`, on: sels.every((el) => el.strokeColor === c), run: () => chooseColor(c, sels) })) },
+    );
+    if (shapes.length) {
+      items.push({ swatches: BOARD_FILLS.map((c) => ({ color: c, label: c === 'transparent' ? 'No fill' : `Fill ${c}`, on: shapes.every((el) => el.backgroundColor === c), run: () => chooseFill(c, sels) })) });
+    }
+    items.push('separator', { label: 'Delete', keys: 'Del', danger: true, run: () => remove(selected) });
+    return items;
+  }
+
   // centerOn moves the view to a board point, at the zoom it has.
   const centerOn = useCallback((x, y) => {
     const rect = svgRef.current?.getBoundingClientRect?.();
@@ -1299,17 +1446,8 @@ export function BoardEditor({
         return;
       }
       if (mod && key === 'y') { event.preventDefault(); undo(true); return; }
-      if (mod && key === 'a') { event.preventDefault(); setSelected(liveElements(elements.current).map((el) => el.id)); return; }
-      if (mod && key === 'd') {
-        event.preventDefault();
-        const source = selectionWithLabels();
-        if (source.length) {
-          const copies = cloneElements(source, 20, 20);
-          commit(copies);
-          setSelected(copies.map((el) => el.id));
-        }
-        return;
-      }
+      if (mod && key === 'a') { event.preventDefault(); selectAll(); return; }
+      if (mod && key === 'd') { event.preventDefault(); duplicate(); return; }
       if (mod || event.altKey) return;
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length) { event.preventDefault(); remove(selected); return; }
       if (event.key === 'Escape') { suggesting.current = null; setSelected([]); setTool('select'); redraw(); return; }
@@ -1329,7 +1467,8 @@ export function BoardEditor({
       const highlighted = win?.getSelection?.();
       if (highlighted && !highlighted.isCollapsed) return;
       event.preventDefault();
-      event.clipboardData?.setData('text/plain', clipboardText(selectionWithLabels()));
+      copied.current = clipboardText(selectionWithLabels());
+      event.clipboardData?.setData('text/plain', copied.current);
       if (event.type === 'cut') remove(selected);
     };
     const onPaste = (event) => {
@@ -1337,15 +1476,7 @@ export function BoardEditor({
       const text = event.clipboardData?.getData('text/plain') || '';
       if (!text) return;
       event.preventDefault();
-      const source = parseClipboard(text);
-      if (source) { pasteElements(source); return; }
-      // Plain text becomes a text element.
-      const clean = cleanText(text);
-      if (!clean.trim()) return;
-      const at = pointerAt.current || { x: view.x + 40, y: view.y + 40 };
-      const el = newElement('text', { x: at.x, y: at.y, text: clean, fontSize: 20, strokeColor: color });
-      commit([el]);
-      setSelected([el.id]);
+      pasteText(text);
     };
     win?.addEventListener?.('keydown', onKey);
     win?.addEventListener?.('keyup', onBorderKey);
@@ -1512,11 +1643,11 @@ export function BoardEditor({
       })}
       <span class="board-sep"></span>
       ${BOARD_COLORS.map((c) => html`<button key=${c} type="button" class=${`board-swatch${color === c ? ' on' : ''}`} style=${`background:${c}`}
-        aria-label=${`Stroke ${c}`} onClick=${() => { setColor(c); if (sels.length) commit(sels.map((el) => bump(el, { strokeColor: c }))); }}></button>`)}
+        aria-label=${`Stroke ${c}`} onClick=${() => chooseColor(c, sels)}></button>`)}
       <span class="board-sep"></span>
       ${BOARD_FILLS.map((c) => html`<button key=${c} type="button" class=${`board-swatch fill${fill === c ? ' on' : ''}`}
         style=${c === 'transparent' ? '' : `background:${c}`} aria-label=${c === 'transparent' ? 'No fill' : `Fill ${c}`}
-        onClick=${() => { setFill(c); commit(sels.filter((el) => ['rectangle', 'ellipse', 'diamond'].includes(el.type)).map((el) => bump(el, { backgroundColor: c }))); }}>${c === 'transparent' ? '∅' : ''}</button>`)}
+        onClick=${() => chooseFill(c, sels)}>${c === 'transparent' ? '∅' : ''}</button>`)}
       ${(lines.length > 0 || tool === 'arrow' || tool === 'line') && html`<span class="board-sep"></span>${LINE_ROUTES.map((r) => html`<button key=${r.id} type="button"
         class=${`board-tool${shownRouting === r.id ? ' on' : ''}`} aria-pressed=${shownRouting === r.id ? 'true' : 'false'} title=${r.label} aria-label=${r.label}
         onClick=${() => chooseRouting(r.id, lines)}>${r.icon}</button>`)}`}
@@ -1532,7 +1663,7 @@ export function BoardEditor({
       <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`} data-board-id=${boardId}
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
         onPointerLeave=${() => setHoverShape('')}
-        onWheel=${onWheel} onDblClick=${onDoubleClick}>
+        onWheel=${(event) => { setContextMenu(null); onWheel(event); }} onDblClick=${onDoubleClick} onContextMenu=${onContextMenu}>
         <g data-board-viewport transform=${transform}>
           ${drawn}
           ${(sels.length > 0 || band || snapShape || offer) && html`<g data-board-chrome>
@@ -1578,6 +1709,8 @@ export function BoardEditor({
         return html`<${BoardQuickMenu} x=${x} y=${y} kind=${menu.kind} onPreview=${(kind) => { if (suggesting.current) { suggesting.current.kind = kind; redraw(); } }}
           onPick=${(kind) => { suggesting.current.kind = kind; acceptSuggestion(); }} onCancel=${closeQuickMenu} />`;
       })()}
+      ${contextMenu && html`<${BoardContextMenu} x=${contextMenu.x} y=${contextMenu.y} win=${win} label=${contextMenu.empty ? 'Board actions' : 'Selection actions'}
+        items=${contextItems(contextMenu, sels)} onClose=${() => setContextMenu(null)} />`}
       ${aiming && html`<div class="board-hint" role="status">Hold ${borderKeyName(win)} to attach to the border instead of a connection point</div>`}
       ${drawing.length > 0 && html`<div class="board-drawing-note" role="status">✎ ${drawing.join(', ')} ${drawing.length === 1 ? 'is' : 'are'} drawing…</div>`}
       ${!live.length && status === 'ready' && html`<div class="board-empty-hint">Pick a tool and draw. Invite an agent to draw with you; it reads the board as shapes and as an image.</div>`}

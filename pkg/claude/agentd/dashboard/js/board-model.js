@@ -125,8 +125,32 @@ export function mergeElements(map, incoming, skip = null) {
   return changed;
 }
 
+// An element's place in the stack is its `z` once it has been sent to the front
+// or back, or else its position on the board, a long stride apart. So nothing is
+// written to the elements left where they are, and what anyone adds later, agents
+// included, is still above a million sends to the front.
+const STACK_STRIDE = 2 ** 20;
+const stackKey = (el, position) => (Number.isFinite(el.z) ? el.z : position * STACK_STRIDE);
+
+function stacked(map) {
+  const all = [...map.values()];
+  if (!all.some((el) => Number.isFinite(el.z))) return all;
+  const key = new Map(all.map((el, i) => [el.id, stackKey(el, i)]));
+  return all.sort((a, b) => key.get(a.id) - key.get(b.id));
+}
+
+// liveElements lists the elements in stacking order, bottom first.
 export function liveElements(map) {
-  return [...map.values()].filter((el) => !el.isDeleted);
+  return stacked(map).filter((el) => !el.isDeleted);
+}
+
+// stackOrder sends elements (with their labels) to the front or back, keeping
+// their order among themselves, and returns the bumped elements.
+export function stackOrder(map, ids, where, opts) {
+  const moving = new Set(withLabels(map, ids));
+  const keys = [...map.values()].map(stackKey);
+  const start = where === 'front' ? Math.max(...keys) + 1 : Math.min(...keys) - moving.size;
+  return stacked(map).filter((el) => moving.has(el.id) && !el.isDeleted).map((el, i) => bump(el, { z: start + i }, opts));
 }
 
 // normalizeBox turns a drag from (x0,y0) to (x1,y1) into a positive box.
@@ -496,7 +520,7 @@ export function drawnElements(map) {
     const container = el.containerId && drawn.get(el.containerId);
     if (container && container.type !== 'text') drawn.set(el.id, { ...el, ...textBoxOn(el, container) });
   }
-  return [...drawn.values()];
+  return liveElements(map).map((el) => drawn.get(el.id));
 }
 
 // labelPoint is where an element's attached text sits: the middle of a box,

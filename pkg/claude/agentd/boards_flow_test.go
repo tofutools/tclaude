@@ -209,6 +209,7 @@ func TestBoardsKeepConnectorAndAttachedTextFields(t *testing.T) {
 		"routing": "curved", "startBinding": map[string]any{"elementId": "a"}}
 	box := rect("r", 1, 1, 0)
 	box["routing"], box["containerId"] = "elbow", "a"
+	box["z"] = -3.5
 	box["startBinding"] = map[string]any{"elementId": "a"}
 	patch := serve(http.MethodPatch, "/api/boards/wired", map[string]any{"elements": []any{line, label, stroke, box}})
 	require.Equal(t, http.StatusOK, patch.Code, "body=%s", patch.Body.String())
@@ -231,6 +232,7 @@ func TestBoardsKeepConnectorAndAttachedTextFields(t *testing.T) {
 	assert.Equal(t, map[string]any{"elementId": "a", "fixedPoint": []any{1.0, 0.5}}, byID["l"]["startBinding"])
 	assert.Equal(t, map[string]any{"elementId": "b"}, byID["l"]["endBinding"])
 	assert.Equal(t, "l", byID["l-label"]["containerId"])
+	assert.Equal(t, -3.5, byID["r"]["z"], "a place in the stack is kept")
 	assert.Contains(t, byID["f"], "startBinding", "a stroke can start on a shape")
 	assert.NotContains(t, byID["f"], "routing", "a stroke has no line routing")
 	for _, key := range []string{"routing", "containerId", "startBinding"} {

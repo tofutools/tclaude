@@ -291,3 +291,138 @@ test('the keyboard builds a graph from the selected shape', async (t) => {
   await key('ArrowDown');
   assert.equal(field(), null);
 });
+
+// tcl-99j1u9: the right-click menu.
+const menuRows = (root) => [...root.querySelectorAll('.board-context [role^="menuitem"]')].map((row) => row.textContent.trim());
+const rowNamed = (root, name) => [...root.querySelectorAll('.board-context [role^="menuitem"]')].find((row) => row.textContent.includes(name));
+
+function rightClick({ harness, svg }, x, y) {
+  const type = 'oncontextmenu' in svg ? 'contextmenu' : 'ContextMenu';
+  return harness.act(() => harness.fireEvent(svg, type, { button: 2, clientX: x + OFFSET, clientY: y + OFFSET }));
+}
+
+test('the context menu offers what applies to what was clicked', async (t) => {
+  const env = await setup(t, (m) => [
+    ...twoShapes(m),
+    m.newElement('arrow', { id: 'link', x: 204, y: 130, points: [[0, 0], [192, 0]], startBinding: { elementId: 'a' }, endBinding: { elementId: 'b' } }),
+    m.newElement('text', { id: 'note', x: 100, y: 300, text: 'note' }),
+  ]);
+  const { root, svg, key, click, saved } = env;
+
+  await rightClick(env, 700, 500);
+  assert.ok(rowNamed(root, 'Add ellipse here') && rowNamed(root, 'Paste here') && rowNamed(root, 'Select all'), 'blank board');
+  assert.match(rowNamed(root, 'Select all').textContent, /Ctrl\+A/, 'a shortcut shows beside its action');
+  await key('Escape', root.querySelector('.board-context button'));
+  assert.equal(root.querySelector('.board-context'), null, 'Escape closes it');
+
+  await rightClick(env, 150, 130);
+  assert.equal(svg.querySelectorAll('.board-selection').length, 1, 'the clicked shape is selected first');
+  const shape = menuRows(root);
+  assert.ok(shape.some((row) => row.includes('Edit text') && row.includes('Enter')));
+  assert.ok(shape.includes('Change to ellipse') && !shape.includes('Change to rectangle'));
+  assert.ok(shape.some((row) => row.includes('Bring to front')));
+  await choose(env, 'Change to diamond');
+  const [changed] = await saved();
+  assert.equal(changed.type, 'diamond');
+  assert.equal(svg.querySelector('[data-element="a"]').tagName.toLowerCase(), 'polygon');
+
+  await rightClick(env, 300, 130);
+  const line = menuRows(root);
+  assert.ok(line.some((row) => row.includes('✓ Straight line')), 'the routing in use is ticked');
+  assert.ok(line.some((row) => row.includes('Edit label')));
+  assert.ok(line.includes('Remove arrowhead'));
+  await choose(env, 'Remove arrowhead');
+  assert.equal((await saved())[0].type, 'line');
+
+  await rightClick(env, 110, 305);
+  assert.ok(rowNamed(root, 'Edit text'));
+  assert.equal(rowNamed(root, 'Change to'), undefined, 'text has no shape kind');
+  await key('Escape', root.querySelector('.board-context button'));
+  await click(700, 500);
+});
+
+// A menu row is clicked, which leaves the menu shut.
+async function choose({ harness, root }, name) {
+  await harness.act(() => rowNamed(root, name).click());
+  await harness.act(() => wait());
+}
+
+test('the context menu acts on the selection, and selects what is outside it', async (t) => {
+  const env = await setup(t, (m) => [...twoShapes(m), m.newElement('rectangle', { id: 'c', x: 100, y: 300, width: 100, height: 60 })]);
+  const { root, svg, fire, saved } = env;
+  await fire('pointerdown', 90, 90);
+  await fire('pointermove', 510, 170);
+  await fire('pointerup', 510, 170);
+  assert.equal(svg.querySelectorAll('.board-selection').length, 2);
+
+  await rightClick(env, 150, 130);
+  assert.equal(svg.querySelectorAll('.board-selection').length, 2, 'inside the selection it stays');
+  assert.ok(rowNamed(root, 'Align left'), 'with what a selection can do');
+  assert.equal(rowNamed(root, 'Edit text'), undefined);
+  await choose(env, 'Delete');
+  assert.deepEqual((await saved()).filter((el) => el.isDeleted).map((el) => el.id).sort(), ['a', 'b']);
+
+  await rightClick(env, 150, 330);
+  assert.equal(svg.querySelectorAll('.board-selection').length, 1);
+});
+
+test('bring to front and send to back reorder what is drawn, labels with their shapes', async (t) => {
+  const env = await setup(t, (m) => [
+    ...twoShapes(m),
+    m.newElement('text', { id: 'a-label', containerId: 'a', x: 120, y: 120, text: 'A' }),
+    m.newElement('rectangle', { id: 'c', x: 100, y: 300, width: 100, height: 60, backgroundColor: '#ffc9c9' }),
+  ]);
+  const { svg, saved, m } = env;
+  const order = () => [...svg.querySelectorAll('[data-board-viewport] > [data-element]')].map((node) => node.getAttribute('data-element'));
+  assert.deepEqual(order(), ['a', 'b', 'a-label', 'c']);
+  await rightClick(env, 150, 110);
+  await choose(env, 'Bring to front');
+  assert.deepEqual(order(), ['b', 'c', 'a', 'a-label']);
+  const front = await saved();
+  assert.deepEqual(front.map((el) => el.id).sort(), ['a', 'a-label'], 'nothing else is written');
+
+  await rightClick(env, 450, 130);
+  await choose(env, 'Bring to front');
+  await rightClick(env, 150, 330);
+  await choose(env, 'Send to back');
+  assert.deepEqual(order(), ['c', 'a', 'a-label', 'b']);
+
+  // Whatever is added later lands on top.
+  const map = new Map([m.newElement('rectangle', { id: 'x' }), m.newElement('rectangle', { id: 'y' })].map((el) => [el.id, el]));
+  map.set('w', m.newElement('rectangle', { id: 'w' }));
+  for (const el of m.stackOrder(map, ['x', 'y'], 'front')) map.set(el.id, el);
+  map.set('z', m.newElement('rectangle', { id: 'z' }));
+  assert.deepEqual(m.liveElements(map).map((el) => el.id), ['w', 'x', 'y', 'z']);
+});
+
+test('the context menu moves with the arrow keys, runs on Enter and closes on a click away', async (t) => {
+  const env = await setup(t, twoShapes);
+  const { harness, root, svg } = env;
+  await rightClick(env, 700, 500);
+  const doc = harness.window.document;
+  const rows = [...root.querySelectorAll('.board-context button:not(:disabled)')];
+  assert.equal(doc.activeElement, rows[0], 'the first row has the focus');
+  await env.key('ArrowDown', doc.activeElement);
+  assert.equal(doc.activeElement, rows[1]);
+  await env.key('ArrowUp', doc.activeElement);
+  await env.key('ArrowUp', doc.activeElement);
+  assert.equal(doc.activeElement, rows.at(-1), 'it wraps');
+  await env.key('3', doc.activeElement);
+  assert.equal(root.querySelector('.board-tool.on').getAttribute('aria-label'), 'Select', 'board keys stay out of it');
+  await harness.act(() => svg.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true, cancelable: true })));
+  assert.equal(root.querySelector('.board-context'), null);
+});
+
+test('the context menu stays on screen', async (t) => {
+  const env = await setup(t, twoShapes);
+  const { harness } = env;
+  const { BoardContextMenu } = await harness.importDashboardModule('js/board-context-menu.js');
+  const proto = harness.window.HTMLElement.prototype;
+  const original = proto.getBoundingClientRect;
+  proto.getBoundingClientRect = function box() { return this.classList?.contains('board-context') ? { width: 200, height: 300, left: 0, top: 0 } : original.call(this); };
+  t.after(() => { proto.getBoundingClientRect = original; });
+  const view = await harness.mount(harness.html`<${BoardContextMenu} x=${5000} y=${5000} label="x" items=${[{ label: 'One', run() {} }]} win=${{ innerWidth: 1000, innerHeight: 700 }} onClose=${() => {}} />`);
+  const node = view.container.querySelector('.board-context');
+  assert.equal(node.style.left, '792px');
+  assert.equal(node.style.top, '392px');
+});
