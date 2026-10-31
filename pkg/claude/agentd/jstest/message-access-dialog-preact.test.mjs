@@ -391,6 +391,7 @@ test('a notification on another node is answered through that node, text only', 
 
 const sudoSlugs = [
   { slug: 'agent.stop', description: 'stop agents' },
+  { slug: 'agent.spawn', description: 'spawn anywhere', scope_dims: ['peer'], countable: true },
   { slug: 'groups.members.spawn', description: 'spawn', scope_dims: ['group'], countable: true },
   { slug: 'node.exec', description: 'run commands', risky: true },
   { slug: 'permissions.grant', description: 'grant', risky: true },
@@ -467,12 +468,36 @@ test('granting sends the duration, reason and scope, and keeps the draft when it
   await mounted.unmount();
 });
 
-test('a slug the agent already holds offers no scope: it would narrow, not elevate', async (t) => {
+test('a slug the agent already holds can be scoped, and the row says that narrows it', async (t) => {
   const harness = await createPreactHarness(t);
   const current = { ...sudoSnapshot(), permissions: { defaults: ['groups.members.spawn'], overrides: {} } };
   const { host, mounted } = await mountSudo(harness, sudoActions(), current);
   await pickSudo(harness, host, 'groups.members.spawn');
-  assert.equal(!!sudoRow(host, 'groups.members.spawn').querySelector('button.perm-scope-twisty'), false);
+  const row = () => sudoRow(host, 'groups.members.spawn');
+  assert.ok(row().querySelector('button.perm-scope-twisty'));
+  assert.equal(row().querySelector('.perm-narrows-held'), null, 'no scope, nothing narrows');
+  await harness.act(() => { row().querySelector('.perm-scope-twisty').click(); });
+  await harness.input(host.querySelector('.perm-scope-free'), 'dev');
+  await harness.act(() => { host.querySelector('.perm-scope-free-add').click(); });
+  assert.match(row().querySelector('.perm-narrows-held').textContent, /only use it within this scope/);
+  await mounted.unmount();
+});
+
+test('a peer-scoped grant says why it takes no use limit, and sends none', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const { host, mounted } = await mountSudo(harness, actions);
+  await pickSudo(harness, host, 'agent.spawn');
+  const row = () => sudoRow(host, 'agent.spawn');
+  await harness.input(row().querySelector('.perm-uses input'), '3');
+  await harness.act(() => { row().querySelector('.perm-scope-twisty').click(); });
+  await harness.input(host.querySelector('.perm-scope-free'), 'inst_peer');
+  await harness.act(() => { host.querySelector('.perm-scope-free-add').click(); });
+  assert.equal(row().querySelector('.perm-uses input'), null);
+  assert.match(row().querySelector('.perm-uses.none').title, /scoped to a peer/);
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(payloads[0].uses, undefined);
   await mounted.unmount();
 });
 

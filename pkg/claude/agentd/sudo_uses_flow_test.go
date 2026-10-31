@@ -187,3 +187,24 @@ func TestSudoUses_PeerScopeTakesNoLimit(t *testing.T) {
 	assert.Equalf(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "local spawns only")
 }
+
+// Scope, time and a use limit sit on one grant and survive being stored for
+// future Stewards, so the next Steward's copy keeps all three.
+func TestSudoUses_ScopeTimeAndLimitCombine(t *testing.T) {
+	f := newFlow(t)
+	const conv = "sudouses-aaaa-bbbb-cccc-000000000004"
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveAliveSession(conv, "lbl-sc", "tmux-sc", f.TestCwd("sc"))
+	now := time.Now()
+	scope := `{"group":["alpha"]}`
+	id, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: agentd.PermGroupsMembersSpawn, ScopeJSON: scope,
+		GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute), GrantedBy: "test", UsesLimit: 5, UsesLeft: 5})
+	require.NoError(t, err)
+	require.NoError(t, db.CarrySudoGrant(id))
+	stored, err := db.ListActiveStewardCarriedSudo()
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.JSONEq(t, scope, stored[0].ScopeJSON)
+	assert.Equal(t, int64(5), stored[0].UsesLimit)
+	assert.WithinDuration(t, now.Add(10*time.Minute), stored[0].ExpiresAt, time.Second)
+}
