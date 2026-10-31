@@ -222,10 +222,8 @@ func exportedPAF(t *testing.T, f *testharness.Flow, conv string) (*paf.Archive, 
 // Scenario: a PAF from another tool carries extensions tclaude does not
 // understand, one declared copy: safe and one copy: unsafe.
 //
-// Expected:
-//   - Imported offline with its history unchanged, an export writes both back.
-//   - Translated for another harness, an export keeps only the safe one, with
-//     its declaration, object data and ext/ entry intact.
+// Expected: whichever way it lands, an export keeps only the safe one, with
+// its declaration, object data and ext/ entry intact.
 func TestAgentExportKeepsUnknownExtensions(t *testing.T) {
 	f := newFlow(t)
 	t.Setenv("CODEX_HOME", "")
@@ -238,25 +236,26 @@ func TestAgentExportKeepsUnknownExtensions(t *testing.T) {
 	raw := withForeignExtensions(t, rec.Body.Bytes())
 
 	dest := testutil.CanonicalTempDir(t)
-	offline := importAgentArchive(t, f, raw, url.Values{"cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"offline"}, "start": {"false"}})
-	require.True(t, offline.Applied)
-	a, ag := exportedPAF(t, f, offline.Spawn.ConvID)
-	assert.Contains(t, a.Manifest.ExtensionsUsed, extSafe)
-	assert.Contains(t, a.Manifest.ExtensionsUsed, extUnsafe, "the history is unchanged, so copy: unsafe data still holds")
-	assert.JSONEq(t, `{"offset":7}`, string(ag.Extensions[extUnsafe]))
-
-	translated := importAgentArchive(t, f, raw, url.Values{"harness": {"codex"}, "model": {"gpt-5.5"}, "cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"translated"}})
-	require.True(t, translated.Applied)
-	a, ag = exportedPAF(t, f, translated.Spawn.ConvID)
-	assert.NotContains(t, a.Manifest.ExtensionsUsed, extUnsafe, "translating drops copy: unsafe data")
-	assert.Equal(t, "safe", a.Manifest.ExtensionsUsed[extSafe].Copy)
-	assert.JSONEq(t, `{"note":"keep me"}`, string(ag.Extensions[extSafe]))
-	assert.JSONEq(t, `{"root":true}`, string(a.Manifest.Extensions[extSafe]))
-	env, _ := a.Environment(a.Manifest.Agents[0])
-	assert.JSONEq(t, `{"env":true}`, string(env.Extensions[extSafe]))
-	notes, err := a.ReadEntry("ext/"+extSafe+"/notes.txt", 1024)
-	require.NoError(t, err)
-	assert.Equal(t, "notes", string(notes))
+	for name, q := range map[string]url.Values{
+		"native":     {"cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"offline"}, "start": {"false"}},
+		"translated": {"harness": {"codex"}, "model": {"gpt-5.5"}, "cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"translated"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			landed := importAgentArchive(t, f, raw, q)
+			require.True(t, landed.Applied)
+			a, ag := exportedPAF(t, f, landed.Spawn.ConvID)
+			assert.NotContains(t, a.Manifest.ExtensionsUsed, extUnsafe, "a landing changes what copy: unsafe data describes")
+			assert.NotContains(t, ag.Extensions, extUnsafe)
+			assert.Equal(t, "safe", a.Manifest.ExtensionsUsed[extSafe].Copy)
+			assert.JSONEq(t, `{"note":"keep me"}`, string(ag.Extensions[extSafe]))
+			assert.JSONEq(t, `{"root":true}`, string(a.Manifest.Extensions[extSafe]))
+			env, _ := a.Environment(a.Manifest.Agents[0])
+			assert.JSONEq(t, `{"env":true}`, string(env.Extensions[extSafe]))
+			notes, err := a.ReadEntry("ext/"+extSafe+"/notes.txt", 1024)
+			require.NoError(t, err)
+			assert.Equal(t, "notes", string(notes))
+		})
+	}
 }
 
 // Scenario: an imported agent's kept extension data holds a credential.

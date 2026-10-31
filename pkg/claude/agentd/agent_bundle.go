@@ -342,7 +342,7 @@ func scanAgentBundle(b *agentbundle.Bundle) ([]agentbundle.Finding, error) {
 		Warnings     []string                   `json:"warnings"`
 	}{b.Manifest.Placeholders, b.Manifest.CreatedAt, b.Manifest.TclaudeVersion, b.Manifest.Warnings})
 	c.JSON(metadata, "manifest")
-	scanCarriedExtensions(c, carriedExtensions(b.SourceConv, b))
+	scanCarriedExtensions(c, carriedExtensions(b.SourceConv))
 	history, err := b.OpenHistory()
 	if err != nil {
 		return nil, err
@@ -876,7 +876,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		for _, id := range dropped {
 			slog.Warn("import: extension data too large to keep", "agent", spawned.AgentID, "extension", id)
 		}
-		keepImportedExtensions(spawned, carried, h, noStart, landing, preview.Cwd)
+		keepImportedExtensions(spawned, carried)
 	}
 	preview.Applied = true
 	preview.Offline = noStart

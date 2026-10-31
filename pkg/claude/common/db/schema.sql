@@ -2200,7 +2200,6 @@ CREATE TABLE steward_carried_sudo (
 , uses_limit INTEGER NOT NULL DEFAULT 0, uses_left INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE TABLE agent_paf_extensions (
-		agent_id       TEXT PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
-		data           TEXT NOT NULL,
-		history_sha256 TEXT NOT NULL DEFAULT ''
+		agent_id TEXT PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+		data     TEXT NOT NULL
 	);

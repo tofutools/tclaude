@@ -96,7 +96,7 @@ func archiveAgentPAFWith(b *agentbundle.Bundle, sign bool, parts pafHistoryParts
 	if !parts.NoContext {
 		opts.Context = neutralContext(b)
 	}
-	opts.Extensions = carriedExtensions(b.SourceConv, b)
+	opts.Extensions = carriedExtensions(b.SourceConv)
 	if parts.NoNative && b.Manifest.History != nil {
 		if opts.Context == nil {
 			return nil, errors.New("the conversation has no neutral form to carry without its native history")
@@ -124,6 +124,17 @@ func archiveAgentPAFWith(b *agentbundle.Bundle, sign bool, parts pafHistoryParts
 		return nil, err
 	}
 	err = legacy.WriteAgentBundle(b, f, opts)
+	if err != nil && opts.Extensions != nil {
+		// Extension data kept for another tool must never block the agent's
+		// own export.
+		slog.Warn("paf: kept extension data left out", "error", err)
+		opts.Extensions = nil
+		if err = f.Truncate(0); err == nil {
+			if _, err = f.Seek(0, io.SeekStart); err == nil {
+				err = legacy.WriteAgentBundle(b, f, opts)
+			}
+		}
+	}
 	if err != nil && opts.Context != nil && !opts.OmitNative {
 		// The neutral context is optional and the native history is
 		// lossless, so a context that does not fit the archive or record
