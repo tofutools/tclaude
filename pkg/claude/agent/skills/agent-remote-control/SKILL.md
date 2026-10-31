@@ -53,7 +53,7 @@ Self remote-control is opt-in. The fastest path is
 `self.dir-repair`, `self.process`) as defaults in one shot. Manual alternatives:
 
 **Option 1 — globally for every agent.** Either edit
-`~/.tclaude/config.json`:
+`~/.tclaude/data/config.json`:
 
 ```json
 {

@@ -408,19 +408,12 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 	writeJSON(w, status, out)
 }
 
-// countableSudoSlugs are the slugs a sudo grant can limit by uses. Each names one
-// discrete action with one place to count it: a spawn. Adding a slug means
-// adding takeSudoUse to its handler, and refusing the grant on any path that
-// cannot count (spawnAuthorityIsCounted). A peer-scoped grant takes no limit:
-// remote spawns do not pass the reservation, so POST /api/sudo refuses the pair.
-var countableSudoSlugs = []string{PermAgentSpawn, PermGroupsMembersSpawn}
-
 // maxSudoUses bounds a use limit. A larger one is no limit at all.
 const maxSudoUses = 1000
 
-// sudoUse is one use of a counted grant, reserved before the action. Release is
-// deferred by the handler and gives it back unless keep ran, so every way of
-// not spawning returns the use.
+// sudoUse is one use of a counted grant, reserved before the action. A spawn
+// handler defers release, which gives it back unless keep ran, so every way of
+// not spawning returns the use. The gates spend theirs through sudoUseMeter.
 type sudoUse struct {
 	grantID int64
 	kept    bool

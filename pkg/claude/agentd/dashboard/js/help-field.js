@@ -1,5 +1,7 @@
 import { h, Fragment } from 'preact';
+import { useRef } from 'preact/hooks';
 import htm from 'htm';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -39,6 +41,9 @@ export function helpCaveat(help) {
 export function HelpDisclosure({
   id, descriptionID = `${id}-hint`, label, help, content = null, open, setOpen, warn = false,
 }) {
+  const triggerRef = useRef(null);
+  const descriptionRef = useRef(null);
+  useDismissablePopover([triggerRef, descriptionRef], open, () => setOpen(''), { escape: false });
   if (!help && !content) return null;
   /* Focus alone is passive form traversal, not a request to cover the dialog
      with help. Once explicitly opened, however, the trigger and description
@@ -66,12 +71,12 @@ export function HelpDisclosure({
      has a caveat" cue the colour gives a sighted one. */
   const name = warn ? `Show ${label} warning` : `Show ${label} help`;
   return html`<${Fragment}>
-    <button type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
+    <button ref=${triggerRef} type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
       aria-label=${name}
       aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
       onClick=${() => setOpen(open ? '' : id)}
       onBlur=${closeAfterTrigger} onKeyDown=${closeOnEscape}>${warn ? '!' : '?'}</button>
-    <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}
+    <span ref=${descriptionRef} id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}
       aria-live="polite" onBlur=${closeAfterDescription} onKeyDown=${closeOnEscape}>${content || help}</span>
   <//>`;
 }

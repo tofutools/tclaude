@@ -21,7 +21,7 @@ type debugExportParams struct {
 
 func debugExportCmd() *cobra.Command {
 	return boa.CmdT[debugExportParams]{
-		Use:         "debug-export [target]",
+		Use:         "debug-export",
 		Short:       "Export an agent's recorded launch and sandbox configuration",
 		Long:        "Exports three configurations side by side: requested (the original spawn request, including omitted fields), resolved (durable values and the exact composed sandbox profiles), and running (the latest recorded launch). Environment values and local paths are included because they are needed for sandbox diagnosis; treat the result as sensitive. The task briefing and one-time authorization token are redacted. Omit target when running as the agent itself; exporting another agent requires agent.debug-export or group ownership.",
 		ParamEnrich: common.DefaultParamEnricher(),

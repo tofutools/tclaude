@@ -92,7 +92,7 @@ type NewParams struct {
 	// an omitted value from the global default spawn profile; if that is also
 	// blank the harness receives no override. A non-empty value is normalized
 	// and validated by the harness catalog in runNew.
-	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>"`
+	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>, for Claude Code, Codex or Copilot"`
 	// ClaudeSubscription is set by agentd for an agent that runs on a peer
 	// operator's own Claude subscription; the token never passes through here.
 	ClaudeSubscription bool   `long:"claude-subscription" optional:"true" hidden:"true" help:"Run Claude Code on the agent's peer-provided subscription token"`
@@ -127,7 +127,7 @@ type NewParams struct {
 	// profile (a spawned agent is the untrusted party) and Claude to inherit (no
 	// override — its settings.json is the operator's chosen posture). See
 	// JOH-192 / JOH-207.
-	Sandbox string `long:"sandbox" optional:"true" help:"The HARNESS'S OWN sandbox setting (per-harness) — not who enforces containment, which is --sandbox-impl. Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = global profile, then no override (each harness uses its own config)"`
+	Sandbox string `long:"sandbox" optional:"true" help:"The HARNESS'S OWN sandbox setting (per-harness) — not who enforces containment, which is --sandbox-impl. Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. OpenCode: access-control | tclaude-layer | off. Copilot: inherit | off. Gemini CLI: inherit | off, and seatbelt on macOS. pi: off. Unset = global profile, then no override (each harness uses its own config)"`
 
 	// SandboxImplementation selects who owns OS-level containment. The default
 	// is the harness's historical behavior; tclaude-layer is a
@@ -184,7 +184,7 @@ type NewParams struct {
 	// daemon spawn path defaults it to each harness's safe value (Codex: never,
 	// so a detached pane can't deadlock; Claude: inherit, no override). See
 	// JOH-200.
-	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. Unset = global profile, then no override (each harness uses its own config)"`
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. OpenCode: deny|ask|allow-tools. Copilot: inherit|allow-tools|yolo. Unset = global profile, then no override (each harness uses its own config)"`
 
 	// ToolGovernance controls OpenCode's homogeneous built-in tool block. A
 	// direct session launch validates but does not default it; daemon launches
@@ -214,7 +214,7 @@ type NewParams struct {
 	// (dashboard checkbox / this flag). Rejected for a harness with no
 	// dir-trust dialog. The write is atomic + idempotent
 	// (harness.EnsureDirTrusted).
-	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json. Off by default; edits that harness's config, so opt-in only"`
+	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json, and gemini and pi record it in their own trust stores. Off by default; edits that harness's config, so opt-in only"`
 
 	// RemoteControl arms Claude Code's built-in Remote Access at launch
 	// (`claude --remote-control`), so the session is reachable from
@@ -387,7 +387,7 @@ type NewParams struct {
 	// specific id. Mutually exclusive with --resume; both harnesses require a
 	// valid UUID. (OpenCode also accepts one, but only as an internal
 	// agentd-minted `ses_` id on a managed launch.)
-	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code or Copilot session (--session-id). Mutually exclusive with --resume"`
+	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code, Copilot, Gemini CLI or pi session (--session-id). OpenCode ids come from agentd, and Codex takes none. Mutually exclusive with --resume"`
 
 	// RouteHelper* are an internal daemon-to-session handoff. The daemon mints
 	// the launch generation and opaque credential before the pane starts; callers

@@ -26,9 +26,7 @@ async function setup(t, { openAgentPane, snapshot = null, tabActive = true } = {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { bindTerminalNavRouting } = await harness.importDashboardModule('js/terminal-nav-route.js');
-  // persistPresentation off: tab-group prefs are irrelevant here and would
-  // leak state between tests through the shared prefs store.
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const announced = [];
   const doc = harness.document;
   const onNavigated = (event) => announced.push(event.detail);

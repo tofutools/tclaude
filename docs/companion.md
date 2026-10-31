@@ -69,9 +69,11 @@ back here**.
 Type in its terminal, just like the Collab tab. You get the harness's own
 streaming, prompts and Esc interrupts.
 
-The row under the terminal holds **view**, the mic **🎤** and **✎**. **view** is
-ticked by default and attaches the page you're on to dictated messages, so the
-agent knows what you're looking at. A text field appears while you dictate.
+**view**, the mic **🎤** and **✎** float at the terminal's top right, dimmed until
+the pointer enters the window. They take no room from the terminal, and clicks
+anywhere else reach it. **view** is ticked by default and attaches the page you're
+on to dictated messages, so the agent knows what you're looking at. A text field
+and **Send** float at the bottom while you dictate.
 
 ## Answering permission requests
 
@@ -194,7 +196,8 @@ closes the window and the new one opens in the companion.
 - **Spawn profile**: what a new Steward launches with. Unset, it uses the global
   default profile.
 - **Name**: what you call it, up to 32 characters. The companion shows it, and agents
-  can message it by that name as well as by `steward`.
+  can message it by that name as well as by `steward`. A running Steward gets a message
+  when you change it here.
 - **Startup prompt**: your own instructions, up to 10,000 bytes, added to what every
   new Steward is told.
 

@@ -37,7 +37,7 @@ type presentPRParams struct {
 	Summary  string `long:"summary" short:"s" optional:"true" help:"Optional short label/summary for the PR badge"`
 	State    string `long:"state" optional:"true" help:"Optional PR state: open, draft, merged, or closed"`
 	Handled  bool   `long:"handled" optional:"true" help:"Mark this presented PR handled so it no longer appears in the dashboard"`
-	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.pr, or owning a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.pr, or owning every active group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 

@@ -2229,7 +2229,7 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !slices.Contains(countableSudoSlugs, slug) {
-			http.Error(w, slug+" has no action to count, so it takes no use limit", http.StatusBadRequest)
+			http.Error(w, slug+" takes no use limit. "+sudoUseLimitRefusal(slug), http.StatusBadRequest)
 			return
 		}
 		if uses < 1 || uses > maxSudoUses {
@@ -2237,7 +2237,7 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if scope, err := permissionScopeForEval(scopes[slug]); err != nil || len(scope[ScopeDimPeer]) != 0 {
-			http.Error(w, "a use limit covers local spawns only, so "+slug+" cannot have one with a peer scope", http.StatusBadRequest)
+			http.Error(w, "a use limit covers local actions only, so "+slug+" cannot have one with a peer scope", http.StatusBadRequest)
 			return
 		}
 	}

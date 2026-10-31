@@ -111,7 +111,7 @@ function ownGroup(name, node) {
 // paging, pins and folds, error reports): a peer's group runs them on this
 // page under the name it is listed by (group@node), which its pins and folds
 // are kept under.
-const VIEW_ACTIONS = new Set(['sort', 'page', 'setPageSize', 'toggleQuickPin', 'toggleForceFold', 'reportError']);
+const VIEW_ACTIONS = new Set(['sort', 'page', 'setPageSize', 'toggleQuickPin', 'toggleForceFold', 'cycleGroupOffline', 'reportError']);
 
 // createNodeGroupsActions builds the Groups actions for one node's groups in
 // this view: requests through nodeFetch (this node's daemon, or the peer

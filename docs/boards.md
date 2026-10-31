@@ -264,7 +264,8 @@ so a client holding an older `--since` should re-read the whole board.
 When the operator works on a board, the dashboard can tell the board's
 participants. Each participant that is online receives operator mail with the
 subject `[board <id>]` and a hint to run `board show`. This is limited to one
-message per board every 3 seconds.
+message per board every 3 seconds; the dashboard holds back an edit that hits the
+limit and sends it with any newer ones once the 3 seconds are up.
 
 The mail usually also names a numbered image of the change:
 `board snapshot <id> --region <n> -o change.png`. The dashboard renders the

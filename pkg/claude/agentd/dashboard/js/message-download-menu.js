@@ -11,6 +11,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { attachmentSize, messageAttachments, messageExportHref } from './human-attachments.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -40,13 +41,7 @@ export function MessageDownloadMenu({
   const totalBytes = attachments.reduce((sum, attachment) => sum + Number(attachment.size_bytes || 0), 0);
 
   useEffect(() => {
-    if (!open) return undefined;
-    rootRef.current?.querySelector('[role="menuitem"]')?.focus();
-    const dismiss = (event) => {
-      if (!rootRef.current?.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', dismiss);
-    return () => document.removeEventListener('mousedown', dismiss);
+    if (open) rootRef.current?.querySelector('[role="menuitem"]')?.focus();
   }, [open]);
   // A different message in the reader closes a menu left open for the last one.
   useEffect(() => setOpen(false), [message.id]);
@@ -55,6 +50,7 @@ export function MessageDownloadMenu({
     setOpen(false);
     caretRef.current?.focus();
   };
+  useDismissablePopover(rootRef, open, (why) => { if (why === 'outside') setOpen(false); else close(); });
   const run = (action) => {
     close();
     action();

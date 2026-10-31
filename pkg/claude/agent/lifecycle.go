@@ -32,7 +32,7 @@ import (
 
 type compactParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"Optional follow-up prompt to submit after /compact lands (quote multi-word strings)"`
-	Target   string `long:"target" optional:"true" help:"Compact ANOTHER agent's pane instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.compact permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Compact ANOTHER agent's pane instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.compact permission, or being an owner of every active group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -44,7 +44,7 @@ func compactCmd() *cobra.Command {
 			"By default the target is the calling agent itself (requires the " +
 			"`self.compact` permission). Use --target <selector> to compact ANOTHER " +
 			"agent — the manager pattern (requires `agent.compact`, or being an " +
-			"owner of a group containing the target). " +
+			"owner of every active group containing the target). " +
 			"\n\n" +
 			"An optional follow-up prompt is queued as the next turn after compact " +
 			"settles — the bytes wait in the pty until CC resumes reading. Note: " +
@@ -66,7 +66,7 @@ func compactCmd() *cobra.Command {
 // --- agent interrupt ---
 
 type interruptParams struct {
-	Target   string `long:"target" optional:"true" help:"Interrupt ANOTHER agent's active Codex turn instead of self. Requires agent.interrupt, or ownership of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Interrupt ANOTHER agent's active Codex turn instead of self. Requires agent.interrupt, or ownership of every active group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On self permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
@@ -93,7 +93,7 @@ func interruptCmd() *cobra.Command {
 
 type contextInfoParams struct {
 	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
-	Target  string `long:"target" optional:"true" help:"Show ANOTHER agent's context-window state instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.context-info permission, or being an owner of a group containing the target."`
+	Target  string `long:"target" optional:"true" help:"Show ANOTHER agent's context-window state instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.context-info permission, or being an owner of every active group containing the target."`
 	Group   string `long:"group" optional:"true" help:"Show the context-window state of EVERY member of a group at a glance (name or id). Read-only; requires the agent.context-info permission, or being an owner of the group."`
 	JSON    bool   `long:"json" help:"Output JSON"`
 }
@@ -106,7 +106,7 @@ func contextInfoCmd() *cobra.Command {
 			"By default reports the calling agent's own state (read-only, no permission slug). " +
 			"\n\n" +
 			"--target <selector> reports ANOTHER agent's state — the manager pattern, for a lead watching a worker " +
-			"approach its context limit (requires `agent.context-info`, or being an owner of a group containing the " +
+			"approach its context limit (requires `agent.context-info`, or being an owner of every active group containing the " +
 			"target). --group <name|id> lists every member of a group in one table so a lead can spot anyone running " +
 			"hot (requires `agent.context-info`, or owning the group). --target and --group are mutually exclusive.",
 		ParamEnrich: common.DefaultParamEnricher(),

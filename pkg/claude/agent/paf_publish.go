@@ -52,7 +52,7 @@ func (p *pafPublishParams) flags() *publishFlags {
 
 // PAFPublishCmd is `tclaude paf publish`.
 func PAFPublishCmd() *cobra.Command {
-	return boa.CmdT[pafPublishParams]{Use: "publish <file>", Short: "Write a redacted, pseudonymous PAF for public sharing (human only)",
+	return boa.CmdT[pafPublishParams]{Use: "publish", Short: "Write a redacted, pseudonymous PAF for public sharing (human only)",
 		Long:        publishLong + "\n\n  tclaude paf publish reviewer.paf --stub-tool-results --keep-turns 5 -o reviewer.public.paf",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafPublishParams, _ *cobra.Command, _ []string) {
 			os.Exit(runPAFPublish(p.File, p.File, p.flags(), os.Stdin, os.Stdout, os.Stderr, term.IsTerminal(int(os.Stdin.Fd()))))
@@ -74,7 +74,7 @@ func (p *snapshotPublishParams) flags() *publishFlags {
 }
 
 func snapshotPublishCmd() *cobra.Command {
-	return boa.CmdT[snapshotPublishParams]{Use: "publish <name>", Short: "Write a snapshot as a redacted, pseudonymous PAF for public sharing (human only)",
+	return boa.CmdT[snapshotPublishParams]{Use: "publish", Short: "Write a snapshot as a redacted, pseudonymous PAF for public sharing (human only)",
 		Long:        publishLong + "\n\n  tclaude agent snapshot publish before-refactor --drop-reasoning -o reviewer.public.paf",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotPublishParams, _ *cobra.Command, _ []string) {
 			os.Exit(runSnapshotPublish(p, os.Stdin, os.Stdout, os.Stderr, term.IsTerminal(int(os.Stdin.Fd()))))

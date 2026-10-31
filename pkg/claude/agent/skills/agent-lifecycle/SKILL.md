@@ -302,7 +302,7 @@ slugs you deliberately revoked.)
 
 Manual alternatives:
 
-**Option 1 — globally for every agent.** Edit `~/.tclaude/config.json`:
+**Option 1 — globally for every agent.** Edit `~/.tclaude/data/config.json`:
 
 ```json
 {

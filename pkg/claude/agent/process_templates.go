@@ -182,7 +182,7 @@ type processTemplatesShowParams struct {
 
 func processTemplatesShowCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesShowParams]{
-		Use:         "show <id>",
+		Use:         "show",
 		Short:       "Emit canonical YAML with CAS metadata",
 		Long:        "Writes valid process-template YAML. The leading YAML comments carry currentRef, sourceHash, and semanticHash for the validate then CAS-save workflow.",
 		ParamEnrich: common.DefaultParamEnricher(),

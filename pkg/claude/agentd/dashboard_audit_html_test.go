@@ -60,5 +60,5 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 	must("scrollbar-color: #7a5db0 #140f28", "Firefox receives the wizard scrollbar fallback")
 	must("response_truncated", "large captured responses disclose truncation")
 	must("closeRef.current?.focus()", "opening the spawn disclosure transfers focus to its close control")
-	must("pointerdown', closeOnOutsidePointer", "outside pointer dismissal is owned by the popover")
+	must("useDismissablePopover([popoverRef, triggerRef]", "outside pointer dismissal is owned by the popover")
 }

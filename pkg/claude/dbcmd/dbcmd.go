@@ -25,7 +25,7 @@ func Cmd() *cobra.Command {
 	return boa.CmdT[Params]{
 		Use:         "db",
 		Short:       "Inspect the tclaude SQLite database",
-		Long:        "Inspect the tclaude SQLite database (~/.tclaude/db.sqlite).",
+		Long:        "Inspect the tclaude SQLite database (~/.tclaude/data/db.sqlite).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			schemaCmd(),

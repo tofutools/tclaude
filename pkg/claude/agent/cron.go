@@ -349,7 +349,7 @@ type cronRmParams struct {
 
 func cronRmCmd() *cobra.Command {
 	return boa.CmdT[cronRmParams]{
-		Use:         "rm <id>",
+		Use:         "rm",
 		Short:       "Delete a scheduled cron job",
 		Long:        "Removes a job by ID. Caller must be the job's owner_conv, hold agent.schedule, or own a group containing the job's target.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -385,7 +385,7 @@ type cronIDOnlyParams struct {
 
 func cronEnableCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
-		Use:         "enable <id>",
+		Use:         "enable",
 		Short:       "Re-enable a previously disabled cron job",
 		Long:        "Flips enabled=true. Does NOT touch last_run_at, so re-enabling a paused job doesn't fire immediately if it ran recently.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -397,7 +397,7 @@ func cronEnableCmd() *cobra.Command {
 
 func cronDisableCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
-		Use:         "disable <id>",
+		Use:         "disable",
 		Short:       "Pause a cron job without deleting it",
 		Long:        "Flips enabled=false. The row stays — `cron enable` reactivates it. Use to silence a noisy job temporarily.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -409,7 +409,7 @@ func cronDisableCmd() *cobra.Command {
 
 func cronRunNowCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
-		Use:         "run-now <id>",
+		Use:         "run-now",
 		Short:       "Fire a cron job immediately (without waiting for the next tick)",
 		Long:        "Manually triggers one fire. Useful for testing a freshly-added job or for a one-off nudge between regular runs. Updates last_run_at + appends a row to the run history.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -475,7 +475,7 @@ type cronLogsParams struct {
 
 func cronLogsCmd() *cobra.Command {
 	return boa.CmdT[cronLogsParams]{
-		Use:         "logs <id>",
+		Use:         "logs",
 		Short:       "Show recent execution history for a cron job",
 		Long:        "Returns the most-recent fires for a job (newest first), one row per scheduler tick that picked it up. Visibility: caller must be owner, target, or owner of a group containing the target.",
 		ParamEnrich: common.DefaultParamEnricher(),

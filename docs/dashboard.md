@@ -110,6 +110,15 @@ On a peer's page, it runs on that peer, limited to what the peer allows.
 
 In any ⚙ menu, start typing to filter, then use ↑, ↓ and Enter.
 
+## Menus and popovers
+
+A menu or popover you open with a click closes on a click outside it, on `Esc`,
+or when the pointer stays away for a moment. Moving back in time keeps it open.
+Text you've typed in it, or a field you're using, keeps it open when the pointer
+leaves, so nothing is lost; a click outside or `Esc` still closes it. Dialogs
+don't work this way: they stay until you answer them. A filter or search box in a
+menu has the cursor as soon as the menu opens, so you can start typing.
+
 ## Links and history
 
 Every view has its own address, so Back and Forward work and you can bookmark or share

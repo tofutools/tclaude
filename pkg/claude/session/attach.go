@@ -30,7 +30,7 @@ func isWebTerminalAttach() bool {
 
 func AttachCmd() *cobra.Command {
 	return boa.CmdT[AttachParams]{
-		Use:         "attach <id>",
+		Use:         "attach",
 		Short:       "Attach to a coding session",
 		Long:        "Attach to an existing coding session. Use Ctrl+B D to detach.",
 		ParamEnrich: common.DefaultParamEnricher(),

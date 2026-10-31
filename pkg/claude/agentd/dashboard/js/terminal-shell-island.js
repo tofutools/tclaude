@@ -43,6 +43,7 @@ import { AgentGearMenu } from './groups-member-table.js';
 import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions, reassignCandidates } from './process-terminal-overlay.js';
 import { agentRunBounds } from './process-agent-stepper.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -488,17 +489,7 @@ function BoardMenu({ state, snapshot }) {
   const rootRef = useRef(null);
   const request = state.boardMenuRequest.value;
   useEffect(() => { if (request) setOpen(true); }, [request]);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onPointerDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
-    const onKeyDown = (event) => { if (event.key === 'Escape') setOpen(false); };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
+  useDismissablePopover(rootRef, open, () => setOpen(false));
   if (snapshot?.value?.collab_enabled !== true) return null;
   return html`<div ref=${rootRef} class="mux-board-slot">
     <button type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
@@ -1081,26 +1072,13 @@ function PaneContextMenu({
     node.querySelector('[role="menuitem"]')?.focus();
   }, [menu]);
 
+  useDismissablePopover(menuRef, true, (why) => closeMenu(why !== 'outside'));
   useEffect(() => {
-    const onMouseDown = (event) => {
-      if (!menuRef.current?.contains(event.target)) closeMenu(false);
-    };
-    const onKeyDown = (event) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      closeMenu(true);
-    };
     const onFocusIn = (event) => {
       if (!menuRef.current?.contains(event.target)) closeMenu(false);
     };
-    document.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('keydown', onKeyDown);
     document.addEventListener('focusin', onFocusIn);
-    return () => {
-      document.removeEventListener('mousedown', onMouseDown);
-      document.removeEventListener('keydown', onKeyDown);
-      document.removeEventListener('focusin', onFocusIn);
-    };
+    return () => document.removeEventListener('focusin', onFocusIn);
   }, [closeMenu]);
 
   const onMenuKeyDown = (event) => {

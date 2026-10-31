@@ -672,7 +672,7 @@ func holdsPermission(convID, slug string) bool {
 //
 // On denial — no path and no slug, or the routing group is archived —
 // the error response is already written and ok is false.
-func resolveMessageRouting(w http.ResponseWriter, fromID, targetID string) (groupID int64, viaName string, ok bool) {
+func resolveMessageRouting(w http.ResponseWriter, r *http.Request, fromID, targetID string) (groupID int64, viaName string, ok bool) {
 	via, _, err := db.CanSenderReachTarget(fromID, targetID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -684,7 +684,7 @@ func resolveMessageRouting(w http.ResponseWriter, fromID, targetID string) (grou
 		}
 		return via.ID, via.Name, true
 	}
-	if !holdsPermission(fromID, PermMessageDirect) {
+	if contextFreeResolution(resolvePermissionVerdictForRequest(r, fromID, PermMessageDirect)) != permAllow {
 		if isLiveSteward(targetID) {
 			writeError(w, http.StatusForbidden, "auth",
 				fmt.Sprintf("you can answer the Steward with `tclaude agent reply <id>` but not write to it first; "+
@@ -696,6 +696,9 @@ func resolveMessageRouting(w http.ResponseWriter, fromID, targetID string) (grou
 				"messaging an agent outside your group requires the %q permission "+
 				"(ask the human to grant it, or get a time-bounded grant via `tclaude agent sudo`)",
 				short8(targetID), PermMessageDirect))
+		return 0, "", false
+	}
+	if !spendSudoUse(w, r, fromID, PermMessageDirect, ActionContext{}) {
 		return 0, "", false
 	}
 	return 0, "", true
@@ -740,7 +743,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are only supported for remote (member@peer) recipients; send local agents a file path instead")
 		return
 	}
-	dispatchSend(w, fromID, &req)
+	dispatchSend(w, r, fromID, &req)
 }
 
 // dispatchSend validates and routes a send from fromID. It is the
@@ -751,7 +754,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 // this point — the group member/owner gate inside handleMulticast,
 // the shared-group / message.direct gate inside resolveMessageRouting
 // — so neither caller can route around the gate.
-func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
+func dispatchSend(w http.ResponseWriter, r *http.Request, fromID string, req *sendReq) {
 	if strings.TrimSpace(req.Body) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
 		return
@@ -852,7 +855,7 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	// successor is who actually receives the message. Routing against the
 	// head (not a `gen`-pinned past conv) keeps the owner-of-group /
 	// via-link reach paths — which compare the member's head conv — correct.
-	groupID, viaName, ok := resolveMessageRouting(w, fromID, headConv)
+	groupID, viaName, ok := resolveMessageRouting(w, r, fromID, headConv)
 	if !ok {
 		return
 	}
@@ -862,7 +865,7 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	// ambiguously / not at all / aren't reachable surface as a 4xx so
 	// the sender can fix the typo before any rows are written.
 	if len(req.Cc) > 0 {
-		handleMultiRecipient(w, fromID, finalConv, originalTo, groupID, viaName, req)
+		handleMultiRecipient(w, r, fromID, finalConv, originalTo, groupID, viaName, req)
 		return
 	}
 
@@ -928,7 +931,7 @@ func walkSuccession(convID string) (finalConv, originalTo string) {
 // rows are written. Half-broadcasts are confusing for the recipient
 // who notices an extra "CC: <missing>" entry that wasn't actually
 // delivered.
-func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOriginalTo string, primaryGroupID int64, primaryViaName string, req *sendReq) {
+func handleMultiRecipient(w http.ResponseWriter, r *http.Request, fromID, primaryConv, primaryOriginalTo string, primaryGroupID int64, primaryViaName string, req *sendReq) {
 	type resolvedCC struct {
 		ConvID         string
 		OriginalToConv string
@@ -975,7 +978,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 			continue
 		}
 		seen[ccConv] = true
-		ccGroupID, _, ok := resolveMessageRouting(w, fromID, ccConv)
+		ccGroupID, _, ok := resolveMessageRouting(w, r, fromID, ccConv)
 		if !ok {
 			// resolveMessageRouting already wrote the 4xx — no
 			// group-policy path and no message.direct slug, or an

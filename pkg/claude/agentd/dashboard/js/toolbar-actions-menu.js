@@ -8,6 +8,7 @@ import {
   MENU_FILTER_PLACEHOLDER, MENU_FILTER_WIZARD_PLACEHOLDER,
 } from './menu-filter.js';
 import { isWizardActive } from './slop.js';
+import { watchPopover } from './hover-popover.js';
 
 let toolbarMenuCleanup = null;
 
@@ -28,7 +29,10 @@ function bindToolbarActionsMenu() {
     filter.value = '';
     applyMenuFilter(menu, '', { input: filter, resetActive: true });
   };
+  let unwatch = null;
   const close = (restoreFocus = false) => {
+    unwatch?.();
+    unwatch = null;
     const focusInside = menu.contains(document.activeElement);
     menu.classList.remove('open');
     cog.setAttribute('aria-expanded', 'false');
@@ -57,7 +61,10 @@ function bindToolbarActionsMenu() {
         menu.classList.add('opens-up');
       }
       filter?.focus();
+      unwatch ||= watchPopover({ roots: () => host, close: () => close(), escape: false });
     } else {
+      unwatch?.();
+      unwatch = null;
       resetFilter();
     }
   };
@@ -69,9 +76,6 @@ function bindToolbarActionsMenu() {
     hasQuery: !!filter.value,
     clearQuery: resetFilter,
   });
-  const onDocumentClick = (event) => {
-    if (!host.contains(event.target)) close();
-  };
   const onDocumentKeyDown = (event) => {
     if (event.key !== 'Escape' || !menu.classList.contains('open')) return;
     event.preventDefault();
@@ -80,7 +84,6 @@ function bindToolbarActionsMenu() {
 
   cog.addEventListener('click', onCogClick);
   menu.addEventListener('click', onMenuClick);
-  document.addEventListener('click', onDocumentClick);
   document.addEventListener('keydown', onDocumentKeyDown);
   filter?.addEventListener('input', onFilterInput);
   filter?.addEventListener('keydown', onFilterKeyDown);
@@ -88,7 +91,7 @@ function bindToolbarActionsMenu() {
   const cleanup = () => {
     cog.removeEventListener('click', onCogClick);
     menu.removeEventListener('click', onMenuClick);
-    document.removeEventListener('click', onDocumentClick);
+    unwatch?.();
     document.removeEventListener('keydown', onDocumentKeyDown);
     filter?.removeEventListener('input', onFilterInput);
     filter?.removeEventListener('keydown', onFilterKeyDown);
