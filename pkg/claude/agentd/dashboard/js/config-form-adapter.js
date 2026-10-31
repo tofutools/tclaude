@@ -1361,9 +1361,11 @@ function applyConfigFilter() {
       section.hidden = !blockMatch;
       panelHits += hits;
     });
+    const id = panel.getAttribute('data-cfg-panel');
+    // Collab off hides this panel (dashboard.css): its rows are no matches.
+    if (id === 'steward' && document.body.classList.contains('hide-collab')) panelHits = 0;
     setFlag(panel, 'data-cfg-nomatch', terms.length > 0 && panelHits === 0);
     shown += panelHits;
-    const id = panel.getAttribute('data-cfg-panel');
     const hitsEl = $(`#tab-config [data-cfg-hits="${id}"]`);
     if (hitsEl) hitsEl.textContent = terms.length && panelHits ? String(panelHits) : '';
     const link = $(`#tab-config [data-cfg-panel-link="${id}"]`);

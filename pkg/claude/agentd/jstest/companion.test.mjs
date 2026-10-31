@@ -21,6 +21,9 @@ function snapshotWith({ aStatus = 'idle', steward = false } = {}) {
   return { groups };
 }
 
+// A hand-over's claim is asynchronous and starts as an act's render ends.
+const settleClaim = (harness) => harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
 function memoryPrefs(initial = {}) {
   const store = new Map(Object.entries(initial));
   return { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k), store };
@@ -51,7 +54,7 @@ function fakeDictation() {
   return fake;
 }
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, openPermissions = null, openSudo = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {} } = {}) {
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, openPermissions = null, openSudo = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {}, locks = null } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -68,7 +71,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sess
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} sessionPrefs=${sessionPrefs} fetchImpl=${fetchFn} notify=${notify}
-    onComposeMessage=${onComposeMessage} openMorph=${openMorph} openPermissions=${openPermissions} openSudo=${openSudo} detachWindow=${detachWindow} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    locks=${locks} onComposeMessage=${onComposeMessage} openMorph=${openMorph} openPermissions=${openPermissions} openSudo=${openSudo} detachWindow=${detachWindow} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -381,6 +384,7 @@ test('a cue can open the agent that needs the operator in the companion window',
     snap.value = { ...snap.value, companion_cues: [{ id: 3, agent_name: 'steward', open: B }] };
     await new Promise((r) => setTimeout(r, 0));
   });
+  await settleClaim(harness);
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   const tab = harness.getByRole(view.container, 'tab', { name: /bravo/ });
   assert.equal(tab.getAttribute('aria-selected'), 'true', 'bravo is pinned and shown');
@@ -398,6 +402,7 @@ test('an open cue only pins the agent while the operator is typing to another ta
     snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };
     await new Promise((r) => setTimeout(r, 0));
   });
+  await settleClaim(harness);
   assert.equal(harness.getByRole(view.container, 'tab', { name: /alpha/ }).getAttribute('aria-selected'), 'true', 'the draft keeps its agent');
   assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'false', 'bravo is pinned beside it');
   assert.equal(view.container.querySelector('input.companion-draft').value, 'half a thought');
@@ -483,6 +488,7 @@ test('an open cue takes over a terminal that only holds focus', async (t) => {
     snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };
     await new Promise((r) => setTimeout(r, 0));
   });
+  await settleClaim(harness);
   assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true');
 });
 
@@ -500,6 +506,7 @@ test('an open cue only pins the agent while the operator is typing in the termin
     snap.value = { ...snap.value, companion_cues: [{ id: 4, agent_name: 'steward', open: B }] };
     await new Promise((r) => setTimeout(r, 0));
   });
+  await settleClaim(harness);
   assert.equal(harness.getByRole(view.container, 'tab', { name: /alpha/ }).getAttribute('aria-selected'), 'true');
   assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'false');
   assert.equal(mounted[0].disposed, false, 'the terminal being typed in stays');
@@ -514,12 +521,66 @@ test('every hand-over in a snapshot opens, and a second dashboard tab takes none
     snap.value = { ...snap.value, companion_cues: cues };
     await new Promise((r) => setTimeout(r, 0));
   });
+  await settleClaim(harness);
   assert.equal(harness.getByRole(view.container, 'tab', { name: /alpha/ }).getAttribute('aria-selected'), 'false');
   assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true', 'the newest shows, the earlier stays pinned');
   const g = await harness.importDashboardModule('js/companion-guide.js');
   const stored = prefs.store.get('tclaude.dash.companion.cue-open');
   assert.deepEqual(cues.map((cue) => g.claimCueOpen(stored, cue)), [false, false]);
   assert.equal(g.claimCueOpen(stored, { id: 3, at: 't3' }), true);
+});
+
+test('the Web Lock lets one of two tabs take a hand-over, and a missing API leaves it to prefs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { claimCueLock } = await harness.importDashboardModule('js/companion-guide.js');
+  const cue = { id: 7, at: 't7' };
+  // The real Web Locks API, held across "tabs" that share one lock manager.
+  if (globalThis.navigator?.locks) {
+    const locks = globalThis.navigator.locks;
+    const unique = { id: 7, at: `t7-${process.pid}-${Date.now()}` };
+    assert.deepEqual(await Promise.all([claimCueLock(locks, unique), claimCueLock(locks, unique)]), [true, false]);
+    assert.equal(await claimCueLock(locks, unique), false, 'a tab seeing the cue later still loses');
+    assert.equal(await claimCueLock(locks, { ...unique, id: 8 }), true);
+  }
+  assert.equal(await claimCueLock(undefined, cue), true, 'no Web Locks: degrade to the prefs claim');
+  assert.equal(await claimCueLock({ request: () => Promise.reject(new Error('SecurityError')) }, cue), true);
+  assert.equal(await claimCueLock({ request: () => { throw new Error('SecurityError'); } }, cue), true);
+});
+
+test('a hand-over another tab holds opens nothing here, shown or held', async (t) => {
+  const prefs = memoryPrefs();
+  const held = new Set();
+  const locks = { request: async (name, _options, grant) => {
+    const free = !held.has(name);
+    if (free) held.add(name);
+    return grant(free ? { name } : null);
+  } };
+  const { view, harness, snap } = await setup(t, { prefs, locks });
+  const settle = (cues) => harness.act(async () => {
+    snap.value = { ...snap.value, companion_cues: cues };
+    await new Promise((r) => setTimeout(r, 0));
+  }).then(() => settleClaim(harness));
+  await settle([]);
+  const taken = { id: 5, agent_name: 'steward', open: B, at: new Date().toISOString() };
+  held.add(`tclaude.companion.cue-open/5@${taken.at}`);
+  await settle([taken]);
+  assert.equal(view.container.querySelector('.companion-window'), null, 'the other tab has it');
+  assert.equal(prefs.store.get('tclaude.dash.companion.cue-open'), undefined);
+
+  const doc = harness.window.document;
+  let visibility = 'hidden';
+  Object.defineProperty(doc, 'visibilityState', { configurable: true, get: () => visibility });
+  const heldCue = { id: 6, agent_name: 'steward', open: B, at: new Date().toISOString() };
+  await settle([taken, heldCue]);
+  held.add(`tclaude.companion.cue-open/6@${heldCue.at}`);
+  visibility = 'visible';
+  await harness.act(async () => { doc.dispatchEvent(new harness.window.Event('visibilitychange')); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(view.container.querySelector('.companion-window'), null, 'a held hand-over another tab took meanwhile is dropped');
+
+  const free = { id: 7, agent_name: 'steward', open: B, at: new Date().toISOString() };
+  await settle([taken, heldCue, free]);
+  assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true', 'a free lock opens it here');
+  assert.match(prefs.store.get('tclaude.dash.companion.cue-open'), /^7@/);
 });
 
 test('a cue from a restarted daemon is new even though its id was seen', async (t) => {
@@ -546,6 +607,7 @@ test('a hand-over cue on a hidden dashboard tab waits until the tab is shown', a
     snap.value = { ...snap.value, companion_cues: [{ id: 5, agent_name: 'steward', open: B, at: new Date().toISOString() }] };
     await new Promise((r) => setTimeout(r, 0));
   });
+  await settleClaim(harness);
   assert.equal(view.container.querySelector('.companion-window'), null, 'nothing opens while hidden');
   await show();
   assert.equal(harness.getByRole(view.container, 'tab', { name: /bravo/ }).getAttribute('aria-selected'), 'true', 'bravo opens on return');
@@ -1090,6 +1152,29 @@ test('every corner of a floating window resizes it, and the opposite corner stay
   assert.equal(top + height, y0 + h0, 'and the bottom edge stays');
 });
 
+test('the window gives the launch dialog what a row does, so Clone and Recall home work', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  const { launchAgent, modeState } = await harness.importDashboardModule('js/launch-target-dialog.js');
+  const home = 'node-home';
+  const here = 'node-here';
+  const fleet = { self: { id: here, name: 'here' }, peers: [{ id: home, name: 'home box' }] };
+  const presence = { state: 'here', home_instance: home, current_instance: here };
+  const agents = m.companionAgents({ groups: [{ name: 'crew', members: [{
+    agent_id: A, conv_id: 'conv-a', title: 'alpha', online: true, federation_presence: presence,
+    state: { status: 'idle', cwd: '/work/alpha', harness: 'codex' },
+  }] }] });
+  const data = m.companionLaunchData(agents.get(A), fleet);
+  assert.deepEqual(data, {
+    agent: A, conv: 'conv-a', label: 'alpha', harness: 'codex', cwd: '/work/alpha', group: 'crew',
+    presence: 'visiting', homeNode: home, homeName: 'home box',
+  });
+  assert.equal(m.companionLaunchData(m.companionAgents({ ungrouped: [{ agent_id: B, conv_id: 'b', title: 'solo' }] }).get(B), null).presence, '');
+  const agent = launchAgent(data, fleet.self);
+  assert.equal(agent.cwd, '/work/alpha');
+  assert.equal(modeState('home', { local: true, presence: agent.presence, homeIsSelf: agent.homeNode === here }).ok, true);
+});
+
 test('Ctrl/Cmd+M and the title bar message the active agent; morph opens from the window', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const seeds = [];
@@ -1106,7 +1191,7 @@ test('Ctrl/Cmd+M and the title bar message the active agent; morph opens from th
   await harness.act(async () => { view.container.querySelector('.companion-compose').click(); });
   assert.equal(seeds.length, 2);
   await harness.act(async () => { view.container.querySelector('.companion-morph').click(); });
-  assert.equal(morphs[0].agent, A);
+  assert.equal(morphs[0].agentId, A);
 });
 
 test('a detached agent keeps its window until the operator brings it back', async (t) => {
@@ -1114,9 +1199,12 @@ test('a detached agent keeps its window until the operator brings it back', asyn
   const opened = { closed: false, close() { this.closed = true; } };
   let result = null;
   const calls = [];
-  const { view, harness, controller, mounted } = await setup(t, { prefs, detachWindow: (agent) => { calls.push(agent); return result; } });
+  const places = [];
+  const { view, harness, controller, mounted } = await setup(t, { prefs, detachWindow: (agent, _label, options) => { calls.push(agent); places.push(options); return result; } });
   await harness.act(() => controller().open(A));
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  Object.assign(harness.window, { screenX: 100, screenY: 50, outerWidth: 1216, innerWidth: 1200, outerHeight: 900, innerHeight: 800 });
+  view.container.querySelector('.companion-window').getBoundingClientRect = () => ({ left: 300, top: 40, width: 420, height: 360 });
   const detach = () => harness.act(async () => {
     view.container.querySelector('.companion-detach').click();
     await new Promise((r) => setTimeout(r, 0));
@@ -1126,6 +1214,8 @@ test('a detached agent keeps its window until the operator brings it back', asyn
   result = opened;
   await detach();
   assert.deepEqual(calls, [A, A]);
+  assert.deepEqual(places[1].at, { x: 408, y: 190 }, 'it opens over the companion window, not at the browser corner');
+  assert.deepEqual(places[1].size, { width: 420, height: 360 });
   assert.equal(mounted[0].disposed, true, 'the window lets go of the terminal');
   assert.match(view.container.textContent, /open in its own window/);
 

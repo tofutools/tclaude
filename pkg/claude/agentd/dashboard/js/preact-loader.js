@@ -306,12 +306,17 @@ const companionDescriptor = createIslandDescriptor({
         closeTerminalPanes: closeTerminalsForConvs, onComposeMessage: dependencies.onComposeMessage,
         openPermissions: dependencies.openPermissions, openSudo: dependencies.openSudo,
         detachWindow: (agent, label, options) => detachWebWindow(agent, label, options),
-        openMorph: async (data) => {
-          const { openLaunchTargetDialog } = await import('./action-dialog-controller.js');
-          const { launchAgent } = await import('./launch-target-dialog.js');
-          const { fleetState } = await import('./fleet-state.js');
-          const node = fleetState.fleet.value?.self || { id: 'local', name: 'this node' };
-          return openLaunchTargetDialog({ mode: 'morph', agent: launchAgent(data, node) });
+        openMorph: async (agent) => {
+          const controllerModule = import('./action-dialog-controller.js');
+          const launchModule = import('./launch-target-dialog.js');
+          const fleetModule = import('./fleet-state.js');
+          const modelModule = import('./companion-model.js');
+          const [{ openLaunchTargetDialog }, { launchAgent }, { fleetState }, { companionLaunchData }] = await Promise.all([
+            controllerModule, launchModule, fleetModule, modelModule,
+          ]);
+          const fleet = fleetState.fleet.value;
+          const node = fleet?.self || { id: 'local', name: 'this node' };
+          return openLaunchTargetDialog({ mode: 'morph', agent: launchAgent(companionLaunchData(agent, fleet), node) });
         },
         openTerminalsPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
         navigate: async (path) => {

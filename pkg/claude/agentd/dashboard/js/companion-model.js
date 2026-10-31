@@ -12,6 +12,7 @@
 // a plain agent in a scribe group, reachable from Terminals for debugging.
 //
 // Everything here is DOM-free so it can be tested directly.
+import { presenceView } from './agent-presence.js';
 
 export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
 // What this window is showing is per browser tab (sessionStorage): an open
@@ -56,7 +57,7 @@ export function isAgentId(value) {
 export function companionAgents(snapshot) {
   const out = new Map();
   const customName = String(snapshot?.steward_name || '');
-  const add = (member, steward, scribe) => {
+  const add = (member, steward, scribe, group = '') => {
     const agentId = member?.agent_id;
     if (!isAgentId(agentId)) return;
     const prev = out.get(agentId);
@@ -75,6 +76,9 @@ export function companionAgents(snapshot) {
       status: String(member.state?.status || ''),
       detail: String(member.state?.status_detail || ''),
       harness: String(member.harness || member.state?.harness || ''),
+      cwd: String(member.state?.cwd || member.cwd || prev?.cwd || ''),
+      group: String(group || prev?.group || ''),
+      presence: member.federation_presence || prev?.presence || null,
       steward: steward || prev?.steward === true,
       scribe: scribe || prev?.scribe === true,
     }));
@@ -82,11 +86,24 @@ export function companionAgents(snapshot) {
   for (const group of snapshot?.groups || []) {
     const scribe = group?.scribe === true;
     const steward = scribe && group?.name === STEWARD_NAME;
-    for (const member of group?.members || []) add(member, steward, scribe);
+    for (const member of group?.members || []) add(member, steward, scribe, group?.name);
   }
   // Agents outside every group are still agents the operator can pin.
   for (const agent of [...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])]) add(agent, false, false);
   return out;
+}
+
+// companionLaunchData is what a ⚙ "Send elsewhere" item says about this agent,
+// for launchAgent (launch-target-dialog.js): the same dialog opens from the
+// window, so Clone keeps the working directory and Recall home sees where the
+// agent is.
+export function companionLaunchData(agent, fleet, now = Date.now()) {
+  const view = presenceView({ federation_presence: agent.presence, title: agent.name, agent_id: agent.agentId }, fleet, now);
+  return {
+    agent: agent.agentId, conv: agent.convId, label: agent.name, harness: agent.harness,
+    cwd: agent.cwd, group: agent.group,
+    presence: view?.kind || '', homeNode: view?.home?.id || '', homeName: view?.home?.name || '',
+  };
 }
 
 // stewardAgent picks the live Steward, else the most recently listed one.
