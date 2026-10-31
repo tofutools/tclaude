@@ -108,6 +108,12 @@ func TestClonesKeepTheLossChain(t *testing.T) {
 
 	fresh := f.AsHuman().CloneFresh(source)
 	assert.Nil(t, storedReport(t, fresh.NewConv))
+	freshGroup := groupCloneRequest(t, f, "team", map[string]any{"new_name": "team-fresh"})
+	require.NotEmpty(t, freshGroup.Members)
+	for _, m := range freshGroup.Members {
+		require.Empty(t, m.Error)
+		assert.Nil(t, storedReport(t, m.NewConv))
+	}
 }
 
 // Scenario: an agent with a conversion record is shared with a peer that reads
@@ -188,6 +194,35 @@ func TestFederation_AgentOfferLandsLossChain(t *testing.T) {
 	}
 	testharness.DecodeJSON(t, rec, &result)
 	assertCountsOnly(t, storedReport(t, result.Spawn.ConvID))
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+result.Spawn.ConvID+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assertCountsOnly(t, archiveLosses(t, rec.Body.Bytes()))
+}
+
+// Scenario: a snapshot is taken of an agent with a conversion record, then an
+// agent is spawned from it. A snapshot can reach another node on a board or in
+// custody, and it is signed, so it cannot be rewritten at that point.
+//
+// Expected: the snapshot holds the chain without the text.
+func TestSnapshotKeepsLossCountsOnly(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("receiver")
+	const source = "0f0e0d0c-0b0a-4908-8706-050403020d05"
+	seedClaudeConversation(t, f, source, "snap-src", testutil.CanonicalTempDir(t))
+	storeConversionReport(t, source)
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/snapshots", map[string]any{"agent": source, "name": "with-losses"})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/snapshots/with-losses/spawn", map[string]any{"group": "receiver", "cwd": testutil.CanonicalTempDir(t)})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var result struct {
+		Spawned []struct {
+			ConvID string `json:"conv_id"`
+		} `json:"spawned"`
+	}
+	testharness.DecodeJSON(t, rec, &result)
+	require.Len(t, result.Spawned, 1)
+	assertCountsOnly(t, storedReport(t, result.Spawned[0].ConvID))
 }
 
 // Scenario: an agent keeps writing its transcript while it is exported, so an
@@ -216,6 +251,13 @@ func TestAgentExportWhileTheTranscriptIsBeingWritten(t *testing.T) {
 	record := func(i int) string {
 		return fmt.Sprintf(`{"type":"user","uuid":"late-%d","sessionId":%q,"message":{"role":"user","content":"late turn %d"}}`, i, source, i)
 	}
+
+	// A finished record with no newline yet is whole, so it stays.
+	_, err = file.WriteString(record(-1))
+	require.NoError(t, err)
+	assert.Contains(t, string(export()), "late--1")
+	_, err = file.WriteString("\n")
+	require.NoError(t, err)
 
 	// The fragment is on disk for the whole of this export.
 	first := record(0)

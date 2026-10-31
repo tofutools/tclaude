@@ -46,6 +46,10 @@ type agentBundleDataContextKey struct{}
 // agentBundleLossesContextKey carries the loss report of the decoded bundle.
 type agentBundleLossesContextKey struct{}
 
+// agentBundleForeignFileContextKey marks an imported file that may have come
+// from another node, as a board or custody snapshot can.
+type agentBundleForeignFileContextKey struct{}
+
 func snapshotAgentHistory(b *agentbundle.Bundle, h *harness.Harness, conv, cwd string) error {
 	if h.Name == harness.OpenCodeName {
 		actor, err := db.GetAgentByConv(conv)
@@ -95,7 +99,7 @@ func snapshotAgentHistory(b *agentbundle.Bundle, h *harness.Harness, conv, cwd s
 	if !h.UsesAuthoritativeServer() {
 		// A live agent is appending to its transcript file: stop at the last
 		// complete record rather than failing on a half-written one.
-		records = &completeLinesReader{r: bufio.NewReader(r)}
+		records = &completeLinesReader{r: bufio.NewReader(r), limit: agentRecordLimit()}
 	}
 	n, err := io.Copy(f, io.LimitReader(records, b.Limit()+1))
 	ce := f.Close()

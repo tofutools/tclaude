@@ -2215,7 +2215,7 @@ func cloneHistory(sourceConv, cwd string, relaunch *durableRelaunchConfig, gitWr
 			// The source is usually live and appending to its transcript file:
 			// stop at the last complete record rather than failing on a
 			// half-written one. OpenCode's export is a finished document.
-			records = &completeLinesReader{r: bufio.NewReader(reader)}
+			records = &completeLinesReader{r: bufio.NewReader(reader), limit: agentRecordLimit()}
 		}
 		newConv, cleanup, err = dst.ImportReader(boundedHistoryReader{records, agentRecordLimit()}, sourceConv, cwd)
 	} else {
@@ -2234,11 +2234,13 @@ func cloneHistory(sourceConv, cwd string, relaunch *durableRelaunchConfig, gitWr
 	return newConv, agentID, cleanup, nil
 }
 
-// completeLinesReader yields only newline-terminated records, dropping a
-// trailing fragment a concurrent writer has not finished yet. Clone and agent
-// export both read transcripts that may still be growing.
+// completeLinesReader yields complete records, dropping a trailing fragment a
+// concurrent writer has not finished yet. Clone and agent export both read
+// transcripts that may still be growing. A last record that is whole but has
+// no newline stays, and limit bounds what one record may hold in memory.
 type completeLinesReader struct {
 	r       *bufio.Reader
+	limit   int
 	pending []byte
 	err     error
 }
@@ -2248,10 +2250,10 @@ func (c *completeLinesReader) Read(p []byte) (int, error) {
 		if c.err != nil {
 			return 0, c.err
 		}
-		line, err := c.r.ReadBytes('\n')
+		line, err := c.readLine()
 		if err != nil {
 			c.err = err
-			if len(line) == 0 || line[len(line)-1] != '\n' {
+			if len(line) == 0 || (line[len(line)-1] != '\n' && !json.Valid(line)) {
 				continue
 			}
 		}
@@ -2260,4 +2262,18 @@ func (c *completeLinesReader) Read(p []byte) (int, error) {
 	n := copy(p, c.pending)
 	c.pending = c.pending[n:]
 	return n, nil
+}
+
+func (c *completeLinesReader) readLine() ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := c.r.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(line) > c.limit {
+			return nil, fmt.Errorf("history record exceeds %d bytes", c.limit)
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return line, err
+		}
+	}
 }

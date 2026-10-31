@@ -162,6 +162,9 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		Handoff:  handoff,
 		Snapshot: &paf.Snapshot{Name: name, Note: req.Note, TakenAt: now, State: state},
 		Lineage:  []paf.LineageStep{{Op: paf.OpSnapshot, At: now, From: from, Detail: "snapshot " + name}},
+		// A snapshot can be shared on a board, and its signature rules out
+		// rewriting it then.
+		LossCountsOnly: true,
 	}
 	archive, err := archiveAgentPAFWith(b, false, parts)
 	if err != nil {

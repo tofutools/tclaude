@@ -795,6 +795,7 @@ func landSnapshotAsAgent(w http.ResponseWriter, r *http.Request, op string, f *o
 		ctx := context.WithValue(inner.Context(), reservedAgentIDContextKey{}, keep.Agent)
 		inner = inner.WithContext(context.WithValue(ctx, federationIdentityLaunchKey{}, federationIdentityLaunch{keep.Agent, reservation}))
 	}
+	inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleForeignFileContextKey{}, true))
 	rec := httptest.NewRecorder()
 	handleAgentBundleImport(rec, inner)
 	if rec.Code != 200 && reservation != "" {

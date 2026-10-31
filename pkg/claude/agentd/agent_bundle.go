@@ -530,6 +530,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		}
 		defer func() { _ = b.Close() }()
 		neutral, rescan, handoff, fileLosses = info.Context, info.Scan, info.Handoff, info.Losses
+		if foreign, _ := r.Context().Value(agentBundleForeignFileContextKey{}).(bool); foreign && fileLosses != nil {
+			l := paf.CountsOnly(*fileLosses)
+			fileLosses = &l
+		}
 	} else {
 		fileLosses, _ = r.Context().Value(agentBundleLossesContextKey{}).(*paf.Losses)
 	}
