@@ -428,3 +428,38 @@ func TestSudoUses_StandingGroupsAdminLeavesASettingsGrantUnspent(t *testing.T) {
 	require.Equal(t, http.StatusOK, patchGroupAs(t, f, worker, "alpha", map[string]any{"descr": "new"}))
 	assert.Equal(t, int64(1), sudoUsesLeft(t, id))
 }
+
+// A rejected field stops the whole save, so an invalid one cannot be used to
+// write the others for free.
+func TestSudoUses_RejectedSettingsSaveWritesNothing(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	descr := haveLimitedSudo(t, worker, agentd.PermGroupsSettingsDescription, 1)
+	policy := haveLimitedSudo(t, worker, agentd.PermGroupsSettingsRemoteControlPolicy, 1)
+	for range 3 {
+		assert.Equal(t, http.StatusBadRequest, patchGroupAs(t, f, worker, "alpha",
+			map[string]any{"descr": "sneaked", "remote_control_policy": "bogus"}))
+	}
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	assert.NotEqual(t, "sneaked", g.Descr)
+	assert.Equal(t, int64(1), sudoUsesLeft(t, descr))
+	assert.Equal(t, int64(1), sudoUsesLeft(t, policy))
+}
+
+// An unlimited grant covers the action, so a limited one beside it is not spent,
+// least of all one scoped elsewhere.
+func TestSudoUses_UnlimitedSudoLeavesALimitedGrantUnspent(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	f.HaveGroup("beta")
+	now := time.Now()
+	scoped, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: worker, Slug: agentd.PermGroupsSettingsDescription, ScopeJSON: `{"group":["beta"]}`,
+		GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test", UsesLimit: 2, UsesLeft: 2})
+	require.NoError(t, err)
+	_, err = db.InsertSudoGrant(&db.SudoGrant{ConvID: worker, Slug: agentd.PermGroupsAdmin,
+		GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, patchGroupAs(t, f, worker, "alpha", map[string]any{"descr": "new"}))
+	assert.Equal(t, int64(2), sudoUsesLeft(t, scoped))
+}

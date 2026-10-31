@@ -271,8 +271,9 @@ These count:
 - group settings: every `groups.settings.*` slug, from `groups.settings.description`
   to `groups.settings.owner-scopes`. One save spends one use of each setting it
   changes, so a save of the description and the default directory spends one of each
-  grant, and gives both back if it fails. Reads spend nothing. An agent that also
-  holds `groups.admin` or owns the group is covered by that, and spends nothing.
+  grant. A rejected save changes nothing and gives both back, but a save that fails
+  after writing some fields keeps its uses. Reads spend nothing, and neither does an
+  agent also covered by `groups.admin` or, for most of these slugs, by owning the group.
 - `message.direct`, `human.notify`, `human.clipboard`.
 - `templates.manage`, `templates.instantiate`, `profiles.manage`, `roles.manage`,
   `prompts.manage`, `process.templates.manage`, `process.runs.start`,
