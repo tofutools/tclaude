@@ -11,7 +11,7 @@ You need three things:
 - a group with at least one agent on each side.
 
 Steps 5 to 7 can also be done in each machine's dashboard: **⚙ Fleet config →
-Setup guide** (⌘ Fleet at the right of the tab bar, then ⚙ Fleet config) joins the hub
+Setup guide** (**Fleet** at the right of the tab bar, then ⚙ Fleet config) joins the hub
 from a pasted join code (or the address and invite), trusts the other machine after you compare
 fingerprints, and shares a group. It shows the CLI command for every step,
 and step 6 of the guide lists what each peer shares and the agent grants
@@ -28,7 +28,8 @@ go install github.com/tofutools/tclaude/cmd/tclaude-hub@latest
 
 Run it on any machine both instances can reach: one of the two machines
 themselves, a VM, or a team server. It only relays and keeps a small
-admission database; it never stores messages.
+admission database, plus encrypted board content if you use boards; it never
+stores messages.
 
 ## 2. Give the hub a TLS certificate
 
@@ -62,7 +63,7 @@ The hub's state lives in `$TCLAUDE_HUB_DIR` (default `~/.tclaude/data/hub/`
 for the user running the hub). Existing `~/.tclaude-hub/` directories stay in
 use with a migration hint; no state is moved automatically. To
 keep it running, use the systemd unit in
-[Running a hub](federation.md#running-a-hub).
+[Running a hub](federation-hub.md#running-a-hub).
 
 ## 4. Admit both machines
 
@@ -201,9 +202,9 @@ received remote agent mail needs no standing grant in the reverse direction.
   `groups.members.spawn` (automatically launch workers under local settings)
   and `routes.consume` (open a TCP service across instances). Agents requesting
   workers or opening routes also need the corresponding `peer=` grants. See
-  [Peer grants](federation.md#peer-grants-what-a-peer-may-see-and-do).
+  [Peer grants](federation-peers.md#peer-grants-what-a-peer-may-see-and-do).
 - Mailing a whole remote group, `--cc` to remote members, operator to
-  operator: [Sending](federation.md#sending).
+  operator: [Sending](federation-work.md#sending).
 - Trying it on one machine first: `scripts/federation-smoke.sh` starts a hub
   and two instances locally ([Trying it locally](federation.md#trying-it-locally)).
 
@@ -249,5 +250,5 @@ indicator identifies remote viewers. Viewers and the target's own terminals
 share the window size: the smallest attached terminal sets it.
 Its operator can run `tclaude federation viewers` and
 `tclaude federation kick <viewer-id>` to remove a viewer immediately.
-See [remote terminals](federation.md#remote-terminals) for revocation and audit
+See [remote terminals](federation-work.md#remote-terminals) for revocation and audit
 behavior.

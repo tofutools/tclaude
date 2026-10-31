@@ -74,9 +74,19 @@ nav:
       - Group routes: group-routes.md
       - Operating remotely: remote.md
       - Profiling agentd: profiling.md
-      - Federation: federation.md
       - Portable Agent Format: paf.md
       - Portable Workflow Format: pwf.md
+  - Federation:
+      - Overview: federation.md
+      - Setup walkthrough: federation-setup.md
+      - Running a hub: federation-hub.md
+      - Connect and share: federation-peers.md
+      - Work across nodes: federation-work.md
+      - Move agents and config: federation-moving.md
+      - Models and usage: federation-models.md
+      - Run the fleet: federation-admin.md
+      - Content boards: federation-boards.md
+      - Reference: federation-reference.md
   - Confinement:
       - Sandboxing: sandboxing.md
       - Network filtering: network-filtering.md

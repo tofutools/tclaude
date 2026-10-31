@@ -967,7 +967,7 @@ registry inputs and ambient authentication cannot replace the launch bearer.
 
 Explicit `off` overrides profile defaults. Saved provider logins cannot replace
 the pinned gateway route; conflicting overrides refuse the launch. See
-[Model gateways](federation.md#model-gateways-claude-code) for permissions,
+[Model gateways](federation-models.md#model-gateways) for permissions,
 limits, usage and shutdown controls.
 
 OpenCode remains unsupported even though it supports custom provider URLs and
