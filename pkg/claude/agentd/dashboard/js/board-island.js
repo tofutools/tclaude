@@ -226,6 +226,7 @@ export function BoardEditor({
     let retry = false;
     let started = false;
     let ticking = false;
+    let settling = false;
     let lastLoad = 0;
     let presenceShown = false;
     const load = async (since) => {
@@ -271,6 +272,7 @@ export function BoardEditor({
     const tick = async () => {
       if (disposed.current || ticking) return;
       ticking = true;
+      settling = false;
       clearTimeout(pollTimer);
       const looking = win?.document?.visibilityState !== 'hidden' && shown();
       void reportView(looking);
@@ -284,14 +286,17 @@ export function BoardEditor({
       if (!disposed.current) pollTimer = setTimeout(tick, stale && looking && liveOpen ? BOARD_LIVE_SETTLE_MS : BOARD_POLL_MS);
     };
     // Signals arrive in bursts while an agent draws; a short wait reads once.
+    // An armed wait is left alone, or a steady stream would never read.
     const signal = () => {
       stale = true;
-      if (!started || ticking) return;
+      if (!started || ticking || settling) return;
+      settling = true;
       clearTimeout(pollTimer);
       pollTimer = setTimeout(tick, BOARD_LIVE_SETTLE_MS);
     };
     const connect = () => {
-      if (disposed.current || !WebSocketCtor) return;
+      // A peer's page rewrites fetches, which a socket would not follow.
+      if (disposed.current || !WebSocketCtor || globalThis.__tclaudeRemoteNode) return;
       const scheme = win.location?.protocol === 'https:' ? 'wss:' : 'ws:';
       try {
         liveSocket = new WebSocketCtor(`${scheme}//${win.location.host}/api/boards/${encodeURIComponent(boardId)}/live`);
@@ -303,7 +308,10 @@ export function BoardEditor({
       liveSocket.onmessage = (event) => {
         let message = null;
         try { message = JSON.parse(event.data); } catch { /* every read is safe */ }
-        if (!message || message.client !== viewClient.current) signal();
+        // Its own edit is no news, but the cursor and the status still move
+        // on a read, so it comes on the next tick rather than straight away.
+        if (message && message.client === viewClient.current) retry = true;
+        else signal();
       };
       liveSocket.onclose = () => {
         liveOpen = false;

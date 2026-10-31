@@ -122,11 +122,11 @@ func handleDashboardBoardLive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer boardLive.unsubscribe(id, sub)
-	ws, err := termWSUpgrader.Upgrade(w, r, nil)
+	ws, err := upgradeTerminalWebSocket(w, r)
 	if err != nil {
 		return
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 	ws.SetReadLimit(512)
 
 	// Nothing is expected from the browser but pongs, and reading is what
