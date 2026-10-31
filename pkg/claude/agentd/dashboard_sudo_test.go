@@ -365,3 +365,114 @@ func TestSnapshot_ActiveSudoEmptyByDefault(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"sudo":[]`,
 		"snapshot must surface Sudo as [] when empty")
 }
+
+func sudoTestAgent(t *testing.T) (string, string) {
+	t.Helper()
+	conv := "33333333-3333-3333-3333-333333333333"
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	return conv, agentID
+}
+
+func sudoTestGrant(t *testing.T, agentID string, left time.Duration) int64 {
+	t.Helper()
+	id, err := db.InsertSudoGrantForAgent(&db.SudoGrant{
+		AgentID: agentID, Slug: PermAgentSpawn, ExpiresAt: time.Now().Add(left), GrantedBy: "test",
+	})
+	require.NoError(t, err)
+	return id
+}
+
+func sudoExtend(t *testing.T, id int64, duration string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/sudo/"+strconv.FormatInt(id, 10)+"/extend", `{"duration":"`+duration+`"}`)
+	handleDashboardSudoAPI(w, r)
+	return w
+}
+
+func TestDashboardSudoExtend_MovesExpiryWithinTheCap(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	_, agentID := sudoTestAgent(t)
+	id := sudoTestGrant(t, agentID, 10*time.Minute)
+
+	w := sudoExtend(t, id, "15m")
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	grant, err := db.GetSudoGrant(id)
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now().Add(25*time.Minute), grant.ExpiresAt, 5*time.Second)
+}
+
+func TestDashboardSudoExtend_HoldsTheCapFromNow(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	_, agentID := sudoTestAgent(t)
+	id := sudoTestGrant(t, agentID, 50*time.Minute)
+
+	w := sudoExtend(t, id, "15m")
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "over the max")
+	grant, err := db.GetSudoGrant(id)
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now().Add(50*time.Minute), grant.ExpiresAt, 5*time.Second, "a refused extension changes nothing")
+}
+
+func TestDashboardSudoExtend_RefusesAFinishedGrant(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	_, agentID := sudoTestAgent(t)
+	revoked := sudoTestGrant(t, agentID, 10*time.Minute)
+	_, err := db.RevokeSudoGrant(revoked)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, sudoExtend(t, revoked, "5m").Code)
+	expired := sudoTestGrant(t, agentID, -time.Minute)
+	assert.Equal(t, http.StatusNotFound, sudoExtend(t, expired, "5m").Code)
+}
+
+func TestDashboardSudoPolicy_NamesLimitsAndWhySlugsAreRefused(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	_, agentID := sudoTestAgent(t)
+	w := httptest.NewRecorder()
+	handleDashboardSudoAPI(w, dashboardRequest(http.MethodGet, "/api/sudo/policy?agent_id="+agentID, ""))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	var policy sudoPolicyJSON
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &policy))
+	assert.EqualValues(t, 3600, policy.MaxSeconds)
+	assert.EqualValues(t, 300, policy.DefaultSeconds)
+	assert.Contains(t, policy.Refused[PermPermissionsGrant], "outlive")
+}
+
+func TestDashboardSudoGrant_StoresAScope(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	conv, agentID := sudoTestAgent(t)
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.members.spawn"],"duration":"5m",` +
+		`"scopes":{"groups.members.spawn":{"group":["dev"]}}}`
+	w := httptest.NewRecorder()
+	handleDashboardSudoAPI(w, dashboardRequest(http.MethodPost, "/api/sudo", body))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	rows, err := db.ListActiveSudoGrants(conv)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Contains(t, rows[0].ScopeJSON, `"dev"`)
+}
+
+func TestDashboardSudoGrant_RefusesABadScope(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	conv, agentID := sudoTestAgent(t)
+	for name, scopes := range map[string]string{
+		"undeclared dimension": `{"groups.members.spawn":{"nonsense":["x"]}}`,
+		"slug not granted":     `{"agent.stop":{"group":["dev"]}}`,
+	} {
+		body := `{"agent_id":"` + agentID + `","slugs":["groups.members.spawn"],"scopes":` + scopes + `}`
+		w := httptest.NewRecorder()
+		handleDashboardSudoAPI(w, dashboardRequest(http.MethodPost, "/api/sudo", body))
+		assert.Equal(t, http.StatusBadRequest, w.Code, name)
+	}
+	rows, err := db.ListActiveSudoGrants(conv)
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}

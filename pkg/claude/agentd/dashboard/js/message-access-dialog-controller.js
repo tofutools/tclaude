@@ -35,8 +35,8 @@ export function openHumanReplyModal(context = {}) {
 
 // node names another node's agent or group (blank: the page's): the dialog
 // reads that node's snapshot and saves there.
-export function openSudoGrantModal(prefillAgentID = '', node = '') {
-  return requireController().openSudoGrant({ agentID: prefillAgentID || '', node });
+export function openSudoEditModal(agentID, label = '', node = '') {
+  return requireController().openSudoEditor({ agentID, label, node });
 }
 
 export function openPermEditModal(conv, label = '', node = '') {
