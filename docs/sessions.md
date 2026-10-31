@@ -217,12 +217,14 @@ opens the same viewer) is an interactive table of sessions:
   to toggle direction).
 - `n` opens a new-session prompt; its harness field cycles through the
   coding harnesses and `shell`.
+- `d` detaches clients, `c` chooses columns, `r` refreshes, and `q` quits.
 - `h`/`?` shows help.
 
 ## Labels and names
 
 The tmux session name is the first 8 characters of the session id, or your
-`--label` verbatim. Setting `session.tmux_name_style` to `"dir"` in
+`--label` verbatim (up to 32 characters from a restricted set; anything else is
+rejected, not cleaned up). Setting `session.tmux_name_style` to `"dir"` in
 `~/.tclaude/data/config.json` names unlabelled sessions after the working
 directory's basename instead (sanitized, capped at 32 characters,
 disambiguated with `-2`, `-3`, … suffixes).

@@ -54,15 +54,16 @@ tclaude agent profiles default show        # the global default profile
 tclaude agent sandbox-profiles ls          # needs sandbox-profiles.manage for payloads
 tclaude agent cron ls
 tclaude agent permissions ls               # your effective slugs
-tclaude agent guide view                   # which dashboard view the operator is on
+tclaude agent guide view                   # the operator's dashboard view; needs dashboard.view.read (Stewards have it)
 tclaude agent guide capture -o /tmp/v.png  # what their dashboard shows right now
 ```
 
 ## Groups for repos
 
 A group is a team of agents. For "set up my repos", one group per repo is the
-usual shape, with the repo as the group's default spawn directory so every
-agent spawned into it starts there.
+usual shape, with the repo as the group's default spawn directory. Dashboard
+spawns start there. `tclaude agent spawn` sends your own directory, so pass
+`--cwd` to it.
 
 | Step | Command | Slug |
 |---|---|---|
@@ -83,8 +84,8 @@ agent spawned into it starts there.
   group-scoped powers (spawning into it, its member permissions and
   environment) that do not expire with the sudo window. Say so in the plan,
   and end the plan by giving it up:
-  `tclaude agent groups revoke-owner <group> <your conv-id>` (your conv-id is
-  in `tclaude agent whoami`), unless the operator asks you to keep it. To make
+  `tclaude agent groups revoke-owner <group> <you>` (`tclaude agent whoami`
+  prints your id), unless the operator asks you to keep it. To make
   another agent an owner, that is `groups grant-owner <group> <conv>`; ask
   first.
 

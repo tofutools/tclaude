@@ -51,7 +51,7 @@ A stopped agent stays in its group with an empty status dot, `○`. Stop
 wake her. She resumes the same conversation, through the harness she ran
 on, with her groups, permissions and scheduled check-ins.
 
-The two buttons under a group's name act on the whole team: the green one
+The 🟢 and 🛑 buttons beside the spawn button act on the whole team: the green one
 wakes every stopped member, the red one stops every running one. Stopped
 agents are shown by default. If you have hidden them, **▾ view** at the top
 of **Groups** has **show offline**.
@@ -120,7 +120,7 @@ Retired agents and past conversations are kept. Open **▾ view** and tick
 **show retired** and **show conversations**. Two blocks appear at the
 bottom of **Groups**:
 
-<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
+<!-- The images on this page are maintained by hand. -->
 ![The Groups view with show retired and show conversations ticked. The Retired block lists bob with a reinstate button, and the Conversations block lists a past conversation, "fix the flaky login test", with a promote button.](../assets/learn-dashboard-resume.png)
 
 - **Retired** lists retired agents. **reinstate** makes `bob` an agent

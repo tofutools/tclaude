@@ -13,7 +13,7 @@ under `cmd/` the standalone `tclaude-agentd` daemon and the `tclaude-hub`
 federation relay (see `docs/federation.md`). A bare `go install .` builds
 only the root package, so name both patterns — `./cmd/...` matches the
 daemon and the hub. Do not widen it to `go install ./...`: that would also drop the
-non-production probe under `scripts/` into your `GOBIN`.
+non-production tools under `scripts/` into your `GOBIN`.
 
 The daemon is built into the CLI as `tclaude agentd serve`, so the second
 binary matters mainly when you are working on it or running a daemon-only host.
@@ -395,7 +395,7 @@ func TestSpawn_RenamesAndResumes(t *testing.T) {
     spawn := f.AsHuman().Spawn("alpha", "worker")
 
     f.AssertSentContains(spawn.TmuxTarget(), "/rename worker", 5*time.Second)
-    f.AssertGroupMember("alpha", spawn.ConvID, "worker", "worker", 5*time.Second)
+    f.AssertGroupMember("alpha", spawn.ConvID, "worker", 5*time.Second)
 
     f.MarkOffline(spawn.TmuxSession)
     resume := f.AsHuman().Resume(spawn.ConvID)

@@ -9,8 +9,8 @@ description: >-
   directory are you working in / building in", "where are you", "recover your
   deleted directory", "open a terminal here / in the repo", or "/agent-dir".
   Manager pattern:
-  `tclaude agent dir <peer>` reports another agent's dir; `tclaude agent dir
-  <peer> --open` opens a terminal in it.
+  `tclaude agent dir <peer>` reports another agent's dir. `--open` on a peer is
+  human-only.
 ---
 
 # Reporting where you're working
@@ -60,8 +60,9 @@ cd "$(tclaude agent dir)"    # (run by the human, not you)
 
 If the daemon has no edit recorded yet — a fresh agent, or one that's
 only been reading files and running commands — `current` falls back to
-the launch dir. The JSON form (`source` field) distinguishes `hook`
-(tracked) from `fallback` (no edit seen yet).
+the launch dir. The daemon's HTTP response has a `source` field that
+distinguishes `hook` (tracked) from `fallback` (no edit seen yet); the CLI
+prints only the path.
 
 ## Recovering a deleted startup directory
 
@@ -114,16 +115,16 @@ preferred:
 
 ```bash
 tclaude agent dir worker-1            # worker-1's current working dir
-tclaude agent dir worker-1 --open     # open a terminal in worker-1's dir
+tclaude agent dir worker-1 --open     # human only; an agent gets a 403
 ```
 
 Reporting another agent's directory is read-only and ungated — the
-same conv data the dashboard already shows. Opening a terminal in it
-is likewise ungated; it's the human's machine and they asked.
+same conv data the dashboard already shows. Opening a terminal in
+another agent's dir is human-only: an agent may only open one for itself.
 
 ## What can go wrong
 
-- **`no_known directory` / not_found.** The agent has no session row
+- **`no known directory for this agent yet` / not_found.** The agent has no session row
   yet — it wasn't started under tclaude, or the daemon has never seen
   a hook from it. There's nothing to report.
 - **`current` equals `start`.** Expected for an agent that hasn't

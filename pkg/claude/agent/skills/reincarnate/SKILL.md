@@ -32,9 +32,9 @@ what your follow-up hands it. That makes the handoff note the entire
 interface between you and your successor — everything below is about
 getting that right.
 
-Not migrated: the conversation title (the successor can self-rename in
-its follow-up if the name matters), the message history (that's the
-point), and task state (you persist that to disk — step 2).
+The successor takes your name automatically. Not migrated: the message
+history (that's the point) and task state (you persist that to disk —
+step 2).
 
 ## Procedure
 
@@ -80,9 +80,8 @@ reads stdin.
 
 **4. Stop.** Once the command succeeds, do not start new work — your
 pane is about to get the soft-exit. The response includes the new
-conv-id and attach command; the human's terminal does *not* follow
-automatically, so if the human is watching, the attach command is worth
-surfacing.
+conv-id and attach command. An attached terminal is switched to the new
+session; the attach command is the fallback if that failed.
 
 ## Tell the successor to stay lean
 

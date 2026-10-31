@@ -5,7 +5,8 @@ dashboard. The dashboard is where you will spend most of your time with
 tclaude: it shows every agent you run, what each is doing, and their mail,
 and it starts, stops and manages them.
 
-**You need:** Linux or macOS, and one harness CLI logged in. See
+**You need:** Linux or macOS, and one harness CLI logged in. On Linux you also need
+bubblewrap for tclaude's sandbox. See
 [Before you start](index.md#before-you-start).
 
 ## 1. Install
@@ -29,7 +30,13 @@ tclaude setup --install-agent-skills --install-default-agent-permissions
 ```
 
 It covers Claude Code and every other harness it finds on your `PATH`, and
-asks about a few optional integrations. Accept the defaults.
+asks about a few optional integrations. Accept the defaults. One question sets how
+long Claude Code waits when an agent asks you something; that one changes a global
+Claude Code setting, and setup never answers it for you, even with `--yes`.
+
+On a new install, agents start inside **tclaude's own sandbox**. If setup warns
+that the sandbox can't run on this host yet, agents won't start until that's fixed.
+The next steps show you where to find the fix.
 
 !!! info "Go deeper"
     [Installation → Run setup](../index.md#2-run-setup) lists every setup
@@ -72,16 +79,31 @@ another machine or a phone.
 ## 5. Find your way around
 
 Tabs run across the top. You start on **Groups**, the home view. It is
-empty for now; the next tutorial fills it. The tabs you will use first:
+empty for now; the next tutorial fills it. On its right is the **library**: saved
+profiles, six starter roles, prompts and templates that you'll use later.
+
+The tabs you will use first:
 
 | Tab | What it is for |
 |---|---|
 | **Groups** | Every agent, grouped into teams, with live status. You start and manage agents here. |
-| **Terminals** | Live terminals of your agents, in the browser. It appears once you open one. |
+| **Terminals** | Live terminals of your agents, in the browser. |
 | **Messages** | The mail agents send each other and you. |
-| **Usage** and **Costs** | Your subscription quota and spend. |
+| **Diagnostics** | Checks on your install, plus logs and the audit trail. |
+| **Config** | Your settings. |
 
+**Usage** and **Plugins** stay hidden until they have something to show.
 **Ctrl/Cmd+K** opens a command palette that reaches everything else.
+
+## 6. Check Doctor
+
+A number on **Diagnostics** means tclaude has a question or found a problem. Open
+**Diagnostics**, then **Doctor**. Its **Needs attention** view lists what to do:
+
+- a blue **decision** is a question only you can answer, such as which sandbox new
+  agents use. Answer it in place.
+- a red **blocking** problem stops agents from starting, such as missing `tmux` or
+  bubblewrap. Doctor gives you the command to fix it.
 
 !!! info "Go deeper"
     [Dashboard → The tabs](../dashboard.md#the-tabs) describes every tab.
@@ -89,8 +111,9 @@ empty for now; the next tutorial fills it. The tabs you will use first:
 ## From the terminal
 
 The dashboard is not the only way in. Bare `tclaude` starts your harness in
-a tmux session from the shell, with no daemon needed, and
-`tclaude session watch` lists running sessions. These commands suit
+a tmux session from the shell, and `tclaude session watch` lists running sessions.
+This works without the daemon, unless a group owns the directory; then tclaude asks
+before starting a solo session. These commands suit
 scripting and terminal-only machines; [Sessions](../sessions.md) covers
 them. The Learn path uses the dashboard.
 
@@ -99,5 +122,6 @@ them. The Learn path uses the dashboard.
 - `tclaude setup` installs the hooks and agent extras.
 - `tclaude agentd serve` runs the daemon; keep it running.
 - `tclaude agent dashboard` opens the dashboard.
+- **Diagnostics › Doctor** tells you what your install still needs.
 
 **Next:** [Your first agent](first-agent.md).

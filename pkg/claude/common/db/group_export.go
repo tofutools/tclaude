@@ -459,7 +459,7 @@ func collectWorkdirs(d *sql.DB, convIDs []string) ([]groupexport.Workdir, error)
 func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+		SELECT ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.uses_limit, s.uses_left
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE ag.current_conv_id `+clause+` ORDER BY s.id`, args...)
 	if err != nil {
@@ -471,7 +471,7 @@ func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, er
 		var s groupexport.SudoGrant
 		var grantedAt, expiresAt, revokedAt dbTimestamp
 		if err := rows.Scan(&s.ConvID, &s.Slug, &s.ScopeJSON, &grantedAt, &expiresAt,
-			&s.GrantedBy, &s.Reason, &revokedAt); err != nil {
+			&s.GrantedBy, &s.Reason, &revokedAt, &s.UsesLimit, &s.UsesLeft); err != nil {
 			return nil, fmt.Errorf("scan sudo grant: %w", err)
 		}
 		s.GrantedAt = exportTimestamp(grantedAt)
@@ -1170,10 +1170,10 @@ func (c *importCtx) sudoGrants() error {
 		}
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_sudo_grants
-				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json, uses_limit, uses_left)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			agentID, s.Slug, requiredImportDBTime(s.GrantedAt), nullableDBTimeText(s.ExpiresAt), s.GrantedBy,
-			s.Reason, nullableDBTimeText(s.RevokedAt), scopeJSON); err != nil {
+			s.Reason, nullableDBTimeText(s.RevokedAt), scopeJSON, s.UsesLimit, s.UsesLeft); err != nil {
 			return fmt.Errorf("import: sudo grant %s/%s: %w", s.ConvID, s.Slug, err)
 		}
 	}

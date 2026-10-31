@@ -82,7 +82,7 @@ reported as a *prerequisite* verdict with its own step-summary block saying that
 no policy was evaluated.
 
 That helper is deliberately free of workflow-specific assumptions, so
-`ci.yml`'s sandbox-v2 job — which carries an inline copy of the same pin today —
+`reusable-sandbox-v2-smoke.yml` — which carries an inline copy of the same pin today —
 can later delegate to it instead of maintaining a second copy.
 
 ## What is shared

@@ -10,8 +10,9 @@ implementation diary, roadmap, or project-management scratchpad.
 session management, conversation search, usage/status reporting, worktree
 helpers, and multi-agent coordination.
 
-The project is harness-agnostic. Six harnesses are registered via
-`--harness claude|codex|opencode|copilot|gemini|pi` (Claude Code is the default); the
+The project is harness-agnostic. Six coding harnesses are registered via
+`--harness claude|codex|opencode|copilot|gemini|pi` (Claude Code is the default),
+plus a plain `shell`; the
 selected harness is persisted per conversation. The harness seam lives in
 `pkg/claude/harness`.
 
@@ -158,8 +159,8 @@ The same loop works agent-to-agent. A lead can ask the implementing agent for
 a mock before green-lighting implementation, or send the implementor a
 rendered mock of what is wanted; either side re-renders and replies with an
 updated image, passing an absolute path the peer can read in the message body
-(`tclaude agent send` carries text only — attachments exist only on
-notify-human), iterating on the design together before any production code is
+(`tclaude agent send` to a local peer carries text only; attachments exist on
+notify-human and for remote `member@peer` recipients), iterating on the design together before any production code is
 written. Bring the human in with notify-human whenever a decision is taste 
 rather than mechanics.
 

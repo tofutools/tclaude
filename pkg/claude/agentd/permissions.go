@@ -59,6 +59,8 @@ type PermSlug struct {
 	AutoGrantable bool `json:"auto_grantable,omitempty"`
 	// Risky marks a slug the editors call out: see riskySlugs.
 	Risky bool `json:"risky,omitempty"`
+	// Countable marks a slug a sudo grant can limit by uses: see countableSudoSlugs.
+	Countable bool `json:"countable,omitempty"`
 }
 
 func initPermissionRegistry() {
@@ -68,6 +70,7 @@ func initPermissionRegistry() {
 func initPermissionRegistryEntries(registry []PermSlug) {
 	for i := range registry {
 		registry[i].Risky = slices.Contains(riskySlugs, registry[i].Slug)
+		registry[i].Countable = slices.Contains(countableSudoSlugs, registry[i].Slug)
 	}
 	seenSlugs := map[string]bool{}
 	for i := range registry {
@@ -1873,6 +1876,7 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	endStoredStewardPermission(target.Key, body.Slug)
 	slugs, _ := db.ListAgentPermissionsForConv(target.Key)
 	writeJSON(w, http.StatusOK, permissionsMutateResp{
 		Target:    body.Target,
@@ -1926,6 +1930,7 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
+		endStoredStewardPermission(target.Key, body.Slug)
 		resp.TargetKey = target.Key
 		resp.AgentID = target.AgentID
 		resp.Title = target.ConvTitle
