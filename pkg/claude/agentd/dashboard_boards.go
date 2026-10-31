@@ -60,6 +60,7 @@ const (
 	boardMaxRequestBodyWithSteps = 12 << 20
 	boardMaxSnapshotBytes        = 8 << 20
 	boardMaxCoordinate           = 1e6
+	boardMaxStack                = 1e15
 	boardMaxPoints               = 5000
 	boardMaxTextBytes            = 4000
 	boardMaxTitleBytes           = 200
@@ -108,6 +109,7 @@ type boardElement struct {
 	StartBinding    *boardBinding     `json:"startBinding,omitempty"`
 	EndBinding      *boardBinding     `json:"endBinding,omitempty"`
 	Routing         string            `json:"routing,omitempty"`
+	Z               *float64          `json:"z,omitempty"` // its place in the stack, see stackOrder in board-model.js
 	Version         int64             `json:"version"`
 	VersionNonce    int64             `json:"versionNonce"`
 	IsDeleted       bool              `json:"isDeleted"`
@@ -234,6 +236,9 @@ func normalizeBoardElement(raw json.RawMessage, author string) (db.CollabBoardEl
 	}
 	if e.Type != "text" {
 		e.ContainerID = ""
+	}
+	if e.Z != nil && !boardFinite(*e.Z, boardMaxStack) {
+		return fail("z must be a finite number")
 	}
 	if e.ContainerID != "" && !elementIDPattern.MatchString(e.ContainerID) {
 		return fail("containerId must be 1-64 characters of [A-Za-z0-9_-]")

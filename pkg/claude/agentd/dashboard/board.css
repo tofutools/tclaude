@@ -115,6 +115,8 @@ body.slop, body.vegas {
 .board-selection { fill: none; stroke: #1971c2; stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .board-handle { fill: #fff; stroke: #1971c2; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .board-snap { fill: #fff; stroke: #1971c2; stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: crosshair; }
+.board-snap.on { fill: #1971c2; }
+.board-aim { fill: rgba(25, 113, 194, .08); stroke: #1971c2; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .board-line-end { fill: #fff; stroke: #1971c2; stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: move; }
 .board-line-end.on { fill: #1971c2; }
 .board-suggestion { opacity: .45; pointer-events: none; }
@@ -130,6 +132,37 @@ body.slop, body.vegas {
   font-family: 'Segoe Print', 'Comic Sans MS', 'Chalkboard SE', cursive; field-sizing: content;
 }
 .board-text-input.centred { transform: translateX(-50%); text-align: center; }
+/* The quick menu (js/board-quick-menu.js): the next shape of a connector. */
+.board-quick {
+  position: absolute; z-index: 3; box-sizing: border-box; width: 180px; padding: 4px; border-radius: 8px;
+  border: 1px solid var(--board-line); background: var(--board-bar); box-shadow: 0 8px 24px rgba(0, 0, 0, .5); color: var(--board-text);
+}
+.board-quick input {
+  box-sizing: border-box; width: 100%; margin-bottom: 4px; padding: 5px 8px; border-radius: 5px;
+  border: 1px solid var(--board-line); background: var(--board-bg); color: var(--board-text); font: inherit; font-size: 12px; outline: none;
+}
+.board-quick input:focus { border-color: var(--board-blue); }
+.board-quick button {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 5px;
+  background: transparent; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.board-quick button.on { background: #1f6feb33; }
+.board-quick kbd {
+  min-width: 14px; padding: 0 3px; border: 1px solid var(--board-line); border-radius: 3px;
+  color: var(--board-muted); font: inherit; font-size: 10px; text-align: center;
+}
+.board-quick-none { padding: 6px 8px; color: var(--board-muted); font-size: 12px; }
+/* The context menu (js/board-context-menu.js) wears the tab menu's rows. */
+.board-context { position: fixed; z-index: 960; max-height: calc(100vh - 16px); overflow: auto; min-width: 210px; }
+.board-context .mux-tab-menu-item { display: flex; justify-content: space-between; gap: 18px; }
+.board-context .mux-tab-menu-item:disabled { opacity: .45; cursor: default; }
+.board-context kbd { color: var(--board-muted); font: inherit; font-size: 11px; white-space: nowrap; }
+.board-context-swatches { display: flex; gap: 5px; padding: 4px 10px; }
+.board-context-swatches .board-swatch:focus-visible { outline: 2px solid var(--board-blue); outline-offset: 1px; }
+.board-hint {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); pointer-events: none; white-space: nowrap;
+  padding: 3px 10px; border-radius: 999px; background: var(--board-bar); color: var(--board-text); font-size: 12px;
+}
 .board-empty-hint {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 420px;
   text-align: center; color: #868e96; font-size: 14px; pointer-events: none;
@@ -189,7 +222,7 @@ body.slop, body.vegas {
   background: var(--board-bg); color: var(--board-text); border: 1px solid #3d4451; border-radius: 10px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .6);
 }
-body.board-overlay-front .board-overlay { z-index: 951; }
+body.board-overlay-front :is(.board-overlay, .board-overlay-resize-frame) { z-index: 951; }
 .board-overlay:focus-within { border-color: var(--board-blue); }
 .board-overlay-titlebar {
   display: flex; align-items: center; gap: 8px; flex: none; padding: 4px 6px 4px 12px; cursor: move;
@@ -207,12 +240,7 @@ body.board-overlay-front .board-overlay { z-index: 951; }
 .board-overlay-action:hover, .board-overlay-close:hover { background: #2d333b; color: var(--board-text); }
 .board-overlay .board-title { display: none; }
 .board-overlay .board-canvas-wrap { min-height: 80px; margin: 0 8px 8px; }
-.board-overlay-corner { position: absolute; width: 12px; height: 12px; touch-action: none; z-index: 2; }
-.board-overlay-corner.nw { left: 0; top: 0; cursor: nwse-resize; }
-.board-overlay-corner.ne { right: 0; top: 0; cursor: nesw-resize; }
-.board-overlay-corner.sw { left: 0; bottom: 0; cursor: nesw-resize; }
-.board-overlay-corner.se { right: 0; bottom: 0; cursor: nwse-resize; }
 /* As for the companion: the dialogs it opens stay above it, and it steps aside
    while the operator annotates the page. */
-body:has(.modal-overlay.show, .manage-overlay.show) .board-overlay { z-index: 90; }
-body.companion-annotating .board-overlay { visibility: hidden; }
+body:has(.modal-overlay.show, .manage-overlay.show) :is(.board-overlay, .board-overlay-resize-frame) { z-index: 90; }
+body.companion-annotating :is(.board-overlay, .board-overlay-resize-frame) { visibility: hidden; }
