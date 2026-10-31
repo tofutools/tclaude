@@ -38,7 +38,7 @@ stays with the page.
 Click a pill, or press **Ctrl+.** anywhere, to open the window. It stays above the
 page without blocking it, and comes back when you reload the tab.
 
-- **Move it** by its title bar. Resize it from a corner.
+- **Move it** by its title bar. Resize it from any edge or corner.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer.
 - **Each agent is a tab**, up to eight. **＋** summons the Steward or pins another
@@ -175,7 +175,7 @@ denies and scopes included. Stored sudo keeps its original expiry: a new Steward
 never restarts the clock. The editors show which of the three sources each grant
 comes from: this Steward, all future Stewards, or Config defaults, which are
 changed only in **Config > Steward**. Changing or revoking a stored grant applies
-to later Stewards too, while revoking an instance-only grant affects that
+to later Stewards too, and the revoke says so, while revoking an instance-only grant affects that
 instance alone. `permissions.grant` and `permissions.revoke` cannot be stored.
 
 Stewards that are already running catch up when the daemon starts or when they resume:

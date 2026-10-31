@@ -189,7 +189,7 @@ body.slop, body.vegas {
   background: var(--board-bg); color: var(--board-text); border: 1px solid #3d4451; border-radius: 10px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .6);
 }
-body.board-overlay-front .board-overlay { z-index: 951; }
+body.board-overlay-front :is(.board-overlay, .board-overlay-resize-frame) { z-index: 951; }
 .board-overlay:focus-within { border-color: var(--board-blue); }
 .board-overlay-titlebar {
   display: flex; align-items: center; gap: 8px; flex: none; padding: 4px 6px 4px 12px; cursor: move;
@@ -207,12 +207,7 @@ body.board-overlay-front .board-overlay { z-index: 951; }
 .board-overlay-action:hover, .board-overlay-close:hover { background: #2d333b; color: var(--board-text); }
 .board-overlay .board-title { display: none; }
 .board-overlay .board-canvas-wrap { min-height: 80px; margin: 0 8px 8px; }
-.board-overlay-corner { position: absolute; width: 12px; height: 12px; touch-action: none; z-index: 2; }
-.board-overlay-corner.nw { left: 0; top: 0; cursor: nwse-resize; }
-.board-overlay-corner.ne { right: 0; top: 0; cursor: nesw-resize; }
-.board-overlay-corner.sw { left: 0; bottom: 0; cursor: nesw-resize; }
-.board-overlay-corner.se { right: 0; bottom: 0; cursor: nwse-resize; }
 /* As for the companion: the dialogs it opens stay above it, and it steps aside
    while the operator annotates the page. */
-body:has(.modal-overlay.show, .manage-overlay.show) .board-overlay { z-index: 90; }
-body.companion-annotating .board-overlay { visibility: hidden; }
+body:has(.modal-overlay.show, .manage-overlay.show) :is(.board-overlay, .board-overlay-resize-frame) { z-index: 90; }
+body.companion-annotating :is(.board-overlay, .board-overlay-resize-frame) { visibility: hidden; }

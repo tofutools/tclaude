@@ -206,6 +206,61 @@ const CASES = [
     tooltip: 'Status: NOT ENFORCED\nImplementation: Codex\nProfile: None',
   },
   {
+    name: 'a partly enforced rule warns and names what is loose without reading as off',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'unix_sockets', reason: 'partial_mechanism', effect: 'enforced_wider',
+        detail: 'abstract-namespace Unix sockets remain reachable',
+      }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: PARTLY ENFORCED\nImplementation: tclaude’s built-in sandbox\nProfile: None\nThe sandbox is on, but some rules are enforced more loosely than configured.\nWarning: abstract-namespace Unix sockets remain reachable\nClick to temporarily disable',
+  },
+  {
+    name: 'the pre-verdict mode fallback warns on a partly enforced rule too',
+    state: {
+      harness: 'claude', sandbox_mode: 'on',
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'network', reason: 'tools_only_scope', effect: 'enforced_wider',
+        detail: 'the network allow list applies only to tool execution, not the harness process',
+      }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: PARTLY ENFORCED\nImplementation: CC\nProfile: None\nThe sandbox is on, but some rules are enforced more loosely than configured.\nWarning: the network allow list applies only to tool execution, not the harness process\nClick to temporarily disable',
+  },
+  {
+    name: 'a dropped rule outranks a loosened one',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      sandbox_access_notices: [
+        { class: 'degradation', axis: 'network', effect: 'enforced_wider' },
+        { class: 'degradation', axis: 'unix_sockets', effect: 'not_enforced' },
+      ],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: NOT ENFORCED\nImplementation: CC\nProfile: None',
+  },
+  {
+    name: 'an off launch stays OFF with a partly enforced notice',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'off',
+      sandbox_access_notices: [{ class: 'degradation', axis: 'network', effect: 'enforced_wider' }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: None',
+  },
+  {
+    name: 'a partly enforced resource limit leaves the padlock alone',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      sandbox_access_notices: [{ class: 'degradation', axis: 'resource_limits', effect: 'enforced_wider' }],
+    },
+    glyph: '🔒', danger: false,
+    tooltip: 'Status: ON\nImplementation: CC\nProfile: None\nClick to temporarily disable',
+  },
+  {
     name: 'a waived resource limit leaves the padlock alone',
     state: {
       harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
@@ -386,6 +441,54 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
       assert.equal(badge.dataset.action, 'restore');
       assert.equal(badge.title,
         'Status: TEMP OFF\nImplementation: None\nProfile: None\nClick to restore normal sandbox');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a partly enforced sandbox keeps the click a lock had', async () => {
+    const mounted = await mount({
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+      sandbox_access_notices: [{ class: 'degradation', axis: 'network', effect: 'enforced_wider' }],
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.textContent.trim(), '⚠');
+      assert.equal(badge.getAttribute('role'), 'button');
+      assert.equal(badge.dataset.action, 'unlock');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a partly enforced Codex harness-builtin sandbox gets no unlock it never had', async () => {
+    const mounted = await mount({
+      harness: 'codex', sandbox_mode: 'tclaude-agent', os_sandbox_state: 'on',
+      sandbox_implementation: 'harness-builtin',
+      sandbox_access_notices: [{ class: 'degradation', axis: 'network', effect: 'enforced_wider' }],
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.textContent.trim(), '⚠');
+      assert.equal(badge.getAttribute('role'), 'note');
+      assert.equal(badge.hasAttribute('data-act'), false);
+      assert.match(badge.title, /Codex restores its persisted sandbox policy/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a not-enforced warning still offers nothing', async () => {
+    const mounted = await mount({
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+      sandbox_access_notices: [{ class: 'degradation', axis: 'network', effect: 'not_enforced' }],
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.getAttribute('role'), 'note');
+      assert.equal(badge.hasAttribute('data-act'), false);
     } finally {
       await mounted.unmount();
     }

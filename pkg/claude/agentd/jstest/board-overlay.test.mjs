@@ -165,7 +165,8 @@ scenario('clicking the overlay or the companion brings that one forward', async 
 
 test('the overlay placement stays reachable and resizing holds the opposite corner', async (t) => {
   const harness = await createPreactHarness(t);
-  const { defaultOverlayPlacement, resizedPlacement } = await harness.importDashboardModule('js/board-overlay.js');
+  const { defaultOverlayPlacement } = await harness.importDashboardModule('js/board-overlay.js');
+  const { resizedPlacement } = await harness.importDashboardModule('js/window-resize.js');
   const { defaultPlacement } = await harness.importDashboardModule('js/companion-model.js');
   const viewport = { width: 1600, height: 900 };
   const placed = defaultOverlayPlacement(viewport);
@@ -185,6 +186,35 @@ test('the overlay placement stays reachable and resizing holds the opposite corn
   const top = resizedPlacement(start, 'ne', 0, -5000, viewport);
   assert.equal(top.y, 0);
   assert.equal(top.y + top.h, start.y + start.h, 'the top edge stops at the viewport');
+});
+
+test('an edge resizes one side only and holds the opposite edge', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { resizedPlacement } = await harness.importDashboardModule('js/window-resize.js');
+  const { COMPANION_FOOTER_ROOM } = await harness.importDashboardModule('js/companion-model.js');
+  const viewport = { width: 1600, height: 900 };
+  const start = { x: 300, y: 200, w: 600, h: 400, snap: '' };
+  const box = ({ x, y, w, h }) => [x, y, w, h];
+  assert.deepEqual(box(resizedPlacement(start, 'e', 50, 30, viewport)), [300, 200, 650, 400]);
+  assert.deepEqual(box(resizedPlacement(start, 's', 50, 30, viewport)), [300, 200, 600, 430]);
+  assert.deepEqual(box(resizedPlacement(start, 'w', -50, 30, viewport)), [250, 200, 650, 400]);
+  assert.deepEqual(box(resizedPlacement(start, 'n', 50, -30, viewport)), [300, 170, 600, 430]);
+
+  const narrow = resizedPlacement(start, 'w', 5000, 0, viewport);
+  assert.equal(narrow.w, 360, 'the minimum width stops a left edge');
+  assert.equal(narrow.x + narrow.w, 900, 'and the right edge stays');
+  const short = resizedPlacement(start, 'n', 0, 5000, viewport);
+  assert.equal(short.h, 220, 'the minimum height stops a top edge');
+  assert.equal(short.y + short.h, 600, 'and the bottom edge stays');
+
+  assert.deepEqual(box(resizedPlacement(start, 'w', -5000, 0, viewport)), [0, 200, 900, 400], 'the viewport stops a left edge');
+  assert.equal(resizedPlacement(start, 'e', 5000, 0, viewport).w, 1300, 'and a right edge');
+  const low = resizedPlacement(start, 's', 0, 5000, viewport);
+  assert.equal(low.y + low.h, 900 - COMPANION_FOOTER_ROOM, 'and a bottom edge, above the footer');
+
+  const past = { x: -100, y: 200, w: 600, h: 400, snap: '' };
+  assert.deepEqual(box(resizedPlacement(past, 'w', 10, 0, viewport)), [-90, 200, 590, 400], 'a window past the limit shrinks without jumping');
+  assert.deepEqual(box(resizedPlacement(past, 'w', -10, 0, viewport)), [-100, 200, 600, 400], 'and does not grow further past it');
 });
 
 scenario('dragging the title bar moves the window and saves its place', async ({ harness, overlayHost, overlayState, dashPrefs, island }) => {

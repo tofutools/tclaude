@@ -1248,18 +1248,18 @@ test('a click outside closes the add menu, and the + button still toggles it', a
   assert.equal(view.container.querySelector('.companion-menu'), null);
 });
 
-test('every corner of a floating window resizes it, and the opposite corner stays put', async (t) => {
+test('every edge and corner of a floating window resizes it, and the opposite side stays put', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const { view, harness, controller } = await setup(t, { prefs });
   await harness.act(() => controller().open(A));
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  const corners = [...view.container.querySelectorAll('.companion-resize-corner')].map((node) => node.className.split(' ').pop());
-  assert.deepEqual(corners.sort(), ['ne', 'nw', 'sw']);
-  assert.ok(view.container.querySelector('.companion-resize'), 'and the south-east grip');
+  const zones = [...view.container.querySelectorAll('.companion-resize-frame .window-resize-zone')].map((node) => node.className.split(' ').pop());
+  assert.deepEqual(zones.sort(), ['e', 'n', 'ne', 'nw', 's', 'se', 'sw', 'w']);
+  assert.equal(view.container.querySelector('.companion-window .window-resize-zone'), null, 'outside the window, whose clip would cut them');
   const frame = view.container.querySelector('.companion-window');
   const box = () => ['left', 'top', 'width', 'height'].map((key) => parseFloat(frame.style[key]));
-  const drag = (corner, dx, dy) => harness.act(async () => {
-    const handle = view.container.querySelector(`.companion-resize-corner.${corner}`);
+  const drag = (zone, dx, dy) => harness.act(async () => {
+    const handle = view.container.querySelector(`.window-resize-zone.${zone}`);
     const event = (type, x, y) => Object.assign(new harness.window.Event(type, { bubbles: true }), { button: 0, pointerId: 1, clientX: x, clientY: y });
     handle.dispatchEvent(event('pointerdown', 300, 300));
     handle.dispatchEvent(event('pointermove', 300 + dx, 300 + dy));
@@ -1273,6 +1273,10 @@ test('every corner of a floating window resizes it, and the opposite corner stay
   const [, top, , height] = box();
   assert.equal(top, 0, 'the top edge stops at the viewport');
   assert.equal(top + height, y0 + h0, 'and the bottom edge stays');
+  const [x1, y1, w1, h1] = box();
+  await drag('w', -15, 40);
+  assert.deepEqual(box(), [x1 - 15, y1, w1 + 15, h1], 'a left edge moves only the left side');
+  assert.equal(view.container.querySelector('.companion-resize-frame').style.left, frame.style.left, 'and the frame follows the window');
 });
 
 test('the window gives the launch dialog what a row does, so Clone and Recall home work', async (t) => {
