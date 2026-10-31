@@ -61,7 +61,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"activeTmuxClipboardCopy = token",
 		"term.modes.mouseTrackingMode",
 		"Ignore unsolicited OSC 52 completely",
-		"navigator.clipboard.writeText(",
+		"writeClipboard(",
 		"new globalThis.WebLinksAddon.WebLinksAddon(",
 		"term.registerLinkProvider(",
 		"visibleLocalFileLinkProvider(term, linkHandler)",

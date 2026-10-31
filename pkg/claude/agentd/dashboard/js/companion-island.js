@@ -1083,7 +1083,7 @@ export function CompanionApp({
     return false;
   }, []);
   useEffect(() => {
-    if (!win?.document || !win.crypto?.randomUUID) return undefined;
+    if (!win?.document) return undefined;
     return startCapturePresence({
       win, fetchImpl, tab: () => activeTab.value,
       onCapture: (request) => setCaptureNotice(request.agent_name || 'An agent'),

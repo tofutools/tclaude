@@ -265,6 +265,15 @@ func handleDashboardViewRead(w http.ResponseWriter, r *http.Request) {
 		resp["at"] = view.At
 		resp["age_seconds"] = int(guideNow().Sub(view.At).Seconds())
 	}
+	captureState.Lock()
+	heard, polled := dashboardLiveness()
+	captureState.Unlock()
+	if !heard.IsZero() {
+		resp["tab_heard_age_seconds"] = int(guideNow().Sub(heard).Seconds())
+	}
+	if !polled.IsZero() {
+		resp["page_polled_age_seconds"] = int(guideNow().Sub(polled).Seconds())
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

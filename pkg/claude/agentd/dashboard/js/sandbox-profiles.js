@@ -4,6 +4,7 @@ import { toast } from './refresh.js';
 import { openTerminalPane } from './terminals-tab.js';
 import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
 import { managementController } from './management-controller.js';
+import { randomUUID } from './insecure-origin.js';
 
 const API = '/api/sandbox-profiles';
 const SANDBOX_SCRIBE_NAME = 'sandbox-scribe';
@@ -26,8 +27,7 @@ async function loadSandboxProfiles() {
 }
 
 function sandboxScribeToken() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '');
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  return randomUUID().replaceAll('-', '');
 }
 
 function sandboxScribeBrief(token, targetName, seed) {

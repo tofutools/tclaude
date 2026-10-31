@@ -15,6 +15,7 @@ import {
 import { LockReason } from './lock-reason.js';
 import { NodeSelect } from './node-select.js';
 import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 
@@ -38,12 +39,8 @@ function DockChips({ chips = [], full = false }) {
 
 // copyName puts a name on the clipboard for a CLI flag or a config file.
 export async function copyName(name, notify) {
-  try {
-    await navigator.clipboard.writeText(name);
-    notify?.(`copied ${name}`);
-  } catch {
-    notify?.('copy failed: the clipboard is not available here', true);
-  }
+  if (await writeClipboard(name)) notify?.(`copied ${name}`);
+  else notify?.(`copy failed: ${clipboardFailure()}`, true);
 }
 
 // DockMenuItem is one row of a card or section menu.

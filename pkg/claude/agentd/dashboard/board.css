@@ -157,6 +157,7 @@ body.slop, body.vegas {
 .board-context .mux-tab-menu-item { display: flex; justify-content: space-between; gap: 18px; }
 .board-context .mux-tab-menu-item:disabled { opacity: .45; cursor: default; }
 .board-context kbd { color: var(--board-muted); font: inherit; font-size: 11px; white-space: nowrap; }
+.board-context-note { max-width: 240px; padding: 2px 10px 6px; color: var(--board-muted); font-size: 11px; }
 .board-context-swatches { display: flex; gap: 5px; padding: 4px 10px; }
 .board-context-swatches .board-swatch:focus-visible { outline: 2px solid var(--board-blue); outline-offset: 1px; }
 .board-hint {

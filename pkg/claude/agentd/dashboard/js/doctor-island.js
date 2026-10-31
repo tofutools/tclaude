@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useEffect } from 'preact/hooks';
 import htm from 'htm';
 import { DOCTOR_CATEGORIES } from './doctor-state.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 
@@ -56,10 +57,9 @@ export function createDoctorActions({ state, notify, fetchImpl = globalThis.fetc
   return Object.freeze({ load, setSandboxDefault });
 }
 
-function copy(text, notify) {
-  globalThis.navigator?.clipboard?.writeText(text).then(
-    () => notify?.('Copied'),
-    () => notify?.('Copy failed — select the command and copy it by hand', true));
+async function copy(text, notify) {
+  if (await writeClipboard(text)) notify?.('Copied');
+  else notify?.(`Copy failed: ${clipboardFailure()}. Select the command and copy it by hand`, true);
 }
 
 function SandboxDefaultControl({ check, state, actions }) {

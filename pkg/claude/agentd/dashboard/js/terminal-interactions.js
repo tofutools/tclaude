@@ -7,6 +7,7 @@ import {
   isCommandPaletteShortcut,
   requestCommandPalette,
 } from './command-registry.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 
 const IMAGE_TYPES = new Map([
   ['image/png', 'png'],
@@ -452,29 +453,6 @@ function shortenPathForStatus(path, max = 100) {
   return `${path.slice(0, max - tailLength - 1)}…${path.slice(-tailLength)}`;
 }
 
-function legacyCopy(text) {
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.setAttribute('readonly', '');
-  area.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
-  document.body.append(area);
-  area.select();
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-  area.remove();
-  return ok;
-}
-
-async function writeClipboard(text) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch (_) { /* insecure context or denied permission: use legacy copy */ }
-  }
-  return legacyCopy(text);
-}
-
 // Arbitrary file paste and drop are for agent terminals only: the agent reads
 // the pasted path as an attachment. A plain shell keeps image paste but takes
 // no other files (agentd enforces the same split).
@@ -647,7 +625,7 @@ export function attachTerminalInteractions({
     if (token.timer) clearTimeout(token.timer);
     pendingTmuxCopy = null;
     if (activeTmuxClipboardCopy === token) activeTmuxClipboardCopy = null;
-    flash(token.result ? 'copied' : 'tmux copied; browser clipboard permission denied');
+    flash(token.result ? 'copied' : `tmux copied; ${clipboardFailure('browser clipboard permission denied')}`);
   }
 
   function armTmuxClipboardFromGesture(selection = null) {
@@ -743,7 +721,7 @@ export function attachTerminalInteractions({
       return;
     }
     if (await writeClipboard(selected)) flash('copied');
-    else flash('copy failed — clipboard permission denied');
+    else flash(`copy failed — ${clipboardFailure('clipboard permission denied')}`);
     term.focus();
   }
 

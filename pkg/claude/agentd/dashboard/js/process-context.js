@@ -16,6 +16,7 @@
 
 import { signal } from '@preact/signals';
 import { idempotentRequestHeaders } from './request-idempotency.js';
+import { randomUUID } from './insecure-origin.js';
 
 export const PROCESS_CONTEXT_PATH = '/v1/process/context';
 
@@ -195,16 +196,6 @@ export function formatRunDuration(fromISO, now = Date.now()) {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
-function newAttemptKey() {
-  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 // saveMeta is a template save's library and group metadata: sent only when
 // set.
 function saveMeta(listed, pinGroup) {
@@ -283,7 +274,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     // `pinGroup` are sent only when given, so a daemon without library
     // listing still accepts a plain create. Both are request metadata, never
     // template content.
-    async createTemplate({ template, edges, layout }, { listed, pinGroup = '', attemptKey = newAttemptKey() } = {}) {
+    async createTemplate({ template, edges, layout }, { listed, pinGroup = '', attemptKey = randomUUID() } = {}) {
       const path = '/v1/process/templates';
       const { id: _id, ...rest } = template;
       const body = JSON.stringify({ template: rest, edges, layout, ...saveMeta(listed, pinGroup) });
@@ -298,7 +289,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     },
     // saveTemplate saves a new version of a stored template against the
     // sourceHash it was opened at; a 409 means someone saved in between.
-    async saveTemplate(templateId, { template, edges, layout }, { sourceHash = '', listed, pinGroup = '', attemptKey = newAttemptKey() } = {}) {
+    async saveTemplate(templateId, { template, edges, layout }, { sourceHash = '', listed, pinGroup = '', attemptKey = randomUUID() } = {}) {
       const path = `/v1/process/templates/${encodeURIComponent(templateId)}`;
       const body = JSON.stringify({ template: { ...template, id: templateId }, edges, layout, sourceHash, ...saveMeta(listed, pinGroup) });
       return processRequest(path, {
@@ -306,7 +297,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       }, fetchImpl);
     },
     // publishTemplate lists a template in the library.
-    async publishTemplate(templateId, attemptKey = newAttemptKey()) {
+    async publishTemplate(templateId, attemptKey = randomUUID()) {
       const path = `/v1/process/templates/${encodeURIComponent(templateId)}/listing`;
       const body = JSON.stringify({ listed: true });
       return processRequest(path, {
@@ -315,7 +306,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     },
     // pinProcess saves an existing template to a group's processes;
     // unpinProcess removes it from them (the template itself stays).
-    async pinProcess(group, templateId, attemptKey = newAttemptKey()) {
+    async pinProcess(group, templateId, attemptKey = randomUUID()) {
       const path = `/v1/process/groups/${encodeURIComponent(group)}/processes`;
       const body = JSON.stringify({ templateId });
       return processRequest(path, {
@@ -346,7 +337,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     },
     // startGroupRun starts a run scoped to a group, or to one agent when
     // agent is given instead.
-    async startGroupRun({ templateId, group, agent, params = {}, authorizeProgramProfiles = [], attemptKey = newAttemptKey() }) {
+    async startGroupRun({ templateId, group, agent, params = {}, authorizeProgramProfiles = [], attemptKey = randomUUID() }) {
       const path = '/v1/process/runs';
       const filled = Object.fromEntries(Object.entries(params).filter(([, value]) => String(value ?? '') !== ''));
       const body = JSON.stringify({
@@ -393,7 +384,7 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
     // decide records a human gate's verdict against the awaited window
     // (attempt) the inspector read, so a stale click is refused, not replayed.
     // Without an attempt the daemon takes the decision's current window.
-    async decide(runId, { nodeId, verdict, evidence = '', attempt, attemptKey = newAttemptKey() }) {
+    async decide(runId, { nodeId, verdict, evidence = '', attempt, attemptKey = randomUUID() }) {
       const path = `${runPath(runId)}/decide`;
       const request = { nodeId, verdict };
       if (evidence) request.evidence = evidence;
@@ -405,7 +396,7 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
     },
     // assign hands a node's outstanding agent attempt to another performer.
     // nodeId is the executable id the attempt runs under (dispatch.nodeId).
-    async assign(runId, { nodeId, agent, attemptKey = newAttemptKey() }) {
+    async assign(runId, { nodeId, agent, attemptKey = randomUUID() }) {
       const path = `${runPath(runId)}/nodes/${encodeURIComponent(nodeId)}/assign`;
       const body = JSON.stringify({ agent });
       return processRequest(path, {
@@ -414,7 +405,7 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
     },
     // pause holds the run: work in flight finishes, nothing new is
     // dispatched until resume releases it. Both are idempotent server-side.
-    pause: (runId, { attemptKey = newAttemptKey() } = {}) => postEmpty(`${runPath(runId)}/pause`, attemptKey),
+    pause: (runId, { attemptKey = randomUUID() } = {}) => postEmpty(`${runPath(runId)}/pause`, attemptKey),
     // listLiveRuns walks every page of the run list for each filter ({group}
     // or {agent}) and returns the running runs once each. The context read
     // model caps how many runs a group or agent lists; acting on all of them
@@ -434,7 +425,7 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
       }
       return [...found.values()];
     },
-    resume: (runId, { attemptKey = newAttemptKey() } = {}) => postEmpty(`${runPath(runId)}/resume`, attemptKey),
+    resume: (runId, { attemptKey = randomUUID() } = {}) => postEmpty(`${runPath(runId)}/resume`, attemptKey),
   };
 }
 

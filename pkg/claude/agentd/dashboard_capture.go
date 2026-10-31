@@ -41,7 +41,11 @@ const (
 	captureLiveWindow = 6 * time.Second
 	// captureOpenWindow is how recently a tab must have pinged to count as
 	// open. Browsers throttle a hidden tab's timers to about once a minute.
-	captureOpenWindow      = 90 * time.Second
+	captureOpenWindow = 90 * time.Second
+	// capturePollWindow is how recently a page must have polled the snapshot to
+	// count as open. Polls are a second signal: they keep running on a page
+	// whose presence loop never started or stopped.
+	capturePollWindow      = 20 * time.Second
 	capturePresenceMaxBody = 1 << 10
 	captureMaxClients      = 32
 	captureMaxClientID     = 64
@@ -183,7 +187,51 @@ var captureState = struct {
 	sync.Mutex
 	clients map[string]captureClient
 	pending *pendingCapture
+	// heard is the last presence ping and polled the last snapshot poll from
+	// this node's own page, zero since the daemon started if there was none.
+	heard, polled time.Time
 }{clients: map[string]captureClient{}}
+
+// noteDashboardPoll records that a page of this node polled its snapshot.
+func noteDashboardPoll() {
+	captureState.Lock()
+	defer captureState.Unlock()
+	captureState.polled = guideNow()
+}
+
+// dashboardLiveness says when a tab last reported and a page last polled. The
+// caller holds the lock.
+func dashboardLiveness() (heard, polled time.Time) {
+	return captureState.heard, captureState.polled
+}
+
+// captureAgo is a time.Time's age for a sentence.
+func captureAgo(now, at time.Time) string {
+	return now.Sub(at).Round(time.Second).String() + " ago"
+}
+
+// captureUnavailable explains why no tab can be captured when none reported
+// within captureOpenWindow. A page still polling is open, whatever its presence
+// says, and reloading it is the likely cure: only a page running without a
+// working presence loop polls without reporting.
+func captureUnavailable(now, heard, polled time.Time) (status int, code, message string) {
+	if !polled.IsZero() && now.Sub(polled) <= capturePollWindow {
+		silent := "has not reported to the capture channel since the daemon started"
+		if !heard.IsZero() {
+			silent = "last reported to the capture channel " + captureAgo(now, heard)
+		}
+		return http.StatusConflict, "dashboard_silent",
+			"a dashboard page is open (it polled " + captureAgo(now, polled) + ") but " + silent + ", so it cannot be captured; reloading that page should fix this"
+	}
+	last := heard
+	if polled.After(last) {
+		last = polled
+	}
+	if last.IsZero() {
+		return http.StatusNotFound, "no_dashboard", "no dashboard has connected since the daemon started; ask the operator to open it"
+	}
+	return http.StatusNotFound, "no_dashboard", "no dashboard is open (last heard from " + captureAgo(now, last) + "); ask the operator to open it"
+}
 
 // ResetDashboardCaptureForTest forgets the tabs and any request.
 func ResetDashboardCaptureForTest() {
@@ -191,6 +239,7 @@ func ResetDashboardCaptureForTest() {
 	defer captureState.Unlock()
 	captureState.clients = map[string]captureClient{}
 	captureState.pending = nil
+	captureState.heard, captureState.polled = time.Time{}, time.Time{}
 }
 
 // captureTarget picks the tab to capture: the focused one, else the visible one
@@ -251,9 +300,14 @@ func handleDashboardCompanionPresence(w http.ResponseWriter, r *http.Request) {
 	defer captureState.Unlock()
 	if req.Gone {
 		delete(captureState.clients, req.Client)
+		// The page's last poll says nothing now that the page has closed.
+		if len(captureState.clients) == 0 {
+			captureState.polled = time.Time{}
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	captureState.heard = guideNow()
 	resp := presenceResponse(w, req.Client, req.Focused, req.Visible)
 	if resp == nil {
 		return
@@ -367,14 +421,17 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "capture_busy", "another capture is in progress; try again in a moment")
 		return
 	}
-	client, open := captureTarget(guideNow())
+	now := guideNow()
+	client, open := captureTarget(now)
 	if client == "" {
+		heard, polled := dashboardLiveness()
 		captureState.Unlock()
 		if open {
 			writeError(w, http.StatusConflict, "dashboard_hidden", "the operator's dashboard is open but not on screen, so it cannot be captured; ask them to bring it up")
 			return
 		}
-		writeError(w, http.StatusNotFound, "no_dashboard", "no dashboard is open; ask the operator to open it")
+		status, code, message := captureUnavailable(now, heard, polled)
+		writeError(w, status, code, message)
 		return
 	}
 	pending.client = client
