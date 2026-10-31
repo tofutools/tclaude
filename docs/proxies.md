@@ -21,7 +21,7 @@ tclaude proxy http    # HTTP(S) requests through a named service instance
 ```
 
 None of their permissions are granted by default, and none are implied by
-group ownership. Every gated verb supports `--ask-human <timeout>` (capped at
+group ownership. Gated verbs support `--ask-human <timeout>`, except `proxy git remotes` (capped at
 300 seconds): on a permission denial, the operator gets a popup approval, and a
 timeout counts as a deny.
 
@@ -75,10 +75,10 @@ of an operator who has not opted in — not a broken install.
 
 ```bash
 tclaude proxy git remotes     # list remotes with a per-remote verdict
-tclaude proxy git ls-remote origin
-tclaude proxy git fetch origin
+tclaude proxy git ls-remote --remote origin
+tclaude proxy git fetch --remote origin
 tclaude proxy git pull        # daemon fetches, then fast-forwards locally
-tclaude proxy git push origin my-branch
+tclaude proxy git push --remote origin --branch my-branch
 ```
 
 `pull` is deliberately split: the daemon only fetches, and the fast-forward
@@ -495,7 +495,7 @@ tclaude setup --install-proxy-skills
 ```
 
 installs the agent skill for each configured credential proxy (`proxy-git`,
-`proxy-linear`, and/or `proxy-awb`) into Claude Code, shared `~/.agents/skills`, and Codex home skill
+`proxy-linear`, `proxy-awb` and/or `proxy-http`) into Claude Code, shared `~/.agents/skills`, and Codex home skill
 directories. The shared directory is read by Codex, Gemini, Copilot,
 OpenCode and pi, so agents discover the semantic commands instead of fighting
 their missing credentials. "Configured" uses the host-side rules under
