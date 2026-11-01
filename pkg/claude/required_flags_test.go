@@ -60,6 +60,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude agent snapshot share":                   "board to",
 		"claude agent snapshot board":                   "board",
 		"claude agent board patch":                      "file",
+		"claude agent guide fill":                       "form set",
 		"claude agent board snapshot":                   "output",
 		"claude agent permissions peer-reach add":       "peer slug",
 		"claude agent permissions peer-reach remove":    "peer slug",
