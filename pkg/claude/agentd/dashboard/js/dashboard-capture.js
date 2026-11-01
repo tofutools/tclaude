@@ -3,21 +3,21 @@
 // a PNG: getDisplayMedia would prompt every time and could show more than the
 // dashboard. Terminals are in the DOM as text, so they come out real.
 //
-// Rendering clones the visible document into an SVG foreignObject with the
-// page's own stylesheets and draws that to a canvas, so a capture can only hold
-// this page. A clone cannot hold live state, so what the DOM does not carry is
-// copied over: field values, scroll offsets, canvases and images. Hover styles
-// do not survive, and elements marked data-capture-skip (the capture's own cue)
-// are left out. Password fields and elements marked data-capture-mask, which is
-// any that holds a token, key or secret whatever its type, are masked: neither
-// the image nor the context carries what they hold.
+// Rendering rebuilds the visible document from its snapshot (capture-snapshot.js)
+// inside an SVG foreignObject with the page's own stylesheets and draws that to
+// a canvas, so a capture can only hold this page. The snapshot holds the live
+// state the DOM does not carry: field values, scroll offsets, canvases and
+// images. Hover styles do not survive, and elements marked data-capture-skip
+// (the capture's own cue) are left out. Password fields and elements marked
+// data-capture-mask, which is any that holds a token, key or secret whatever its
+// type, are masked: neither the image, the text nor the context carries what
+// they hold.
 // dashboard-imperative-boundary: browser-io
 
+import { MASKED, snapshotPage, snapshotText } from './capture-snapshot.js';
 import { randomUUID } from './insecure-origin.js';
 
 export const CAPTURE_PRESENCE_MS = 1500;
-const CAPTURE_MASK = '••••••••';
-const MASKED = '[data-capture-mask], input[type="password"]';
 export const CAPTURE_HIDDEN_PRESENCE_MS = 10000;
 // A peer's page cannot see whether this node has Collab on, so it asks, and
 // keeps asking rarely in case it is switched on.
@@ -49,6 +49,16 @@ function selectionIsMasked(win) {
   if (doc.activeElement?.closest?.(MASKED)) return true;
   const selection = win.getSelection?.();
   return [...(doc.querySelectorAll?.(MASKED) || [])].some((el) => selection?.containsNode?.(el, true));
+}
+
+// selectedText reads the ranges rather than the selection. A selection's text
+// includes what is selected inside a field, and keeps it after the field loses
+// focus, when nothing can say it came from a masked one. A range holds only the
+// page's text, so no field's value is reported, as describeElement promises.
+function selectedText(win) {
+  const selection = win.getSelection?.();
+  const ranges = Array.from({ length: selection?.rangeCount || 0 }, (_, i) => selection.getRangeAt(i));
+  return ranges.map((range) => range.toString()).join(' ');
 }
 
 export function describeElement(el, y = null) {
@@ -119,7 +129,7 @@ export function captureContext({ win, tab, pointer, marks = [], now = Date.now()
   }
   const active = doc.activeElement;
   if (active && active !== doc.body && active !== doc.documentElement) context.focus = describeElement(active);
-  const selection = clip(win.getSelection?.()?.toString?.(), 400);
+  const selection = clip(selectedText(win), 400);
   if (selection && !selectionIsMasked(win)) context.selection = selection;
   const board = boardContext(doc);
   if (board) context.board = board;
@@ -150,7 +160,7 @@ export function trackPointer(win, now = Date.now) {
 // startCapturePresence tells the daemon this tab is open and whether it is on
 // screen, and answers a capture aimed at it. It returns a stop function.
 export function startCapturePresence({
-  win, fetchImpl, tab, onCapture, onMarks, marks = () => [], render = renderPage, randomId = () => randomUUID(win.crypto),
+  win, fetchImpl, tab, onCapture, onMarks, marks = () => [], render = renderPage, snapshot = snapshotPage, randomId = () => randomUUID(win.crypto),
   setTimeoutImpl = (fn, ms) => win.setTimeout(fn, ms), clearTimeoutImpl = (id) => win.clearTimeout(id),
 }) {
   const doc = win.document;
@@ -181,8 +191,10 @@ export function startCapturePresence({
       // stalls for the render.
       await new Promise((resolve) => setTimeoutImpl(resolve, 60));
       const context = captureContext({ win, tab: tab(), pointer: tracker.pointer, marks: marks() });
-      const png = await render({ win, fetchImpl, pointer: tracker.pointer?.inside ? tracker.pointer : null });
+      const page = snapshot(win);
+      const png = await render({ win, fetchImpl, pointer: tracker.pointer?.inside ? tracker.pointer : null, snapshot: page });
       body = { png: await blobToBase64(png, win), context };
+      if (request.form) body.form_text = snapshotText(page);
     } catch (err) {
       body = { error: String(err?.message || err || 'render failed') };
     }
@@ -329,82 +341,64 @@ async function pageCss(doc, inline) {
   return rewriteCss(parts.join('\n'));
 }
 
-function copyFieldState(source, clone, masked) {
-  const tag = source.tagName.toLowerCase();
-  if (tag === 'textarea') {
-    clone.textContent = masked && source.value ? CAPTURE_MASK : source.value;
-  } else if (tag === 'select') {
-    for (const [i, option] of [...source.options].entries()) {
-      if (option.selected) clone.options?.[i]?.setAttribute('selected', 'selected');
-      else clone.options?.[i]?.removeAttribute('selected');
-    }
-  } else if (tag === 'input') {
-    const type = (source.type || '').toLowerCase();
-    if (masked || type === 'password') {
-      clone.setAttribute('value', source.value ? CAPTURE_MASK : '');
-      if (type === 'password') clone.setAttribute('type', 'text');
-    } else if (type === 'checkbox' || type === 'radio') {
-      if (source.checked) clone.setAttribute('checked', 'checked');
-      else clone.removeAttribute('checked');
-    } else if (type !== 'file') {
-      clone.setAttribute('value', source.value);
-    }
+function applyField(clone, field) {
+  if (field.kind === 'textarea') {
+    clone.textContent = field.value;
+  } else if (field.kind === 'checkbox' || field.kind === 'radio') {
+    if (field.checked) clone.setAttribute('checked', 'checked');
+    else clone.removeAttribute('checked');
+  } else if (field.kind !== 'select' && field.kind !== 'file') {
+    clone.setAttribute('value', field.value);
   }
 }
 
-// cloneVisible copies the rendered part of the tree. tasks collects the async
+function setAttrs(el, attrs) {
+  for (const { name, value, ns } of attrs) {
+    try {
+      if (ns) el.setAttributeNS(ns, name, value);
+      else el.setAttribute(name, value);
+    } catch { /* a name only a parser accepts: nothing a picture needs */ }
+  }
+}
+
+// buildNode makes the DOM of a filtered snapshot node. tasks collects the async
 // work (image data) to finish before serialising.
-export function cloneVisible(source, { win, inline, tasks }, scroller = { x: 0, y: 0 }) {
-  if (source.nodeType === 3) return source.cloneNode(false);
-  if (source.nodeType !== 1) return null;
-  const tag = source.tagName.toLowerCase();
-  if (/^(script|style|link|noscript|template|meta|title|head)$/.test(tag)) return null;
-  if (source.hasAttribute('data-capture-skip')) return null;
-  const style = win.getComputedStyle(source);
-  if (style.display === 'none') return null;
-  const doc = win.document;
+export function buildNode(node, { doc, inline, tasks }, scroller = { x: 0, y: 0 }) {
+  if (node.text !== undefined) return doc.createTextNode(node.text);
+  if (node.gone) return null;
+  if (node.surface) return surfaceElement(node.surface, doc);
 
-  const masked = source.hasAttribute('data-capture-mask');
-  if (!masked && (tag === 'canvas' || tag === 'video' || tag === 'iframe')) return frozenSurface(source, tag, style, doc);
-
-  const clone = source.cloneNode(false);
-  copyFieldState(source, clone, masked);
-  if (masked) {
-    // Its children are never visited: a textarea's hold its text, too.
-    clone.removeAttribute('title');
-    if (!/^(input|textarea|select)$/.test(tag)) clone.textContent = CAPTURE_MASK;
-    return clone;
-  }
-  if (tag === 'img') {
+  const clone = doc.createElementNS(node.ns || XHTML, node.name);
+  setAttrs(clone, node.attrs);
+  if (node.field) applyField(clone, node.field);
+  if (node.src) {
     clone.removeAttribute('srcset');
-    const src = source.currentSrc || source.src;
     clone.removeAttribute('src');
-    tasks.push(inline(src).then((data) => { if (data) clone.setAttribute('src', data); }));
+    tasks.push(inline(node.src).then((data) => { if (data) clone.setAttribute('src', data); }));
   }
-  if (tag === 'image') {
-    const href = source.getAttribute('href');
+  if (node.tag === 'image') {
+    const href = clone.getAttribute('href');
     if (href && !href.startsWith('data:')) {
       clone.removeAttribute('href');
       tasks.push(inline(href).then((data) => { if (data) clone.setAttribute('href', data); }));
     }
   }
-  const inlineStyle = source.getAttribute('style') || '';
+  const inlineStyle = clone.getAttribute('style') || '';
   if (inlineStyle.includes('url(')) {
     tasks.push(inlineCssUrls(inlineStyle, doc.baseURI, inline).then((css) => clone.setAttribute('style', css)));
   }
 
-  // A clone has no scroll offset. Moving the children keeps the layout, which
-  // a wrapper or margin would not in a flex or grid box. A sticky element
-  // stays where it is pinned instead of moving with them.
-  const scrollX = source.scrollLeft || 0;
-  const scrollY = source.scrollTop || 0;
-  const scrolled = (scrollX || scrollY) && source.namespaceURI === XHTML;
-  const inner = scrolled ? { x: scrollX, y: scrollY } : scroller;
-  if (style.position === 'sticky' && (scroller.x || scroller.y)) {
+  // A rebuilt element has no scroll offset. Moving the children keeps the
+  // layout, which a wrapper or margin would not in a flex or grid box. A sticky
+  // element stays where it is pinned instead of moving with them.
+  const { x: scrollX, y: scrollY } = node.scroll;
+  const scrolled = (scrollX || scrollY) && node.ns === XHTML;
+  const inner = scrolled ? node.scroll : scroller;
+  if (node.sticky && (scroller.x || scroller.y)) {
     clone.style?.setProperty('translate', `${scroller.x}px ${scroller.y}px`);
   }
-  for (const child of source.childNodes) {
-    let copy = cloneVisible(child, { win, inline, tasks }, inner);
+  for (const child of node.children) {
+    let copy = buildNode(child, { doc, inline, tasks }, inner);
     if (!copy) continue;
     if (scrolled) {
       if (copy.nodeType === 3) {
@@ -412,8 +406,7 @@ export function cloneVisible(source, { win, inline, tasks }, scroller = { x: 0, 
         span.appendChild(copy);
         copy = span;
       }
-      const sticky = child.nodeType === 1 && win.getComputedStyle(child).position === 'sticky';
-      if (sticky) {
+      if (child.sticky) {
         // Its siblings move instead, so it stays put.
         copy.style?.removeProperty('translate');
       } else if (copy.style) {
@@ -427,30 +420,20 @@ export function cloneVisible(source, { win, inline, tasks }, scroller = { x: 0, 
   return clone;
 }
 
-// frozenSurface stands in for an element with no DOM content: a canvas or video
-// as its current frame, an iframe as a labelled box, since its page is another
-// document.
-function frozenSurface(source, tag, style, doc) {
-  const rect = source.getBoundingClientRect();
-  const size = `width:${rect.width}px;height:${rect.height}px;${style.position === 'absolute' ? `position:absolute;left:${style.left};top:${style.top};` : ''}`;
-  if (tag !== 'iframe') {
-    try {
-      const canvas = tag === 'canvas' ? source : doc.createElement('canvas');
-      if (tag === 'video') {
-        canvas.width = source.videoWidth;
-        canvas.height = source.videoHeight;
-        canvas.getContext('2d').drawImage(source, 0, 0);
-      }
-      const image = doc.createElementNS(XHTML, 'img');
-      image.setAttribute('src', canvas.toDataURL('image/png'));
-      image.setAttribute('style', size);
-      image.setAttribute('class', source.getAttribute('class') || '');
-      return image;
-    } catch { /* drawn from another origin: fall through to the box */ }
+// surfaceElement draws what the snapshot read from a canvas or video, or a
+// labelled box where it could read nothing.
+function surfaceElement(surface, doc) {
+  const size = `width:${surface.width}px;height:${surface.height}px;${surface.absolute ? `position:absolute;left:${surface.left};top:${surface.top};` : ''}`;
+  if (surface.data) {
+    const image = doc.createElementNS(XHTML, 'img');
+    image.setAttribute('src', surface.data);
+    image.setAttribute('style', size);
+    image.setAttribute('class', surface.className);
+    return image;
   }
   const box = doc.createElementNS(XHTML, 'div');
   box.setAttribute('style', `${size}display:flex;align-items:center;justify-content:center;background:#222;color:#aaa;font:12px sans-serif`);
-  box.textContent = `(${tag} not captured)`;
+  box.textContent = `(${surface.tag} not captured)`;
   return box;
 }
 
@@ -503,7 +486,9 @@ export function renderPage(options) {
   });
 }
 
-async function renderViewport({ win, fetchImpl, pointer, draw }) {
+// The snapshot defaults here rather than below so that it is read before the
+// first await, at the moment the render was asked for.
+async function renderViewport({ win, fetchImpl, pointer, draw, snapshot = snapshotPage(win) }) {
   const doc = win.document;
   const width = win.innerWidth;
   const height = win.innerHeight;
@@ -512,8 +497,8 @@ async function renderViewport({ win, fetchImpl, pointer, draw }) {
   const tasks = [];
   // Offsetting the body keeps fixed elements where they are, which a transform
   // would not, and sticky ones still stick to the image's edges by themselves.
-  const page = { x: win.scrollX || 0, y: win.scrollY || 0 };
-  const body = cloneVisible(doc.body, { win, inline, tasks });
+  const page = snapshot.scroll;
+  const body = buildNode(snapshot.root, { doc, inline, tasks });
   await Promise.all(tasks);
   if (page.x || page.y) {
     body.style.setProperty('position', 'relative');

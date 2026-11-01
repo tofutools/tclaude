@@ -73,7 +73,7 @@ export function HelpDisclosure({
   return html`<${Fragment}>
     <button ref=${triggerRef} type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
       aria-label=${name}
-      aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
+      data-capture-text="none" aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
       onClick=${() => setOpen(open ? '' : id)}
       onBlur=${closeAfterTrigger} onKeyDown=${closeOnEscape}>${warn ? '!' : '?'}</button>
     <span ref=${descriptionRef} id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}

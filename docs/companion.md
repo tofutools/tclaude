@@ -523,7 +523,7 @@ it's summoned, and aren't granted to other agents by default.
 `tclaude agent guide capture -o view.png` shows the Steward what
 you see, with `dashboard.capture`, which it gets when summoned and other agents
 do not. It saves an image of your dashboard and prints the cursor position and
-what is under it, the focused control, any selected text, the viewport, and the
+what is under it, the focused control, any selected page text, the viewport, and the
 open board with the region on screen. `--json` gives the same as data.
 
 The tab renders its own page, so a capture holds only that dashboard page,
@@ -538,10 +538,54 @@ asked to with `--save`.
 A capture shows whatever is on screen, including open messages and terminal
 output, which reaches the Steward even though it cannot read agents' mail
 through the API. Password fields and fields holding tokens, keys or environment
-values are masked, in the image and in the text that comes with it. Hover styles are not reproduced,
+values are masked, in the image and in the text that comes with it. Text selected
+inside a field is never reported. Hover styles are not reproduced,
 and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
 in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
 command fails there. It needs Collab, like the rest of the Steward.
+
+#### Form values as text
+
+`tclaude agent guide capture --form` also prints the open form as text, so an
+agent can help you fill it in. It needs `dashboard.forms.capture` on top of
+`dashboard.capture`. That slug is not given to anyone by default, the Steward
+included: you assign it to the agents you want reading forms, and it works the
+same for any agent. The notice says when values were read.
+
+The image and the text come from one snapshot, taken at one moment and filtered
+once, so what is masked in one is masked in the other. A password is never
+delivered to an agent in either, even when a show button has made it readable.
+
+- The image stays your viewport, exactly.
+- The open form is the topmost dialog, or the Config tab. Its text covers the
+  whole form, including fields scrolled off screen, every option of a dropdown,
+  and collapsed sections and inactive tabs, which are labelled `collapsed`.
+  A collapsed part with no field in it is left out, and a section the page has
+  not built yet only shows as a `[collapsed]` control.
+- With no form open, the text covers what is on screen.
+- A list showing one page of its rows says so, for example `showing 30 of 200
+  rows`.
+- Terminals appear as `[terminal]`. Their output has no secret marker, so it
+  stays out of the text, although the image shows it.
+- A confirm dialog's diff masks any key with a secret-like name, what is nested
+  under one, and whatever it can't parse, so a corrupt `config.json` is masked whole.
+- `--save` keeps the image and context, never this text.
+
+**Rule for new surfaces:** a capture can only mask what is marked. Any element
+that shows a secret needs `data-capture-mask`, and that includes a plain element
+echoing one, such as a preview, a diff or a confirmation, not just the field it
+was typed into. A test catches unmarked secret-named inputs and a diff body that
+doesn't use `DiffLines`, but nothing can catch a secret in any other plain
+element, so mark it when you write it.
+
+Each field line gives its label, type, id and value:
+
+```text
+Form: Spawn a new agent (the whole form, including what is off screen or collapsed)
+Name [text, #agent-spawn-name]: "reviewer"
+Harness [select, #agent-spawn-harness]: "Claude Code" (options: Claude Code, Codex)
+API key [password, #api-key]: [masked]
+```
 
 A tab showing a peer's dashboard (`?node=`) counts as open, and `guide view`,
 capture and marks work on it: they belong to this node's agents and to you at

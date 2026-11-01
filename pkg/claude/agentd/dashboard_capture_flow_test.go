@@ -192,6 +192,99 @@ func TestDashboardCapture_TimesOutAndForgetsClosedTabs(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+// formRequest asks for a capture with its text, as `guide capture --form` does.
+func (c *captureFlow) formRequest(body map[string]any) <-chan *httptest.ResponseRecorder {
+	out := make(chan *httptest.ResponseRecorder, 1)
+	req := agentd.AsHumanPeer(testharness.JSONRequest(c.t, http.MethodPost, "/v1/dashboard/capture", body))
+	go func() { out <- testharness.Serve(c.f.Mux, req) }()
+	return out
+}
+
+func TestDashboardCapture_FormTextIsAskedForAndKeptOutOfSavedCaptures(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("tab", true, true)
+
+	waiting := c.formRequest(map[string]any{"form": true, "save": true})
+	// The tab learns it was asked, which is also what its cue says.
+	var delivered struct {
+		Capture struct {
+			ID   string `json:"id"`
+			Form bool   `json:"form"`
+		} `json:"capture"`
+	}
+	require.Eventually(t, func() bool {
+		rec := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
+			map[string]any{"client": "tab", "focused": true, "visible": true}))
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &delivered))
+		return delivered.Capture.ID != ""
+	}, 5*time.Second, 5*time.Millisecond)
+	assert.True(t, delivered.Capture.Form)
+
+	require.Equal(t, http.StatusNoContent, c.answer(delivered.Capture.ID, map[string]any{
+		"png": capturePNG, "context": map[string]any{"path": "/config"},
+		"form_text": "Form: Spawn\nName [text]: \"reviewer\"\x1b[31m",
+	}))
+	rec := <-waiting
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		FormText string `json:"form_text"`
+		SavedID  int64  `json:"saved_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "Form: Spawn\nName [text]: \"reviewer\"[31m", resp.FormText, "lines survive, control bytes do not")
+
+	saved := testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/dashboard/captures", nil)))
+	require.Equal(t, http.StatusOK, saved.Code)
+	assert.Contains(t, saved.Body.String(), "/config", "the context is kept")
+	assert.NotContains(t, saved.Body.String(), "reviewer", "form values are not")
+}
+
+func TestDashboardCapture_TextNobodyAskedForIsDropped(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("tab", true, true)
+	waiting := c.request()
+	id := c.await(func() string { return c.ping("tab", true, true) })
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"png": capturePNG, "form_text": "Name: reviewer"}))
+	rec := <-waiting
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "reviewer")
+	assert.NotContains(t, rec.Body.String(), "form_text")
+}
+
+func TestDashboardCapture_FormTextNeedsItsOwnPermission(t *testing.T) {
+	c := newCaptureFlow(t)
+	const conv = "capt-aaaa-bbbb-cccc-000000000002"
+	c.f.HaveConvWithTitle(conv, "worker")
+	c.f.HaveGroup("team")
+	c.f.HaveMember("team", conv)
+	c.f.HaveAliveSession(conv, "capt", "tclaude-capt", c.f.TestCwd("work"))
+	c.ping("tab", true, true)
+	ask := func() *httptest.ResponseRecorder {
+		return testharness.Serve(c.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/dashboard/capture", map[string]any{"form": true}), conv))
+	}
+	t.Cleanup(agentd.SetCaptureTimeoutForTest(10 * time.Millisecond))
+
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardFormsCapture, "test"))
+	assert.Equal(t, http.StatusForbidden, ask().Code, "the text comes with a capture, which takes dashboard.capture too")
+
+	_, err := db.RevokeAgentPermission(conv, agentd.PermDashboardFormsCapture)
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardCapture, "test"))
+	refused := ask()
+	assert.Equal(t, http.StatusForbidden, refused.Code)
+	assert.Contains(t, refused.Body.String(), agentd.PermDashboardFormsCapture, "capture alone does not read forms, and the refusal says what is missing")
+
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardFormsCapture, "test"))
+	assert.Equal(t, http.StatusGatewayTimeout, ask().Code, "with both, it reaches the tab")
+}
+
+func TestDashboardFormsCapture_IsNotGivenToASteward(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	conv := c.summon()
+	_, held := stewardOverrideHeld(t, conv, agentd.PermDashboardFormsCapture)
+	assert.False(t, held, "form values are opt-in, for the Steward like any agent")
+}
+
 func TestDashboardCapture_NeedsPermission(t *testing.T) {
 	c := newCaptureFlow(t)
 	const conv = "capt-aaaa-bbbb-cccc-000000000001"

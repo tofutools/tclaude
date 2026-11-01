@@ -97,9 +97,11 @@ const launchValue = (value) => {
 function launchSettings(asked, dropped, otherHarness = false) {
   return remoteLaunchFields(asked.launch).map(({ field, label, keys }) => {
     const value = keys.map((k) => `${k} ${launchValue(asked.launch[k])}${otherHarness && HARNESS_LAUNCH_KEYS.has(k) ? ` (${OTHER_HARNESS}, dropped)` : ''}`).join(', ');
-    if (dropped(field)) return { key: `launch:${field}`, label, value, dropped: true, reason: NOT_ALLOWED };
-    if (otherHarness && keys.every((k) => HARNESS_LAUNCH_KEYS.has(k))) return { key: `launch:${field}`, label, value, dropped: true, reason: OTHER_HARNESS };
-    return { key: `launch:${field}`, label, value };
+    // The operator reads an environment value to approve it. A capture must not.
+    const secret = keys.includes('environment') || undefined;
+    if (dropped(field)) return { key: `launch:${field}`, label, value, secret, dropped: true, reason: NOT_ALLOWED };
+    if (otherHarness && keys.every((k) => HARNESS_LAUNCH_KEYS.has(k))) return { key: `launch:${field}`, label, value, secret, dropped: true, reason: OTHER_HARNESS };
+    return { key: `launch:${field}`, label, value, secret };
   });
 }
 
@@ -137,7 +139,7 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
     <div class="fa-spawn-brief">${req.brief}</div>
     <div class="muted">From ${req.from} into group ${req.group}${req.role ? `, role ${req.role}` : ''}. Leave a field empty to keep what was requested or the group's default.</div>
     ${requested.length > 0 && html`<div id="fleet-spawn-requested">Requested launch settings:
-      <ul>${requested.map((x) => html`<li key=${x.key} data-setting=${x.key} class=${x.dropped || x.replaced ? 'muted' : ''}>${x.label} <code>${x.value}</code>${x.dropped ? ` — dropped on approval: ${x.reason}` : x.replaced ? ' — replaced by your value' : ''}</li>`)}</ul>
+      <ul>${requested.map((x) => html`<li key=${x.key} data-setting=${x.key} class=${x.dropped || x.replaced ? 'muted' : ''}>${x.label} <code data-capture-mask=${x.secret}>${x.value}</code>${x.dropped ? ` — dropped on approval: ${x.reason}` : x.replaced ? ' — replaced by your value' : ''}</li>`)}</ul>
       ${requested.some((x) => x.key === 'cwd' && !x.dropped && !x.replaced) && html`<div class="muted">The requested directory is a path on this machine; the worker can write there.</div>`}</div>`}
     ${['name', 'profile', 'cwd', 'harness', 'model', 'effort'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
       <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${placeholder(k)} /></label>`)}
@@ -272,7 +274,7 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
         <td>${r.group}</td>
         <td>${[r.name, r.role && `role ${r.role}`, r.profile && `profile ${r.profile}`].filter(Boolean).join(' · ') || html`<span class="muted">defaults</span>`}
           ${payTag(r) && html`<div class="muted">${payTag(r)}</div>`}
-          ${requestedSettings(r).length > 0 && html`<div class="muted" data-requested>${requestedSettings(r).map((x) => `${x.label} ${x.value}${x.dropped ? ' (dropped)' : ''}`).join(' · ')}</div>`}</td>
+          ${requestedSettings(r).length > 0 && html`<div class="muted" data-requested data-capture-mask=${requestedSettings(r).some((x) => x.secret) || undefined}>${requestedSettings(r).map((x) => `${x.label} ${x.value}${x.dropped ? ' (dropped)' : ''}`).join(' · ')}</div>`}</td>
         <td class="fa-spawn-brief-cell" title=${r.brief}>${r.brief}</td>
         <td class=${r.status === 'denied' || r.status === 'expired' ? 'fa-danger' : r.status === 'launching' ? 'fa-warn' : ''} title=${r.reason || ''}>${r.status}${r.result_agent ? html` <code title=${r.result_agent}>${r.result_agent.slice(0, 14)}</code>` : ''}${r.reason ? html` <span class="muted">— ${r.reason}</span>` : ''}</td>
         <td class="muted">${r.status === 'pending' ? (Date.parse(r.expires_at) < now ? 'expired' : when(r.expires_at)) : ''}</td>

@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,8 +33,16 @@ import (
 // page, never the operator's other windows. It shows the operator a cue, and a
 // hidden tab is never captured, because that cue would go unseen. Nothing is
 // stored unless the caller asks to keep it (dashboard_marks.go).
+//
+// With `form`, which also takes dashboard.forms.capture, the tab adds a text
+// rendering of the same filtered snapshot (capture-snapshot.js): the open form
+// with its values, or what is on screen. That text is never stored, not even
+// with --save, and the tab cannot volunteer it: it is dropped unless asked for.
 
-const PermDashboardCapture = "dashboard.capture"
+const (
+	PermDashboardCapture      = "dashboard.capture"
+	PermDashboardFormsCapture = "dashboard.forms.capture"
+)
 
 const (
 	// captureLiveWindow is how recently a tab must have pinged to count as
@@ -51,7 +60,13 @@ const (
 	captureMaxClientID     = 64
 	captureMaxImage        = 24 << 20
 	captureMaxContext      = 64 << 10
-	captureMaxText         = 240
+	// captureMaxFormText bounds what the page sends: it cuts at 60k characters,
+	// which can take more bytes, and says so in the text.
+	captureMaxFormText = 256 << 10
+	// captureMaxTextLine holds a field's longest value, 2k characters that can
+	// take several bytes each, with its label and options.
+	captureMaxTextLine = 16 << 10
+	captureMaxText     = 240
 )
 
 // captureTimeout is swapped by tests.
@@ -74,12 +89,14 @@ type captureClient struct {
 type captureRequest struct {
 	ID        string `json:"id"`
 	AgentName string `json:"agent_name,omitempty"`
+	Form      bool   `json:"form,omitempty"`
 }
 
 type captureResult struct {
-	image   []byte
-	context *captureContext
-	err     string
+	image    []byte
+	context  *captureContext
+	formText string
+	err      string
 }
 
 type pendingCapture struct {
@@ -161,6 +178,19 @@ func (e *captureElement) clean() {
 	e.ID = guideText(e.ID, 120)
 	e.Ref = guideText(e.Ref, guideMaxTarget)
 	e.BoardElement = guideText(e.BoardElement, 120)
+}
+
+// cleanFormText is guideText for a text of many lines.
+func cleanFormText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = guideText(line, captureMaxTextLine)
+	}
+	out := strings.Join(lines, "\n")
+	if len(out) > captureMaxFormText {
+		return strings.ToValidUTF8(out[:captureMaxFormText], "")
+	}
+	return out
 }
 
 func (c *captureContext) clean() {
@@ -345,17 +375,18 @@ func handleDashboardCompanionCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The image travels base64-encoded.
-	r.Body = http.MaxBytesReader(w, r.Body, captureMaxImage/3*4+captureMaxContext)
+	r.Body = http.MaxBytesReader(w, r.Body, captureMaxImage/3*4+captureMaxContext+captureMaxFormText)
 	var req struct {
-		PNG     string          `json:"png"`
-		Context *captureContext `json:"context"`
-		Error   string          `json:"error"`
+		PNG      string          `json:"png"`
+		Context  *captureContext `json:"context"`
+		FormText string          `json:"form_text"`
+		Error    string          `json:"error"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid capture: "+err.Error())
 		return
 	}
-	result := captureResult{context: req.Context, err: guideText(req.Error, guideMaxNote)}
+	result := captureResult{context: req.Context, formText: cleanFormText(req.FormText), err: guideText(req.Error, guideMaxNote)}
 	if result.err == "" {
 		image, err := base64.StdEncoding.DecodeString(req.PNG)
 		if err != nil || !bytes.HasPrefix(image, pngMagic) {
@@ -397,18 +428,24 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Save  bool   `json:"save"`
 		Label string `json:"label"`
+		Form  bool   `json:"form"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, capturePresenceMaxBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid capture request: "+err.Error())
 		return
 	}
+	if req.Form {
+		if _, ok := requirePermission(w, r, PermDashboardFormsCapture); !ok {
+			return
+		}
+	}
 	id, err := newCaptureID()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	pending := &pendingCapture{captureRequest: captureRequest{ID: id}, done: make(chan captureResult, 1)}
+	pending := &pendingCapture{captureRequest: captureRequest{ID: id, Form: req.Form}, done: make(chan captureResult, 1)}
 	if convID != "" {
 		if res, _, err := agent.ResolveSelector(convID); err == nil && res.Row != nil {
 			pending.AgentName = guideText(res.Row.CustomTitle, 80)
@@ -437,7 +474,7 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 	pending.client = client
 	captureState.pending = pending
 	captureState.Unlock()
-	slog.Info("dashboard capture requested", "conv", convID, "agent", pending.AgentName)
+	slog.Info("dashboard capture requested", "conv", convID, "agent", pending.AgentName, "form", req.Form)
 
 	abandon := func() {
 		captureState.Lock()
@@ -457,6 +494,9 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{"png": base64.StdEncoding.EncodeToString(result.image)}
 		if result.context != nil {
 			resp["context"] = result.context
+		}
+		if req.Form {
+			resp["form_text"] = result.formText
 		}
 		if req.Save {
 			saved, err := saveCapture(convID, guideText(req.Label, guideMaxTitle), result.image, result.context)

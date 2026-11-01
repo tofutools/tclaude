@@ -51,8 +51,8 @@ function SpawnDetails({ entry }) {
     ${open && html`<div id=${panelID} ref=${popoverRef} class="audit-spawn-popover" role="dialog" aria-label="Spawn details" tabIndex="-1">
       <div class="audit-spawn-popover-head"><strong>Spawn details</strong><button ref=${closeRef} type="button" class="audit-spawn-popover-close" aria-label="Close spawn details" title="Close" onClick=${() => dismiss()}>×</button></div>
       ${details.snapshot_truncated && html`<div class="audit-spawn-popover-note">The request snapshot exceeded the audit size limit; the resolved values and response are retained where possible.</div>`}
-      <section><h4>Request input</h4><pre>${prettyAuditValue(details.input, details.input_raw)}</pre></section>
-      <section><h4>Resolved parameters and profiles</h4><pre>${prettyAuditValue(details.resolved)}</pre></section>
+      <section><h4>Request input</h4><pre data-capture-mask>${prettyAuditValue(details.input, details.input_raw)}</pre></section>
+      <section><h4>Resolved parameters and profiles</h4><pre data-capture-mask>${prettyAuditValue(details.resolved)}</pre></section>
       <section><h4>Command response${details.response_truncated ? ' (truncated)' : ''}</h4><pre>${prettyAuditValue(details.response, details.response_raw)}</pre></section>
     </div>`}
   </span>`;

@@ -73,7 +73,8 @@ export function Pager({
     title=${range ? sizeTitle : undefined} aria-label=${range ? sizeTitle : undefined} disabled=${disabled} value=${String(range ? limit : pageSize)}
     onChange=${delegated ? undefined : (event) => onPageSize?.(Number(event.currentTarget.value))}>
     ${sizes.map((size) => html`<option key=${size} value=${size}>${sizeOption(size)}</option>`)}</select>`;
-  if (range) return html`<div class=${prefix} ...${data}>${nav}${select}</div>`;
+  // A capture's text says how much of the list this page holds.
+  if (range) return html`<div class=${prefix} data-capture-note=${`showing ${Math.max(0, Math.min(offset + limit, total) - offset)} of ${total} rows`} ...${data}>${nav}${select}</div>`;
   return html`<div id=${id} class=${prefix}>${nav}${note && html`<span class=${`${prefix}-note muted`}>${note}</span>`}
     <span class="grow"></span><label class=${`${prefix}-size`} title=${sizeTitle}>${select} / page</label></div>`;
 }

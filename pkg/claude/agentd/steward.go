@@ -399,7 +399,8 @@ const stewardCaptureGuide = "To see the operator's screen, run `tclaude agent gu
 	"Try it before saying it cannot be done. If it fails: a refused permission means you do not hold dashboard.capture, so ask for it with " +
 	"`tclaude agent sudo request dashboard.capture`; \"not on screen\" means their tab is hidden, so ask them to bring it up; " +
 	"\"no dashboard is open\" means ask them to open it; a timeout means the tab may have closed or be busy, so try again. " +
-	"The age `guide view` prints is how long they have been on that view, not whether the tab is still open."
+	"The age `guide view` prints is how long they have been on that view, not whether the tab is still open. " +
+	"`--form` also prints the open form's values as text; it needs dashboard.forms.capture, which the operator assigns, and is only for helping with a form."
 
 // stewardKnowledgeGuide says the knowledge base exists and when to use it. The
 // depth lives there; the brief keeps only the essentials.
