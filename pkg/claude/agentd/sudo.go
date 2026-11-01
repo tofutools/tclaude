@@ -341,6 +341,11 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slot, ok := admitApproval(w, req.convID)
+	if !ok {
+		return
+	}
+	defer approvals.release(slot)
 	approved := requestHumanApproval(req, popupBaseURL)
 	if !approved {
 		writeError(w, http.StatusForbidden, "denied",

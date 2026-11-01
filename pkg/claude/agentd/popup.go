@@ -197,8 +197,9 @@ type approvalRequest struct {
 // approvalRegistry holds pending approvals keyed by ID. Browser
 // callbacks resolve the matching channel.
 type approvalRegistry struct {
-	mu      sync.Mutex
-	pending map[string]*approvalRequest
+	mu        sync.Mutex
+	pending   map[string]*approvalRequest
+	admission approvalAdmission
 }
 
 // maxResolvedApprovals bounds the dashboard's recent-history query.
@@ -798,22 +799,27 @@ func withApprovalFacts(r *http.Request, facts approvalFactsFunc) *http.Request {
 
 // approvalPreviewFacts puts the request's facts ahead of its body in a popup.
 // Call it after the body is snapshotted. Facts read the body the handler will,
-// not the preview, which is capped.
-func approvalPreviewFacts(r *http.Request, bodyPreview, bodyLabel string) (string, string) {
+// not the preview, which is capped. The body stays in memory until the human
+// answers, charged to slot; an error says why it cannot be held.
+func approvalPreviewFacts(r *http.Request, slot *approvalTicket, bodyPreview, bodyLabel string) (string, string, error) {
 	facts, _ := r.Context().Value(approvalFactsKey{}).(approvalFactsFunc)
 	if facts == nil {
-		return bodyPreview, bodyLabel
+		return bodyPreview, bodyLabel, nil
 	}
 	var body []byte
 	if r.Body != nil {
-		body, _ = io.ReadAll(r.Body)
+		var err error
+		body, err = approvals.readBody(slot, r.Body)
+		if errors.Is(err, errApprovalBodyTooLarge) || errors.Is(err, errApprovalBodyBusy) {
+			return "", "", err
+		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 	}
 	stated := facts(body)
 	if stated == "" {
-		return bodyPreview, bodyLabel
+		return bodyPreview, bodyLabel, nil
 	}
-	return stated + "\n\nRequest:\n" + bodyPreview, "What approving does"
+	return stated + "\n\nRequest:\n" + bodyPreview, "What approving does", nil
 }
 
 func snapshotApprovalRequestBody(r *http.Request, _ string) string {

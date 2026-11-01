@@ -245,7 +245,16 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	// target surfaced so the popup can render
 	// "<caller> wants to <verb> <target>". Timeout = deny.
 	if timeout := parseAskHumanHeader(r); timeout > 0 && popupBaseURL != "" {
-		bodyPreview, bodyLabel := approvalPreviewFacts(r, snapshotRequestBody(r), "")
+		slot, ok := admitApproval(w, p.ConvID)
+		if !ok {
+			return "", false
+		}
+		defer approvals.release(slot)
+		bodyPreview, bodyLabel, heldErr := approvalPreviewFacts(r, slot, snapshotRequestBody(r), "")
+		if heldErr != nil {
+			refuseApprovalBody(w, heldErr)
+			return "", false
+		}
 		callerTitle := ""
 		if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
 			callerTitle = agent.DisplayTitle(row)
