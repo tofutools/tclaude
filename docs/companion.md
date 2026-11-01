@@ -70,7 +70,7 @@ Type in its terminal, just like the Collab tab. You get the harness's own
 streaming, prompts and Esc interrupts.
 
 **view**, the mic **🎤** and **✎** float at the terminal's top right, dimmed until
-the pointer enters the window. They take no room from the terminal, and clicks
+the pointer is on them. They take no room from the terminal, and clicks
 anywhere else reach it. **view** is ticked by default and attaches the page you're
 on to dictated messages, so the agent knows what you're looking at. A text field
 and **Send** float at the bottom while you dictate.

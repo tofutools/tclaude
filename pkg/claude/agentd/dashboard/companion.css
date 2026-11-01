@@ -156,7 +156,7 @@
   position: absolute; top: 6px; right: 8px; display: flex; align-items: center; gap: 6px; padding: 3px 6px;
   border: 1px solid var(--cmp-line); border-radius: 8px; background: var(--cmp-bar); opacity: .4; transition: opacity .15s;
 }
-.companion-window:hover .companion-floating, .companion-floating:focus-within, .companion-floating.listening { opacity: 1; }
+.companion-floating:hover, .companion-floating:focus-within, .companion-floating.listening { opacity: 1; }
 @media (hover: none) { .companion-floating { opacity: 1; } }
 .companion-input {
   position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 5px 6px;
