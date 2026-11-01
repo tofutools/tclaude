@@ -1690,8 +1690,10 @@ func TestVoice(t *testing.T) {
 	assert.False(t, off.WakeEnabled)
 	assert.Zero(t, off.SilenceSendSeconds)
 	assert.True(t, *off.MarkDictated, "dictated messages are marked by default")
-	assert.Equal(t, []VoicePhrase{{Action: VoiceActionSend, Phrase: "send now"}, {Action: VoiceActionWake}}, off.Phrases,
-		"the send phrase is on by default and the wake phrase off")
+	assert.Equal(t, []VoicePhrase{{Action: VoiceActionSend, Phrase: "send now"}, {Action: VoiceActionWake}, {Action: VoiceActionStop, Phrase: "stop listening"}}, off.Phrases,
+		"the send and stop phrases are on by default and the wake phrase off")
+	assert.False(t, off.ContinuousEnabled, "continuous mode is off by default")
+	assert.Equal(t, ContinuousIdleSecondsDefault, off.ContinuousIdleSeconds)
 
 	voice := func(v VoiceConfig) VoiceConfig { return (&Config{Dashboard: &DashboardConfig{Voice: &v}}).Voice() }
 	phrase := func(v VoiceConfig, action string) string {
@@ -1703,6 +1705,9 @@ func TestVoice(t *testing.T) {
 		return "missing"
 	}
 	assert.False(t, *voice(VoiceConfig{MarkDictated: new(false)}).MarkDictated)
+
+	assert.Equal(t, ContinuousIdleSecondsMin, voice(VoiceConfig{ContinuousIdleSeconds: 1}).ContinuousIdleSeconds)
+	assert.Equal(t, ContinuousIdleSecondsMax, voice(VoiceConfig{ContinuousIdleSeconds: 90000}).ContinuousIdleSeconds)
 
 	assert.Zero(t, off.CommaPauseSeconds, "pause punctuation is off by default")
 	assert.Zero(t, off.PeriodPauseSeconds)
@@ -1731,6 +1736,10 @@ func TestVoice(t *testing.T) {
 	phraseOnly := voice(VoiceConfig{Phrases: []VoicePhrase{wakeOn}})
 	assert.False(t, phraseOnly.WakeEnabled, "an active wake phrase needs the listener")
 	assert.Equal(t, "hey tofu", phrase(phraseOnly, VoiceActionWake))
+
+	stopAs := func(words string) VoicePhrase { return VoicePhrase{Action: VoiceActionStop, Phrase: words} }
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{stopAs("Send Now")}}), VoiceActionStop), "a stop phrase equal to the send phrase is off")
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{wakeOn, stopAs("hey tofu")}}), VoiceActionStop), "a stop phrase equal to the wake phrase is off")
 
 	sendOff := VoicePhrase{Action: VoiceActionSend, Phrase: "over", Enabled: new(false)}
 	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{sendOff}}), VoiceActionSend), "an off phrase matches nothing")

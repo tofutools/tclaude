@@ -142,7 +142,7 @@ manages it, and nothing downloads without that click. Once installed it's used
 automatically, and the draft shows which is in use. If it fails at the start of a
 dictation, that dictation falls back to Google's service and tells you.
 
-**Hands-free (opt-in, both off by default).**
+**Hands-free (opt-in, all off by default).**
 
 - **Wake phrase.** Saying it, "hey tofu" by default, starts dictating with no click;
   words after it start the draft. It needs two settings on: the wake phrase's own
@@ -158,6 +158,19 @@ dictation, that dictation falls back to Google's service and tells you.
   waits while the mic is in use or a reply is read aloud. After repeated errors it
   stops and says why. If on-device speech stops working, it stops rather than
   switching to Google's service.
+- **Continuous mode.** After a voice message sends, the next thing you say sends
+  another, with no wake phrase, while the agent is still working. Each one sends on
+  send after silence, or after 3 seconds if that is off, and queues while the agent
+  is busy. It stays on the agent it started on: changing focus, closing that terminal
+  or hiding the tab stops it, and speech never moves to another agent. So do **Esc**,
+  **Stop**, typing in the draft, a failed send, saying the stop phrase ("stop
+  listening") on its own, and silence, 2 minutes by default. The draft shows it's on.
+  It stops rather than sends when the agent is waiting on you, so it can't answer a
+  permission question. Plain shells, peers' agents, Gemini CLI and pi get one message
+  at a time. The microphone stays open, so without on-device speech **everything said
+  in the room goes to Google's service for as long as it runs**. Replies aren't read
+  aloud while it listens.
+
 - **Send after silence.** With no new speech for a set time, 3 seconds by default,
   the draft is sent to the agent. It counts down first: **Esc**, **Cancel** or
   speaking again stops it. It never runs in a plain shell.

@@ -14,12 +14,20 @@ export const VOICE_ACTIONS = Object.freeze([
     summary: 'say this to start dictating without a click',
     more: 'Words after the phrase start the draft. Pick something you would not say to an agent. It must differ from the send phrase while both are on. It only does anything with the wake listener on, below.',
   }),
+  Object.freeze({
+    action: 'stop', phrase: 'stop listening', on: true, title: 'Stop phrase',
+    summary: 'say this on its own to end continuous mode',
+    more: 'It only counts as a whole phrase, so a sentence that merely contains it is plain text. It is never sent to the agent, and it does nothing with continuous mode off.',
+  }),
 ]);
 
 export const COMMA_PAUSE_DEFAULT = 0.7;
 export const PERIOD_PAUSE_DEFAULT = 1.5;
 export const VOICE_PAUSE_MIN = 0.3;
 export const VOICE_PAUSE_MAX = 10;
+export const CONTINUOUS_IDLE_DEFAULT = 120;
+export const CONTINUOUS_IDLE_MIN = 30;
+export const CONTINUOUS_IDLE_MAX = 3600;
 export const SILENCE_SEND_DEFAULT = 3;
 export const SILENCE_SEND_MIN = 2;
 export const SILENCE_SEND_MAX = 30;
@@ -40,6 +48,18 @@ export function voiceWakeOn(snapshot) {
 // voiceMarksDictated is the opt-out for the marker on dictated messages.
 export function voiceMarksDictated(snapshot) {
   return snapshot?.voice?.mark_dictated !== false;
+}
+
+// voiceContinuous is continuous mode's settings, null when it is off.
+export function voiceContinuous(snapshot) {
+  if (snapshot?.voice?.continuous_enabled !== true) return null;
+  return { stopPhrase: voicePhrase(snapshot, 'stop'), idleSeconds: snapshot.voice.continuous_idle_seconds || CONTINUOUS_IDLE_DEFAULT };
+}
+
+// harnessTakesMailMidTurn reports whether continuous mode can run on an agent
+// of this harness, per the snapshot's catalog.
+export function harnessTakesMailMidTurn(snapshot, harness) {
+  return !!(snapshot?.harnesses || []).find((item) => item.name === harness)?.can_mail_mid_turn;
 }
 
 export function voiceSilenceSeconds(snapshot) {
@@ -65,6 +85,20 @@ const sameWords = (a, b) => a.trim().split(/\s+/).join(' ').toLowerCase() === b.
 // voicePhrasesClash reports whether two phrases would answer to the same words.
 export function voicePhrasesClash(a, b) {
   return !!a.trim() && sameWords(a, b);
+}
+
+// voiceClashProblem says which two of the form's active phrases share words,
+// or returns ''.
+export function voiceClashProblem(phrases) {
+  const active = VOICE_ACTIONS.filter(({ action }) => phrases[action].on);
+  for (const [index, first] of active.entries()) {
+    for (const second of active.slice(index + 1)) {
+      if (voicePhrasesClash(phrases[first.action].phrase, phrases[second.action].phrase)) {
+        return `The ${first.title.toLowerCase()} and the ${second.title.toLowerCase()} must differ.`;
+      }
+    }
+  }
+  return '';
 }
 
 // voiceFormPhrase is what Config shows for an action, from the stored

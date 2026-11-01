@@ -67,6 +67,9 @@ Spoken phrases and the opt-in hands-free settings. See
 | Mark dictated messages | `dashboard.voice.mark_dictated` | on |
 | Comma at a pause | `dashboard.voice.comma_pause_seconds` | off; 0.7 seconds when on, 0.3 to 10 |
 | Period at a pause | `dashboard.voice.period_pause_seconds` | off; 1.5 seconds when on, 0.3 to 10 |
+| Stop phrase | `dashboard.voice.phrases`, action `stop` | on, `stop listening`; ends continuous mode |
+| Continuous mode | `dashboard.voice.continuous_enabled` | off |
+| Continuous mode auto-stop | `dashboard.voice.continuous_idle_seconds` | 120; 30 to 3600 |
 | Wake phrase listener | `dashboard.voice.wake_enabled` | off; needs the wake phrase on too |
 | On-device speech | in this browser, not saved in config | not installed |
 | Send after silence | `dashboard.voice.silence_send_seconds` | off; 2 to 30 seconds |

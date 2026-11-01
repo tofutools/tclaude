@@ -14,7 +14,7 @@ import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorM
 import { nodeFetch } from './node-api.js';
 import { shellToast } from './shell-state.js';
 import { dashboardState } from './snapshot-store.js';
-import { voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
+import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 
 const html = htm.bind(h);
 
@@ -22,12 +22,27 @@ const html = htm.bind(h);
 // mail. A shell session has an agent id too, but nobody to read mail. A local
 // pane whose harness is unknown stays a terminal, which never submits by
 // itself; a peer's agent is not in this node's roster, so its pane decides.
+const paneRow = (target, snapshot) => (snapshot?.agents || []).find((agent) => agent.agent_id === target?.agent || agent.conv_id === target?.agent);
+
 export function paneTalksToAgent(pane, target, snapshot) {
   if (!target || snapshot?.collab_enabled !== true) return false;
-  const row = (snapshot.agents || []).find((agent) => agent.agent_id === target.agent || agent.conv_id === target.agent);
+  const row = paneRow(target, snapshot);
   const harness = pane.seed.harness || row?.state?.harness || '';
   if (harness === 'shell') return false;
   return !!(harness || pane.seed.remote);
+}
+
+// paneContinuous is continuous mode's settings for an agent's pane, null where
+// it can't run. It needs this node's roster, to see the agent ask for its
+// operator, so a peer's agent gets one message at a time, as does a harness
+// that isn't proven to take mail mid-turn.
+export function paneContinuous(pane, target, snapshot, name) {
+  const mode = voiceContinuous(snapshot);
+  const row = paneRow(target, snapshot);
+  if (!mode || !row || pane.seed.remote) return null;
+  if (!harnessTakesMailMidTurn(snapshot, pane.seed.harness || row.state?.harness)) return null;
+  const waiting = ['awaiting_permission', 'awaiting_input'].includes(row.state?.status);
+  return { ...mode, held: () => (waiting ? `${name} is waiting on you, so continuous mode stopped. Your words stay in the draft.` : '') };
 }
 
 // terminalDraftText is a draft as one line of terminal input. Control
@@ -67,6 +82,7 @@ export function PaneDictation({
     silenceSend: talks ? voiceSilenceSeconds(snapshot?.value) : 0,
     pauses: talks ? voicePauses(snapshot?.value) : null,
     mark: voiceMarksDictated(snapshot?.value),
+    continuous: talks ? paneContinuous(pane, target, snapshot?.value, name) : null,
     wakeHost: () => (shownRef.current ? win?.document?.getElementById(pane.id) : null),
     setDraft: (_, text) => setDraftText(text),
     send: (text) => send(null, text),
@@ -90,14 +106,16 @@ export function PaneDictation({
     const message = dictation.outgoing(text);
     if (!companionMessageFits(message, context)) {
       report('That message is too long to send. Shorten it and try again.', true);
-      return;
+      return false;
     }
     setSending(true);
     try {
       await postOperatorMessage(agentFetch(), { to: target.agent, body: composeCompanionMessage(message, context) });
       settle(text);
+      return true;
     } catch (error) {
       report(`Message to ${name} failed: ${error?.message || error}`, true);
+      return false;
     } finally {
       setSending(false);
     }
@@ -110,12 +128,13 @@ export function PaneDictation({
 
   async function send(event, text = draft) {
     event?.preventDefault?.();
-    if (sending || !text.trim()) return;
+    if (sending || !text.trim()) return false;
     // An open mic would bring the sent text back. Enter or the button sends
     // what the draft holds; a failed send leaves it there.
     if (event) dictation.abort();
-    if (talks) await mailAgent(text);
-    else pasteToTerminal(text);
+    if (talks) return mailAgent(text);
+    pasteToTerminal(text);
+    return true;
   }
 
   // A drawing in progress outlives a blip, and keeps its Cancel.

@@ -9,7 +9,7 @@ import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
-import { COMMA_PAUSE_DEFAULT, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN } from './voice-config.js';
+import { COMMA_PAUSE_DEFAULT, CONTINUOUS_IDLE_DEFAULT, CONTINUOUS_IDLE_MAX, CONTINUOUS_IDLE_MIN, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN } from './voice-config.js';
 import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
 
 const html = htm.bind(h);
@@ -554,6 +554,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more="The draft counts down first. Press Esc, press Cancel or speak again to stop it. An empty draft never sends, and it never runs in a plain shell.">
           <${Toggle} id="cfg-voice-silence" onChange=${() => syncVoiceSection()} />
           <label class="cfg-inline">after <${ConfigInput} type="number" id="cfg-voice-silence-seconds" min=${SILENCE_SEND_MIN} max=${SILENCE_SEND_MAX} step="1" placeholder=${String(SILENCE_SEND_DEFAULT)} aria-label="Seconds of silence before sending" style="width:5em" /> seconds</label>
+        </${Setting}>
+        <${Setting} title="Continuous mode" forId="cfg-voice-continuous" k="dashboard.voice.continuous_enabled"
+          summary=${html`after a voice message sends, the next thing you say sends another, with no wake phrase, while the agent is still working. <strong>The microphone stays open, so without on-device speech everything said in the room goes to your browser's speech service, Google's in Chrome, for as long as it runs.</strong> On-device speech is recommended here.`}
+          more="Each message sends on send after silence, or after 3 seconds if that is off, and queues while the agent is busy. It stays on the agent it started on: changing focus, closing that terminal or hiding the tab stops it. So do Esc, Stop, typing in the draft, the stop phrase and a failed send. An indicator shows on the draft while it runs. It stops rather than sends when the agent is waiting on you, so it can't answer a permission question. It needs an agent on this node whose harness takes messages mid-turn: Gemini CLI, pi, peers' agents and plain shells get one message at a time. Replies aren't read aloud while it listens.">
+          <${Toggle} id="cfg-voice-continuous" />
+          <label class="cfg-inline">stop after <${ConfigInput} type="number" id="cfg-voice-continuous-idle" min=${CONTINUOUS_IDLE_MIN} max=${CONTINUOUS_IDLE_MAX} step="1" placeholder=${String(CONTINUOUS_IDLE_DEFAULT)} aria-label="Seconds of silence before continuous mode stops" style="width:6em" /> seconds of silence</label>
         </${Setting}>
         <div class="cfg-hint" id="cfg-voice-hands-free-warning" style="padding-left:0" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
       </${Group}>

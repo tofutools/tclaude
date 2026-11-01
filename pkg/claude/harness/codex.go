@@ -26,6 +26,7 @@ func init() {
 		Name:                      CodexName,
 		ModelProxyProtocol:        "openai-responses-v1",
 		DisplayName:               "Codex CLI",
+		MailMidTurn: true,
 		AvailabilityCredentialEnv: []string{"OPENAI_API_KEY"},
 		Spawn:                     codexSpawner{},
 		Ask:                       codexAsker{},

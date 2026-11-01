@@ -27,6 +27,7 @@ func init() {
 	Register(&Harness{
 		Name:                      DefaultName,
 		DisplayName:               "Claude Code",
+		MailMidTurn: true,
 		AvailabilityCredentialEnv: []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
 		ModelProxyProtocol:        "anthropic-messages-v1",
 		Spawn:                     claudeSpawner{},

@@ -1420,6 +1420,9 @@ type dashboardHarness struct {
 	// without an in-pane /rename), so the dashboard keeps Codex renameable.
 	CanRename  bool `json:"can_rename"`
 	CanCompact bool `json:"can_compact"`
+	// CanMailMidTurn mirrors Harness.MailMidTurn, which continuous dictation
+	// gates on.
+	CanMailMidTurn bool `json:"can_mail_mid_turn"`
 	// CanSandbox reports whether the harness takes a launch sandbox flag —
 	// the same condition as a non-empty HarnessBuiltinModes, surfaced explicitly
 	// so the dialog has a single boolean to gate the sandbox row on.
@@ -1554,6 +1557,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			EffortLevels:            h.Models.EffortLevels(),
 			CanRename:               h.CanRename(),
 			CanCompact:              h.CanCompact(),
+			CanMailMidTurn:          h.MailMidTurn,
 			CanSandbox:              h.SupportsSandbox(),
 			CanBuiltinOSSandbox:     h.SupportsBuiltinOSSandbox(),
 			CanApproval:             h.SupportsApproval(),

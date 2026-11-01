@@ -250,6 +250,13 @@ export function sendPhraseRest(phrase, sendPhrase) {
   return match ? phrase.slice(0, match.index).replace(/[\s,;:]+$/, '') : null;
 }
 
+// isWholePhrase reports whether a finished phrase is nothing but the given
+// spoken phrase. Case and the punctuation the recognizer adds don't count.
+export function isWholePhrase(heard, phrase) {
+  const pattern = phrasePattern(phrase);
+  return !!pattern && new RegExp(`^[\\s\\p{P}]*${pattern}[\\s\\p{P}]*$`, 'iu').test(String(heard || ''));
+}
+
 // phrasePattern is a spoken phrase as a regular expression source, or '' for
 // an empty phrase: its words as text, whatever punctuation lies between them.
 export function phrasePattern(phrase) {
@@ -345,22 +352,29 @@ export function dictationOpen() {
 // and onRoute says so: it is a click and a short burst, unlike the wake
 // listener. start({strictRoute: true}), for a dictation nobody clicked, ends
 // with the error instead. pauses() gives the pause punctuation, see
-// createPauseMarks; the marks are in what onText and onSend carry.
+// createPauseMarks; the marks are in what onText and onSend carry. A finished
+// phrase that is all of stopPhrase() fires onStopPhrase instead of landing in
+// the text. keep(true) holds the mic for this dictation between recognizers, so
+// the wake listener stays out of a loop that is about to start another one, and
+// onTaken says another dictation took the mic. onText's second argument is
+// {interim, settled}: the words still changing, and the text without them.
 export function createDictation(win = globalThis.window, {
-  onText, onState, onSend, onRoute, sendPhrase = () => '', pauses = () => null, lang, now = () => Date.now(),
+  onText, onState, onSend, onRoute, onStopPhrase, onTaken, sendPhrase = () => '', stopPhrase = () => '', pauses = () => null, lang, now = () => Date.now(),
 } = {}) {
   const Ctor = speechRecognitionCtor(win);
   let recognition = null;
   let stopped = false;
   let opening = false;
   let strictRoute = false;
+  let keeping = false;
   const dictation = {
     supported: !!Ctor,
-    get active() { return !!recognition || opening; },
+    get active() { return !!recognition || opening || keeping; },
+    get recognizing() { return !!recognition || opening; },
     start(options = {}) {
       if (!Ctor || recognition || opening) return;
       strictRoute = !!options.strictRoute;
-      if (openDictation !== dictation) openDictation?.abort();
+      if (openDictation !== dictation) openDictation?.takeOver();
       openDictation = dictation;
       opening = true;
       if (wakeHold) wakeHold.release(begin);
@@ -369,6 +383,14 @@ export function createDictation(win = globalThis.window, {
     stop() {
       stopped = true;
       recognition?.stop();
+    },
+    keep(on) {
+      keeping = on;
+      if (!on) micChanged();
+    },
+    takeOver() {
+      onTaken?.();
+      dictation.abort();
     },
     abort() {
       opening = false;
@@ -411,6 +433,12 @@ export function createDictation(win = globalThis.window, {
           continue;
         }
         finished = true;
+        if (!stopped && isWholePhrase(phrase, stopPhrase())) {
+          sent = true;
+          onText?.(pauseMarks.render(finals.join(' ').replace(/\s+/g, ' ').trim()), { interim: '', settled: '' });
+          onStopPhrase?.();
+          return;
+        }
         const rest = stopped ? null : sendPhraseRest(phrase, sendPhrase());
         if (rest !== null) {
           finals.push(rest);
@@ -428,7 +456,8 @@ export function createDictation(win = globalThis.window, {
       const text = `${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim();
       pauseMarks.heard(text, interimShowing && finished && !interim.trim());
       interimShowing = !!interim.trim();
-      onText?.(pauseMarks.render(text));
+      const settled = pauseMarks.render(finals.join(' ').replace(/\s+/g, ' ').trim());
+      onText?.(pauseMarks.render(text), { interim: interim.trim(), settled });
     };
     r.onerror = (event) => {
       fallBack = local && !strictRoute && !heard && !stopped && !NOT_LOCAL_FAULTS.has(event?.error);

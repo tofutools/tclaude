@@ -348,6 +348,8 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-floating .companion-mic { color: var(--cmp-text); font-size: 13px; }
 .companion-mic-note { color: var(--cmp-text); font-size: 11px; white-space: nowrap; cursor: help; }
 .companion-floating .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }
+/* Continuous mode runs for minutes, and a pulse repaints every frame: the draft shows it's on. */
+.companion-floating .companion-mic.on.steady { animation: none; }
 @media (prefers-reduced-motion: reduce) { .companion-floating .companion-mic.on { animation: none; } }
 .companion-send-hint { flex: none; color: var(--cmp-muted); font-size: 11px; white-space: nowrap; }
 /* The same tools over a Terminals-tab pane: there they only brighten on them,
@@ -358,6 +360,7 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 body:not(.solo) .mux-pane .companion-input { right: 120px; }
 /* Silence send (tcl-jk3kal): it sends without a deliberate act, so it counts out loud. */
 .companion-silence { color: var(--cmp-amber-text); }
+.companion-continuous { color: var(--cmp-amber-text); font-weight: 600; }
 .companion-input button.companion-silence-cancel {
   padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
   color: var(--cmp-text); font: inherit; font-size: 11px; cursor: pointer;
