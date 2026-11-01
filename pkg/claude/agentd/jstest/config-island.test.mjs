@@ -974,6 +974,83 @@ test('Config ask sandbox defaults to global and round-trips modes and exact libr
   await mounted.unmount();
 });
 
+test('Config voice phrases: each has its own switch, and hands-free stays separate', async (t) => {
+  const harness = await createPreactHarness(t);
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => [] }));
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  const el = (id) => mounted.container.querySelector(`#${id}`);
+  const click = (id) => harness.act(() => {
+    el(id).checked = !el(id).checked;
+    el(id).dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  });
+  const voice = () => adapter.assembleConfig().dashboard?.voice;
+
+  adapter.populateConfigForm({});
+  assert.equal(el('cfg-voice-on-send').checked, true);
+  assert.equal(el('cfg-voice-on-wake').checked, false);
+  assert.equal(el('cfg-voice-phrase-send').disabled, false);
+  assert.equal(el('cfg-voice-phrase-wake').disabled, true);
+  assert.equal(el('cfg-voice-phrase-wake').value, 'hey tofu');
+  assert.equal(voice(), undefined, 'the defaults store nothing');
+
+  // Unticking keeps the text, disables the field, and re-ticking restores it.
+  await click('cfg-voice-on-send');
+  assert.equal(el('cfg-voice-phrase-send').disabled, true);
+  assert.equal(el('cfg-voice-phrase-send').value, 'send now');
+  assert.deepEqual(voice().phrases, [{ action: 'send', phrase: 'send now', enabled: false }]);
+  await click('cfg-voice-on-send');
+  assert.equal(el('cfg-voice-phrase-send').disabled, false);
+  assert.equal(voice(), undefined);
+
+  // Neither wake setting moves the other; a one-sided combination gets a hint.
+  await click('cfg-voice-wake');
+  assert.equal(el('cfg-voice-on-wake').checked, false);
+  assert.equal(el('cfg-voice-wake-no-phrase').hidden, false);
+  assert.deepEqual(voice(), { wake_enabled: true });
+  await click('cfg-voice-wake');
+  await click('cfg-voice-on-wake');
+  assert.equal(el('cfg-voice-wake').checked, false);
+  assert.equal(el('cfg-voice-wake-no-phrase').hidden, true);
+  assert.equal(el('cfg-voice-wake-no-listener').hidden, false);
+  assert.deepEqual(voice(), { phrases: [{ action: 'wake', phrase: 'hey tofu', enabled: true }] });
+
+  // The room warning needs a wake that can really start.
+  await click('cfg-voice-silence');
+  assert.equal(el('cfg-voice-hands-free-warning').hidden, true);
+  await click('cfg-voice-wake');
+  assert.equal(el('cfg-voice-hands-free-warning').hidden, false);
+  await click('cfg-voice-on-wake');
+  assert.equal(el('cfg-voice-hands-free-warning').hidden, true);
+
+  // A wake phrase only clashes with a send phrase that is on, and an empty
+  // phrase can't be on.
+  adapter.populateConfigForm({ dashboard: { voice: { phrases: [{ action: 'wake', phrase: 'send now', enabled: true }] } } });
+  assert.throws(() => adapter.assembleConfig(), /must differ/);
+  await click('cfg-voice-on-send');
+  assert.ok(voice().phrases);
+  el('cfg-voice-phrase-wake').value = ' ';
+  assert.throws(() => adapter.assembleConfig(), /Wake phrase: type a phrase/);
+
+  // The older ways to turn a phrase off read as off, with text to come back to.
+  adapter.populateConfigForm({ dashboard: { dictation_send_phrase: '' } });
+  assert.equal(el('cfg-voice-on-send').checked, false);
+  assert.equal(el('cfg-voice-phrase-send').value, 'send now');
+  adapter.populateConfigForm({ dashboard: { dictation_send_phrase: 'over' } });
+  assert.equal(el('cfg-voice-on-send').checked, true);
+  assert.equal(el('cfg-voice-phrase-send').value, 'over');
+  adapter.populateConfigForm({ dashboard: { voice: { phrases: [{ action: 'send', phrase: '' }] } } });
+  assert.equal(el('cfg-voice-on-send').checked, false);
+  adapter.populateConfigForm({ dashboard: { voice: { phrases: [{ action: 'send', enabled: true }] } } });
+  assert.equal(el('cfg-voice-on-send').checked, false, 'a hand-edited entry with no phrase loads');
+  await mounted.unmount();
+});
+
 test('picking a Config section is a navigation; a history location shows it', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, { CONFIG_PANELS }, core, panel] = await Promise.all([

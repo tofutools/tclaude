@@ -119,7 +119,7 @@ the keyboard goes back to the terminal with the draft kept. Typing in the draft 
 the mic so you can edit. If the browser ends listening by itself, the keyboard stays
 on the draft.
 
-Change the phrase, or empty it to turn spoken send off, in
+Change the phrase, or untick it to turn spoken send off, in
 [Config › Voice](dashboard-config.md#voice). Dictation listens in your browser's
 language, so pick a phrase in that language.
 
@@ -133,7 +133,9 @@ dictation, that dictation falls back to Google's service and tells you.
 **Hands-free (opt-in, both off by default).**
 
 - **Wake phrase.** Saying it, "hey tofu" by default, starts dictating with no click;
-  words after it start the draft. Dictation goes to the terminal or chat window with
+  words after it start the draft. It needs two settings on: the wake phrase's own
+  checkbox and the wake phrase listener. Neither changes the other, and Config says
+  so when only one is on. Dictation goes to the terminal or chat window with
   focus, or the only one showing. Otherwise nothing happens and the indicator says so.
   Plain shells get a draft as usual. This keeps a microphone open while a tab is
   showing, so without on-device speech **everything said in the room goes to Google's

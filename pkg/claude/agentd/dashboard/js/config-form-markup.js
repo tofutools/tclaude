@@ -9,7 +9,7 @@ import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { dashboardState } from './snapshot-store.js';
 import { SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS } from './voice-config.js';
-import { LocalSpeechRow, syncVoiceWarning } from './voice-config-section.js';
+import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -513,17 +513,20 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
     <${Panel} id="voice" active=${active}>
       <${Group} title="Phrases" lede="What you can say. Dictation listens in your browser's language, so pick phrases in that language: an English phrase may not be heard on another one.">
-        ${VOICE_ACTIONS.map(({ action, phrase, title, summary, more }) => html`<${Setting} key=${action} title=${title} forId=${`cfg-voice-phrase-${action}`} k="dashboard.voice.phrases"
+        ${VOICE_ACTIONS.map(({ action, title, summary, more }) => html`<${Setting} key=${action} title=${title} forId=${`cfg-voice-on-${action}`} k="dashboard.voice.phrases"
           summary=${summary} more=${more}>
-          <${ConfigInput} type="text" id=${`cfg-voice-phrase-${action}`} data-voice-action=${action} maxLength="60" placeholder="off" aria-label=${title} style="width:14em" />
+          <${ConfigInput} type="checkbox" id=${`cfg-voice-on-${action}`} aria-label=${`${title} on`} onChange=${() => syncVoiceSection()} />
+          <${ConfigInput} type="text" id=${`cfg-voice-phrase-${action}`} data-voice-action=${action} maxLength="60" aria-label=${title} style="width:14em" />
         </${Setting}>`)}
+        <div class="cfg-hint" id="cfg-voice-wake-no-listener" style="padding-left:0" hidden>The wake phrase won't start anything until the wake phrase listener below is on too.</div>
       </${Group}>
       <${Group} title="Hands-free" lede="Off unless you turn them on. Neither runs on plain HTTP pages away from localhost, or sends by itself in a plain shell.">
         <${Setting} title="Wake phrase listener" forId="cfg-voice-wake" k="dashboard.voice.wake_enabled" badges=${['refresh']}
           summary=${html`<strong>Keeps a microphone open while a dashboard tab is showing</strong>, so saying the wake phrase starts dictation with no click. Without on-device speech, <strong>everything said in the room goes to your browser's speech service, Google's in Chrome, for as long as it listens</strong>, not only what you dictate. On-device speech is recommended here.`}
           more="It dictates into the terminal or chat window with focus, or the only one showing; otherwise it stays idle and says so. An indicator shows whenever it is on, with a Pause button. It stops while the tab is hidden, runs in one tab at a time, and waits while a reply is read aloud. Plain HTTP pages can't use it, because browsers refuse the microphone there.">
-          <${Toggle} id="cfg-voice-wake" onChange=${() => syncVoiceWarning()} />
+          <${Toggle} id="cfg-voice-wake" onChange=${() => syncVoiceSection()} />
         </${Setting}>
+        <div class="cfg-hint" id="cfg-voice-wake-no-phrase" style="padding-left:0" hidden>The listener has nothing to listen for until the wake phrase above is on too.</div>
         <${Setting} title="On-device speech" summary="Recognition that stays on this machine, for dictation and the wake listener. It's a language pack Chrome downloads and manages, not part of tclaude. Its size isn't known here. Nothing downloads without your click, and accuracy may differ."
           more="Once installed it is used automatically. If it later stops working, the wake listener stops and says why rather than switching to a speech service; a dictation carries on through the service and says so. This row is about this browser, so it isn't saved with the settings below.">
           <${LocalSpeechRow} />
@@ -531,10 +534,10 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <${Setting} title="Send after silence" forId="cfg-voice-silence" k="dashboard.voice.silence_send_seconds"
           summary="send a dictated message to an agent after this many seconds with no new speech"
           more="The draft counts down first. Press Esc, press Cancel or speak again to stop it. An empty draft never sends, and it never runs in a plain shell.">
-          <${Toggle} id="cfg-voice-silence" onChange=${() => syncVoiceWarning()} />
+          <${Toggle} id="cfg-voice-silence" onChange=${() => syncVoiceSection()} />
           <label class="cfg-inline">after <${ConfigInput} type="number" id="cfg-voice-silence-seconds" min=${SILENCE_SEND_MIN} max=${SILENCE_SEND_MAX} step="1" placeholder=${String(SILENCE_SEND_DEFAULT)} aria-label="Seconds of silence before sending" style="width:5em" /> seconds</label>
         </${Setting}>
-        <div class="cfg-hint" id="cfg-voice-hands-free-warning" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
+        <div class="cfg-hint" id="cfg-voice-hands-free-warning" style="padding-left:0" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
       </${Group}>
     </${Panel}>
     <${Panel} id="notifications" active=${active}>

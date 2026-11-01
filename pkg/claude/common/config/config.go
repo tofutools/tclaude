@@ -2014,9 +2014,10 @@ const (
 // VoicePhraseDefaults entry, and its phrase lands in the same list.
 type VoiceConfig struct {
 	// Phrases lists spoken phrases by action. An action left out keeps its
-	// default, and an empty phrase turns that action off.
+	// default, and an empty phrase or Enabled false turns that action off.
 	Phrases []VoicePhrase `json:"phrases,omitempty"`
-	// WakeEnabled opts in to the always-on listener for the wake phrase.
+	// WakeEnabled opts in to the always-on listener. It has nothing to listen
+	// for unless the wake phrase is on too; neither setting changes the other.
 	WakeEnabled bool `json:"wake_enabled,omitempty"`
 	// SilenceSendSeconds opts in to sending a dictated message after this many
 	// seconds with no new speech. 0 is off.
@@ -2027,6 +2028,9 @@ type VoiceConfig struct {
 type VoicePhrase struct {
 	Action string `json:"action"`
 	Phrase string `json:"phrase"`
+	// Enabled is whether the phrase is active. Nil keeps the action's default.
+	// It is stored apart from Phrase so turning a phrase off keeps its text.
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // Voice phrase actions.
@@ -2038,8 +2042,8 @@ const (
 // VoicePhraseDefaults are the known actions in display order, with neutral
 // defaults. The wake phrase avoids words people say to their agents.
 var VoicePhraseDefaults = []VoicePhrase{
-	{Action: VoiceActionSend, Phrase: "send now"},
-	{Action: VoiceActionWake, Phrase: "hey tofu"},
+	{Action: VoiceActionSend, Phrase: "send now", Enabled: new(true)},
+	{Action: VoiceActionWake, Phrase: "hey tofu", Enabled: new(false)},
 }
 
 // DictationSendPhraseDefault, the phrase cap and the silence-send range bound
@@ -2056,10 +2060,11 @@ func cleanVoicePhrase(phrase string) string {
 	return strings.TrimSpace(string(runes[:min(len(runes), DictationSendPhraseMaxRunes)]))
 }
 
-// Voice resolves dashboard.voice: every known action with its cleaned phrase,
-// the wake listener only when it has a phrase of its own, and the silence
-// send clamped into range. A wake phrase equal to the send phrase would send
-// and wake on the same words, so it counts as off. Nil-safe on the receiver.
+// Voice resolves dashboard.voice for its readers: every known action with its
+// cleaned phrase, "" when it is off, the wake listener only when it has an
+// active phrase of its own, and the silence send clamped into range. A wake
+// phrase equal to an active send phrase would send and wake on the same words,
+// so it counts as off. Nil-safe on the receiver.
 func (c *Config) Voice() VoiceConfig {
 	var stored VoiceConfig
 	if c != nil && c.Dashboard != nil && c.Dashboard.Voice != nil {
@@ -2070,13 +2075,23 @@ func (c *Config) Voice() VoiceConfig {
 		out.SilenceSendSeconds = max(SilenceSendSecondsMin, min(stored.SilenceSendSeconds, SilenceSendSecondsMax))
 	}
 	phrases := map[string]string{}
+	enabled := map[string]bool{}
 	for _, known := range VoicePhraseDefaults {
 		phrases[known.Action] = known.Phrase
+		enabled[known.Action] = *known.Enabled
 	}
 	phrases[VoiceActionSend] = c.DictationSendPhrase()
 	for _, phrase := range stored.Phrases {
 		if _, known := phrases[phrase.Action]; known {
 			phrases[phrase.Action] = cleanVoicePhrase(phrase.Phrase)
+			if phrase.Enabled != nil {
+				enabled[phrase.Action] = *phrase.Enabled
+			}
+		}
+	}
+	for action, on := range enabled {
+		if !on {
+			phrases[action] = ""
 		}
 	}
 	if strings.EqualFold(phrases[VoiceActionWake], phrases[VoiceActionSend]) {

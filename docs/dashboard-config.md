@@ -62,9 +62,9 @@ Spoken phrases and the opt-in hands-free settings. See
 
 | Setting | Key | Default |
 |---|---|---|
-| Send phrase | `dashboard.voice.phrases`, action `send` | `send now` (empty is off) |
-| Wake phrase | `dashboard.voice.phrases`, action `wake` | `hey tofu`; must differ from the send phrase |
-| Wake phrase listener | `dashboard.voice.wake_enabled` | off |
+| Send phrase | `dashboard.voice.phrases`, action `send` | on, `send now` |
+| Wake phrase | `dashboard.voice.phrases`, action `wake` | off, `hey tofu`; must differ from the send phrase while both are on |
+| Wake phrase listener | `dashboard.voice.wake_enabled` | off; needs the wake phrase on too |
 | On-device speech | in this browser, not saved in config | not installed |
 | Send after silence | `dashboard.voice.silence_send_seconds` | off; 2 to 30 seconds |
 
