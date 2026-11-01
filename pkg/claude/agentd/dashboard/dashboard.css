@@ -1984,11 +1984,11 @@ body :is(.overlay-window, .window-resize-frame).overlay-window-front { z-index: 
 .overlay-window-edge:is(.s, .sw, .se) { bottom: 0; }
 .overlay-window-edge:is(.nw, .se) { cursor: nwse-resize; }
 .overlay-window-edge:is(.ne, .sw) { cursor: nesw-resize; }
-.overlay-window-controls { flex: none; position: relative; z-index: 1; display: flex; align-items: center; background: var(--cmp-bar); }
+.overlay-window-controls { flex: none; position: relative; z-index: 3; display: flex; align-items: center; background: var(--cmp-bar); }
 .overlay-window-controls button { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
 .overlay-window-controls svg { display: block; fill: none; stroke: currentColor; pointer-events: none; }
 
-.overlay-look-macos { padding-left: 10px; }
+header.overlay-look-macos { padding-left: 10px; }
 .overlay-look-macos .overlay-window-controls { gap: 8px; margin-right: 8px; }
 .overlay-look-macos .overlay-window-controls button { width: 12px; height: 12px; border-radius: 50%; color: transparent; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .2); }
 .overlay-look-macos .overlay-window-controls svg { width: 8px; height: 8px; stroke-width: 1.4; }
@@ -1998,7 +1998,7 @@ body :is(.overlay-window, .window-resize-frame).overlay-window-front { z-index: 
 .overlay-look-macos .overlay-window-controls:is(:hover, :focus-within) button { color: rgba(0, 0, 0, .6); }
 .overlay-look-macos .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: 2px; }
 
-.overlay-look-windows { padding-right: 0; }
+header.overlay-look-windows { padding-right: 0; }
 .overlay-look-windows .overlay-window-controls { align-self: stretch; margin-left: 4px; }
 .overlay-look-windows .overlay-window-controls button { width: 44px; height: 100%; background: none; color: var(--cmp-text); }
 .overlay-look-windows .overlay-window-controls svg { width: 11px; height: 11px; stroke-width: 1; }
