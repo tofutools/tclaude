@@ -245,7 +245,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	// target surfaced so the popup can render
 	// "<caller> wants to <verb> <target>". Timeout = deny.
 	if timeout := parseAskHumanHeader(r); timeout > 0 && popupBaseURL != "" {
-		bodyPreview := snapshotRequestBody(r)
+		bodyPreview, bodyLabel := approvalPreviewFacts(r, snapshotRequestBody(r), "")
 		callerTitle := ""
 		if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
 			callerTitle = agent.DisplayTitle(row)
@@ -263,6 +263,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			path:            r.URL.Path,
 			rawQuery:        r.URL.RawQuery,
 			bodyPreview:     bodyPreview,
+			bodyLabel:       bodyLabel,
 			targetConvID:    targetConv,
 			targetConvTitle: targetTitle,
 			// autoGrantable stays false on the cross-agent path: "always

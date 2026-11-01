@@ -195,7 +195,8 @@ This move asks first. Before anything stops or moves, the dashboard shows how ma
 conversations will be exposed, that agents outside tclaude's sandbox can read them
 once moved, and that todo lists are deleted, and you confirm it there. On the
 command line `sandbox-impl set` refuses with the same facts unless you pass
-`--yes`. Nothing asks when the agent has no private state. Private conversation
+`--yes`. An agent that asks with `--ask-human` gets you a popup with the same
+facts. Nothing asks when the agent has no private state. Private conversation
 storage is something only OpenCode has here: other harnesses keep conversations
 in a state root shared per harness, so moving out puts this agent where those
 already are.

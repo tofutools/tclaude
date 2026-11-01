@@ -291,6 +291,39 @@ func TestSandboxImplAssign_MovesOpenCodeAgentIntoPrivateState(t *testing.T) {
 	assert.DirExists(t, allocation.StateRoot, "asking moves nothing")
 	assert.NotContains(t, storedOpenCodeSessions(t, store), older, "asking moves nothing")
 
+	// An agent's --ask-human popup shows the human the same facts.
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	popups, restorePopup := agentd.StubCapturingApprovalForTest(false)
+	const asker = "move-asker-1111-2222-3333"
+	f.HaveConvWithTitle(asker, "asker")
+	_, _, err = db.EnsureAgentForConv(asker, "test")
+	require.NoError(t, err)
+	askAs := func(payload map[string]any) {
+		raw, marshalErr := json.Marshal(payload)
+		require.NoError(t, marshalErr)
+		agentAsk := httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(raw))
+		agentAsk.Header.Set("X-Tclaude-Ask-Human", "30s")
+		refused := testharness.Serve(f.Mux, agentd.AsAgentPeer(agentAsk, asker))
+		require.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+	}
+	askAs(map[string]any{"implementation": "harness-builtin", "confirm_move_out": true})
+	require.Len(t, *popups, 1)
+	popup := (*popups)[0]
+	assert.Equal(t, "What approving does", popup.Label)
+	assert.Contains(t, popup.Body, "2 conversations")
+	assert.Contains(t, popup.Body, "outside tclaude's sandbox can read them")
+	assert.Contains(t, popup.Body, "todo lists are")
+	assert.Contains(t, popup.Body, "only OpenCode has here")
+	assert.Contains(t, popup.Body, `"confirm_move_out": true`, "the request itself still shows")
+
+	// Unconfirmed, or staying in tclaude's sandbox, approving moves nothing.
+	askAs(map[string]any{"implementation": "harness-builtin"})
+	askAs(map[string]any{"implementation": "tclaude-layer", "confirm_move_out": true})
+	require.Len(t, *popups, 3)
+	assert.NotContains(t, (*popups)[1].Body, "conversations")
+	assert.NotContains(t, (*popups)[2].Body, "conversations")
+	restorePopup()
+
 	body, err = json.Marshal(map[string]any{"implementation": "harness-builtin", "confirm_move_out": true})
 	require.NoError(t, err)
 	r = agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -775,6 +776,33 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 // snapshotApprovalRequestBody builds the human-facing preview for a permission
 // request. The preview is bounded and the request body is restored for the
 // downstream handler.
+// approvalFactsKey carries a request's approvalFactsFunc on its context.
+type approvalFactsKey struct{}
+
+// approvalFactsFunc states, from the request body, what approving does that the
+// body does not say: a confirmation flag shows as true, not as what it accepts.
+// "" adds nothing.
+type approvalFactsFunc func(body string) string
+
+// withApprovalFacts makes a handler's facts part of any popup a gate raises for
+// r, so the human sees what a client asking for the same thing is shown.
+func withApprovalFacts(r *http.Request, facts approvalFactsFunc) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), approvalFactsKey{}, facts))
+}
+
+// approvalPreviewFacts puts the request's facts ahead of its body in a popup.
+func approvalPreviewFacts(r *http.Request, bodyPreview, bodyLabel string) (string, string) {
+	facts, _ := r.Context().Value(approvalFactsKey{}).(approvalFactsFunc)
+	if facts == nil {
+		return bodyPreview, bodyLabel
+	}
+	stated := facts(bodyPreview)
+	if stated == "" {
+		return bodyPreview, bodyLabel
+	}
+	return stated + "\n\nRequest:\n" + bodyPreview, "What approving does"
+}
+
 func snapshotApprovalRequestBody(r *http.Request, _ string) string {
 	return snapshotRequestBody(r)
 }

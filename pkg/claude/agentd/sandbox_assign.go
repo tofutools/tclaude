@@ -55,6 +55,9 @@ func handleAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	// implementation with no confinement would walk around that cap. The slug is
 	// operator policy, like sandbox-profiles.manage — humans pass, an agent needs
 	// a real grant.
+	if r.Method == http.MethodPost {
+		r = withApprovalFacts(r, func(body string) string { return sandboxMoveOutApprovalFacts(convID, body) })
+	}
 	if _, ok := requirePermission(w, r, PermAgentSandboxImplementation); !ok {
 		return
 	}
@@ -364,11 +367,13 @@ func openCodeMoveOutFacts(count int) string {
 		conversations = "1 conversation"
 	}
 	return "This moves " + conversations + " out of this OpenCode agent's private state to the shared " +
-		"OpenCode store. Agents outside tclaude's sandbox can read them once moved. Their todo lists are " +
-		"deleted, because OpenCode's export does not carry them. Private conversation storage is something " +
-		"only OpenCode has here: other harnesses keep conversations in a state root shared per harness, " +
-		"so moving out puts this agent where those already are."
+		"OpenCode store. " + openCodeMoveOutCommonFacts
 }
+
+const openCodeMoveOutCommonFacts = "Agents outside tclaude's sandbox can read them once moved. Their todo lists are " +
+	"deleted, because OpenCode's export does not carry them. Private conversation storage is something " +
+	"only OpenCode has here: other harnesses keep conversations in a state root shared per harness, " +
+	"so moving out puts this agent where those already are."
 
 // openCodeMoveOutConfirmation refuses an assignment that would move an OpenCode
 // agent out of private state, naming what the move does. Nil when nothing would
@@ -392,6 +397,46 @@ func openCodeMoveOutConfirmation(h *harness.Harness, agentID, convID, cwd string
 		return refuse(err)
 	}
 	return &spawnFailure{http.StatusConflict, openCodeMoveOutConfirmKind, openCodeMoveOutFacts(len(conversations))}
+}
+
+// sandboxMoveOutApprovalFacts is what an agent's --ask-human popup says when
+// approving it would move an OpenCode agent out of private state. Only a request
+// that confirms the move can do that: without confirm_move_out it is refused,
+// with these facts, after the human approves.
+func sandboxMoveOutApprovalFacts(convID, body string) string {
+	var req struct {
+		Implementation string `json:"implementation"`
+		ConfirmMoveOut bool   `json:"confirm_move_out"`
+	}
+	if json.Unmarshal([]byte(body), &req) != nil || !req.ConfirmMoveOut {
+		return ""
+	}
+	agentID, err := db.AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		return ""
+	}
+	current, err := durableRelaunchConfigForConv(convID)
+	if err != nil {
+		return ""
+	}
+	h, err := harness.Resolve(current.Harness)
+	if err != nil {
+		return ""
+	}
+	implementation, err := validateAssignedSandboxImplementation(h, strings.TrimSpace(req.Implementation))
+	if err != nil || isTclaudeLayer(implementation) {
+		return ""
+	}
+	fail := openCodeMoveOutConfirmation(h, agentID, convID, current.Cwd)
+	switch {
+	case fail == nil:
+		return ""
+	case fail.Kind == openCodeMoveOutConfirmKind:
+		return fail.Msg
+	}
+	// The count failed, not the move: the human still has to hear what it does.
+	return "This may move conversations out of this OpenCode agent's private state, but tclaude could not count them: " +
+		fail.Msg + ". " + openCodeMoveOutCommonFacts
 }
 
 // openCodeStateToMoveOut returns the private state an assignment off tclaude's
