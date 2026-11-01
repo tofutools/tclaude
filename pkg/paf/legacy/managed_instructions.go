@@ -40,7 +40,6 @@ func writeManagedInstructions(w *paf.Writer, agent *paf.Agent, env *paf.Environm
 	index := ManagedInstructionIndex{Version: 1}
 	total := 0
 	seen := map[string]bool{}
-	blobs := map[string]bool{}
 	for _, resource := range resources {
 		if err := managedinstructions.Validate(resource.Kind, resource.Name, resource.Content); err != nil {
 			return err
@@ -60,11 +59,9 @@ func writeManagedInstructions(w *paf.Writer, agent *paf.Agent, env *paf.Environm
 		sum := sha256.Sum256(resource.Content)
 		digest := hex.EncodeToString(sum[:])
 		index.Items = append(index.Items, ManagedInstructionReference{Kind: resource.Kind, Name: resource.Name, SHA256: digest, Bytes: len(resource.Content)})
-		if !blobs[digest] {
-			if err := w.WriteFile(paf.AttachmentsDir+digest, "application/octet-stream", resource.Content); err != nil {
-				return err
-			}
-			blobs[digest] = true
+		// Performers of one bundle can share a resource.
+		if _, err := w.AddAttachment(resource.Content, "application/octet-stream"); err != nil {
+			return err
 		}
 		if resource.Kind == "skill" {
 			env.Skills = append(env.Skills, paf.SkillRef{Name: resource.Name, Source: "attachment:" + digest, SHA256: digest})

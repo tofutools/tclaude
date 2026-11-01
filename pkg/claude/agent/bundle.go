@@ -180,7 +180,7 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 	if p.NoContext {
 		q.Set("no_context", "true")
 	}
-	p.CarriedWorkflowParams.addTo(q)
+	p.addTo(q)
 	archive, err := os.CreateTemp("", ".agent-cli-export-")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -335,7 +335,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 			fmt.Fprintf(out, "Unresolved %s %s (original: %q): --set %s=value or --keep-paths\n", p.Item, p.Field, p.Original, p.Name)
 		}
 		for _, w := range preview.CarriedWorkflows {
-			fmt.Fprintf(out, "Also carries workflow %s, not imported here: review it with process-templates import --workflow %s\n", w.Root, w.Key)
+			fmt.Fprintf(out, "Also carries workflow %s, not imported here: review it with process-templates import --workflow %s\n", shown(w.Root), shown(w.Key))
 		}
 		if !p.Apply {
 			fmt.Fprintln(out, "Preview only. Use --apply --group NAME to create an agent.")

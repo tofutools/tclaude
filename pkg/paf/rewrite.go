@@ -47,7 +47,7 @@ func WithPrivacy(a *Archive, out io.Writer, p Privacy, limits Limits, producer P
 	if err := w.WriteJSON(PrivacyPath, p); err != nil {
 		return err
 	}
-	_, err := w.Close(producer, keys...)
+	_, err := w.Close(producer, RewriteKeys(a, keys)...)
 	return err
 }
 

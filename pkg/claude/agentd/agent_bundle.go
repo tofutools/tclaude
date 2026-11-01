@@ -555,6 +555,11 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		hash := sha256.New()
 		n, err := io.Copy(io.MultiWriter(file, hash), http.MaxBytesReader(w, r.Body, agentTransferLimit()+1))
 		fileDigest = hex.EncodeToString(hash.Sum(nil))
+		// A confirmation is for the one agent the human saw listed.
+		if key := r.URL.Query().Get("agent"); key != "" {
+			sum := sha256.Sum256([]byte(fileDigest + "\n" + key))
+			fileDigest = hex.EncodeToString(sum[:])
+		}
 		if err != nil || n > agentTransferLimit() {
 			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
 			return
@@ -594,7 +599,11 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		d.Name = name
 	}
 	// A performer lands under the role this node's workflow asks for. The
-	// importer names it; the file only ever suggests one.
+	// importer names it; the file only ever suggests one, so choosing an agent
+	// out of a file takes no role from it.
+	if q.Get("agent") != "" && direct {
+		d.Role = ""
+	}
 	if role := q.Get("role"); role != "" && direct {
 		d.Role = role
 	}

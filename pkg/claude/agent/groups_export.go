@@ -80,7 +80,7 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 		path += "&allow_flagged=true"
 	}
 	carried := url.Values{}
-	p.CarriedWorkflowParams.addTo(carried)
+	p.addTo(carried)
 	if len(carried) > 0 {
 		path += "&" + carried.Encode()
 	}
@@ -418,7 +418,7 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 	}
 	fmt.Fprintf(stdout, "  format version: %d\n", insp.FormatVersion)
 	for _, w := range insp.CarriedWorkflows {
-		fmt.Fprintf(stdout, "  also carries:   workflow %s, not imported here; review it with process-templates import --workflow %s\n", w.Root, w.Key)
+		fmt.Fprintf(stdout, "  also carries:   workflow %s, not imported here; review it with process-templates import --workflow %s\n", shown(w.Root), shown(w.Key))
 	}
 
 	if len(insp.Findings) > 0 {

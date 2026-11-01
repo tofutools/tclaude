@@ -295,3 +295,42 @@ func TestRedactionKeepsOrDropsWorkflows(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, paf.KindAgent, copied.Manifest.Kind, "one agent with no workflow is an agent file")
 }
+
+// Redacting or consenting vouches for nothing, so a key that never signed the
+// file cannot sign a workflow into passing the unsigned-import policy.
+func TestRewritesDoNotVouchForWorkflows(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	key := paf.SigningKey{Key: priv, KeyID: "instance", Signer: &paf.Signer{Kind: "instance"}}
+	rewrite := func(t *testing.T, raw []byte) (redacted, consented *paf.Archive) {
+		t.Helper()
+		a, err := openEnvelope(t, raw)
+		require.NoError(t, err)
+		var buf bytes.Buffer
+		_, err = privacy.Redact(a, &buf, privacy.RedactOptions{DropReasoning: true}, paf.Producer{Name: "test"}, key)
+		require.NoError(t, err)
+		redacted, err = openEnvelope(t, buf.Bytes())
+		require.NoError(t, err)
+		var out bytes.Buffer
+		_, err = privacy.AddConsent(a, &out, privacy.ConsentRequest{By: "human", Audience: privacy.AudienceSelf}, paf.Limits{}, paf.Producer{Name: "test"}, key)
+		require.NoError(t, err)
+		consented, err = openEnvelope(t, out.Bytes())
+		require.NoError(t, err)
+		return redacted, consented
+	}
+
+	foreign := writeEnvelope(t, envelopeOpts{kind: paf.KindAgent, bundle: envelopeBundle(childSource)})
+	red, con := rewrite(t, foreign)
+	require.Len(t, red.Manifest.Workflows, 1)
+	assert.Empty(t, red.Signatures)
+	assert.Empty(t, con.Signatures)
+
+	own := writeEnvelope(t, envelopeOpts{kind: paf.KindAgent, bundle: envelopeBundle(childSource), keys: []paf.SigningKey{key}})
+	red, con = rewrite(t, own)
+	assert.True(t, paf.SignedBy(red.Signatures, pub), "a key that signed the file keeps signing it")
+	assert.True(t, paf.SignedBy(con.Signatures, pub))
+
+	plain := writeEnvelope(t, envelopeOpts{kind: paf.KindAgent})
+	red, _ = rewrite(t, plain)
+	assert.True(t, paf.SignedBy(red.Signatures, pub), "without workflows a rewrite signs as before")
+}

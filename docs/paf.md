@@ -395,7 +395,9 @@ security posture before anything starts.
 A PAF is also the shared envelope: one archive that holds agents and
 [PWF](pwf.md) workflows side by side, and can say which agents perform which
 workflows. There is no separate file type. A `.pwf` stays a workflow on its
-own, and a `.paf` that carries workflows opens wherever a `.pwf` does.
+own. A `.paf` that carries workflows opens in `process-templates inspect` and
+`import`, and in the dashboard's *import workflow*. Dropping a file on the dock
+or on a group's processes still takes a `.pwf` only.
 
 Carrying is opt-in. Nothing below happens unless you ask for it.
 
@@ -406,7 +408,7 @@ tclaude paf export reviewer --file reviewer.paf --workflow ship-feature
 
 # A group with its saved processes; a snapshot likewise.
 tclaude agent groups export team --out team.paf --workflows
-tclaude agent snapshot create before-release --workflow ship-feature
+tclaude agent snapshot create reviewer --name before-release --workflow ship-feature
 
 # A workflow with an agent for one of its roles, pre-briefed.
 tclaude agent process-templates export ship-feature \
@@ -441,7 +443,8 @@ tclaude paf import --file ship-feature.paf --agent reviewer --role reviewer \
 ```
 
 `--role` is the role you land it under. The file proposes a role and cannot
-assign one: a role given by the importer is the only way a performer gets it.
+assign one: an agent chosen with `--agent` lands with no role unless you give it
+one.
 
 In the dashboard, *import workflow* accepts a `.paf`. Its review lists the
 agents the file ships, each with *Land it…*, and the agent import dialog offers
@@ -462,9 +465,19 @@ records a dropped one as `drop_unredactable`:
 | Paths to placeholders, `strip_identity` (so every [published](#publishing) PAF) | Dropped |
 
 A `bundle` that loses all its workflows this way becomes an `agent` PAF if it
-has one agent; with several, the redaction is refused. The credential scan
-covers workflow entries like any other. Federation transfers do not carry
-workflows; only files do. A bundle offered as a federation transfer is refused.
+has one agent; with several, the redaction is refused. `strip_identity` takes a
+PAF of one agent, so a `bundle` cannot be published as it is: export the agent on
+its own. The credential scan covers workflow entries like any other.
+
+A signature on a PAF covers the workflows it carries, and counts for
+[refusing unsigned files](pwf.md#refusing-unsigned-files). Redacting or
+consenting vouches for nothing, so a copy that keeps workflows is signed only by
+a key that already signed the original.
+
+Moves and other federation transfers do not carry workflows, and a bundle offered
+as a transfer is refused. A [snapshot shared on a Board](#sharing-a-snapshot-on-a-board)
+is the stored file, so a snapshot created with workflows keeps them, and a
+receiver needs a reader of PAF 0.2.
 
 ## Exporting and importing an agent
 

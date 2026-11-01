@@ -138,6 +138,9 @@ func Redact(a *paf.Archive, out io.Writer, opts RedactOptions, producer paf.Prod
 	if opts.StripIdentity {
 		r.idents = identifiers(a)
 	}
+	if len(kept) > 0 {
+		keys = paf.RewriteKeys(a, keys)
+	}
 	return r.run(producer, keys)
 }
 
@@ -211,7 +214,7 @@ func workflowEntries(a *paf.Archive, key string) []paf.Entry {
 func (r *redactor) workflows() error {
 	for _, wf := range r.a.Manifest.Workflows {
 		if !r.keptWF[wf.Key] {
-			r.drop("workflow " + wf.Root)
+			r.drop("carried workflow")
 			continue
 		}
 		if err := r.w.AddWorkflow(wf.Key, wf.Root, wf.Requires); err != nil {

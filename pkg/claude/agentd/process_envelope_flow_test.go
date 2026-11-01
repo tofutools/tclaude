@@ -138,10 +138,18 @@ func TestWorkflowEnvelopeShipsAPerformerOptIn(t *testing.T) {
 	assert.Equal(t, "qa", landed.Agent.Role)
 	assert.NotEqual(t, envelopeReviewer, landed.Spawn.ConvID, "an import forks")
 	require.Len(t, landed.CarriedWorkflows, 1)
+
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent-bundle/import?agent="+key+"&cwd="+url.QueryEscape(dest), bytes.NewReader(file))))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var unnamed struct {
+		Agent struct {
+			Role string `json:"role"`
+		} `json:"agent"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &unnamed))
+	assert.Empty(t, unnamed.Agent.Role, "the file proposes a role and cannot assign one")
 }
 
-// The export gates of both sides apply: a role the workflow does not ask for,
-// an agent the caller may not export, and credentials in what would travel.
 // An agent asking the human to approve a .paf import shows the review of the
 // workflow inside, and what else the file ships.
 func TestWorkflowEnvelopePopupShowsThePerformers(t *testing.T) {
@@ -169,6 +177,8 @@ func TestWorkflowEnvelopePopupShowsThePerformers(t *testing.T) {
 	assert.NotContains(t, body, "cannot be reviewed")
 }
 
+// The export gates of both sides apply: a role the workflow does not ask for,
+// an agent the caller may not export, and credentials in what would travel.
 func TestWorkflowEnvelopeExportGates(t *testing.T) {
 	f := envelopeFlow(t)
 
