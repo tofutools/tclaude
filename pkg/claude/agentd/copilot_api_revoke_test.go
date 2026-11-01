@@ -49,6 +49,9 @@ var copilotAPIPostureWriters = []struct {
 	// landing, neither of which has a Copilot posture to demote.
 	{"lifecycle.go", "recordBaselineResumeProfile", "SetAgentRelaunchProfile"},
 	{"lifecycle.go", "recordBaselineResumeProfile", "SetConversationResumeProfile"},
+	// The first record of an OpenCode conversation an import just minted: there
+	// is no earlier profile to replace, and this harness has no Copilot drive.
+	{"agent_bundle.go", "recordOfflineResumeProfile", "SetConversationResumeProfile"},
 }
 
 // TestNoAutomaticRevokeOfTheCopilotAPIPosture is the mechanical statement that

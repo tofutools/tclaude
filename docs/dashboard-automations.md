@@ -27,8 +27,9 @@ more, or a cron expression. Each job has run-now, a recent-runs log, edit,
 duplicate, enable and delete.
 
 **Spawn** jobs need `features.triggers`. They take a spawn profile, roles and a
-concurrency rule: Forbid, or Allow with a max number of live workers. With the flag
-off, existing spawn jobs still list, but you can't edit or duplicate them.
+concurrency rule: Forbid, Replace (stop the live worker first), or Allow with a
+max number of live workers. With the flag off, existing spawn jobs still list,
+but you can't edit or duplicate them.
 
 The CLI equivalent is `tclaude agent cron`.
 

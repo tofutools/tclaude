@@ -974,7 +974,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     // and a large history cut until the importer accepts it.
     (!historyCutNeedsConfirm(agentPreview) || !!choices.confirmHistoryLoss);
   const busy = phase === 'importing' || phase === 'loading' || phase === 'refreshing';
-  const offlineBlocker = kind === 'agent' ? offlineImportBlocker(agentPreview, choices) : '';
+  const offlineBlocker = kind === 'agent' ? offlineImportBlocker(agentPreview) : '';
   const submit = async (start = false) => {
     setError('');
     setPhase('importing');

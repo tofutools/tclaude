@@ -34,9 +34,9 @@ pending permission request, a **🔑** opens the
   and `Close all tabs`. Boards add `Open in overlay`.
 - **Right-click a group** for `Expand group` or `Collapse group`, `Rename group…`,
   `Ungroup tabs` and `Close tabs in group`. Double-click or press F2 to rename.
-- **Detach** a tab into its own browser window by dragging it off the strip or
-  pressing **⧉ tab**. **↩ dashboard**, or dragging the pop-out's header back,
-  reattaches it.
+- **Detach** a tab by dragging it off the strip, which opens its own browser
+  window, or with **⧉ tab** or `Detach tab`, which open it in a new browser tab.
+  **↩ dashboard**, or dragging the pop-out's header back, reattaches it.
 - **`$`** after the last tab shows or hides costs next to agent names. It works
   separately from the one in Groups. Green is API spend, and muted italic `≈$…` is
   a subscription what-if estimate. A tab's tooltip always has its cost.

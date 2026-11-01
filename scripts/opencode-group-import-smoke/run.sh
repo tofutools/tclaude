@@ -10,7 +10,8 @@
 # install default and imports the same archive again: that member's conversation
 # goes in its private state, never the shared store, and resumes in a sandboxed
 # server, and resume recovery still finds that conversation with its resume
-# profile gone.
+# profile gone. An agent PAF of the same conversation then lands offline both
+# ways (`paf import --no-start`), with no server until it resumes.
 #
 # It needs `opencode`, `tmux`, `jq` and a working `bwrap` on PATH. Anything missing
 # is a failure:
@@ -128,6 +129,8 @@ node src tclaude agent groups create crew
 node src tclaude agent groups add crew "$SOURCE_ID" --role lead
 node src tclaude agent groups export crew --format paf --out "$ROOT/crew.paf"
 test -s "$ROOT/crew.paf" || die "the group export wrote nothing"
+node src tclaude paf export "$SOURCE_ID" --history --file "$ROOT/agent.paf"
+test -s "$ROOT/agent.paf" || die "the agent export wrote nothing"
 
 # The destination daemon does not run in the landing directory, as a real one
 # would not, so its own `opencode session list` cannot see the landed member.
@@ -228,10 +231,35 @@ PY
 log "the managed server serves the same session"
 managed_server_holds "$LANDED" harness-builtin
 
+# land_offline <group> <name> <expected sandbox implementation>: the agent lands
+# with no server, and resume serves its conversation under that implementation.
+OFFLINE=
+land_offline() {
+	node dst tclaude paf import --file "$ROOT/agent.paf" --cwd "$DST_CWD" --group "$1" --name "$2" \
+		--apply --no-start --json | tee "$ROOT/offline-$2.json"
+	OFFLINE=$(jq -r '.spawn.conv_id' "$ROOT/offline-$2.json")
+	[[ $OFFLINE == ses_* ]] || die "the offline import returned no conversation: $OFFLINE"
+	local running
+	running=$(python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$OFFLINE" <<'PY'
+import sqlite3, sys
+
+print(sqlite3.connect(sys.argv[1]).execute(
+    "SELECT count(*) FROM opencode_runtimes WHERE conv_id = ?", (sys.argv[2],)).fetchone()[0])
+PY
+)
+	[[ $running == 0 ]] || die "an offline landing started a server"
+	node dst tclaude agent resume "$OFFLINE" | tee "$ROOT/offline-$2-resume.txt"
+	wait_for 90 "the offline agent's server" managed_server_holds "$OFFLINE" "$3"
+}
+
+log "landing an agent offline on the shared store"
+land_offline crew-landed parked harness-builtin
+
 log "importing again under tclaude's sandbox"
 node dst tclaude agent groups stop crew-landed --force
 node dst tmux -L tclaude kill-server 2>/dev/null || true
 node dst tclaude agent sandbox-impl default set tclaude-layer
+node dst tclaude agent stop "$OFFLINE" --force
 AMBIENT_BEFORE=$(sessions_on_dst | jq -c '[.[].id] | sort')
 node dst tclaude agent groups import "$ROOT/crew.paf" --dry-run --into "$DST_CWD" --as crew-walled | tee "$ROOT/walled-dry-run.txt"
 grep -q 'sandbox tclaude-layer' "$ROOT/walled-dry-run.txt" || die "the dry run does not state the sandboxed posture"
@@ -289,3 +317,9 @@ private_opencode session list --format json | jq -e --arg id "$WALLED" 'any(.[];
 	|| die "the recovered conversation left private state"
 
 log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed"
+
+log "landing an agent offline under tclaude's sandbox"
+land_offline crew-walled parked-walled tclaude-layer
+[[ $(sessions_on_dst | jq -c '[.[].id] | sort') == "$AMBIENT_BEFORE" ]] || die "the offline sandboxed agent reached the shared store"
+
+log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed, started and offline"

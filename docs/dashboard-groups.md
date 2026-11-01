@@ -135,7 +135,9 @@ spot.
 Each agent is one row. The first column has the status dot, then icons for
 focus window, retire, and **⚙**. **Agent hide button** in
 [Config › Appearance](dashboard-config.md#appearance) adds a hide window icon. Below them is the harness line,
-such as `CC · Opus 4.8 hi $0.42`: harness, model, effort and cost.
+such as a Claude Code logo, then `Opus 4.8 hi $0.42`: harness, model, effort and
+cost. Hover the logo for the harness name. A harness with no logo, such as pi,
+shows its name as text.
 
 - **The status dot** is `●` online and `○` offline. Click it to turn the agent
   off (exit gracefully or force kill) or wake it.

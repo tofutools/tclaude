@@ -33,6 +33,8 @@ type launchDefaults struct {
 	resolvedBy string
 	// sandboxSource and implementationSource are the tiers behind each field.
 	sandboxSource, implementationSource string
+	// tiers are the profile tiers walked, for a caller resolving another field.
+	tiers []launchProfileTier
 }
 
 // resolveLaunchDefaults walks the same tiers a real spawn walks — the named
@@ -158,6 +160,7 @@ func resolveLaunchDefaults(
 		resolvedBy:     joinProvenanceSources(harnessSource, sandboxSource, implementationSource),
 
 		sandboxSource: sandboxSource, implementationSource: implementationSource,
+		tiers: tiers,
 	}, nil, nil
 }
 

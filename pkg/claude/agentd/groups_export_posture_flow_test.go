@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -291,6 +292,60 @@ func TestAgentImport_RecordedPostureDoesNotWiden(t *testing.T) {
 	assert.Equal(t, "tclaude-layer", got)
 	require.NotNil(t, res.Posture)
 	assert.Equal(t, "tclaude-layer", res.Posture.SandboxImplementation)
+}
+
+// A file asking for more automatic approval than this node would give does not
+// get it, and the preview and the result say so.
+func TestAgentImport_RecordedApprovalDoesNotWiden(t *testing.T) {
+	f := newFlow(t)
+	seedClaudeConversation(t, f, postureMember, "scout", f.TestCwd("src"))
+	agentID, err := db.AgentIDForConv(postureMember)
+	if err == nil && agentID == "" {
+		f.HaveEnrolledAgent(postureMember)
+		agentID, err = db.AgentIDForConv(postureMember)
+	}
+	require.NoError(t, err)
+	bypass := "bypassPermissions"
+	profile, err := db.AgentRelaunchProfileForConv(postureMember)
+	require.NoError(t, err)
+	if profile == nil {
+		profile = &db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
+	}
+	profile.ApprovalPolicy = &bypass
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+	f.HaveGroup("receivers")
+	export := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+postureMember+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, export.Code, export.Body.String())
+	dst := f.TestCwd("dst")
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+
+	dry := importAgentArchive(t, f, export.Body.Bytes(), url.Values{"cwd": {dst}, "group": {"receivers"}})
+	assert.Contains(t, strings.Join(dry.Warnings, "\n"), "approval bypassPermissions")
+
+	res := importAgentArchive(t, f, export.Body.Bytes(), url.Values{"apply": {"true"}, "cwd": {dst}, "group": {"receivers"}})
+	require.True(t, res.Applied)
+	assert.Contains(t, strings.Join(res.Warnings, "\n"), "approval bypassPermissions")
+	landed, err := db.AgentRelaunchProfileForConv(res.Spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, landed)
+	require.NotNil(t, landed.ApprovalPolicy)
+	assert.NotEqual(t, bypass, *landed.ApprovalPolicy)
+
+	// A teleport or move the receiver accepted keeps it.
+	query := url.Values{"cwd": {dst}, "group": {"receivers"}, "apply": {"true"}}
+	r := agentd.AsAcceptedMove(agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost,
+		"/v1/agent-bundle/import?"+query.Encode(), bytes.NewReader(export.Body.Bytes()))))
+	moved := httptest.NewRecorder()
+	f.Mux.ServeHTTP(moved, r)
+	require.Equal(t, http.StatusOK, moved.Code, moved.Body.String())
+	var accepted landingResult
+	require.NoError(t, json.Unmarshal(moved.Body.Bytes(), &accepted))
+	assert.NotContains(t, strings.Join(accepted.Warnings, "\n"), "approval bypassPermissions")
+	landed, err = db.AgentRelaunchProfileForConv(accepted.Spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, landed)
+	require.NotNil(t, landed.ApprovalPolicy)
+	assert.Equal(t, bypass, *landed.ApprovalPolicy)
 }
 
 // An agent landed offline has its posture before anything launches it.

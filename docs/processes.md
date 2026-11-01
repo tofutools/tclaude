@@ -293,8 +293,9 @@ agent-scoped run, `rescope --group` **promotes** it to a group the agent
 belongs to; completed history is kept. Demoting a group-scoped run to agent
 scope is not supported.
 
-Unscoped runs need no migration and appear only in the Processes list, not
-in the Groups or Terminals overlays.
+Unscoped runs need no migration and appear only in `tclaude process runs ls`,
+not in the dashboard: Automations › Processes lists templates, and the Groups
+and Terminals overlays show scoped runs only.
 
 **Runs in context.** The dashboard overlays poll `GET /v1/process/context`
 alongside the snapshot. It returns one mini-graph projection per scoped run
@@ -401,9 +402,9 @@ for an agent is `--agent`.
 **Following it.**
 
 - **Groups › Agents** — each group header counts running, waiting-on-you and
-  planned runs, and each member row's Process column shows a *run › node*
-  badge for every run the agent works in (amber when parked on a human gate,
-  dashed when queued).
+  planned runs, and the optional Process column (turn it on under **▾ view**)
+  shows a *run › node* badge on each member row for every run the agent works
+  in (amber when parked on a human gate, dashed when queued).
 - **Groups › Processes** — each group's runs as live graph cards with the
   agents on the nodes they perform, needs-you first. *open ›* focuses one run:
   the live graph, a docked inspector (approve or request changes on a human

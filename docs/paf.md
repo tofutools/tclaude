@@ -92,7 +92,11 @@ receiving side.
   receiver's own policy approves them explicitly. Ownership never travels.
 - **Posture is decided by the receiver.** The recorded sandbox and approval
   posture is shown at import, but the landing profile and the receiver's
-  policy decide how the new agent actually runs. A received history is
+  policy decide how the new agent actually runs. A file can make its sandbox,
+  approval, tools and auto-review tighter than a spawn here would resolve,
+  never wider: a wider value is dropped, and the preview and the import result
+  say so. A teleport or direct move the receiver accepted keeps its approval,
+  tools and auto-review, so a moved agent does not stall on prompts. A received history is
   untrusted input: it may contain instructions written by anyone whose text
   reached the original agent.
 
@@ -339,8 +343,12 @@ permissions and ownership are advisory only.
 instead: it joins the group with its conversation installed and its
 briefing queued, and `tclaude agent resume` starts it later on its landing
 harness. Landing offline needs a conversation that lands (not
-`--skip-history` or a configuration-only import) and is not yet available
-on OpenCode.
+`--skip-history` or a configuration-only import). On OpenCode the
+conversation goes in the store its landing posture reads, so a
+tclaude-sandboxed agent lands in private state, and its server starts at
+resume. OpenCode takes a model only from the launch prompt, so an offline
+landing with its conversation intact keeps the conversation's last model, even
+when the import names another; the import warns when it does.
 
 The agent lands on its own harness unless `--harness` names another. When
 the source harness is not available here, the import says so and asks for
