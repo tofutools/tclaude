@@ -27,6 +27,13 @@ export function boardToolDigit(index) {
   return index < 9 ? String(index + 1) : index === 9 ? '0' : '';
 }
 
+export const BOARD_ZOOM_MIN = 0.2;
+export const BOARD_ZOOM_MAX = 4;
+
+export function clampBoardZoom(zoom) {
+  return Math.min(BOARD_ZOOM_MAX, Math.max(BOARD_ZOOM_MIN, zoom));
+}
+
 export const BOARD_COLORS = Object.freeze(['#1e1e1e', '#e03131', '#2f9e44', '#1971c2', '#f08c00', '#9c36b5']);
 export const BOARD_FILLS = Object.freeze(['transparent', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99', '#eebefa']);
 

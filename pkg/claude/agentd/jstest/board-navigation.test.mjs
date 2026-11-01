@@ -117,6 +117,44 @@ test('the grid scrolls and zooms with the board', async (t) => {
   assert.deepEqual([far.x, far.y], [-20, -10]);
 });
 
+test('the zoom controls and keys step, reset and fit', async (t) => {
+  const { harness, mount } = await setup(t);
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const root = await mount(boardFetch({ version: 1, elements: [m.newElement('rectangle', { id: 'wide', x: 0, y: 0, width: 4000, height: 100 })] }));
+  sized(root.querySelector('svg.board-canvas'), 0, 0, 1000, 600);
+  const zoom = () => root.querySelector('.board-zoom').textContent;
+  const button = (name) => root.querySelector(`[aria-label="${name}"]`);
+  const click = (name) => harness.act(() => button(name).click());
+  const body = root.querySelector('svg.board-canvas');
+
+  assert.equal(button('Reset zoom to 100%').disabled, true);
+  await click('Zoom in');
+  assert.equal(zoom(), '125%');
+  await click('Reset zoom to 100%');
+  assert.equal(zoom(), '100%');
+  await click('Zoom out');
+  assert.equal(zoom(), '80%');
+  await click('Fit everything in view');
+  assert.equal(zoom(), '25%');
+
+  await press(harness, body, 'Whatever', { code: 'Digit0', shiftKey: true });
+  assert.equal(zoom(), '100%');
+  await press(harness, body, '=', { code: 'Digit0', shiftKey: true }); // Shift+0 on a Nordic layout
+  assert.equal(zoom(), '100%', 'the physical key decides, not what it types');
+  await press(harness, body, '+');
+  assert.equal(zoom(), '125%');
+  await press(harness, body, '-');
+  assert.equal(zoom(), '100%');
+  await press(harness, body, '!', { code: 'Digit1', shiftKey: true });
+  assert.equal(zoom(), '25%');
+  await press(harness, body, '-', { ctrlKey: true });
+  assert.equal(zoom(), '25%', 'with Ctrl held the key stays the browser\'s');
+
+  for (let i = 0; i < 20; i += 1) await press(harness, body, '+');
+  assert.equal(zoom(), '400%');
+  assert.equal(button('Zoom in').disabled, true);
+});
+
 test('each tool has its number key, shown in the menu, in keyboard order', async (t) => {
   const { harness, mount } = await setup(t);
   const { BOARD_TOOLS, boardToolDigit } = await harness.importDashboardModule('js/board-model.js');

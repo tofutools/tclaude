@@ -22,6 +22,7 @@ import {
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
   entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
   QUICK_SHAPES, reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, stackOrder, suggestedShape, toExcalidraw, topHit, withLabels,
+  BOARD_ZOOM_MAX, BOARD_ZOOM_MIN, clampBoardZoom,
 } from './board-model.js';
 import { BoardContextMenu } from './board-context-menu.js';
 import { clipboardReadNote } from './insecure-origin.js';
@@ -142,6 +143,8 @@ function dash(el) {
   if (el.strokeStyle === 'dotted') return '2 5';
   return null;
 }
+
+const ZOOM_STEP = 1.25; // a click or key of the zoom controls
 
 const TEXT_ANCHOR = { center: 'middle', right: 'end' };
 
@@ -1268,12 +1271,26 @@ export function BoardEditor({
     setSelected([shape.id]);
   }
 
+  // zoomTo changes the zoom, holding the middle of the view still.
+  function zoomTo(next) {
+    const rect = svgRef.current?.getBoundingClientRect?.();
+    const px = (rect?.width || 0) / 2;
+    const py = (rect?.height || 0) / 2;
+    setView((v) => {
+      const zoom = clampBoardZoom(next(v.zoom));
+      return { zoom, x: v.x + px / v.zoom - px / zoom, y: v.y + py / v.zoom - py / zoom };
+    });
+  }
+  const zoomIn = () => zoomTo((zoom) => zoom * ZOOM_STEP);
+  const zoomOut = () => zoomTo((zoom) => zoom / ZOOM_STEP);
+  const zoomReset = () => zoomTo(() => 1);
+
   // fitView shows everything, never closer than actual size.
   function fitView() {
     const box = contentBounds(liveElements(elements.current));
     const rect = svgRef.current?.getBoundingClientRect?.();
     if (!box || !rect?.width) return;
-    const zoom = Math.max(0.2, Math.min(1, rect.width / (box.width + 80), rect.height / (box.height + 80)));
+    const zoom = clampBoardZoom(Math.min(1, rect.width / (box.width + 80), rect.height / (box.height + 80)));
     setView({ zoom, x: box.x + box.width / 2 - rect.width / 2 / zoom, y: box.y + box.height / 2 - rect.height / 2 / zoom });
   }
 
@@ -1470,6 +1487,11 @@ export function BoardEditor({
       if (mod && key === 'a') { event.preventDefault(); selectAll(); return; }
       if (mod && key === 'd') { event.preventDefault(); duplicate(); return; }
       if (mod || event.altKey) return;
+      // By physical key: a layout's Shift+0 may read `=`, which zooms in.
+      if (event.shiftKey && event.code === 'Digit0') { event.preventDefault(); zoomReset(); return; }
+      if (event.shiftKey && event.code === 'Digit1') { event.preventDefault(); fitView(); return; }
+      if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomIn(); return; }
+      if (event.key === '-') { event.preventDefault(); zoomOut(); return; }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length) { event.preventDefault(); remove(selected); return; }
       if (event.key === 'Escape') { suggesting.current = null; setSelected([]); setTool('select'); redraw(); return; }
       if (selected.length === 1 && !onButton(event)) {
@@ -1678,7 +1700,13 @@ export function BoardEditor({
       ${sels.length > 0 && html`<button type="button" class="board-tool" title="Delete (Del)" aria-label="Delete selection" onClick=${() => remove(selected)}>🗑</button>`}
       ${arrangeable >= 2 && html`<span class="board-sep"></span>${ALIGNMENTS.filter((a) => arrangeable >= (a.min || 2)).map((a) => html`<button key=${a.id} type="button" class="board-tool"
         title=${a.label} aria-label=${a.label} onClick=${() => align(a.id)}>${a.icon}</button>`)}`}
-      <span class="board-zoom">${Math.round(view.zoom * 100)}%</span>
+      <span class="board-zoom-controls" role="group" aria-label="Board zoom">
+        <button type="button" class="board-tool" title="Zoom out (-)" aria-label="Zoom out" disabled=${view.zoom <= BOARD_ZOOM_MIN} onClick=${zoomOut}>−</button>
+        <span class="board-zoom">${Math.round(view.zoom * 100)}%</span>
+        <button type="button" class="board-tool" title="Zoom in (+)" aria-label="Zoom in" disabled=${view.zoom >= BOARD_ZOOM_MAX} onClick=${zoomIn}>+</button>
+        <button type="button" class="board-tool" title="Reset zoom to 100% (Shift+0)" aria-label="Reset zoom to 100%" disabled=${view.zoom === 1} onClick=${zoomReset}>1:1</button>
+        <button type="button" class="board-tool" title="Fit everything in view (Shift+1)" aria-label="Fit everything in view" disabled=${!live.length} onClick=${fitView}>⤢</button>
+      </span>
     </div>
     <div class="board-canvas-wrap" style=${paper}>
       <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`} data-board-id=${boardId}

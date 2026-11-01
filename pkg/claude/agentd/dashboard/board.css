@@ -98,7 +98,10 @@ body.slop, body.vegas {
 }
 .board-swatch.fill { border-radius: 5px; }
 .board-swatch.on { border-color: var(--board-blue); box-shadow: 0 0 0 2px #1f6feb66; }
-.board-zoom { margin-left: auto; font-size: 11px; color: var(--board-muted); }
+.board-zoom-controls { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.board-zoom { min-width: 36px; text-align: center; font-size: 11px; color: var(--board-muted); }
+.board-zoom-controls .board-tool:disabled { opacity: .4; cursor: default; }
+.board-zoom-controls .board-tool:disabled:hover { background: none; border-color: transparent; }
 
 .board-canvas-wrap {
   position: relative; flex: 1 1 auto; min-height: 240px; margin: 0 12px 12px; overflow: hidden;
