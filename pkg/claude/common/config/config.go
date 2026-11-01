@@ -2034,6 +2034,11 @@ type VoiceConfig struct {
 	// capitalizes what follows. 0 is off.
 	CommaPauseSeconds  float64 `json:"comma_pause_seconds,omitempty"`
 	PeriodPauseSeconds float64 `json:"period_pause_seconds,omitempty"`
+	// ContinuousEnabled opts in to continuous mode: after a voice message
+	// sends, the next spoken sentence sends another with no wake phrase.
+	ContinuousEnabled bool `json:"continuous_enabled,omitempty"`
+	// ContinuousIdleSeconds ends continuous mode after this much silence.
+	ContinuousIdleSeconds int `json:"continuous_idle_seconds,omitempty"`
 }
 
 // VoicePhrase is one spoken phrase and what it does.
@@ -2049,6 +2054,7 @@ type VoicePhrase struct {
 const (
 	VoiceActionSend = "send"
 	VoiceActionWake = "wake"
+	VoiceActionStop = "stop"
 )
 
 // VoicePhraseDefaults are the known actions in display order, with neutral
@@ -2056,17 +2062,21 @@ const (
 var VoicePhraseDefaults = []VoicePhrase{
 	{Action: VoiceActionSend, Phrase: "send now", Enabled: new(true)},
 	{Action: VoiceActionWake, Phrase: "hey tofu", Enabled: new(false)},
+	{Action: VoiceActionStop, Phrase: "stop listening", Enabled: new(true)},
 }
 
 // DictationSendPhraseDefault, the phrase cap and the silence-send range bound
 // config dashboard.voice.
 const (
-	DictationSendPhraseDefault  = "send now"
-	DictationSendPhraseMaxRunes = 60
-	SilenceSendSecondsMin       = 2
-	SilenceSendSecondsMax       = 30
-	VoicePauseSecondsMin        = 0.3
-	VoicePauseSecondsMax        = 10.0
+	DictationSendPhraseDefault   = "send now"
+	DictationSendPhraseMaxRunes  = 60
+	SilenceSendSecondsMin        = 2
+	SilenceSendSecondsMax        = 30
+	VoicePauseSecondsMin         = 0.3
+	VoicePauseSecondsMax         = 10.0
+	ContinuousIdleSecondsDefault = 120
+	ContinuousIdleSecondsMin     = 30
+	ContinuousIdleSecondsMax     = 3600
 )
 
 func cleanVoicePhrase(phrase string) string {
@@ -2078,13 +2088,22 @@ func cleanVoicePhrase(phrase string) string {
 // cleaned phrase, "" when it is off, the wake listener only when it has an
 // active phrase of its own, and the silence send clamped into range. A wake
 // phrase equal to an active send phrase would send and wake on the same words,
-// so it counts as off. Nil-safe on the receiver.
+// so it counts as off, and so does a stop phrase equal to either. Nil-safe on
+// the receiver.
 func (c *Config) Voice() VoiceConfig {
 	var stored VoiceConfig
 	if c != nil && c.Dashboard != nil && c.Dashboard.Voice != nil {
 		stored = *c.Dashboard.Voice
 	}
-	out := VoiceConfig{WakeEnabled: stored.WakeEnabled, MarkDictated: new(stored.MarkDictated == nil || *stored.MarkDictated)}
+	out := VoiceConfig{
+		WakeEnabled:           stored.WakeEnabled,
+		MarkDictated:          new(stored.MarkDictated == nil || *stored.MarkDictated),
+		ContinuousEnabled:     stored.ContinuousEnabled,
+		ContinuousIdleSeconds: ContinuousIdleSecondsDefault,
+	}
+	if stored.ContinuousIdleSeconds > 0 {
+		out.ContinuousIdleSeconds = max(ContinuousIdleSecondsMin, min(stored.ContinuousIdleSeconds, ContinuousIdleSecondsMax))
+	}
 	if stored.SilenceSendSeconds > 0 {
 		out.SilenceSendSeconds = max(SilenceSendSecondsMin, min(stored.SilenceSendSeconds, SilenceSendSecondsMax))
 	}
@@ -2116,6 +2135,9 @@ func (c *Config) Voice() VoiceConfig {
 	}
 	if strings.EqualFold(phrases[VoiceActionWake], phrases[VoiceActionSend]) {
 		phrases[VoiceActionWake] = ""
+	}
+	if stop := phrases[VoiceActionStop]; strings.EqualFold(stop, phrases[VoiceActionSend]) || strings.EqualFold(stop, phrases[VoiceActionWake]) {
+		phrases[VoiceActionStop] = ""
 	}
 	for _, known := range VoicePhraseDefaults {
 		out.Phrases = append(out.Phrases, VoicePhrase{Action: known.Action, Phrase: phrases[known.Action]})

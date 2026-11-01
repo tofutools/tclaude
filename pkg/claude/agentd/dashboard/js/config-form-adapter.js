@@ -1,5 +1,5 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
-import { COMMA_PAUSE_DEFAULT, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN, storedVoicePhrases, voiceFormPhrase, voicePausesProblem, voicePhrasesClash } from './voice-config.js';
+import { COMMA_PAUSE_DEFAULT, CONTINUOUS_IDLE_DEFAULT, CONTINUOUS_IDLE_MAX, CONTINUOUS_IDLE_MIN, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN, storedVoicePhrases, voiceClashProblem, voiceFormPhrase, voicePausesProblem } from './voice-config.js';
 import { syncVoiceSection } from './voice-config-section.js';
 import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
@@ -574,6 +574,8 @@ function populateConfigForm(cfg) {
     $(`#${id}`).checked = seconds > 0;
     $(`#${id}-seconds`).value = seconds > 0 ? seconds : '';
   }
+  $('#cfg-voice-continuous').checked = voice.continuous_enabled === true;
+  $('#cfg-voice-continuous-idle').value = voice.continuous_idle_seconds > 0 ? voice.continuous_idle_seconds : '';
   $('#cfg-voice-wake').checked = voice.wake_enabled === true;
   $('#cfg-voice-silence').checked = voice.silence_send_seconds > 0;
   $('#cfg-voice-silence-seconds').value = voice.silence_send_seconds > 0 ? voice.silence_send_seconds : '';
@@ -952,7 +954,8 @@ function assembleConfig() {
   for (const { action, title } of VOICE_ACTIONS) {
     if (phrases[action].on && !phrases[action].phrase) throw new Error(`${title}: type a phrase, or untick it to turn it off.`);
   }
-  if (phrases.wake.on && phrases.send.on && voicePhrasesClash(phrases.wake.phrase, phrases.send.phrase)) throw new Error('The wake phrase and the send phrase must differ.');
+  const phraseClash = voiceClashProblem(phrases);
+  if (phraseClash) throw new Error(phraseClash);
   const voiceConfig = { ...(dashboard.voice || {}) };
   const voiceList = storedVoicePhrases(phrases);
   if (voiceList.length) voiceConfig.phrases = voiceList; else delete voiceConfig.phrases;
@@ -962,6 +965,9 @@ function assembleConfig() {
     const seconds = cfgInt('cfg-voice-silence-seconds', SILENCE_SEND_DEFAULT);
     voiceConfig.silence_send_seconds = Math.min(SILENCE_SEND_MAX, Math.max(SILENCE_SEND_MIN, seconds));
   } else delete voiceConfig.silence_send_seconds;
+  if ($('#cfg-voice-continuous').checked) voiceConfig.continuous_enabled = true; else delete voiceConfig.continuous_enabled;
+  const idleSeconds = Math.min(CONTINUOUS_IDLE_MAX, Math.max(CONTINUOUS_IDLE_MIN, cfgInt('cfg-voice-continuous-idle', CONTINUOUS_IDLE_DEFAULT)));
+  if (idleSeconds === CONTINUOUS_IDLE_DEFAULT) delete voiceConfig.continuous_idle_seconds; else voiceConfig.continuous_idle_seconds = idleSeconds;
   const pauseSeconds = (id, fallback) => {
     if (!$(`#${id}`).checked) return 0;
     return Math.min(VOICE_PAUSE_MAX, Math.max(VOICE_PAUSE_MIN, cfgFloat(`${id}-seconds`, fallback)));

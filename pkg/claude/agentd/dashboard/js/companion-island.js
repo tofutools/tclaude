@@ -22,7 +22,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
-  clampPlacement, fitPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
+  agentWaitsOnOperator, clampPlacement, fitPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent, viewportOf,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
@@ -37,7 +37,7 @@ import { WindowControls, windowControlsLook } from './companion-window-controls.
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
-import { voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
+import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
@@ -154,6 +154,15 @@ function without(set, value) {
   const next = new Set(set);
   next.delete(value);
   return next;
+}
+
+// companionContinuous is continuous mode's settings for an agent's tab, null
+// where it can't run: on a peer's agent, whose questions this node can't see,
+// or a harness that isn't proven to take mail mid-turn.
+function companionContinuous(snapshot, agent) {
+  const mode = voiceContinuous(snapshot);
+  if (!mode || !agent || agent.presence || !harnessTakesMailMidTurn(snapshot, agent.harness || 'claude')) return null;
+  return { ...mode, held: () => (agentWaitsOnOperator(snapshot, agent) ? `${agent.name} is waiting on you, so continuous mode stopped. Your words stay in the draft.` : '') };
 }
 
 // How recently a key in the terminal counts as still typing when a cue lands.
@@ -355,6 +364,7 @@ export function CompanionApp({
     silenceSend: voiceSilenceSeconds(snapshot.value),
     pauses: voicePauses(snapshot.value),
     mark: voiceMarksDictated(snapshot.value),
+    continuous: companionContinuous(snapshot.value, activeAgent),
     wakeHost: () => (composerShown.current ? windowRef.current : null),
     send: (text) => send(null, text),
     onStart: () => speaker.cancel(),

@@ -1019,6 +1019,21 @@ test('Config voice phrases: each has its own switch, and hands-free stays separa
   assert.equal(el('cfg-voice-phrase-send').disabled, false);
   assert.equal(voice(), undefined);
 
+  // Continuous mode is off, and the stop phrase on, until changed.
+  assert.equal(el('cfg-voice-continuous').checked, false);
+  assert.equal(el('cfg-voice-on-stop').checked, true);
+  assert.equal(el('cfg-voice-phrase-stop').value, 'stop listening');
+  await click('cfg-voice-continuous');
+  assert.deepEqual(voice(), { continuous_enabled: true }, 'the default silence stores nothing');
+  el('cfg-voice-continuous-idle').value = '45';
+  assert.deepEqual(voice(), { continuous_enabled: true, continuous_idle_seconds: 45 });
+  el('cfg-voice-continuous-idle').value = '';
+  await click('cfg-voice-continuous');
+  el('cfg-voice-phrase-stop').value = 'Send  Now';
+  assert.throws(() => adapter.assembleConfig(), /send phrase and the stop phrase must differ/);
+  el('cfg-voice-phrase-stop').value = 'stop listening';
+  assert.equal(voice(), undefined);
+
   // Pause punctuation is off until asked for, and each mark has its own switch.
   assert.equal(el('cfg-voice-comma').checked, false);
   assert.equal(el('cfg-voice-period').checked, false);

@@ -384,11 +384,21 @@ export function decisionSpeech(agent, decision) {
 // companion can show them where the operator is already talking to it.
 export function approvalsFor(snapshot, agent) {
   if (!agent) return [];
-  const convs = new Set([agent.convId].filter(Boolean));
-  return pendingApprovals(snapshot).filter((request) => {
-    if (request?.agent_id) return request.agent_id === agent.agentId;
-    return convs.has(request?.conv_id) || convs.has(request?.current_conv_id);
-  });
+  return pendingApprovals(snapshot).filter((request) => requestFrom(request, agent));
+}
+
+function requestFrom(request, agent) {
+  if (request?.agent_id) return request.agent_id === agent.agentId;
+  return !!agent.convId && (request?.conv_id === agent.convId || request?.current_conv_id === agent.convId);
+}
+
+// agentWaitsOnOperator reports whether an agent is waiting on the operator:
+// its session is at a prompt, or it has a request or decision open, which leave
+// the session working or idle. Every request counts here, not only the ones a
+// card can answer.
+export function agentWaitsOnOperator(snapshot, agent) {
+  return companionStatus(agent) === 'needs' || decisionsFor(snapshot, agent).length > 0
+    || pendingAccess(snapshot).some((request) => requestFrom(request, agent));
 }
 
 // pendingAccess lists every request waiting on the operator, in the daemon's

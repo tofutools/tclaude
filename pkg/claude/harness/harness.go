@@ -307,6 +307,12 @@ type Harness struct {
 	// true. See JOH-200 part 2.
 	ApprovalsReviewer bool
 
+	// MailMidTurn marks a harness proven to take mail while a turn runs, by
+	// queueing or steering it. Continuous dictation gates on it: Gemini CLI and
+	// pi only have send-keys, so a dictated message per sentence stays unproven
+	// there, and those agents get one message at a time.
+	MailMidTurn bool
+
 	// BackgroundShells marks a harness that can run a shell command in the
 	// BACKGROUND — detached from the turn, so the agent's turn ends while
 	// the command keeps running — and that names each such command in its
