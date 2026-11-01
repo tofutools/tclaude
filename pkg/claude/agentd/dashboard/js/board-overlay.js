@@ -46,7 +46,7 @@ function readOpen(win) {
 }
 
 function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) {
-  const overlay = useOverlayWindow({ win, prefs, prefKey: BOARD_OVERLAY_PLACEMENT_PREF, defaultPlacement: defaultOverlayPlacement, snaps: true });
+  const overlay = useOverlayWindow({ id: OVERLAY_ID, win, prefs, prefKey: BOARD_OVERLAY_PLACEMENT_PREF, defaultPlacement: defaultOverlayPlacement, snaps: true });
   const look = windowControlsLook(snapshot.value?.window_controls);
   const close = () => { boardOverlay.value = null; };
   // The title bar is outside the editor, whose Ctrl+wheel zooms the board.

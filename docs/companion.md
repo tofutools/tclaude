@@ -42,6 +42,15 @@ Click a pill, or press **Ctrl+.** anywhere, to open the window. It stays above t
 page without blocking it, and comes back when you reload the tab.
 
 - **Move it** by its title bar. Resize it from any edge or corner.
+- **Split the room** with a board window: snap one to the left and one to the right, or
+  two corners, and they fill the room and share a line. Drag the line to redistribute,
+  and it is remembered. Dropping a window near the edge or corner of a snapped window
+  splits that window. Bring the pointer near the centre of a line for a detach button,
+  which floats the windows under that line. Dragging one out by its title bar, or
+  closing or minimizing it, gives its room to its neighbour, and a window left alone
+  goes back to its own panel size. A window that comes back from being closed or
+  minimized rejoins the split. Pairs fill the room while it holds both windows at their
+  minimum size.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free
   edges to resize it; each spot keeps the size you gave it, across reloads too.

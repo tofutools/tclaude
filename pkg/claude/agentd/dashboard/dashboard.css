@@ -2011,8 +2011,24 @@ header.overlay-look-windows { padding-right: 0; }
 .overlay-look-linux .overlay-window-controls svg { width: 10px; height: 10px; stroke-width: 1.5; }
 .overlay-look-linux .overlay-window-controls button:hover { background: #484f58; }
 .overlay-look-linux .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: 1px; }
+/* A split's shared edges (overlay-window.js): above both windows they divide. */
+.overlay-split-line { position: fixed; z-index: 952; touch-action: none; }
+.overlay-split-line.x { margin-left: -4px; width: 8px !important; cursor: ew-resize; }
+.overlay-split-line.y { margin-top: -4px; height: 8px !important; cursor: ns-resize; }
+.overlay-split-line::after { content: ''; position: absolute; inset: 3.5px; background: var(--cmp-line); transition: background .12s; }
+.overlay-split-line:hover::after { background: #58a6ff; }
+.overlay-split-cross { position: fixed; z-index: 953; width: 16px; height: 16px; margin: -8px 0 0 -8px; cursor: move; touch-action: none; }
+.overlay-split-detach {
+  position: fixed; z-index: 954; width: 26px; height: 26px; margin: -13px 0 0 -13px; padding: 0; border: 1px solid #58a6ff; border-radius: 50%;
+  background: var(--cmp-bar); color: #58a6ff; line-height: 1; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s;
+}
+.overlay-split-detach:is(.near, :focus-visible) { opacity: 1; pointer-events: auto; }
+/* The windows step down for a dialog and aside for annotation. The lines between
+   them go, as they would cut across either and take its clicks. */
+body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach) { display: none; }
+/* Above the windows: a drop that splits a window lands on top of it. */
 .overlay-snap-guide {
-  position: fixed; z-index: 949; pointer-events: none; border-radius: 8px;
+  position: fixed; z-index: 952; pointer-events: none; border-radius: 8px;
   background: rgba(88, 166, 255, .10); border: 1px dashed #58a6ff;
 }
 
