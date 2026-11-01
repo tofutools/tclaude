@@ -62,6 +62,9 @@ type snapshotCreateRequest struct {
 	Expires string `json:"expires,omitempty"`
 	// NoHistory captures the definition only.
 	NoHistory bool `json:"no_history,omitempty"`
+	// Workflow and OwnWorkflows name workflows the snapshot carries.
+	Workflow     []string `json:"workflow,omitempty"`
+	OwnWorkflows bool     `json:"own_workflows,omitempty"`
 	// Summary is the id of a summary the agent wrote for this capture
 	// (POST /v1/agent-bundle/summary); it travels as context/handoff.md.
 	Summary string `json:"summary,omitempty"`
@@ -166,6 +169,14 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		// rewriting it then.
 		LossCountsOnly: true,
 	}
+	workflows, ok := loadCarriedWorkflows(w, r, req.carried(), agentOwnWorkflows(res.ConvID))
+	if !ok {
+		return
+	}
+	parts.Workflows = workflows
+	carriedFindings := scanWorkflowBundles(workflows)
+	meta.Findings = append(meta.Findings, carriedFindings...)
+	b.Manifest.Findings = append(b.Manifest.Findings, bundleFindings(carriedFindings)...)
 	archive, err := archiveAgentPAFWith(b, false, parts)
 	if err != nil {
 		writeError(w, 400, "snapshot", err.Error())
@@ -185,6 +196,10 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, meta)
+}
+
+func (req snapshotCreateRequest) carried() carriedWorkflows {
+	return carriedWorkflows{IDs: req.Workflow, Own: req.OwnWorkflows}
 }
 
 var nonNameChars = regexp.MustCompile(`[^a-z0-9._-]+`)

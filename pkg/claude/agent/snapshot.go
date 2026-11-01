@@ -41,6 +41,7 @@ type snapshotCreateParams struct {
 	WithSummary bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and keep it with the snapshot, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
 	SummaryWait string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
 	JSON        bool   `long:"json" help:"Print the snapshot as JSON."`
+	CarriedWorkflowParams
 }
 
 func snapshotCreateCmd() *cobra.Command {
@@ -59,7 +60,7 @@ func runSnapshotCreate(p *snapshotCreateParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	var meta snapshotlib.Meta
-	body := map[string]any{"agent": p.Agent, "name": p.Name, "note": p.Note, "expires": p.Expires, "no_history": p.NoHistory}
+	body := map[string]any{"agent": p.Agent, "name": p.Name, "note": p.Note, "expires": p.Expires, "no_history": p.NoHistory, "workflow": p.Workflow, "own_workflows": p.Workflows}
 	if p.WithSummary {
 		id, rc := awaitAgentSummary(p.Agent, p.SummaryWait, stderr)
 		if rc != rcOK {

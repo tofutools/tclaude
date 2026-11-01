@@ -312,3 +312,14 @@ test('import dialog: a file this node refuses can be reviewed but not imported',
   assert.equal(button.disabled, true);
   assert.equal(button.textContent, 'Refused');
 });
+
+// A workflow read out of a .paf shows what else the file holds. Importing lands
+// nobody, and the choice of workflow is part of what is reviewed.
+test('importQuery names the chosen workflow; the review keeps the envelope', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { importQuery, importReview } = await harness.importDashboardModule('js/process-workflow-share.js');
+  assert.equal(importQuery({ workflow: 'ship' }), 'workflow=ship');
+  const envelope = { workflow: 'ship', workflows: [{ key: 'ship', root: 'ship@sha256:aa' }], performers: [{ role: 'dev', target: 'dev', agentKey: 'scout', name: 'scout', harness: 'claude', history: true }] };
+  assert.equal(importReview({ ...PREVIEW, envelope }).envelope, envelope);
+  assert.equal(importReview(PREVIEW).envelope, null, 'a .pwf has none');
+});

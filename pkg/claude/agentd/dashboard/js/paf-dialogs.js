@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { dashboardState } from './snapshot-store.js';
+import { WorkflowImportButton } from './process-workflow-share.js';
 import {
   confirmGroups, downloadBlob, findingsText, lossSummary, modelsFor, provenanceRows, redactionText, rungBadge,
   safeFilename, spawnableHarnesses,
@@ -72,6 +73,8 @@ function RedactPanel({ actions, source, filename, onDone }) {
   </div>`;
 }
 
+function processesOn() { return dashboardState.snapshot.value?.processes_enabled === true; }
+
 // AgentExportDialog exports one agent as a PAF (agent ⚙ → export (PAF)…).
 // An export the credential scan flags is refused until the human either
 // acknowledges the findings or downloads a redacted copy instead.
@@ -80,6 +83,7 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
   const [history, setHistory] = useState(true);
   const [native, setNative] = useState(true);
   const [neutral, setNeutral] = useState(true);
+  const [workflows, setWorkflows] = useState(false);
   const [findings, setFindings] = useState(null);
   const [ack, setAck] = useState(false);
   const [redacting, setRedacting] = useState(false);
@@ -88,7 +92,7 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
   const flaggedBlob = useRef(null);
   const label = descriptor.label || descriptor.agent;
   const filename = safeFilename(label, '.paf');
-  const choices = (allowFlagged) => ({ agent: descriptor.agent, history, native, neutral, allowFlagged });
+  const choices = (allowFlagged) => ({ agent: descriptor.agent, history, native, neutral, allowFlagged, workflows });
   const reset = (fn) => (value) => { fn(value); setFindings(null); setAck(false); setRedacting(false); flaggedBlob.current = null; };
   const download = async () => {
     if (busy) return;
@@ -120,6 +124,8 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
       <${Check} id="paf-export-neutral" checked=${neutral} disabled=${busy || !history} onChange=${reset(setNeutral)}
         hint="Lets other harnesses and readers land it.">Harness-neutral context</${Check}>
     </div>
+    ${processesOn() && html`<${Check} id="paf-export-workflows" checked=${workflows} disabled=${busy} onChange=${reset(setWorkflows)}
+      hint="The templates of its active runs. An older tclaude cannot import a file that carries workflows.">Carry its workflows</${Check}>`}
     ${history && !native && !neutral && html`<div class="cron-create-error">Keep at least one copy of the conversation, or untick Conversation history.</div>`}
     ${findings && html`<${FindingsPanel} findings=${findings} />
       ${!redacting && html`<div class="paf-flagged-actions">
@@ -143,6 +149,7 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
 export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [format, setFormat] = useState('paf');
+  const [workflows, setWorkflows] = useState(false);
   const [findings, setFindings] = useState(null);
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -152,7 +159,7 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
     setBusy(true);
     setError('');
     try {
-      const { blob, filename } = await actions.exportGroupArchive(descriptor.group, format, !!findings && ack);
+      const { blob, filename } = await actions.exportGroupArchive(descriptor.group, format, !!findings && ack, '', format === 'paf' && workflows);
       downloadBlob(blob, filename);
       state.closeDialog();
     } catch (e) {
@@ -169,6 +176,8 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
       <span>.paf<span class="paf-hint">Group PAF: every member with its own harness's history; other tools can read it.</span></span></label>
     <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-zip" checked=${format === 'zip'} onChange=${() => pick('zip')} />
       <span>.zip (legacy)<span class="paf-hint">For importing into an older tclaude. Conversations on harnesses other than Claude Code export without history.</span></span></label>
+    ${format === 'paf' && processesOn() && html`<${Check} id="group-export-workflows" checked=${workflows} disabled=${busy} onChange=${(value) => { setWorkflows(value); setFindings(null); setAck(false); }}
+      hint="Its saved processes. An older tclaude cannot import a file that carries workflows.">Carry its workflows</${Check}>`}
     ${findings && html`<${FindingsPanel} findings=${findings} />
       <${Check} id="group-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>`}
     <div class="cron-create-error" role="alert">${error}</div>
@@ -273,6 +282,16 @@ export function ImportOutcome({ kept, dropped }) {
 // preview for an agent PAF or legacy agent bundle, with where and how the
 // agent lands. "Import (offline)" lands it without starting; "Import &
 // start" also starts it.
+// CarriedWorkflows says what else an agent or group file holds. Importing it
+// stores none of these: each goes through the workflow review, on the same file.
+export function CarriedWorkflows({ workflows, file }) {
+  if (!workflows?.length) return null;
+  const names = workflows.map((w) => w.root.split('@')[0]);
+  return html`<div class="paf-box" id="paf-carried-workflows"><b>Also carries ${names.length === 1 ? 'a workflow' : `${names.length} workflows`}</b>
+    <div>${names.join(', ')}. This import stores none of them.</div>
+    ${dashboardState.snapshot.value?.processes_enabled && html`<${WorkflowImportButton} from=${file} id="" label="Review workflows…" className="tool" />`}</div>`;
+}
+
 export function AgentImportPreview({ preview, choices, setChoices, overrides, setOverrides, reveal }) {
   const snapshot = dashboardState.snapshot.value;
   const groups = (snapshot?.groups || []).map((group) => group.name);
@@ -295,6 +314,8 @@ export function AgentImportPreview({ preview, choices, setChoices, overrides, se
       <input id="agent-import-cwd" value=${choices.cwd} placeholder=${agent.paths?.cwd || 'absolute path on this machine'} disabled=${choices.keepPaths}
         onInput=${(event) => set('cwd')(event.currentTarget.value)} /></label>
     <${Check} id="agent-import-keep-paths" checked=${choices.keepPaths} onChange=${set('keepPaths')}>Keep the recorded paths</${Check}>
+    ${choices.agent && html`<label class="cron-create-row"><span class="cron-create-label">Role</span>
+      <input id="agent-import-role" value=${choices.role} onInput=${(event) => set('role')(event.currentTarget.value)} /></label>`}
     <div class="cron-create-row"><span class="cron-create-label">Land on</span>
       <${LandingSelects} idPrefix="agent-import" harness=${choices.harness} model=${choices.model}
         onChange=${(patch) => setChoices({ ...choices, ...patch })} sameLabel=${`${agent.harness || 'own harness'} (as exported)`} /></div>
@@ -318,6 +339,7 @@ export function agentImportParams(choices, apply = false, start = true) {
     cwd: choices.keepPaths ? '' : choices.cwd.trim(), keep_paths: choices.keepPaths,
     start: apply && !start ? 'false' : '',
     confirm_history_loss: apply && choices.confirmHistoryLoss ? 'true' : '',
+    agent: choices.agent || '', role: choices.agent ? (choices.role || '').trim() : '',
   };
 }
 

@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -16,6 +17,8 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
@@ -35,6 +38,9 @@ type processTemplatesExportParams struct {
 	Strict           bool     `long:"strict" optional:"true" help:"Refuse to export a workflow that is not portable: paths from this machine, steps naming a specific agent, or failing validation."`
 	AssigneesToRoles bool     `long:"assignees-to-roles" optional:"true" help:"Stop naming a specific agent in exported steps: they ask for the role it holds here (when it has exactly one), or for the profile they already have."`
 	AssigneeRole     []string `long:"assignee-role" optional:"true" help:"Export steps naming an agent with a role instead, as <agent>=<role> (repeatable). Wins over --assignees-to-roles."`
+	Performer        []string `long:"performer" optional:"true" help:"Ship an agent for a role the workflow asks for, as <role>=<agent> (repeatable). The file becomes a .paf holding both. Needs agent.bundle.export on the agent."`
+	PerformerHistory bool     `long:"performer-history" help:"With --performer: include each agent's conversation, so it arrives pre-briefed. Scanned for credentials like any agent export."`
+	AllowFlagged     bool     `long:"allow-flagged" help:"With --performer: export even when the scan flags suspected credentials; inspect before sharing."`
 	AskHuman         string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
@@ -85,6 +91,15 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 	if p.Strict {
 		q.Set("strict", "1")
 	}
+	for _, performer := range p.Performer {
+		q.Add("performer", performer)
+	}
+	if p.PerformerHistory {
+		q.Set("performer_history", "1")
+	}
+	if p.AllowFlagged {
+		q.Set("allow_flagged", "true")
+	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
@@ -96,7 +111,7 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 	out := strings.TrimSpace(p.Output)
 	if out == "-" {
 		_, _ = stdout.Write(data)
-		if archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits()); err == nil {
+		if archive, _, err := openWorkflowBytes(data, ""); err == nil {
 			warnWorkflowProblems(stderr, archive)
 			warnWorkflowPaths(stderr, archive.Paths)
 		}
@@ -104,23 +119,54 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 	}
 	if out == "" {
 		out = id + ".pwf"
+		if len(p.Performer) > 0 {
+			out = id + ".paf"
+		}
 	}
-	if err := os.WriteFile(out, data, 0o644); err != nil {
+	// A performer's conversation may travel, so the file is private like any
+	// other PAF.
+	mode := os.FileMode(0o644)
+	if len(p.Performer) > 0 {
+		mode = 0o600
+	}
+	if err := os.WriteFile(out, data, mode); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcIOFailure
 	}
-	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
+	archive, env, err := openWorkflowBytes(data, "")
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: the daemon wrote an unreadable workflow: %v\n", err)
 		return rcIOFailure
 	}
 	fmt.Fprintf(stdout, "Wrote %s (%d bytes, %d template(s)%s).\n", out, len(data), len(archive.Order), signedNote(archive))
+	if env != nil {
+		fmt.Fprintf(stdout, "It ships %d agent(s) for the workflow's roles; treat it as sensitive.\n", len(env.Manifest.Agents))
+	}
 	if n := len(archive.Workflow.Assignees); n > 0 {
 		fmt.Fprintf(stdout, "Note: %d step(s) name a specific agent, which the importing node will not have; they fall to their profile there, or wait until reassigned.\n", n)
 	}
 	warnWorkflowProblems(stderr, archive)
 	warnWorkflowPaths(stderr, archive.Paths)
 	return rcOK
+}
+
+// openWorkflowBytes reads a .pwf or, from a .paf, the workflow key names (the
+// first when key is empty). The envelope is nil for a .pwf.
+func openWorkflowBytes(data []byte, key string) (*pwf.Archive, *paf.Archive, error) {
+	r := bytes.NewReader(data)
+	if !legacy.IsPAF(r, int64(len(data))) {
+		if key != "" {
+			return nil, nil, errors.New("--workflow chooses a workflow inside a .paf; this file holds one workflow")
+		}
+		a, err := pwf.Open(r, int64(len(data)), pwf.DefaultLimits())
+		return a, nil, err
+	}
+	env, err := paf.Open(r, int64(len(data)), paf.Options{Purpose: paf.PurposeImport})
+	if err != nil {
+		return nil, nil, err
+	}
+	a, _, err := pwf.OpenEnvelope(env, key)
+	return a, env, err
 }
 
 // reportAssigneeRoles says which role --assignees-to-roles picks for each
@@ -201,8 +247,9 @@ func signedNote(a *pwf.Archive) string {
 }
 
 type processTemplatesInspectParams struct {
-	File string `pos:"true" help:"Path to a .pwf file ('-' reads stdin)."`
-	JSON bool   `long:"json" optional:"true" help:"Print workflow.json and the signature status as JSON."`
+	File     string `pos:"true" help:"Path to a .pwf file, or a .paf carrying a workflow ('-' reads stdin)."`
+	Workflow string `long:"workflow" optional:"true" help:"Which workflow to read from a .paf that carries several (default: the first)."`
+	JSON     bool   `long:"json" optional:"true" help:"Print workflow.json and the signature status as JSON."`
 }
 
 func processTemplatesInspectCmd() *cobra.Command {
@@ -219,7 +266,7 @@ func processTemplatesInspectCmd() *cobra.Command {
 
 func readWorkflowFile(name string, stdin io.Reader) ([]byte, error) {
 	if strings.TrimSpace(name) == "-" {
-		return io.ReadAll(io.LimitReader(stdin, 32<<20))
+		return io.ReadAll(io.LimitReader(stdin, localAgentBundleLimit()))
 	}
 	return os.ReadFile(name)
 }
@@ -230,7 +277,7 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
-	a, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
+	a, env, err := openWorkflowBytes(data, strings.TrimSpace(p.Workflow))
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
@@ -254,6 +301,9 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 		return rcOK
 	}
 	renderWorkflow(stdout, a.Workflow, len(a.Workflow.Templates))
+	if env != nil {
+		fmt.Fprintf(stdout, "In a .paf with %d agent(s) and %d workflow(s); `tclaude paf inspect` shows the agents.\n", len(env.Manifest.Agents), len(env.Manifest.Workflows))
+	}
 	if len(a.Problems) > 0 {
 		fmt.Fprintln(stdout, "Fails validation (it imports, but cannot run until fixed):")
 		renderProblems(stdout, a.Problems)
@@ -304,10 +354,25 @@ type workflowImportJSON struct {
 	Updates      int    `json:"updates"`
 	Applied      bool   `json:"applied"`
 	ReviewDigest string `json:"reviewDigest"`
+	Envelope     *struct {
+		Workflow  string `json:"workflow"`
+		Workflows []struct {
+			Key  string `json:"key"`
+			Root string `json:"root"`
+		} `json:"workflows"`
+		Performers []struct {
+			Target   string `json:"target"`
+			AgentKey string `json:"agentKey"`
+			Name     string `json:"name"`
+			Harness  string `json:"harness"`
+			History  bool   `json:"history"`
+		} `json:"performers"`
+	} `json:"envelope"`
 }
 
 type processTemplatesImportParams struct {
-	File     string   `pos:"true" help:"Path to a .pwf file ('-' reads stdin)."`
+	File     string   `pos:"true" help:"Path to a .pwf file, or a .paf carrying a workflow ('-' reads stdin)."`
+	Workflow string   `long:"workflow" optional:"true" help:"Which workflow to import from a .paf that carries several (default: the first)."`
 	Yes      bool     `long:"yes" short:"y" optional:"true" help:"Import after showing the review instead of stopping at the preview."`
 	Replace  bool     `long:"replace" optional:"true" help:"Make the imported versions current where this node already has the template with different content."`
 	Rename   bool     `long:"rename" optional:"true" help:"Import a template whose id this node already uses with different content under a new id (<id>-2, ...) instead of replacing it; references inside the workflow follow."`
@@ -360,7 +425,7 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	renderImportReview(stdout, &view)
+	renderImportReview(stdout, p.File, &view)
 	if view.Refused != "" {
 		if p.Yes {
 			fmt.Fprintf(stderr, "Error: %s\n", view.Refused)
@@ -412,6 +477,9 @@ func workflowImportChoices(p *processTemplatesImportParams) (url.Values, error) 
 	if g := strings.TrimSpace(p.Group); g != "" {
 		q.Set("group", g)
 	}
+	if key := strings.TrimSpace(p.Workflow); key != "" {
+		q.Set("workflow", key)
+	}
 	return q, nil
 }
 
@@ -453,7 +521,7 @@ func renderImportChanges(out io.Writer, view *workflowImportJSON) {
 // renderImportReview prints what a person reviews before importing: who signed
 // the workflow, what it needs and every command it would run, and what
 // importing changes here.
-func renderImportReview(out io.Writer, view *workflowImportJSON) {
+func renderImportReview(out io.Writer, file string, view *workflowImportJSON) {
 	renderWorkflow(out, view.Workflow, len(view.Templates))
 	if len(view.Signatures) == 0 {
 		fmt.Fprintln(out, "Signature: none (unverified)")
@@ -470,6 +538,7 @@ func renderImportReview(out io.Writer, view *workflowImportJSON) {
 		renderPaths(out, view.Paths)
 	}
 	renderImportChanges(out, view)
+	renderWorkflowEnvelope(out, file, view)
 }
 
 // ImportReview is a workflow import's review for an approval popup.
@@ -491,7 +560,7 @@ func WorkflowImportReview(preview []byte) (ImportReview, error) {
 		return ImportReview{}, err
 	}
 	var full, summary strings.Builder
-	renderImportReview(&full, &view)
+	renderImportReview(&full, "<file>", &view)
 	switch {
 	case len(view.Signatures) == 0:
 		fmt.Fprintln(&summary, "Signature: none (unverified)")
@@ -511,10 +580,40 @@ func WorkflowImportReview(preview []byte) (ImportReview, error) {
 		counts = append(counts, fmt.Sprintf("%d %s", changes[status], shown(status)))
 	}
 	fmt.Fprintf(&summary, "Templates: %s\n", strings.Join(counts, ", "))
+	if view.Envelope != nil && len(view.Envelope.Performers) > 0 {
+		fmt.Fprintf(&summary, "The file also ships %d agent(s); importing the workflow lands none of them.\n", len(view.Envelope.Performers))
+	}
 	if view.Group != "" {
 		fmt.Fprintf(&summary, "Pins the process to group %s.\n", shown(view.Group))
 	}
 	return ImportReview{Summary: summary.String(), Full: full.String(), Refused: shown(view.Refused)}, nil
+}
+
+// renderWorkflowEnvelope says what else a .paf holds. Importing the workflow
+// lands none of it, so it names the command that would.
+func renderWorkflowEnvelope(out io.Writer, file string, view *workflowImportJSON) {
+	env := view.Envelope
+	if env == nil {
+		return
+	}
+	for _, wf := range env.Workflows {
+		if wf.Key != env.Workflow {
+			fmt.Fprintf(out, "Also in this file: workflow %s (--workflow %s)\n", shown(wf.Root), shown(wf.Key))
+		}
+	}
+	if len(env.Performers) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "Agents shipped for its roles (importing the workflow lands none of them):")
+	for _, p := range env.Performers {
+		briefed := "no conversation"
+		if p.History {
+			briefed = "with its conversation"
+		}
+		fmt.Fprintf(out, "  %s: %s on %s, %s\n", shown(p.Target), shown(p.Name), shown(p.Harness), briefed)
+		fmt.Fprintf(out, "    land it, with its own review: tclaude paf import --file %s --agent %s --role %s --group <group> --cwd <dir>\n",
+			strconv.Quote(file), shown(p.AgentKey), strconv.Quote(p.Target))
+	}
 }
 
 // shown makes a file-controlled string safe to print in a review: anything

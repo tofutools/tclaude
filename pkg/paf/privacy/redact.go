@@ -109,10 +109,22 @@ func Redact(a *paf.Archive, out io.Writer, opts RedactOptions, producer paf.Prod
 	if opts.StripIdentity && (a.Manifest.Kind != paf.KindAgent || len(a.Manifest.Agents) != 1) {
 		return nil, errors.New("strip_identity applies to a PAF of one agent")
 	}
+	kept, err := keptWorkflows(a, opts)
+	if err != nil {
+		return nil, err
+	}
+	kind := a.Manifest.Kind
+	if kind == paf.KindBundle && len(kept) == 0 {
+		if len(a.Manifest.Agents) != 1 {
+			return nil, errors.New("this redaction drops the file's workflows, and several agents need a group or a workflow to travel together; redact without it, or fix the workflow")
+		}
+		kind = paf.KindAgent
+	}
 	r := &redactor{
 		a:       a,
 		opts:    opts,
-		w:       paf.NewWriter(out, a.Manifest.Kind, opts.Limits),
+		w:       paf.NewWriter(out, kind, opts.Limits),
+		keptWF:  kept,
 		scan:    NewCollector(),
 		counts:  map[string]int{},
 		masked:  map[string]int{},
@@ -125,6 +137,9 @@ func Redact(a *paf.Archive, out io.Writer, opts RedactOptions, producer paf.Prod
 	}
 	if opts.StripIdentity {
 		r.idents = identifiers(a)
+	}
+	if len(kept) > 0 {
+		keys = paf.RewriteKeys(a, keys)
 	}
 	return r.run(producer, keys)
 }
@@ -142,12 +157,88 @@ type redactor struct {
 	// agentCounts is per redaction kind for the agent being written.
 	agentCounts map[string]int
 	// refs maps source attachment references to rewritten ones.
-	refs    map[string]string
-	paths   []placeholder
+	refs  map[string]string
+	paths []placeholder
 	// idents are the identifiers strip_identity removes wherever they
 	// appear in text, longest first.
 	idents  []string
 	keepExt bool
+	// keptWF are the workflows that stay, by key (see keptWorkflows).
+	keptWF map[string]bool
+}
+
+// workflowRecordLimit bounds one line of a workflow entry: a workflow file
+// allows at most this much per entry.
+const workflowRecordLimit = 1 << 20
+
+// keptWorkflows says which workflows a redaction leaves in the copy. Templates
+// are addressed by the hash of their content and subprocess steps pin those
+// hashes, so a workflow cannot be rewritten: it stays byte for byte or it goes.
+// Redactions of the conversation do not touch it. Masking keeps a workflow the
+// scan finds nothing in. Paths and identity may be anywhere in a template, so
+// those redactions always drop it.
+func keptWorkflows(a *paf.Archive, opts RedactOptions) (map[string]bool, error) {
+	kept := map[string]bool{}
+	if opts.PathsToPlaceholders || opts.StripIdentity {
+		return kept, nil
+	}
+	for _, wf := range a.Manifest.Workflows {
+		if opts.MaskFlagged {
+			c := NewCollector()
+			for _, e := range workflowEntries(a, wf.Key) {
+				if err := c.entry(a, e, workflowRecordLimit); err != nil {
+					return nil, err
+				}
+			}
+			if len(c.Findings()) > 0 {
+				continue
+			}
+		}
+		kept[wf.Key] = true
+	}
+	return kept, nil
+}
+
+func workflowEntries(a *paf.Archive, key string) []paf.Entry {
+	var out []paf.Entry
+	for _, e := range a.Manifest.Entries {
+		if strings.HasPrefix(e.Path, paf.WorkflowPath(key, "")) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// workflows copies the kept workflows and their links, scanned like any other
+// content, and records the rest as dropped.
+func (r *redactor) workflows() error {
+	for _, wf := range r.a.Manifest.Workflows {
+		if !r.keptWF[wf.Key] {
+			r.drop("carried workflow")
+			continue
+		}
+		if err := r.w.AddWorkflow(wf.Key, wf.Root, wf.Requires); err != nil {
+			return err
+		}
+		for _, e := range workflowEntries(r.a, wf.Key) {
+			data, err := r.a.ReadEntry(e.Path, r.opts.MaxAttachmentBytes)
+			if err != nil {
+				return err
+			}
+			if err := r.scan.entry(r.a, e, workflowRecordLimit); err != nil {
+				return err
+			}
+			if err := r.w.WriteFile(e.Path, e.MediaType, data); err != nil {
+				return err
+			}
+		}
+	}
+	for _, l := range r.a.Manifest.Links {
+		if r.keptWF[l.Workflow] {
+			r.w.AddLink(l)
+		}
+	}
+	return nil
 }
 
 func (r *redactor) run(producer paf.Producer, keys []paf.SigningKey) (*RedactReport, error) {
@@ -185,6 +276,9 @@ func (r *redactor) run(producer paf.Producer, keys []paf.SigningKey) (*RedactRep
 				return nil, err
 			}
 		}
+	}
+	if err := r.workflows(); err != nil {
+		return nil, err
 	}
 	if len(m.Extensions) > 0 {
 		ext := r.exts(m.Extensions)

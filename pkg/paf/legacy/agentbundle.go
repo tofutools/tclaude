@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -138,6 +139,12 @@ type WriteOptions struct {
 	// LossCountsOnly writes losses.json without free text, for an archive
 	// leaving this node.
 	LossCountsOnly bool
+	// AddContent, when set, adds to the archive before it closes, such as
+	// the workflows an agent carries. It gets the agent keys.
+	AddContent func(w *paf.Writer, agents []string) error
+	// ContentFindings are the scan findings of what AddContent adds, recorded
+	// in privacy.json with the agents' own.
+	ContentFindings []agentbundle.Finding
 }
 
 func writeLosses(w *paf.Writer, key string, l paf.Losses, opts WriteOptions) error {
@@ -150,17 +157,89 @@ func writeLosses(w *paf.Writer, key string, l paf.Losses, opts WriteOptions) err
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
 // a neutral context.
 func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) error {
-	producer, keys := opts.Producer, opts.Keys
 	m := b.Manifest
-	d := m.Agent
 	w := paf.NewWriter(out, paf.KindAgent, paf.Limits{MaxArchiveBytes: ConvertedLimit(b.Limit()), MaxRecordBytes: opts.MaxRecordBytes})
 	if t, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil {
 		w.SetCreatedAt(t)
 	}
-	if err := w.DeclareExtension(paf.ExtTclaude, TclaudeExtension(producer.Version), false); err != nil {
+	if err := w.DeclareExtension(paf.ExtTclaude, TclaudeExtension(opts.Producer.Version), false); err != nil {
 		return err
 	}
-	key := AgentKey(d.Name)
+	key := AgentKey(m.Agent.Name)
+	if err := writeAgent(w, key, b, opts); err != nil {
+		return err
+	}
+	if err := writeBundlePrivacy(w, append(slices.Clone(m.Findings), opts.ContentFindings...), opts.AllowedFindings); err != nil {
+		return err
+	}
+	if opts.AddContent != nil {
+		if err := opts.AddContent(w, []string{key}); err != nil {
+			return err
+		}
+	}
+	var root paf.Extensions
+	if err := root.Set(paf.ExtTclaude, map[string]any{"converted_from": ConvertedFrom{Format: m.Format, FormatVersion: m.FormatVersion, TclaudeVersion: m.TclaudeVersion, CreatedAt: m.CreatedAt}}); err != nil {
+		return err
+	}
+	w.SetManifestExtensions(root)
+	_, err := w.Close(opts.Producer, opts.Keys...)
+	return err
+}
+
+// BundleAgent is one agent of a bundle PAF, with how to write it.
+type BundleAgent struct {
+	Bundle  *agentbundle.Bundle
+	Options WriteOptions
+}
+
+// WriteBundlePAF writes a bundle PAF: agents with no group, which opts.AddContent
+// ties to the workflows it adds. AddContent gets the keys in the order of agents.
+func WriteBundlePAF(agents []BundleAgent, out io.Writer, opts WriteOptions, limit int64) error {
+	if len(agents) == 0 {
+		return errors.New("legacy: a bundle PAF needs an agent")
+	}
+	w := paf.NewWriter(out, paf.KindBundle, paf.Limits{MaxArchiveBytes: ConvertedLimit(limit), MaxRecordBytes: opts.MaxRecordBytes})
+	if err := w.DeclareExtension(paf.ExtTclaude, TclaudeExtension(opts.Producer.Version), false); err != nil {
+		return err
+	}
+	used := map[string]bool{}
+	keys := make([]string, 0, len(agents))
+	findings := slices.Clone(opts.ContentFindings)
+	for _, a := range agents {
+		key := uniqueKey(AgentKey(a.Bundle.Manifest.Agent.Name), used)
+		keys = append(keys, key)
+		if err := writeAgent(w, key, a.Bundle, a.Options); err != nil {
+			return err
+		}
+		findings = append(findings, a.Bundle.Manifest.Findings...)
+	}
+	if err := writeBundlePrivacy(w, findings, opts.AllowedFindings); err != nil {
+		return err
+	}
+	if opts.AddContent != nil {
+		if err := opts.AddContent(w, keys); err != nil {
+			return err
+		}
+	}
+	_, err := w.Close(opts.Producer, opts.Keys...)
+	return err
+}
+
+func writeBundlePrivacy(w *paf.Writer, findings []agentbundle.Finding, allowed bool) error {
+	if len(findings) == 0 {
+		return nil
+	}
+	pr := paf.Privacy{Scan: &paf.Scan{Scanner: privacy.Scanner, Findings: []paf.Finding{}, Allowed: allowed}}
+	for _, f := range findings {
+		pr.Scan.Findings = append(pr.Scan.Findings, paf.Finding{Kind: f.Kind, Count: f.Count, Locations: f.Locations})
+	}
+	return w.WriteJSON(paf.PrivacyPath, pr)
+}
+
+// writeAgent writes one agent into w under key.
+func writeAgent(w *paf.Writer, key string, b *agentbundle.Bundle, opts WriteOptions) error {
+	m := b.Manifest
+	d := m.Agent
 
 	ag := paf.Agent{Name: d.Name, Definition: paf.Definition{
 		Role:           d.Role,
@@ -274,22 +353,7 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 			return err
 		}
 	}
-	if len(m.Findings) > 0 {
-		pr := paf.Privacy{Scan: &paf.Scan{Scanner: privacy.Scanner, Findings: []paf.Finding{}, Allowed: opts.AllowedFindings}}
-		for _, f := range m.Findings {
-			pr.Scan.Findings = append(pr.Scan.Findings, paf.Finding{Kind: f.Kind, Count: f.Count, Locations: f.Locations})
-		}
-		if err := w.WriteJSON(paf.PrivacyPath, pr); err != nil {
-			return err
-		}
-	}
-	var root paf.Extensions
-	if err := root.Set(paf.ExtTclaude, map[string]any{"converted_from": ConvertedFrom{Format: m.Format, FormatVersion: m.FormatVersion, TclaudeVersion: m.TclaudeVersion, CreatedAt: m.CreatedAt}}); err != nil {
-		return err
-	}
-	w.SetManifestExtensions(root)
-	_, err := w.Close(producer, keys...)
-	return err
+	return nil
 }
 
 // ConvertedLimit is the archive limit for a PAF converted from a bundle

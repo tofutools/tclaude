@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -29,6 +31,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/paf/privacy"
 	"github.com/tofutools/tclaude/pkg/paf/render"
+	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
 type Params struct{}
@@ -93,6 +96,9 @@ func runValidate(out io.Writer, p *validateParams) int {
 				res.Valid, res.Error = false, "signature "+sig.Path+" is invalid"
 			}
 		}
+		if err := checkWorkflows(o.Archive); err != nil {
+			res.Valid, res.Error = false, err.Error()
+		}
 	}
 	if p.JSON {
 		writeJSON(out, res)
@@ -122,6 +128,20 @@ func runValidate(out io.Writer, p *validateParams) int {
 		return 1
 	}
 	return 0
+}
+
+// checkWorkflows runs a workflow reader's checks on what the file carries.
+// pkg/paf only checks their hashes and links.
+func checkWorkflows(a *paf.Archive) error {
+	if len(a.Unsupported) > 0 || len(a.Warnings) > 0 {
+		return nil
+	}
+	for _, wf := range a.Manifest.Workflows {
+		if _, err := pwf.OpenEmbedded(a, wf.Key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type inspectParams struct {
@@ -180,6 +200,16 @@ func runInspect(out io.Writer, p *inspectParams) error {
 		for _, f := range s.Rescan {
 			fmt.Fprintf(out, "  %-19s %s\n", "Scan (this node):", termSafe(render.FindingLine(f)))
 		}
+	}
+	for _, wf := range s.Workflows {
+		fmt.Fprintf(out, "\nworkflow %s (%s)\n", termSafe(wf.Root), termSafe(wf.Key))
+		for _, role := range slices.Sorted(maps.Keys(wf.Performers)) {
+			fmt.Fprintf(out, "  %-19s %s\n", "Performer:", termSafe(role+": agent "+wf.Performers[role]))
+		}
+		for _, key := range wf.CarriedBy {
+			fmt.Fprintf(out, "  %-19s %s\n", "Carried by:", termSafe(key))
+		}
+		fmt.Fprintf(out, "  %-19s %s\n", "Review:", "tclaude agent process-templates inspect "+termSafe(p.File)+" --workflow "+termSafe(wf.Key))
 	}
 	for _, ag := range s.Agents {
 		fmt.Fprintf(out, "\nagent %s (%s)\n", termSafe(ag.Name), termSafe(ag.Key))

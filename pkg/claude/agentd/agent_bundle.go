@@ -414,7 +414,23 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "format", "format must be paf (the default) or v1")
 		return
 	}
-	parts := pafHistoryParts{NoNative: r.URL.Query().Get("no_native") == "true", NoContext: r.URL.Query().Get("no_context") == "true", AllowedFindings: classify(peerFromContext(r.Context())) == classHuman && flaggedCredentials(b.Manifest.Findings)}
+	carried := carriedWorkflowsFromQuery(r.URL.Query())
+	if carried.any() && format != agentArchivePAF {
+		writeError(w, 400, "format", "only a PAF can carry workflows: drop --format v1")
+		return
+	}
+	workflows, ok := loadCarriedWorkflows(w, r, carried, agentOwnWorkflows(res.ConvID))
+	if !ok {
+		return
+	}
+	if fs := scanWorkflowBundles(workflows); len(fs) > 0 {
+		b.Manifest.Findings = append(b.Manifest.Findings, bundleFindings(fs)...)
+		if flaggedCredentials(b.Manifest.Findings) && r.URL.Query().Get("allow_flagged") != "true" {
+			writeJSON(w, 422, map[string]any{"error": "suspected credentials in a carried workflow: use --allow-flagged, or leave the workflow out", "code": "flagged_credentials", "findings": b.Manifest.Findings})
+			return
+		}
+	}
+	parts := pafHistoryParts{Workflows: workflows, NoNative: r.URL.Query().Get("no_native") == "true", NoContext: r.URL.Query().Get("no_context") == "true", AllowedFindings: classify(peerFromContext(r.Context())) == classHuman && flaggedCredentials(b.Manifest.Findings)}
 	if (parts.NoNative || parts.NoContext) && format != agentArchivePAF {
 		writeError(w, 400, "format", "no_native and no_context apply only to format=paf")
 		return
@@ -492,7 +508,10 @@ type agentBundlePreview struct {
 	// Kept and Dropped list the file's elevated items by what became of them.
 	Kept    []string `json:"kept,omitempty"`
 	Dropped []string `json:"dropped,omitempty"`
-	Applied bool     `json:"applied"`
+	// CarriedWorkflows are workflows the file also holds. Importing the agent
+	// stores none of them; a workflow import of the same file reviews each.
+	CarriedWorkflows []paf.WorkflowItem `json:"carried_workflows,omitempty"`
+	Applied          bool               `json:"applied"`
 	// Offline reports an applied import that landed without starting
 	// (start=false); resume starts it.
 	Offline bool                 `json:"offline,omitempty"`
@@ -524,6 +543,8 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	var fileLosses *paf.Losses
 	// fileDigest binds a human's confirmation to the file they previewed.
 	var fileDigest string
+	// carriedWorkflows stay in the file: an agent import stores none of them.
+	var carriedWorkflows []paf.WorkflowItem
 	if b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
@@ -534,18 +555,24 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		hash := sha256.New()
 		n, err := io.Copy(io.MultiWriter(file, hash), http.MaxBytesReader(w, r.Body, agentTransferLimit()+1))
 		fileDigest = hex.EncodeToString(hash.Sum(nil))
+		// A confirmation is for the one agent the human saw listed.
+		if key := r.URL.Query().Get("agent"); key != "" {
+			sum := sha256.Sum256([]byte(fileDigest + "\n" + key))
+			fileDigest = hex.EncodeToString(sum[:])
+		}
 		if err != nil || n > agentTransferLimit() {
 			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
 			return
 		}
 		var info legacy.Info
-		b, info, err = legacy.DecodeBundleFile(file, legacy.DecodeLimits{MaxBytes: agentTransferLimit(), MaxRecordBytes: pafContextRecordLimit()}, "")
+		b, info, err = legacy.DecodeBundleFile(file, legacy.DecodeLimits{MaxBytes: agentTransferLimit(), MaxRecordBytes: pafContextRecordLimit(), AgentKey: r.URL.Query().Get("agent")}, "")
 		if err != nil {
 			writeError(w, 400, "archive", err.Error())
 			return
 		}
 		defer func() { _ = b.Close() }()
 		neutral, rescan, handoff, fileLosses = info.Context, info.Scan, info.Handoff, info.Losses
+		carriedWorkflows = info.Workflows
 		if foreign, _ := r.Context().Value(agentBundleForeignFileContextKey{}).(bool); foreign && fileLosses != nil {
 			l := paf.CountsOnly(*fileLosses)
 			fileLosses = &l
@@ -570,6 +597,15 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	d := b.Manifest.Agent
 	if name := q.Get("name"); name != "" {
 		d.Name = name
+	}
+	// A performer lands under the role this node's workflow asks for. The
+	// importer names it; the file only ever suggests one, so choosing an agent
+	// out of a file takes no role from it.
+	if q.Get("agent") != "" && direct {
+		d.Role = ""
+	}
+	if role := q.Get("role"); role != "" && direct {
+		d.Role = role
 	}
 	// The agent lands on its own harness unless the importer names another;
 	// the conversation then translates (see planHistoryLanding).
@@ -889,6 +925,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		preview.Confirm = newImportConfirmation(fileDigest, fileDrops, keep.human, preview.Warnings)
 	}
 	preview.Kept, preview.Dropped = settled.kept, settled.dropped
+	preview.CarriedWorkflows = carriedWorkflows
 	if offerList != nil {
 		// Refused here too, so a stale selection reserves no launch.
 		if err := keep.check(fileDigest, fileImportItems(fileDrops)); err != nil {

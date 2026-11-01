@@ -324,7 +324,7 @@ func TestOpenRefuses(t *testing.T) {
 		"closed enum value":                          `unknown role "system"`,
 		"context without losses":                     "no losses.json",
 		"unknown major version":                      "unsupported PAF version 1.0",
-		"needs a newer reader":                       "this file needs PAF >= 0.3 (written by test as PAF 0.3); this reader supports PAF 0.1",
+		"needs a newer reader":                       "this file needs PAF >= 0.3 (written by test as PAF 0.3); this reader supports PAF 0.2",
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {

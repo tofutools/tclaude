@@ -635,8 +635,9 @@ export function createManagementActions(deps) {
   // openGroupImport opens the one ⤒ import… dialog; file preloads a
   // dropped .paf or .zip.
   let importKey = 0;
-  function openGroupImport(file = null) {
-    state.openDialog({ kind: 'group-import', file, key: ++importKey });
+  // landing names one agent of the file and the role it lands under.
+  function openGroupImport(file = null, landing = null) {
+    state.openDialog({ kind: 'group-import', file, landing, key: ++importKey });
   }
   // node names another node's group (the fused Groups view): its snapshot
   // holds the context, and the save goes to it.
@@ -702,8 +703,8 @@ export function createManagementActions(deps) {
     if (!response.ok) throw await pafError(response);
     return response.blob();
   }
-  async function exportGroupArchive(group, format, allowFlagged = false, node = '') {
-    const response = await nodeDownload(node, `/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged })}`);
+  async function exportGroupArchive(group, format, allowFlagged = false, node = '', workflows = false) {
+    const response = await nodeDownload(node, `/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged, workflows: workflows ? 'own' : '' })}`);
     if (!response.ok) throw await pafError(response);
     return { blob: await response.blob(), filename: response.headers.get('X-Tclaude-Export-Filename') || dispositionName(response) || `group-${group}.${format}` };
   }
@@ -863,7 +864,7 @@ export function createManagementActions(deps) {
         ...controller,
         snapshots: snapshotsOn(node),
         exportAgentPAF: (choices) => exportAgentPAF(choices, node),
-        exportGroupArchive: (group, format, allowFlagged = false) => exportGroupArchive(group, format, allowFlagged, node),
+        exportGroupArchive: (group, format, allowFlagged = false, _node = '', workflows = false) => exportGroupArchive(group, format, allowFlagged, node, workflows),
       }));
     }
     return nodeActions.get(node);

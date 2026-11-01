@@ -28,6 +28,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/paf/privacy"
+	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
 // groups_export.go is the daemon half of per-group export / import. It
@@ -94,7 +95,16 @@ func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "invalid_arg", "format must be paf (the default) or zip")
 		return
 	}
-	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman)
+	carried := carriedWorkflowsFromQuery(r.URL.Query())
+	if carried.any() && format != groupArchivePAF {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "only a PAF can carry workflows: drop --format zip")
+		return
+	}
+	workflows, ok := loadCarriedWorkflows(w, r, carried, groupOwnWorkflows(g.ID))
+	if !ok {
+		return
+	}
+	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman, workflows)
 }
 
 // Archive formats a group export can be written in.
@@ -104,8 +114,8 @@ const (
 )
 
 // serveGroupExport builds the archive and writes it as a file download.
-func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged, byHuman bool) {
-	archive, err := buildGroupExportAs(groupName, format, allowFlagged, byHuman)
+func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged, byHuman bool, workflows []pwf.Bundle) {
+	archive, err := buildGroupExportAs(groupName, format, allowFlagged, byHuman, workflows)
 	if err != nil {
 		if errors.Is(err, db.ErrGroupNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -142,7 +152,7 @@ func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlag
 // be located is flagged Missing — its DB rows still export.
 // byHuman records allowFlagged as a human's allowance in privacy.json;
 // an agent's allowance passes the export but is not recorded as one.
-func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool) ([]byte, error) {
+func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool, workflows []pwf.Bundle) ([]byte, error) {
 	exp, err := db.CollectGroupExport(groupName)
 	if err != nil {
 		return nil, err
@@ -191,10 +201,11 @@ func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool) ([
 		if scanErr != nil {
 			return nil, scanErr
 		}
+		findings = append(findings, scanWorkflowBundles(workflows)...)
 		if privacy.Blocking(findings) && !allowFlagged {
 			return nil, &flaggedGroupExportError{findings: findings}
 		}
-		archive, err = groupExportPAF(exp, findings, byHuman && allowFlagged && privacy.Blocking(findings))
+		archive, err = groupExportPAF(exp, findings, byHuman && allowFlagged && privacy.Blocking(findings), workflows)
 	} else {
 		archive, err = groupexport.Marshal(exp)
 	}
@@ -222,12 +233,17 @@ func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool) ([
 
 // groupExportPAF writes exp as a group PAF, signed when this node already
 // has a federation identity (exporting never creates one).
-func groupExportPAF(exp *groupexport.Export, findings []paf.Finding, allowed bool) ([]byte, error) {
+func groupExportPAF(exp *groupexport.Export, findings []paf.Finding, allowed bool, workflows []pwf.Bundle) ([]byte, error) {
 	// A PAF bounds its uncompressed size; the PAF default (2 GiB) leaves the
 	// same headroom the zip's 512 MiB compressed upload cap does.
 	opts := legacy.GroupWriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, Findings: findings, AllowedFindings: allowed}
 	if id, err := proto.LoadIdentity(FederationKeyPath()); err == nil {
 		opts.Keys = []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
+	}
+	if len(workflows) > 0 {
+		opts.AddContent = func(w *paf.Writer, agents []string) error {
+			return writeCarriedWorkflows(w, workflows, agents, false)
+		}
 	}
 	opts.EarlierLosses = map[string]*paf.Losses{}
 	for _, c := range exp.Convs {
@@ -283,6 +299,13 @@ type decodedGroupArchive struct {
 	Export  *groupexport.Export
 	Archive *paf.Archive
 	Source  string
+}
+
+func (d *decodedGroupArchive) workflows() []paf.WorkflowItem {
+	if d.Archive == nil {
+		return nil
+	}
+	return d.Archive.Manifest.Workflows
 }
 
 // decodeGroupArchive reads an import archive: a group PAF, verified and
@@ -459,17 +482,20 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 type importInspection struct {
 	// Manifest summary — what the archive declares it holds. Source is
 	// "paf" for a group PAF, "group-export" for a zip.
-	Source        string `json:"source"`
-	SourceGroup   string `json:"source_group"`
-	FormatVersion int    `json:"format_version"`
-	SchemaVersion int    `json:"schema_version,omitempty"`
-	SourceHome    string `json:"source_home,omitempty"`
-	SourceOS      string `json:"source_os,omitempty"`
-	ExportedAt    string `json:"exported_at,omitempty"`
-	AgentCount    int    `json:"agent_count"`
-	MessageCount  int    `json:"message_count"`
-	ConvCount     int    `json:"conv_count"`
-	MissingConvs  int    `json:"missing_convs"`
+	Source      string `json:"source"`
+	SourceGroup string `json:"source_group"`
+	// CarriedWorkflows are workflows the file also holds. Importing the group
+	// stores none of them; a workflow import of the same file reviews each.
+	CarriedWorkflows []paf.WorkflowItem `json:"carried_workflows,omitempty"`
+	FormatVersion    int                `json:"format_version"`
+	SchemaVersion    int                `json:"schema_version,omitempty"`
+	SourceHome       string             `json:"source_home,omitempty"`
+	SourceOS         string             `json:"source_os,omitempty"`
+	ExportedAt       string             `json:"exported_at,omitempty"`
+	AgentCount       int                `json:"agent_count"`
+	MessageCount     int                `json:"message_count"`
+	ConvCount        int                `json:"conv_count"`
+	MissingConvs     int                `json:"missing_convs"`
 
 	// Target + collision analysis against THIS machine.
 	TargetName      string          `json:"target_name"`
@@ -529,17 +555,18 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	}
 
 	insp := &importInspection{
-		Source:         source,
-		SourceGroup:    exp.SourceGroup,
-		FormatVersion:  exp.FormatVersion,
-		SchemaVersion:  exp.SchemaVersion,
-		SourceHome:     exp.SourceHome,
-		SourceOS:       exp.SourceOS,
-		ExportedAt:     exp.ExportedAt,
-		AgentCount:     len(exp.Members),
-		MessageCount:   len(exp.Messages),
-		ConvCount:      len(exp.Convs),
-		ConvCollisions: []convCollision{},
+		CarriedWorkflows: decoded.workflows(),
+		Source:           source,
+		SourceGroup:      exp.SourceGroup,
+		FormatVersion:    exp.FormatVersion,
+		SchemaVersion:    exp.SchemaVersion,
+		SourceHome:       exp.SourceHome,
+		SourceOS:         exp.SourceOS,
+		ExportedAt:       exp.ExportedAt,
+		AgentCount:       len(exp.Members),
+		MessageCount:     len(exp.Messages),
+		ConvCount:        len(exp.Convs),
+		ConvCollisions:   []convCollision{},
 	}
 	cwd := ""
 	if into != "" {

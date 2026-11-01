@@ -154,6 +154,22 @@ asks you to authorize each program profile its command steps use, as for any
 run (see [Processes](processes.md#running)). Export needs
 `process.templates.read`; import needs `process.templates.manage`.
 
+### Shipping agents with a workflow
+
+A workflow can travel with agents for its roles, as a `.paf`. See
+[Carrying workflows](paf.md#carrying-workflows).
+
+```bash
+tclaude agent process-templates export ship-feature --performer reviewer=alice --performer-history
+tclaude agent process-templates inspect ship-feature.paf --workflow ship-feature
+tclaude agent process-templates import ship-feature.paf --yes
+```
+
+`inspect` and `import` read a workflow out of any `.paf` that carries one, with
+the same checks and the same review as a `.pwf`. Importing the workflow lands
+none of the agents: they are listed in the review, and each lands through the
+[agent import](paf.md#importing-what-a-file-carries) with a review of its own.
+
 ### Refusing unsigned files
 
 An unsigned file imports by default. To refuse it, turn on *Refuse unsigned

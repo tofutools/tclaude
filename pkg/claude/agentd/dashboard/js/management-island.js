@@ -2311,7 +2311,7 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'template-starters':
       return html`<${TemplateStartersDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'group-import':
-      return html`<${GroupImportDialog} key=${descriptor.key || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} initialFile=${descriptor.file || null}/>`;
+      return html`<${GroupImportDialog} key=${descriptor.key || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} initialFile=${descriptor.file || null} landing=${descriptor.landing || null}/>`;
     case 'paf-export':
       return html`<${AgentExportDialog} descriptor=${descriptor} state=${state} actions=${actions.actionsOn?.(descriptor.node) || actions} confirmDiscard=${confirmDiscard}/>`;
     case 'snapshots':

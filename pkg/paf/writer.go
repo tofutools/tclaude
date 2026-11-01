@@ -46,9 +46,13 @@ type Writer struct {
 	manExt   Extensions
 	natives  []string
 	members  []string
+	// workflows and links are the envelope; their digests are filled in by
+	// Close, once every entry is written.
+	workflows []WorkflowItem
+	links     []Link
 }
 
-// NewWriter starts an archive of the given kind (KindAgent or KindGroup).
+// NewWriter starts an archive of the given kind.
 func NewWriter(w io.Writer, kind string, limits Limits) *Writer {
 	return &Writer{
 		zw:      zip.NewWriter(w),
@@ -258,6 +262,23 @@ func (w *Writer) AddAgent(key string, a Agent, env Environment) error {
 	return nil
 }
 
+// AddWorkflow records a workflow whose entries the caller writes under
+// workflows/<key>/ (see pwf.WriteEmbedded).
+func (w *Writer) AddWorkflow(key, root string, requires []string) error {
+	if !ValidAgentKey(key) {
+		return fmt.Errorf("paf: invalid workflow key %q", key)
+	}
+	if slices.ContainsFunc(w.workflows, func(wf WorkflowItem) bool { return wf.Key == key }) {
+		return fmt.Errorf("paf: duplicate workflow key %q", key)
+	}
+	w.workflows = append(w.workflows, WorkflowItem{Key: key, Root: root, Requires: append([]string{}, requires...)})
+	return nil
+}
+
+// AddLink records a reference between an agent and a workflow. Close fills
+// in its digest.
+func (w *Writer) AddLink(l Link) { w.links = append(w.links, l) }
+
 // CreateContext starts an agent's context file (scope effective writes
 // transcript.jsonl, scope full writes full.jsonl). Close the returned closer
 // after the last line.
@@ -321,6 +342,9 @@ func (w *Writer) Close(producer Producer, keys ...SigningKey) ([]byte, error) {
 	if w.kind != KindGroup && w.seen[GroupPath] {
 		return nil, errors.New("paf: group.json in an agent PAF")
 	}
+	if w.kind == KindBundle && len(w.workflows) == 0 {
+		return nil, errors.New("paf: bundle PAF has no workflow")
+	}
 	for _, key := range w.agents {
 		if w.seen[AgentPath(key, "context/transcript.jsonl")] && !w.seen[AgentPath(key, "context/losses.json")] {
 			return nil, fmt.Errorf("paf: agent %q has context but no losses.json", key)
@@ -367,6 +391,24 @@ func (w *Writer) Close(producer Producer, keys ...SigningKey) ([]byte, error) {
 		Agents:             w.agents,
 		Entries:            w.entries,
 		Extensions:         w.manExt,
+	}
+	if len(w.workflows) > 0 {
+		// An older reader would import the agents and silently lose the
+		// workflows, so a file with an envelope says it needs a newer one.
+		m.PafVersion, m.MinReaderVersion = EnvelopeVersion, EnvelopeVersion
+		for i := range w.workflows {
+			w.workflows[i].Digest = SectionDigest(w.entries, WorkflowPath(w.workflows[i].Key, ""))
+		}
+		m.Workflows = w.workflows
+		for i := range w.links {
+			l := &w.links[i]
+			if l.Type == LinkPerformer {
+				l.Digest = SectionDigest(w.entries, AgentPath(l.Agent, ""))
+			} else {
+				l.Digest = SectionDigest(w.entries, WorkflowPath(l.Workflow, ""))
+			}
+		}
+		m.Links = w.links
 	}
 	if len(w.extUsed) > 0 {
 		m.ExtensionsUsed = w.extUsed

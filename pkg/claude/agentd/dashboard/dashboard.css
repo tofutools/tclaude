@@ -22050,6 +22050,7 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 /* Workflow sharing (.pwf): the import review. */
 .pwf-import-entry { display: inline-flex; align-items: center; gap: 8px; }
 .pwf-inline-error { font-size: 12px; }
+.pwf-land { margin-left: 6px; }
 .pwf-import-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; color: #c9d1d9; background: #161b22; border: 1px solid #30363d; }
 .pwf-import-dialog h4 { margin: 0 0 4px; font-size: 12px; letter-spacing: .4px; text-transform: uppercase; color: #8b949e; }
 .pwf-import-dialog ul { margin: 0; padding-left: 18px; }

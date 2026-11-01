@@ -53,6 +53,7 @@ test('PAF model builds the export, landing and query shapes the routes take', as
   assert.equal(model.queryString(model.exportParams({ agent: 'agt_1', history: false })), '?agent=agt_1&format=paf');
   assert.equal(model.queryString(model.landingParams({ harness: 'codex', members: { c1: { harness: 'claude', model: 'claude-opus-5-5' }, c2: { harness: '' } } })),
     '?harness=codex&member_harness=c1%3Dclaude&member_model=c1%3Dclaude-opus-5-5');
+  assert.equal(model.queryString(model.exportParams({ agent: 'agt_1', history: false, workflows: true })), '?agent=agt_1&format=paf&workflows=own');
   assert.equal(model.rungBadge('none').text, 'config only');
   assert.match(model.lossSummary({ source_entries: 412, carried_entries: 371, items: [{ kind: 'provider_reasoning', count: 41 }] }),
     /carries 371 \/ 412 entries · losses: 41 provider reasoning/);
@@ -88,7 +89,7 @@ test('a flagged agent export shows the findings and downloads only after acknowl
   await tick(host.querySelector('#paf-export-native'), false);
   await harness.act(() => host.querySelector('#paf-export-download').click());
   await settle();
-  assert.deepEqual(calls[0], ['export', { agent: 'agt_1', history: true, native: false, neutral: true, allowFlagged: false }]);
+  assert.deepEqual(calls[0], ['export', { agent: 'agt_1', history: true, native: false, neutral: true, allowFlagged: false, workflows: false }]);
   assert.match(host.querySelector('#paf-findings').textContent, /github_token \(history line 3\)/);
   assert.equal(host.querySelector('#paf-export-download').disabled, true, 'download waits for the acknowledgement');
   await harness.act(() => host.querySelector('#paf-export-redact').click());
@@ -159,6 +160,9 @@ test('offline import is offered only when a conversation lands', async (t) => {
   const choices = { group: 'team', name: '', harness: '', model: '', cwd: '', keepPaths: true };
   assert.equal(agentImportParams(choices).start, '', 'a preview never sends start');
   assert.equal(agentImportParams(choices, true, false).start, 'false');
+  assert.equal(agentImportParams(choices).agent, '', 'an ordinary import names no agent of the file');
+  const landing = agentImportParams({ ...choices, agent: 'scout', role: ' dev ' });
+  assert.deepEqual([landing.agent, landing.role], ['scout', 'dev'], 'a performer lands by its key, under the role asked for');
 });
 
 test('a group preview offers per-member harness and model and re-inspects with them', async (t) => {

@@ -31,6 +31,7 @@ type groupsExportParams struct {
 	Format string `long:"format" optional:"true" alts:"paf,zip" help:"Archive format: paf (the default; a group Portable Agent Format file) or zip (the legacy group export archive, for importing into an older tclaude)"`
 
 	AllowFlagged bool `long:"allow-flagged" help:"Export a PAF even when the credential scan flags suspected credentials; inspect before sharing."`
+	CarriedWorkflowParams
 }
 
 func groupsExportCmd() *cobra.Command {
@@ -77,6 +78,11 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/export?format=" + format
 	if p.AllowFlagged {
 		path += "&allow_flagged=true"
+	}
+	carried := url.Values{}
+	p.addTo(carried)
+	if len(carried) > 0 {
+		path += "&" + carried.Encode()
 	}
 	archive, headers, err := DaemonGetRaw(path)
 	if err != nil {
@@ -369,9 +375,13 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			Count     int      `json:"count"`
 			Locations []string `json:"locations"`
 		} `json:"findings"`
-		Landings     []groupLanding `json:"landings"`
-		FileWarnings []string       `json:"file_warnings"`
-		Confirm      *importConfirm `json:"confirm"`
+		Landings         []groupLanding `json:"landings"`
+		FileWarnings     []string       `json:"file_warnings"`
+		Confirm          *importConfirm `json:"confirm"`
+		CarriedWorkflows []struct {
+			Key  string `json:"key"`
+			Root string `json:"root"`
+		} `json:"carried_workflows"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -407,6 +417,9 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 		fmt.Fprintf(stdout, "  exported at:    %s\n", insp.ExportedAt)
 	}
 	fmt.Fprintf(stdout, "  format version: %d\n", insp.FormatVersion)
+	for _, w := range insp.CarriedWorkflows {
+		fmt.Fprintf(stdout, "  also carries:   workflow %s, not imported here; review it with process-templates import --workflow %s\n", shown(w.Root), shown(w.Key))
+	}
 
 	if len(insp.Findings) > 0 {
 		fmt.Fprintf(stdout, "\nCredential scan (this node):\n")

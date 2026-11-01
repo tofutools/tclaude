@@ -9,10 +9,13 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { downloadBlob } from './paf-model.js';
 import { shellConfirm } from './shell-state.js';
+import { managementController } from './management-controller.js';
 
 const html = htm.bind(h);
 const PWF_TYPE = 'application/vnd.tclaude.pwf+zip';
 const MAX_FILE = 32 << 20;
+// A .paf can carry workflows beside whole conversations.
+const MAX_PAF = 1 << 30;
 
 async function errorText(response) {
   const body = await response.json().catch(() => ({}));
@@ -101,6 +104,7 @@ export function importQuery(choices = {}) {
   }
   if (choices.rename) params.set('rename', '1');
   if (choices.group) params.set('group', choices.group);
+  if (choices.workflow) params.set('workflow', choices.workflow);
   return params.toString();
 }
 
@@ -172,6 +176,7 @@ export function importReview(preview) {
     refused: preview.refused || '',
     templates,
     updates: preview.updates || 0,
+    envelope: preview.envelope || null,
     nothingToDo: templates.length > 0 && templates.every((t) => t.status === 'identical'),
   };
 }
@@ -184,11 +189,25 @@ async function processGroupNames(fetchImpl = fetch) {
   return (body.groups || []).map((g) => g.group).filter(Boolean);
 }
 
-function ImportDialog({ file, bytes, preview: initialPreview, group: initialGroup = '', onClose, onImported }) {
+// EnvelopeSection says what else the .paf holds. Importing the workflow takes
+// none of it: each performer lands through the agent import and its own review.
+function EnvelopeSection({ envelope, workflow, disabled, onPick, onLand }) {
+  return html`<div class="pwf-section" data-pwf-envelope>
+    ${envelope.workflows.length > 1 && html`<label class="pwf-group">This file holds ${envelope.workflows.length} workflows. Reviewing <select data-pwf-workflow disabled=${disabled} value=${workflow} onChange=${(e) => onPick(e.currentTarget.value)}>
+      ${envelope.workflows.map((w) => html`<option key=${w.key} value=${w.key}>${w.root.split('@')[0]}</option>`)}
+    </select></label>`}
+    ${envelope.performers.length > 0 && html`<h4>Agents it ships</h4><ul class="pwf-roles">${envelope.performers.map((p) => html`<li key=${p.role} data-pwf-performer=${p.role}>
+      <b>${p.target}</b> <span class="muted">· ${p.name} on ${p.harness}${p.model ? ` (${p.model})` : ''}, ${p.history ? 'with its conversation' : 'no conversation'}</span>
+      <button type="button" class="tool pwf-land" data-pwf-land=${p.agentKey} disabled=${disabled} onClick=${() => onLand(p)}>Land it…</button></li>`)}</ul>
+      <p class="muted">Importing the workflow lands none of them. Land one to give a role a pre-briefed agent, with the agent import's own review; or use your own agents and ignore these.</p>`}
+  </div>`;
+}
+
+function ImportDialog({ file, source, bytes, preview: initialPreview, group: initialGroup = '', onClose, onImported }) {
   const [preview, setPreview] = useState(initialPreview);
   const review = importReview(preview);
   const [replace, setReplace] = useState(false);
-  const [choices, setChoices] = useState({ roleMap: {}, rename: false, group: initialGroup });
+  const [choices, setChoices] = useState({ roleMap: {}, rename: false, group: initialGroup, workflow: initialPreview.envelope?.workflow || '' });
   const [groups, setGroups] = useState([]);
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -284,6 +303,8 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
     ${review.problems.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-problems><h4>Fails validation</h4><p class="muted">It imports as it is, but cannot run until these are fixed here.</p><ul>${review.problems.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul></div>`}
     ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4>Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps fall to their profile, or wait until reassigned.</li>`)}</ul></div>`}
     ${review.paths.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-paths><h4>Paths from another machine</h4><p class="muted">Steps using these may need changing here.</p><ul>${review.paths.map((p, i) => html`<li key=${i}><code>${p.path}</code> <span class="muted">· ${p.where}</span></li>`)}</ul></div>`}
+    ${review.envelope && html`<${EnvelopeSection} envelope=${review.envelope} workflow=${choices.workflow} disabled=${busy}
+      onPick=${(workflow) => choose({ workflow, roleMap: {} })} onLand=${(performer) => { managementController().openGroupImport(source, { agent: performer.agentKey, role: performer.target }); onClose(); }} />`}
     <div class="pwf-section"><h4>What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
       ${(review.updates > 0 || choices.rename) && html`<label class="pwf-replace"><input type="checkbox" data-pwf-rename checked=${choices.rename} disabled=${busy} onChange=${(e) => { setReplace(false); choose({ rename: e.currentTarget.checked }); }} /> Import under new ids (${'<id>-2'}, …) instead of replacing mine</label>`}
       ${review.updates > 0 && !choices.rename && html`<label class="pwf-replace"><input type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
@@ -303,7 +324,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
 // A file dropped elsewhere (the dock's Processes section) comes in as
 // `dropped` and takes the same review.
 export function WorkflowImportButton({
-  group = '', onImported, dropped = null, label = '⤒ import workflow', className = 'process-action', id = 'process-workflow-import-btn',
+  group = '', onImported, dropped = null, from = null, label = '⤒ import workflow', className = 'process-action', id = 'process-workflow-import-btn',
 }) {
   const input = useRef(null);
   const [state, setState] = useState(null);
@@ -311,13 +332,13 @@ export function WorkflowImportButton({
   const load = async (picked) => {
     if (!picked) return;
     setError('');
-    if (picked.size > MAX_FILE) {
+    if (picked.size > (/\.paf$/i.test(picked.name) ? MAX_PAF : MAX_FILE)) {
       setError('That file is too large to be a workflow.');
       return;
     }
     try {
       const bytes = new Uint8Array(await picked.arrayBuffer());
-      setState({ file: picked.name, bytes, preview: await previewImport(bytes, { choices: { group } }) });
+      setState({ file: picked.name, source: picked, bytes, preview: await previewImport(bytes, { choices: { group } }) });
     } catch (err) {
       setError(`Cannot import ${picked.name}: ${err?.message || err}`);
     }
@@ -329,8 +350,8 @@ export function WorkflowImportButton({
   };
   useEffect(() => { void load(dropped); }, [dropped]);
   return html`<span class="pwf-import-entry">
-    <input ref=${input} type="file" accept=".pwf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
-    <button id=${id || undefined} class=${className} type="button" title="Import a shared .pwf workflow file: you review what it runs before anything is stored" onClick=${() => input.current?.click()}>${label}</button>
+    <input ref=${input} type="file" accept=".pwf,.paf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
+    <button id=${id || undefined} class=${className} type="button" title="Import a shared .pwf workflow file, or a .paf carrying one: you review what it runs before anything is stored" onClick=${() => (from ? void load(from) : input.current?.click())}>${label}</button>
     ${error && html`<span class="island-error pwf-inline-error" role="alert">${error}</span>`}
     ${state && html`<${ImportDialog} ...${state} group=${group} onClose=${() => setState(null)} onImported=${onImported} />`}
   </span>`;

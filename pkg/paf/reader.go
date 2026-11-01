@@ -50,7 +50,7 @@ func versionReadable(v string, major int) bool {
 
 // ReadVersions are the PAF versions this package reads natively, which an
 // instance advertises to its federation peers.
-func ReadVersions() []string { return []string{Version} }
+func ReadVersions() []string { return []string{Version, EnvelopeVersion} }
 
 // writeVersions are the versions this package can write, newest first.
 var writeVersions = []string{Version}
@@ -101,7 +101,7 @@ func (e *VersionError) Error() string {
 		p += " " + e.Producer.Version
 	}
 	if e.MinReaderVersion != "" {
-		return fmt.Sprintf("paf: this file needs PAF >= %s (written by %s as PAF %s); this reader supports PAF %s", e.MinReaderVersion, p, e.PafVersion, Version)
+		return fmt.Sprintf("paf: this file needs PAF >= %s (written by %s as PAF %s); this reader supports PAF %s", e.MinReaderVersion, p, e.PafVersion, EnvelopeVersion)
 	}
 	return fmt.Sprintf("paf: unsupported PAF version %s (written by %s; this reader supports %d.x)", e.PafVersion, p, Major)
 }
@@ -274,7 +274,7 @@ func (a *Archive) readManifest(purpose Purpose) error {
 	switch {
 	case !versionReadable(head.PafVersion, Major):
 		verr = &VersionError{PafVersion: head.PafVersion, Producer: head.Producer}
-	case head.MinReaderVersion != "" && versionBefore(Version, head.MinReaderVersion):
+	case head.MinReaderVersion != "" && versionBefore(EnvelopeVersion, head.MinReaderVersion):
 		verr = &VersionError{PafVersion: head.PafVersion, MinReaderVersion: head.MinReaderVersion, Producer: head.Producer}
 	}
 	if verr != nil {
@@ -603,6 +603,9 @@ func (a *Archive) checkSemantics() error {
 	if m.Kind != KindGroup && a.group != nil {
 		return errors.New("paf: group.json in an agent PAF")
 	}
+	if m.Kind == KindBundle && len(m.Workflows) == 0 {
+		return errors.New("paf: bundle PAF has no workflow")
+	}
 	for _, key := range m.Agents {
 		ag := a.agents[key]
 		if ag == nil || a.envs[key] == nil {
@@ -648,7 +651,83 @@ func (a *Archive) checkSemantics() error {
 			}
 		}
 	}
+	if err := a.checkEnvelope(); err != nil {
+		if a.lenient("envelope", err) != nil {
+			return err
+		}
+	}
 	return a.checkDeclared(a.ManifestRaw)
+}
+
+// checkEnvelope verifies the workflow items and links: every key resolves,
+// every digest matches, and each workflow's entries belong to it. What a
+// workflow holds is checked by pkg/pwf, which reads it. A file with no
+// workflow items has no envelope, whatever its listed entries are called,
+// since a reader ignores a listed entry it does not understand.
+func (a *Archive) checkEnvelope() error {
+	m := a.Manifest
+	if len(m.Workflows) == 0 {
+		if len(m.Links) > 0 {
+			return errors.New("paf: links in a file with no workflows")
+		}
+		return nil
+	}
+	items := map[string]WorkflowItem{}
+	for _, wf := range m.Workflows {
+		if !ValidAgentKey(wf.Key) {
+			return fmt.Errorf("paf: invalid workflow key %q", wf.Key)
+		}
+		if _, dup := items[wf.Key]; dup {
+			return fmt.Errorf("paf: workflow %q is listed twice", wf.Key)
+		}
+		items[wf.Key] = wf
+		if !a.listed(WorkflowPath(wf.Key, "workflow.json")) {
+			return fmt.Errorf("paf: workflow %q has no workflow.json", wf.Key)
+		}
+		if got := SectionDigest(m.Entries, WorkflowPath(wf.Key, "")); got != wf.Digest {
+			return fmt.Errorf("paf: workflow %q digest does not match its entries", wf.Key)
+		}
+	}
+	for _, e := range m.Entries {
+		if rest, ok := strings.CutPrefix(e.Path, WorkflowsDir); ok {
+			key, _, _ := strings.Cut(rest, "/")
+			if _, listed := items[key]; !listed {
+				return fmt.Errorf("paf: entry %q belongs to a workflow the manifest does not list", e.Path)
+			}
+		}
+	}
+	roles := map[[2]string]bool{}
+	for _, l := range m.Links {
+		switch l.Type {
+		case LinkPerformer, LinkCarries:
+		default:
+			// An open enumeration: a reader skips a link type it does not know.
+			continue
+		}
+		wf, ok := items[l.Workflow]
+		if !ok {
+			return fmt.Errorf("paf: %s link names unknown workflow %q", l.Type, l.Workflow)
+		}
+		if !slices.Contains(m.Agents, l.Agent) {
+			return fmt.Errorf("paf: %s link names unknown agent %q", l.Type, l.Agent)
+		}
+		want := wf.Digest
+		if l.Type == LinkPerformer {
+			want = SectionDigest(m.Entries, AgentPath(l.Agent, ""))
+			if l.Role == "" {
+				return errors.New("paf: performer link has no role")
+			}
+			slot := [2]string{l.Workflow, l.Role}
+			if roles[slot] {
+				return fmt.Errorf("paf: workflow %q has two performers for role %q", l.Workflow, l.Role)
+			}
+			roles[slot] = true
+		}
+		if l.Digest != want {
+			return fmt.Errorf("paf: %s link digest does not match what it names", l.Type)
+		}
+	}
+	return nil
 }
 
 func (a *Archive) readSignatures() error {
@@ -697,6 +776,17 @@ func (a *Archive) Losses(key string) (*Losses, bool) { v, ok := a.losses[key]; r
 
 // Group returns group.json for a group PAF.
 func (a *Archive) Group() *Group { return a.group }
+
+// Performers lists the agents a workflow ships, from its performer links.
+func (a *Archive) Performers(workflow string) []Link {
+	var out []Link
+	for _, l := range a.Manifest.Links {
+		if l.Type == LinkPerformer && l.Workflow == workflow {
+			out = append(out, l)
+		}
+	}
+	return out
+}
 
 // Privacy returns privacy.json, or nil when absent (which means private).
 func (a *Archive) Privacy() *Privacy { return a.privacy }

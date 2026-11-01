@@ -134,6 +134,22 @@ func ContentDigest(entries []Entry) string {
 	return hexSHA256(b.Bytes())
 }
 
+// SectionDigest is ContentDigest over the entries under one prefix: what a
+// workflow item or a link names. It covers what the section holds, not the
+// attachments an agent's context points at, which the manifest pins anyway.
+func SectionDigest(entries []Entry, prefix string) string {
+	rows := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Path, prefix) {
+			rows = append(rows, e)
+		}
+	}
+	return ContentDigest(rows)
+}
+
+// WorkflowPath returns the entry path of a file in a workflow's directory.
+func WorkflowPath(key, rel string) string { return WorkflowsDir + key + "/" + rel }
+
 // checkNoDuplicateKeys refuses JSON with a repeated object key at any depth,
 // so every reader parses the same signed content.
 func checkNoDuplicateKeys(b []byte) error {

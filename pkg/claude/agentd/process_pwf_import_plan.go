@@ -38,6 +38,9 @@ type pwfImportOptions struct {
 	RoleMap map[string]string
 	Rename  bool
 	Group   string
+	// Workflow is the key of the workflow chosen from a .paf. It is resolved
+	// after parsing, so a review of the default workflow binds to its key.
+	Workflow string
 }
 
 func parsePWFImportOptions(q url.Values) (pwfImportOptions, error) {
@@ -79,7 +82,7 @@ func (o pwfImportOptions) digestKey() string {
 	for _, from := range sortedKeysOf(o.RoleMap) {
 		fmt.Fprintf(&b, "map %q=%q\n", from, o.RoleMap[from])
 	}
-	fmt.Fprintf(&b, "rename %t\ngroup %q\n", o.Rename, o.Group)
+	fmt.Fprintf(&b, "rename %t\ngroup %q\nworkflow %q\n", o.Rename, o.Group, o.Workflow)
 	return b.String()
 }
 
