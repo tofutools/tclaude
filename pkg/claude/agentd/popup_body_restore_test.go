@@ -3,11 +3,13 @@ package agentd
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,4 +98,28 @@ func TestSnapshotRequestBodyRemainderWaitsOnTheConnection(t *testing.T) {
 	got := <-done
 	require.NoError(t, got.err)
 	assert.Equal(t, http.StatusOK, got.status)
+}
+
+// A route whose facts read the whole body meets a failed read itself, and the
+// handler must not be given the part that arrived as if it were all of it.
+func TestApprovalFactsRefuseABodyThatCouldNotBeRead(t *testing.T) {
+	broken := errors.New("connection reset")
+	r := httptest.NewRequest("POST", "/v1/anything", nil)
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader([]byte(`{"a":1}`)), iotest.ErrReader(broken)))
+	r = withApprovalFacts(r, func([]byte) string {
+		t.Error("facts must not describe a partial body")
+		return ""
+	})
+	ticket, refused := (&approvalRegistry{pending: map[string]*approvalRequest{}}).admit("caller")
+	require.NotNil(t, ticket, refused)
+	_, _, err := approvalPreviewFacts(r, ticket, "preview", "")
+	require.ErrorIs(t, err, broken)
+
+	w := httptest.NewRecorder()
+	refuseApprovalBody(w, err)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = httptest.NewRecorder()
+	refuseApprovalBody(w, &http.MaxBytesError{Limit: 1})
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 }
