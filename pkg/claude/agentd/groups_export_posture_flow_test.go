@@ -581,11 +581,11 @@ func TestGroupImport_FileAuthorityDoesNotLand(t *testing.T) {
 	rec, _ := importGroupWith(t, f, archive, url.Values{"into": {testutil.CanonicalTempDir(t)}})
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	for _, listed := range []string{"group permission " + agentd.PermGroupsMembersSpawn, "sudo grant human.notify", "nightly"} {
+	for _, listed := range []string{"group permission " + agentd.PermGroupsMembersSpawn, "permission agent.retire for ", "sudo grant human.notify", "nightly"} {
 		assert.Contains(t, rec.Body.String(), listed)
 	}
-	assert.Contains(t, rec.Body.String(), agentd.PermGroupsMembersSpawn+", "+agentd.PermAgentRetire+" for ",
-		"a grant that never lands cannot refuse the import, and one agent's grants read as one list")
+	assert.Contains(t, rec.Body.String(), "permission "+agentd.PermAgentRetire+" for ",
+		"a grant that never lands cannot refuse the import, and a grant no human can keep reads apart from the list")
 	assert.NotContains(t, rec.Body.String(), "human.clipboard", "an ended sudo grant is history, not a grant lost")
 	assert.NotContains(t, rec.Body.String(), "sudo grant self.rename", "an ended sudo grant is history, not a grant lost")
 	g, err := db.GetAgentGroupByName("file-authority")

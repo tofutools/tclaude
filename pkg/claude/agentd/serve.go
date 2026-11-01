@@ -1431,6 +1431,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
 	mux.HandleFunc("GET /v1/agent-bundle/export", handleAgentBundleExport)
 	mux.HandleFunc("POST /v1/agent-bundle/import", handleAgentBundleImport)
+	mux.HandleFunc("POST /v1/import/reveal", handleImportReveal)
 	mux.HandleFunc("POST /v1/agent-bundle/summary", handleExportSummaryRequest)
 	mux.HandleFunc("GET /v1/agent-bundle/summary/{id}", handleExportSummaryStatus)
 	mux.HandleFunc("POST /v1/snapshots", handleSnapshotCreate)

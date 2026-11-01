@@ -103,6 +103,10 @@ type offerImportParams struct {
 	Name                      string `long:"name" optional:"true" help:"Name the new receiving agent."`
 	SkipHistory               bool   `long:"skip-history" help:"Import only configuration from an agent offer."`
 
+	Keep       []string `long:"keep" optional:"true" help:"Human only: on a teleport or move, keep this elevated item by the id the preview's confirm list shows (repeatable). Needs --keep-digest. With no selection, an unrestricted peer's items land and any other peer's drop."`
+	KeepNone   bool     `long:"keep-none" help:"On a teleport or move, keep no elevated item."`
+	KeepDigest string   `long:"keep-digest" optional:"true" help:"The digest in the preview's confirm list."`
+
 	ID        string   `pos:"true" help:"Offer ID from the inbox or offers listing."`
 	Peer      string   `long:"peer" optional:"true" help:"Select source peer when an offer ID is ambiguous."`
 	Only      []string `long:"only" optional:"true" help:"Include section or section/name (repeatable)."`
@@ -182,6 +186,12 @@ func runOfferImport(p *offerImportParams, out, stderr io.Writer) int {
 		values[name] = value
 	}
 	in := map[string]any{"approve_managed_scripts": p.ApproveManagedScripts, "omit_managed_instructions": p.OmitManagedInstructions, "only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths, "cwd": p.Cwd, "landing": p.Landing, "worktree": p.Worktree, "group": p.Group, "name": p.Name, "skip_history": p.SkipHistory, "drop_permissions": p.DropPermissions, "allow_sensitive_permissions": p.AllowSensitivePermissions}
+	if len(p.Keep) > 0 {
+		in["keep"], in["keep_digest"] = p.Keep, p.KeepDigest
+	}
+	if p.KeepNone {
+		in["keep_none"] = true
+	}
 	var response map[string]any
 	if rc := offerPost(stderr, offerPath(p.ID, p.Peer, "import"), in, &response); rc != 0 {
 		return rc

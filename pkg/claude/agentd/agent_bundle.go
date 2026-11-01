@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -484,7 +486,13 @@ type agentBundlePreview struct {
 	Findings                      []agentbundle.Finding       `json:"findings,omitempty"`
 	Landing                       *historyLanding             `json:"history_landing,omitempty"`
 	Posture                       *landingPosture             `json:"posture,omitempty"`
-	Applied                       bool                        `json:"applied"`
+	// Confirm lists what a human may keep of what this file would lose. Only a
+	// file import has one.
+	Confirm *importConfirmation `json:"confirm,omitempty"`
+	// Kept and Dropped list the file's elevated items by what became of them.
+	Kept    []string `json:"kept,omitempty"`
+	Dropped []string `json:"dropped,omitempty"`
+	Applied bool     `json:"applied"`
 	// Offline reports an applied import that landed without starting
 	// (start=false); resume starts it.
 	Offline bool                 `json:"offline,omitempty"`
@@ -514,6 +522,8 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	// its own loss report.
 	var handoff string
 	var fileLosses *paf.Losses
+	// fileDigest binds a human's confirmation to the file they previewed.
+	var fileDigest string
 	if b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
@@ -521,7 +531,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
-		n, err := io.Copy(file, http.MaxBytesReader(w, r.Body, agentTransferLimit()+1))
+		hash := sha256.New()
+		n, err := io.Copy(io.MultiWriter(file, hash), http.MaxBytesReader(w, r.Body, agentTransferLimit()+1))
+		fileDigest = hex.EncodeToString(hash.Sum(nil))
 		if err != nil || n > agentTransferLimit() {
 			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
 			return
@@ -622,6 +634,27 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Profile = safe.Sections["profiles"][0].Value
 	var landingWarnings []string
+	// What this file loses, and what a human may keep of it. Only a file import
+	// or an offer a human accepts reaches a selection: every other path here
+	// builds its own query.
+	offerList, _ := r.Context().Value(offerConfirmKey{}).(*offerConfirmation)
+	var keep importKeep
+	switch {
+	case offerList != nil:
+		keep, fileDigest = offerList.keep, offerList.digest
+	case direct:
+		keep = readImportKeep(r)
+	}
+	selection := keep
+	if !apply {
+		selection = keep.preview()
+	}
+	if offerList != nil && offerList.unrestricted && !keep.named {
+		// A request with no selection takes the list's ticks: all, from the
+		// operator's own nodes, and none from anyone else, whatever they hold.
+		selection = importKeep{human: true, named: true, all: true}
+	}
+	var fileDrops []fileDrop
 	if crossHarness || model != "" {
 		if err := json.Unmarshal(d.Profile, &profile); err != nil {
 			writeError(w, 400, "profile", err.Error())
@@ -656,20 +689,23 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		// The receiver owns a teleport or direct move, by landing authority or by
 		// accepting the offer, and dropping its posture could stall the agent on
 		// prompts nobody answers. Everything else is a file.
-		if !movedHere {
+		if !movedHere || offerList != nil {
 			landingWarnings = append(landingWarnings, droppedSandbox(recordedSandbox, profile, h, q.Get("group"), landingProfile)...)
-			var dropped []string
-			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
-			landingWarnings = append(landingWarnings, dropped...)
-			profile.Environment = fileEnvironment
+			var drops []fileDrop
+			profile, drops = receiverApprovalDrops(profile, h, q.Get("group"), landingProfile)
+			fileDrops = append(fileDrops, drops...)
+			profile.Environment = make([]sandboxpolicy.EnvironmentEntry, len(fileEnvironment))
+			for i, entry := range fileEnvironment {
+				profile.Environment[i] = sandboxpolicy.EnvironmentEntry{Name: entry.Name, Value: fileEnvironmentValue(entry, safe.Placeholders, values)}
+			}
 			// A teleport offer's route is no file's: its credential mode wrote it,
 			// checked against this receiver's landing policy.
 			route := ""
 			if offer, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer); offer != nil && offer.Descriptor.Teleport != nil {
 				route, profile.ModelProxy = profile.ModelProxy, ""
 			}
-			profile, dropped = receiverLaunchFieldsProfile(profile, h, q.Get("group"), landingProfile)
-			landingWarnings = append(landingWarnings, dropped...)
+			profile, drops = receiverLaunchFieldsDrops(profile, h, q.Get("group"), landingProfile)
+			fileDrops = append(fileDrops, drops...)
 			if route != "" {
 				profile.ModelProxy = route
 			}
@@ -713,6 +749,28 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	carryDecisions, carryOverrides := planCarriedPermissions(d.Permissions, carryPolicy)
+	// Permissions join the list last, since it leaves out what carry applies. A
+	// kept permission lands through the carry path, with its checks at launch.
+	keptPermissions := map[string]bool{}
+	if direct && !movedHere {
+		fileDrops = append(fileDrops, fileAgentPermissionDrops(d.Permissions, q.Get("group"), carryOverrides, keptPermissions)...)
+	}
+	if offerList != nil {
+		for i := range fileDrops {
+			fileDrops[i].item.Default, fileDrops[i].item.Revealable = offerList.unrestricted, false
+		}
+	}
+	settled := settleFileDrops(fileDrops, selection, &profile)
+	landingWarnings = append(landingWarnings, settled.warnings...)
+	if len(keptPermissions) > 0 {
+		carried := slices.DeleteFunc(slices.Clone(d.Permissions), func(row agentbundle.Permission) bool {
+			_, applied := carryOverrides[row.Slug]
+			return !keptPermissions[row.Slug] && !applied
+		})
+		d.Permissions = carried
+		carryPolicy = permissionCarryPolicy{Group: q.Get("group"), Enabled: true, AllowSensitive: true}
+		carryDecisions, carryOverrides = planCarriedPermissions(d.Permissions, carryPolicy)
+	}
 	if authority != nil && authority.record.WorkerDefaults != nil {
 		for i := range carryDecisions {
 			d := &carryDecisions[i]
@@ -827,6 +885,19 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preview.ManagedInstructions, preview.ManagedInstructionDigest, preview.ManagedScriptApprovalRequired = managedPreview, managedDigest, managedCode
+	if (direct && !movedHere) || offerList != nil {
+		preview.Confirm = newImportConfirmation(fileDigest, fileDrops, keep.human, preview.Warnings)
+	}
+	preview.Kept, preview.Dropped = settled.kept, settled.dropped
+	if offerList != nil {
+		// Refused here too, so a stale selection reserves no launch.
+		if err := keep.check(fileDigest, fileImportItems(fileDrops)); err != nil {
+			var refused *importKeepError
+			errors.As(err, &refused)
+			writeError(w, refused.status, refused.code, err.Error())
+			return
+		}
+	}
 	if !apply {
 		writeJSON(w, 200, preview)
 		return
@@ -851,6 +922,12 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if preview.Group == "" {
 		writeError(w, 400, "group", "--apply requires --group naming an existing receiving group, as with agent spawn")
+		return
+	}
+	if err := keep.check(fileDigest, fileImportItems(fileDrops)); err != nil {
+		var refused *importKeepError
+		errors.As(err, &refused)
+		writeError(w, refused.status, refused.code, err.Error())
 		return
 	}
 	if noStart && !preview.History {
@@ -951,6 +1028,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if landing.history != nil {
 		recordConvLosses(spawned.ConvID, fileLosses, landing.Losses)
 	}
+	logKeptImportItems(settled.kept)
 	preview.Applied = true
 	preview.Offline = noStart
 	preview.Spawn = &spawned
@@ -1172,51 +1250,77 @@ func sandboxMatchesLanding(recorded spawnProfileJSON, h *harness.Harness, group,
 }
 
 // receiverLaunchFieldsProfile takes out of a file's profile the launch fields
-// that widen an agent without being a posture: pre-trusting its directory, opening
-// it to remote control or peer messaging, choosing its model route, keeping
-// features a tier here trims, and setting its environment.
+// that widen an agent without being a posture, and returns a warning for each.
 func receiverLaunchFieldsProfile(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []string) {
+	p, drops := receiverLaunchFieldsDrops(p, h, group, profile)
+	return p, renderFileDrops(drops)
+}
+
+// receiverLaunchFieldsDrops is receiverLaunchFieldsProfile, with each drop as
+// what a human may keep: pre-trusting its directory, opening it to remote control
+// or peer messaging, choosing its model route, keeping features a tier here trims,
+// and setting its environment.
+func receiverLaunchFieldsDrops(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []fileDrop) {
 	var tiers []launchProfileTier
 	if landing, fail, err := resolveLaunchDefaults(group, profile, h.Name); fail == nil && err == nil {
 		tiers = landing.tiers
 	}
-	var dropped []string
-	drop := func(what string) { dropped = append(dropped, fileFieldDropped(what)) }
+	var drops []fileDrop
+	drop := func(id, label, what, gives string, keep func(*spawnProfileJSON)) {
+		drops = append(drops, fileDrop{warning: fileFieldDropped(what), keep: keep,
+			item: importItem{ID: id, Kind: importKindLaunch, Label: label, Gives: gives, Default: true}})
+	}
 	gives := func(field string, value func(*db.SpawnProfile) *bool) bool {
 		given, _, _, _, fail := resolveBoolLaunchField(field, false, false, h.Name, tiers, value,
 			func(v bool) (bool, error) { return v, nil })
 		return fail == nil && given
+	}
+	on := func(set func(*spawnProfileJSON, *bool)) func(*spawnProfileJSON) {
+		return func(p *spawnProfileJSON) {
+			yes := true
+			set(p, &yes)
+		}
 	}
 	// Left blank, a true field resolves to what a spawn here gives. A false one
 	// only asks for less.
 	if p.TrustDir != nil && *p.TrustDir {
 		p.TrustDir = nil
 		if !gives("trust_dir", func(tier *db.SpawnProfile) *bool { return tier.TrustDir }) {
-			drop("a trusted working directory")
+			drop("trust_dir", "trusted working directory", "a trusted working directory",
+				"Skips the harness's trust prompt for the working directory.",
+				on(func(p *spawnProfileJSON, v *bool) { p.TrustDir = v }))
 		}
 	}
 	if p.RemoteControl != nil && *p.RemoteControl {
 		p.RemoteControl = nil
 		if !gives("remote_control", func(tier *db.SpawnProfile) *bool { return tier.RemoteControl }) {
-			drop("remote control")
+			drop("remote_control", "remote control", "remote control",
+				"Opens the agent to remote control from outside this node.",
+				on(func(p *spawnProfileJSON, v *bool) { p.RemoteControl = v }))
 		}
 	}
 	if p.PeerMessaging != nil && *p.PeerMessaging {
 		p.PeerMessaging = nil
 		if !gives("peer_messaging", func(tier *db.SpawnProfile) *bool { return tier.PeerMessaging }) {
-			drop("peer messaging")
+			drop("peer_messaging", "peer messaging", "peer messaging",
+				"Lets the agent reach other sessions through the harness's own messaging.",
+				on(func(p *spawnProfileJSON, v *bool) { p.PeerMessaging = v }))
 		}
 	}
 	if p.AutoMemory != nil && *p.AutoMemory {
 		p.AutoMemory = nil
 		if !gives("auto_memory", func(tier *db.SpawnProfile) *bool { return tier.AutoMemory }) {
-			drop("auto memory")
+			drop("auto_memory", "auto memory", "auto memory",
+				"Lets the harness load and write its automatic memory.",
+				on(func(p *spawnProfileJSON, v *bool) { p.AutoMemory = v }))
 		}
 	}
 	if p.CopilotAPI != nil && *p.CopilotAPI {
 		p.CopilotAPI = nil
 		if !gives("copilot_api", func(tier *db.SpawnProfile) *bool { return tier.CopilotAPI }) {
-			drop("the Copilot API drive")
+			drop("copilot_api", "Copilot API drive", "the Copilot API drive",
+				"Drives Copilot through its API rather than its terminal.",
+				on(func(p *spawnProfileJSON, v *bool) { p.CopilotAPI = v }))
 		}
 	}
 	// Auto-continuing past a question an agent asked is an explicit opt-in.
@@ -1226,7 +1330,9 @@ func receiverLaunchFieldsProfile(p spawnProfileJSON, h *harness.Harness, group, 
 			func(tier *db.SpawnProfile) string { return tier.AskUserQuestionTimeout },
 			func(v string) (string, error) { return v, nil })
 		if fail != nil || given != recorded {
-			drop("a question timeout of " + recorded)
+			drop("ask_user_question_timeout", "question timeout "+recorded, "a question timeout of "+recorded,
+				"Continues without an answer when a question the agent asked goes unanswered for "+recorded+".",
+				func(p *spawnProfileJSON) { p.AskUserQuestionTimeout = recorded })
 		}
 	}
 	// A proxy carries the whole conversation, and "off" steps around the one a
@@ -1237,44 +1343,79 @@ func receiverLaunchFieldsProfile(p spawnProfileJSON, h *harness.Harness, group, 
 			func(tier *db.SpawnProfile) string { return tier.ModelProxy },
 			func(v string) (string, error) { return v, nil })
 		if fail != nil || (given != recorded && (recorded != "off" || given != "")) {
-			drop("model proxy " + recorded)
+			drop("model_proxy", "model proxy "+recorded, "model proxy "+recorded,
+				"Routes the agent's whole conversation through this proxy, or around this node's own.",
+				func(p *spawnProfileJSON) { p.ModelProxy = recorded })
 		}
 	}
 	if len(p.ContextFeatures) > 0 {
+		recorded := maps.Clone(p.ContextFeatures)
 		var cut []string
 		p.ContextFeatures, cut = receiverContextFeatures(p.ContextFeatures, h, tiers)
-		if len(cut) > 0 {
-			drop("context features " + strings.Join(cut, ", "))
+		_, resolveErr := harness.ResolveContextFeatures(h, recorded)
+		for _, feature := range cut {
+			d := fileDrop{list: "context", name: feature}
+			if resolveErr == nil {
+				value := cmp.Or(recorded[feature], harness.ContextFeatureOff)
+				d.item = importItem{ID: "context:" + feature, Kind: importKindContext, Label: "context feature " + feature + " " + value, Default: true,
+					Gives: "Sets " + feature + " to " + value + ", which a spawn here would not: it can take away the repo's or organization's instructions, or keep what this node trims."}
+				d.keep = func(p *spawnProfileJSON) {
+					if p.ContextFeatures == nil {
+						p.ContextFeatures = map[string]string{}
+					}
+					p.ContextFeatures[feature] = value
+				}
+			}
+			drops = append(drops, d)
 		}
 	}
 	// A variable can change what the harness loads or how it decides, so none is
 	// taken from a file. The warning names them; their values may be secrets.
-	var names []string
 	for _, entry := range p.Environment {
 		given := false
 		for _, tier := range tiers {
 			given = given || (tier.profile != nil && slices.Contains(tier.profile.Environment, entry))
 		}
 		if !given {
-			names = append(names, entry.Name)
+			drops = append(drops, fileDrop{list: "environment", name: entry.Name,
+				item: environmentItem(entry, "Set in the agent's process. It can change what the harness loads or how it decides."),
+				keep: func(p *spawnProfileJSON) { p.Environment = append(p.Environment, entry) }})
 		}
 	}
 	p.Environment = nil
-	if len(names) > 0 {
-		drop("environment variables " + strings.Join(names, ", "))
-	}
-	return p, dropped
+	return p, drops
 }
 
 func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []string) {
+	p, drops := receiverApprovalDrops(p, h, group, profile)
+	return p, renderFileDrops(drops)
+}
+
+// receiverApprovalDrops is receiverApprovalProfile, with each drop as what a
+// human may keep.
+func receiverApprovalDrops(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []fileDrop) {
 	recorded := p
 	p.Approval, p.ToolGovernance, p.AutoReview = "", "", nil
-	var dropped []string
+	var drops []fileDrop
 	drop := func(field, value, kept string) {
-		dropped = append(dropped, filePostureDropped(field, value, kept))
+		d := fileDrop{warning: filePostureDropped(field, value, kept),
+			item: importItem{ID: field, Kind: importKindPosture, Label: field + " " + value, Default: true}}
+		switch field {
+		case "approval":
+			d.item.Gives = "Runs with this approval policy, wider than a spawn here: " + kept + " applies otherwise."
+			d.keep = func(p *spawnProfileJSON) { p.Approval = recorded.Approval }
+		case "tools":
+			d.item.Gives = "Runs with this tool policy, wider than a spawn here: " + kept + " applies otherwise."
+			d.keep = func(p *spawnProfileJSON) { p.ToolGovernance = recorded.ToolGovernance }
+		default:
+			d.item.ID = "auto_review"
+			d.item.Gives = "Lets an automatic reviewer answer approvals: " + kept + " applies otherwise."
+			d.keep = func(p *spawnProfileJSON) { p.AutoReview = recorded.AutoReview }
+		}
+		drops = append(drops, d)
 	}
 	recordedReview := recorded.AutoReview != nil && *recorded.AutoReview
-	unjudged := func() (spawnProfileJSON, []string) {
+	unjudged := func() (spawnProfileJSON, []fileDrop) {
 		const kept = "the receiver's default"
 		if recorded.Approval != "" {
 			drop("approval", recorded.Approval, kept)
@@ -1285,7 +1426,7 @@ func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, prof
 		if recordedReview {
 			drop("auto-review", "on", kept)
 		}
-		return p, dropped
+		return p, drops
 	}
 	landing, fail, err := resolveLaunchDefaults(group, profile, h.Name)
 	if fail != nil || err != nil {
@@ -1343,7 +1484,7 @@ func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, prof
 			drop("tools", recorded.ToolGovernance, kept)
 		}
 	}
-	return p, dropped
+	return p, drops
 }
 
 // acceptedMoveContextKey marks an import of a teleport or move offer the

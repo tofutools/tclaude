@@ -340,6 +340,11 @@ type fedBundleImportRequest struct {
 	OmitManagedInstructions bool     `json:"omit_managed_instructions"`
 	Landing                 string   `json:"landing"`
 	Set                     []string `json:"set"`
+	// Keep, KeepNone and KeepDigest are a human's confirm list selection for a
+	// teleport or move accepted by hand.
+	Keep       []string `json:"keep,omitempty"`
+	KeepNone   bool     `json:"keep_none,omitempty"`
+	KeepDigest string   `json:"keep_digest,omitempty"`
 }
 
 func federationOfferProvenance(o *db.FederationBundleOffer) map[string]any {
@@ -498,6 +503,9 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		}
 		if offerKeepsItsPosture(o, g.ID) {
 			inner = inner.WithContext(context.WithValue(inner.Context(), acceptedMoveContextKey{}, true))
+		}
+		if confirmation := newOfferConfirmation(r, o, in); confirmation != nil {
+			inner = inner.WithContext(context.WithValue(inner.Context(), offerConfirmKey{}, confirmation))
 		}
 		inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: query.Encode()}
 		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleDataContextKey{}, bundle))

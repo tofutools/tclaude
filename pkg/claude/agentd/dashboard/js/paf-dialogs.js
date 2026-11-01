@@ -1,10 +1,10 @@
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { dashboardState } from './snapshot-store.js';
 import {
-  downloadBlob, findingsText, lossSummary, modelsFor, provenanceRows, redactionText, rungBadge,
+  confirmGroups, downloadBlob, findingsText, lossSummary, modelsFor, provenanceRows, redactionText, rungBadge,
   safeFilename, spawnableHarnesses,
 } from './paf-model.js';
 
@@ -228,17 +228,59 @@ export function ImportWarnings({ id, title, warnings }) {
     ${warnings.map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>`;
 }
 
+// ImportConfirmList is the list of what a file asks for beyond a spawn here:
+// each row keeps or drops one item, and the server checks the choice again. A
+// value is not in the preview: Reveal asks for that one, for that click.
+export function ImportConfirmList({ confirm, overrides, setOverrides, reveal }) {
+  const [shown, setShown] = useState({});
+  useEffect(() => setShown({}), [confirm?.digest]);
+  if (!confirm?.items?.length) return null;
+  const canKeep = !!confirm.can_keep;
+  const show = async (item) => {
+    try {
+      const { value } = await reveal(item.id);
+      setShown((current) => ({ ...current, [item.id]: { value } }));
+    } catch (err) {
+      setShown((current) => ({ ...current, [item.id]: { error: message(err) } }));
+    }
+  };
+  return html`<div class="paf-preview paf-box" id="import-confirm">
+    <b>Elevated items in this file</b>
+    <div class="paf-hint">${canKeep ? 'Untick what this import should not keep. Anything unticked is dropped.' : 'Only a human on this node can keep these, so all of them are dropped.'}</div>
+    ${confirmGroups(confirm.items).map((group) => html`<div key=${group.heading} class="import-confirm-group">
+      <div class="gi-head">${group.heading}</div>
+      ${group.items.map((item) => html`<div key=${item.id} class="import-confirm-item" data-item=${item.id}>
+        <${Check} id=${`import-keep-${item.id}`} checked=${canKeep && (overrides[item.id] ?? !!item.default)} disabled=${!canKeep}
+          onChange=${(value) => setOverrides({ ...overrides, [item.id]: value })} hint=${item.gives}>${item.label}</${Check}>
+        ${item.revealable && canKeep && shown[item.id]?.value === undefined && html`<button type="button" class="import-confirm-reveal" onClick=${() => show(item)}>Reveal value</button>`}
+        ${shown[item.id]?.value !== undefined && html`<code class="import-confirm-value">${shown[item.id].value}</code>`}
+        ${shown[item.id]?.error && html`<div class="gi-warn">⚠ ${shown[item.id].error}</div>`}
+      </div>`)}
+    </div>`)}
+  </div>`;
+}
+
+// ImportOutcome lists what became of a file's elevated items.
+export function ImportOutcome({ kept, dropped }) {
+  if (!kept?.length && !dropped?.length) return null;
+  return html`<div class="paf-preview paf-box" id="import-outcome">
+    ${kept?.length > 0 && html`<div id="import-outcome-kept"><b>Kept</b> ${kept.join(', ')}</div>`}
+    ${dropped?.length > 0 && html`<div id="import-outcome-dropped"><b>Dropped</b> ${dropped.join(', ')}</div>`}
+  </div>`;
+}
+
 // AgentImportPreview is the agent half of the ⤒ import… dialog: the import
 // preview for an agent PAF or legacy agent bundle, with where and how the
 // agent lands. "Import (offline)" lands it without starting; "Import &
 // start" also starts it.
-export function AgentImportPreview({ preview, choices, setChoices }) {
+export function AgentImportPreview({ preview, choices, setChoices, overrides, setOverrides, reveal }) {
   const snapshot = dashboardState.snapshot.value;
   const groups = (snapshot?.groups || []).map((group) => group.name);
   const agent = preview.agent || {};
   const set = (key) => (value) => setChoices({ ...choices, [key]: value });
   const rows = provenanceRows(agent);
   const unresolved = preview.unresolved || [];
+  const warnings = (preview.confirm?.can_keep && preview.confirm.items?.length ? preview.confirm.warnings : preview.warnings) || [];
   return html`<div class="paf-preview" id="agent-import-preview">
     <div class="gi-head">Agent “${agent.name || '(unnamed)'}”${agent.role ? ` · ${agent.role}` : ''}</div>
     ${rows.length > 0 && html`<div class="paf-box"><b>Provenance</b>${rows.map(([key, value]) => html`<div key=${key} class="gi-row"><span class="gi-k">${key}</span><span class="gi-v">${value}</span></div>`)}</div>`}
@@ -262,8 +304,9 @@ export function AgentImportPreview({ preview, choices, setChoices }) {
       hint="The full history stays in the file and is saved beside the agent, which is told where. A model with a larger window keeps more.">Accept cutting about ${preview.history_landing.losses.dropped_percent}% of the conversation to fit the landing model</${Check}>`}
     ${(preview.findings || []).length > 0 && html`<${FindingsPanel} findings=${preview.findings} title="This node's scan" />`}
     ${unresolved.length > 0 && html`<div class="gi-warn" id="agent-import-unresolved">⚠ ${unresolved.length} recorded path${unresolved.length === 1 ? '' : 's'} need a value here: set a working dir or keep the recorded paths.</div>`}
+    <${ImportConfirmList} confirm=${preview.confirm} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
     <div class="paf-box"><b>Security posture</b><div>${preview.security}</div>
-      ${(preview.warnings || []).map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>
+      ${warnings.map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>
   </div>`;
 }
 

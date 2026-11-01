@@ -446,7 +446,7 @@ func servePeerAsLocal(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 		writeError(w, 403, "peer_view_local_only", "endpoint is local-only")
 		return
 	}
-	peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
+	peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(withImportForwarded(r.Context()), remoteAuthedCtxKey{}, true)))
 }
 
 func servePeerSnapshot(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {

@@ -283,12 +283,12 @@ export function createManagementActions(deps) {
         throw new Error(body?.error || `HTTP ${response.status}`);
       return body;
     },
-    async importGroup(file, into, as = '', landing = {}) {
+    async importGroup(file, into, as = '', landing = {}, keep = {}) {
       const form = new FormData();
       form.append('archive', file);
       form.append('into', into);
       if (as) form.append('as', as);
-      const response = await fetch(`/api/groups/import${queryString(landingParams(landing))}`, {
+      const response = await fetch(`/api/groups/import${queryString({ ...landingParams(landing), ...keep })}`, {
         method: 'POST',
         credentials: 'same-origin',
         body: form,
@@ -654,8 +654,8 @@ export function createManagementActions(deps) {
   async function inspectGroupImport(file, as, landing) {
     return groups.inspectImport(file, as, landing);
   }
-  async function importGroup(file, into, as, landing) {
-    const result = await groups.importGroup(file, into, as, landing);
+  async function importGroup(file, into, as, landing, keep) {
+    const result = await groups.importGroup(file, into, as, landing, keep);
     let summary = `Imported group "${result.group}" — ${result.agent_count} agent(s), ${result.message_count} message(s)`;
     const remaps = Object.keys(result.conv_remaps || {}).length;
     if (remaps) summary += ` (${remaps} conv-id(s) remapped to fresh copies)`;
@@ -666,7 +666,22 @@ export function createManagementActions(deps) {
     }
     onGroupImported(result.group);
     await refresh();
-    return warnings.length ? { summary, warnings } : null;
+    return warnings.length || result.kept?.length || result.dropped?.length
+      ? { summary, warnings, kept: result.kept, dropped: result.dropped } : null;
+  }
+  // revealImportValue fetches one environment value from the picked file, for
+  // the click that asked. It is shown in that row and kept nowhere else.
+  async function revealImportValue(file, item) {
+    const form = new FormData();
+    form.append('archive', file);
+    const response = await nodeFetch('')(`/api/import/reveal${queryString({ item })}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: form,
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+    return body;
   }
   // PAF export / redact / agent import (tcl-jkmitn). Each goes through the
   // dashboard's /api twin of the human-only /v1 route.
@@ -711,12 +726,13 @@ export function createManagementActions(deps) {
     if (params.apply) {
       const summary = `Imported agent "${result.agent?.name || params.name || 'agent'}" into ${params.group}${result.offline ? ' offline; wake it to start' : ' and started it'}`;
       const warnings = result.warnings || [];
-      if (!warnings.length) {
+      const outcome = warnings.length || result.kept?.length || result.dropped?.length;
+      if (!outcome) {
         state.closeDialog();
         notify(summary);
       }
       await refresh();
-      return warnings.length ? { summary, warnings } : null;
+      return outcome ? { summary, warnings, kept: result.kept, dropped: result.dropped } : null;
     }
     return result;
   }
@@ -1290,6 +1306,7 @@ export function createManagementActions(deps) {
     openGroupImport,
     inspectGroupImport,
     importGroup,
+    revealImportValue,
     exportAgentPAF,
     exportGroupArchive,
     redactPAF,

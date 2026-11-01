@@ -4,6 +4,8 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { shortID } from './fleet-admin-model.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
+import { ImportConfirmList } from './paf-dialogs.js';
+import { keepParams } from './paf-model.js';
 import { LandingPicker, landingBlocks, landingSentence, receiverDecides, sentLanding } from './fleet-admin-landing.js';
 
 const html = htm.bind(h);
@@ -48,6 +50,11 @@ export function importBody(offer, opts, apply) {
     if (opts.dropPermissions) body.drop_permissions = true;
     if (opts.allowSensitivePermissions) body.allow_sensitive_permissions = true;
     if (opts.skipHistory && !offer.offer.move && !offer.offer.teleport) body.skip_history = true;
+    if (apply) {
+      const { keep, keep_digest: digest, keep_none: none } = keepParams(opts.confirm, opts.overrides);
+      if (keep) Object.assign(body, { keep, keep_digest: digest });
+      if (none) body.keep_none = true;
+    }
   } else {
     if (opts.skip?.length) body.skip = [...opts.skip];
     if (opts.replace) body.replace = true;
@@ -102,6 +109,8 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
   const fixedHistory = !!(offer.offer?.move || offer.offer?.teleport);
   const [opts, setOpts] = useState({ skip: [], values: {}, replace: false, keepPaths: false, cwd: '', landing: '', worktree: '', group: '', name: '', skipHistory: false, dropPermissions: false, allowSensitivePermissions: false });
   const [preview, setPreview] = useState(null);
+  // What the human changed on the confirm list; the rest stays as previewed.
+  const [overrides, setOverrides] = useState({});
   // rows keeps every config item seen in any preview: a skipped item drops out
   // of the next preview but stays listed (unticked) so it can be re-included.
   const [rows, setRows] = useState([]);
@@ -160,7 +169,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
     body: agent ? agentConsequence(peer, offer, preview) + (opts.allowSensitivePermissions && !opts.dropPermissions ? ' You explicitly authorize carried permission administration, sandbox administration, human interaction and federation administration grants in the preview.' : '') : configConsequence(peer, preview, opts.skip),
     okLabel: agent ? 'Start agent' : 'Apply',
     busyLabel: agent ? 'Starting…' : 'Applying…',
-    action: () => actions.importOffer(offer, importBody(offer, opts, true)),
+    action: () => actions.importOffer(offer, importBody(offer, { ...opts, confirm: preview?.confirm, overrides }, true)),
   }).then((r) => { if (r) onDone(agent ? `Started ${r.spawn?.agent_id || preview?.agent?.name || 'the agent'} from ${peer}'s offer` : `Applied ${(r.applied || []).length} items from ${peer}`); })
     .catch((e) => {
       const p = previewOf(e, preview);
@@ -186,10 +195,11 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
         <label class="fa-of-check"><input id="fleet-offer-sensitive-permissions" type="checkbox" checked=${opts.allowSensitivePermissions} disabled=${opts.dropPermissions} onChange=${set('allowSensitivePermissions')} /> I explicitly authorize carried permission administration, sandbox administration, human interaction and federation administration grants. These can change security policy and contact the operator; unrestricted trust is also required.</label>
         <table class="fa-table" id="fleet-offer-permissions"><thead><tr><th>Permission</th><th>Effect</th><th>Source scope</th><th>Receiving scope</th><th>Decision</th><th>Reason</th></tr></thead>
           <tbody>${(preview.permissions || []).map((p, i) => html`<tr key=${i}><td><code>${p.slug}</code></td><td>${p.effect}</td><td>${p.source_scope ? JSON.stringify(p.source_scope) : 'all'}</td><td>${p.scope ? JSON.stringify(p.scope) : p.decision === 'drop' ? '—' : 'all'}</td><td>${p.decision}</td><td>${p.reason}</td></tr>`)}</tbody></table>`}
+      <${ImportConfirmList} confirm=${preview?.confirm} overrides=${overrides} setOverrides=${setOverrides} />
       ${preview && html`<div class="fa-plan"><ul>
         <li>${preview.history ? 'With conversation history.' : 'Without conversation history.'}</li>
         ${(preview.findings || []).map((f) => html`<li class="fa-danger">Suspected credentials in the history: ${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}
-        ${(preview.warnings || []).map((w) => html`<li class="fa-warn">${w}</li>`)}
+        ${((preview.confirm?.can_keep && preview.confirm.items?.length ? preview.confirm.warnings : preview.warnings) || []).map((w) => html`<li class="fa-warn">${w}</li>`)}
         ${preview.security && html`<li class="muted">${preview.security}</li>`}
       </ul></div>`}`
     : html`

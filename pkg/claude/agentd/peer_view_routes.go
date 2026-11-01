@@ -367,6 +367,8 @@ var peerViewOwnNodeRoutes = []string{
 	// Conversation search returns raw transcript excerpts, a thing no peer
 	// grant covers, and reads files for seconds on this node's disk.
 	"GET /api/conversations/search",
+	// A file's environment value is for a human on this node.
+	"POST /api/import/reveal",
 	// The local operator's current dashboard view, read by this node's companion agents.
 	"POST /api/companion/view",
 	// Consent to this node downloading its own source is its local operator's.

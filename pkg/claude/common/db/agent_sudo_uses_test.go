@@ -104,21 +104,3 @@ func TestTakeSudoUse_CopiesOfAStoredGrantShareOneCount(t *testing.T) {
 	}
 	assert.Equal(t, 3, taken)
 }
-
-func TestGroupExportKeepsSudoUseLimits(t *testing.T) {
-	setupTestDB(t)
-	id := insertLimitedSudoGrant(t, 5)
-	_, ok, err := TakeSudoUse(id)
-	require.NoError(t, err)
-	require.True(t, ok)
-	grant, err := GetSudoGrant(id)
-	require.NoError(t, err)
-
-	d, err := Open()
-	require.NoError(t, err)
-	exported, err := collectSudoGrants(d, []string{grant.ConvID})
-	require.NoError(t, err)
-	require.Len(t, exported, 1)
-	assert.Equal(t, int64(5), exported[0].UsesLimit)
-	assert.Equal(t, int64(4), exported[0].UsesLeft)
-}

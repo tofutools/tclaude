@@ -9322,6 +9322,10 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-preview .gi-row { display: flex; gap: 8px; }
 .paf-preview .gi-k { flex: 0 0 110px; color: #7d8590; }
 .paf-preview .gi-warn, .paf-members .gi-warn { color: #f0883e; overflow-wrap: anywhere; }
+.import-confirm-group { margin-top: 6px; }
+.import-confirm-item { margin: 3px 0; }
+.import-confirm-reveal { font-size: 11px; padding: 1px 7px; margin-left: 22px; }
+.import-confirm-value { display: block; margin-left: 22px; overflow-wrap: anywhere; }
 .paf-landing-selects { display: inline-flex; gap: 6px; }
 .paf-rung { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 10px; border: 1px solid #30363d; white-space: nowrap; }
 .paf-rung.native { background: #12301d; color: #3fb950; border-color: #238636; }

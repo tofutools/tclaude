@@ -159,10 +159,6 @@ func TestImportGroup_RequiresAndAppliesPermissionScopeCanonicalizer(t *testing.T
 			ConvID: conv, Slug: "groups.members.spawn", Effect: PermEffectGrant,
 			ScopeJSON: `{"group":["dev","dev"]}`,
 		}},
-		SudoGrants: []groupexport.SudoGrant{{
-			ConvID: conv, Slug: "groups.members.spawn", ScopeJSON: `{"group":["dev","dev"]}`,
-			ExpiresAt: "2099-01-01T00:00:00Z",
-		}},
 	}
 	var validated int
 	_, err = ImportGroup(GroupImportPlan{
@@ -176,14 +172,13 @@ func TestImportGroup_RequiresAndAppliesPermissionScopeCanonicalizer(t *testing.T
 		},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 3, validated, "all three authority tables validate scopes")
+	assert.Equal(t, 2, validated, "both authority tables validate scopes")
 
 	d, err := Open()
 	require.NoError(t, err)
 	for _, query := range []string{
 		`SELECT scope_json FROM agent_group_permissions WHERE group_id = (SELECT id FROM agent_groups WHERE name = 'canonicalized')`,
 		`SELECT p.scope_json FROM agent_permissions p JOIN agent_conversations c ON c.agent_id = p.agent_id WHERE c.conv_id = 'scope-import-conv'`,
-		`SELECT s.scope_json FROM agent_sudo_grants s JOIN agent_conversations c ON c.agent_id = s.agent_id WHERE c.conv_id = 'scope-import-conv'`,
 	} {
 		var scopeJSON string
 		require.NoError(t, d.QueryRow(query).Scan(&scopeJSON))
@@ -402,10 +397,6 @@ func TestImportGroup_FreshActorMetadataRestored(t *testing.T) {
 				ConvID: "conv-fresh", EnrolledAt: "2022-03-03T00:00:00Z", EnrolledVia: "spawn",
 				RetiredAt: "2022-04-04T00:00:00Z", RetiredBy: "src-human",
 				RetireReason: "src-reason", PendingName: "src-pending",
-			}},
-			SudoGrants: []groupexport.SudoGrant{{
-				ConvID: "conv-fresh", Slug: "groups.members.spawn", GrantedAt: "2026-01-01T00:00:00Z",
-				ExpiresAt: "2099-01-01T00:00:00Z", GrantedBy: "source", Reason: "source grant",
 			}},
 			CronJobs: []groupexport.CronJob{{
 				ID: 1, Name: "source-cron", OwnerConv: "conv-fresh", TargetKind: CronTargetGroup,

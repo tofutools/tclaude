@@ -297,3 +297,61 @@ test('a group import cut needs confirmation only for a member that lands cut', a
   assert.match(model.queryString(model.landingParams({ confirmHistoryLoss: true })), /confirm_history_loss=true/);
   assert.doesNotMatch(model.queryString(model.landingParams({})), /confirm_history_loss/);
 });
+
+test('the import confirm list starts as previewed, and the import sends what stays ticked', async (t) => {
+  const imported = [];
+  const revealed = [];
+  const inspection = {
+    source: 'paf', source_group: 'crew', format_version: 5, agent_count: 1, message_count: 0, conv_count: 1, missing_convs: 0,
+    target_name: 'crew', target_name_valid: true, group_name_taken: false, conv_collisions: [], findings: [],
+    file_warnings: ['listed warning', 'other warning'],
+    confirm: {
+      digest: 'abc', can_keep: true, warnings: ['other warning'],
+      items: [
+        { id: 'owner:c1', kind: 'owners', label: 'owner lead', gives: 'Owns the group.', default: true },
+        { id: 'env:TOKEN', kind: 'environment', label: 'environment variable TOKEN', gives: 'Set in every spawn.', revealable: true },
+      ],
+    },
+  };
+  const actions = {
+    async inspectGroupImport() { return inspection; },
+    async importGroup(...args) { imported.push(args); return { summary: 'Imported', warnings: [], kept: ['environment variable TOKEN'], dropped: ['owner lead'] }; },
+    async importAgentPAF() { throw new Error('should not be tried for a group'); },
+    async revealImportValue(file, item) { revealed.push(item); return { value: 'the-value' }; },
+  };
+  const { host, settle, tick } = await mountManagement(t, actions, { kind: 'group-import', file: { name: 'crew.paf' } });
+  await settle();
+  const owner = host.querySelector('[data-item="owner:c1"] input');
+  const env = host.querySelector('[data-item="env:TOKEN"] input');
+  assert.equal(owner.getAttribute('checked') !== null, true, 'owners start ticked');
+  assert.equal(env.getAttribute('checked') !== null, false, 'environment starts unticked');
+  assert.doesNotMatch(host.textContent, /the-value/);
+  assert.deepEqual([...host.querySelectorAll('#group-import-warnings .gi-warn')].map((row) => row.textContent), ['⚠ other warning'], 'the list already shows the rest');
+
+  host.querySelector('[data-item="env:TOKEN"] .import-confirm-reveal').click();
+  await settle();
+  assert.deepEqual(revealed, ['env:TOKEN']);
+  assert.match(host.querySelector('[data-item="env:TOKEN"] .import-confirm-value').textContent, /the-value/);
+
+  await tick(owner, false);
+  await tick(env, true);
+  const into = host.querySelector('#group-import-into');
+  into.value = '/tmp/app';
+  into.dispatchEvent(new host.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  await settle();
+  host.querySelector('#group-import-submit').click();
+  await settle();
+  assert.deepEqual(imported[0][4], { keep: ['env:TOKEN'], keep_digest: 'abc' });
+  assert.match(host.querySelector('#import-outcome-kept').textContent, /TOKEN/);
+  assert.match(host.querySelector('#import-outcome-dropped').textContent, /owner lead/);
+});
+
+test('an emptied confirm list says so, and a caller who cannot keep sends nothing', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { keepParams } = await harness.importDashboardModule('js/paf-model.js');
+  const confirm = { digest: 'abc', can_keep: true, items: [{ id: 'owner:c1', default: true }] };
+  assert.deepEqual(keepParams(confirm), { keep: ['owner:c1'], keep_digest: 'abc' });
+  assert.deepEqual(keepParams(confirm, { 'owner:c1': false }), { keep_none: 'true' });
+  assert.deepEqual(keepParams({ ...confirm, can_keep: false }), {});
+  assert.deepEqual(keepParams({ ...confirm, items: [] }), {});
+});

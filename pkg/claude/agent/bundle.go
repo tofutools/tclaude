@@ -63,7 +63,9 @@ func PAFImportCmd() *cobra.Command {
 		Long: "Preview by default: the agent, the landing harness and model, how its conversation lands (native, translated or not at all) " +
 			"with the expected losses, and the security posture. --apply creates a fresh agent in --group through normal spawn checks. " +
 			"--harness and --model land it somewhere other than where it came from; the conversation is then translated within the " +
-			"landing model's context budget. Needs agent.bundle.import.",
+			"landing model's context budget. What the file asks for beyond a spawn here is listed and dropped unless a human keeps it " +
+			"with --keep-defaults, --keep or --keep-all and the digest the preview prints; the sandbox and sudo are never kept. " +
+			"Needs agent.bundle.import.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
 		}}.ToCobra()
@@ -87,13 +89,14 @@ type bundleImportParams struct {
 	ConfirmHistoryLoss        bool     `long:"confirm-history-loss" help:"Accept a landing that cuts 25% or more of the conversation to fit the landing model; the full history stays in the file and is saved beside the agent."`
 	Harness                   string   `long:"harness" optional:"true" help:"Land on this harness instead of the source one; the conversation is translated."`
 	Model                     string   `long:"model" optional:"true" help:"Landing model; the conversation is budgeted to its context window."`
-	JSON                      bool     `long:"json" help:"Print the full machine-readable preview or result."`
+	ImportKeepParams
+	JSON bool `long:"json" help:"Print the full machine-readable preview or result."`
 }
 
 func bundleCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "bundle", Short: "Transfer portable agent configuration and optional history", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
 		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable .paf file (or a legacy v1 ZIP with --format v1)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, os.Stderr)) }}.ToCobra(),
-		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permission carry requires --carry-permissions on export and import, and receiver authorization. Ownership and source memberships never travel. Native history support depends on the harness.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
+		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permission carry requires --carry-permissions on export and import, and receiver authorization. What a file asks for beyond a spawn here is dropped unless a human keeps it (--keep-defaults, --keep, --keep-all). Ownership and source memberships never travel. Native history support depends on the harness.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
 		}}.ToCobra(),
 	}}.ToCobra()
@@ -276,6 +279,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	if p.ApproveManagedScripts != "" {
 		q.Set("approve_managed_scripts", p.ApproveManagedScripts)
 	}
+	p.addTo(q)
 	var result json.RawMessage
 	if err := uploadAgentArchive("/v1/agent-bundle/import?"+q.Encode(), archive, &result); err != nil {
 		printBundleError(stderr, err)
@@ -294,8 +298,14 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		fmt.Fprintln(out, formatted.String())
 		var preview struct {
 			Unresolved []configbundle.Placeholder `json:"unresolved"`
+			importOutcome
 		}
 		_ = json.Unmarshal(result, &preview)
+		if p.Apply {
+			preview.print(out)
+		} else {
+			preview.Confirm.print(out)
+		}
 		for _, p := range preview.Unresolved {
 			fmt.Fprintf(out, "Unresolved %s %s (original: %q): --set %s=value or --keep-paths\n", p.Item, p.Field, p.Original, p.Name)
 		}
