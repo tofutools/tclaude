@@ -337,6 +337,8 @@ test('placement model: clamping, snap zones and status folding', async (t) => {
   const right = m.zoneRect('right', vp, 60);
   assert.equal(right.x + right.w, vp.width);
   assert.equal(right.y, 60);
+  assert.deepEqual(m.zoneRect('max', vp, 60), { x: 0, y: 60, w: vp.width, h: vp.height - m.COMPANION_FOOTER_ROOM - 60, snap: 'max' });
+  assert.equal(m.parsePlacement(JSON.stringify({ x: 1, y: 2, w: 3, h: 4, snap: 'max' })).snap, 'max');
   const narrow = m.zoneRect('right', { width: 300, height: 800 }, 0);
   assert.deepEqual([narrow.x, narrow.w], [0, 300], 'a snapped panel never outgrows a narrow viewport');
   assert.equal(m.companionStatus({ online: true, status: 'awaiting_input' }), 'needs');
@@ -1323,6 +1325,181 @@ test('a reopened window fits the viewport and a larger browser restores its save
   });
   await press(view.container.querySelector('.window-resize-zone.e'), -20);
   assert.equal(JSON.parse(prefs.getItem('tclaude.dash.companion.placement')).h, 400, 'a side drag keeps the saved height');
+});
+
+const FLOATING = { x: 300, y: 100, w: 500, h: 400, snap: '' };
+
+async function openLook(t, look, { prefs, snapshot = snapshotWith() } = {}) {
+  const store = prefs || memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]), 'tclaude.dash.companion.active': A });
+  const ctx = await setup(t, { prefs: store, snapshot: { ...snapshot, window_controls: look } });
+  await ctx.harness.act(() => ctx.controller().open(A));
+  await ctx.harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  return ctx;
+}
+const buttonNames = (root) => [...root.querySelectorAll('button')].map((button) => button.getAttribute('aria-label'));
+
+test('each look puts the window controls in native order, and keyboard order follows the eye', async (t) => {
+  const names = ['Minimize (Ctrl+.)', 'Maximize', 'Close alpha'];
+  for (const [look, order] of [['macos', [names[2], names[0], names[1]]], ['windows', names], ['linux', names]]) {
+    const { view } = await openLook(t, look);
+    const bar = view.container.querySelector('.companion-titlebar');
+    const group = bar.querySelector('.companion-window-controls');
+    assert.deepEqual(buttonNames(group), order, look);
+    assert.ok(group.querySelectorAll('svg').length === 3, `${look} draws its symbols`);
+    const all = [...bar.querySelectorAll('button')];
+    const tab = bar.querySelector('[role="tab"]');
+    assert.equal(all.indexOf(group.querySelector('button')) < all.indexOf(tab), look === 'macos', `${look} tab order`);
+    assert.equal(bar.querySelector('.companion-grip') === null, look === 'macos', `${look} grip`);
+    assert.equal(bar.querySelector('.companion-controls [aria-label^="Minimize"]'), null, 'no second minimize');
+    view.unmount?.();
+  }
+});
+
+test('the classic look is the bar as it always was, with its one minimize', async (t) => {
+  const { view, harness } = await openLook(t, 'classic');
+  const bar = view.container.querySelector('.companion-titlebar');
+  assert.equal(bar.querySelector('.companion-window-controls'), null);
+  const minimize = bar.querySelector('.companion-controls [aria-label="Minimize (Ctrl+.)"]');
+  assert.equal(minimize.textContent, '–');
+  assert.equal(bar.querySelector('[aria-label="Maximize"]'), null);
+  await harness.act(async () => { minimize.click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(view.container.querySelector('.companion-window-warm'), 'minimized');
+});
+
+test('an unknown or missing look follows the browser OS', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { windowControlsLook } = await harness.importDashboardModule('js/companion-window-controls.js');
+  assert.equal(windowControlsLook('auto', 'macos'), 'macos');
+  assert.equal(windowControlsLook(undefined, 'windows'), 'windows');
+  assert.equal(windowControlsLook('beos', 'linux'), 'linux');
+  assert.equal(windowControlsLook('classic', 'macos'), 'classic');
+  assert.equal(windowControlsLook('linux', 'macos'), 'linux');
+});
+
+test('minimize and close are their own actions, and close leaves the agent running', async (t) => {
+  const { view, harness, requests } = await openLook(t, 'windows');
+  const bar = () => view.container.querySelector('.companion-titlebar');
+  await harness.act(() => bar().querySelector('.companion-wc-close').click());
+  assert.deepEqual([...bar().querySelectorAll('[role="tab"]')].map((tab) => tab.title.split(':')[0]), ['bravo'], 'the tab is gone');
+  assert.equal(view.container.querySelector('.companion-window-warm'), null, 'the window stays for the other tab');
+  assert.deepEqual(requests.filter((request) => request.url.includes(A)), [], 'nothing was asked of the agent');
+  await harness.act(async () => { bar().querySelector('.companion-wc-minimize').click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(view.container.querySelector('.companion-window-warm'), 'minimized');
+  assert.equal(view.container.querySelectorAll('[role="tab"]').length, 1, 'and minimize closed no tab');
+});
+
+test('maximize fills the room, survives a reload, and restores what it replaced', async (t) => {
+  const pref = 'tclaude.dash.companion.placement';
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: JSON.stringify(FLOATING) });
+  const { view, harness } = await openLook(t, 'linux', { prefs });
+  const frame = () => view.container.querySelector('.companion-window');
+  const size = () => view.container.querySelector('.companion-wc-maximize');
+  await harness.act(() => size().click());
+  assert.ok(frame().classList.contains('snapped-max'));
+  assert.equal(size().getAttribute('aria-label'), 'Restore');
+  assert.equal(view.container.querySelector('.companion-resize'), null, 'a maximized window has no free edge to pull');
+  assert.equal(view.container.querySelector('.companion-resize-frame'), null);
+  assert.deepEqual(JSON.parse(prefs.getItem(pref)), { ...FLOATING, snap: 'max' }, 'the floating place is kept to come back to');
+  await harness.act(() => size().click());
+  assert.equal(frame().classList.contains('snapped'), false);
+  assert.equal(size().getAttribute('aria-label'), 'Maximize');
+  assert.deepEqual(JSON.parse(prefs.getItem(pref)), FLOATING);
+  prefs.setItem(pref, JSON.stringify({ ...FLOATING, snap: 'left' }));
+  view.unmount?.();
+  const again = await openLook(t, 'linux', { prefs });
+  const frame2 = () => again.view.container.querySelector('.companion-window');
+  const size2 = () => frame2().querySelector('.companion-wc-maximize');
+  assert.ok(frame2().classList.contains('snapped-left'));
+  await again.harness.act(() => size2().click());
+  await again.harness.act(() => size2().click());
+  assert.ok(frame2().classList.contains('snapped-left'), 'restored to the side it was snapped to');
+});
+
+test('restore brings back the panel it replaced, across a reload and at its resized width', async (t) => {
+  const pref = 'tclaude.dash.companion.placement';
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: JSON.stringify({ ...FLOATING, snap: 'left' }) });
+  const first = await openLook(t, 'linux', { prefs });
+  const frame = () => first.view.container.querySelector('.companion-window');
+  const size = () => frame().querySelector('.companion-wc-maximize');
+  const pull = (dx) => first.harness.act(async () => {
+    const handle = first.view.container.querySelector('.companion-resize');
+    const event = (type, x) => Object.assign(new first.harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 200 });
+    handle.dispatchEvent(event('pointerdown', 500));
+    handle.dispatchEvent(event('pointermove', 500 + dx));
+    handle.dispatchEvent(event('pointerup', 500 + dx));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await pull(30);
+  const pulled = frame().style.width;
+  await first.harness.act(() => size().click());
+  await first.harness.act(() => size().click());
+  assert.ok(frame().classList.contains('snapped-left'));
+  assert.equal(frame().style.width, pulled, 'the resized panel comes back at its size');
+  await first.harness.act(() => size().click());
+  assert.equal(JSON.parse(prefs.getItem(pref)).restoreSnap, 'left');
+  const reloaded = await openLook(t, 'linux', { prefs });
+  const frame2 = () => reloaded.view.container.querySelectorAll('.companion-window')[0];
+  assert.ok(frame2().classList.contains('snapped-max'));
+  await reloaded.harness.act(() => frame2().querySelector('.companion-wc-maximize').click());
+  assert.ok(frame2().classList.contains('snapped-left'), 'the edge survives a reload');
+  assert.equal(JSON.parse(prefs.getItem(pref)).restoreSnap, undefined);
+});
+
+test('a mouse press hands focus back to the terminal, and the keyboard stays on the control', async (t) => {
+  const { view, harness, mounted } = await openLook(t, 'windows');
+  const size = () => view.container.querySelector('.companion-wc-maximize');
+  const before = mounted.at(-1).focused;
+  await harness.act(() => size().click());
+  assert.equal(mounted.at(-1).focused, before, 'Enter on the control keeps focus for the next key');
+  const press = (node) => harness.act(() => node.dispatchEvent(Object.assign(new harness.window.Event('click', { bubbles: true, cancelable: true }), { detail: 1 })));
+  await press(size());
+  assert.equal(mounted.at(-1).focused, before + 1, 'after maximize or restore');
+  await press(view.container.querySelector('.companion-wc-close'));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.notEqual(view.container.ownerDocument.activeElement?.className, 'companion-wc-close', 'the next key cannot close the next tab');
+});
+
+test('a click on the bar leaves a snapped window alone, and only a real move tears it off', async (t) => {
+  const pref = 'tclaude.dash.companion.placement';
+  const stored = JSON.stringify({ ...FLOATING, snap: 'max' });
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: stored });
+  const { view, harness } = await openLook(t, 'linux', { prefs });
+  const frame = () => view.container.querySelector('.companion-window');
+  const bar = view.container.querySelector('.companion-grip');
+  const press = (dx) => harness.act(async () => {
+    const event = (type, x) => Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 200 });
+    bar.dispatchEvent(event('pointerdown', 400));
+    if (dx) bar.dispatchEvent(event('pointermove', 400 + dx));
+    bar.dispatchEvent(event('pointerup', 400 + dx));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await press(0);
+  await press(2);
+  assert.ok(frame().classList.contains('snapped-max'), 'a click, or a hand that shook, keeps it');
+  assert.equal(prefs.getItem(pref), stored, 'and saves nothing');
+  await press(40);
+  assert.equal(frame().classList.contains('snapped'), false);
+});
+
+test('dragging by the bar works around the controls, and pressing a control starts no drag', async (t) => {
+  const pref = 'tclaude.dash.companion.placement';
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: JSON.stringify({ ...FLOATING, snap: 'max' }) });
+  const { view, harness } = await openLook(t, 'macos', { prefs });
+  const frame = () => view.container.querySelector('.companion-window');
+  const press = (node) => harness.act(async () => {
+    const event = (type, x) => Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 200 });
+    node.dispatchEvent(event('pointerdown', 400));
+    node.dispatchEvent(event('pointermove', 420));
+    node.dispatchEvent(event('pointerup', 420));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const group = () => view.container.querySelector('.companion-window-controls');
+  await press(group().querySelector('button'));
+  await press(group().querySelector('svg'));
+  assert.ok(frame().classList.contains('snapped-max'), 'still maximized: a control is no handle');
+  await press(group());
+  assert.equal(frame().classList.contains('snapped'), false, 'the gaps between the lights drag, and tear the window off');
+  assert.equal(JSON.parse(prefs.getItem(pref)).snap, '');
 });
 
 test('every edge and corner of a floating window resizes it, and the opposite side stays put', async (t) => {

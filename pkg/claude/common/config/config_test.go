@@ -1659,6 +1659,18 @@ func TestStewardAccessDefaultsAndValidates(t *testing.T) {
 	assert.Equal(t, []string{"groups.owners.manage"}, c.Steward.DefaultPermissions)
 }
 
+func TestWindowControls(t *testing.T) {
+	var unset *Config
+	assert.Equal(t, "auto", unset.WindowControls())
+	for _, tc := range []struct{ in, want string }{
+		{"", "auto"}, {"auto", "auto"}, {"beos", "auto"}, {"macos", "macos"},
+		{"windows", "windows"}, {"linux", "linux"}, {"classic", "classic"},
+	} {
+		c := &Config{Dashboard: &DashboardConfig{WindowControls: tc.in}}
+		assert.Equal(t, tc.want, c.WindowControls(), tc.in)
+	}
+}
+
 func TestOverlayBackdrop(t *testing.T) {
 	var unset *Config
 	assert.Equal(t, "dim", unset.OverlayBackdrop())

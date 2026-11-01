@@ -323,6 +323,17 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
             <option value="none">Nothing</option>
           </${ConfigSelect}>
         </${Setting}>
+        <${Setting} title="Window controls" forId="cfg-dashboard-window-controls" k="dashboard.window_controls"
+          summary="How the minimize, maximize and close buttons look on the companion window."
+          more=${html`Automatic follows the operating system your browser runs on. Linux desktops vary, so Linux uses GNOME-style buttons. Classic keeps the plain minimize button on its own.`}>
+          <${ConfigSelect} id="cfg-dashboard-window-controls" aria-label="Window controls">
+            <option value="auto">Automatic</option>
+            <option value="macos">macOS</option>
+            <option value="windows">Windows</option>
+            <option value="linux">Linux</option>
+            <option value="classic">Classic</option>
+          </${ConfigSelect}>
+        </${Setting}>
       </${Group}>
 
       <${Group} title="Tabs">

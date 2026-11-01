@@ -475,7 +475,13 @@ test('Config saves live wizard and slop activity-bot selections over their loade
   selectLiveOption('#cfg-dashboard-activity-bots-wizard', 'emoji', 'sprites');
   selectLiveOption('#cfg-dashboard-activity-bots-slop', 'sprites', 'emoji');
 
+  const windowControls = mounted.container.querySelector('#cfg-dashboard-window-controls');
+  assert.deepEqual([...windowControls.querySelectorAll('option')].map((option) => option.textContent), ['Automatic', 'macOS', 'Windows', 'Linux', 'Classic']);
+  assert.equal(adapter.assembleConfig().dashboard.window_controls, undefined, 'Automatic is the default and stays unset');
+  selectLiveOption('#cfg-dashboard-window-controls', 'auto', 'classic');
+
   const assembled = adapter.assembleConfig();
+  assert.equal(assembled.dashboard.window_controls, 'classic');
   assert.equal(assembled.dashboard.activity_bots.wizard, 'sprites');
   assert.equal(assembled.dashboard.activity_bots.slop, 'emoji');
   await mounted.unmount();

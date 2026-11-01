@@ -213,8 +213,9 @@ export function parsePlacement(raw) {
     if (!p || typeof p !== 'object') return null;
     const nums = ['x', 'y', 'w', 'h'].every((k) => Number.isFinite(p[k]));
     if (!nums) return null;
-    const snap = ['left', 'right', 'bottom'].includes(p.snap) ? p.snap : '';
-    return { x: p.x, y: p.y, w: p.w, h: p.h, snap };
+    const snap = ['left', 'right', 'bottom', 'max'].includes(p.snap) ? p.snap : '';
+    const placement = { x: p.x, y: p.y, w: p.w, h: p.h, snap };
+    return snap === 'max' && ['left', 'right', 'bottom'].includes(p.restoreSnap) ? { ...placement, restoreSnap: p.restoreSnap } : placement;
   } catch {
     return null;
   }
@@ -266,9 +267,11 @@ export function viewportOf(win) {
 }
 
 // zoneRect is the rectangle a snapped window occupies: a full-height side
-// panel below the top bar, or a full-width bottom drawer above the footer.
+// panel below the top bar, a full-width bottom drawer above the footer, or for
+// a maximized window all the room between the two.
 export function zoneRect(zone, viewport, top = 0) {
   const bottom = viewport.height - COMPANION_FOOTER_ROOM;
+  if (zone === 'max') return { x: 0, y: top, w: viewport.width, h: Math.max(COMPANION_MIN_H, bottom - top), snap: zone };
   if (zone === 'right' || zone === 'left') {
     const w = Math.min(viewport.width, Math.max(COMPANION_MIN_W, Math.round(viewport.width * COMPANION_SNAP_SHARE)));
     return { x: zone === 'right' ? viewport.width - w : 0, y: top, w, h: Math.max(COMPANION_MIN_H, bottom - top), snap: zone };

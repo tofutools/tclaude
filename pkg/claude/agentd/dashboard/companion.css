@@ -105,6 +105,39 @@
 .companion-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
 .companion-controls button:disabled:hover { background: none; color: var(--cmp-muted); }
 
+/* Window controls. They sit outside .companion-controls so nothing there can
+   push them off the bar. Tool popovers forbid clipping the tools, so a window
+   too narrow for every tool lets the tools run underneath instead. */
+.companion-titlebar:not(.companion-look-classic) .companion-controls { min-width: 0; }
+.companion-titlebar:not(.companion-look-classic) .companion-tabs { min-width: 56px; }
+.companion-window-controls { flex: none; position: relative; z-index: 1; display: flex; align-items: center; background: var(--cmp-bar); }
+.companion-window-controls button { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
+.companion-window-controls svg { display: block; fill: none; stroke: currentColor; pointer-events: none; }
+
+.companion-look-macos { padding-left: 10px; }
+.companion-look-macos .companion-window-controls { gap: 8px; margin-right: 8px; }
+.companion-look-macos .companion-window-controls button { width: 12px; height: 12px; border-radius: 50%; color: transparent; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .2); }
+.companion-look-macos .companion-window-controls svg { width: 8px; height: 8px; stroke-width: 1.4; }
+.companion-look-macos .companion-wc-close { background: #ff5f57; }
+.companion-look-macos .companion-wc-minimize { background: #febc2e; }
+.companion-look-macos .companion-wc-maximize { background: #28c840; }
+.companion-look-macos .companion-window-controls:is(:hover, :focus-within) button { color: rgba(0, 0, 0, .6); }
+.companion-look-macos .companion-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: 2px; }
+
+.companion-look-windows { padding-right: 0; }
+.companion-look-windows .companion-window-controls { align-self: stretch; margin-left: 4px; }
+.companion-look-windows .companion-window-controls button { width: 44px; height: 100%; background: none; color: var(--cmp-text); }
+.companion-look-windows .companion-window-controls svg { width: 11px; height: 11px; stroke-width: 1; }
+.companion-look-windows .companion-window-controls button:hover { background: #21262d; }
+.companion-look-windows .companion-window-controls .companion-wc-close:hover { background: #c42b1c; color: #fff; }
+.companion-look-windows .companion-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: -2px; }
+
+.companion-look-linux .companion-window-controls { gap: 6px; margin-left: 4px; }
+.companion-look-linux .companion-window-controls button { width: 22px; height: 22px; border-radius: 50%; background: #30363d; color: var(--cmp-text); }
+.companion-look-linux .companion-window-controls svg { width: 10px; height: 10px; stroke-width: 1.5; }
+.companion-look-linux .companion-window-controls button:hover { background: #484f58; }
+.companion-look-linux .companion-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: 1px; }
+
 .companion-menu {
   position: absolute; top: 36px; left: 8px; z-index: 4; width: min(340px, calc(100% - 16px));
   background: var(--cmp-bar); border: 1px solid var(--cmp-edge); border-radius: 8px;
@@ -465,7 +498,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 
 /* The dialogs the window opens must not land behind it. Other plain modals
    stay under it, so an agent can be used beside the editor it is helping with. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show) :is(.companion-window, .companion-resize-frame) { z-index: 90; }
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show, #steward-handover-modal.show) :is(.companion-window, .companion-resize-frame) { z-index: 90; }
 
 /* The title bar sizes its buttons as icons; the shut-down confirmation hanging
    off it holds ordinary ones. */

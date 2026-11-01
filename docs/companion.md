@@ -63,6 +63,16 @@ back here**.
 | ⧉ | Detach it into its own browser window |
 | ⇄ | Morph it, with Move, Teleport, Clone and Recall home a pick away |
 | – | Minimize (Ctrl+.) |
+| □ | Maximize, or restore the size it had |
+| × | Close the tab you're on. The agent keeps running. With no agent showing, this minimizes the window |
+
+The last three are shaped like your OS's own window buttons: traffic lights at
+the top left on macOS, flush in the top right corner on Windows, and round
+GNOME-style buttons on Linux. **Config > Appearance > Window controls** picks a
+look by hand. **Classic** keeps a plain minimize button and has no maximize or
+close.
+
+Dragging a maximized window by its title bar also restores it.
 
 ### Talking to an agent
 

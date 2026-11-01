@@ -1187,6 +1187,9 @@ type snapshotPayload struct {
 	// full-screen previews do to the page behind them. refresh.js applies it
 	// to the root element each poll. See Config.OverlayBackdrop.
 	OverlayBackdrop string `json:"overlay_backdrop"`
+	// WindowControls mirrors config dashboard.window_controls: the look of the
+	// companion window's controls. See Config.WindowControls.
+	WindowControls string `json:"window_controls"`
 	// DefaultTerminal mirrors config dashboard.default_terminal — how spawn
 	// auto-focus, per-agent focus / open-window / open-terminal actions and bulk
 	// windows-modal focus open a console: "native" (pop a native OS window) or
@@ -3482,6 +3485,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		HScrollFollow:     cfg.HScrollFollow(),
 		GroupQuickOptions: cfg.GroupQuickOptions(),
 		OverlayBackdrop:   cfg.OverlayBackdrop(),
+		WindowControls:    cfg.WindowControls(),
 		DefaultTerminal:   cfg.DefaultTerminal(),
 		TerminalAttach: dashboardTerminalAttach{
 			Mode:                 terminalAttachMode,
