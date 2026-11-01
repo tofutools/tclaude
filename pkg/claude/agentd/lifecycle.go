@@ -3106,6 +3106,11 @@ func requestResumeDirectoryRecreationApproval(w http.ResponseWriter, r *http.Req
 	if row := agent.FreshConvRowResolved(targetConv); row != nil {
 		targetTitle = agent.DisplayTitle(row)
 	}
+	slot, ok := admitApproval(w, p.ConvID)
+	if !ok {
+		return false
+	}
+	defer approvals.release(slot)
 	targetGroup, _, _ := extractApprovalTargets(r, "")
 	req := &approvalRequest{
 		id:              newApprovalID(),
@@ -3157,6 +3162,11 @@ func requestCodexDriveRollbackApproval(w http.ResponseWriter, r *http.Request, p
 	if row := agent.FreshConvRowResolved(targetConv); row != nil {
 		targetTitle = agent.DisplayTitle(row)
 	}
+	slot, ok := admitApproval(w, p.ConvID)
+	if !ok {
+		return false
+	}
+	defer approvals.release(slot)
 	targetGroup, _, _ := extractApprovalTargets(r, "")
 	req := &approvalRequest{
 		id: newApprovalID(), perm: perm, convID: p.ConvID, convTitle: callerTitle,

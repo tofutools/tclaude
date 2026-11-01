@@ -1396,6 +1396,12 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 				}
 			}
 
+			slot, ok := admitApproval(w, p.ConvID)
+			if !ok {
+				return "", false
+			}
+			defer approvals.release(slot)
+
 			// Snapshot a safe description now so the popup can show what's
 			// being approved. The preview helper replaces r.Body with a
 			// fresh reader so the downstream handler still gets the same
@@ -1412,7 +1418,11 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 				bodyPreview = raw
 				bodyLabel = "Clipboard content"
 			}
-			bodyPreview, bodyLabel = approvalPreviewFacts(r, bodyPreview, bodyLabel)
+			bodyPreview, bodyLabel, held := approvalPreviewFacts(r, slot, bodyPreview, bodyLabel)
+			if !held {
+				refuseApprovalBody(w)
+				return "", false
+			}
 			// The scope the popup's scoped "always allow" may persist is
 			// derived from the SAME context this gate evaluates grants
 			// against — never re-parsed from the URL or body — so a scope the

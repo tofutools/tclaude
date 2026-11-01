@@ -2453,3 +2453,25 @@ func StubCapturingApprovalForTest(decision bool) (*[]CapturedApproval, func()) {
 	}
 	return captured, func() { RequestHumanApprovalImpl = prev }
 }
+
+// StubWaitingApprovalForTest makes each ask-human request wait until the
+// returned answer func is called, as a real popup waits for the human. raised
+// receives one value per request that reached the popup.
+func StubWaitingApprovalForTest() (raised <-chan struct{}, answer func(), restore func()) {
+	prev := RequestHumanApprovalImpl
+	reached := make(chan struct{}, maxPendingApprovals*2)
+	answered := make(chan struct{})
+	RequestHumanApprovalImpl = func(*approvalRequest, string) bool {
+		reached <- struct{}{}
+		<-answered
+		return true
+	}
+	return reached, func() { close(answered) }, func() { RequestHumanApprovalImpl = prev }
+}
+
+// SetApprovalHeldBytesForTest lowers the limit on bytes held for waiting requests.
+func SetApprovalHeldBytesForTest(n int64) (restore func()) {
+	prev := maxApprovalHeldBytes
+	maxApprovalHeldBytes = n
+	return func() { maxApprovalHeldBytes = prev }
+}
