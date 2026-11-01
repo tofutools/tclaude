@@ -379,6 +379,7 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 			return rcInvalidArg
 		}
 		fmt.Fprintf(stdout, "Refused here: %s\n", view.Refused)
+		return rcOK
 	}
 	if !p.Yes {
 		fmt.Fprintln(stdout, "Preview only; nothing was imported. Re-run with --yes to import.")
