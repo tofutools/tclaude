@@ -1,6 +1,7 @@
 # Real-OpenCode proof that a group member landing on OpenCode keeps its
-# conversation. Two isolated tclaude nodes export, dry-run, import and resume a
-# group against the pinned binary; see the script for what passes.
+# conversation, in the shared store at the baseline and in private state under
+# tclaude's sandbox. Two isolated tclaude nodes export, dry-run, import and resume
+# a group against the pinned binary; see the script for what passes.
 #
 # Credential-free and model-free: nothing here has a provider key, and no check
 # depends on a model turn. A real failure fails the job. So does an install
@@ -20,6 +21,7 @@ on:
       - 'pkg/claude/agentd/groups_export*.go'
       - 'pkg/claude/agentd/lifecycle.go'
       - 'pkg/claude/agentd/opencode_*.go'
+      - 'pkg/claude/agentd/sandbox_*.go'
       - 'pkg/claude/common/db/group_export.go'
       - 'pkg/claude/common/db/relaunch_profiles.go'
       - 'pkg/claude/common/groupexport/**'
@@ -57,12 +59,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install tmux
+      - name: Install tmux and bubblewrap
         shell: bash
         run: |
           source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/sandbox.sh"
           smoke::apt_update
-          sudo apt-get install -y tmux jq
+          sudo apt-get install -y tmux jq bubblewrap
+          smoke::unlock_userns
 
       - name: Install pinned OpenCode
         shell: bash

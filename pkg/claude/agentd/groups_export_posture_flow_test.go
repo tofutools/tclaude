@@ -292,3 +292,27 @@ func TestAgentImport_RecordedPostureDoesNotWiden(t *testing.T) {
 	require.NotNil(t, res.Posture)
 	assert.Equal(t, "tclaude-layer", res.Posture.SandboxImplementation)
 }
+
+// An agent landed offline has its posture before anything launches it.
+func TestAgentImport_OfflineLandingResumesInTheReceiverPosture(t *testing.T) {
+	f := newFlow(t)
+	seedClaudeConversation(t, f, postureMember, "scout", f.TestCwd("src"))
+	f.HaveGroup("receivers")
+	export := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+postureMember+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, export.Code, export.Body.String())
+	setSandboxImplDefault(t, f, "tclaude-layer")
+
+	dst := f.TestCwd("dst")
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+	res := importAgentArchive(t, f, export.Body.Bytes(), url.Values{
+		"apply": {"true"}, "start": {"false"}, "cwd": {dst}, "group": {"receivers"}})
+	require.True(t, res.Applied)
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(res.Spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+
+	assert.Equal(t, "resumed", f.Resume(res.Spawn.ConvID).Action)
+	got, ok := f.World.SpawnSandboxImplementation(res.Spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "tclaude-layer", got)
+}

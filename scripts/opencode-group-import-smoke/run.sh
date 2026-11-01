@@ -6,9 +6,13 @@
 # group and exports the group. Node "dst", with an empty OpenCode store, dry-runs
 # and imports that archive, then resumes the group. The run passes when the
 # conversation is in dst's store, OpenCode exports it, the managed server serves
-# it, and the attached TUI draws it.
+# it, and the attached TUI draws it. The node then makes tclaude's sandbox its
+# install default and imports the same archive again: that member's conversation
+# goes in its private state, never the shared store, and resumes in a sandboxed
+# server.
 #
-# It needs `opencode`, `tmux` and `jq` on PATH. Anything missing is a failure:
+# It needs `opencode`, `tmux`, `jq` and a working `bwrap` on PATH. Anything missing
+# is a failure:
 # this script has no skip path. Run it from a plain terminal or CI, not from
 # inside an agent: agentd treats a caller with a harness ancestor as that agent.
 #
@@ -26,7 +30,7 @@ mkdir -p "$BIN"
 log() { printf '\n== %s\n' "$*"; }
 die() { echo "::error::$*" >&2; exit 1; }
 
-for tool in opencode tmux jq; do
+for tool in opencode tmux jq bwrap; do
 	command -v "$tool" >/dev/null || die "$tool is not installed"
 done
 
@@ -174,25 +178,42 @@ log "the attached OpenCode TUI draws the conversation"
 wait_for 90 "the imported conversation in the OpenCode TUI" pane_shows_history
 cat "$ROOT/pane.txt"
 
-log "the managed server serves the same session"
-DB=$ROOT/dst/.tclaude/data/db.sqlite
-python3 - "$DB" "$LANDED" "$SECRET" "$DST_CWD" <<'PY'
-import base64, json, sqlite3, sys, urllib.parse, urllib.request
+# managed_server_holds <conv> <expected sandbox implementation>: the conversation's
+# managed server runs under that implementation and serves the messages.
+managed_server_holds() {
+	python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$1" "$SECRET" "$DST_CWD" "$2" <<'PY'
+import base64, http.client, json, socket, sqlite3, sys, urllib.parse
 
-db, conv, secret, cwd = sys.argv[1:5]
+db, conv, secret, cwd, implementation = sys.argv[1:6]
 row = sqlite3.connect(db).execute(
-    "SELECT server_url, password FROM opencode_runtimes WHERE conv_id = ?", (conv,)
+    "SELECT server_url, password, sandbox_implementation, sandbox_launch_spec_json, control_socket_path"
+    " FROM opencode_runtimes WHERE conv_id = ?", (conv,)
 ).fetchone()
 assert row, f"no managed OpenCode runtime for {conv}"
-url, password = row
+url, password, recorded, spec, control = row
+assert recorded == implementation, f"the server runs under {recorded}, not {implementation}"
+assert bool(spec) == (implementation == "tclaude-layer"), "the sandbox launch spec does not match the implementation"
 auth = base64.b64encode(f"opencode:{password}".encode()).decode()
 q = urllib.parse.urlencode({"directory": cwd})
 
 
+class UnixConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(control)
+
+
 def get(path):
-    req = urllib.request.Request(f"{url}{path}?{q}", headers={"Authorization": f"Basic {auth}"})
-    with urllib.request.urlopen(req, timeout=10) as res:
-        return json.load(res)
+    parsed = urllib.parse.urlparse(url)
+    if control:
+        conn = UnixConnection("localhost", timeout=10)
+    else:
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
+    conn.request("GET", f"{path}?{q}", headers={"Authorization": f"Basic {auth}"})
+    res = conn.getresponse()
+    assert res.status == 200, f"{path}: HTTP {res.status}"
+    return json.load(res)
 
 
 session = get(f"/session/{conv}")
@@ -201,5 +222,52 @@ messages = json.dumps(get(f"/session/{conv}/message"))
 assert secret in messages, "the managed server does not hold the imported messages"
 print("managed server holds", conv)
 PY
+}
 
-log "PASS: the imported OpenCode conversation is in the store, the server and the TUI"
+log "the managed server serves the same session"
+managed_server_holds "$LANDED" harness-builtin
+
+log "importing again under tclaude's sandbox"
+node dst tclaude agent groups stop crew-landed --force
+node dst tmux -L tclaude kill-server 2>/dev/null || true
+node dst tclaude agent sandbox-impl default set tclaude-layer
+AMBIENT_BEFORE=$(sessions_on_dst | jq -c '[.[].id] | sort')
+node dst tclaude agent groups import "$ROOT/crew.paf" --dry-run --into "$DST_CWD" --as crew-walled | tee "$ROOT/walled-dry-run.txt"
+grep -q 'sandbox tclaude-layer' "$ROOT/walled-dry-run.txt" || die "the dry run does not state the sandboxed posture"
+grep -q 'private state' "$ROOT/walled-dry-run.txt" || die "the dry run does not state private OpenCode state"
+node dst tclaude agent groups import "$ROOT/crew.paf" --into "$DST_CWD" --as crew-walled --json \
+	| tee "$ROOT/walled-import.json"
+jq -e '.landings[0] | .rung == "native" and .posture.sandbox_implementation == "tclaude-layer" and .posture.opencode_state == "private"' \
+	"$ROOT/walled-import.json" >/dev/null || die "the import result does not state the sandboxed posture"
+[[ $(sessions_on_dst | jq -c '[.[].id] | sort') == "$AMBIENT_BEFORE" ]] || die "the sandboxed member reached the shared store"
+
+STATE_ROOT=$(python3 - "$ROOT/dst/.tclaude/data/db.sqlite" <<'PY'
+import sqlite3, sys
+
+rows = sqlite3.connect(sys.argv[1]).execute(
+    "SELECT state_root FROM opencode_agent_state_allocations WHERE mode = 'private'"
+).fetchall()
+assert len(rows) == 1, rows
+print(rows[0][0])
+PY
+)
+[[ -d $STATE_ROOT ]] || die "no private state root: $STATE_ROOT"
+private_opencode() {
+	(cd "$DST_CWD" && node dst env XDG_DATA_HOME="$STATE_ROOT/data" XDG_CACHE_HOME="$STATE_ROOT/cache" \
+		XDG_CONFIG_HOME="$STATE_ROOT/config" XDG_STATE_HOME="$STATE_ROOT/state" opencode "$@" --pure --log-level ERROR)
+}
+private_opencode session list --format json | tee "$ROOT/private-sessions.json"
+WALLED=$(jq -r '.[0].id' "$ROOT/private-sessions.json")
+[[ $WALLED == ses_* ]] || die "no session in private state: $WALLED"
+[[ $WALLED != "$LANDED" ]] || die "the sandboxed member reused the shared store's session"
+private_opencode export "$WALLED" >"$ROOT/private-export.json"
+grep -q "$SECRET" "$ROOT/private-export.json" || die "private state does not hold the imported conversation"
+
+log "resuming the sandboxed group"
+node dst tclaude agent groups resume crew-walled | tee "$ROOT/walled-resume.txt"
+grep -qE 'resumed|already_online' "$ROOT/walled-resume.txt" || die "the sandboxed member did not resume"
+wait_for 90 "the sandboxed conversation in the OpenCode TUI" pane_shows_history
+cat "$ROOT/pane.txt"
+managed_server_holds "$WALLED" tclaude-layer
+
+log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed"

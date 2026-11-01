@@ -365,8 +365,14 @@ the conversation takes:
   after trimming. The agent then imports as configuration only, with a
   warning; `tclaude paf render` still reads the whole conversation.
 
-On another harness the source's launch posture (approval, sandbox and the
-other profile settings) is not applied; the receiver's defaults and normal
+The source's sandbox posture does not travel: the receiving group's applies, so
+a file cannot widen it, and the preview states the result. The one exception
+tightens rather than widens: an agent that ran under tclaude's sandbox keeps it,
+and the import is refused where this node cannot run it. Without `--group` the
+preview shows the posture with no group's settings.
+
+On another harness the rest of the source's launch posture (approval and the
+other profile settings) is not applied either; the receiver's defaults and normal
 spawn checks apply, and the preview says so. Imports through federation
 offers, moves and teleports keep landing on the source harness.
 
@@ -745,16 +751,40 @@ Each member of a group PAF lands like an
   record still names its landing harness, so it resumes there.
 - **OpenCode:** a member landing on OpenCode installs its conversation into
   this host's OpenCode store through the `opencode` CLI, which is where its
-  first resume reads it. The member resumes without tclaude's sandbox, so its
-  conversation shares that store with other unsandboxed OpenCode agents. Without
-  `opencode` installed it imports as configuration, with a warning.
+  first resume reads it, which depends on its [landing posture](#landing-posture).
+  Without `opencode` installed it imports as configuration, with a warning.
 
 A Claude Code member landing on Claude Code takes the group import's own
 path, which rewrites embedded paths and keeps its conversation id unless it
 collides. Every other landing goes through the harness's own history import,
 which mints a new conversation id that the group's rows then follow. The
-dry run shows each member's landing harness, model and rung. Imported
+dry run shows each member's landing harness, model, rung and posture. Imported
 members land offline and resume on their landing harness.
+
+### Landing posture
+
+An imported member launches under the sandbox a spawn into the landing group
+would get: the spawn profile tiers, then the install default, composed with
+the group and global sandbox profiles. A group import always creates its
+group, so at import that means the global tiers and the install default.
+Nothing in the file sets it, so a source that ran without a sandbox cannot
+bring that here. A sandbox profile assigned to the group later binds the
+member's next launch, like any other member's; its sandbox implementation
+stays what the import resolved until `sandbox-impl set` changes it.
+
+`--dry-run`, the import result and the dashboard preview state each member's
+implementation, sandbox profiles and the tiers that chose them. A posture this
+node cannot meet, such as tclaude's sandbox on a host without `bwrap`, is shown
+as refused by the dry run and refuses the whole import, with the same reason a
+spawn would give and nothing written. It never lands unconfined instead.
+
+An OpenCode member's conversation goes in the store its server reads. Under
+tclaude's sandbox that is the member's private per-agent state; under any other
+posture it is the shared store, shared with other unsandboxed OpenCode agents.
+
+Members imported by an earlier version are left as they are, running or not:
+they keep the baseline posture, with no tclaude sandbox. Move one with
+[`sandbox-impl set`](sandboxing.md#reassigning-an-existing-agent).
 
 `tclaude paf inspect`, `validate` and `render` also read group export zips,
 converting them on read.
