@@ -46,6 +46,7 @@ import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions, reassignCan
 import { agentRunBounds } from './process-agent-stepper.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { PaneDictation } from './terminal-dictation.js';
+import { ShellHere, paneShellAgent } from './terminal-here.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -298,6 +299,7 @@ function TerminalPane({
   const [hasSelection, setHasSelection] = useState(false);
   const [remote, setRemote] = useState(null);
   const [files, setFiles] = useState(false);
+  const shellAgent = paneShellAgent(pane, solo);
   const filesOK = !!(pane.seed.remote && remote?.files && remote?.viewer && !remote?.closed);
   const [dragging, setDragging] = useState(false);
   const [stewardDown, setStewardDown] = useState(false);
@@ -403,6 +405,7 @@ function TerminalPane({
       <${PaneDictation} pane=${pane} active=${active} solo=${solo} status=${status} actions=${actions}
         canType=${!pane.seed.remote || remote?.mode === 'interactive'} snapshot=${processSnapshot}
         target=${composeAgent(pane) ? composeTarget(pane, actions) : null}>
+        ${shellAgent && html`<${ShellHere} ...${shellAgent} name=${pane.label} snapshot=${processSnapshot?.value} />`}
         <${TerminalZoom} font=${font} widget=${() => actions.widgetFor(pane.id)} />
       <//>
       <${OpaqueTerminalHost}

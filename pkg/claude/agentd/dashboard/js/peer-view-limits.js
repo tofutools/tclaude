@@ -607,8 +607,12 @@ export function shellControl(act, peerView, groupOf = (g) => g) {
     else if (SAFE_AGENT_ID.test(d.agent || '')) shell = { group, shell: SHELL_WHICH.has(d.which) ? d.which : 'current', agent: d.agent, label: d.label || d.agent };
   }
   if (!shell) return { el: act, state: 'local', what: 'This action' };
-  const held = unrestricted(peerView) || (peerView?.groups?.[group] || []).includes(SHELL_GRANT);
-  return held ? { el: act, state: 'shell', what: 'This terminal', shell } : { el: act, state: 'omitted', what: "this group's shells", needs: [SHELL_GRANT] };
+  return peerShellAllowed(peerView, group) ? { el: act, state: 'shell', what: 'This terminal', shell } : { el: act, state: 'omitted', what: "this group's shells", needs: [SHELL_GRANT] };
+}
+
+// peerShellAllowed reports whether a peer view opens the peer's shells in group.
+export function peerShellAllowed(peerView, group) {
+  return unrestricted(peerView) || (peerView?.groups?.[group] || []).includes(SHELL_GRANT);
 }
 
 // shellSelectors are the SHELL_ACTS controls a peer view runs: every one
