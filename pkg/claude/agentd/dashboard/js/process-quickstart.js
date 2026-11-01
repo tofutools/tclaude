@@ -285,7 +285,7 @@ export function fallbackChoices({ current = '', inherit = '', defaultSpawnProfil
     },
     ...named.map((name) => ({ value: `spawn:${name}`, label: `spawn one with profile ${name}` })),
   ];
-  if (current && !options.some((option) => option.value === current)) {
+  if (current.startsWith('spawn:') && !options.some((option) => option.value === current)) {
     options.push({ value: current, label: `spawn one with profile ${current.slice(6)}` });
   }
   options.push({ value: 'fail', label: 'fail the step' });

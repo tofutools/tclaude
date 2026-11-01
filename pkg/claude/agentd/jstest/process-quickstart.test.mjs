@@ -115,6 +115,11 @@ test('fallback choices offer the default, the other profiles, and keep a value t
   const values = (options) => options.map((option) => option.value);
   assert.deepEqual(values(fallbackChoices({ defaultSpawnProfile: 'dev', profiles: ['dev', 'opus'] })), ['wait', 'spawn', 'spawn:opus', 'fail']);
   assert.deepEqual(values(fallbackChoices({ inherit: 'as the process', current: 'spawn:gone', profiles: [] })), ['', 'wait', 'spawn', 'spawn:gone', 'fail']);
+  for (const current of ['fail', 'wait', 'spawn']) {
+    const listed = fallbackChoices({ current, defaultSpawnProfile: 'dev' }).filter((option) => option.value === current);
+    assert.equal(listed.length, 1, `${current} is listed once, under its own label`);
+    assert.doesNotMatch(listed[0].label, /profile $/);
+  }
   const noDefault = fallbackChoices({ profiles: ['opus'] });
   assert.equal(noDefault.find((option) => option.value === 'spawn').disabled, true, 'no default to spawn');
 });
