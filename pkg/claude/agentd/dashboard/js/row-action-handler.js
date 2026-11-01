@@ -720,6 +720,30 @@ export async function handleRowAction(action) {
         openSnapshots({ agent, node: rowNode() });
         return;
       }
+      case 'compact-agent': {
+        // The menu item only shows where the harness can compact and is
+        // disabled offline; the daemon re-checks both. The summary replaces
+        // the agent's context, so it asks first.
+        const confirmed = await confirmModal({
+          title: `Compact ${label}?`,
+          body: 'The agent summarises its conversation so far and carries on from the summary. Its detailed context cannot be restored afterwards.',
+          okLabel: 'Compact',
+        });
+        if (!confirmed) return;
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/compact`, { method: 'POST', credentials: 'same-origin' });
+        if (!r.ok) {
+          const text = await r.text();
+          let body = {};
+          try { body = JSON.parse(text); } catch (_) { /* plain error */ }
+          // A slow compaction is running, not failed: the daemon stopped waiting.
+          if (body.code === 'settling') toast(`${label} is still compacting`);
+          else toast(`compact ${label} failed: ${body.error || text}`, true);
+          return;
+        }
+        toast(`Asked ${label} to compact`);
+        refresh();
+        return;
+      }
       case 'reincarnate': {
         // Open the reincarnate modal pre-populated with this
         // agent. The modal enforces the required follow_up and

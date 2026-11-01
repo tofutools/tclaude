@@ -26,6 +26,9 @@ var (
 	errCodexControlDisconnected = errors.New("codex app-server control is disconnected")
 	errCodexControlUnsupported  = errors.New("codex thread state does not support this operation")
 	errCodexControlAmbiguous    = errors.New("codex app-server mutation outcome is ambiguous")
+	// errCodexCompactSettling is the one ambiguity a caller can word plainly: the
+	// compaction was started and is still running at the deadline.
+	errCodexCompactSettling = fmt.Errorf("%w: compaction did not settle before deadline", errCodexControlAmbiguous)
 )
 
 type codexThreadStatus struct {
@@ -346,7 +349,7 @@ func compactCodexAppServerThread(convID, followUp string) error {
 			}
 			select {
 			case <-ctx.Done():
-				return fmt.Errorf("%w: compaction did not settle before deadline", errCodexControlAmbiguous)
+				return errCodexCompactSettling
 			case <-time.After(codexAppServerPollInterval):
 			}
 		}
@@ -424,6 +427,8 @@ func codexControlFailure(err error) slashFailure {
 		return slashFailureUnsupported
 	case errors.Is(err, errCodexControlDisconnected):
 		return slashFailureDisconnected
+	case errors.Is(err, errCodexCompactSettling):
+		return slashFailureSettling
 	default:
 		return slashFailureControl
 	}

@@ -332,7 +332,10 @@ inbox instruction asking the target to name itself.
 ### compact and context-info
 
 `compact [follow-up]` injects `/compact`, with an optional follow-up
-message queued after it (timing best-effort). `context-info` reads the
+message queued after it (timing best-effort). In the dashboard, *compact* in
+an agent's ⚙ menu does the same with no follow-up, after a confirmation. It
+shows only for harnesses that can compact and is disabled while the agent is
+offline. `context-info` reads the
 context meter (populated by the status line) for yourself — ungated — a
 `--target`, or a whole team at once with `--group`.
 

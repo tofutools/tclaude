@@ -477,3 +477,10 @@ func TestCodexAppServerRenameKeepsRoutedCharsetGate(t *testing.T) {
 	assert.False(t, deliverRenameOn(f.convID, "unsafe\ntitle", deliveryChannelRouted))
 	assert.Zero(t, f.methodCount(codexappserver.MethodThreadNameSet))
 }
+
+func TestCodexCompactSettlingIsNotADispatchFailure(t *testing.T) {
+	assert.ErrorIs(t, errCodexCompactSettling, errCodexControlAmbiguous)
+	assert.Equal(t, slashFailureSettling, codexControlFailure(errCodexCompactSettling))
+	assert.Equal(t, slashFailureControl, codexControlFailure(errCodexControlAmbiguous))
+	assert.NotContains(t, slashFailureDetail(slashFailureSettling, "conv-1", "/compact"), "could not dispatch")
+}
