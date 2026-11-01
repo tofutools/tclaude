@@ -340,12 +340,29 @@ func TestAgentImport_RecordedApprovalDoesNotWiden(t *testing.T) {
 	require.Equal(t, http.StatusOK, moved.Code, moved.Body.String())
 	var accepted landingResult
 	require.NoError(t, json.Unmarshal(moved.Body.Bytes(), &accepted))
-	assert.NotContains(t, strings.Join(accepted.Warnings, "\n"), "approval bypassPermissions")
+	assert.Contains(t, strings.Join(accepted.Warnings, "\n"), "keeps what a file would lose")
 	landed, err = db.AgentRelaunchProfileForConv(accepted.Spawn.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, landed)
 	require.NotNil(t, landed.ApprovalPolicy)
 	assert.Equal(t, bypass, *landed.ApprovalPolicy)
+}
+
+// A file's environment never lands, so a placeholder only it uses cannot hold the
+// import up for a value that would be thrown away.
+func TestAgentImport_FileEnvironmentNeedsNoBinding(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("receivers")
+	b := fedAgentBundle(t)
+	b.Manifest.Agent.Profile = json.RawMessage(`{"environment":[{"name":"TOOLCHAIN","value":"${path_1}/tc"}]}`)
+	raw, err := b.Encode()
+	require.NoError(t, err)
+	dst := f.TestCwd("dst")
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+
+	res := importAgentArchive(t, f, raw, url.Values{"cwd": {dst}, "group": {"receivers"}})
+
+	assert.Contains(t, strings.Join(res.Warnings, "\n"), "TOOLCHAIN")
 }
 
 // An agent landed offline has its posture before anything launches it.
