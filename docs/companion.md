@@ -380,8 +380,9 @@ goes on the roster the same way, once the new one is running. Retiring an agent 
 
 An agent going on the roster has its scheduled jobs and standing orders paused, and is
 told so. They run again if it takes the seat, except any you disabled yourself. One
-kept as a normal agent keeps them running. Taking a standby off the roster leaves them
-paused, shown as `steward-standby`, until someone enables them.
+kept as a normal agent keeps them running. One aimed at a group that has emptied waits
+for that group instead. Taking a standby off the roster leaves them disabled until
+someone enables them.
 
 Other live Stewards, such as a second one summoned earlier, stay as they are and show
 as **also running**. Only one is active, and **Switch** makes one of them active.

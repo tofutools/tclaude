@@ -600,17 +600,58 @@ func pauseStandbyJobs(agentID string) int {
 	if err != nil {
 		slog.Warn("steward: pause a standby's scheduled jobs failed", "agent", agentID, "error", err)
 	}
+	if paused > 0 {
+		reconcileOwnedStandingOrderHooks(agentID)
+	}
 	return paused
 }
 
-// resumeStandbyJobs runs what going on the roster paused. It says how many, for
-// the agent's message.
+// resumeStandbyJobs runs what going on the roster paused, except what aims at a
+// group that emptied meanwhile. It says how many, for the agent's message.
 func resumeStandbyJobs(agentID string) int {
-	resumed, err := db.ResumeStewardStandbyJobs(agentID)
+	groups, err := db.StewardStandbyTargetGroups(agentID)
+	if err != nil {
+		slog.Warn("steward: read a standby's scheduled jobs failed", "agent", agentID, "error", err)
+		return 0
+	}
+	var empty []int64
+	for _, group := range groups {
+		// A failed check counts as empty: the job waits for its group.
+		if live, err := groupHasLiveMembers(group); err != nil || !live {
+			empty = append(empty, group)
+		}
+	}
+	resumed, err := db.ResumeStewardStandbyJobs(agentID, empty)
 	if err != nil {
 		slog.Warn("steward: resume scheduled jobs failed", "agent", agentID, "error", err)
 	}
+	if resumed > 0 {
+		reconcileOwnedStandingOrderHooks(agentID)
+	}
 	return resumed
+}
+
+// reconcileOwnedStandingOrderHooks redeclares the native hooks after the agent's
+// orders changed state in bulk: they are declared from enabled orders only, so
+// an order that comes back to a pruned hook would otherwise never fire.
+func reconcileOwnedStandingOrderHooks(agentID string) {
+	orders, err := db.ListStandingOrders()
+	if err != nil {
+		slog.Warn("steward: read standing orders for hooks failed", "agent", agentID, "error", err)
+		return
+	}
+	harnesses := map[string]bool{}
+	for _, order := range orders {
+		if order.OwnerAgent != agentID {
+			continue
+		}
+		for _, selector := range order.HookSelectors {
+			harnesses[selector.Harness] = true
+		}
+	}
+	if warning := reconcileStandingOrderHookHarnesses(harnesses); warning != "" {
+		slog.Warn("steward: standing-order hook reconciliation failed", "agent", agentID, "warning", warning)
+	}
 }
 
 // tellStoodDown tells a former Steward what happened. One that is not running

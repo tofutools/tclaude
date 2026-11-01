@@ -59,9 +59,10 @@ func ListStewardRoster() ([]StewardRosterEntry, error) {
 }
 
 // PauseStewardStandbyJobs pauses what a Steward going on the roster owns: its
-// enabled cron jobs and standing orders, together, as a retirement does. Only
-// enabled rows take the marker, so one the human disabled stays disabled when
-// ResumeStewardStandbyJobs runs. It returns how many it paused.
+// enabled cron jobs and standing orders, together, as a retirement does. Rows an
+// emptied group already paused move to this marker too, or resuming that group
+// would run them from a standby. One the human disabled carries no marker, so it
+// stays disabled when ResumeStewardStandbyJobs runs. It returns how many it paused.
 func PauseStewardStandbyJobs(agentID string) (int, error) {
 	d, err := Open()
 	if err != nil {
@@ -73,14 +74,15 @@ func PauseStewardStandbyJobs(agentID string) (int, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	jobs, err := tx.Exec(`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = ?
-		WHERE owner_agent = ? AND enabled = 1`, CronDisabledReasonStewardStandby, agentID)
+		WHERE owner_agent = ? AND (enabled = 1 OR disabled_reason = ?)`,
+		CronDisabledReasonStewardStandby, agentID, CronDisabledReasonGroupRetired)
 	if err != nil {
 		return 0, err
 	}
 	orders, err := tx.Exec(`UPDATE agent_standing_orders
 		SET enabled = 0, disabled_reason = ?, row_version = row_version + 1, updated_at = ?
-		WHERE owner_agent = ? AND enabled = 1`,
-		StandingDisabledReasonStewardStandby, formatStandingTime(time.Now()), agentID)
+		WHERE owner_agent = ? AND (enabled = 1 OR disabled_reason = ?)`,
+		StandingDisabledReasonStewardStandby, formatStandingTime(time.Now()), agentID, StandingDisabledReasonGroupRetired)
 	if err != nil {
 		return 0, err
 	}
@@ -92,10 +94,37 @@ func PauseStewardStandbyJobs(agentID string) (int, error) {
 	return int(paused + pausedOrders), nil
 }
 
+// StewardStandbyTargetGroups lists the groups a standby's paused rows aim at.
+func StewardStandbyTargetGroups(agentID string) ([]int64, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT group_id FROM agent_cron_jobs WHERE owner_agent = ? AND disabled_reason = ? AND target_kind = ?
+		UNION SELECT group_id FROM agent_standing_orders WHERE owner_agent = ? AND disabled_reason = ? AND target_kind = ?`,
+		agentID, CronDisabledReasonStewardStandby, CronTargetGroup,
+		agentID, StandingDisabledReasonStewardStandby, StandingTargetGroup)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var groups []int64
+	for rows.Next() {
+		var group int64
+		if err := rows.Scan(&group); err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
 // ResumeStewardStandbyJobs undoes PauseStewardStandbyJobs for an agent back in
-// the seat. The marker is the crux: only what that call paused runs again. The
-// last run is left alone, so a long pause does not fire a flood of catch-ups.
-func ResumeStewardStandbyJobs(agentID string) (int, error) {
+// the seat. The marker is the crux: only what that call paused runs again. A row
+// aimed at one of emptyGroups goes back to waiting for its group, not to firing
+// at nobody. The last run is left alone, so a long pause does not fire a flood
+// of catch-ups. It returns how many run again.
+func ResumeStewardStandbyJobs(agentID string, emptyGroups []int64) (int, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -105,6 +134,19 @@ func ResumeStewardStandbyJobs(agentID string) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	now := formatStandingTime(time.Now())
+	for _, group := range emptyGroups {
+		if _, err := tx.Exec(`UPDATE agent_cron_jobs SET disabled_reason = ?
+			WHERE owner_agent = ? AND disabled_reason = ? AND target_kind = ? AND group_id = ?`,
+			CronDisabledReasonGroupRetired, agentID, CronDisabledReasonStewardStandby, CronTargetGroup, group); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`UPDATE agent_standing_orders SET disabled_reason = ?, row_version = row_version + 1, updated_at = ?
+			WHERE owner_agent = ? AND disabled_reason = ? AND target_kind = ? AND group_id = ?`,
+			StandingDisabledReasonGroupRetired, now, agentID, StandingDisabledReasonStewardStandby, StandingTargetGroup, group); err != nil {
+			return 0, err
+		}
+	}
 	jobs, err := tx.Exec(`UPDATE agent_cron_jobs SET enabled = 1, disabled_reason = ''
 		WHERE owner_agent = ? AND disabled_reason = ?`, agentID, CronDisabledReasonStewardStandby)
 	if err != nil {
@@ -112,8 +154,7 @@ func ResumeStewardStandbyJobs(agentID string) (int, error) {
 	}
 	orders, err := tx.Exec(`UPDATE agent_standing_orders
 		SET enabled = 1, disabled_reason = '', row_version = row_version + 1, updated_at = ?
-		WHERE owner_agent = ? AND disabled_reason = ?`,
-		formatStandingTime(time.Now()), agentID, StandingDisabledReasonStewardStandby)
+		WHERE owner_agent = ? AND disabled_reason = ?`, now, agentID, StandingDisabledReasonStewardStandby)
 	if err != nil {
 		return 0, err
 	}
