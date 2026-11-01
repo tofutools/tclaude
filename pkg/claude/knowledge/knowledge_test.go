@@ -213,7 +213,7 @@ func TestSourceIsFetchedByCommitAndFiltered(t *testing.T) {
 	base := docsBase(t, Build{State: StateExact, Commit: testCommit, Ref: testCommit}).WithSourceURL(url)
 	require.NoError(t, os.MkdirAll(filepath.Join(base.root, "old-commit"), 0o700))
 
-	assert.Equal(t, SourceFetching, base.Status().Source.State)
+	assert.Equal(t, SourceUnavailable, base.Status().Source.State)
 	fetched(t, base)
 	status := base.Status()
 	require.Equal(t, SourceReady, status.Source.State, status.Source.Detail)

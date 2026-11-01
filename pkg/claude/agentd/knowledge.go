@@ -43,9 +43,7 @@ type knowledgeReply struct {
 }
 
 func newKnowledgeReply() knowledgeReply {
-	base := knowledgeBase()
-	base.Prefetch()
-	status := base.Status()
+	status := knowledgeBase().Status()
 	return knowledgeReply{Label: status.Label, State: status.Build.State, Source: status.Source}
 }
 
@@ -53,9 +51,7 @@ func handleKnowledgeStatus(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermKnowledgeRead); !ok {
 		return
 	}
-	base := knowledgeBase()
-	base.Prefetch()
-	writeJSON(w, http.StatusOK, base.Status())
+	writeJSON(w, http.StatusOK, knowledgeBase().Status())
 }
 
 func handleKnowledgeList(w http.ResponseWriter, r *http.Request) {

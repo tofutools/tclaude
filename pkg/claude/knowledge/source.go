@@ -55,6 +55,10 @@ const (
 	SourceUnavailable SourceState = "unavailable"
 )
 
+// SourceNotDownloaded explains a missing source to a reader. Only the operator
+// starts a download, so an agent is told to say so rather than to wait or retry.
+const SourceNotDownloaded = "not downloaded; docs are readable, and only the operator can choose to download the source"
+
 // SourceStatus is the source half of a status report.
 type SourceStatus struct {
 	State  SourceState `json:"state"`
@@ -99,14 +103,15 @@ func (b *Base) sourceStatus() SourceStatus {
 		return SourceStatus{State: SourceFetching, Detail: "fetching " + shortRef(b.build.Ref) + "; docs are readable meanwhile"}
 	}
 	if b.fetchErr != nil {
-		return SourceStatus{State: SourceFailed, Detail: b.fetchErr.Error() + "; docs are readable, and the fetch is retried on use"}
+		return SourceStatus{State: SourceFailed, Detail: b.fetchErr.Error() + "; docs are readable"}
 	}
-	return SourceStatus{State: SourceFetching, Detail: "not fetched yet; docs are readable meanwhile"}
+	return SourceStatus{State: SourceUnavailable, Detail: SourceNotDownloaded}
 }
 
 // Prefetch starts fetching the source if this build has one and it is not
-// stored, so it is there later when the machine may be offline. It returns at
-// once. A recent failure is not retried until fetchRetryAfter has passed.
+// stored. It returns at once. A recent failure is not retried until
+// fetchRetryAfter has passed. A download takes the operator's consent, so no read
+// path, summon or daemon start may call this.
 func (b *Base) Prefetch() {
 	if !b.canFetch() {
 		return
