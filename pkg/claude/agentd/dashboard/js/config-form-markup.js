@@ -518,7 +518,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <${ConfigInput} type="checkbox" id=${`cfg-voice-on-${action}`} aria-label=${`${title} on`} onChange=${() => syncVoiceSection()} />
           <${ConfigInput} type="text" id=${`cfg-voice-phrase-${action}`} data-voice-action=${action} maxLength="60" aria-label=${title} style="width:14em" />
         </${Setting}>`)}
-        <div class="cfg-hint" id="cfg-voice-wake-no-listener" hidden>The wake phrase won't start anything until the wake phrase listener below is on too.</div>
+        <div class="cfg-hint" id="cfg-voice-wake-no-listener" style="padding-left:0" hidden>The wake phrase won't start anything until the wake phrase listener below is on too.</div>
       </${Group}>
       <${Group} title="Hands-free" lede="Off unless you turn them on. Neither runs on plain HTTP pages away from localhost, or sends by itself in a plain shell.">
         <${Setting} title="Wake phrase listener" forId="cfg-voice-wake" k="dashboard.voice.wake_enabled" badges=${['refresh']}
@@ -526,7 +526,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more="It dictates into the terminal or chat window with focus, or the only one showing; otherwise it stays idle and says so. An indicator shows whenever it is on, with a Pause button. It stops while the tab is hidden, runs in one tab at a time, and waits while a reply is read aloud. Plain HTTP pages can't use it, because browsers refuse the microphone there.">
           <${Toggle} id="cfg-voice-wake" onChange=${() => syncVoiceSection()} />
         </${Setting}>
-        <div class="cfg-hint" id="cfg-voice-wake-no-phrase" hidden>The listener has nothing to listen for until the wake phrase above is on too.</div>
+        <div class="cfg-hint" id="cfg-voice-wake-no-phrase" style="padding-left:0" hidden>The listener has nothing to listen for until the wake phrase above is on too.</div>
         <${Setting} title="On-device speech" summary="Recognition that stays on this machine, for dictation and the wake listener. It's a language pack Chrome downloads and manages, not part of tclaude. Its size isn't known here. Nothing downloads without your click, and accuracy may differ."
           more="Once installed it is used automatically. If it later stops working, the wake listener stops and says why rather than switching to a speech service; a dictation carries on through the service and says so. This row is about this browser, so it isn't saved with the settings below.">
           <${LocalSpeechRow} />
@@ -537,7 +537,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <${Toggle} id="cfg-voice-silence" onChange=${() => syncVoiceSection()} />
           <label class="cfg-inline">after <${ConfigInput} type="number" id="cfg-voice-silence-seconds" min=${SILENCE_SEND_MIN} max=${SILENCE_SEND_MAX} step="1" placeholder=${String(SILENCE_SEND_DEFAULT)} aria-label="Seconds of silence before sending" style="width:5em" /> seconds</label>
         </${Setting}>
-        <div class="cfg-hint" id="cfg-voice-hands-free-warning" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
+        <div class="cfg-hint" id="cfg-voice-hands-free-warning" style="padding-left:0" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
       </${Group}>
     </${Panel}>
     <${Panel} id="notifications" active=${active}>
