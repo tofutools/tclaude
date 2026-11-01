@@ -40,8 +40,8 @@ func stopCmd() *cobra.Command {
 		Short: "Stop another agent's tmux session",
 		Long: "Soft-stops the target agent's tmux pane by injecting `/exit`. " +
 			"A target that does not exit escalates through pane kill, SIGTERM and SIGKILL. " +
-			"--force skips the soft exit and kills the pane at once, with no SIGTERM or SIGKILL after it, " +
-			"so a wedged process can survive it — last resort, " +
+			"--force skips the soft exit and kills the pane at once, with SIGTERM and SIGKILL following " +
+			"in the background if the pane does not go — last resort, " +
 			"drops any unsubmitted input the agent hadn't sent yet. " +
 			"\n\n" +
 			"Idempotent: agents already offline come back as " +

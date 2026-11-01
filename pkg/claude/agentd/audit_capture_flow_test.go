@@ -105,12 +105,8 @@ func TestAudit_ForceStopCorrelatesSystemExitObservation(t *testing.T) {
 	require.NotEmpty(t, command.EventID)
 	assert.Equal(t, db.AuditActorHuman, command.ActorKind)
 
-	d, err := db.Open()
-	require.NoError(t, err)
-	_, err = d.Exec(`UPDATE sessions SET created_at = ? WHERE conv_id = ?`,
-		time.Now().Add(-2*time.Minute).UTC().UnixNano(), worker.ConvID)
-	require.NoError(t, err)
-	require.Equal(t, 1, agentd.RunReaperTickForTest(time.Now()))
+	// The stop's own background ladder verifies the pane went and records it.
+	agentd.WaitForBackgroundForTest()
 
 	exit := auditRowByVerb(t, db.AuditVerbAgentExit)
 	assert.Equal(t, db.AuditActorSystem, exit.ActorKind)

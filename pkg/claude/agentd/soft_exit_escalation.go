@@ -109,6 +109,17 @@ const (
 // about to delete the agent's directories, a bulk stop reporting what it
 // achieved — use awaitLifecycleTargetExit instead.
 func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relatedEventID, reason, fallbackExitReason string) {
+	scheduleLifecycleEscalation(target, softExitEscalationDeadline, lifecycleAction, relatedEventID, reason, fallbackExitReason)
+}
+
+// scheduleForceStopEscalation is the same ladder after a force stop's kill.
+// A kill that failed, or that tmux accepted without letting go of the pane,
+// has only the signals left, so there is no delivered exit to wait out first.
+func scheduleForceStopEscalation(target *lifecycleTarget, lifecycleAction, relatedEventID string) {
+	scheduleLifecycleEscalation(target, softExitEscalationSignalGrace, lifecycleAction, relatedEventID, "force-stop", daemonEscalatedKillReason)
+}
+
+func scheduleLifecycleEscalation(target *lifecycleTarget, deadline time.Duration, lifecycleAction, relatedEventID, reason, fallbackExitReason string) {
 	if target == nil {
 		return
 	}
@@ -118,7 +129,7 @@ func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relate
 		// soft-exit retry watchdog instead of leaving it to sleep out its
 		// delay and rediscover the outcome.
 		defer target.markSoftExitSettled()
-		if waitForLifecycleTargetGone(target, softExitEscalationDeadline) {
+		if waitForLifecycleTargetGone(target, deadline) {
 			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, fallbackExitReason); err != nil {
 				slog.Warn("soft-exit: recording verified pane exit failed",
 					"session", target.sessionID, "conv", short8(target.convID), "error", err)
