@@ -109,6 +109,7 @@
    push them off the bar. Tool popovers forbid clipping the tools, so a window
    too narrow for every tool lets the tools run underneath instead. */
 .companion-titlebar:not(.companion-look-classic) .companion-controls { min-width: 0; }
+.companion-titlebar:not(.companion-look-classic) .companion-tabs { min-width: 56px; }
 .companion-window-controls { flex: none; position: relative; z-index: 1; display: flex; align-items: center; background: var(--cmp-bar); }
 .companion-window-controls button { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
 .companion-window-controls svg { display: block; fill: none; stroke: currentColor; pointer-events: none; }
