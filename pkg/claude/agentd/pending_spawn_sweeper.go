@@ -406,6 +406,12 @@ func discardOrphanedOpenCodeState(ps *db.PendingSpawn) {
 	if allocation == nil || allocation.Mode != db.OpenCodeStatePrivate {
 		return
 	}
+	// A server that outlived the daemon must not outlive the state it serves from.
+	if err := stopOpenCodeRuntime(ps.Label); err != nil {
+		slog.Warn("pending-spawn sweeper: stop OpenCode server; keeping its state",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+		return
+	}
 	// The record goes first: a directory nothing points at is only unused.
 	if err := db.DeleteOpenCodeAgentStateAllocation(ps.AgentID); err != nil {
 		slog.Warn("pending-spawn sweeper: forget unused OpenCode state",
