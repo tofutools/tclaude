@@ -18,7 +18,7 @@ const (
 )
 
 // These bound what waiting requests hold for a route that must read its whole
-// body to describe it, such as a .paf on process import. The first
+// body to describe it, such as an archive on a workflow, agent or group import. The first
 // approvalBodyFreeBytes of a body are not charged: the slots bound those, so a
 // few large files cannot stop ordinary requests from reaching the human. Other
 // routes' bodies are bounded by the slots alone, whatever cap each route has.

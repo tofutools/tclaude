@@ -327,11 +327,7 @@ type workflowImportJSON struct {
 	RootID     string            `json:"rootId"`
 	Problems   []string          `json:"problems"`
 	Paths      []pwf.PathFinding `json:"paths"`
-	Signatures []struct {
-		KeyID  string `json:"keyId"`
-		Status string `json:"status"`
-		Trust  string `json:"trust"`
-	} `json:"signatures"`
+	Signatures []importSignature `json:"signatures"`
 	Templates []struct {
 		Ref        string `json:"ref"`
 		ID         string `json:"id"`
@@ -561,15 +557,7 @@ func WorkflowImportReview(preview []byte) (ImportReview, error) {
 	}
 	var full, summary strings.Builder
 	renderImportReview(&full, "<file>", &view)
-	switch {
-	case len(view.Signatures) == 0:
-		fmt.Fprintln(&summary, "Signature: none (unverified)")
-	case len(view.Signatures) == 1:
-		s := view.Signatures[0]
-		fmt.Fprintf(&summary, "Signature: %s, key %s (%s)\n", shown(s.Status), shown(s.KeyID), shown(s.Trust))
-	default:
-		fmt.Fprintf(&summary, "Signatures: %d, see below\n", len(view.Signatures))
-	}
+	summarizeSignatures(&summary, view.Signatures)
 	fmt.Fprintf(&summary, "Commands it can run: %d\n", len(view.Programs))
 	changes := map[string]int{}
 	for _, t := range view.Templates {

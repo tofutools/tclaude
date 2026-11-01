@@ -505,6 +505,8 @@ type agentBundlePreview struct {
 	// Confirm lists what a human may keep of what this file would lose. Only a
 	// file import has one.
 	Confirm *importConfirmation `json:"confirm,omitempty"`
+	// Signatures are a PAF's checked signatures. A v1 file has none.
+	Signatures []pwfSignatureView `json:"signatures,omitempty"`
 	// Kept and Dropped list the file's elevated items by what became of them.
 	Kept    []string `json:"kept,omitempty"`
 	Dropped []string `json:"dropped,omitempty"`
@@ -525,8 +527,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 403, "teleport_revoked", err.Error())
 			return
 		}
-	} else if _, ok := requirePermission(w, r, PermAgentBundleImport); !ok {
-		return
+	} else if !reviewingForApproval(r) {
+		if r.Context().Value(agentBundleDataContextKey{}) == nil {
+			asked := r
+			r = withApprovalFacts(r, func(body []byte) string { return agentImportApprovalFacts(asked, body) })
+		}
+		if _, ok := requirePermission(w, r, PermAgentBundleImport); !ok {
+			return
+		}
 	}
 	b, _ := r.Context().Value(agentBundleDataContextKey{}).(*agentbundle.Bundle)
 	// neutral reads a PAF's neutral context while the archive file is open.
@@ -545,6 +553,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	var fileDigest string
 	// carriedWorkflows stay in the file: an agent import stores none of them.
 	var carriedWorkflows []paf.WorkflowItem
+	var signatures []pwfSignatureView
+	// archive is the file again, for a later popup's review.
+	var archive *io.SectionReader
 	if b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
@@ -564,6 +575,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
 			return
 		}
+		archive = io.NewSectionReader(file, 0, n)
 		var info legacy.Info
 		b, info, err = legacy.DecodeBundleFile(file, legacy.DecodeLimits{MaxBytes: agentTransferLimit(), MaxRecordBytes: pafContextRecordLimit(), AgentKey: r.URL.Query().Get("agent")}, "")
 		if err != nil {
@@ -573,6 +585,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = b.Close() }()
 		neutral, rescan, handoff, fileLosses = info.Context, info.Scan, info.Handoff, info.Losses
 		carriedWorkflows = info.Workflows
+		if info.Signatures != nil {
+			signatures = pwfSignatureViews(info.Signatures)
+		}
 		if foreign, _ := r.Context().Value(agentBundleForeignFileContextKey{}).(bool); foreign && fileLosses != nil {
 			l := paf.CountsOnly(*fileLosses)
 			fileLosses = &l
@@ -775,6 +790,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if !hasCarryPolicy {
 		carryPolicy = permissionCarryPolicy{Group: q.Get("group"), Enabled: d.CarryPermissions && q.Get("carry_permissions") == "true", AllowSensitive: q.Get("allow_sensitive_permissions") == "true"}
 		if apply && carryPolicy.Enabled {
+			if archive != nil {
+				r.Body = io.NopCloser(archive)
+			}
 			if _, ok := requirePermission(w, r, PermPermissionsGrant); !ok {
 				return
 			}
@@ -925,7 +943,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		preview.Confirm = newImportConfirmation(fileDigest, fileDrops, keep.human, preview.Warnings)
 	}
 	preview.Kept, preview.Dropped = settled.kept, settled.dropped
-	preview.CarriedWorkflows = carriedWorkflows
+	preview.CarriedWorkflows, preview.Signatures = carriedWorkflows, signatures
 	if offerList != nil {
 		// Refused here too, so a stale selection reserves no launch.
 		if err := keep.check(fileDigest, fileImportItems(fileDrops)); err != nil {

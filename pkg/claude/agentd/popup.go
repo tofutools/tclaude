@@ -846,14 +846,17 @@ const (
 // decides as it would with no popup. (Restoring only what was read shortened a large body AFTER the
 // human had approved it: an approve-then-fail.)
 func snapshotRequestBody(r *http.Request) string {
+	// An archive import's popup shows its review instead; see popup_review.go.
+	switch r.URL.Path {
+	case "/v1/process/import":
+		return "[workflow file omitted]"
+	case "/v1/agent-bundle/import", "/v1/groups/import", "/v1/groups/import/inspect":
+		return "[archive omitted]"
+	}
 	// A notify-human attachment can be hundreds of MiB. Its small human-readable
 	// metadata lives in a bounded header specifically so an ad-hoc approval can
 	// describe the action without consuming, buffering, or truncating the binary
 	// request stream before the handler receives it.
-	// A workflow file is an archive: its popup shows the review instead.
-	if r.URL.Path == "/v1/process/import" {
-		return "[workflow file omitted]"
-	}
 	if r.URL.Path == "/v1/notify-human/attachment" {
 		if raw, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Tclaude-Notify-Metadata")); err == nil {
 			var pretty bytes.Buffer
@@ -883,7 +886,11 @@ func snapshotRequestBody(r *http.Request) string {
 	if len(buf) == 0 {
 		return ""
 	}
-	// Build the preview from the leading bytes only.
+	// Build the preview from the leading bytes only. Raw bytes tell a person
+	// nothing, and they would be approving them.
+	if binaryApprovalBody(buf[:min(len(buf), maxApprovalBodyPreview)]) {
+		return "[binary request body omitted; this popup cannot show what it holds]"
+	}
 	preview := buf
 	truncated := false
 	if len(preview) > maxApprovalBodyPreview {

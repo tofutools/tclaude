@@ -308,6 +308,13 @@ func (d *decodedGroupArchive) workflows() []paf.WorkflowItem {
 	return d.Archive.Manifest.Workflows
 }
 
+func (d *decodedGroupArchive) signatures() []pwfSignatureView {
+	if d.Archive == nil {
+		return nil
+	}
+	return pwfSignatureViews(d.Archive.Signatures)
+}
+
 // decodeGroupArchive reads an import archive: a group PAF, verified and
 // read into the group export model, or a group export zip.
 func decodeGroupArchive(archive []byte) (*decodedGroupArchive, error) {
@@ -428,6 +435,7 @@ func readImportUpload(w http.ResponseWriter, r *http.Request) (archive []byte, i
 //
 // Permission slug: groups.import (default human-only).
 func handleGroupImport(w http.ResponseWriter, r *http.Request) {
+	r = withApprovalFacts(r, func(body []byte) string { return groupImportApprovalFacts(r, body) })
 	caller, ok := requirePermission(w, r, PermGroupsImport)
 	if !ok {
 		return
@@ -487,15 +495,17 @@ type importInspection struct {
 	// CarriedWorkflows are workflows the file also holds. Importing the group
 	// stores none of them; a workflow import of the same file reviews each.
 	CarriedWorkflows []paf.WorkflowItem `json:"carried_workflows,omitempty"`
-	FormatVersion    int                `json:"format_version"`
-	SchemaVersion    int                `json:"schema_version,omitempty"`
-	SourceHome       string             `json:"source_home,omitempty"`
-	SourceOS         string             `json:"source_os,omitempty"`
-	ExportedAt       string             `json:"exported_at,omitempty"`
-	AgentCount       int                `json:"agent_count"`
-	MessageCount     int                `json:"message_count"`
-	ConvCount        int                `json:"conv_count"`
-	MissingConvs     int                `json:"missing_convs"`
+	// Signatures are a group PAF's checked signatures.
+	Signatures    []pwfSignatureView `json:"signatures,omitempty"`
+	FormatVersion int                `json:"format_version"`
+	SchemaVersion int                `json:"schema_version,omitempty"`
+	SourceHome    string             `json:"source_home,omitempty"`
+	SourceOS      string             `json:"source_os,omitempty"`
+	ExportedAt    string             `json:"exported_at,omitempty"`
+	AgentCount    int                `json:"agent_count"`
+	MessageCount  int                `json:"message_count"`
+	ConvCount     int                `json:"conv_count"`
+	MissingConvs  int                `json:"missing_convs"`
 
 	// Target + collision analysis against THIS machine.
 	TargetName      string          `json:"target_name"`
@@ -556,6 +566,7 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 
 	insp := &importInspection{
 		CarriedWorkflows: decoded.workflows(),
+		Signatures:       decoded.signatures(),
 		Source:           source,
 		SourceGroup:      exp.SourceGroup,
 		FormatVersion:    exp.FormatVersion,
@@ -661,10 +672,13 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 // Gated on groups.import: inspecting an archive reveals its full
 // manifest, so the same slug that gates the import gates the preview.
 func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermGroupsImport); !ok {
-		return
+	if !reviewingForApproval(r) {
+		r = withApprovalFacts(r, func(body []byte) string { return groupImportApprovalFacts(r, body) })
+		if _, ok := requirePermission(w, r, PermGroupsImport); !ok {
+			return
+		}
+		giveBackSudoUses(r)
 	}
-	giveBackSudoUses(r)
 	archive, into, asName, ok := readImportUpload(w, r)
 	if !ok {
 		return
