@@ -1780,10 +1780,9 @@ export function BoardEditor({
     <div class="board-canvas-wrap" style=${paper}>
       <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`} data-board-id=${boardId}
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
+        onMouseDown=${keepEditorFocus}
         onPointerLeave=${() => setHoverShape('')}
         onDblClick=${onDoubleClick} onContextMenu=${onContextMenu}>
-        onMouseDown=${keepEditorFocus}
-        onWheel=${(event) => { setContextMenu(null); onWheel(event); }} onDblClick=${onDoubleClick} onContextMenu=${onContextMenu}>
         <g data-board-viewport transform=${transform}>
           ${drawn}
           ${(sels.length > 0 || band || snapShape || offer) && html`<g data-board-chrome>
