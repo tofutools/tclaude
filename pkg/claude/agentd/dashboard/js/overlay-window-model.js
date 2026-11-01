@@ -9,9 +9,9 @@
 export const OVERLAY_MIN_W = 360;
 export const OVERLAY_MIN_H = 220;
 // Distance from a viewport edge at which a drag offers to snap.
-export const OVERLAY_SNAP_EDGE = 28;
+export const OVERLAY_SNAP_EDGE = 56;
 // How far along an edge, from its end, a drag counts as the corner.
-export const OVERLAY_CORNER_REACH = 72;
+export const OVERLAY_CORNER_REACH = 200;
 // The share of the viewport a snapped window takes.
 export const OVERLAY_SNAP_SHARE = 0.42;
 // Room kept for the fixed footer bar below a placement.
@@ -78,6 +78,8 @@ export function fitPlacement(p, viewport) {
   return { x, y, w, h, snap };
 }
 
+const cornerReach = (edge) => Math.min(OVERLAY_CORNER_REACH, edge / 3);
+
 // snapZone names the zone a dragged window would snap to for a pointer position,
 // or '' to keep floating. Along a side, top is where the room starts, so the top
 // corners sit just under the nav bar.
@@ -85,14 +87,17 @@ export function snapZone(pointer, viewport, top = 0) {
   const bottom = viewport.height - OVERLAY_FOOTER_ROOM;
   const right = pointer.x >= viewport.width - OVERLAY_SNAP_EDGE;
   const left = pointer.x <= OVERLAY_SNAP_EDGE;
+  // The corners leave the middle third of an edge to the edge itself.
   if (left || right) {
     const side = right ? 'right' : 'left';
-    if (pointer.y <= top + OVERLAY_CORNER_REACH) return `top-${side}`;
-    return pointer.y >= bottom - OVERLAY_CORNER_REACH ? `bottom-${side}` : side;
+    const reach = cornerReach(bottom - top);
+    if (pointer.y <= top + reach) return `top-${side}`;
+    return pointer.y >= bottom - reach ? `bottom-${side}` : side;
   }
   if (pointer.y < bottom - OVERLAY_SNAP_EDGE) return '';
-  if (pointer.x <= OVERLAY_CORNER_REACH) return 'bottom-left';
-  return pointer.x >= viewport.width - OVERLAY_CORNER_REACH ? 'bottom-right' : 'bottom';
+  const reach = cornerReach(viewport.width);
+  if (pointer.x <= reach) return 'bottom-left';
+  return pointer.x >= viewport.width - reach ? 'bottom-right' : 'bottom';
 }
 
 // viewportOf is the area a fixed window can use. innerWidth and innerHeight

@@ -1594,6 +1594,13 @@ test('snap model: corners, saved panel sizes and free edges', async (t) => {
   assert.equal(o.snapZone({ x: 3, y: 760 }, vp, 60), 'bottom-left');
   assert.equal(o.snapZone({ x: 1100 + 60, y: 790 }, vp, 60), 'bottom-right', 'along the bottom edge too');
   assert.equal(o.snapZone({ x: 3, y: 400 }, vp, 60), 'left');
+  assert.equal(o.snapZone({ x: 50, y: 400 }, vp, 60), 'left', 'an edge reaches 56px');
+  assert.equal(o.snapZone({ x: 60, y: 400 }, vp, 60), '');
+  assert.equal(o.snapZone({ x: 3, y: 255 }, vp, 60), 'top-left', 'a corner reaches 200px along the edge');
+  assert.equal(o.snapZone({ x: 3, y: 265 }, vp, 60), 'left');
+  const short = { width: 900, height: 400 };
+  assert.equal(o.snapZone({ x: 3, y: 150 }, short, 60), 'left', 'a short side keeps its middle third');
+  assert.equal(o.snapZone({ x: 3, y: 100 }, short, 60), 'top-left');
   const quarter = o.zoneRect('top-right', vp, 60);
   assert.deepEqual(quarter, { x: 1200 - 504, y: 60, w: 504, h: Math.round((bottom - 60) / 2), snap: 'top-right' });
   const low = o.zoneRect('bottom-left', vp, 60);
