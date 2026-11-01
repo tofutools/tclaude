@@ -131,9 +131,14 @@ func (a *approvalRegistry) readBody(s *approvalTicket, body io.Reader) ([]byte, 
 }
 
 func refuseApprovalBody(w http.ResponseWriter, err error) {
-	if errors.Is(err, errApprovalBodyTooLarge) {
+	var overLimit *http.MaxBytesError
+	if errors.Is(err, errApprovalBodyTooLarge) || errors.As(err, &overLimit) {
 		writeError(w, http.StatusRequestEntityTooLarge, "approval_body_too_large",
 			"this request is too large to hold while the human decides; get the permission granted first, or have the operator do it")
+		return
+	}
+	if !errors.Is(err, errApprovalBodyBusy) {
+		writeError(w, http.StatusBadRequest, "body_read", "the request body could not be read: "+err.Error())
 		return
 	}
 	w.Header().Set("Retry-After", "30")

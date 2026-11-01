@@ -800,7 +800,8 @@ func withApprovalFacts(r *http.Request, facts approvalFactsFunc) *http.Request {
 // approvalPreviewFacts puts the request's facts ahead of its body in a popup.
 // Call it after the body is snapshotted. Facts read the body the handler will,
 // not the preview, which is capped. The body stays in memory until the human
-// answers, charged to slot; an error says why it cannot be held.
+// answers, charged to slot; an error says why it cannot be held, or that it could
+// not be read whole, since a handler must never get a short body as if complete.
 func approvalPreviewFacts(r *http.Request, slot *approvalTicket, bodyPreview, bodyLabel string) (string, string, error) {
 	facts, _ := r.Context().Value(approvalFactsKey{}).(approvalFactsFunc)
 	if facts == nil {
@@ -810,7 +811,7 @@ func approvalPreviewFacts(r *http.Request, slot *approvalTicket, bodyPreview, bo
 	if r.Body != nil {
 		var err error
 		body, err = approvals.readBody(slot, r.Body)
-		if errors.Is(err, errApprovalBodyTooLarge) || errors.Is(err, errApprovalBodyBusy) {
+		if err != nil {
 			return "", "", err
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
@@ -833,20 +834,17 @@ const (
 
 // snapshotRequestBody reads the request body, builds a bounded preview
 // string for the popup (JSON-prettified when it parses), and replaces
-// r.Body with a fresh reader holding the SAME bytes so the downstream
-// handler still receives its full request. Returns the preview ("" if no
-// body).
+// r.Body with a reader that yields the SAME bytes, so the downstream handler
+// still receives its full request. Returns the preview ("" if no body).
 //
 // The preview is capped at maxApprovalBodyPreview and marked "…[truncated]" when
-// it overflows — that only affects what the human is shown. The RESTORED
-// body is preserved up to maxApprovalRestoreBody (well above the largest legit
-// mutating body — a 256 KiB clipboard payload is ≈1.5 MiB on the wire),
-// so the popup never silently shortens what the handler decodes. A body
-// past maxApprovalRestoreBody is restored truncated, but the handler's own
-// MaxBytesReader then rejects it with the same 400 it would return with no
-// popup — never a silent mis-decode. (Restoring only the 64 KiB preview,
-// as this did before, truncated a large clipboard body AFTER the human had
-// approved it: an approve-then-fail.)
+// it overflows — that only affects what the human is shown. About
+// maxApprovalRestoreBody stays in memory here while the popup waits. Past that
+// the buffered prefix is handed back in front of the unread remainder, which
+// waits on the connection, unless a route's approval facts read it (see
+// approvalPreviewFacts, which charges it), so the handler's own MaxBytesReader
+// decides as it would with no popup. (Restoring only what was read shortened a large body AFTER the
+// human had approved it: an approve-then-fail.)
 func snapshotRequestBody(r *http.Request) string {
 	// A notify-human attachment can be hundreds of MiB. Its small human-readable
 	// metadata lives in a bounded header specifically so an ad-hoc approval can
@@ -868,15 +866,20 @@ func snapshotRequestBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""
 	}
-	buf, err := io.ReadAll(io.LimitReader(r.Body, maxApprovalRestoreBody))
-	_ = r.Body.Close()
+	orig := r.Body
+	// One byte past the bound, so "exactly at it" and "over it" are distinguishable.
+	buf, err := io.ReadAll(io.LimitReader(orig, maxApprovalRestoreBody+1))
 	if err != nil {
+		_ = orig.Close()
 		r.Body = io.NopCloser(bytes.NewReader(nil))
 		return ""
 	}
-	// Restore the full body we read, so the handler decodes exactly what the
-	// client sent (up to the restore bound).
-	r.Body = io.NopCloser(bytes.NewReader(buf))
+	if len(buf) > maxApprovalRestoreBody {
+		r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(buf), orig), Closer: orig}
+	} else {
+		_ = orig.Close()
+		r.Body = io.NopCloser(bytes.NewReader(buf))
+	}
 	if len(buf) == 0 {
 		return ""
 	}
