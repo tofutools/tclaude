@@ -13,7 +13,8 @@
 # profile gone. Assigning tclaude's sandbox to the first member then moves its
 # conversation into private state with the same ids, and an agent PAF of the
 # same conversation lands offline both ways (`paf import --no-start`), with no
-# server until it resumes.
+# server until it resumes. Assigning another implementation moves the first
+# member back to the shared store and removes its private state.
 #
 # It needs `opencode`, `tmux`, `jq` and a working `bwrap` on PATH. Anything missing
 # is a failure:
@@ -436,10 +437,6 @@ node dst tclaude agent groups stop crew-walled --force
 node dst tmux -L tclaude kill-server 2>/dev/null || true
 node dst tclaude agent sandbox-impl set "$LANDED" tclaude-layer | tee "$ROOT/move.txt"
 grep -q 'todo list' "$ROOT/move.txt" || die "the assignment does not disclose the todo list"
-if node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin 2>"$ROOT/refused.txt"; then
-	die "an assignment stranded the moved conversation"
-fi
-grep -q 'private state' "$ROOT/refused.txt" || die "the refusal does not say why: $(cat "$ROOT/refused.txt")"
 sessions_on_dst | jq -es --arg id "$LANDED" 'add // [] | all(.[]; .id != $id)' >/dev/null || die "the shared copy is still there"
 if (cd "$DST_CWD" && node dst opencode export "$CHILD_ID" --pure --log-level ERROR >/dev/null 2>&1); then
 	die "the shared copy of the child session is still there"
@@ -468,5 +465,20 @@ log "landing an agent offline under tclaude's sandbox"
 AMBIENT_BEFORE=$(sessions_on_dst | jq -cs 'add // [] | [.[].id] | sort')
 land_offline crew-walled parked-walled tclaude-layer
 [[ $(sessions_on_dst | jq -cs 'add // [] | [.[].id] | sort') == "$AMBIENT_BEFORE" ]] || die "the offline sandboxed agent reached the shared store"
+
+log "assigning another implementation moves the agent back to the shared store"
+node dst tclaude agent groups stop crew-walled --force
+node dst tmux -L tclaude kill-server 2>/dev/null || true
+private_opencode export "$LANDED" >"$ROOT/before-move-out.json"
+node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin | tee "$ROOT/move-out.txt"
+grep -q "outside tclaude's sandbox" "$ROOT/move-out.txt" || die "the assignment does not say the conversation is readable"
+(cd "$DST_CWD" && node dst opencode export "$LANDED" --pure --log-level ERROR) >"$ROOT/after-move-out.json"
+cmp "$ROOT/before-move-out.json" "$ROOT/after-move-out.json" || die "the conversation changed moving out"
+(cd "$DST_CWD" && node dst opencode export "$CHILD_ID" --pure --log-level ERROR) | grep -q "$SECRET" \
+	|| die "the child session did not move out"
+[[ ! -e $MOVED_ROOT ]] || die "the private state is still there"
+node dst tclaude agent resume "$LANDED" | tee "$ROOT/moved-out-resume.txt"
+grep -q 'resumed' "$ROOT/moved-out-resume.txt" || die "the moved-out agent did not resume"
+managed_server_holds "$LANDED" harness-builtin
 
 log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed, started and offline"
