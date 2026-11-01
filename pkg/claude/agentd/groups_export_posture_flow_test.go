@@ -234,8 +234,8 @@ func TestGroupImport_FailedImportRemovesPrivateState(t *testing.T) {
 	assert.Nil(t, allocation)
 }
 
-// An OpenCode agent whose conversation is in the shared store cannot move under
-// tclaude's sandbox. The assignment says so, instead of every later resume.
+// Assigning tclaude's sandbox to an OpenCode agent moves its conversation out of
+// the shared store, which the sandboxed server cannot read.
 func TestSandboxImplAssign_MovesOpenCodeAgentIntoPrivateState(t *testing.T) {
 	f := newFlow(t)
 	store := fakeOpenCodeStore(t)

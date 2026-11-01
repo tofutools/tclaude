@@ -427,6 +427,7 @@ func rewriteOpenCodeHistory(r io.Reader, source, newID, cwd string, out io.Write
 	_, err := io.WriteString(out, "]}")
 	return err
 }
+
 // sessionTree is id and its descendants, parents first. An export holds one
 // session, and deleting a session deletes its children.
 func (h openCodeHistory) sessionTree(id, cwd string) ([]string, error) {
