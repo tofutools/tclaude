@@ -239,6 +239,8 @@ body.slop, body.vegas {
   display: flex; align-items: center; gap: 8px; flex: none; padding: 4px 6px 4px 12px; cursor: move;
   background: var(--board-bar); border-bottom: 1px solid var(--board-line); touch-action: none; user-select: none;
 }
+/* Windows' buttons fill the bar and reach its corner. */
+.board-overlay-titlebar.overlay-look-windows { min-height: 34px; padding-block: 0; padding-right: 0; }
 .board-overlay-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .board-overlay-action {
   flex: none; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--board-line);
