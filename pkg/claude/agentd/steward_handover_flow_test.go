@@ -386,3 +386,108 @@ type stewardRosterRow struct {
 	LastRan string   `json:"last_ran"`
 	Keeps   []string `json:"keeps"`
 }
+
+// A Steward on the roster stops scheduling from outside the role, and takes up
+// where it left off in the seat. A job the operator disabled stays disabled, and
+// one kept as a normal agent keeps running what it scheduled.
+func TestSteward_RosterPausesScheduledJobsUntilReseated(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	s.mustHandover(handoverWorker, "keep")
+	owner := s.agentID(handoverWorker)
+	job := func(name, ownerConv string, enabled bool) int64 {
+		group, err := db.GetAgentGroupByName("team")
+		require.NoError(t, err)
+		id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+			Name: name, OwnerConv: ownerConv, TargetKind: db.CronTargetGroup, GroupID: group.ID,
+			IntervalSeconds: 600, Body: "check in", ActionKind: db.CronActionMessage, Enabled: enabled,
+		})
+		require.NoError(t, err)
+		return id
+	}
+	enabled := func(id int64) (bool, string) {
+		row, err := db.GetAgentCronJob(id)
+		require.NoError(t, err)
+		return row.Enabled, row.DisabledReason
+	}
+	running := job("running", handoverWorker, true)
+	byHand := job("by-hand", handoverWorker, false)
+	others := job("others", handoverOther, true)
+	team, err := db.GetAgentGroupByName("team")
+	require.NoError(t, err)
+	order, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name: "order", OwnerAgent: owner, TargetKind: db.StandingTargetGroup, GroupID: team.ID,
+		Summary: "Remember.", TriggerEvent: db.StandingTriggerSessionStart, TriggerSources: []string{db.StandingSourceCompact},
+		Timing: db.StandingTimingSameContinuation, Cadence: db.StandingCadenceAlways, Enabled: true,
+	})
+	require.NoError(t, err)
+
+	s.mustHandover(handoverOther, "roster")
+	on, reason := enabled(running)
+	assert.False(t, on)
+	assert.Equal(t, db.CronDisabledReasonStewardStandby, reason)
+	on, reason = enabled(byHand)
+	assert.False(t, on)
+	assert.Empty(t, reason, "the operator's own choice carries no marker")
+	on, _ = enabled(others)
+	assert.True(t, on, "only what the standby owns")
+	stored, err := db.GetStandingOrder(order)
+	require.NoError(t, err)
+	assert.False(t, stored.Enabled, "a standing order pauses with the jobs")
+	rows, err := db.ListAgentMessagesForConv(handoverWorker, 20)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Contains(t, rows[0].Body, "Your 2 scheduled job(s) are paused until you take the seat again.")
+
+	s.mustHandover(handoverWorker, "keep")
+	on, reason = enabled(running)
+	assert.True(t, on, "back in the seat")
+	assert.Empty(t, reason)
+	on, _ = enabled(byHand)
+	assert.False(t, on, "a job disabled by hand stays disabled")
+	stored, err = db.GetStandingOrder(order)
+	require.NoError(t, err)
+	assert.True(t, stored.Enabled)
+	rows, err = db.ListAgentMessagesForConv(handoverWorker, 20)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Contains(t, rows[0].Body, "Your 2 paused scheduled job(s) are running again.")
+
+	s.mustHandover(handoverOther, "keep")
+	on, _ = enabled(running)
+	assert.True(t, on, "one kept as a normal agent keeps its schedule")
+}
+
+// A group emptying and coming back is the other thing that pauses and runs a
+// job, and it must not cut across the seat in either direction.
+func TestSteward_StandbyJobsStayOutOfGroupRetireAndResume(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	s.mustHandover(handoverWorker, "keep")
+	team, err := db.GetAgentGroupByName("team")
+	require.NoError(t, err)
+	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "job", OwnerConv: handoverWorker, TargetKind: db.CronTargetGroup, GroupID: team.ID,
+		IntervalSeconds: 600, Body: "check in", ActionKind: db.CronActionMessage, Enabled: true,
+	})
+	require.NoError(t, err)
+	state := func() (bool, string) {
+		row, err := db.GetAgentCronJob(id)
+		require.NoError(t, err)
+		return row.Enabled, row.DisabledReason
+	}
+
+	_, err = db.DisableGroupTargetCronJobsForRetire(team.ID)
+	require.NoError(t, err)
+	s.mustHandover(handoverOther, "roster")
+	_, err = db.ReenableGroupRetiredCronJobs(team.ID)
+	require.NoError(t, err)
+	on, reason := state()
+	assert.False(t, on, "resuming the group does not run a standby's job")
+	assert.Equal(t, db.CronDisabledReasonStewardStandby, reason)
+
+	require.NoError(t, db.RemoveAgentGroupMember(team.ID, handoverWorker))
+	require.NoError(t, db.RemoveAgentGroupMember(team.ID, handoverOther))
+	s.mustHandover(handoverWorker, "keep")
+	on, reason = state()
+	assert.False(t, on, "reseating does not fire at an empty group")
+	assert.Equal(t, db.CronDisabledReasonGroupRetired, reason, "it waits for its group again")
+}
