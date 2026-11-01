@@ -208,7 +208,7 @@ at most 32 MiB of uncompressed content and 1,000 entries, and 1 MiB per entry.
 
 ```text
 manifest.json                   format, version, root ref, entry hashes
-workflow.json                   title, summary, templates, and what the workflow needs
+workflow.json                   title, summary, credit, templates, and what the workflow needs
 README.md                       optional human documentation
 templates/<id>/<semantic-hash>  one process template source (YAML or JSON) per version carried
 signatures/<key-id>.json        detached signatures over manifest.json (optional)
