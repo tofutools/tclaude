@@ -838,6 +838,7 @@ test("a peer's page has no companion window but stays reachable for capture and 
   await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
   assert.equal(view.container.querySelector('.companion-chips'), null, 'no window on a peer page');
   assert.ok(urls.includes('/api/companion/presence'), 'the tab still reports itself');
+  assert.ok(urls.includes('/api/companion/view'), 'and which view it is on, so guide view is not left on a local one');
 });
 
 test('a permission request opens in a right-hand panel from its pill, and the panel closes when answered', async (t) => {
