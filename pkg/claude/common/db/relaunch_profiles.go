@@ -590,6 +590,29 @@ func AssignAgentSandboxImplementation(
 	harnessBuiltinMode string,
 	source string,
 ) error {
+	return assignAgentSandboxImplementation(agentID, implementation, harnessBuiltinMode, source, false)
+}
+
+// AssignAgentSandboxImplementationLeavingOpenCodeState also forgets the agent's
+// OpenCode state allocation, in the same transaction: the allocation says where
+// lookups read the conversation, the posture says where the agent runs, and
+// they must not disagree after a crash.
+func AssignAgentSandboxImplementationLeavingOpenCodeState(
+	agentID string,
+	implementation string,
+	harnessBuiltinMode string,
+	source string,
+) error {
+	return assignAgentSandboxImplementation(agentID, implementation, harnessBuiltinMode, source, true)
+}
+
+func assignAgentSandboxImplementation(
+	agentID string,
+	implementation string,
+	harnessBuiltinMode string,
+	source string,
+	forgetOpenCodeState bool,
+) error {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return errors.New("AssignAgentSandboxImplementation: agent_id required")
@@ -641,6 +664,11 @@ func AssignAgentSandboxImplementation(
 	if _, err := tx.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`,
 		encoded, agentID); err != nil {
 		return err
+	}
+	if forgetOpenCodeState {
+		if _, err := tx.Exec(`DELETE FROM opencode_agent_state_allocations WHERE agent_id = ?`, agentID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

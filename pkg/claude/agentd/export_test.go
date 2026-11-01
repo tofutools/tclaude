@@ -105,3 +105,9 @@ func OfferKeepsItsPostureForTest(o *db.FederationBundleOffer, groupID int64) boo
 
 // ClaimPrivateOpenCodeStateForTest exposes claimPrivateOpenCodeState.
 var ClaimPrivateOpenCodeStateForTest = claimPrivateOpenCodeState
+
+// MarkDeferredSpawnRunningForTest stands in for a deferred launch in progress.
+func MarkDeferredSpawnRunningForTest(label string) func() {
+	deferredSpawnsRunning.Store(label, struct{}{})
+	return func() { deferredSpawnsRunning.Delete(label) }
+}

@@ -8459,7 +8459,9 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	var mu sync.Mutex
 	responded := false
 	done := make(chan deferredResult, 1)
+	deferredSpawnsRunning.Store(label, struct{}{})
 	goBackground(func() {
+		defer deferredSpawnsRunning.Delete(label)
 		out, fail := executeSpawn(g, continuation)
 		if fail != nil {
 			// The failed continuation cannot claim this reservation. Do not

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -28,6 +30,16 @@ const pendingSpawnSweepInterval = 5 * time.Second
 // reservation whose launch is merely slow would make the operator's Pending
 // row vanish mid-launch.
 const pendingSpawnLaunchGrace = 60 * time.Second
+
+// deferredSpawnsRunning holds the labels of deferred launches this daemon is
+// still running. A launch slower than pendingSpawnLaunchGrace loses its
+// reservation but keeps its state.
+var deferredSpawnsRunning sync.Map
+
+func deferredSpawnRunning(label string) bool {
+	_, running := deferredSpawnsRunning.Load(label)
+	return running
+}
 
 // startPendingSpawnSweeper runs the pending-spawn back-fill sweeper in its
 // own goroutine until stop closes (the daemon-wide quit channel). JOH-205
@@ -112,6 +124,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		slog.Info("pending-spawn sweeper: session row gone; dropping pending spawn",
 			"label", ps.Label)
 		revokePendingRouteHelperCredentials(ps.AgentID, ps.Label)
+		discardOrphanedOpenCodeState(ps)
 		deletePendingSpawnRow(ps.Label)
 		surfacePendingSpawnDrop(ps)
 		return
@@ -362,6 +375,47 @@ func ensurePendingTaskRefBound(convID string, ps *db.PendingSpawn) bool {
 		return false
 	}
 	return true
+}
+
+// discardOrphanedOpenCodeState removes the private OpenCode state of a dropped
+// reservation whose session row never appeared. executeServerSpawnDeferred
+// allocates it before the launch and only memory knew how to remove it, so a
+// daemon restart mid-boot would leave it for good. No pane can be behind it: the
+// launch writes the session row before it creates a pane. A deferred launch still
+// running here owns its state, and an agent row means something else may read it,
+// so neither is touched.
+func discardOrphanedOpenCodeState(ps *db.PendingSpawn) {
+	if ps.AgentID == "" || deferredSpawnRunning(ps.Label) {
+		return
+	}
+	agent, err := db.GetAgent(ps.AgentID)
+	if err != nil {
+		slog.Warn("pending-spawn sweeper: agent lookup failed; keeping OpenCode state",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+		return
+	}
+	if agent != nil {
+		return
+	}
+	allocation, err := db.GetOpenCodeAgentStateAllocation(ps.AgentID)
+	if err != nil {
+		slog.Warn("pending-spawn sweeper: OpenCode state lookup failed",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+		return
+	}
+	if allocation == nil || allocation.Mode != db.OpenCodeStatePrivate {
+		return
+	}
+	// The record goes first: a directory nothing points at is only unused.
+	if err := db.DeleteOpenCodeAgentStateAllocation(ps.AgentID); err != nil {
+		slog.Warn("pending-spawn sweeper: forget unused OpenCode state",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+		return
+	}
+	if err := os.RemoveAll(allocation.StateRoot); err != nil {
+		slog.Warn("pending-spawn sweeper: remove unused OpenCode state",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+	}
 }
 
 // surfacePendingSpawnDrop lands a daemon-originated Messages-tab notice when
