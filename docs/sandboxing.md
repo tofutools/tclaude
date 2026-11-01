@@ -170,13 +170,13 @@ running agent the same way. A harness mode that was
 merely derived from the old implementation is not carried forward; the harness
 default is recorded instead unless `--sandbox` pins one.
 
-An OpenCode agent with no private state allocation cannot be assigned
-tclaude's sandbox. Its conversation is in the shared store, which the sandboxed
-server cannot read, so the assignment refuses rather than leave an agent whose
-every resume fails. Export it, then import it with `paf import --group` into a
-group whose spawn profile uses tclaude's sandbox, or import it or its group while
-tclaude's sandbox is the install default or the global profile's choice: the
-import installs the conversation in private state.
+Assigning tclaude's sandbox to an OpenCode agent with no private state moves
+its conversation there, because the sandboxed server cannot read the shared
+store. The conversation keeps its id and its spend, along with any subagent
+sessions under it. tclaude checks that the copy reads back the same before it
+records the assignment, then deletes the shared copy. If the copy fails, the
+agent stays as it was and the assignment reports why. A running agent is
+stopped first, as for any assignment with a restart.
 
 ### Imported agents
 

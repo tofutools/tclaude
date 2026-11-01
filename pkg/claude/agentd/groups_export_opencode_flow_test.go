@@ -57,6 +57,7 @@ session)
 		;;
 	esac
 	;;
+db) printf '[{"id":"%s"}]\n' "$(printf %s "$2" | grep -o 'ses_[A-Za-z0-9_-]*' | head -n 1)" ;;
 *) exit 1 ;;
 esac
 `

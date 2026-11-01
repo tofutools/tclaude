@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -426,6 +427,125 @@ func rewriteOpenCodeHistory(r io.Reader, source, newID, cwd string, out io.Write
 	_, err := io.WriteString(out, "]}")
 	return err
 }
+// sessionTree is id and its descendants, parents first. An export holds one
+// session, and deleting a session deletes its children.
+func (h openCodeHistory) sessionTree(id, cwd string) ([]string, error) {
+	var out bytes.Buffer
+	query := "WITH RECURSIVE tree(id) AS (SELECT id FROM session WHERE id = '" + id +
+		"' UNION ALL SELECT session.id FROM session JOIN tree ON session.parent_id = tree.id) SELECT id FROM tree"
+	if err := h.command(cwd, &out, "db", query, "--format", "json"); err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		return nil, fmt.Errorf("read OpenCode session tree: %w", err)
+	}
+	if len(rows) == 0 || rows[0].ID != id {
+		return nil, fmt.Errorf("OpenCode session %s is not in its store", id)
+	}
+	tree := make([]string, len(rows))
+	for i, row := range rows {
+		if !validOpenCodeHistoryID(row.ID, "ses_") {
+			return nil, errors.New("invalid OpenCode session identity")
+		}
+		tree[i] = row.ID
+	}
+	return tree, nil
+}
+
+// exportFile is OpenCode's own export of id, unrewritten.
+func (h openCodeHistory) exportFile(id, cwd string) (string, error) {
+	file, err := os.CreateTemp("", "tclaude-opencode-move-*.json")
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	if err = h.command(cwd, file, "export", id); err != nil {
+		_ = os.Remove(file.Name())
+		return "", err
+	}
+	return file.Name(), nil
+}
+
+func sameOpenCodeExport(a, b string) (bool, error) {
+	var values [2]any
+	for i, path := range []string{a, b} {
+		file, err := os.Open(path)
+		if err != nil {
+			return false, err
+		}
+		decoder := json.NewDecoder(file)
+		decoder.UseNumber()
+		err = decoder.Decode(&values[i])
+		_ = file.Close()
+		if err != nil {
+			return false, err
+		}
+	}
+	return reflect.DeepEqual(values[0], values[1]), nil
+}
+
+// CopyOpenCodeConversation copies a session and its descendants between stores
+// with every id unchanged, and proves each copy reads back the same. Same ids
+// and recorded spend mean the same conversation, so it is not marked inherited
+// the way a fork is. from keeps its copy; DeleteOpenCodeConversation removes it.
+func CopyOpenCodeConversation(from, to HistoryTransfer, id, cwd string) error {
+	source, ok := from.(openCodeHistory)
+	target, ok2 := to.(openCodeHistory)
+	if !ok || !ok2 {
+		return errors.New("not an OpenCode history")
+	}
+	if !validOpenCodeHistoryID(id, "ses_") {
+		return errors.New("invalid OpenCode session identity")
+	}
+	tree, err := source.sessionTree(id, cwd)
+	if err != nil {
+		return err
+	}
+	for _, session := range tree {
+		if err = copyOpenCodeSession(source, target, session, cwd); err != nil {
+			return fmt.Errorf("copy OpenCode session %s: %w", session, err)
+		}
+	}
+	return nil
+}
+
+func copyOpenCodeSession(from, to openCodeHistory, id, cwd string) error {
+	exported, err := from.exportFile(id, cwd)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(exported) }()
+	if err = to.command(cwd, io.Discard, "import", exported); err != nil {
+		return err
+	}
+	copied, err := to.exportFile(id, cwd)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(copied) }()
+	same, err := sameOpenCodeExport(exported, copied)
+	if err != nil {
+		return err
+	}
+	if !same {
+		return errors.New("the copy does not read back the same")
+	}
+	return nil
+}
+
+// DeleteOpenCodeConversation removes a session and its descendants from h's
+// store.
+func DeleteOpenCodeConversation(h HistoryTransfer, id, cwd string) error {
+	history, ok := h.(openCodeHistory)
+	if !ok {
+		return errors.New("not an OpenCode history")
+	}
+	return history.command(cwd, io.Discard, "session", "delete", id)
+}
+
 func (h openCodeHistory) Import(raw []byte, source, cwd string) (string, func(), error) {
 	return h.ImportReader(bytes.NewReader(raw), source, cwd)
 }

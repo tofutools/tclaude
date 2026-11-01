@@ -9,7 +9,8 @@
 # it, and the attached TUI draws it. The node then makes tclaude's sandbox its
 # install default and imports the same archive again: that member's conversation
 # goes in its private state, never the shared store, and resumes in a sandboxed
-# server.
+# server. Assigning tclaude's sandbox to the first member then moves its
+# conversation into private state with the same ids.
 #
 # It needs `opencode`, `tmux`, `jq` and a working `bwrap` on PATH. Anything missing
 # is a failure:
@@ -269,5 +270,38 @@ grep -qE 'resumed|already_online' "$ROOT/walled-resume.txt" || die "the sandboxe
 wait_for 90 "the sandboxed conversation in the OpenCode TUI" pane_shows_history
 cat "$ROOT/pane.txt"
 managed_server_holds "$WALLED" tclaude-layer
+
+log "assigning tclaude's sandbox moves a shared-store agent into private state"
+CHILD_ID=ses_0123456789abfSmokeChild0001
+jq --arg id "$CHILD_ID" --arg parent "$LANDED" --arg cwd "$DST_CWD" '
+	.info.id = $id | .info.parentID = $parent | .info.directory = $cwd |
+	.messages[0].info.id = "msg_0123456789abfSmokeChildMsg" | .messages[0].info.sessionID = $id |
+	.messages[0].parts[0].id = "prt_0123456789abfSmokeChildPrt" | .messages[0].parts[0].sessionID = $id |
+	.messages[0].parts[0].messageID = "msg_0123456789abfSmokeChildMsg"' "$ROOT/fixture.json" >"$ROOT/child.json"
+(cd "$DST_CWD" && node dst opencode import "$ROOT/child.json" --pure --log-level ERROR)
+(cd "$DST_CWD" && node dst opencode export "$LANDED" --pure --log-level ERROR) >"$ROOT/before-move.json"
+node dst tclaude agent sandbox-impl set "$LANDED" tclaude-layer
+sessions_on_dst | jq -e --arg id "$LANDED" 'all(.[]; .id != $id)' >/dev/null || die "the shared copy is still there"
+if (cd "$DST_CWD" && node dst opencode export "$CHILD_ID" --pure --log-level ERROR >/dev/null 2>&1); then
+	die "the shared copy of the child session is still there"
+fi
+MOVED_ROOT=$(python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$STATE_ROOT" <<'PY'
+import sqlite3, sys
+
+rows = sqlite3.connect(sys.argv[1]).execute(
+    "SELECT state_root FROM opencode_agent_state_allocations WHERE mode = 'private' AND state_root != ?",
+    (sys.argv[2],),
+).fetchall()
+assert len(rows) == 1, rows
+print(rows[0][0])
+PY
+)
+STATE_ROOT=$MOVED_ROOT
+private_opencode export "$LANDED" >"$ROOT/after-move.json"
+cmp "$ROOT/before-move.json" "$ROOT/after-move.json" || die "the moved conversation changed"
+private_opencode export "$CHILD_ID" | grep -q "$SECRET" || die "the child session did not move"
+node dst tclaude agent resume "$LANDED" | tee "$ROOT/moved-resume.txt"
+grep -q 'resumed' "$ROOT/moved-resume.txt" || die "the moved agent did not resume"
+managed_server_holds "$LANDED" tclaude-layer
 
 log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed"

@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -211,10 +213,6 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	if fail := openCodeStateAssignmentFailure(h, agentID, implementation); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
 	planned, _, err := resolveCurrentSandboxChainForConv(convID)
 	if err != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
@@ -248,10 +246,18 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 
 	previous := current.SandboxImplementation
 	persist := func() *spawnFailure {
+		commit, undo, fail := moveOpenCodeStateForAssignment(h, agentID, convID, current.Cwd, implementation, planned)
+		if fail != nil {
+			return fail
+		}
 		err := db.AssignAgentSandboxImplementation(
 			agentID, implementation, mode, db.AssignedSandboxImplementationSource)
+		if err != nil {
+			undo()
+		}
 		switch {
 		case err == nil:
+			commit()
 			return nil
 		case errors.Is(err, db.ErrTemporarySandboxOverrideActive):
 			return &spawnFailure{
@@ -318,26 +324,64 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	})
 }
 
-// openCodeStateAssignmentFailure refuses putting tclaude's sandbox on an
-// OpenCode agent with no state allocation. Its conversation is in the ambient
-// store, which the sandboxed server cannot read, so the assignment would only
-// leave an agent whose every resume is refused. Allocating now would not help:
-// the new state would not hold the conversation.
-func openCodeStateAssignmentFailure(h *harness.Harness, agentID, implementation string) *spawnFailure {
+// moveOpenCodeStateForAssignment gives an OpenCode agent with no state
+// allocation the private state tclaude's sandbox needs: its conversation is in
+// the shared store, which the sandboxed server cannot read. The agent must be
+// stopped. The copy is complete and verified when this returns and the shared
+// copy is still there, so commit removes it once the posture is recorded and
+// undo leaves everything as it was.
+func moveOpenCodeStateForAssignment(
+	h *harness.Harness, agentID, convID, cwd, implementation string, planned *sandboxpolicy.Snapshot,
+) (commit, undo func(), fail *spawnFailure) {
+	commit, undo = func() {}, func() {}
 	if h.Name != harness.OpenCodeName || !isTclaudeLayer(implementation) {
-		return nil
+		return commit, undo, nil
 	}
-	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	existing, err := db.GetOpenCodeAgentStateAllocation(agentID)
 	if err != nil {
-		return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		return commit, undo, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
-	if allocation != nil {
-		return nil
+	if existing != nil {
+		return commit, undo, nil
 	}
-	return &spawnFailure{http.StatusConflict, "opencode_state_unallocated",
-		"this OpenCode agent keeps its conversation in the shared store, which tclaude's sandbox cannot read; " +
-			"export it and import it where tclaude's sandbox is the receiving group's spawn profile or the install default, " +
-			"which installs the conversation in private state"}
+	refuse := func(err error) (func(), func(), *spawnFailure) {
+		return func() {}, func() {}, &spawnFailure{http.StatusInternalServerError, "opencode_state_move",
+			"move the conversation into private state: " + err.Error()}
+	}
+	allocation, err := allocatePrivateOpenCodeState(agentID)
+	if err != nil {
+		return refuse(err)
+	}
+	discard := func() {
+		if err := os.RemoveAll(allocation.StateRoot); err != nil {
+			slog.Warn("sandbox assignment: remove unused OpenCode state", "agent", agentID, "error", err)
+		}
+		if err := db.DeleteOpenCodeAgentStateAllocation(agentID); err != nil {
+			slog.Warn("sandbox assignment: forget unused OpenCode state", "agent", agentID, "error", err)
+		}
+	}
+	spec, err := openCodeTclaudeLayerLaunchSpec(implementation, cwd, nil, planned, agentID)
+	if err == nil {
+		err = prepareOpenCodeTclaudeLayerState(spec)
+	}
+	var private *harness.Harness
+	if err == nil {
+		private, err = openCodeHistoryForAgent(h, agentID)
+	}
+	if err == nil {
+		err = harness.CopyOpenCodeConversation(h.History, private.History, convID, cwd)
+	}
+	if err != nil {
+		discard()
+		return refuse(err)
+	}
+	return func() {
+		// The agent reads its private copy from here on, so what this leaves
+		// behind is a stale duplicate, not a broken agent.
+		if err := harness.DeleteOpenCodeConversation(h.History, convID, cwd); err != nil {
+			slog.Warn("sandbox assignment: shared OpenCode copy left behind", "conv", short8(convID), "error", err)
+		}
+	}, discard, nil
 }
 
 // assignedHarnessBuiltinMode decides which harness-builtin mode the new posture
