@@ -71,6 +71,8 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/steward/handover", collabRoute(asDashboardHuman(handleStewardHandover)))
 	mux.HandleFunc("POST /api/steward/step-down", collabRoute(asDashboardHuman(handleStewardStepDown)))
 	mux.HandleFunc("POST /api/steward/roster/remove", collabRoute(asDashboardHuman(handleStewardRosterRemove)))
+	mux.HandleFunc("GET /api/steward/default-permissions", collabRoute(asDashboardHuman(handleStewardDefaultPermissionsGet)))
+	mux.HandleFunc("PUT /api/steward/default-permissions", collabRoute(asDashboardHuman(handleStewardDefaultPermissionsPut)))
 	mux.HandleFunc("POST /api/companion/view", collabRoute(handleDashboardCompanionView))
 	mux.HandleFunc("POST /api/companion/presence", collabRoute(handleDashboardCompanionPresence))
 	mux.HandleFunc("GET /api/knowledge/source", collabRoute(handleDashboardKnowledgeSourceGet))
@@ -2218,14 +2220,9 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
 		return
 	}
-	carryCfg, _ := config.Load()
 	for _, slug := range body.Carry {
 		if !slices.Contains(body.Slugs, slug) {
 			http.Error(w, "carry names slug "+slug+" which the grant does not include", http.StatusBadRequest)
-			return
-		}
-		if refusal := carryRefusal(carryCfg, slug); refusal != "" {
-			http.Error(w, refusal, http.StatusForbidden)
 			return
 		}
 	}
@@ -2417,7 +2414,6 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
 		return
 	}
-	cfg, _ := config.Load()
 	for slug, carry := range body.Carry {
 		if !carry {
 			continue
@@ -2425,10 +2421,6 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		effect, ok := body.Overrides[slug]
 		if !ok || effect == "default" {
 			http.Error(w, "carry names slug "+slug+" which the batch does not grant or deny", http.StatusBadRequest)
-			return
-		}
-		if refusal := carryRefusal(cfg, slug); refusal != "" {
-			http.Error(w, refusal, http.StatusForbidden)
 			return
 		}
 	}

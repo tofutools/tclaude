@@ -4014,12 +4014,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.BrokerRefusalsTotal, out.BrokerRefusalsUnplaceable = brokerRefusals.counts()
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
 	if cfg.CollabEnabled() {
-		out.StewardElevated = stewardElevations(cfg, permissionsState{
+		stewardState := permissionsState{
 			Defaults:  out.Permissions.Defaults,
 			Grants:    out.Permissions.Grants,
 			Overrides: out.Permissions.Overrides,
-		})
-		out.StewardAccess = stewardAccessView(cfg)
+		}
+		out.StewardElevated = stewardElevations(cfg, stewardState)
+		out.StewardAccess = stewardAccessView(cfg, stewardState)
 		out.StewardRoster = stewardRosterView()
 		if len(out.StewardRoster) > 0 && out.StewardRoster[0].Seat == db.StewardSeatActive {
 			out.StewardActive = out.StewardRoster[0].AgentID

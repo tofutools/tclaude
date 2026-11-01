@@ -2,7 +2,9 @@ package agentd
 
 import (
 	_ "embed"
+	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -33,20 +35,13 @@ var stewardBaseSlugs = []string{
 // stewardOperatorReadSlugs bring a Steward to what the operator reads, on top
 // of the whole fleet that fleet.read already lists. Reads are safe to give by
 // default because injected text in a worker's reply can only look with them;
-// writing stays with the levels below, steward.default_permissions and sudo.
+// writing stays with the levels below, stored permissions and sudo.
 // Left out on purpose: reading other agents' mail (agent.inbox-watch), though a
 // capture shows whatever the operator has open, private setup text (config export), and the proxy.* reads, which spend the operator's GitHub,
 // Linear and AWB credentials outside tclaude.
 var stewardOperatorReadSlugs = []string{
 	PermProcessTemplatesRead, PermProcessRunsRead, PermTriggersRead, PermUsageRead, PermHostRead, PermCostsRead,
 	PermAgentContextInfo, PermFederationAuditRead,
-}
-
-// stewardSlugs is the access a Steward is born with under this config: its
-// levels, then the operator's default permissions. The daemon decides it, not
-// the summoning client.
-func stewardSlugs(cfg *config.Config) []string {
-	return append(stewardLevelSlugs(cfg), stewardDefaultSlugs(cfg)...)
 }
 
 // stewardLevelSlugs is what the Reads and Writes levels give.
@@ -64,67 +59,48 @@ func stewardLevelSlugs(cfg *config.Config) []string {
 	return slugs
 }
 
-// stewardDefaultSlugs are the registered entries of steward.default_permissions.
-// Saving through the Config tab refuses an unknown slug, so one here comes from
-// a hand edit or a slug a later version dropped. It can grant nothing, so it is
-// left out rather than stopping every summon.
-func stewardDefaultSlugs(cfg *config.Config) []string {
-	var slugs []string
-	for _, slug := range cfg.StewardDefaultPermissions() {
-		if IsKnownPermSlug(slug) && !slices.Contains(sudoDefaultBlocklist, slug) {
-			slugs = append(slugs, slug)
-		}
+// storedStewardPermissions reads what the operator stored for future Stewards.
+// A failed read leaves a Steward its levels: it logs and answers with nothing.
+func storedStewardPermissions() map[string]db.PermissionOverride {
+	stored, err := db.ListStewardCarriedPermissions()
+	if err != nil {
+		slog.Warn("steward: read stored permissions failed", "error", err)
 	}
-	return slugs
+	return stored
 }
 
-// recursiveStewardSlugs are the entries of steward.default_permissions that
-// hand out permissions themselves. The Steward reads agent mail, so standing
-// grant authority on it is refused, as it is for sudo. The operator can still
-// grant one to a running Steward from its permissions editor.
-func recursiveStewardSlugs(cfg *config.Config) []string {
-	var slugs []string
-	for _, slug := range cfg.StewardDefaultPermissions() {
-		if slices.Contains(sudoDefaultBlocklist, slug) {
-			slugs = append(slugs, slug)
-		}
-	}
-	return slugs
-}
-
-// unknownStewardSlugs are the entries of steward.default_permissions the slug
-// registry does not know.
-func unknownStewardSlugs(cfg *config.Config) []string {
-	var slugs []string
-	for _, slug := range cfg.StewardDefaultPermissions() {
-		if !IsKnownPermSlug(slug) {
-			slugs = append(slugs, slug)
-		}
-	}
-	return slugs
-}
-
-// stewardExtraSlugs are the default permissions the levels do not already give.
-func stewardExtraSlugs(cfg *config.Config) []string {
-	seen := map[string]bool{}
-	for _, slug := range stewardLevelSlugs(cfg) {
-		seen[slug] = true
-	}
+// stewardExtraSlugs are the stored grants the levels do not already give.
+func stewardExtraSlugs(cfg *config.Config, stored map[string]db.PermissionOverride) []string {
+	levels := stewardLevelSlugs(cfg)
 	var extra []string
-	for _, slug := range stewardDefaultSlugs(cfg) {
-		if !seen[slug] {
-			seen[slug] = true
+	for _, slug := range slices.Sorted(maps.Keys(stored)) {
+		if stored[slug].Effect == db.PermEffectGrant && IsKnownPermSlug(slug) && !slices.Contains(levels, slug) {
 			extra = append(extra, slug)
 		}
 	}
 	return extra
 }
 
+// stewardDeniedSlugs are the stored denies.
+func stewardDeniedSlugs(stored map[string]db.PermissionOverride) []string {
+	var denied []string
+	for _, slug := range slices.Sorted(maps.Keys(stored)) {
+		if stored[slug].Effect == db.PermEffectDeny && IsKnownPermSlug(slug) {
+			denied = append(denied, slug)
+		}
+	}
+	return denied
+}
+
+func captureDenied(stored map[string]db.PermissionOverride) bool {
+	return stored[PermDashboardCapture].Effect == db.PermEffectDeny
+}
+
 // stewardAccessNote tells a Steward what it was born with, for its brief.
-func stewardAccessNote(cfg *config.Config) string {
-	reads := "every agent and group, boards, the dashboard view and captures of the operator's screen"
+func stewardAccessNote(cfg *config.Config, stored map[string]db.PermissionOverride) string {
+	reads := "every agent and group, boards and the dashboard view"
 	if cfg.StewardReads() == config.StewardReadsOperator {
-		reads = "what the operator reads across tclaude, including every agent and group whether or not you share one with them, and captures of their screen"
+		reads = "what the operator reads across tclaude, including every agent and group whether or not you share one with them"
 	}
 	writes := "drawing on boards and the operator's view, and notifying the operator"
 	switch cfg.StewardWrites() {
@@ -133,67 +109,69 @@ func stewardAccessNote(cfg *config.Config) string {
 	case config.StewardWritesWorkers:
 		writes = "messaging any agent, starting workers, drawing on boards and the operator's view, and notifying the operator"
 	}
-	note := "Your access, set by the operator: you can read " + reads + ". You can write: " + writes
-	if extra := stewardExtraSlugs(cfg); len(extra) > 0 {
-		return note + ". The operator also granted you these permissions: " + strings.Join(extra, ", ") + ". Everything else needs approval."
+	note := "Your access, set by the operator: you can read " + reads + ". You can write: " + writes + "."
+	if extra := stewardExtraSlugs(cfg, stored); len(extra) > 0 {
+		note += " The operator also granted you these permissions: " + strings.Join(extra, ", ") + "."
 	}
-	return note + "; everything else needs approval."
+	if denied := stewardDeniedSlugs(stored); len(denied) > 0 {
+		note += " The operator denied you these, whatever the above says: " + strings.Join(denied, ", ") + "."
+	}
+	return note + " Everything else needs approval."
 }
 
 // A Steward's access has three sources, and the operator keeps them apart: what
-// Config gives every Steward (stewardSlugs), what was given to one running
-// instance (its own overrides and sudo, which end with it), and what the
-// operator chose to store for all future Stewards (the steward_carried_*
-// tables). The last is read here, at the summon, and nowhere else: being in the
+// the Reads and Writes levels give every Steward (stewardLevelSlugs), what was
+// given to one running instance (its own overrides and sudo, which end with it),
+// and what the operator stored for all future Stewards (the steward_carried_*
+// tables), which can add to the levels or deny any slug they give. The last is
+// read at the summon and for the brief, not at the permission gate: being in the
 // steward scope is what makes an agent a Steward, so an ordinary agent that is
 // merely named "steward" never comes near it.
 
-// stewardCarriedGranter labels what a new Steward inherited.
-const stewardCarriedGranter = "steward-carried"
+const (
+	// stewardCarriedGranter labels what a new Steward inherited.
+	stewardCarriedGranter = "steward-carried"
+	// stewardDefaultsMigrationGranter labels what came from steward.default_permissions.
+	stewardDefaultsMigrationGranter = "system:steward-default-permissions"
+)
 
 // stewardAccess tells the editors where a live Steward's access comes from.
 type stewardAccess struct {
 	// Convs are the live Stewards; other agents get the ordinary editor.
 	Convs []string `json:"convs"`
-	// Config is what Config > Steward gives. It is changed there, not here.
+	// Config is what the Reads and Writes levels give.
 	Config []string `json:"config"`
 	// Carried is what is stored for all future Stewards, slug → effect.
 	Carried map[string]string `json:"carried"`
-	// NotCarryable are slugs that may not be stored: see carryRefusal.
-	NotCarryable []string `json:"not_carryable"`
+	// CaptureOff are the live Stewards, by agent ID, that cannot capture the
+	// operator's screen.
+	CaptureOff []string `json:"capture_off,omitempty"`
 }
 
-func stewardAccessView(cfg *config.Config) *stewardAccess {
-	carried, err := db.ListStewardCarriedPermissions()
-	if err != nil {
-		slog.Warn("steward: read carried permissions failed", "error", err)
-	}
+func stewardAccessView(cfg *config.Config, state permissionsState) *stewardAccess {
 	view := &stewardAccess{
-		Convs: liveStewardConvs(), Config: stewardSlugs(cfg),
-		Carried: map[string]string{}, NotCarryable: sudoDefaultBlocklist,
+		Convs: liveStewardConvs(), Config: stewardLevelSlugs(cfg),
+		Carried: map[string]string{},
 	}
-	for slug, override := range carried {
+	for slug, override := range storedStewardPermissions() {
 		view.Carried[slug] = override.Effect
+	}
+	for _, conv := range view.Convs {
+		agentID, err := db.AgentIDForConv(conv)
+		if err != nil || agentID == "" {
+			continue
+		}
+		effective, _, _, _ := effectivePermsFor(state, conv, ownerImpliedSlugsFor(conv))
+		if !slices.Contains(effective, PermDashboardCapture) {
+			view.CaptureOff = append(view.CaptureOff, agentID)
+		}
 	}
 	return view
 }
 
-// carryRefusal says why a slug cannot be stored for future Stewards. What Config
-// gives is managed in Config, and standing grant authority is refused on a
-// Steward's birth for the same reason as in steward.default_permissions.
-func carryRefusal(cfg *config.Config, slug string) string {
-	if slices.Contains(stewardSlugs(cfg), slug) {
-		return slug + " comes from Config > Steward; change it there"
-	}
-	if slices.Contains(sudoDefaultBlocklist, slug) {
-		return slug + " cannot be given to future Stewards: it hands out permissions itself"
-	}
-	return ""
-}
-
-// mergeStewardCarried adds the stored grants to a new Steward's birth grants.
-// Config wins a slug both name. A slug a later version dropped is left out, as
-// in stewardDefaultSlugs, and so is one the rules no longer let through.
+// mergeStewardCarried lays what is stored over a new Steward's level grants, so
+// a stored deny takes a slug a level gives. A slug a later version dropped is
+// left out.
 func mergeStewardCarried(in map[string]db.PermissionOverride) {
 	carried, err := db.ListStewardCarriedPermissions()
 	if err != nil {
@@ -201,7 +179,7 @@ func mergeStewardCarried(in map[string]db.PermissionOverride) {
 		return
 	}
 	for slug, override := range carried {
-		if _, config := in[slug]; config || !IsKnownPermSlug(slug) || slices.Contains(sudoDefaultBlocklist, slug) {
+		if !IsKnownPermSlug(slug) {
 			continue
 		}
 		// One stored grant a later version cannot read must not block every summon.
@@ -213,6 +191,110 @@ func mergeStewardCarried(in map[string]db.PermissionOverride) {
 		}
 		in[slug] = override
 	}
+}
+
+// migrateStewardDefaultPermissions moves steward.default_permissions into the
+// stored permissions, which are now the one place for them, and clears the
+// setting. It runs before anything can summon, whether or not Collab is on. What
+// is stored wins a slug both name. An unregistered or grant-authority slug could
+// never be given through this setting, so it is dropped, not turned into a grant.
+// A failure leaves the setting for the next start.
+func migrateStewardDefaultPermissions(cfg *config.Config) {
+	slugs := cfg.StewardDefaultPermissions()
+	if len(slugs) == 0 {
+		return
+	}
+	stored, err := db.ListStewardCarriedPermissions()
+	if err != nil {
+		slog.Warn("steward: read stored permissions for migration failed", "error", err)
+		return
+	}
+	for _, slug := range slugs {
+		if !IsKnownPermSlug(slug) || slices.Contains(sudoDefaultBlocklist, slug) {
+			slog.Warn("steward.default_permissions: dropping a slug that never applied", "slug", slug)
+			continue
+		}
+		if _, ok := stored[slug]; ok {
+			continue
+		}
+		if err := db.SetStewardCarriedPermission(slug, db.Grant(), stewardDefaultsMigrationGranter); err != nil {
+			slog.Warn("steward: migrate default permission failed", "slug", slug, "error", err)
+			return
+		}
+	}
+	if _, err := config.Update(func(saved *config.Config, loadErr error) error {
+		if loadErr != nil {
+			return loadErr
+		}
+		if saved.Steward != nil {
+			saved.Steward.DefaultPermissions = nil
+		}
+		return nil
+	}); err != nil {
+		slog.Warn("steward: clear default_permissions failed", "error", err)
+	}
+}
+
+// stewardDefaultPermissionsResp is what the future-Stewards editor opens with.
+type stewardDefaultPermissionsResp struct {
+	Stored map[string]db.PermissionOverride `json:"stored"`
+	Levels []string                         `json:"levels"`
+}
+
+func handleStewardDefaultPermissionsGet(w http.ResponseWriter, _ *http.Request) {
+	cfg, ok := stewardRequestConfig(w)
+	if !ok {
+		return
+	}
+	stored, err := db.ListStewardCarriedPermissions()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, stewardDefaultPermissionsResp{Stored: stored, Levels: stewardLevelSlugs(cfg)})
+}
+
+// handleStewardDefaultPermissionsPut replaces what is stored for future
+// Stewards. It sits on the dashboard mux only, so an agent cannot reach it. A
+// running Steward is not touched. Every slug the levels give may be denied and
+// any other may be granted, including ones that hand out permissions: this is
+// the operator's own choice, made here.
+func handleStewardDefaultPermissionsPut(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Overrides map[string]db.PermissionOverride `json:"overrides"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "body", "decode body: "+err.Error())
+		return
+	}
+	stored, err := db.ListStewardCarriedPermissions()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	// A slug a later version dropped has no row to edit, so it rides along
+	// unchanged rather than being refused.
+	retired := map[string]db.PermissionOverride{}
+	for slug, override := range body.Overrides {
+		if held, ok := stored[slug]; ok && !IsKnownPermSlug(slug) && held.Effect == override.Effect {
+			retired[slug] = held
+			delete(body.Overrides, slug)
+		}
+	}
+	next, refusal := normalizeSpawnPermissionOverrides(body.Overrides)
+	if refusal != "" {
+		writeError(w, http.StatusBadRequest, "overrides", refusal)
+		return
+	}
+	if next == nil {
+		next = map[string]db.PermissionOverride{}
+	}
+	maps.Copy(next, retired)
+	if err := db.ReplaceStewardCarriedPermissions(next, dashboardGranter); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stored": next})
 }
 
 // inheritStewardCarriedSudo gives a new Steward the stored temporary grants
@@ -259,6 +341,18 @@ func saveStewardCarry(convID string, before map[string]db.PermissionOverride, ef
 		if !chosen {
 			keep = wasStored
 		}
+		// The editor posts every row, and this instance holding its level grant
+		// says nothing about a deny stored for later Stewards: only a row that
+		// changed, or one with a choice made, speaks for them.
+		if !chosen && before[slug] == current[slug] {
+			continue
+		}
+		// What this one instance is given says nothing about a stored deny, and
+		// a running Steward can hold what later ones are denied. Only an explicit
+		// choice here, or the Config editor, lifts it.
+		if !chosen && stored[slug].Effect == db.PermEffectDeny {
+			continue
+		}
 		switch {
 		case effect != "default" && keep:
 			if err := db.SetStewardCarriedPermission(slug, current[slug], dashboardGranter); err != nil {
@@ -281,11 +375,17 @@ func holdsOverride(overrides map[string]db.PermissionOverride, slug string) bool
 	return held
 }
 
-// endStoredStewardPermission makes a CLI revoke or deny hold for later
-// Stewards, as a sudo revoke and the editor do. Only a live Steward's own row
-// says anything about what is stored.
-func endStoredStewardPermission(convID, slug string) {
-	if !isLiveSteward(convID) {
+// endStoredStewardPermission makes the operator's CLI revoke or deny hold for
+// later Stewards, as a sudo revoke and the editor do. Only a live Steward's own
+// row says anything about what is stored. An agent's revoke ends at the instance:
+// what is stored is the operator's alone. So does anything on a stored deny: a
+// running Steward can hold what later ones are denied, and ending its grant must
+// not give that grant back to them.
+func endStoredStewardPermission(r *http.Request, convID, slug string) {
+	if classify(peerFromContext(r.Context())) != classHuman || !isLiveSteward(convID) {
+		return
+	}
+	if storedStewardPermissions()[slug].Effect != db.PermEffectGrant {
 		return
 	}
 	if err := db.DeleteStewardCarriedPermission(slug); err != nil {
@@ -316,10 +416,41 @@ const stewardKnowledgeGuide = "You have a knowledge base of tclaude's docs and s
 //go:embed steward_brief.txt
 var stewardBaseBrief string
 
+// stewardCaptureBullets start the base brief's bullets that are only about
+// capturing the screen.
+var stewardCaptureBullets = []string{"- See what the operator sees:", "- Keep what you saw:"}
+
+// stewardRoleBrief is the base brief for what is stored now: with capture denied
+// it does not tell a Steward to use it.
+func stewardRoleBrief() string {
+	if !captureDenied(storedStewardPermissions()) {
+		return stewardBaseBrief
+	}
+	var kept []string
+	dropping := false
+	for line := range strings.SplitSeq(stewardBaseBrief, "\n") {
+		if !strings.HasPrefix(line, " ") {
+			dropping = slices.ContainsFunc(stewardCaptureBullets, func(bullet string) bool {
+				return strings.HasPrefix(line, bullet)
+			})
+		}
+		if !dropping {
+			kept = append(kept, line)
+		}
+	}
+	return strings.ReplaceAll(strings.Join(kept, "\n"),
+		"Confirm one landed with `guide capture`, see how marks ended with", "See how marks ended with")
+}
+
 // stewardBrief adds to the summon's brief what the daemon owns: the access
 // note and the operator's own startup prompt, last so it has the final word.
 func stewardBrief(brief string, cfg *config.Config) string {
-	brief = strings.TrimRight(brief, "\n") + "\n\n" + stewardAccessNote(cfg) + "\n\n" + stewardCaptureGuide + "\n\n" + stewardKnowledgeGuide
+	stored := storedStewardPermissions()
+	brief = strings.TrimRight(brief, "\n") + "\n\n" + stewardAccessNote(cfg, stored) + "\n\n"
+	if !captureDenied(stored) {
+		brief += stewardCaptureGuide + "\n\n"
+	}
+	brief += stewardKnowledgeGuide
 	if name := cfg.StewardName(); name != "" {
 		brief += "\n\nThe operator calls you " + name + ". Use that name."
 	}
@@ -484,6 +615,7 @@ func reconcileSteward(conv string, cfg *config.Config) {
 		return
 	}
 	levels := stewardLevelSlugs(cfg)
+	stored := storedStewardPermissions()
 	if len(offered) == 1 {
 		// Summoned before the record existed.
 		var baseline []string
@@ -500,7 +632,9 @@ func reconcileSteward(conv string, cfg *config.Config) {
 	}
 	var added []string
 	for _, slug := range levels {
-		if offered[slug] {
+		// Stored is for future Stewards, and a stored deny says this level slug
+		// is not wanted on any: a running Steward keeps what it has, gets no more.
+		if offered[slug] || stored[slug].Effect == db.PermEffectDeny {
 			continue
 		}
 		offered[slug] = true
@@ -518,7 +652,11 @@ func reconcileSteward(conv string, cfg *config.Config) {
 	if len(added) == 0 {
 		return
 	}
-	body := "You now also hold: " + strings.Join(added, ", ") + ".\n\n" + stewardCaptureGuide + "\n\n" + stewardKnowledgeGuide
+	body := "You now also hold: " + strings.Join(added, ", ") + ".\n\n"
+	if !captureDenied(stored) {
+		body += stewardCaptureGuide + "\n\n"
+	}
+	body += stewardKnowledgeGuide
 	if _, err := queueAgentMessage(&db.AgentMessage{ToConv: conv, Subject: "Your access changed", Body: body}); err != nil {
 		slog.Warn("steward: access change message failed", "conv", short8(conv), "error", err)
 	}
@@ -579,7 +717,7 @@ func stewardElevations(cfg *config.Config, state permissionsState) map[string]st
 // Config and the defaults.
 func stewardElevationOf(cfg *config.Config, state permissionsState, conv string) stewardElevation {
 	usual := map[string]bool{}
-	for _, slug := range append(stewardSlugs(cfg), state.Defaults...) {
+	for _, slug := range append(stewardLevelSlugs(cfg), state.Defaults...) {
 		usual[slug] = true
 	}
 	effective, _, provenance, _ := effectivePermsFor(state, conv, ownerImpliedSlugsFor(conv))

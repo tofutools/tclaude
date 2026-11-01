@@ -2406,6 +2406,12 @@ func ReconcileStewardAccessForTest() {
 	knowledgeStartup.Wait()
 }
 
+// MigrateStewardDefaultPermissionsForTest runs the daemon start's migration.
+func MigrateStewardDefaultPermissionsForTest() {
+	cfg, _ := clconfig.Load()
+	migrateStewardDefaultPermissions(cfg)
+}
+
 // AddStewardBaseSlugForTest stands in for a release adding a slug to the base set.
 func AddStewardBaseSlugForTest(slug string) func() {
 	before := stewardBaseSlugs

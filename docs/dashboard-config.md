@@ -161,7 +161,7 @@ options, see [Ask sandbox policy](ask.md#sandbox-policy).
 |---|---|---|---|
 | Access | Reads | `steward.reads` | `operator` |
 | Access | Writes | `steward.writes` | `messaging` |
-| Access | Default permissions | `steward.default_permissions` | empty |
+| Access | Default permissions | stored permissions, saved from their own editor | Reads and Writes only |
 | Launch | Spawn profile | `steward.profile` | global default profile |
 | Knowledge base | Source download | `steward.source_download` | `ask` |
 | Name and startup | Name | `steward.name` | Steward |

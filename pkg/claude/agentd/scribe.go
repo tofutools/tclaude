@@ -193,11 +193,8 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 			writeError(w, http.StatusInternalServerError, "config", err.Error())
 			return
 		}
-		body.Slugs = stewardSlugs(cfg)
-		if unknown := unknownStewardSlugs(cfg); len(unknown) > 0 {
-			slog.Warn("steward.default_permissions: skipping unknown permission slugs", "slugs", unknown)
-		}
-		body.Brief = stewardBrief(strings.TrimSpace(stewardBaseBrief+"\n"+body.Brief), cfg)
+		body.Slugs = stewardLevelSlugs(cfg)
+		body.Brief = stewardBrief(strings.TrimSpace(stewardRoleBrief()+"\n"+body.Brief), cfg)
 		titleBase = cfg.StewardName()
 	}
 

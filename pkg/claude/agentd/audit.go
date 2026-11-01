@@ -277,6 +277,7 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"steward", "handover"}, verb: "steward.handover", describe: describeStewardHandover},
 	{method: http.MethodPost, segs: []string{"steward", "step-down"}, verb: "steward.step-down", describe: describeStewardHandover},
 	{method: http.MethodPost, segs: []string{"steward", "roster", "remove"}, verb: "steward.roster-remove", describe: describeStewardHandover},
+	{method: http.MethodPut, segs: []string{"steward", "default-permissions"}, verb: "steward.default-permissions", describe: describeStewardDefaults},
 	{method: http.MethodPost, segs: []string{"permissions", "deny"}, verb: "permissions.deny", describe: describePerm},
 	{method: http.MethodPost, segs: []string{"permissions", "revoke"}, verb: "permissions.revoke", describe: describePerm},
 	{method: http.MethodPost, segs: []string{"permissions"}, verb: "permissions.set", describe: describePermSet},
@@ -1449,6 +1450,19 @@ func describePermSet(c *auditCtx) {
 	}
 	sort.Strings(parts)
 	c.fields.Detail = auditClip(strings.Join(parts, ", "), 120)
+}
+
+func describeStewardDefaults(c *auditCtx) {
+	var b struct {
+		Overrides map[string]db.PermissionOverride `json:"overrides"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	parts := make([]string, 0, len(b.Overrides))
+	for slug, override := range b.Overrides {
+		parts = append(parts, slug+"="+override.Effect)
+	}
+	sort.Strings(parts)
+	c.fields.Detail = auditClip(strings.Join(parts, ", "), auditDetailMax)
 }
 
 func describeStewardHandover(c *auditCtx) {

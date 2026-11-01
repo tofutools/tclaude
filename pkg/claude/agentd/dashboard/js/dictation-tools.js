@@ -470,12 +470,13 @@ export function useAnnotation({ win, notify, viewNow, render = renderPage }) {
 // before the terminal in the DOM, because Tab typed into a terminal stays
 // there. view and ✎ are for agents, so a plain shell leaves them out.
 export function FloatingTools({
-  dictation, micLabel, micTitle, withContext = null, onContext = () => {}, annotateLabel = '', onAnnotate = null, children = null,
+  dictation, micLabel, micTitle, withContext = null, onContext = () => {}, contextNote = '', annotateLabel = '', onAnnotate = null, children = null,
 }) {
   const { listening, block, toggle, continuing } = dictation;
   return html`<div class=${`companion-floating${listening ? ' listening' : ''}`} role="group" aria-label="Message tools">
       ${!block && withContext !== null && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
         <input type="checkbox" checked=${withContext} onChange=${(event) => onContext(event.currentTarget.checked)} /> view
+        ${contextNote && html`<span class="companion-context-off" title=${contextNote}>capture off</span>`}
       </label>`}
       <button type="button" class=${`companion-tool companion-mic${listening ? ' on' : ''}${continuing ? ' steady' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
         aria-label=${micLabel} disabled=${!!block}

@@ -236,27 +236,21 @@ func TestSteward_SnapshotListsElevatedAccess(t *testing.T) {
 	assert.Equal(t, []string{agentd.PermAgentSpawn}, elevated()[agentID].Standing)
 }
 
-// The operator's default Steward permissions: saved through the Config tab's
-// endpoint, which refuses a slug the registry does not know, and applied by the
-// daemon at summon. They count as usual access, and a running Steward keeps
-// what it was summoned with.
+// stewardDefaults drives the Config > Steward editor's route, as the dashboard does.
+func stewardDefaults(t *testing.T, mux http.Handler, overrides map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	return testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPut, "/api/steward/default-permissions", map[string]any{"overrides": overrides}))
+}
+
+// What is stored for future Stewards adds to the levels or takes from them, and
+// any slug goes: the operator's choice, made from the dashboard. A running
+// Steward keeps what it has.
 func TestSteward_DefaultPermissions(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
 	enableCollab(t)
 	stubScribeTerminal(t)
 	mux := dashMessageMux(t)
 
-	save := func(path string, slugs ...string) *httptest.ResponseRecorder {
-		cfg, err := config.Load()
-		require.NoError(t, err)
-		cfg.Steward = &config.StewardConfig{DefaultPermissions: slugs}
-		return testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, path, map[string]any{"config": cfg}))
-	}
-	saved := func() []string {
-		cfg, err := config.Load()
-		require.NoError(t, err)
-		return cfg.StewardDefaultPermissions()
-	}
 	summon := func() string {
 		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
 			"name": "steward", "slugs": []string{agentd.PermNodeExec}, "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
@@ -264,67 +258,230 @@ func TestSteward_DefaultPermissions(t *testing.T) {
 		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
 		return decodeScribeResp(t, rec).ConvID
 	}
-	has := func(conv, slug string) bool {
-		effect, ok, err := db.AgentPermissionOverride(conv, slug)
+	effect := func(conv, slug string) string {
+		found, ok, err := db.AgentPermissionOverride(conv, slug)
 		require.NoError(t, err)
-		return ok && effect == "grant"
-	}
-	standing := func(conv string) []string {
-		agentID, err := db.AgentIDForConv(conv)
-		require.NoError(t, err)
-		rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
-		require.Equal(t, http.StatusOK, rec.Code)
-		var snap struct {
-			Elevated map[string]struct {
-				Standing []string `json:"standing"`
-			} `json:"steward_elevated"`
+		if !ok {
+			return ""
 		}
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap))
-		return snap.Elevated[agentID].Standing
+		return found
+	}
+	brief := func(conv string) string {
+		rows, err := db.ListAgentMessagesForConv(conv, 10)
+		require.NoError(t, err)
+		require.NotEmpty(t, rows)
+		return rows[0].Body
 	}
 
-	for _, path := range []string{"/api/config?dry_run=1", "/api/config"} {
-		rec := save(path, agentd.PermAgentSpawn, "no.such.slug")
-		require.Equalf(t, http.StatusBadRequest, rec.Code, "%s body=%s", path, rec.Body.String())
-		assert.Contains(t, rec.Body.String(), "no.such.slug")
+	for _, bad := range []map[string]any{{"no.such.slug": "grant"}, {agentd.PermAgentSpawn: "maybe"}} {
+		rec := stewardDefaults(t, mux, bad)
+		require.Equalf(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 	}
-	assert.Empty(t, saved(), "a refused save writes nothing")
+	stored, err := db.ListStewardCarriedPermissions()
+	require.NoError(t, err)
+	assert.Empty(t, stored, "a refused save writes nothing")
 
-	// message.direct already comes from the default Writes level.
-	rec := save("/api/config", agentd.PermAgentSpawn, agentd.PermMessageDirect)
+	rec := stewardDefaults(t, mux, map[string]any{
+		agentd.PermAgentSpawn:       "grant",
+		agentd.PermPermissionsGrant: "grant",
+		agentd.PermDashboardCapture: "deny",
+		agentd.PermMessageDirect:    "deny",
+	})
 	require.Equalf(t, http.StatusOK, rec.Code, "save body=%s", rec.Body.String())
 
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/steward/default-permissions", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var opened struct {
+		Stored map[string]string `json:"stored"`
+		Levels []string          `json:"levels"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &opened))
+	assert.Equal(t, "deny", opened.Stored[agentd.PermDashboardCapture])
+	assert.Contains(t, opened.Levels, agentd.PermDashboardCapture, "the editor shows what the levels would give")
+
 	conv := summon()
-	assert.True(t, has(conv, agentd.PermAgentSpawn), "the default permission is granted at birth")
-	assert.True(t, has(conv, agentd.PermMessageDirect))
-	assert.False(t, has(conv, agentd.PermNodeExec), "the summon still cannot ask for more")
-	assert.Empty(t, standing(conv), "a default permission is usual access, not an elevation")
-	rows, err := db.ListAgentMessagesForConv(conv, 10)
+	assert.Equal(t, "grant", effect(conv, agentd.PermAgentSpawn))
+	assert.Equal(t, "grant", effect(conv, agentd.PermPermissionsGrant), "the levels do not limit what the operator adds")
+	assert.Equal(t, "deny", effect(conv, agentd.PermMessageDirect), "a deny takes what a level gives")
+	assert.Equal(t, "deny", effect(conv, agentd.PermDashboardCapture))
+	assert.Equal(t, "grant", effect(conv, agentd.PermFleetRead), "the levels still give the rest")
+	assert.Empty(t, effect(conv, agentd.PermNodeExec), "the summon still cannot ask for more")
+
+	body := brief(conv)
+	assert.Contains(t, body, "The operator also granted you these permissions: "+agentd.PermAgentSpawn+", "+agentd.PermPermissionsGrant+".")
+	assert.Contains(t, body, "The operator denied you these, whatever the above says: "+agentd.PermDashboardCapture+", "+agentd.PermMessageDirect+".")
+	assert.NotContains(t, body, "guide capture", "the brief does not tell it to use what it was denied")
+	assert.NotContains(t, body, "captures of", "nor say it has it")
+	assert.Contains(t, body, "`guide marks`", "the rest of the mark guidance stays")
+
+	// A running Steward keeps what it has, and the view tick is told.
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	var snap struct {
+		Access struct {
+			CaptureOff []string `json:"capture_off"`
+		} `json:"steward_access"`
+	}
+	f.HaveAliveSession(conv, "stwd", "tclaude-stwd", f.TestCwd("work"))
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap))
+	assert.Contains(t, snap.Access.CaptureOff, agentID)
+
+	require.Equal(t, http.StatusOK, stewardDefaults(t, mux, map[string]any{agentd.PermAgentTask: "grant"}).Code)
+	assert.Empty(t, effect(conv, agentd.PermAgentTask), "a running Steward is not touched")
+	assert.Equal(t, "grant", effect(conv, agentd.PermAgentSpawn))
+	stored, err = db.ListStewardCarriedPermissions()
+	require.NoError(t, err)
+	assert.Len(t, stored, 1, "a save replaces what was stored")
+	audit, err := db.ListAuditLog(db.AuditLogFilter{Verb: "steward.default-permissions"})
+	require.NoError(t, err)
+	require.NotEmpty(t, audit, "changing what every future Steward holds is audited")
+	assert.Contains(t, audit[0].Detail, agentd.PermAgentTask+"=grant")
+}
+
+// A Steward summoned without a deny keeps its level grants, and nothing tells
+// the next one to use capture once it is denied. Only the base brief's own text
+// is touched.
+func TestSteward_CaptureDeniedDropsOnlyCaptureGuidance(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermDashboardCapture, db.Deny(), "test"))
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "- Keep what you saw: the operator's own line stays.",
+	})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	rows, err := db.ListAgentMessagesForConv(decodeScribeResp(t, rec).ConvID, 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
-	assert.Contains(t, rows[0].Body, "The operator also granted you these permissions: "+agentd.PermAgentSpawn+". Everything else needs approval.")
+	assert.NotContains(t, rows[0].Body, "guide capture")
+	assert.NotContains(t, rows[0].Body, "See what the operator sees")
+	assert.Contains(t, rows[0].Body, "the operator's own line stays")
+	assert.Contains(t, rows[0].Body, "See how marks ended with")
+}
 
-	require.Equal(t, http.StatusOK, save("/api/config", agentd.PermAgentTask).Code)
-	assert.False(t, has(conv, agentd.PermAgentTask), "a running Steward keeps what it was summoned with")
-	assert.Equal(t, []string{agentd.PermAgentSpawn}, standing(conv), "what config no longer gives shows as beyond it")
+// A level slug a stored deny covers is not given to a Steward that has not had
+// it yet, and stays available if the deny is lifted.
+func TestSteward_ReconcileLeavesAStoredDenyAlone(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	stubScribeTerminal(t)
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	conv := decodeScribeResp(t, rec).ConvID
 
-	// Standing grant authority is refused on save, and ignored from a hand edit.
-	assert.NotEqual(t, http.StatusOK, save("/api/config", agentd.PermPermissionsGrant).Code)
+	defer agentd.AddStewardBaseSlugForTest(agentd.PermNodeExec)()
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermNodeExec, db.Deny(), "test"))
+	agentd.ReconcileStewardAccessForTest()
+	_, ok, err := db.AgentPermissionOverride(conv, agentd.PermNodeExec)
+	require.NoError(t, err)
+	assert.False(t, ok, "a stored deny stops the catch-up")
 
-	// A hand edit can leave an unknown slug. It grants nothing and must not
-	// stop the Steward from starting.
+	require.NoError(t, db.DeleteStewardCarriedPermission(agentd.PermNodeExec))
+	agentd.ReconcileStewardAccessForTest()
+	effect, ok, err := db.AgentPermissionOverride(conv, agentd.PermNodeExec)
+	require.NoError(t, err)
+	assert.True(t, ok && effect == "grant", "it was never offered, so lifting the deny offers it")
+}
+
+// steward.default_permissions moves to the stored permissions once, whether or
+// not Collab is on. Stored wins, and what could never apply stays out.
+func TestSteward_DefaultPermissionsMigrate(t *testing.T) {
+	processAuthoringFlow(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Steward = &config.StewardConfig{DefaultPermissions: []string{"no.such.slug", agentd.PermPermissionsGrant, agentd.PermAgentTask}}
+	cfg.Steward = &config.StewardConfig{DefaultPermissions: []string{
+		agentd.PermAgentSpawn, agentd.PermMessageDirect, agentd.PermAgentTask, "no.such.slug", agentd.PermPermissionsGrant,
+	}}
 	require.NoError(t, config.Save(cfg))
-	next := summon()
-	assert.True(t, has(next, agentd.PermAgentTask))
-	assert.False(t, has(next, "no.such.slug"))
-	assert.False(t, has(next, agentd.PermPermissionsGrant))
-	rows, err = db.ListAgentMessagesForConv(next, 10)
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermAgentTask, db.Deny(), "operator"))
+
+	for range 2 {
+		agentd.MigrateStewardDefaultPermissionsForTest()
+		stored, err := db.ListStewardCarriedPermissions()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]db.PermissionOverride{
+			agentd.PermAgentSpawn:    db.Grant(),
+			agentd.PermMessageDirect: db.Grant(),
+			agentd.PermAgentTask:     db.Deny(),
+		}, stored)
+		cfg, err = config.Load()
+		require.NoError(t, err)
+		assert.Empty(t, cfg.StewardDefaultPermissions())
+	}
+}
+
+// Only the operator changes what is stored: not the agent socket, and not an
+// agent's revoke of a Steward's slug.
+func TestSteward_DefaultPermissionsAreTheOperators(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	enableCollab(t)
+	const worker = "stwd-aaaa-bbbb-cccc-000000000009"
+	f.HaveGroup("team")
+	f.HaveMember("team", worker)
+	f.HaveAliveSession(worker, "stwd9", "tclaude-stwd9", f.TestCwd("work"))
+	stubScribeTerminal(t)
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	conv := decodeScribeResp(t, rec).ConvID
+	f.HaveAliveSession(conv, "stwd", "tclaude-stwd", f.TestCwd("work"))
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermNodeExec, db.Grant(), "operator"))
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermPermissionsRevoke, db.PermEffectGrant, "test"))
+
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, "/api/steward/default-permissions",
+			map[string]any{"overrides": map[string]any{agentd.PermNodeExec: "grant"}}), worker))
+		assert.Equal(t, http.StatusNotFound, rec.Code, "the agent socket has no such route")
+	}
+
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/permissions/revoke", map[string]any{
+		"target": conv, "slug": agentd.PermNodeExec,
+	}), worker))
+	require.Equalf(t, http.StatusOK, rec.Code, "revoke body=%s", rec.Body.String())
+	stored, err := db.ListStewardCarriedPermissions()
 	require.NoError(t, err)
-	require.NotEmpty(t, rows)
-	assert.NotContains(t, rows[0].Body, "no.such.slug")
+	assert.Equal(t, db.Grant(), stored[agentd.PermNodeExec], "an agent's revoke stops at the instance")
+}
+
+// A running Steward can hold what later ones are denied, so nothing done to that
+// one instance lifts the deny, short of choosing to.
+func TestSteward_StoredDenyOutlastsInstanceEdits(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	steward := c.summon()
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermFleetRead, db.Deny(), "operator"))
+	denied := func(step string) {
+		t.Helper()
+		stored, err := db.ListStewardCarriedPermissions()
+		require.NoError(t, err)
+		assert.Equal(t, db.Deny(), stored[agentd.PermFleetRead], step)
+	}
+
+	rec := c.post("/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermFleetRead: "default"}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	denied("taking the grant off this Steward")
+
+	rec = c.post("/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermFleetRead: "grant"}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	denied("giving it to this Steward only")
+
+	for _, verb := range []string{"deny", "revoke"} {
+		rec = testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/permissions/"+verb,
+			map[string]any{"target": steward, "slug": agentd.PermFleetRead})))
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		denied("the operator's CLI " + verb)
+	}
+
+	rec = c.post("/api/permissions", map[string]any{"conv": steward,
+		"overrides": map[string]string{agentd.PermFleetRead: "grant"}, "carry": map[string]bool{agentd.PermFleetRead: true}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	stored, err := db.ListStewardCarriedPermissions()
+	require.NoError(t, err)
+	assert.Equal(t, db.PermEffectGrant, stored[agentd.PermFleetRead].Effect, "an explicit choice does lift it")
 }
 
 // Only the operator's dashboard writes steward.default_permissions: the agent
@@ -641,9 +798,7 @@ func TestSteward_CarryIsRefusedOutsideItsRules(t *testing.T) {
 	}{
 		"an agent named steward": {"/api/permissions", map[string]any{"conv": named, "overrides": map[string]string{agentd.PermAgentStop: "grant"}, "carry": map[string]bool{agentd.PermAgentStop: true}}, http.StatusForbidden},
 		"its sudo":               {"/api/sudo", map[string]any{"agent_id": namedAgent, "slugs": []string{agentd.PermAgentStop}, "carry": []string{agentd.PermAgentStop}}, http.StatusForbidden},
-		"a Config slug":          {"/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermFleetRead: "grant"}, "carry": map[string]bool{agentd.PermFleetRead: true}}, http.StatusForbidden},
-		"grant authority":        {"/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermPermissionsGrant: "grant"}, "carry": map[string]bool{agentd.PermPermissionsGrant: true}}, http.StatusForbidden},
-		"sudo grant authority":   {"/api/sudo", map[string]any{"agent_id": c.agentID(steward), "slugs": []string{agentd.PermFleetRead}, "duration": "5m", "carry": []string{agentd.PermFleetRead}}, http.StatusForbidden},
+		"sudo grant authority":   {"/api/sudo", map[string]any{"agent_id": c.agentID(steward), "slugs": []string{agentd.PermPermissionsGrant}, "duration": "5m", "carry": []string{agentd.PermPermissionsGrant}}, http.StatusForbidden},
 	} {
 		assert.Equal(t, tc.want, c.post(tc.path, tc.body).Code, name)
 	}

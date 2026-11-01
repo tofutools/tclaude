@@ -169,7 +169,6 @@ export function stewardAccessFor(snapshot, conv) {
   return {
     config: new Set(access.config || []),
     carried: access.carried || {},
-    notCarryable: new Set(access.not_carryable || []),
   };
 }
 
@@ -309,6 +308,7 @@ export function ownerSource(scopeDims, ownedGroups) {
 // its standing overrides rather than the slugs being elevated.
 export function permissionRows(snapshot, descriptor, selection) {
   const defaults = new Set(snapshot?.permissions?.defaults || []);
+  const stewardLevels = new Set(descriptor.stewardLevels || []);
   const groups = membershipGroups(snapshot, descriptor);
   const groupGrants = new Map();
   const roleGrants = new Map();
@@ -333,7 +333,8 @@ export function permissionRows(snapshot, descriptor, selection) {
   return [...(snapshot?.slugs || [])].sort((a, b) => a.slug.localeCompare(b.slug)).map((slug) => {
     const effect = selection[slug.slug] || 'default';
     const sources = [];
-    if (effect === 'grant') sources.push('agent override');
+    if (effect === 'grant') sources.push(descriptor.stewardLevels ? 'stored' : 'agent override');
+    if (effect === 'default' && stewardLevels.has(slug.slug)) sources.push('Reads and Writes');
     if (effect === 'default' && defaults.has(slug.slug)) sources.push('global default');
     if (effect === 'default' && groupGrants.has(slug.slug)) {
       sources.push(`group: ${groupGrants.get(slug.slug).join(', ')}`);

@@ -706,6 +706,7 @@ func runServe(p *serveParams) error {
 	// Shares the same stop channel — both sweeps shut down together
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
+	migrateStewardDefaultPermissions(cfg)
 	reconcileStewardAccess(cfg)
 	startOneShotDirectoryCleanup(cronStop)
 

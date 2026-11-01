@@ -7,6 +7,7 @@ import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
+import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
 import { COMMA_PAUSE_DEFAULT, CONTINUOUS_IDLE_DEFAULT, CONTINUOUS_IDLE_MAX, CONTINUOUS_IDLE_MIN, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN } from './voice-config.js';
@@ -989,9 +990,9 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
             <option value="workers">Message agents and start workers</option>
           </${ConfigSelect}>
         </${Setting}>
-        <${Setting} title="Default permissions" wide k="steward.default_permissions"
-          summary="Permission slugs a new Steward is born with, on top of Reads and Writes. A running Steward keeps what it was summoned with.">
-          <${StringList} id="cfg-steward-permissions" values=${lists['cfg-steward-permissions']} datalist="cfg-slug-list" placeholder="permission slug" onChange=${onListChange} />
+        <${Setting} title="Default permissions"
+          summary="What a new Steward gets beyond Reads and Writes, or is denied from them. Saved from the editor, not with this form. A running Steward keeps what it has.">
+          <${StewardDefaultPermissions} />
         </${Setting}>
       </${Group}>
       <${Group} title="Launch">
