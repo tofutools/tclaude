@@ -29,7 +29,7 @@ import {
 import {
   GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen,
 } from './groups-quickstart.js';
-import { ScribeDraft, draftWithScribe, leaveScribeDraft, restorableScribeDraft } from './groups-scribe-draft.js';
+import { ScribeDraft, draftWithScribe, leaveScribeDraft, noteDraftOpened, restorableScribeDraft } from './groups-scribe-draft.js';
 import { processScribeSessions } from './process-scribe.js';
 import { viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
@@ -485,6 +485,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   // A stored version opens as any saved process does: the step list, or the
   // inline graph when the list cannot show it.
   const openStored = (process, view) => {
+    noteDraftOpened(scribes, process.templateId, view);
     const converted = viewToStepList(view);
     if (!converted.ok) {
       setQuick({ mode: 'graph', key: Date.now(), process, view, stored: view });

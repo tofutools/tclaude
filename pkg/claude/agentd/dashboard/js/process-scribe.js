@@ -190,6 +190,7 @@ export function processScribeSessions(snapshot) {
     return [Object.freeze({
       agentId, convId, name: String(member.title || 'process scribe'), scope,
       scopeLabel: processScribeScopeLabel(scope), online: member.online === true,
+      status: String(member?.state?.status || ''),
       taskURL, taskLabel: taskURL ? String(member.task_ref_label || '') : '',
     })];
   });

@@ -15,7 +15,7 @@ import htm from 'htm';
 import { unauthorizedProfiles } from './process-context.js';
 import { viewToStepList } from './process-step-list.js';
 import { defaultNotify, markQuickStart } from './groups-quickstart.js';
-import { reopenScribeDraft, scribeDraftsOf } from './groups-scribe-draft.js';
+import { noteDraftOpened, reopenScribeDraft, scribeDraftsOf, scribeStartWarning } from './groups-scribe-draft.js';
 import { bindSavedProcessDnd, registerSavedProcessRemover } from './groups-saved-process-dnd.js';
 import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
@@ -35,12 +35,14 @@ function initialValues(process) {
 }
 
 // StartStrip is the start form of one saved process.
-function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, scribeDraft = null, onRemoving, onEdit, onClose }) {
+function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, scribeDraft = null, scribes = [], onRemoving, onEdit, onClose }) {
   const [values, setValues] = useState(() => initialValues(process));
   const [authorized, setAuthorized] = useState(() => new Set());
   const [extraProfiles, setExtraProfiles] = useState([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  // Set while Start asks about a scribe's unreviewed work; see scribeStartWarning.
+  const [draftWarning, setDraftWarning] = useState(null);
   const params = process.params || [];
   const profiles = [...new Set([...(process.programProfiles || []), ...extraProfiles])].sort();
   const missing = params.filter((param) => param.required && !String(values[param.name] ?? '').trim());
@@ -61,23 +63,42 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
       setBusy('');
     }
   };
+  const begin = async (expectedRef = '') => {
+    await api.startGroupRun({
+      templateId: process.templateId, group: group.name, params: values,
+      authorizeProgramProfiles: profiles.filter((profile) => authorized.has(profile)),
+      ...(expectedRef ? { expectedRef } : {}),
+    });
+    markQuickStart();
+    notify(`Started ${process.name} in ${group.name}`);
+    void source?.refresh?.();
+    onClose();
+  };
   const start = (event) => {
     event.preventDefault();
-    if (blockedWhy) return;
+    if (blockedWhy || draftWarning) return;
     void act('start', async () => {
-      await api.startGroupRun({
-        templateId: process.templateId, group: group.name, params: values,
-        authorizeProgramProfiles: profiles.filter((profile) => authorized.has(profile)),
-      });
-      markQuickStart();
-      notify(`Started ${process.name} in ${group.name}`);
-      void source?.refresh?.();
-      onClose();
+      const warning = await scribeStartWarning(api, scribes, process.templateId);
+      if (warning) setDraftWarning(warning);
+      else await begin();
     });
   };
+  // Pinned to the version the question was about: a save since then asks again
+  // instead of running what nobody was asked about.
+  const startAnyway = () => act('start', async () => {
+    try {
+      await begin(draftWarning.ref);
+    } catch (cause) {
+      if (cause.body?.code !== 'process_run_template_moved') throw cause;
+      const warning = await scribeStartWarning(api, scribes, process.templateId);
+      setDraftWarning(warning);
+      if (!warning) setError(`${process.name} changed since you were asked. Press Start to run the current version.`);
+    }
+  });
   // A process the step list cannot show opens as the inline graph.
   const edit = () => act('edit', async () => {
     const view = await api.getTemplate(process.templateId);
+    noteDraftOpened(scribes, process.templateId, view);
     const converted = viewToStepList(view);
     if (!converted.ok) {
       onEdit({ mode: 'graph', view, process });
@@ -120,8 +141,13 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
       <span>Allow its commands to run on this host <span class="gq-dim">(program profile: ${profile || 'default'})</span></span>
     </label>`)}
     <span class="gq-strip-acts">
-    <button type="submit" class="gq-btn primary" data-saved-start disabled=${!!busy || !!blockedWhy} title=${blockedWhy}>${busy === 'start' ? 'starting…' : 'Start'}</button>
+    <button type="submit" class="gq-btn primary" data-saved-start disabled=${!!busy || !!blockedWhy || !!draftWarning} title=${blockedWhy}>${busy === 'start' ? 'starting…' : 'Start'}</button>
     ${blockedWhy && html`<span class="gq-why" data-start-blocked>${blockedWhy}</span>`}
+    ${draftWarning && html`<span class="gq-confirm" role="alert" data-start-draft-warning>
+      This draft isn't reviewed: open it, or start anyway? <span class="gq-dim">${draftWarning.reason}</span>
+      <button type="button" class="gq-btn" data-start-draft-open disabled=${!!busy || !!editing} onClick=${edit}>open it</button>
+      <button type="button" class="gq-link" data-start-draft-anyway disabled=${!!busy} onClick=${startAnyway}>start anyway</button>
+    </span>`}
     <button type="button" class="gq-btn" data-saved-edit disabled=${!!busy || !!editing} onClick=${edit}
       title=${editing ? 'Save or cancel the open editor first' : 'Edit the steps; saving writes a new version'}>${busy === 'edit' ? 'opening…' : '✎ Edit steps'}</button>
     ${scribeDraft && html`<button type="button" class="gq-btn" data-saved-scribe disabled=${!!busy || !!editing}
@@ -155,6 +181,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
     setLoading(process.templateId);
     try {
       const view = await api.getTemplate(process.templateId);
+      noteDraftOpened(scribes, process.templateId, view);
       setOpen('');
       onEdit({ mode: 'graph', view, process });
     } catch (cause) {
@@ -207,7 +234,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
       </span>`)}
     </div>
     ${current && html`<${StartStrip} key=${current.templateId} removing=${removing} onRemoving=${setRemoving} editing=${editing}
-      scribeDraft=${scribeDraftsOf(scribes, [current])[0] || null} group=${group} process=${current} api=${api} source=${source}
+      scribeDraft=${scribeDraftsOf(scribes, [current])[0] || null} scribes=${scribes} group=${group} process=${current} api=${api} source=${source}
       wizard=${wizard} notify=${notify} onClose=${() => setOpen('')}
       onEdit=${(edit) => { setOpen(''); onEdit({ ...edit, origin: '' }); }} />`}
   </div>`;
