@@ -1372,11 +1372,9 @@ type StewardConfig struct {
 	// Writes is "none", "messaging" or "workers"; see the StewardWrites
 	// constants.
 	Writes string `json:"writes,omitempty"`
-	// DefaultPermissions are permission slugs a new Steward is born with on top
-	// of Reads and Writes, the Steward's own agent.default_permissions. The
-	// daemon applies them at summon, and the Config tab refuses unknown slugs.
-	// The steward block is deliberately not a portable config bundle key, so
-	// only the operator can set this.
+	// DefaultPermissions is read only to migrate it: the daemon moves these
+	// slugs to the stored permissions for future Stewards when it starts, then
+	// clears this. Config > Steward edits that store directly.
 	DefaultPermissions []string `json:"default_permissions,omitempty"`
 	// SourceDownload is "ask", "each_version" or "never"; see the
 	// StewardSource constants. It is consent to a download, which is why it
@@ -1481,7 +1479,7 @@ func (c *Config) StewardSourceDownload() string {
 	return StewardSourceAsk
 }
 
-// StewardDefaultPermissions returns the configured extra slugs, trimmed.
+// StewardDefaultPermissions returns the slugs still to migrate, trimmed.
 // Nil-safe.
 func (c *Config) StewardDefaultPermissions() []string {
 	if c == nil || c.Steward == nil {

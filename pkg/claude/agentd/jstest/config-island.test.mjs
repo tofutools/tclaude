@@ -668,26 +668,12 @@ test('Config edits the default Steward permissions with the slug list and drops 
   ]);
   const state = createConfigState({ activeTab: harness.signals.signal('config') });
   const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
-    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify({ steward: { name: 'Jeeves', default_permissions: ['agent.spawn'] } }) }) }),
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify({ steward: { name: 'Jeeves' } }) }) }),
   }} />`);
   await adapter.loadConfigTab();
   await harness.act(() => {});
-  const list = () => mounted.container.querySelector('#cfg-steward-permissions');
-  assert.equal(list().querySelector('input').value, 'agent.spawn');
-  assert.equal(list().querySelector('input').getAttribute('list'), 'cfg-slug-list', 'the same slug suggestions as agent defaults');
-
-  harness.fireEvent(list().querySelector('.cfg-list-add'), 'click');
-  await harness.act(() => {});
-  await harness.input(list().querySelector('.cfg-list-row:last-of-type input'), ' agent.task ');
-  assert.deepEqual(adapter.assembleConfig().steward.default_permissions, ['agent.spawn', 'agent.task']);
-
-  for (const button of [...list().querySelectorAll('.cfg-row-del')].reverse()) {
-    harness.fireEvent(button, 'click');
-    await harness.act(() => {});
-  }
   const steward = adapter.assembleConfig().steward;
   assert.equal(steward.name, 'Jeeves');
-  assert.equal('default_permissions' in steward, false, 'an empty list is not written out');
   assert.equal('source_download' in steward, false, 'asking is the default, so it is not written out');
   await selectValue(harness, mounted.container.querySelector('#cfg-steward-source-download'), 'each_version');
   assert.equal(adapter.assembleConfig().steward.source_download, 'each_version');

@@ -1100,6 +1100,8 @@ export function CompanionApp({
     micLabel=${`Dictate a message to ${activeAgent.name}`}
     micTitle=${micTitle(sendPhrase)}
     withContext=${withContext} onContext=${setWithContext}
+    contextNote=${(snapshot.value?.steward_access?.capture_off || []).includes(activeAgent.agentId)
+      ? `${activeAgent.name} can't capture your screen: that permission is off for it. The attached view says where you are, not what is on screen.` : ''}
     annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${startAnnotating}>${children}<//>`;
   const terminalZoom = html`<${ShellHere} agent=${activeAgent?.agentId} name=${activeAgent?.name} snapshot=${snapshot.value} notify=${notify} />
     <${TerminalZoom} font=${terminalFont} widget=${() => terminalWidgetRef.current} />`;

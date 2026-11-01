@@ -10,7 +10,7 @@ async function requestJSON(fetchImpl, url, options) {
   return readJSON(await fetchImpl(url, { credentials: 'same-origin', ...options }));
 }
 
-async function readJSON(response) {
+export async function readJSON(response) {
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : {}; } catch (_) { body = text; }

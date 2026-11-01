@@ -273,10 +273,7 @@ func TestSteward_SummonWithoutABriefGetsTheDaemons(t *testing.T) {
 // has to go by its label.
 func TestStewardHandover_SummonedStewardLosesItsBirthGrants(t *testing.T) {
 	s := newStewardHandoverFlow(t)
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Steward.DefaultPermissions = []string{agentd.PermAgentRename}
-	require.NoError(t, config.Save(cfg))
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermAgentRename, db.Grant(), "test"))
 	old := s.summon()
 	require.NoError(t, db.CloseStewardRecord(s.agentID(old), agentd.PermAgentRename))
 	require.NoError(t, db.OfferStewardPermissions(s.agentID(old), db.StewardRecordOpened))

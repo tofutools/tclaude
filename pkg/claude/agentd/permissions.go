@@ -1880,7 +1880,7 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	endStoredStewardPermission(target.Key, body.Slug)
+	endStoredStewardPermission(r, target.Key, body.Slug)
 	slugs, _ := db.ListAgentPermissionsForConv(target.Key)
 	writeJSON(w, http.StatusOK, permissionsMutateResp{
 		Target:    body.Target,
@@ -1934,7 +1934,7 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		endStoredStewardPermission(target.Key, body.Slug)
+		endStoredStewardPermission(r, target.Key, body.Slug)
 		resp.TargetKey = target.Key
 		resp.AgentID = target.AgentID
 		resp.Title = target.ConvTitle

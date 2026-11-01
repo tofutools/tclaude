@@ -211,6 +211,7 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
 .companion-body.clear-strip { padding-bottom: 52px; }
 .companion-context { display: inline-flex; align-items: center; gap: 4px; color: var(--cmp-muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
 .companion-context input { margin: 0; accent-color: var(--cmp-blue); }
+.companion-context-off { font-style: italic; cursor: help; }
 .companion-draft {
   flex: 1; min-width: 0; background: #0f1419; border: 1px solid var(--cmp-line); border-radius: 6px;
   color: var(--cmp-text); padding: 5px 8px; font: inherit; font-size: 12px;

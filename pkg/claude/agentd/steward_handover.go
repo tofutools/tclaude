@@ -60,7 +60,7 @@ type stewardAccessPlan struct {
 
 func planStewardAccess(cfg *config.Config, conv, agentID string, state permissionsState) (*stewardAccessPlan, []string, error) {
 	wanted := map[string]db.PermissionOverride{}
-	for _, slug := range stewardSlugs(cfg) {
+	for _, slug := range stewardLevelSlugs(cfg) {
 		wanted[slug] = db.Grant()
 	}
 	mergeStewardCarried(wanted)
@@ -520,7 +520,7 @@ func seatSteward(cfg *config.Config, res *agent.Resolved, then, by string) (*ste
 	note := "The operator made you their Steward. You keep this conversation, your working directory, your groups and what you already held. " +
 		"Finish or park what you were doing as they prefer. From now on this is your role:\n\n"
 	if _, err := queueAgentMessage(&db.AgentMessage{GroupID: g.ID, ToConv: conv, Subject: "You are now the Steward",
-		Body: stewardBrief(note+stewardBaseBrief, cfg), ToRecipients: []string{conv}}); err != nil {
+		Body: stewardBrief(note+stewardRoleBrief(), cfg), ToRecipients: []string{conv}}); err != nil {
 		out.Warning = "could not send the Steward's brief: " + err.Error()
 	}
 	autoFetchKnowledgeSource(cfg)

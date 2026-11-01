@@ -1041,12 +1041,15 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     finally { busyRef.current = false; setBusy(false); }
   };
   const shortConv = String(descriptor.conv || '').slice(0, 8);
-  const subtitle = sudoMode ? `Agent: ${descriptor.label} · ${shortAgentId(descriptor.agentID)}`
+  const futureStewards = !!descriptor.stewardLevels;
+  const subtitle = futureStewards ? 'Future Stewards · shows what a new Steward would hold; running Stewards keep what they have'
+    : sudoMode ? `Agent: ${descriptor.label} · ${shortAgentId(descriptor.agentID)}`
     : groupMode ? `Group: ${descriptor.group} · every current member receives these grants immediately`
     : descriptor.mode === 'agent' ? `Agent: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Role${descriptor.label ? `: ${descriptor.label}` : ''} · granted when the role is assigned`
     : `New agent${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · fully composed from defaults, group, roles, ownership, and overrides`;
-  const wizardSubtitle = sudoMode ? `Hero: ${descriptor.label} · ${shortAgentId(descriptor.agentID)}`
+  const wizardSubtitle = futureStewards ? subtitle
+    : sudoMode ? `Hero: ${descriptor.label} · ${shortAgentId(descriptor.agentID)}`
     : groupMode ? `Party: ${descriptor.group} · every hero receives these boons immediately`
     : descriptor.mode === 'agent' ? `Hero: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Class${descriptor.label ? `: ${descriptor.label}` : ''} · bestowed when the class is assigned`
@@ -1054,9 +1057,11 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   return html`<${Overlay} id="perm-edit-modal" dialogClass=${`perm-edit-modal${sudoMode ? ' sudo-edit-modal' : ''}`} labelledby="perm-edit-title"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
     registerClose=${registerClose}>
-    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
-      <span class="perm-edit-title-wizard">${sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span></h3>
-    <div class="perm-edit-banner" id="perm-edit-banner">${sudoMode
+    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${futureStewards ? 'Permissions for future Stewards' : sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
+      <span class="perm-edit-title-wizard">${futureStewards ? '📕 The Stewards’ Grimoire' : sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span></h3>
+    <div class="perm-edit-banner" id="perm-edit-banner">${futureStewards
+      ? html`<strong>STORED</strong> — given to each new Steward. <strong>Grant</strong> adds a slug, <strong>Deny</strong> takes one away even if Reads or Writes give it, and <strong>Default</strong> leaves it to them.`
+      : sudoMode
       ? html`<${Words} plain=${html`<strong>TEMPORARY</strong> — picked permissions apply straight away and end by themselves when the time runs out. Sudo wins over an explicit Deny.`}
           wizard=${html`<strong>A BOUNDED BOON</strong> — these powers take hold at once and fade when the sands run out. A boon outranks any binding.`}/>`
       : groupMode ? html`<${Words} plain=${html`<strong>GROUP GRANTS</strong> — selected permissions apply immediately to every current member. An agent-level <strong>Deny</strong> still wins.`}
@@ -1066,7 +1071,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       : html`<${Words} plain=${html`<strong>PERMANENT</strong> — these per-agent overrides persist until changed. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks inherited sources, and <strong>Default</strong> inherits them.`}
           wizard=${html`<strong>THE GRIMOIRE</strong> — these bindings follow this hero until changed. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals inherited boons away, and <strong>Default</strong> inherits them.`}/>`}</div>
     <p class="perm-edit-subtitle" id="perm-edit-subtitle"><${Words} plain=${subtitle} wizard=${wizardSubtitle}/></p>
-    ${stewardAccess && html`<p class="perm-steward-note" id="perm-steward-note">Each grant is for <b>this Steward only</b>, which ends with this instance, or for <b>all future Stewards</b>, which is stored and given to each new Steward${sudoMode ? ' with the same expiry' : ''}. Config defaults are changed in Config.</p>`}
+    ${stewardAccess && html`<p class="perm-steward-note" id="perm-steward-note">Each grant is for <b>this Steward only</b>, which ends with this instance, or for <b>all future Stewards</b>, which is stored and given to each new Steward${sudoMode ? ' with the same expiry' : ''}. Reads and Writes are set in Config.</p>`}
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
     <div class="perm-edit-toolbar"><${PermissionFilter} value=${filter} onChange=${setFilter} /></div>
     <div id="perm-edit-list" class="perm-edit-list">${activeSudo.length > 0 && html`<${SudoActive} grants=${activeSudo}
@@ -1076,7 +1081,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const sudoHeld = sudoMode ? activeSudo.find((grant) => grant.slug === row.slug) : null;
     const fromConfig = !!stewardAccess?.config.has(row.slug);
     const picked = currentEffect(row.slug) !== 'default';
-    const canCarry = !!stewardAccess && picked && !fromConfig && !stewardAccess.notCarryable.has(row.slug);
+    // A level slug's grant is what every Steward is born with, so there is
+    // nothing to choose until it is denied.
+    const fromLevels = fromConfig && currentEffect(row.slug) !== 'deny';
+    const canCarry = !!stewardAccess && picked && !fromLevels;
     // The scope controls appear only where they can mean something: a slug
     // that declares dimensions, granted, in an editor whose save path can
     // persist a scope. Everywhere else the row renders exactly as before.
@@ -1092,11 +1100,11 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const heldNote = !(sudoMode && picked && row.granted && Object.keys(scopeOf(row.slug)).length) ? ''
       : scopeOf(row.slug).peer?.length ? 'This scope only covers work on that peer. What it holds here does not change.'
         : 'It already holds this. Until this grant ends, this scope replaces its own, group and default access. Ownership, membership and groups.admin still apply.';
-    const stewardSource = stewardAccess && (fromConfig ? 'Config defaults'
+    const stewardSource = stewardAccess && (fromLevels ? 'Reads and Writes'
       : stewardAccess.carried[row.slug] !== undefined ? 'all future Stewards' : 'this Steward only');
     const effText = sudoMode
       ? (row.granted ? `already held: ${stewardSource || row.sources.join(' + ')}` : 'not held now')
-      : stewardAccess && (picked || fromConfig) ? (fromConfig ? 'Config defaults' : carriedNow(row.slug) ? 'all future Stewards' : 'this Steward only')
+      : stewardAccess && (picked || fromConfig) ? (fromLevels ? 'Reads and Writes' : carriedNow(row.slug) ? 'all future Stewards' : 'this Steward only')
       : groupMode
       ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
       : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
@@ -1119,7 +1127,6 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       ${canCarry && html`<${CarryChoice} slug=${row.slug} carried=${carriedNow(row.slug)}
         onChange=${(carried) => setCarryChoices((current) => ({ ...current, [row.slug]: carried }))} />`}
       ${refusedWhy ? html`<span class="perm-refused" title=${refusedWhy}>refused</span>`
-    : fromConfig && !sudoMode ? html`<span class="perm-refused" title="Changed in Config > Steward">in Config</span>`
     : sudoHeld ? html`<span class="perm-sudo-held" title="Already elevated: extend it under Active now">🔓 active</span>`
     : html`<div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${sudoMode ? 'Off' : groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
         <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${sudoMode ? 'Sudo' : groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>

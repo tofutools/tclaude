@@ -67,6 +67,45 @@ func DeleteStewardCarriedPermission(slug string) error {
 	return err
 }
 
+// ReplaceStewardCarriedPermissions makes the stored set exactly next, in one
+// transaction. A row whose grant did not change keeps its author and time.
+func ReplaceStewardCarriedPermissions(next map[string]PermissionOverride, by string) error {
+	current, err := ListStewardCarriedPermissions()
+	if err != nil {
+		return err
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for slug := range current {
+		if _, kept := next[slug]; kept {
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM steward_carried_permissions WHERE slug = ?`, slug); err != nil {
+			return err
+		}
+	}
+	for slug, override := range next {
+		if current[slug] == override {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO steward_carried_permissions (slug, effect, scope_json, granted_by, granted_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(slug) DO UPDATE SET effect = excluded.effect, scope_json = excluded.scope_json,
+				granted_by = excluded.granted_by, granted_at = excluded.granted_at`,
+			slug, override.Effect, override.Scope, by, dbTime(time.Now())); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // CarrySudoGrant stores an instance's active sudo grant for all future
 // Stewards and links the two rows.
 func CarrySudoGrant(grantID int64) error {

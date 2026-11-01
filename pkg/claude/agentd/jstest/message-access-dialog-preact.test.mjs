@@ -599,7 +599,7 @@ function stewardSnapshot(sudo = []) {
     ...sudoSnapshot(sudo),
     permissions: { defaults: [], overrides: { 'conv-s': { 'agent.stop': 'grant', 'fleet.read': 'grant', 'node.exec': 'grant' } } },
     slugs: [...sudoSlugs, { slug: 'fleet.read', description: 'read the fleet' }],
-    steward_access: { convs: ['conv-s'], config: ['fleet.read'], carried: { 'agent.stop': 'grant' }, not_carryable: ['permissions.grant'] },
+    steward_access: { convs: ['conv-s'], config: ['fleet.read'], carried: { 'agent.stop': 'grant' } },
   };
 }
 
@@ -620,9 +620,12 @@ test('a Steward\'s editor names each grant\'s source and offers carrying it over
   assert.equal(sudoRow(host, 'agent.stop').querySelector('.perm-carry option[value="all"]').selected, true);
   assert.equal(sudoRow(host, 'node.exec').querySelector('.perm-carry option[value="this"]').selected, true, 'the default');
   const config = sudoRow(host, 'fleet.read');
-  assert.match(config.textContent, /Config defaults/);
-  assert.equal(!!config.querySelector('.perm-tristate'), false, 'managed in Config only');
-  assert.equal(!!config.querySelector('.perm-carry'), false);
+  assert.match(config.textContent, /Reads and Writes/);
+  assert.equal(!!config.querySelector('.perm-tristate'), true, 'a level grant can be denied');
+  assert.equal(!!config.querySelector('.perm-carry'), false, 'nothing to store until it is denied');
+  await harness.act(async () => { config.querySelector('[data-effect="deny"]').click(); });
+  assert.equal(!!sudoRow(host, 'fleet.read').querySelector('.perm-carry'), true, 'a deny can be stored');
+  await harness.act(async () => { sudoRow(host, 'fleet.read').querySelector('[data-effect="grant"]').click(); });
   const carry = sudoRow(host, 'node.exec').querySelector('.perm-carry');
   await chooseAllStewards(harness, carry);
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
@@ -950,5 +953,24 @@ test('this node and an unrestricted peer keep every field open, with no lock', a
   const { host, mounted } = await mountDialogs(harness, state, actions, unrestricted);
   assert.equal(host.querySelector('#message-create-from').disabled, false);
   assert.equal(host.querySelector('.lock-why'), null);
+  await mounted.unmount();
+});
+
+test('the future-Stewards editor shows what a new Steward would hold and stores denies', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  const saves = [];
+  const actions = sudoActions({ savePermissions: async (descriptor, selection) => { saves.push(selection); } });
+  const { host, mounted } = await mountDialogs(harness, state, actions, stewardSnapshot());
+  await harness.act(async () => {
+    state.openBufferedPermissions({ stewardLevels: ['fleet.read'], overrides: { 'node.exec': 'grant' } });
+  });
+  assert.match(host.querySelector('#perm-edit-subtitle').textContent, /Future Stewards/);
+  assert.match(sudoRow(host, 'fleet.read').textContent, /✓ Reads and Writes/);
+  assert.match(sudoRow(host, 'node.exec').textContent, /✓ stored/);
+  await harness.act(async () => { sudoRow(host, 'fleet.read').querySelector('[data-effect="deny"]').click(); });
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(saves[0]['fleet.read'], 'deny');
   await mounted.unmount();
 });

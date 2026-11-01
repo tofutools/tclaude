@@ -298,24 +298,30 @@ In both, each grant on a live Steward is for **This Steward only**, the default,
 or **All future Stewards**, which stores it and gives it to every new Steward,
 denies and scopes included. Stored sudo keeps its original expiry: a new Steward
 never restarts the clock. The editors show which of the three sources each grant
-comes from: this Steward, all future Stewards, or Config defaults, which are
-changed only in **Config > Steward**. Changing or revoking a stored grant applies
-to later Stewards too, and the revoke says so, while revoking an instance-only grant affects that
-instance alone. `permissions.grant` and `permissions.revoke` cannot be stored.
+comes from: this Steward, all future Stewards, or the **Reads and Writes** levels.
+Changing or revoking a stored grant applies to later Stewards too, and the revoke
+says so, while revoking an instance-only grant affects that instance alone. A
+revoke by an agent stops at the instance: only you change what is stored.
+
+**Config > Steward > Default permissions** edits the same stored list in the common
+permission editor, without a Steward running. It shows what a new Steward would
+hold, and you can deny any slug Reads or Writes give or grant any other, with scopes
+where a slug has them. With `dashboard.capture` denied, a new Steward's brief leaves
+capture out, and the **view** tick says **capture off** for any Steward without it.
+Older `steward.default_permissions` values move to this list when the daemon starts.
 
 Stewards that are already running catch up when the daemon starts or when they resume:
 each gets what its levels now give and a message saying so. Saving Config > Steward
 does not change one on its own. Each slug is given once, so this only adds: a deny
-stays, and so does a permission you took off that Steward. Default permissions reach
-new Stewards only.
+stays, and so does a permission you took off that Steward. A level slug with a stored
+deny is not given. Stored permissions reach new Stewards only.
 
 While an agent in the window holds elevated access, its tab and pill show **🔓**, and
 a band above its terminal lists what it holds. **End sudo** appears when it holds
 temporary sudo and ends that, with no confirmation; it can ask again. A sudo grant
 stored for all future Stewards ends for them too, and the band says so on that grant.
 Permanent access is listed but stays, including standing permissions stored for future
-Stewards: change standing permissions in the 🛡 editor, Config defaults in
-**Config > Steward**,
+Stewards: change standing permissions in the 🛡 editor or **Config > Steward**,
 and access from a group or from owning one in Groups.
 
 ### Making another agent the Steward
