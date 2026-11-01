@@ -17,9 +17,9 @@
 // is then where the first side ends, and free (freeX, freeY) where the second
 // starts. The children stay in their places.
 //
-// Any child can be any node. A tree has at least two windows, and a quad holds
-// four children: anything smaller collapses (collapseQuad). A path names a node
-// by the child indexes that reach it. Everything here is DOM-free.
+// Any child can be any node. A tree has at least one window, and a window that
+// leaves or is away leaves its cell empty, so the rest never move. A path names
+// a node by the child indexes that reach it. Everything here is DOM-free.
 
 import { OVERLAY_MIN_H, OVERLAY_MIN_W } from './overlay-window-model.js';
 
@@ -119,7 +119,8 @@ function quadAreas(node, area) {
 // splitLayout lays a tree out over area. rects maps each window to its
 // rectangle; lines are the shared split lines, each { path, area, axis, x, y, w,
 // h } with axis as the node's; crossings are the quads', { path, area, x, y };
-// gaps are the empty cells, { path, rect }. edges maps a window to the compass
+// gaps are the empty cells, { path, rect, held }, held naming a window that is
+// away and keeps the cell. edges maps a window to the compass
 // edges an unlocked line left it to resize, each { path, area, axis, side, partner },
 // side 'end' or 'start' of its line and partner where the other side's edge stands.
 export function splitLayout(tree, area) {
@@ -135,7 +136,7 @@ export function splitLayout(tree, area) {
       return;
     }
     if (isGap(node)) {
-      gaps.push({ path, rect: here });
+      gaps.push({ path, rect: here, held: node.held });
       return;
     }
     const edge = (axis, side, unlocked, partner) => (unlocked ? { path, area: here, axis, side, partner } : undefined);
@@ -178,14 +179,6 @@ export function splitEdges(free) {
   return [...sides, ...corners];
 }
 
-// coveringPath is the path of the smallest node holding every window of ids: in
-// a saved tree, the split a line of the showing tree belongs to. It stops at a
-// split, as a window and a gap are one window's split.
-export function coveringPath(tree, ids, path = []) {
-  const holder = childrenOf(tree).findIndex((child) => !isLeaf(child) && ids.every((id) => leavesOf(child).includes(id)));
-  return holder < 0 ? path : coveringPath(childrenOf(tree)[holder], ids, [...path, holder]);
-}
-
 // movedLine is the tree with one line of the node at path at a new position.
 // A quad's axis 'x' moves its vertical line, and 'y' its horizontal one.
 export function movedLine(tree, path, axis, pointer, area) {
@@ -198,8 +191,7 @@ export function movedLine(tree, path, axis, pointer, area) {
 }
 
 // movedEdge is the tree with an unlocked edge of the node at path at a new
-// position. The edge comes from the showing tree, where a quad with a window
-// away is binaries, so it goes by axis and side, as lines do.
+// position.
 export function movedEdge(tree, path, { axis, side, area }, pointer) {
   const share = clampShare(axis === 'x' ? (pointer.x - area.x) / area.w : (pointer.y - area.y) / area.h);
   return atPath(tree, path, (node) => {
@@ -250,18 +242,6 @@ function lineOf(axis, at, free, a, b) {
   return { axis, at, ...(free !== undefined && { free }), a, b };
 }
 
-// collapseQuad is what a quad becomes without one cell. The cell's neighbour in
-// its row takes the room, so the horizontal line stays where it is.
-function collapseQuad(quad, gone) {
-  const [tl, tr, bl, br] = quad.cells;
-  const rows = [[tl, tr], [bl, br]];
-  const row = (cells, index) => {
-    const kept = cells.filter((_, i) => i !== index);
-    return kept.length === 1 ? kept[0] : lineOf('x', quad.x, quad.freeX, cells[0], cells[1]);
-  };
-  return lineOf('y', quad.y, quad.freeY, row(rows[0], gone < 2 ? gone : -1), row(rows[1], gone >= 2 ? gone - 2 : -1));
-}
-
 // tidied folds whatever only holds empty cells into one.
 function tidied(node) {
   if (isLeaf(node) || isGap(node)) return node;
@@ -270,21 +250,28 @@ function tidied(node) {
   return isQuad(node) ? { ...node, cells: kept } : { ...node, a: kept[0], b: kept[1] };
 }
 
-// withoutWindow takes a window out, and its sibling gets the room. Null when
-// that leaves fewer than two windows, because one window is not a split.
+// withoutWindow takes a window out and leaves its cell empty, so nothing else
+// moves and the cell stays a place to drop one. Null with no window left.
 export function withoutWindow(tree, id) {
   const path = tree && pathTo(tree, id);
   if (!path) return tree;
   if (!path.length) return null;
-  const index = path[path.length - 1];
-  const next = tidied(atPath(tree, path.slice(0, -1), (parent) => (isQuad(parent) ? collapseQuad(parent, index) : childrenOf(parent)[1 - index])));
-  return leavesOf(next).length < 2 ? null : next;
+  const next = tidied(atPath(tree, path, () => GAP));
+  return leavesOf(next).length ? next : null;
 }
 
-// keepingWindows is the part of a tree that is showing now. The saved tree keeps
-// a minimized or closed window's place, for when it is back.
+// keepingWindows is what is showing now: the tree with the same shape, and an
+// empty cell held for each window that is away, for when it is back. A path in
+// one names the same node in the other.
 export function keepingWindows(tree, present) {
-  return leavesOf(tree).reduce((kept, id) => (present.has(id) ? kept : withoutWindow(kept, id)), tree);
+  if (!tree) return null;
+  const showing = (node) => {
+    if (isLeaf(node)) return present.has(node.id) ? node : { gap: true, held: node.id };
+    if (isGap(node)) return node;
+    return childrenOf(node).reduce((next, child, index) => withChild(next, index, showing(child)), node);
+  };
+  const kept = showing(tree);
+  return leavesOf(kept).length ? kept : null;
 }
 
 // whatever edge or corner of an area a zone names.
@@ -448,7 +435,7 @@ export function parseSplit(raw) {
     const tree = validNode(JSON.parse(raw || 'null'));
     if (!tree) return null;
     const ids = leavesOf(tree);
-    return ids.length >= 2 && new Set(ids).size === ids.length ? tree : null;
+    return !isLeaf(tree) && ids.length >= 1 && new Set(ids).size === ids.length ? tree : null;
   } catch {
     return null;
   }

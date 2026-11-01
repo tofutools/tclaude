@@ -53,10 +53,10 @@ page without blocking it, and comes back when you reload the tab.
   each side resizes from that edge on its own, so a space or an overlap can open.
   Drag an edge back near the other side's and a preview shows the snap: release there
   and the line is shared again, or press **Esc** to leave things as they were. The
-  other lines of a nested split or a quad stay as they are. Dragging one out by its title bar, or
-  closing or minimizing it, gives its room to its neighbour, and a window left alone
-  goes back to its own panel size. A minimized or maximized window rejoins the split
-  when it is back; a closed one does not. Pairs fill the room while it holds both windows at their
+  other lines of a nested split or a quad stay as they are. A window that leaves
+  never moves the others. Minimized or maximized, it keeps its cell and goes back into
+  it. Closed or dragged out by its title bar, it leaves its cell empty, and you can
+  drop any window there. The last window stays where it is. Pairs fill the room while it holds both windows at their
   minimum size.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free

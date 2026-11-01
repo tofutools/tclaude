@@ -61,12 +61,27 @@ test('every window has its own level from the start, so a reload keeps lines und
   assert.ok(level('a') >= overlay.OVERLAY_BOTTOM_LEVEL);
 });
 
-test('closing a window gives its place in a split to its sibling', async (t) => {
+test('closing a window leaves its cell empty, and the last one ends the split', async (t) => {
   const { harness, instances, overlay, prefs } = await setup(t, PAIR);
   await harness.act(() => instances.openOverlayWindow({ id: 'a', kind: 'k', label: 'A' }));
   await harness.act(() => instances.closeOverlayWindow('a'));
-  assert.equal(prefs.getItem(overlay.OVERLAY_SPLIT_PREF), '', 'one window is not a split');
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } });
   assert.equal(instances.overlayWindows.value.length, 0);
+  await harness.act(() => instances.openOverlayWindow({ id: 'b', kind: 'k', label: 'B' }));
+  await harness.act(() => instances.closeOverlayWindow('b'));
+  assert.equal(prefs.getItem(overlay.OVERLAY_SPLIT_PREF), '');
+});
+
+test('a click on a title bar brings focus to the window, and a control keeps its own', async (t) => {
+  const { harness, mounted } = await setup(t, PAIR);
+  const section = mounted.container.querySelector('.w-a');
+  const title = section.querySelector('.t');
+  const click = (node) => harness.act(() => node.dispatchEvent(new harness.window.Event('click', { bubbles: true })));
+  await click(title);
+  assert.ok(harness.document.activeElement === section, 'the border shows on this window');
+  const other = mounted.container.querySelector('.w-b');
+  await click(other.querySelector('.t'));
+  assert.ok(harness.document.activeElement === other, 'and moves with the next click, from another window');
 });
 
 test('a window opens once, and comes back rather than opening twice', async (t) => {

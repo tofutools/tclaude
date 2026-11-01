@@ -65,33 +65,70 @@ test('a tree that the room cannot hold is reported', async (t) => {
   assert.equal(fits(quad(), { ...AREA, h: 439 }), false);
 });
 
-test('closing a window gives its room to its sibling, and a pair ends', async (t) => {
-  const { withoutWindow } = await model(t);
-  assert.equal(withoutWindow(pair('x', 'a', 'b'), 'a'), null);
-  const tree = { axis: 'x', at: 0.3, a: { id: 'a' }, b: pair('y', 'b', 'c') };
-  assert.deepEqual(withoutWindow(tree, 'c'), pair('x', 'a', 'b', 0.3));
-  assert.deepEqual(withoutWindow(tree, 'a'), pair('y', 'b', 'c'));
+// Every shape a split can take, with an unlocked line among them.
+const SHAPES = {
+  pair: pair('x', 'a', 'b'),
+  offCentre: pair('y', 'a', 'b', 0.3),
+  twoPlusOne: { axis: 'x', at: 0.5, a: pair('y', 'a', 'b'), b: { id: 'c' } },
+  quad: quad(0.4, 0.6),
+  nested: { axis: 'x', at: 0.4, a: { id: 'a' }, b: { axis: 'y', at: 0.5, a: { id: 'b' }, b: pair('x', 'c', 'd') } },
+  unlockedPair: { axis: 'x', at: 0.4, free: 0.6, a: { id: 'a' }, b: { id: 'b' } },
+  unlockedQuad: { x: 0.4, y: 0.5, freeX: 0.6, cells: ['a', 'b', 'c', 'd'].map((id) => ({ id })) },
+  unlockedNested: { axis: 'x', at: 0.5, a: { axis: 'y', at: 0.4, free: 0.6, a: { id: 'a' }, b: { id: 'b' } }, b: { id: 'c' } },
+};
+const subsets = (ids) => ids.reduce((all, id) => [...all, ...all.map((some) => [...some, id])], [[]]).filter((some) => some.length);
+
+test('a window away keeps its cell in every shape, and nothing else moves', async (t) => {
+  const { keepingWindows, leavesOf, parseSplit, splitLayout } = await model(t);
+  for (const [name, tree] of Object.entries(SHAPES)) {
+    const whole = splitLayout(tree, AREA);
+    const ids = leavesOf(tree);
+    for (const away of subsets(ids).filter((some) => some.length < ids.length)) {
+      const here = new Set(ids.filter((id) => !away.includes(id)));
+      const showing = splitLayout(keepingWindows(tree, here), AREA);
+      for (const id of here) assert.deepEqual(showing.rects[id], whole.rects[id], `${name}: ${id} with ${away} away`);
+      assert.deepEqual(showing.gaps.map((cell) => cell.held).sort(), [...away].sort(), `${name}: each keeps its cell`);
+      for (const cell of showing.gaps) assert.deepEqual(cell.rect, whole.rects[cell.held], `${name}: the cell is the window's`);
+      assert.deepEqual(showing.lines.map(({ axis, path }) => [axis, path]), whole.lines.map(({ axis, path }) => [axis, path]), `${name}: the lines stay, at the same paths`);
+    }
+    assert.deepEqual(splitLayout(keepingWindows(tree, new Set(ids)), AREA).rects, whole.rects);
+    assert.equal(keepingWindows(tree, new Set()), null, 'nobody showing is no split');
+    assert.deepEqual(parseSplit(JSON.stringify(tree)), tree, 'the saved tree is not touched, so a reload changes nothing');
+  }
+  assert.equal(keepingWindows(null, new Set(['a'])), null);
+});
+
+test('a window that closes leaves its cell empty, in every shape and order', async (t) => {
+  const { leavesOf, parseSplit, splitLayout, withoutWindow } = await model(t);
+  for (const [name, tree] of Object.entries(SHAPES)) {
+    const whole = splitLayout(tree, AREA);
+    const ids = leavesOf(tree);
+    for (const gone of subsets(ids).filter((some) => some.length < ids.length)) {
+      const left = gone.reduce(withoutWindow, tree);
+      const laid = splitLayout(left, AREA);
+      for (const id of ids.filter((other) => !gone.includes(other))) assert.deepEqual(laid.rects[id], whole.rects[id], `${name}: ${id} after ${gone}`);
+      for (const id of gone) assert.ok(laid.gaps.some(({ rect }) => rect.x <= whole.rects[id].x && rect.y <= whole.rects[id].y && rect.x + rect.w >= whole.rects[id].x + whole.rects[id].w && rect.y + rect.h >= whole.rects[id].y + whole.rects[id].h), `${name}: ${id}'s cell is a place to drop`);
+      assert.deepEqual(parseSplit(JSON.stringify(left)), left, `${name}: a reload keeps it`);
+    }
+    assert.equal(ids.reduce(withoutWindow, tree), null, 'the last one ends the split');
+  }
+  const tree = SHAPES.pair;
   assert.equal(withoutWindow(tree, 'nobody'), tree);
 });
 
-test('closing a cell of a quad gives it to its row, and the horizontal line stays', async (t) => {
-  const { splitLayout, withoutWindow } = await model(t);
-  const without = withoutWindow(quad(0.4, 0.6), 'd');
-  assert.deepEqual(without, { axis: 'y', at: 0.6, a: pair('x', 'a', 'b', 0.4), b: { id: 'c' } });
-  assert.equal(splitLayout(without, AREA).rects.c.w, 1600);
-  const top = withoutWindow(quad(0.4, 0.6), 'a');
-  assert.deepEqual(top.a, { id: 'b' });
-  assert.deepEqual(top.b, pair('x', 'c', 'd', 0.4));
-  assert.deepEqual(withoutWindow(without, 'c'), pair('x', 'a', 'b', 0.4));
-});
-
-test('the showing tree leaves out windows that are away, and the saved one keeps them', async (t) => {
-  const { keepingWindows } = await model(t);
-  const tree = { axis: 'x', at: 0.5, a: { id: 'a' }, b: pair('y', 'b', 'c') };
-  assert.deepEqual(keepingWindows(tree, new Set(['a', 'c'])), pair('x', 'a', 'c'));
-  assert.equal(keepingWindows(tree, new Set(['a'])), null);
-  assert.equal(keepingWindows(null, new Set(['a'])), null);
-  assert.equal(tree.b.a.id, 'b');
+test('a window comes back into the cell it left, and the rest stay', async (t) => {
+  const { leavesOf, splitLayout, withinGap, withoutWindow } = await model(t);
+  for (const [name, tree] of Object.entries(SHAPES)) {
+    const whole = splitLayout(tree, AREA);
+    for (const id of leavesOf(tree)) {
+      const left = withoutWindow(tree, id);
+      const cell = splitLayout(left, AREA).gaps.find(({ rect }) => rect.x <= whole.rects[id].x + 1 && rect.y <= whole.rects[id].y + 1 && rect.x + rect.w >= whole.rects[id].x + whole.rects[id].w);
+      const { x, y, w, h } = cell.rect;
+      const back = splitLayout(withinGap(left, cell, { x: x + w / 2, y: y + h / 2 }, 'z'), AREA);
+      assert.deepEqual(back.rects.z, whole.rects[id], `${name}: ${id}`);
+      for (const other of leavesOf(tree).filter((one) => one !== id)) assert.deepEqual(back.rects[other], whole.rects[other], `${name}: ${other} stays`);
+    }
+  }
 });
 
 test('windows facing each other pair up and fill the room', async (t) => {
@@ -126,17 +163,14 @@ test('a quad keeps the line that was already there', async (t) => {
   assert.equal(withWindow(dragged, 'a', 'bottom-left', 'd').y, 0.3);
 });
 
-test('a line of the showing tree finds its split in the saved one', async (t) => {
-  const { coveringPath, keepingWindows, movedLine, leavesOf, nodeAt, splitLayout } = await model(t);
+test('a line moves with a window away, and that window keeps its place', async (t) => {
+  const { keepingWindows, movedLine, leavesOf, splitLayout } = await model(t);
   const saved = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { axis: 'y', at: 0.5, a: { id: 'b' }, b: pair('x', 'c', 'd') } };
   const live = keepingWindows(saved, new Set(['a', 'b', 'c']));
-  const [, inner] = splitLayout(live, AREA).lines;
-  const path = coveringPath(saved, leavesOf(nodeAt(live, inner.path)));
-  const moved = movedLine(saved, path, inner.axis, { x: 1200, y: 240 }, inner.area);
-  assert.equal(moved.b.at, 0.25);
-  assert.deepEqual(leavesOf(moved), ['a', 'b', 'c', 'd'], 'the window that is away keeps its place');
-  const crossing = { x: 0.5, y: 0.5, cells: ['a', 'b', 'c', 'd'].map((id) => ({ id })) };
-  assert.deepEqual(coveringPath(crossing, ['a', 'b']), [], 'a collapsed quad line is the quad');
+  const inner = splitLayout(live, AREA).lines.find((line) => line.path.length === 2);
+  const moved = movedLine(saved, inner.path, inner.axis, { x: 1200, y: 240 }, inner.area);
+  assert.equal(moved.b.b.at, 0.5);
+  assert.deepEqual(leavesOf(moved), ['a', 'b', 'c', 'd']);
 });
 
 test('a drop counts near an edge or corner of a window, not in its middle', async (t) => {
@@ -211,23 +245,19 @@ test('a window fills a gap, both gaps of a side, or a corner of an empty half', 
   assert.equal(rectZone({ x: 0, y: 500, w: 1000, h: 400 }, room), 'bottom');
 });
 
-test('a window leaving a gap beside it ends the split; a gap holds its place otherwise', async (t) => {
-  const { roomTree, withoutWindow, keepingWindows, parseSplit } = await model(t);
+test('empty cells fold into one where a whole part is empty, and survive a reload', async (t) => {
+  const { roomTree, withoutWindow, parseSplit } = await model(t);
   const half = roomTree([['a', 'left'], ['b', 'top-right']]);
-  assert.equal(withoutWindow(half, 'b'), null);
-  assert.equal(withoutWindow(half, 'a'), null);
+  assert.deepEqual(withoutWindow(half, 'b'), { ...half, b: gap });
+  assert.equal(withoutWindow(withoutWindow(half, 'b'), 'a'), null);
   const three = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, gap] };
-  assert.deepEqual(withoutWindow(three, 'c'), { axis: 'y', at: 0.5, a: pair('x', 'a', 'b'), b: gap });
-  assert.equal(keepingWindows(three, new Set(['a'])), null);
   assert.deepEqual(parseSplit(JSON.stringify(three)), three, 'a gap survives a reload');
-  assert.equal(parseSplit(JSON.stringify(half.b)), null, 'one window is not a split');
+  assert.deepEqual(parseSplit(JSON.stringify(half.b)), half.b, 'one window can keep its cell');
+  assert.equal(parseSplit(JSON.stringify({ axis: 'x', at: 0.5, a: gap, b: gap })), null, 'no window is no split');
 });
 
-test('a line beside a gap is found, and its windows stay put when a pushed line unlocks', async (t) => {
-  const { coveringPath, roomTree, splitLayout, unlockedLine, movedEdge, withoutWindow } = await model(t);
-  const half = roomTree([['a', 'left'], ['b', 'top-right']]);
-  assert.deepEqual(coveringPath(half, ['b']), [1], 'the split, not the window in it');
-
+test('windows stay put when a pushed line unlocks', async (t) => {
+  const { splitLayout, unlockedLine, movedEdge, withoutWindow } = await model(t);
   const pushed = pair('x', 'a', 'b', 0.05);
   const shown = splitLayout(pushed, room).rects;
   assert.deepEqual(splitLayout(unlockedLine(pushed, [], 'x', room), room).rects, shown, 'a line pushed past a minimum');
@@ -236,7 +266,7 @@ test('a line beside a gap is found, and its windows stay put when a pushed line 
   const open = unlockedLine(quad, [], 'x', room);
   const live = splitLayout(withoutWindow(open, 'd'), room);
   const moved = movedEdge(open, [], live.edges.a.e, { x: 400, y: 200 });
-  assert.equal(moved.x, 0.4, 'an edge of a collapsed quad moves the saved quad');
+  assert.equal(moved.x, 0.4, 'an edge moves the quad with a cell empty');
   assert.equal(moved.at, undefined);
 });
 
@@ -305,5 +335,5 @@ test('detach unlocks one line: the windows stay put, and each side has its own e
   const both = splitLayout(unlockedLine(unlockedLine(quad, [], 'x', room), [], 'y', room), room);
   assert.deepEqual(splitEdges(both.edges.a), ['s', 'e', 'se']);
   const after = withoutWindow(unlockedLine(quad, [], 'x', room), 'd');
-  assert.equal(after.a.free, 0.5, 'collapsing a quad keeps a line unlocked');
+  assert.equal(after.freeX, 0.5, 'a cell left empty keeps a line unlocked');
 });
