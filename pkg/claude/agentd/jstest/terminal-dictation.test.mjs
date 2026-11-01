@@ -576,18 +576,16 @@ test('it stops rather than sends while the agent waits on the operator', async (
   assert.equal(s.speech.made.length, 1);
 });
 
-test('an open approval or decision holds it too, with the session still working', async (t) => {
+test('only what blocks the agent holds it, with the session still working', async (t) => {
   const { paneContinuous } = await (await createPreactHarness(t)).importDashboardModule('js/terminal-dictation.js');
   const base = { voice: { continuous_enabled: true }, harnesses: CATALOG, agents: [{ agent_id: AGENT, conv_id: 'c1', state: { harness: 'claude', status: 'working' } }] };
   const held = (extra) => paneContinuous({ seed: { harness: 'claude' } }, { agent: AGENT }, { ...base, ...extra }, 'alpha').held();
   assert.equal(held({}), '');
   assert.match(held({ access_requests: [{ agent_id: AGENT, status: 'pending', perm: 'x' }] }), /waiting on you/);
   assert.match(held({ access_requests: [{ agent_id: AGENT, status: 'pending', perm: 'models.proxy' }] }), /waiting on you/, 'a request no card can answer counts');
-  assert.match(held({ access_requests: [{ conv_id: 'c1', status: 'pending', proposal: true }] }), /waiting on you/);
   assert.equal(held({ access_requests: [{ agent_id: AGENT, status: 'approved' }] }), '');
   assert.equal(held({ access_requests: [{ agent_id: 'agt_other', status: 'pending' }] }), '');
-  assert.match(held({ messages: [{ id: 1, from_agent: AGENT, options: ['yes', 'no'] }] }), /waiting on you/);
-  assert.equal(held({ messages: [{ id: 1, from_agent: AGENT, options: ['yes', 'no'], decision: { choice: 'yes' } }] }), '', 'an answered decision holds nothing');
+  assert.equal(held({ messages: [{ id: 1, from_agent: AGENT, options: ['yes', 'no'] }] }), '', 'an open decision blocks nobody');
 });
 
 test('with silence send off the first message waits for the send phrase', async (t) => {
