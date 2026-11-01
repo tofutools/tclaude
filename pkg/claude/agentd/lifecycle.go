@@ -337,8 +337,8 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		}
 		// A successful kill-pane is tmux letting go of the pane, not proof the
 		// harness process died — it can be wedged in uninterruptible work or
-		// held open by a child. The signal half of the ladder (SIGTERM, then
-		// SIGKILL) follows, so a force stop is never weaker than a soft one: a
+		// held open by a child. The rest of the ladder follows while tmux still
+		// lists the pane, so a force stop reaches as far as a soft one: a
 		// waiting caller gets it inline, anyone else out-of-band.
 		if !waitPolicy.wait {
 			scheduleForceStopEscalation(target, lifecycleAction, relatedEventID)
