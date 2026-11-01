@@ -48,12 +48,19 @@ function roleOf(el) {
   return '';
 }
 
+// holdsMasked says an element's text may hold a secret marked for capture, which
+// an annotation carries to the agent just as a capture does.
+function holdsMasked(node) {
+  return !!(node.closest?.('[data-capture-mask]') || node.querySelector?.('[data-capture-mask]'));
+}
+
 // labelFor names an element the way the operator sees it: its own short text,
 // else the nearest ancestor with short text (a cell, a card title, a button).
 export function labelFor(el) {
   let node = el;
   for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
     if (node.tagName === 'BODY' || node.tagName === 'HTML') break;
+    if (holdsMasked(node)) continue;
     const { label, text } = textOf(node);
     // A field is named by its label or placeholder, never by what is typed
     // in it (a token, a password).
@@ -67,7 +74,7 @@ export function labelFor(el) {
     }
   }
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el?.tagName)) return { text: 'an unlabelled field', role: 'field' };
-  const fallback = el ? textOf(el).text : '';
+  const fallback = el && !holdsMasked(el) ? textOf(el).text : '';
   return fallback ? { text: `${fallback.slice(0, LABEL_MAX - 1)}…`, role: '' } : null;
 }
 

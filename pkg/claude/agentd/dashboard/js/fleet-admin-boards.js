@@ -166,7 +166,7 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
       <span class="spacer"></span>
       <button type="button" id="fleet-board-rotate" onClick=${rotate}>Change key…</button>
     </div>`}
-    ${token?.token && html`<div class="fa-hub-token" id="fleet-board-new-invite">Invite, shown once (expires ${new Date(token.expires_at).toLocaleString()}): <code>${token.token}</code>
+    ${token?.token && html`<div class="fa-hub-token" id="fleet-board-new-invite">Invite, shown once (expires ${new Date(token.expires_at).toLocaleString()}): <code data-capture-mask>${token.token}</code>
       <button type="button" class="fa-link" onClick=${() => copy(token.token).then(() => toast('Invite copied', false)).catch(() => toast('Copy it from the page', true))}>copy</button>
       <button type="button" class="fa-link" id="fleet-board-invite-cancel" onClick=${() => cancelInvite(token.token_id)}>cancel invite…</button>
       <button type="button" class="fa-link" onClick=${() => setToken(null)}>hide</button></div>`}
@@ -278,7 +278,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
     ${browsing ? html`${updates?.updates?.length > 0 && html`<${BoardUpdates} updates=${updates} actions=${actions} toast=${toast} loadUpdates=${loadUpdates} onOpen=${(id) => { setOpen(id); setMode('manage'); }} />`}<${ContentBrowser} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} onOpenBoard=${(id) => { setOpen(id); setMode('manage'); }} />` : html`
     <div class="muted fa-wrap">Boards share content with other nodes through the hub, without linking the nodes or giving anyone access to this machine. ${HUB_TRUST}</div>
     <div class="fa-row" id="fleet-board-join">
-      <input id="fleet-board-token" class="fa-grow" placeholder="Paste an invite to join a board" autocomplete="off" spellcheck="false" value=${token}
+      <input data-capture-mask id="fleet-board-token" class="fa-grow" placeholder="Paste an invite to join a board" autocomplete="off" spellcheck="false" value=${token}
         onInput=${(e) => { setToken(e.currentTarget.value); setJoinFail(''); }} onKeyDown=${(e) => { if (e.key === 'Enter') join(); }} />
       <button type="button" class="primary" id="fleet-board-join-btn" disabled=${busy || !token.trim()} onClick=${join}>Join</button>
       <input id="fleet-board-name" placeholder="New board name" value=${name} onInput=${(e) => setName(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter') create(); }} />

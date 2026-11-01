@@ -22,7 +22,7 @@ function TokenDialog({ created, self, copy, toast, onClose }) {
   return html`<${Overlay} id="fleet-token-modal" labelledby="fleet-token-title" onClose=${onClose}>
     <h3 id="fleet-token-title">Invite token for profile ${created.claims?.profile_name || ''}</h3>
     <div class="fa-consequence" role="note">Shown once. It is a bearer secret: deliver it privately (not in chat or a ticket), and the joining operator should pass it on stdin.</div>
-    <textarea id="fleet-token-bearer" class="fa-bearer" readonly rows="3" onFocus=${(e) => e.currentTarget.select?.()}>${created.token}</textarea>
+    <textarea data-capture-mask id="fleet-token-bearer" class="fa-bearer" readonly rows="3" onFocus=${(e) => e.currentTarget.select?.()}>${created.token}</textarea>
     <div class="fa-dl">
       <span class="fa-k">Master</span><code class="fa-wrap">${self.id}</code>
       <span class="fa-k">Fingerprint</span><code class="fa-wrap fa-fp-full">${created.master_fingerprint || self.fingerprint}</code>
