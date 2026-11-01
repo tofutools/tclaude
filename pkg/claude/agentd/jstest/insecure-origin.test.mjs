@@ -28,3 +28,12 @@ test('a menu that cannot read the clipboard blames plain HTTP only on a plain ht
   assert.match(clipboardReadNote('Ctrl+V', { isSecureContext: false }), /over plain HTTP except on localhost\. Use Ctrl\+V/);
   assert.doesNotMatch(clipboardReadNote('Ctrl+V', { isSecureContext: true }), /HTTP/);
 });
+
+test('dictationBlock names what stops dictation, and nothing on a secure page', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { dictationBlock } = await harness.importDashboardModule('js/insecure-origin.js');
+  assert.equal(dictationBlock(true, { isSecureContext: true }), null);
+  assert.equal(dictationBlock(true, {}), null, 'an unknown context is not treated as blocked');
+  assert.match(dictationBlock(true, { isSecureContext: false }).note, /HTTPS or localhost/);
+  assert.match(dictationBlock(false, { isSecureContext: false }).note, /this browser/, 'HTTPS would not help this browser');
+});
