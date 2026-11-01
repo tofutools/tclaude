@@ -18,7 +18,7 @@
 // Terminals" parks this tab instead of fighting over the session.
 
 import { h, render } from 'preact';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
@@ -267,7 +267,7 @@ export function CompanionApp({
     onPlaced: () => writePref(prefs, COMPANION_WINDOW_SPOT_PREF, ''),
     onRefocus: () => setFocusToken((n) => n + 1),
   });
-  const { placement, windowRef, openFrom, releaseFocus } = overlay;
+  const { windowRef, openFrom, releaseFocus } = overlay;
   const [menu, setMenu] = useState(false);
   const addRef = useRef(null);
   const [busy, setBusy] = useState(false);
