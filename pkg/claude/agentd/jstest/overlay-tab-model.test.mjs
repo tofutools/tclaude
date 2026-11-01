@@ -22,9 +22,9 @@ test('every window saved before tabs comes back as a window of one tab, with its
   const { parseSavedOverlays } = await model(t);
   const { windows, minimizedTabs } = parseSavedOverlays(JSON.stringify(OLD_SAVED), anyTab);
   assert.deepEqual(windows, [
-    { id: 'chat:agt_0123456789abcdef', tabs: [{ id: 'chat:agt_0123456789abcdef', kind: 'chat', agent: 'agt_0123456789abcdef', label: 'Worker' }], active: 'chat:agt_0123456789abcdef', minimized: false },
-    { id: 'terminal:/api/term-ws/abc', tabs: [{ id: 'terminal:/api/term-ws/abc', kind: 'terminal', paneKey: '/api/term-ws/abc', ws: '/api/term-ws/abc', agent: '', label: 'repo shell' }], active: 'terminal:/api/term-ws/abc', minimized: true },
-    { id: 'board:plan', tabs: [{ id: 'board:plan', kind: 'board', board: 'plan', label: 'Release plan' }], active: 'board:plan', minimized: false, focusAsked: 2 },
+    { id: 'chat:agt_0123456789abcdef', tabs: [{ id: 'chat:agt_0123456789abcdef', kind: 'chat', agent: 'agt_0123456789abcdef', label: 'Worker' }], active: 'chat:agt_0123456789abcdef', minimized: false, place: 'tclaude.dash.chat-window.placement.agt_0123456789abcdef' },
+    { id: 'terminal:/api/term-ws/abc', tabs: [{ id: 'terminal:/api/term-ws/abc', kind: 'terminal', paneKey: '/api/term-ws/abc', ws: '/api/term-ws/abc', agent: '', label: 'repo shell' }], active: 'terminal:/api/term-ws/abc', minimized: true, place: 'tclaude.dash.terminal-window.placement./api/term-ws/abc' },
+    { id: 'board:plan', tabs: [{ id: 'board:plan', kind: 'board', board: 'plan', label: 'Release plan' }], active: 'board:plan', minimized: false, place: 'tclaude.dash.board-overlay.placement.plan', focusAsked: 2 },
   ]);
   assert.deepEqual(minimizedTabs, []);
 });
@@ -43,7 +43,7 @@ test('a window keeps its valid tabs, and goes with none left', async (t) => {
     { id: 'w', tabs, active: 'bad', minimized: false },
     { id: 'gone', tabs: [{ id: 'worse', kind: 'no' }], active: 'worse' },
   ] }), (tab) => tab.kind === 'yes');
-  assert.deepEqual(windows, [{ id: 'w', tabs: [tabs[1]], active: 'good', minimized: false }]);
+  assert.deepEqual(windows, [{ id: 'w', tabs: [tabs[1]], active: 'good', minimized: false, place: '' }]);
 });
 
 test('a tab saved twice opens in one place', async (t) => {
@@ -57,6 +57,16 @@ test('a tab saved twice opens in one place', async (t) => {
   assert.deepEqual(saved.minimizedTabs, []);
 });
 
+test('a window keeps its place whatever its tabs do, and a bad one is not trusted', async (t) => {
+  const { parseSavedOverlays, placementKeyOf } = await model(t);
+  const tab = { id: 'board:map', kind: 'board', board: 'map' };
+  const place = 'tclaude.dash.chat-window.placement.agt_1';
+  const read = (saved) => parseSavedOverlays(JSON.stringify({ windows: [{ id: 'w', tabs: [tab], active: tab.id, place: saved }] }), anyTab).windows[0].place;
+  assert.equal(read(place), place, 'the chat it was made around has since left it');
+  assert.equal(read('someone.elses.pref'), placementKeyOf(tab));
+  assert.equal(read(7), placementKeyOf(tab));
+});
+
 test('whatever else was saved reads as nothing', async (t) => {
   const { parseSavedOverlays } = await model(t);
   const none = { windows: [], minimizedTabs: [] };
@@ -67,11 +77,13 @@ test('whatever else was saved reads as nothing', async (t) => {
 });
 
 test('a drop point is not saved, and every tab reads what it takes from its window', async (t) => {
-  const { savedOverlays, tabsOfWindows, windowHolding, windowOfTab } = await model(t);
+  const { activeTabOf, savedOverlays, tabsOfWindows, windowHolding, windowOfTab } = await model(t);
   const window = windowOfTab({ id: 'a', kind: 'k', label: 'A', at: { x: 1, y: 2 } });
   assert.deepEqual(window.at, { x: 1, y: 2 });
   assert.equal(JSON.parse(savedOverlays([window], [])).windows[0].at, undefined);
   assert.deepEqual(tabsOfWindows([{ ...window, minimized: true }]), [{ id: 'a', kind: 'k', label: 'A', windowId: 'a', minimized: true, focusAsked: undefined, at: { x: 1, y: 2 } }]);
+  assert.equal(activeTabOf(window).at.x, 1);
+  assert.equal(activeTabOf({ ...window, active: 'gone' }), null);
   assert.equal(windowHolding([window], 'a'), window);
   assert.equal(windowHolding([window], 'b'), null);
 });

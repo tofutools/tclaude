@@ -394,16 +394,12 @@ const boardOverlayDescriptor = createIslandDescriptor({
   label: 'Board overlay',
   hosts: { host: '#board-overlay-root' },
   failureClass: 'board-overlay-error',
-  load: async ({ hosts: { host }, dependencies }) => {
+  load: async ({ hosts: { host } }) => {
     const islandModule = import('./board-overlay.js');
     const snapshotStoreModule = import('./snapshot-store.js');
-    const prefsModule = import('./prefs.js');
-    const [{ mountBoardOverlayIsland }, { dashboardState }, { dashPrefs }] =
-      await Promise.all([islandModule, snapshotStoreModule, prefsModule]);
+    const [{ mountBoardOverlayIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
     return {
-      mount: (registerCleanup) => mountBoardOverlayIsland({
-        host, registerCleanup, snapshot: dashboardState.snapshot, notify: dependencies.notify, prefs: dashPrefs,
-      }),
+      mount: (registerCleanup) => mountBoardOverlayIsland({ host, registerCleanup, snapshot: dashboardState.snapshot }),
     };
   },
 });

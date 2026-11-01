@@ -4,12 +4,38 @@
 // { id, kind, label, ...what its kind needs }. A tab minimized by itself leaves
 // its window, and waits as { tab, home }, home being the window it came from.
 //
+// A window's placement is saved under place, which is settled when the window
+// is made, so what its tabs do later never moves it.
+//
 // Everything here is DOM-free so it can be tested directly.
+
+export const CHAT_PLACEMENT_PREF = 'tclaude.dash.chat-window.placement';
+export const TERMINAL_WINDOW_PREF = 'tclaude.dash.terminal-window.placement';
+export const BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.board-overlay.placement';
+
+// Each kind's placements, by the field that names the tab's content.
+const PLACEMENTS = Object.freeze({
+  chat: [CHAT_PLACEMENT_PREF, 'agent'],
+  terminal: [TERMINAL_WINDOW_PREF, 'paneKey'],
+  board: [BOARD_OVERLAY_PLACEMENT_PREF, 'board'],
+});
+
+// placementKeyOf is where a window opened around tab saves its placement: where
+// that content's own window has always saved it.
+export function placementKeyOf(tab) {
+  const [pref, field] = PLACEMENTS[tab.kind] || [];
+  return pref ? `${pref}.${tab[field]}` : '';
+}
 
 // windowOfTab is a new window around one tab. It takes the tab's id, so a window
 // saved before tabs keeps its place in the stack and in a split.
 export function windowOfTab({ minimized = false, at, focusAsked, ...tab }) {
-  return { id: tab.id, tabs: [tab], active: tab.id, minimized: !!minimized, ...(at && { at }), ...(focusAsked && { focusAsked }) };
+  return { id: tab.id, tabs: [tab], active: tab.id, minimized: !!minimized, place: placementKeyOf(tab), ...(at && { at }), ...(focusAsked && { focusAsked }) };
+}
+
+// activeTabOf is the tab a window shows, with what it takes from its window.
+export function activeTabOf(window) {
+  return tabsOfWindows([window]).find((tab) => tab.id === window.active) || null;
 }
 
 // windowHolding finds the window a tab is in.
@@ -42,7 +68,8 @@ function savedWindow(raw, valid, seen) {
   const tabs = keptTabs(window.tabs, valid, seen);
   if (typeof window.id !== 'string' || !tabs.length) return null;
   const active = tabs.some((tab) => tab.id === window.active) ? window.active : tabs[0].id;
-  return { ...window, tabs, active, minimized: !!window.minimized };
+  const place = typeof window.place === 'string' && window.place.startsWith('tclaude.dash.') ? window.place : placementKeyOf(tabs[0]);
+  return { ...window, tabs, active, minimized: !!window.minimized, place };
 }
 
 function savedMinimizedTab(raw, valid, seen) {

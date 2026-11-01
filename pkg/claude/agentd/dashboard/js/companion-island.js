@@ -32,10 +32,10 @@ import { compactWidth, measureFooterRoom, useFooterRest } from './companion-chip
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
-import { closeOverlayWindow, focusOverlayWindow, openOverlayWindow, overlayTabs } from './overlay-instances.js';
+import { closeOverlayWindow, focusOverlayWindow, openOverlayWindow, overlayTabs, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
-import { ChatWindow } from './chat-window.js';
-import { TerminalWindow } from './terminal-window.js';
+import { OverlayTabWindow } from './overlay-tab-window.js';
+import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
@@ -1482,12 +1482,15 @@ export function CompanionApp({
       onEdit=${(text) => { speaker.cancel(); setDraft(activeAgent.agentId, text); }} />`}
   <//>`;
 
+  const shownTerminal = { snapshot, prefs, win, widgetFactory, loadRuntime, Terminal: CompanionTerminal };
+  const tabKinds = {
+    [CHAT_WINDOW_KIND]: { ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onBackToTab: chatBackToTab, onSeparateWindow: detachWindow ? chatToWindow : null, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot },
+    [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
+    [BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
+  };
+
   return html`
-    ${overlayTabs.value.filter((tab) => tab.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
-      snapshot=${snapshot} prefs=${prefs} win=${win} fetchImpl=${fetchImpl} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
-      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onSeparateWindow=${detachWindow ? chatToWindow : null} onStewardDown=${stewardShutDown} stewardRoster=${stewardRoster} openPermissions=${openPermissions} openSudo=${openSudo} openStewardHandover=${openStewardHandover} showAgent=${showAgent} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
-    ${overlayTabs.value.filter((tab) => tab.kind === TERMINAL_WINDOW_KIND).map((instance) => html`<${TerminalWindow} key=${instance.id} instance=${instance}
-      snapshot=${snapshot} prefs=${prefs} win=${win} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} Terminal=${CompanionTerminal} />`)}
+    ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} prefs=${prefs} win=${win} kinds=${tabKinds} />`)}
     ${windowView}
     ${chipSlots}
     ${chips}
