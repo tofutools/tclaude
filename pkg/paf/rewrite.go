@@ -3,6 +3,7 @@ package paf
 import (
 	"errors"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -22,6 +23,8 @@ func WithPrivacy(a *Archive, out io.Writer, p Privacy, limits Limits, producer P
 	}
 	w.extReq = append(w.extReq, m.ExtensionsRequired...)
 	w.manExt = m.Extensions
+	w.workflows = slices.Clone(m.Workflows)
+	w.links = slices.Clone(m.Links)
 	for _, e := range m.Entries {
 		if e.Path == PrivacyPath {
 			continue

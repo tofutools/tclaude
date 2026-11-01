@@ -32,9 +32,19 @@ type Summary struct {
 	Bytes       int64              `json:"bytes"`
 	Group       *GroupSummary      `json:"group,omitempty"`
 	Agents      []AgentSummary     `json:"agents"`
-	Privacy     *PrivacySummary    `json:"privacy,omitempty"`
+	// Workflows are the workflows the file carries beside its agents.
+	Workflows []WorkflowSummary `json:"workflows,omitempty"`
+	Privacy   *PrivacySummary   `json:"privacy,omitempty"`
 	// Rescan is the reader's own credential scan, when it ran one.
 	Rescan []paf.Finding `json:"rescan,omitempty"`
+}
+
+// WorkflowSummary is one workflow of the envelope, and who it is tied to.
+type WorkflowSummary struct {
+	Key        string            `json:"key"`
+	Root       string            `json:"root"`
+	Performers map[string]string `json:"performers,omitempty"`
+	CarriedBy  []string          `json:"carried_by,omitempty"`
 }
 
 type ExtensionSummary struct {
@@ -65,23 +75,23 @@ type GroupSummary struct {
 }
 
 type AgentSummary struct {
-	Key          string          `json:"key"`
-	Name         string          `json:"name"`
-	Title        string          `json:"title,omitempty"`
-	Role         string          `json:"role,omitempty"`
-	Harness      string          `json:"harness"`
-	Model        string          `json:"model,omitempty"`
-	Effort       string          `json:"effort,omitempty"`
-	Cwd          string          `json:"cwd,omitempty"`
-	Groups       []string        `json:"groups,omitempty"`
-	Lineage      []string        `json:"lineage,omitempty"`
-	Native       *NativeSummary  `json:"native,omitempty"`
-	Context      []ContextFile   `json:"context,omitempty"`
-	Handoff      bool            `json:"handoff,omitempty"`
-	LandingRung  string          `json:"landing_rung,omitempty"`
-	Losses       []paf.LossItem  `json:"losses,omitempty"`
+	Key         string         `json:"key"`
+	Name        string         `json:"name"`
+	Title       string         `json:"title,omitempty"`
+	Role        string         `json:"role,omitempty"`
+	Harness     string         `json:"harness"`
+	Model       string         `json:"model,omitempty"`
+	Effort      string         `json:"effort,omitempty"`
+	Cwd         string         `json:"cwd,omitempty"`
+	Groups      []string       `json:"groups,omitempty"`
+	Lineage     []string       `json:"lineage,omitempty"`
+	Native      *NativeSummary `json:"native,omitempty"`
+	Context     []ContextFile  `json:"context,omitempty"`
+	Handoff     bool           `json:"handoff,omitempty"`
+	LandingRung string         `json:"landing_rung,omitempty"`
+	Losses      []paf.LossItem `json:"losses,omitempty"`
 	// PriorReports counts the loss reports of earlier conversions.
-	PriorReports int `json:"prior_reports,omitempty"`
+	PriorReports int             `json:"prior_reports,omitempty"`
 	Placeholders []string        `json:"placeholders,omitempty"`
 	Workspace    *paf.Workspace  `json:"workspace,omitempty"`
 	Sandbox      []string        `json:"sandbox,omitempty"`
@@ -147,6 +157,22 @@ func Summarize(a *paf.Archive, source string) Summary {
 		CreatedAt: m.CreatedAt, Producer: m.Producer, Requires: m.Requires,
 		Unsupported: a.Unsupported, Warnings: a.Warnings, Entries: len(m.Entries), Signatures: []SignatureSummary{},
 		Agents: []AgentSummary{},
+	}
+	for _, wf := range m.Workflows {
+		row := WorkflowSummary{Key: wf.Key, Root: wf.Root}
+		for _, l := range m.Links {
+			switch {
+			case l.Workflow != wf.Key:
+			case l.Type == paf.LinkPerformer:
+				if row.Performers == nil {
+					row.Performers = map[string]string{}
+				}
+				row.Performers[l.Role] = l.Agent
+			case l.Type == paf.LinkCarries:
+				row.CarriedBy = append(row.CarriedBy, l.Agent)
+			}
+		}
+		s.Workflows = append(s.Workflows, row)
 	}
 	sizes := map[string]int64{}
 	for _, e := range m.Entries {

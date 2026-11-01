@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
+	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
 // Archive formats an agent transfer can be written in.
@@ -105,12 +106,19 @@ type pafHistoryParts struct {
 	// LossCountsOnly keeps free text out of the loss report, for a PAF
 	// leaving this node.
 	LossCountsOnly bool
+	// Workflows are carried beside the agent, linked to it.
+	Workflows []pwf.Bundle
 }
 
 func archiveAgentPAFWith(b *agentbundle.Bundle, sign bool, parts pafHistoryParts) (*os.File, error) {
 	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit(), AllowedFindings: parts.AllowedFindings, Snapshot: parts.Snapshot, Lineage: parts.Lineage, Handoff: parts.Handoff, LossCountsOnly: parts.LossCountsOnly}
 	if !parts.NoContext {
 		opts.Context = neutralContext(b)
+	}
+	if len(parts.Workflows) > 0 {
+		opts.AddContent = func(w *paf.Writer, agents []string) error {
+			return writeCarriedWorkflows(w, parts.Workflows, agents, true)
+		}
 	}
 	if b.Manifest.History != nil {
 		opts.EarlierLosses = storedConvLosses(b.Manifest.History.SourceConvID)

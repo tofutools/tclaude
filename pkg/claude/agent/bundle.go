@@ -29,6 +29,23 @@ type bundleExportParams struct {
 	NoContext               bool   `long:"no-context" help:"PAF only: leave the harness-neutral copy of the conversation out."`
 	WithSummary             bool   `long:"with-summary" help:"PAF only: first ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
 	SummaryWait             string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
+	CarriedWorkflowParams
+}
+
+// CarriedWorkflowParams choose the workflows an export carries (docs/paf.md,
+// "The envelope"). Carrying one needs process.templates.read.
+type CarriedWorkflowParams struct {
+	Workflow  []string `long:"workflow" optional:"true" help:"Carry this process template and everything it references (repeatable). Needs process.templates.read."`
+	Workflows bool     `long:"workflows" help:"Carry the workflows this has: an agent's active runs, or a group's saved processes. Needs process.templates.read."`
+}
+
+func (p CarriedWorkflowParams) addTo(q url.Values) {
+	for _, id := range p.Workflow {
+		q.Add("workflow", id)
+	}
+	if p.Workflows {
+		q.Set("workflows", "own")
+	}
 }
 
 // pafExportParams are bundleExportParams for `tclaude paf export`, which
@@ -43,6 +60,7 @@ type pafExportParams struct {
 	AllowFlagged            bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
 	WithSummary             bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
 	SummaryWait             string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
+	CarriedWorkflowParams
 }
 
 // PAFExportCmd is `tclaude paf export`: agent bundle export writing PAF.
@@ -52,7 +70,7 @@ func PAFExportCmd() *cobra.Command {
 			"The conversation travels as the native history plus a harness-neutral copy, so it can land on any harness. " +
 			"Credential-shaped text refuses the export unless --allow-flagged. Needs agent.bundle.export.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleExport(&bundleExportParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait}, os.Stderr))
+			os.Exit(runBundleExport(&bundleExportParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait, CarriedWorkflowParams: p.CarriedWorkflowParams}, os.Stderr))
 		}}.ToCobra()
 }
 
@@ -89,6 +107,8 @@ type bundleImportParams struct {
 	ConfirmHistoryLoss        bool     `long:"confirm-history-loss" help:"Accept a landing that cuts 25% or more of the conversation to fit the landing model; the full history stays in the file and is saved beside the agent."`
 	Harness                   string   `long:"harness" optional:"true" help:"Land on this harness instead of the source one; the conversation is translated."`
 	Model                     string   `long:"model" optional:"true" help:"Landing model; the conversation is budgeted to its context window."`
+	Agent                     string   `long:"agent" optional:"true" help:"Which agent to land from a .paf that ships several for a workflow."`
+	Role                      string   `long:"role" optional:"true" help:"Land under this role instead of the one the file records, such as the role a workflow asks for."`
 	ImportKeepParams
 	JSON bool `long:"json" help:"Print the full machine-readable preview or result."`
 }
@@ -160,6 +180,7 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 	if p.NoContext {
 		q.Set("no_context", "true")
 	}
+	p.CarriedWorkflowParams.addTo(q)
 	archive, err := os.CreateTemp("", ".agent-cli-export-")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -230,7 +251,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		fmt.Fprintf(stderr, "archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d\n", limit)
 		return rcInvalidArg
 	}
-	b, _, err := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: limit}, "")
+	b, _, err := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: limit, AgentKey: p.Agent}, "")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return rcInvalidArg
@@ -246,7 +267,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	if p.AllowSensitivePermissions {
 		q.Set("allow_sensitive_permissions", "true")
 	}
-	for key, value := range map[string]string{"group": p.Group, "name": p.Name, "cwd": p.Cwd, "worktree": p.Worktree, "harness": p.Harness, "model": p.Model} {
+	for key, value := range map[string]string{"group": p.Group, "name": p.Name, "cwd": p.Cwd, "worktree": p.Worktree, "harness": p.Harness, "model": p.Model, "agent": p.Agent, "role": p.Role} {
 		if value != "" {
 			q.Set(key, value)
 		}

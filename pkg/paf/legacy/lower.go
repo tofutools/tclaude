@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
@@ -43,6 +45,8 @@ type Info struct {
 	// Losses is the PAF's own loss report, or nil. A landing keeps it as the
 	// conversation's history of conversions.
 	Losses *paf.Losses
+	// Workflows are the workflows the PAF carries beside its agents.
+	Workflows []paf.WorkflowItem
 }
 
 // MaxHandoffBytes bounds the handoff an import reads.
@@ -56,6 +60,9 @@ type DecodeLimits struct {
 	// peers pass a tighter bound than the native history record limit,
 	// because validating a context line costs several times its size.
 	MaxRecordBytes int
+	// AgentKey picks the agent to lower from a bundle PAF, which may hold
+	// several. Every other path leaves it empty, so a bundle is refused there.
+	AgentKey string
 }
 
 // DecodeBundleFile reads an agent bundle v1 or an agent PAF from f into the
@@ -81,12 +88,15 @@ func DecodeBundleFile(f *os.File, lim DecodeLimits, dir string) (*agentbundle.Bu
 		if err != nil {
 			return nil, Info{}, err
 		}
-		b, err := ToAgentBundle(a, lim.MaxBytes, dir)
+		key := a.Manifest.Agents[0]
+		if a.Manifest.Kind == paf.KindBundle {
+			key = lim.AgentKey
+		}
+		b, err := toAgentBundle(a, key, lim.MaxBytes, dir)
 		if err != nil {
 			return nil, Info{}, err
 		}
-		key := a.Manifest.Agents[0]
-		info := Info{Source: paf.Format, Signatures: a.Signatures, HasContext: a.HasContext(key, paf.ScopeEffective)}
+		info := Info{Source: paf.Format, Signatures: a.Signatures, HasContext: a.HasContext(key, paf.ScopeEffective), Workflows: a.Manifest.Workflows}
 		info.Scan = func(recordLimit int) ([]paf.Finding, error) { return privacy.ScanArchive(a, recordLimit) }
 		if p := paf.AgentPath(key, "context/handoff.md"); a.HasEntry(p) {
 			raw, err := a.ReadEntry(p, MaxHandoffBytes)
@@ -139,7 +149,20 @@ func ToAgentBundle(a *paf.Archive, limit int64, dir string) (*agentbundle.Bundle
 	if a.Manifest.Kind != paf.KindAgent || len(a.Manifest.Agents) != 1 {
 		return nil, errors.New("an agent bundle import needs an agent PAF with exactly one agent")
 	}
-	key := a.Manifest.Agents[0]
+	return toAgentBundle(a, a.Manifest.Agents[0], limit, dir)
+}
+
+// toAgentBundle lowers one agent: the only agent of an agent PAF, or one a
+// caller named from a bundle PAF.
+func toAgentBundle(a *paf.Archive, key string, limit int64, dir string) (*agentbundle.Bundle, error) {
+	switch {
+	case a.Manifest.Kind == paf.KindBundle && key == "":
+		return nil, fmt.Errorf("this file carries several agents; choose one with --agent: %s", strings.Join(a.Manifest.Agents, ", "))
+	case a.Manifest.Kind == paf.KindBundle && !slices.Contains(a.Manifest.Agents, key):
+		return nil, fmt.Errorf("this file carries no agent %q; it carries: %s", key, strings.Join(a.Manifest.Agents, ", "))
+	case a.Manifest.Kind != paf.KindBundle && (a.Manifest.Kind != paf.KindAgent || len(a.Manifest.Agents) != 1):
+		return nil, errors.New("an agent bundle import needs an agent PAF with exactly one agent")
+	}
 	ag, _ := a.Agent(key)
 	env, _ := a.Environment(key)
 	var ext AgentExt

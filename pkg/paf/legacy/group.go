@@ -51,6 +51,9 @@ type GroupWriteOptions struct {
 	// EarlierLosses holds the stored loss reports of converted conversations,
 	// by conversation id. Each is written as that agent's losses.json.
 	EarlierLosses map[string]*paf.Losses
+	// AddContent, when set, adds to the archive before it closes; it gets
+	// the agent keys in the order of exp.Convs.
+	AddContent func(w *paf.Writer, agents []string) error
 }
 
 // WriteGroupExport writes a group export as a group PAF. group.json carries
@@ -167,6 +170,15 @@ func WriteGroupExport(exp *groupexport.Export, out io.Writer, opts GroupWriteOpt
 	if len(opts.Findings) > 0 {
 		pr := paf.Privacy{Scan: &paf.Scan{Scanner: privacy.Scanner, Findings: opts.Findings, Allowed: opts.AllowedFindings}}
 		if err := w.WriteJSON(paf.PrivacyPath, pr); err != nil {
+			return err
+		}
+	}
+	if opts.AddContent != nil {
+		order := make([]string, 0, len(exp.Convs))
+		for _, c := range exp.Convs {
+			order = append(order, keys[c.ConvID])
+		}
+		if err := opts.AddContent(w, order); err != nil {
 			return err
 		}
 	}

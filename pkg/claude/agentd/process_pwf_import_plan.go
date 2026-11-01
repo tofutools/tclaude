@@ -38,6 +38,9 @@ type pwfImportOptions struct {
 	RoleMap map[string]string
 	Rename  bool
 	Group   string
+	// Workflow is the key of the workflow chosen from a .paf. It is resolved
+	// after parsing, so a review of the default workflow binds to its key.
+	Workflow string
 }
 
 func parsePWFImportOptions(q url.Values) (pwfImportOptions, error) {

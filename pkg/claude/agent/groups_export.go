@@ -31,6 +31,7 @@ type groupsExportParams struct {
 	Format string `long:"format" optional:"true" alts:"paf,zip" help:"Archive format: paf (the default; a group Portable Agent Format file) or zip (the legacy group export archive, for importing into an older tclaude)"`
 
 	AllowFlagged bool `long:"allow-flagged" help:"Export a PAF even when the credential scan flags suspected credentials; inspect before sharing."`
+	CarriedWorkflowParams
 }
 
 func groupsExportCmd() *cobra.Command {
@@ -77,6 +78,11 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/export?format=" + format
 	if p.AllowFlagged {
 		path += "&allow_flagged=true"
+	}
+	carried := url.Values{}
+	p.CarriedWorkflowParams.addTo(carried)
+	if len(carried) > 0 {
+		path += "&" + carried.Encode()
 	}
 	archive, headers, err := DaemonGetRaw(path)
 	if err != nil {

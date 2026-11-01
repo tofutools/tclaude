@@ -39,6 +39,7 @@ const maxPWFUpload = 32 << 20
 
 // GET /v1/process/templates/{id}/export?version=&title=&summary=&author=&licence=[&check=1]
 // [&assignee=<agent>=<role>...][&assignees=roles][&strict=1]
+// [&performer=<role>=<agent>...[&performer_history=1][&allow_flagged=true]]
 //
 // A template that fails validation exports as it is, as the store saves it:
 // the file carries it and every reader reports its problems. With check=1
@@ -51,6 +52,9 @@ const maxPWFUpload = 32 << 20
 // assignee= and assignees=roles export those steps with a role instead (see
 // process_pwf_export.go). strict=1 refuses to export anything a check would
 // point out.
+//
+// performer= ships an agent for a role, which makes the file a .paf that holds
+// both (see process_envelope.go).
 func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 		return
@@ -116,6 +120,15 @@ func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 				"not exported, because the workflow is not portable:\n  "+strings.Join(issues, "\n  "))
 			return
 		}
+	}
+	performers, err := parseWorkflowPerformers(q, bundle)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if len(performers) > 0 {
+		serveWorkflowWithPerformers(w, r, bundle, performers, r.PathValue("id"))
+		return
 	}
 	opts := pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}}
 	// Signed only when this node already has a federation identity; exporting
@@ -248,6 +261,8 @@ type pwfImportView struct {
 	// import; LocalRoles are the names a role can be mapped to here.
 	RoleMap    []pwfRoleMapping `json:"roleMap"`
 	LocalRoles []string         `json:"localRoles"`
+	// Envelope is set for a workflow read out of a .paf.
+	Envelope *pwfEnvelopeView `json:"envelope,omitempty"`
 	// Rename and Group echo the importer's choices; Pinned reports that an
 	// applied import pinned the root to Group.
 	Rename bool   `json:"rename,omitempty"`
@@ -302,23 +317,36 @@ type pwfTemplateImported struct {
 // pwfImportOptions). Without apply it is a preview and changes nothing; an
 // apply must carry the reviewDigest of the preview it acts on.
 func handleProcessImport(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxPWFUpload)
+	// A .paf carries whole conversations, so the body is spooled to disk under
+	// the agent transfer limit; a .pwf keeps its own, smaller bound.
+	r.Body = http.MaxBytesReader(w, r.Body, max(maxPWFUpload, agentTransferLimit()))
 	r = withApprovalFacts(r, func(body []byte) string { return processImportApprovalFacts(r, body) })
 	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
 	if !ok {
 		return
 	}
-	data, err := io.ReadAll(r.Body)
+	file, err := os.CreateTemp("", ".workflow-import-archive-")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
+		return
+	}
+	defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
+	hash := sha256.New()
+	size, err := io.Copy(io.MultiWriter(file, hash), r.Body)
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("a workflow file is at most %d bytes", maxPWFUpload))
 		return
 	}
-	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
+	q := r.URL.Query()
+	archive, envelope, envelopeKey, err := openWorkflowFile(file, size, q.Get("workflow"))
+	if errors.Is(err, errPWFTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large", err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_pwf", err.Error())
 		return
 	}
-	q := r.URL.Query()
 	opts, err := parsePWFImportOptions(q)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -353,10 +381,14 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
 		return
 	}
-	view, err := pwfImportPreview(r.Context(), fs, archive, data, planned, opts, uses, local)
+	opts.Workflow = envelopeKey
+	view, err := pwfImportPreview(r.Context(), fs, archive, hash.Sum(nil), planned, opts, uses, local)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
 		return
+	}
+	if envelope != nil {
+		view.Envelope = pwfEnvelopeSummary(envelope, envelopeKey, opts)
 	}
 	if group != nil {
 		// Refuse a full group before anything is stored.
@@ -493,11 +525,12 @@ func processImportApprovalText(review agent.ImportReview, apply, replace bool) s
 }
 
 func processImportReview(r *http.Request, data []byte) (agent.ImportReview, error) {
-	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
+	q := r.URL.Query()
+	archive, envelope, envelopeKey, err := openWorkflowFile(bytes.NewReader(data), int64(len(data)), q.Get("workflow"))
 	if err != nil {
 		return agent.ImportReview{}, err
 	}
-	opts, err := parsePWFImportOptions(r.URL.Query())
+	opts, err := parsePWFImportOptions(q)
 	if err != nil {
 		return agent.ImportReview{}, err
 	}
@@ -513,9 +546,14 @@ func processImportReview(r *http.Request, data []byte) (agent.ImportReview, erro
 	if err != nil {
 		return agent.ImportReview{}, err
 	}
-	view, err := pwfImportPreview(r.Context(), fs, archive, data, planned, opts, pwfRoleUses(archive), local)
+	opts.Workflow = envelopeKey
+	fileDigest := sha256.Sum256(data)
+	view, err := pwfImportPreview(r.Context(), fs, archive, fileDigest[:], planned, opts, pwfRoleUses(archive), local)
 	if err != nil {
 		return agent.ImportReview{}, err
+	}
+	if envelope != nil {
+		view.Envelope = pwfEnvelopeSummary(envelope, envelopeKey, opts)
 	}
 	preview, err := json.Marshal(view)
 	if err != nil {
@@ -526,7 +564,7 @@ func processImportReview(r *http.Request, data []byte) (agent.ImportReview, erro
 
 // pwfImportPreview says what importing the planned templates changes here.
 // RootID is the root's id as stored (renamed, when it was).
-func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []byte, planned map[string]*pwfPlanned,
+func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, fileDigest []byte, planned map[string]*pwfPlanned,
 	opts pwfImportOptions, uses map[string][]string, local []string) (pwfImportView, error) {
 	wf := a.Workflow
 	view := pwfImportView{
@@ -585,7 +623,7 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 		view.Templates = append(view.Templates, row)
 	}
 	digest := sha256.New()
-	digest.Write(data)
+	digest.Write(fileDigest)
 	for _, row := range view.Templates {
 		fmt.Fprintf(digest, "\n%s %s %s %s", row.Ref, row.ImportRef, row.Status, row.CurrentRef)
 	}

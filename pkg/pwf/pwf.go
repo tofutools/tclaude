@@ -472,22 +472,62 @@ func Assignees(b Bundle) ([]Use, error) {
 	return Summarize(b.Root, byRef, order).Assignees, nil
 }
 
-// Write packs a bundle into a PWF file. The bundle should be complete (the
-// root and every template its subprocess steps reference), but templates
-// with validation errors and references it does not carry are written as
-// they are and reported to readers as Archive.Problems.
-func Write(out io.Writer, b Bundle, opts WriteOptions) error {
+// content is what a bundle writes, with paths relative to the workflow, in
+// either container.
+type content struct {
+	workflow Workflow
+	files    []contentFile
+}
+
+type contentFile struct {
+	name, mediaType string
+	data            []byte
+}
+
+func bundleContent(b Bundle) (*content, error) {
 	byRef, order, _, err := prepare(b)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	wf := Summarize(b.Root, byRef, order)
 	wf.Title, wf.Summary = workflowText(b, byRef[b.Root].Parsed)
 	wf.Author, wf.Licence = strings.TrimSpace(b.Author), strings.TrimSpace(b.Licence)
 	if err := wf.checkText(); err != nil {
-		return err
+		return nil, err
 	}
 	workflow, err := marshal(wf)
+	if err != nil {
+		return nil, err
+	}
+	c := &content{workflow: wf, files: []contentFile{{WorkflowPath, "application/json", workflow}}}
+	if len(b.Readme) > 0 {
+		c.files = append(c.files, contentFile{ReadmePath, "text/markdown", b.Readme})
+	}
+	for _, ref := range order {
+		name, err := templatePath(ref)
+		if err != nil {
+			return nil, fmt.Errorf("pwf: %w", err)
+		}
+		c.files = append(c.files, contentFile{name, TemplateMediaType, byRef[ref].Source})
+	}
+	return c, nil
+}
+
+// Roles lists the agent roles a bundle's steps ask for.
+func Roles(b Bundle) ([]Use, error) {
+	byRef, order, _, err := prepare(b)
+	if err != nil {
+		return nil, err
+	}
+	return Summarize(b.Root, byRef, order).Roles, nil
+}
+
+// Write packs a bundle into a PWF file. The bundle should be complete (the
+// root and every template its subprocess steps reference), but templates
+// with validation errors and references it does not carry are written as
+// they are and reported to readers as Archive.Problems.
+func Write(out io.Writer, b Bundle, opts WriteOptions) error {
+	c, err := bundleContent(b)
 	if err != nil {
 		return err
 	}
@@ -502,7 +542,7 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 	}
 	zw := zip.NewWriter(out)
 	man := Manifest{Format: Format, PwfVersion: Version, Kind: KindWorkflow, CreatedAt: created.UTC().Truncate(time.Second).Format(time.RFC3339),
-		Producer: opts.Producer, Requires: requiredFeatures(wf), Root: b.Root}
+		Producer: opts.Producer, Requires: requiredFeatures(c.workflow), Root: b.Root}
 	add := func(name, mediaType string, data []byte) error {
 		if int64(len(data)) > limits.MaxMetadataBytes {
 			return fmt.Errorf("pwf: entry %q exceeds %d bytes", name, limits.MaxMetadataBytes)
@@ -518,20 +558,8 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 		man.Entries = append(man.Entries, paf.Entry{Path: name, Bytes: int64(len(data)), SHA256: hex.EncodeToString(sum[:]), MediaType: mediaType})
 		return nil
 	}
-	if err := add(WorkflowPath, "application/json", workflow); err != nil {
-		return err
-	}
-	if len(b.Readme) > 0 {
-		if err := add(ReadmePath, "text/markdown", b.Readme); err != nil {
-			return err
-		}
-	}
-	for _, ref := range order {
-		name, err := templatePath(ref)
-		if err != nil {
-			return fmt.Errorf("pwf: %w", err)
-		}
-		if err := add(name, TemplateMediaType, byRef[ref].Source); err != nil {
+	for _, f := range c.files {
+		if err := add(f.name, f.mediaType, f.data); err != nil {
 			return err
 		}
 	}
@@ -688,43 +716,57 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 		if hex.EncodeToString(sum[:]) != e.SHA256 {
 			return nil, fmt.Errorf("pwf: entry %q hash does not match the manifest", p)
 		}
-		switch {
-		case p == WorkflowPath, p == ReadmePath, strings.HasPrefix(p, TemplatesDir):
-		default:
-			return nil, fmt.Errorf("pwf: unknown entry %q", p)
-		}
 		contents[p] = data
 	}
+	if err := a.loadContents(contents); err != nil {
+		return nil, err
+	}
+	if err := a.readSignatures(files, read); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// loadContents checks a workflow's files, whichever container held them,
+// against a.Manifest and fills in everything but the signatures.
+func (a *Archive) loadContents(contents map[string][]byte) error {
+	for p := range contents {
+		if p != WorkflowPath && p != ReadmePath && !strings.HasPrefix(p, TemplatesDir) {
+			return fmt.Errorf("pwf: unknown entry %q", p)
+		}
+	}
+	m := &a.Manifest
 	raw, ok := contents[WorkflowPath]
 	if !ok {
-		return nil, errors.New("pwf: workflow.json is missing")
+		return errors.New("pwf: workflow.json is missing")
 	}
-	if err := paf.DecodeStrict(raw, &a.Workflow); err != nil {
-		return nil, fmt.Errorf("pwf: workflow.json: %w", err)
+	var err error
+	if err = paf.DecodeStrict(raw, &a.Workflow); err != nil {
+		return fmt.Errorf("pwf: workflow.json: %w", err)
 	}
 	if err := a.Workflow.checkText(); err != nil {
-		return nil, err
+		return err
 	}
 	a.Readme = contents[ReadmePath]
 	carried := map[string]bool{}
 	for _, te := range a.Workflow.Templates {
 		name, err := templatePath(te.Ref)
 		if err != nil {
-			return nil, fmt.Errorf("pwf: workflow.json: %w", err)
+			return fmt.Errorf("pwf: workflow.json: %w", err)
 		}
 		source, ok := contents[name]
 		if !ok {
-			return nil, fmt.Errorf("pwf: template %s is not in the file", te.Ref)
+			return fmt.Errorf("pwf: template %s is not in the file", te.Ref)
 		}
 		if a.Templates[te.Ref] != nil {
-			return nil, fmt.Errorf("pwf: template %s listed twice", te.Ref)
+			return fmt.Errorf("pwf: template %s listed twice", te.Ref)
 		}
 		parsed, ref, problems, err := parseTemplate(source)
 		if err != nil {
-			return nil, fmt.Errorf("pwf: %s: %w", name, err)
+			return fmt.Errorf("pwf: %s: %w", name, err)
 		}
 		if ref != te.Ref {
-			return nil, fmt.Errorf("pwf: %s hashes to %s", name, ref)
+			return fmt.Errorf("pwf: %s hashes to %s", name, ref)
 		}
 		a.Templates[ref] = &Template{Ref: ref, Head: te.Head, Source: source, Parsed: parsed, Problems: problems}
 		a.Order = append(a.Order, ref)
@@ -732,14 +774,14 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 	}
 	for name := range contents {
 		if strings.HasPrefix(name, TemplatesDir) && !carried[name] {
-			return nil, fmt.Errorf("pwf: %s is not listed in workflow.json", name)
+			return fmt.Errorf("pwf: %s is not listed in workflow.json", name)
 		}
 	}
 	if len(a.Order) == 0 || a.Order[0] != m.Root || a.Workflow.Root != m.Root {
-		return nil, errors.New("pwf: the root template must be listed first in workflow.json and match the manifest")
+		return errors.New("pwf: the root template must be listed first in workflow.json and match the manifest")
 	}
 	if a.Problems, err = checkClosure(m.Root, a.Templates, a.Order); err != nil {
-		return nil, fmt.Errorf("pwf: %w", err)
+		return fmt.Errorf("pwf: %w", err)
 	}
 	derived := Summarize(m.Root, a.Templates, a.Order)
 	derived.Title, derived.Summary, derived.Author, derived.Licence = a.Workflow.Title, a.Workflow.Summary, a.Workflow.Author, a.Workflow.Licence
@@ -751,17 +793,14 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 		legacy := summarize(m.Root, a.Templates, a.Order, false)
 		legacy.Title, legacy.Summary, legacy.Author, legacy.Licence = a.Workflow.Title, a.Workflow.Summary, a.Workflow.Author, a.Workflow.Licence
 		if want, _ = marshal(legacy); !bytes.Equal(got, want) {
-			return nil, errors.New("pwf: workflow.json does not match its templates")
+			return errors.New("pwf: workflow.json does not match its templates")
 		}
 		a.Workflow.Roles = derived.Roles
 	}
 	if a.Paths, err = scanPaths(a.Workflow, a.Readme, inOrder(a.Templates, a.Order)); err != nil {
-		return nil, err
+		return err
 	}
-	if err := a.readSignatures(files, read); err != nil {
-		return nil, err
-	}
-	return a, nil
+	return nil
 }
 
 func (a *Archive) readSignatures(files map[string]*zip.File, read func(string) ([]byte, error)) error {
