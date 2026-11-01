@@ -2247,3 +2247,13 @@ CREATE TABLE steward_offered_permissions (
 		slug     TEXT NOT NULL,
 		PRIMARY KEY (agent_id, slug)
 	) STRICT;
+
+CREATE TABLE steward_roster (
+		agent_id TEXT NOT NULL PRIMARY KEY,
+		seat     TEXT NOT NULL CHECK (seat IN ('active', 'standby')),
+		since    INTEGER NOT NULL,
+		set_by   TEXT NOT NULL
+	) STRICT;
+
+CREATE UNIQUE INDEX steward_roster_one_active
+		ON steward_roster (seat) WHERE seat = 'active';

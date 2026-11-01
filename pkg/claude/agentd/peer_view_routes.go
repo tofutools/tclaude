@@ -368,6 +368,8 @@ var peerViewOwnNodeRoutes = []string{
 	"POST /api/companion/view",
 	// Consent to this node downloading its own source is its local operator's.
 	"GET /api/knowledge/source", "POST /api/knowledge/source",
+	// Who this node's Steward is, is its local operator's to say.
+	"GET /api/steward/handover", "POST /api/steward/handover", "POST /api/steward/step-down", "POST /api/steward/roster/remove",
 	// Presence and captures belong to the local operator's own open tabs.
 	"POST /api/companion/presence", "POST /api/companion/capture/{id}",
 	"POST /api/companion/marks/dismiss", "POST /api/companion/marks/{id}/dismiss", "POST /api/companion/marks/{id}/acknowledge", "POST /api/companion/marks/{id}/reply",

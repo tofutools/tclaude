@@ -72,6 +72,7 @@ func Cmd() *cobra.Command {
 			guideCmd(),
 			fleetCmd(),
 			knowledgeCmd(),
+			stewardCmd(),
 			boardCmd(),
 		},
 	}.ToCobra()

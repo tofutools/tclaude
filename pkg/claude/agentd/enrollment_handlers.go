@@ -148,6 +148,7 @@ func retireAgentConvWithTransition(convID, by, reason string, requireOffline boo
 	out.CronDisabled = retired.CronDisabled
 	out.StandingOrdersDisabled = retired.StandingOrdersDisabled
 	out.Retired = retired.Retired
+	forgetRetiredSteward(convID)
 	if db.AgentConvAway(convID) {
 		return out, retired.OwnerGroupIDs, nil
 	}

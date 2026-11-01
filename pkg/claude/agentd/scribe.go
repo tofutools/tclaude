@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -186,7 +187,7 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 		if unknown := unknownStewardSlugs(cfg); len(unknown) > 0 {
 			slog.Warn("steward.default_permissions: skipping unknown permission slugs", "slugs", unknown)
 		}
-		body.Brief = stewardBrief(body.Brief, cfg)
+		body.Brief = stewardBrief(cmp.Or(strings.TrimSpace(body.Brief), stewardBaseBrief), cfg)
 		titleBase = cfg.StewardName()
 	}
 
@@ -320,6 +321,11 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	if !reused {
 		spawnUse.keep()
 	}
+	// The seat is the operator's. An agent's summon joins the group and takes
+	// the role only if nobody holds it.
+	if isSteward && spawnerConvID == "" {
+		seatSummonedSteward(out.ConvID)
+	}
 
 	resp := map[string]any{
 		"name":    out.Name,
@@ -411,7 +417,11 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	// Dead sessions are no longer doing useful parallel work. Preserve the old
 	// cleanup behavior by unlinking them, while every live scribe stays in the
 	// group and continues its independent editing task.
-	pruneDeadScribes(g)
+	if g.Name == stewardGroupName {
+		pruneDeadStewards(g, spawnerConvID == "")
+	} else {
+		pruneDeadScribes(g)
+	}
 	if scopeKey != "" {
 		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief, taskURL, taskLabel, focus); reused != nil || reuseFail != nil {
 			return reused, reused != nil, reuseFail
@@ -787,13 +797,13 @@ func uniqueScribeName(base string) string {
 // Live members are deliberately retained: they may be editing different
 // profiles or templates in parallel. Removing membership does not delete the
 // old conversation.
-func pruneDeadScribes(g *db.AgentGroup) {
+func pruneDeadScribes(g *db.AgentGroup, keep ...string) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return
 	}
 	for _, m := range members {
-		if pickAliveSession(m.ConvID) != nil {
+		if pickAliveSession(m.ConvID) != nil || slices.Contains(keep, m.ConvID) {
 			continue
 		}
 		if err := db.RemoveAgentGroupMember(g.ID, m.ConvID); err != nil {

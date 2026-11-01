@@ -1086,6 +1086,10 @@ type snapshotPayload struct {
 	Voice config.VoiceConfig `json:"voice"`
 	// StewardName is what the operator calls their Steward, empty by default.
 	StewardName string `json:"steward_name,omitempty"`
+	// StewardActive is the agent the operator's "steward" means, and StewardRoster
+	// every Steward and standby to switch between.
+	StewardActive string               `json:"steward_active,omitempty"`
+	StewardRoster []stewardRosterEntry `json:"steward_roster,omitempty"`
 	// StewardElevated is what each live Steward holds beyond Config and the
 	// defaults, by agent id. Sent only with Collab on.
 	StewardElevated map[string]stewardElevation `json:"steward_elevated,omitempty"`
@@ -4008,6 +4012,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Overrides: out.Permissions.Overrides,
 		})
 		out.StewardAccess = stewardAccessView(cfg)
+		out.StewardRoster = stewardRosterView()
+		if len(out.StewardRoster) > 0 && out.StewardRoster[0].Seat == db.StewardSeatActive {
+			out.StewardActive = out.StewardRoster[0].AgentID
+		}
 		source := newKnowledgeSourceView(cfg)
 		out.KnowledgeSource = &source
 		out.CompanionCues = activeCompanionCues()
