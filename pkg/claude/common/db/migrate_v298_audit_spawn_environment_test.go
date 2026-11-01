@@ -38,9 +38,10 @@ func TestMigrateV297toV298RedactsStoredSpawnRows(t *testing.T) {
 	require.NoError(t, err)
 
 	const clear = `{"kind":"tclaude.spawn.audit.v1","summary":"role: dev","input":{"context_window":1000000000000000001,"environment":[{"name":"API_TOKEN","value":"s3cret"}]},"resolved":{"launch":{"sandbox_policy":{"environment":["API_TOKEN"]}}}}`
+	const refused = `{"kind":"tclaude.spawn.audit.v1","input":{"environment":[{"name":"API_TOKEN=s3cret"}]},"response":{"code":"invalid_environment","error":"environment[0].name \"API_TOKEN=s3cret\" is invalid (want an ASCII identifier up to 128 bytes)"}}`
 	const message = `{"environment":"not a spawn row, s3cret"}`
 	const notJSON = `role: "environment" s3cret`
-	for _, row := range [][]string{{"spawn", clear}, {"send", message}, {"spawn", notJSON}} {
+	for _, row := range [][]string{{"spawn", clear}, {"send", message}, {"spawn", notJSON}, {"spawn", refused}} {
 		_, err := d.Exec(`INSERT INTO audit_log (verb, actor_label, detail) VALUES (?, 'operator', ?)`, row[0], row[1])
 		require.NoError(t, err)
 	}
@@ -61,6 +62,8 @@ func TestMigrateV297toV298RedactsStoredSpawnRows(t *testing.T) {
 	assert.Contains(t, spawn, "1000000000000000001", "a number stays as written")
 	assert.Contains(t, spawn, `"summary":"role: dev"`)
 	assert.Contains(t, spawn, `"resolved":{"launch":{"sandbox_policy":{"environment":["API_TOKEN"]}}}`)
+	assert.NotContains(t, detail(4), "s3cret", "a refusal quoted what was typed as a name")
+	assert.Contains(t, detail(4), `"code":"invalid_environment"`)
 	assert.Equal(t, message, detail(2), "other verbs are not touched")
 	assert.Equal(t, notJSON, detail(3), "a row that cannot be read is left")
 

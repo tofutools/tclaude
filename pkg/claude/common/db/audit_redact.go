@@ -91,6 +91,21 @@ func redactedAuditEntry(entry map[string]any) bool {
 	return len(entry) == 1
 }
 
+// redactInvalidNameError removes the name a refusal used to quote: a name that
+// was not one may be a value in the wrong field.
+func redactInvalidNameError(response any) bool {
+	object, ok := response.(map[string]any)
+	if !ok || object["code"] != "invalid_environment" {
+		return false
+	}
+	text, _ := object["error"].(string)
+	if !strings.Contains(text, `.name "`) || !strings.Contains(text, " is invalid") {
+		return false
+	}
+	object["error"] = "environment name is invalid"
+	return true
+}
+
 // redactSpawnAuditDetail redacts the environment in a stored spawn envelope. The
 // fields it does not touch stay as stored. It reports false for a detail that is
 // not an envelope or holds nothing to redact.
@@ -108,7 +123,14 @@ func redactSpawnAuditDetail(detail string) (string, bool) {
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.UseNumber() // a number stays as it was written
 		var value any
-		if decoder.Decode(&value) != nil || RedactAuditEnvironment(value) == 0 {
+		if decoder.Decode(&value) != nil {
+			continue
+		}
+		replaced := RedactAuditEnvironment(value)
+		if field == "response" && redactInvalidNameError(value) {
+			replaced++
+		}
+		if replaced == 0 {
 			continue
 		}
 		redacted, err := json.Marshal(value)

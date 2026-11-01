@@ -114,6 +114,14 @@ func TestAudit_SpawnSnapshotKeepsEnvironmentNamesOnly(t *testing.T) {
 	row = auditRowByVerb(t, "spawn")
 	assert.Equal(t, http.StatusBadRequest, row.Status)
 	assert.NotContains(t, row.Detail, secret)
+
+	misplaced := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":        "worker",
+		"environment": []map[string]string{{"name": "API_TOKEN=" + secret, "value": "x"}},
+	})
+	require.Equal(t, http.StatusBadRequest, misplaced.Code, "spawn should be refused; body=%s", misplaced.Raw)
+	assert.Contains(t, misplaced.Raw, "environment[0].name is invalid")
+	assert.NotContains(t, auditRowByVerb(t, "spawn").Detail, secret, "a value typed as a name")
 }
 
 func TestAudit_ForceStopCorrelatesSystemExitObservation(t *testing.T) {

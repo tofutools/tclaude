@@ -333,7 +333,9 @@ Three properties make the trail defensible rather than decorative:
   and every command executed under the elevation all land in the trail.
 - **Environment values are not kept.** A spawn row lists the names of the
   environment variables it set, with each value as `[redacted]`. Upgrading
-  redacts the spawn rows already stored the same way.
+  redacts the spawn rows already stored the same way, though scraps of the old
+  rows can stay in the database file's free pages. Rotate a token you believe
+  was exposed.
 
 Browse and filter the trail in the dashboard's **Diagnostics › Audit** view. Retention
 defaults to 30 days; set `audit.retention_days` in
