@@ -662,7 +662,7 @@ export function createManagementActions(deps) {
     if (remaps) summary += ` (${remaps} conv-id(s) remapped to fresh copies)`;
     notify(
       result.file_warnings?.length
-        ? `${summary} — ${result.file_warnings.length} file warning(s); see the daemon log`
+        ? `${summary} — ${result.file_warnings.join(' ')}`
         : summary,
       !!result.file_warnings?.length,
     );
