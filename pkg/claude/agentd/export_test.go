@@ -1,7 +1,9 @@
 package agentd
 
 import (
+	"context"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -81,4 +83,10 @@ func TestSanitizeExportFilename(t *testing.T) {
 // compose, which is otherwise only visible by launching.
 func ResolveCurrentSandboxChainForConvForTest(convID string) (*sandboxpolicy.Snapshot, *sandboxpolicy.Snapshot, error) {
 	return resolveCurrentSandboxChainForConv(convID)
+}
+
+// AsAcceptedMove marks r as the import of a teleport or move offer the receiver
+// accepted.
+func AsAcceptedMove(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), acceptedMoveContextKey{}, true))
 }
