@@ -15,7 +15,7 @@
 // Element text is agent- or operator-supplied and is rendered as SVG text.
 
 import { h } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   BOARD_FONTS, BOARD_TEXT_STYLE, boardFont, boardFontSizes, sameTextStyle, textStyleOf,
@@ -245,6 +245,7 @@ export function BoardEditor({
   // it unmounts); the ref lets the second call see the edit already finished.
   const editingRef = useRef(null);
   const setEditingText = (value) => { editingRef.current = value; setEditingTextState(value); };
+  const textInputRef = useRef(null);
   const [flash, setFlash] = useState(() => new Set());
   const [invite, setInvite] = useState(false);
   const inviteRef = useRef(null);
@@ -1472,6 +1473,22 @@ export function BoardEditor({
     }
   }
 
+  // A browser honours autofocus only once per document, so the open editor
+  // takes the focus here, with the caret after any text it already holds.
+  const editing = !!editingText;
+  useLayoutEffect(() => {
+    const input = textInputRef.current;
+    if (!input) return;
+    input.focus();
+    input.setSelectionRange?.(input.value.length, input.value.length);
+  }, [editing]);
+
+  // The text tool opens the editor on pointerdown; the mousedown of that same
+  // press would otherwise blur it, which closes it again.
+  function keepEditorFocus(event) {
+    if (editingRef.current) event.preventDefault();
+  }
+
   // -- keyboard ---------------------------------------------------------------
 
   // A click anywhere else ends the board's claim on keys aimed at the page, or
@@ -1765,6 +1782,8 @@ export function BoardEditor({
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
         onPointerLeave=${() => setHoverShape('')}
         onDblClick=${onDoubleClick} onContextMenu=${onContextMenu}>
+        onMouseDown=${keepEditorFocus}
+        onWheel=${(event) => { setContextMenu(null); onWheel(event); }} onDblClick=${onDoubleClick} onContextMenu=${onContextMenu}>
         <g data-board-viewport transform=${transform}>
           ${drawn}
           ${(sels.length > 0 || band || snapShape || offer) && html`<g data-board-chrome>
@@ -1794,7 +1813,7 @@ export function BoardEditor({
           </g>`}
         </g>
       </svg>
-      ${editingText && html`<textarea class=${`board-text-input${editingText.centred ? ' centred' : ''}`} autoFocus
+      ${editingText && html`<textarea ref=${textInputRef} class=${`board-text-input${editingText.centred ? ' centred' : ''}`}
         style=${`left:${(editingText.x - view.x) * view.zoom}px;top:${(editingText.y - view.y) * view.zoom}px;font-size:${shownText.fontSize * view.zoom}px;color:${editingText.color};font-family:${boardFont(shownText).css};font-weight:${shownText.fontWeight || 'normal'};font-style:${shownText.fontStyle || 'normal'}`}
         value=${editingText.text}
         onInput=${(event) => setEditingText({ ...editingText, text: event.currentTarget.value })}

@@ -166,6 +166,42 @@ test('double-clicking anywhere inside a shape of any kind opens its text', async
   }
 });
 
+test('every way of opening the text editor gives it the keyboard', async (t) => {
+  const { harness, fire, root, key, click, saved } = await setup(t, (m) => [
+    m.newElement('rectangle', { id: 'box', x: 100, y: 100, width: 100, height: 60 }),
+    m.newElement('text', { id: 'note', x: 400, y: 100, text: 'words', fontSize: 20 }),
+  ]);
+  const doc = harness.window.document;
+  const input = () => root.querySelector('.board-text-input');
+  const close = () => harness.act(() => harness.fireEvent(input(), 'keydown', { key: 'Escape' }));
+
+  await fire('dblclick', 300, 300); // new text, past the one autofocus a page gets
+  assert.equal(doc.activeElement, input());
+  await close();
+
+  await fire('dblclick', 410, 110); // existing text
+  assert.equal(doc.activeElement, input());
+  await close();
+
+  await fire('dblclick', 150, 130); // a shape's label
+  assert.equal(doc.activeElement, input());
+  await close();
+
+  await click(110, 100); // Enter on the selected shape
+  await key('Enter');
+  assert.equal(doc.activeElement, input());
+  await close();
+
+  await key('t');
+  await fire('pointerdown', 300, 400);
+  assert.equal(doc.activeElement, input());
+  const press = new harness.window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+  await harness.act(() => root.querySelector('svg.board-canvas').dispatchEvent(press));
+  assert.ok(press.defaultPrevented, 'the press that opened it leaves the focus there');
+  await close();
+  assert.deepEqual(await saved(), []);
+});
+
 test('double-clicking a connection point labels the shape rather than adding one', async (t) => {
   const { root, svg, fire, click, saved } = await setup(t, twoShapes);
   await fire('pointermove', 200, 130);
