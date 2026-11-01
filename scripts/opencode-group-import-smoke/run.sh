@@ -303,6 +303,70 @@ log "resume recovery finds a conversation in private state"
 node dst tclaude agent stop "$WALLED" --force
 # The managed server outlives the pane; a new one has to prove the resume.
 node dst tmux -L tclaude kill-server 2>/dev/null || true
+
+log "tclaude's own OpenCode runs load nothing an agent planted"
+MARKERS=$ROOT/markers
+AGENT_CONFIG=$STATE_ROOT/config/opencode
+mkdir -p "$MARKERS" "$AGENT_CONFIG/plugin" "$DST_CWD/.opencode/plugin"
+plant() { # plant <plugin file> <marker name>
+	cat >"$1" <<JS
+import fs from "node:fs"
+fs.writeFileSync("$MARKERS/$2", "ran")
+export const Planted = async () => ({})
+JS
+}
+plant "$AGENT_CONFIG/plugin/planted.js" config-dir
+plant "$DST_CWD/.opencode/plugin/planted.js" project-dir
+plant "$ROOT/entry-config.js" config-entry
+plant "$ROOT/entry-project.js" project-entry
+[[ ! -e $AGENT_CONFIG/opencode.json ]] || cp "$AGENT_CONFIG/opencode.json" "$ROOT/agent-opencode.json"
+jq -n --arg entry "file://$ROOT/entry-config.js" '{plugin: [$entry]}' >"$ROOT/planted-config.json"
+if [[ -e $ROOT/agent-opencode.json ]]; then
+	jq -s '.[0] + {plugin: ((.[0].plugin // []) + .[1].plugin)}' "$ROOT/agent-opencode.json" "$ROOT/planted-config.json" \
+		>"$AGENT_CONFIG/opencode.json"
+else
+	cp "$ROOT/planted-config.json" "$AGENT_CONFIG/opencode.json"
+fi
+jq -n --arg entry "file://$ROOT/entry-project.js" '{plugin: [$entry]}' >"$DST_CWD/opencode.json"
+
+# Without the hardening every one of these runs, or the check below proves nothing.
+(cd "$DST_CWD" && node dst env XDG_DATA_HOME="$STATE_ROOT/data" XDG_CACHE_HOME="$STATE_ROOT/cache" \
+	XDG_CONFIG_HOME="$STATE_ROOT/config" XDG_STATE_HOME="$STATE_ROOT/state" \
+	opencode session list --format json --log-level ERROR) >/dev/null
+for marker in config-dir project-dir config-entry project-entry; do
+	[[ -e $MARKERS/$marker ]] || die "the planted $marker plugin did not run without the hardening"
+done
+rm -f "$MARKERS"/*
+
+# The private lookup, with no index row left to answer it; the ambient listing
+# from the project; and a history export of the private conversation.
+python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$WALLED" <<'PY'
+import sqlite3, sys
+
+with sqlite3.connect(sys.argv[1]) as db:
+    n = db.execute("DELETE FROM conv_index WHERE conv_id = ?", (sys.argv[2],)).rowcount
+assert n == 1, n
+PY
+(cd "$DST_CWD" && node dst tclaude conv archive "$WALLED")
+python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$WALLED" <<'PY'
+import sqlite3, sys
+
+row = sqlite3.connect(sys.argv[1]).execute("SELECT 1 FROM conv_index WHERE conv_id = ?", (sys.argv[2],)).fetchone()
+assert row, "the private lookup did not find the conversation"
+PY
+(cd "$DST_CWD" && node dst tclaude conv unarchive "$WALLED")
+(cd "$DST_CWD" && node dst tclaude conv ls) >/dev/null
+node dst tclaude paf export "$WALLED" --history --file "$ROOT/hardened.paf"
+test -s "$ROOT/hardened.paf" || die "the history export wrote nothing"
+[[ -z $(ls -A "$MARKERS") ]] || die "a planted plugin ran in tclaude's own run: $(ls "$MARKERS")"
+
+rm -rf "$AGENT_CONFIG/plugin" "$DST_CWD/.opencode" "$DST_CWD/opencode.json"
+if [[ -e $ROOT/agent-opencode.json ]]; then
+	cp "$ROOT/agent-opencode.json" "$AGENT_CONFIG/opencode.json"
+else
+	rm -f "$AGENT_CONFIG/opencode.json"
+fi
+
 python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$WALLED" <<'PY'
 import sqlite3, sys
 

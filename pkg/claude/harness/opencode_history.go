@@ -94,11 +94,16 @@ func (h openCodeHistory) command(cwd string, stdout io.Writer, args ...string) e
 	if err != nil {
 		return err
 	}
+	env, cleanup, err := openCodeCLIEnvironment(h.environment)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 72*time.Hour)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, append(args, "--pure", "--log-level", "ERROR")...)
 	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), h.environment...)
+	cmd.Env = env
 	cmd.Stdout = stdout
 	// Native diagnostic output must not grow with the transcript.
 	var detail bytes.Buffer

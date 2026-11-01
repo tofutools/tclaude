@@ -160,19 +160,70 @@ func existingDirs(dirs []string) []string {
 	return out
 }
 
+// openCodeIsolation shuts a CLI run off from every config source, on top of
+// --pure. It matches what the filtered server gets in agentd.
+var openCodeIsolation = []string{
+	"OPENCODE_PURE=1",
+	"OPENCODE_DISABLE_PROJECT_CONFIG=1",
+	"OPENCODE_CONFIG=",
+	"OPENCODE_CONFIG_DIR=",
+	"OPENCODE_DISABLE_AUTOUPDATE=1",
+	"OPENCODE_DISABLE_MODELS_FETCH=1",
+}
+
+// openCodeCLIEnvironment is the environment of a CLI run tclaude starts itself.
+// Such a run is outside any sandbox, and the project directory and an agent's
+// private state are both writable by that agent, so nothing there may be loaded
+// as config. A run against private state takes only its data directory; the
+// agent's config, cache and state are replaced by fresh directories, removed by
+// the returned cleanup.
+//
+// OpenCode still opens the database in that data directory, which the agent can
+// write. This closes code loading, not a hostile database.
+func openCodeCLIEnvironment(environment []string) ([]string, func(), error) {
+	env := append(os.Environ(), openCodeIsolation...)
+	var data string
+	for _, entry := range environment {
+		if value, ok := strings.CutPrefix(entry, "XDG_DATA_HOME="); ok {
+			data = value
+		}
+	}
+	if data == "" {
+		return append(env, environment...), func() {}, nil
+	}
+	fresh, err := os.MkdirTemp("", "tclaude-opencode-cli-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(fresh) }
+	env = append(env, "XDG_DATA_HOME="+data)
+	for name, dir := range map[string]string{"XDG_CONFIG_HOME": "config", "XDG_CACHE_HOME": "cache", "XDG_STATE_HOME": "state"} {
+		path := filepath.Join(fresh, dir)
+		if err = os.Mkdir(path, 0o700); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		env = append(env, name+"="+path)
+	}
+	return env, cleanup, nil
+}
+
 // listOpenCodeSessions deliberately uses the supported CLI instead of reading
 // opencode.db. OpenCode already migrated its private store from JSON files to
 // SQLite once; pinning tclaude to that schema would turn a future migration
 // into a silent empty conversation list.
 func listOpenCodeSessions(executable, dir string, environment []string) ([]openCodeSession, error) {
+	env, cleanup, err := openCodeCLIEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), openCodeConvStoreTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable,
 		"session", "list", "--format", "json", "--pure", "--log-level", "ERROR")
 	cmd.Dir = dir
-	if len(environment) > 0 {
-		cmd.Env = append(os.Environ(), environment...)
-	}
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()

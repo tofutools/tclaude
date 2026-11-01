@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"slices"
 	"strconv"
 	"sync"
@@ -598,6 +599,43 @@ func TestOpenCodeConvStoreSeesPrivateState(t *testing.T) {
 	require.NoError(t, os.RemoveAll(repo))
 	_, err = store.Exists(conv, "")
 	require.Error(t, err, "no directory to look in is not a conversation that is gone")
+}
+
+// A CLI run outside the sandbox must not read what an agent can write. Private
+// state contributes its data directory and nothing else, and project config is
+// off everywhere.
+func TestOpenCodeCLIEnvironmentLoadsNothingAnAgentWrote(t *testing.T) {
+	value := func(env []string, name string) string {
+		found := ""
+		for _, entry := range env {
+			if rest, ok := strings.CutPrefix(entry, name+"="); ok {
+				found = rest
+			}
+		}
+		return found
+	}
+	const agent = "/state/agt_x"
+	env, cleanup, err := openCodeCLIEnvironment([]string{
+		"XDG_DATA_HOME=" + agent + "/data", "XDG_CONFIG_HOME=" + agent + "/config",
+		"XDG_CACHE_HOME=" + agent + "/cache", "XDG_STATE_HOME=" + agent + "/state",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, agent+"/data", value(env, "XDG_DATA_HOME"))
+	fresh := value(env, "XDG_CONFIG_HOME")
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"} {
+		assert.NotContains(t, value(env, name), agent)
+		assert.DirExists(t, value(env, name))
+	}
+	cleanup()
+	assert.NoDirExists(t, fresh)
+
+	ambient, cleanup, err := openCodeCLIEnvironment(nil)
+	require.NoError(t, err)
+	defer cleanup()
+	for _, isolated := range [][]string{env, ambient} {
+		assert.Equal(t, "1", value(isolated, "OPENCODE_DISABLE_PROJECT_CONFIG"))
+		assert.Equal(t, "1", value(isolated, "OPENCODE_PURE"))
+	}
 }
 
 func TestListOpenCodeSessionsRunsFromTheProject(t *testing.T) {
