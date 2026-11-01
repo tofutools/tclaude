@@ -477,6 +477,9 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   const [mode, setMode] = useState(SANDBOX_IMPL_MODE_INHERIT);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // What the server says moving this OpenCode agent out of private state does,
+  // once it has refused the assignment for it. The next Assign accepts it.
+  const [moveOut, setMoveOut] = useState('');
   const submitGuard = useRef(false);
   const firstOptionRef = useRef(null);
 
@@ -531,9 +534,12 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         implementation: choice,
         sandbox: pinned,
         restart,
+        ...(moveOut ? { confirmMoveOut: true } : {}),
       }, descriptor);
-    } catch (cause) { setError(errorMessage(cause)); }
-    finally {
+    } catch (cause) {
+      if (cause?.code === 'opencode_move_out_confirm') setMoveOut(errorMessage(cause));
+      else setError(errorMessage(cause));
+    } finally {
       submitGuard.current = false;
       setBusy(false);
     }
@@ -546,7 +552,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       labelledby="sandbox-impl-title"
       initialFocusRef=${firstOptionRef}
       onClose=${() => actions.close(descriptor)}
-      onSubmitHotkey=${submit}
+      onSubmitHotkey=${moveOut ? undefined : submit}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
@@ -573,7 +579,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
                 title=${option.descr || ''}>
                 <input type="radio" name="sandbox-impl-choice" value=${value} checked=${selected}
                   ref=${index === 0 ? firstOptionRef : null}
-                  disabled=${busy} onChange=${() => setChoice(value)} />
+                  disabled=${busy} onChange=${() => { setChoice(value); setMoveOut(''); }} />
                 <span class="sandbox-impl-option-body">
                   <span class="sandbox-impl-option-name">${value}
                     ${value === current && html`<span class="sandbox-impl-tag">current</span>`}
@@ -616,6 +622,9 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         ${posture.temporary_sandbox_active && html`
           <p class="sandbox-impl-hint" id="sandbox-impl-unlocked">⚠ the temporary sandbox unlock is active on this agent; restore its normal sandbox before assigning.</p>
         `}
+        ${moveOut && html`
+          <p class="sandbox-impl-hint sandbox-impl-warn" id="sandbox-impl-move-out" role="alert">⚠ ${moveOut}</p>
+        `}
       `}
       <div class="cron-create-error" id="sandbox-impl-error" role="alert">${error}</div>
       <div class="modal-buttons">
@@ -625,7 +634,9 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${busy || !dirty}
           onClick=${submit}>${busy
             ? (restart ? 'Restarting…' : 'Assigning…')
-            : (restart ? 'Assign & restart' : 'Assign')}</button>
+            : moveOut
+              ? `Move conversations & ${restart ? 'restart' : 'assign'}`
+              : (restart ? 'Assign & restart' : 'Assign')}</button>
       </div>
     </${Overlay}>
   `;

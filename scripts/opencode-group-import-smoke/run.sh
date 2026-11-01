@@ -470,7 +470,12 @@ log "assigning another implementation moves the agent back to the shared store"
 node dst tclaude agent groups stop crew-walled --force
 node dst tmux -L tclaude kill-server 2>/dev/null || true
 private_opencode export "$LANDED" >"$ROOT/before-move-out.json"
-node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin | tee "$ROOT/move-out.txt"
+if node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin >"$ROOT/move-out-refused.txt" 2>&1; then
+	die "the move out did not ask first"
+fi
+grep -q "Run again with --yes" "$ROOT/move-out-refused.txt" || die "the refused move out does not say how to accept it"
+[[ -e $MOVED_ROOT ]] || die "the refused move out touched the private state"
+node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin --yes | tee "$ROOT/move-out.txt"
 grep -q "outside tclaude's sandbox" "$ROOT/move-out.txt" || die "the assignment does not say the conversation is readable"
 (cd "$DST_CWD" && node dst opencode export "$LANDED" --pure --log-level ERROR) >"$ROOT/after-move-out.json"
 cmp "$ROOT/before-move-out.json" "$ROOT/after-move-out.json" || die "the conversation changed moving out"

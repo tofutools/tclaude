@@ -46,6 +46,31 @@ func TestRunSandboxImplSet_PostsTheSelectorAndBody(t *testing.T) {
 	assert.Contains(t, out, "wake the agent")
 }
 
+func TestRunSandboxImplSet_MoveOutIsRefusedWithoutYes(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(_, _ string) (int, string, string) {
+		if len(calls) == 1 {
+			return http.StatusConflict, sandboxMoveOutConfirmCode, ""
+		}
+		return http.StatusOK, "", sandboxImplAssignedBody
+	})
+	params := &sandboxImplSetParams{Agent: "legacy-worker", Implementation: "harness-builtin"}
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(params, &stdout, &stderr)
+	assert.NotEqual(t, rcOK, rc)
+	assert.Contains(t, stderr.String(), "stub error", "the daemon's facts are printed")
+	assert.Contains(t, stderr.String(), "--yes")
+	assert.NotContains(t, calls[0].body, "confirm_move_out")
+
+	params.Yes = true
+	stdout.Reset()
+	stderr.Reset()
+	require.Equal(t, rcOK, runSandboxImplSet(params, &stdout, &stderr), "stderr=%s", stderr.String())
+	require.Len(t, calls, 2)
+	assert.Equal(t, true, calls[1].body.(map[string]any)["confirm_move_out"])
+}
+
 func TestRunSandboxImplSet_RestartIsSentAndReported(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, ok(`{"conv_id":"conv-legacy","sandbox_implementation":"resource-only",

@@ -281,6 +281,19 @@ func TestSandboxImplAssign_MovesOpenCodeAgentIntoPrivateState(t *testing.T) {
 	body, err = json.Marshal(map[string]string{"implementation": "harness-builtin"})
 	require.NoError(t, err)
 	r = agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
+	asked := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusConflict, asked.Code, asked.Body.String())
+	assert.Contains(t, asked.Body.String(), "opencode_move_out_confirm")
+	assert.Contains(t, asked.Body.String(), "2 conversations")
+	assert.Contains(t, asked.Body.String(), "outside tclaude's sandbox can read them")
+	assert.Contains(t, asked.Body.String(), "todo lists are")
+	assert.Contains(t, asked.Body.String(), "only OpenCode has here")
+	assert.DirExists(t, allocation.StateRoot, "asking moves nothing")
+	assert.NotContains(t, storedOpenCodeSessions(t, store), older, "asking moves nothing")
+
+	body, err = json.Marshal(map[string]any{"implementation": "harness-builtin", "confirm_move_out": true})
+	require.NoError(t, err)
+	r = agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
 	back := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusOK, back.Code, back.Body.String())
 	assert.Contains(t, back.Body.String(), "outside tclaude's sandbox can read them")
@@ -295,6 +308,13 @@ func TestSandboxImplAssign_MovesOpenCodeAgentIntoPrivateState(t *testing.T) {
 	require.NotNil(t, relaunch)
 	require.NotNil(t, relaunch.SandboxImplementation)
 	assert.Equal(t, "harness-builtin", *relaunch.SandboxImplementation)
+
+	// With no private state left there is nothing to accept.
+	body, err = json.Marshal(map[string]string{"implementation": "harness-builtin"})
+	require.NoError(t, err)
+	r = agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
+	plain := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, plain.Code, plain.Body.String())
 
 	// And the move into private state works again.
 	body, err = json.Marshal(map[string]string{"implementation": "tclaude-layer"})
@@ -331,7 +351,7 @@ func TestSandboxImplAssign_FailedMoveOutLeavesTheAgentPrivate(t *testing.T) {
 	before := storedOpenCodeSessions(t, privateStore)[landed]
 	require.NotEmpty(t, before)
 	assign := func() *httptest.ResponseRecorder {
-		body, err := json.Marshal(map[string]string{"implementation": "harness-builtin"})
+		body, err := json.Marshal(map[string]any{"implementation": "harness-builtin", "confirm_move_out": true})
 		require.NoError(t, err)
 		r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
 		return testharness.Serve(f.Mux, r)

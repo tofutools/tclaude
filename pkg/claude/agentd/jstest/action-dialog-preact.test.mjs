@@ -919,6 +919,48 @@ test('sandbox-impl dialog restarts a running agent instead of refusing it', asyn
   assert.equal(calls[0][1].restart, true);
 });
 
+test('sandbox-impl dialog asks before moving an OpenCode agent out of private state', async (t) => {
+  const calls = [];
+  const facts = 'This moves 2 conversations out of this OpenCode agent\u2019s private state.';
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      assignSandboxImpl: async (value) => {
+        calls.push(['assign', value]);
+        if (!value.confirmMoveOut) throw Object.assign(new Error(facts), { code: 'opencode_move_out_confirm' });
+      },
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const pick = (value) => harness.act(() => [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === value)
+    .dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+
+  await pick('resource-only');
+  assert.equal(host.querySelector('#sandbox-impl-move-out'), null, 'nothing asks before the server does');
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+
+  assert.ok(host.querySelector('#sandbox-impl-modal'), 'the dialog stays open to ask');
+  assert.match(host.querySelector('#sandbox-impl-move-out').textContent, /2 conversations/);
+  assert.equal(host.querySelector('#sandbox-impl-error').textContent, '', 'asking is not an error');
+  assert.match(host.querySelector('#sandbox-impl-assign').textContent, /Move conversations/);
+
+  // Another choice is another decision: what was shown does not confirm it.
+  await pick('harness-builtin');
+  assert.equal(host.querySelector('#sandbox-impl-move-out'), null);
+  await pick('resource-only');
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1][1].confirmMoveOut, undefined);
+
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls[2][1].confirmMoveOut, true);
+});
+
 test('sandbox-impl dialog surfaces a refusal instead of closing', async (t) => {
   const calls = [];
   const { harness, host, cleanup } = await mountDialogs(
