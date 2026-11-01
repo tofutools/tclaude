@@ -800,26 +800,26 @@ func withApprovalFacts(r *http.Request, facts approvalFactsFunc) *http.Request {
 // approvalPreviewFacts puts the request's facts ahead of its body in a popup.
 // Call it after the body is snapshotted. Facts read the body the handler will,
 // not the preview, which is capped. The body stays in memory until the human
-// answers, charged to slot; it reports false for one too large to hold.
-func approvalPreviewFacts(r *http.Request, slot *approvalTicket, bodyPreview, bodyLabel string) (string, string, bool) {
+// answers, charged to slot; an error says why it cannot be held.
+func approvalPreviewFacts(r *http.Request, slot *approvalTicket, bodyPreview, bodyLabel string) (string, string, error) {
 	facts, _ := r.Context().Value(approvalFactsKey{}).(approvalFactsFunc)
 	if facts == nil {
-		return bodyPreview, bodyLabel, true
+		return bodyPreview, bodyLabel, nil
 	}
 	var body []byte
 	if r.Body != nil {
 		var err error
 		body, err = approvals.readBody(slot, r.Body)
-		if errors.Is(err, errApprovalBodyTooLarge) {
-			return "", "", false
+		if errors.Is(err, errApprovalBodyTooLarge) || errors.Is(err, errApprovalBodyBusy) {
+			return "", "", err
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 	}
 	stated := facts(body)
 	if stated == "" {
-		return bodyPreview, bodyLabel, true
+		return bodyPreview, bodyLabel, nil
 	}
-	return stated + "\n\nRequest:\n" + bodyPreview, "What approving does", true
+	return stated + "\n\nRequest:\n" + bodyPreview, "What approving does", nil
 }
 
 func snapshotApprovalRequestBody(r *http.Request, _ string) string {

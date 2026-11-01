@@ -250,9 +250,9 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			return "", false
 		}
 		defer approvals.release(slot)
-		bodyPreview, bodyLabel, held := approvalPreviewFacts(r, slot, snapshotRequestBody(r), "")
-		if !held {
-			refuseApprovalBody(w)
+		bodyPreview, bodyLabel, heldErr := approvalPreviewFacts(r, slot, snapshotRequestBody(r), "")
+		if heldErr != nil {
+			refuseApprovalBody(w, heldErr)
 			return "", false
 		}
 		callerTitle := ""

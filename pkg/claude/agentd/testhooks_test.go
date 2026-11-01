@@ -2469,9 +2469,12 @@ func StubWaitingApprovalForTest() (raised <-chan struct{}, answer func(), restor
 	return reached, func() { close(answered) }, func() { RequestHumanApprovalImpl = prev }
 }
 
-// SetApprovalHeldBytesForTest lowers the limit on bytes held for waiting requests.
+// SetApprovalHeldBytesForTest lowers the limits on bytes held for waiting
+// requests to n, with no free allowance.
 func SetApprovalHeldBytesForTest(n int64) (restore func()) {
-	prev := maxApprovalHeldBytes
-	maxApprovalHeldBytes = n
-	return func() { maxApprovalHeldBytes = prev }
+	total, perCaller, free := maxApprovalHeldBytes, maxApprovalHeldBytesPerCaller, approvalBodyFreeBytes
+	maxApprovalHeldBytes, maxApprovalHeldBytesPerCaller, approvalBodyFreeBytes = n, n, 0
+	return func() {
+		maxApprovalHeldBytes, maxApprovalHeldBytesPerCaller, approvalBodyFreeBytes = total, perCaller, free
+	}
 }

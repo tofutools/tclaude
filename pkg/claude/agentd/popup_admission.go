@@ -17,15 +17,25 @@ const (
 	maxPendingApprovals          = 64
 )
 
-// maxApprovalHeldBytes bounds what the requests waiting on a human hold between
-// them for a route that must read its whole body to describe it, such as a .paf
-// on process import. Every other route's body is capped per request at
-// maxApprovalRestoreBody, so the slots above bound those.
-var maxApprovalHeldBytes int64 = 256 << 20
+// These bound what waiting requests hold for a route that must read its whole
+// body to describe it, such as a .paf on process import. The first
+// approvalBodyFreeBytes of a body are not charged: the slots bound those, so a
+// few large files cannot stop ordinary requests from reaching the human. Other
+// routes' bodies are bounded by the slots alone, whatever cap each route has.
+var (
+	maxApprovalHeldBytes          int64 = 256 << 20
+	maxApprovalHeldBytesPerCaller int64 = 128 << 20
+	approvalBodyFreeBytes         int64 = maxApprovalRestoreBody
+)
 
-var errApprovalBodyTooLarge = errors.New("approval body over the held-bytes limit")
+var (
+	// errApprovalBodyTooLarge can never succeed, however long the caller waits.
+	errApprovalBodyTooLarge = errors.New("approval body over the per-caller limit")
+	// errApprovalBodyBusy clears as waiting requests are answered.
+	errApprovalBodyBusy = errors.New("no room to hold the approval body now")
+)
 
-// approvalTicket is one admitted request. A nil slot holds nothing.
+// approvalTicket is one admitted request. A nil ticket holds nothing.
 type approvalTicket struct {
 	caller string
 	held   int64
@@ -33,9 +43,10 @@ type approvalTicket struct {
 
 // approvalAdmission counts the admitted requests, under approvals.mu.
 type approvalAdmission struct {
-	byCaller map[string]int
-	total    int
-	held     int64
+	byCaller   map[string]int
+	total      int
+	held       int64
+	heldByCall map[string]int64
 }
 
 // admit takes a slot for caller. It says why not when one is refused.
@@ -63,36 +74,50 @@ func (a *approvalRegistry) release(s *approvalTicket) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.admission.held -= s.held
-	s.held = 0
+	if s.held > 0 {
+		a.admission.held -= s.held
+		if a.admission.heldByCall[s.caller] -= s.held; a.admission.heldByCall[s.caller] <= 0 {
+			delete(a.admission.heldByCall, s.caller)
+		}
+		s.held = 0
+	}
 	if a.admission.byCaller[s.caller]--; a.admission.byCaller[s.caller] <= 0 {
 		delete(a.admission.byCaller, s.caller)
 	}
 	a.admission.total--
 }
 
-func (a *approvalRegistry) hold(s *approvalTicket, n int64) bool {
+func (a *approvalRegistry) hold(s *approvalTicket, n int64) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.admission.held+n > maxApprovalHeldBytes {
-		return false
+	if s.held+n > maxApprovalHeldBytesPerCaller {
+		return errApprovalBodyTooLarge
+	}
+	if a.admission.held+n > maxApprovalHeldBytes || a.admission.heldByCall[s.caller]+n > maxApprovalHeldBytesPerCaller {
+		return errApprovalBodyBusy
+	}
+	if a.admission.heldByCall == nil {
+		a.admission.heldByCall = map[string]int64{}
 	}
 	a.admission.held += n
+	a.admission.heldByCall[s.caller] += n
 	s.held += n
-	return true
+	return nil
 }
 
 // readBody reads body into memory, charging the slot as it goes, so a body with
 // no declared length is stopped at the limit too. A read error comes back with
-// what was read, as a plain read would. errApprovalBodyTooLarge means the limit.
+// what was read, as a plain read would; errApprovalBodyTooLarge and
+// errApprovalBodyBusy come back alone.
 func (a *approvalRegistry) readBody(s *approvalTicket, body io.Reader) ([]byte, error) {
 	var out bytes.Buffer
 	chunk := make([]byte, 64<<10)
 	for {
 		n, err := body.Read(chunk)
 		if n > 0 {
-			if !a.hold(s, int64(n)) {
-				return nil, errApprovalBodyTooLarge
+			free := min(max(approvalBodyFreeBytes-int64(out.Len()), 0), int64(n))
+			if err := a.hold(s, int64(n)-free); err != nil {
+				return nil, err
 			}
 			out.Write(chunk[:n])
 		}
@@ -105,10 +130,15 @@ func (a *approvalRegistry) readBody(s *approvalTicket, body io.Reader) ([]byte, 
 	}
 }
 
-func refuseApprovalBody(w http.ResponseWriter) {
+func refuseApprovalBody(w http.ResponseWriter, err error) {
+	if errors.Is(err, errApprovalBodyTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "approval_body_too_large",
+			"this request is too large to hold while the human decides; get the permission granted first, or have the operator do it")
+		return
+	}
 	w.Header().Set("Retry-After", "30")
-	writeError(w, http.StatusTooManyRequests, "approval_body_too_large",
-		"this request is too large to hold while the human decides; ask for the permission first, or have the operator do it")
+	writeError(w, http.StatusTooManyRequests, "approval_queue_full",
+		"large requests already waiting for the human leave no room for this one; ask again once some are answered")
 }
 
 // admitApproval takes a slot for an ask-human request, or refuses it. The caller

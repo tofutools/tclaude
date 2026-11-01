@@ -87,8 +87,9 @@ func TestAskHumanRefusesABodyTooLargeToHold(t *testing.T) {
 	lower := agentd.SetApprovalHeldBytesForTest(int64(len(file)) - 1)
 	refused := ask()
 	lower()
-	assert.Equal(t, http.StatusTooManyRequests, refused.Code, refused.Body.String())
+	assert.Equal(t, http.StatusRequestEntityTooLarge, refused.Code, refused.Body.String())
 	assert.Contains(t, refused.Body.String(), "approval_body_too_large")
+	assert.Empty(t, refused.Header().Get("Retry-After"), "waiting would not help")
 	assert.Empty(t, *popups, "no popup for a request that could not be held")
 
 	assert.Equal(t, http.StatusOK, ask().Code)

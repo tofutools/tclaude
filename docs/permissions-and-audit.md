@@ -305,9 +305,9 @@ timeout expires.
 At most 8 requests from one agent, and 64 in all, wait for you at a time. Past
 that a new request is refused at once with a message to ask again later, and the
 requests already waiting are not affected. A workflow file imported with
-`--ask-human` is held in memory while you decide, so waiting requests may hold
-256 MiB between them; a larger one is refused, and needs the permission granted
-first or the operator to import it.
+`--ask-human` is held in memory while you decide, so one agent may hold 128 MiB
+and all of them 256 MiB. A larger file is refused, and needs the permission
+granted first or the operator to import it.
 
 For exactly two slugs — `human.clipboard` and `human.notify` — the card also
 offers **"Always allow for this agent"**, which persists an allow keyed to

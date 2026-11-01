@@ -1418,9 +1418,9 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 				bodyPreview = raw
 				bodyLabel = "Clipboard content"
 			}
-			bodyPreview, bodyLabel, held := approvalPreviewFacts(r, slot, bodyPreview, bodyLabel)
-			if !held {
-				refuseApprovalBody(w)
+			bodyPreview, bodyLabel, heldErr := approvalPreviewFacts(r, slot, bodyPreview, bodyLabel)
+			if heldErr != nil {
+				refuseApprovalBody(w, heldErr)
 				return "", false
 			}
 			// The scope the popup's scoped "always allow" may persist is
