@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -319,17 +318,9 @@ func refusedPostures(ls []*groupMemberLanding) *groupPostureRefusal {
 // import rolls back, since no agent ever owned them.
 func installPrivateOpenCodeLanding(l *groupMemberLanding, cwd string) (string, func(), error) {
 	agentID := db.NewAgentID()
-	allocation, err := allocatePrivateOpenCodeState(agentID)
+	discard, err := claimPrivateOpenCodeState(agentID)
 	if err != nil {
 		return "", nil, err
-	}
-	discard := func() {
-		if err := os.RemoveAll(allocation.StateRoot); err != nil {
-			slog.Warn("import: remove unused OpenCode state", "agent", agentID, "error", err)
-		}
-		if err := db.DeleteOpenCodeAgentStateAllocation(agentID); err != nil {
-			slog.Warn("import: forget unused OpenCode state", "agent", agentID, "error", err)
-		}
 	}
 	spec, err := openCodeTclaudeLayerLaunchSpec(
 		l.Posture.SandboxImplementation, cwd, nil, &l.Posture.snapshot, agentID)

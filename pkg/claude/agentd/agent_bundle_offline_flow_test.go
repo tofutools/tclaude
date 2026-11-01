@@ -3,9 +3,11 @@ package agentd_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -194,4 +196,90 @@ func TestAgentImportWithoutStartLandsOnOpenCode(t *testing.T) {
 			}
 		})
 	}
+}
+
+// privateOpenCodeStateLeft is what failed spawns left behind: the state roots on
+// disk and the allocation rows.
+func privateOpenCodeStateLeft(t *testing.T) ([]string, int) {
+	t.Helper()
+	base := os.Getenv("XDG_DATA_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		require.NoError(t, err)
+		base = filepath.Join(home, ".local", "share")
+	}
+	roots, err := filepath.Glob(filepath.Join(base, "tclaude", "opencode-agents", "agt_*"))
+	require.NoError(t, err)
+	d, err := db.Open()
+	require.NoError(t, err)
+	var rows int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM opencode_agent_state_allocations`).Scan(&rows))
+	return roots, rows
+}
+
+// A spawn that fails before its agent exists leaves no private state behind, on
+// the offline path and on the started one.
+func TestAgentImport_FailedLandingLeavesNoPrivateState(t *testing.T) {
+	for _, tc := range []struct {
+		name, start           string
+		failImport, failStart bool
+		failPrompt            bool
+	}{
+		{name: "offline, the conversation does not import", start: "false", failImport: true},
+		{name: "started, the conversation does not import", start: "true", failImport: true},
+		{name: "started, the server does not start", start: "true", failStart: true},
+		{name: "started, the first prompt fails after the fork", start: "true", failPrompt: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			store := fakeOpenCodeStore(t)
+			const source = "ses_0123456789abcdefghijklmnoz"
+			seedOpenCodeSession(t, store, source, "scout", testutil.CanonicalTempDir(t))
+			f.HaveGroup("source")
+			f.HaveMember("source", source)
+			f.HaveGroup("receiver")
+			rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf", nil)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			setSandboxImplDefault(t, f, "tclaude-layer")
+			if tc.failImport {
+				require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(store), "import-fails"), nil, 0o600))
+			}
+			t.Cleanup(agentd.SetOpenCodeRuntimeForTest(func(sessionID, _, _, resumeID string) (agentd.OpenCodeRuntimeFixture, error) {
+				if tc.failStart {
+					return agentd.OpenCodeRuntimeFixture{}, errors.New("port already in use")
+				}
+				return agentd.OpenCodeRuntimeFixture{SessionID: sessionID, ConvID: resumeID, ServerURL: "http://127.0.0.1:1", Password: "pw", PID: 1}, nil
+			}))
+			if tc.failPrompt {
+				t.Cleanup(agentd.SetOpenCodePromptErrorForTest(errors.New("server went away")))
+			}
+			query := url.Values{"apply": {"true"}, "start": {tc.start}, "cwd": {testutil.CanonicalTempDir(t)}, "group": {"receiver"}}
+			r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent-bundle/import?"+query.Encode(), bytes.NewReader(rec.Body.Bytes())))
+			failed := httptest.NewRecorder()
+			f.Mux.ServeHTTP(failed, r)
+
+			require.NotEqual(t, http.StatusOK, failed.Code, failed.Body.String())
+			roots, rows := privateOpenCodeStateLeft(t)
+			assert.Empty(t, roots)
+			assert.Zero(t, rows)
+		})
+	}
+}
+
+// State that was there before a spawn is not that spawn's to remove.
+func TestPrivateOpenCodeState_ClaimOwnsOnlyWhatItCreated(t *testing.T) {
+	newFlow(t)
+	const agentID = "agt_0123456789abcdef0123456789abcdef"
+	discard, err := agentd.ClaimPrivateOpenCodeStateForTest(agentID)
+	require.NoError(t, err)
+	require.NotNil(t, discard)
+
+	again, err := agentd.ClaimPrivateOpenCodeStateForTest(agentID)
+	require.NoError(t, err)
+	assert.Nil(t, again)
+
+	discard()
+	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	require.NoError(t, err)
+	assert.Nil(t, allocation)
 }

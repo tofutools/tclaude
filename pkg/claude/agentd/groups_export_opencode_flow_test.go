@@ -40,7 +40,7 @@ esac
 field() { sed -n "s|.*\"$1\":\"\($2[^\"]*\)\".*|\1|p" "$3" | head -n 1; }
 case "$1" in
 export) cat "$store/$2.json" ;;
-import) cp "$2" "$store/$(field id ses_ "$2").json" ;;
+import) [ ! -e '` + dir + `/import-fails' ] || exit 1; cp "$2" "$store/$(field id ses_ "$2").json" ;;
 session)
 	case "$2" in
 	delete) rm "$store/$3.json" ;;

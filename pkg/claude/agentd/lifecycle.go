@@ -5754,6 +5754,10 @@ type spawnParams struct {
 	// validation failures; the launch-success flag preserves it after the pane
 	// exists, including later enrollment/claim failures.
 	privateAttachmentRootCleanup func()
+	// privateOpenCodeStateDiscard transfers the deferred pass's fresh private
+	// OpenCode state into executeSpawn, which removes it if the spawn fails
+	// before a pane exists. Nil when this spawn did not create the state.
+	privateOpenCodeStateDiscard func()
 	// SpawnConfigJSON is the JSON of the agent.SpawnRequest this spawn came
 	// from, captured at the HTTP boundary (handleGroupSpawn) AFTER its profile
 	// tier stack resolves — so it states what the launch actually used, not what
@@ -6892,6 +6896,15 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	privateAttachmentsLaunched := false
+	// Registered first: a deferred launch hands its state over before the
+	// checks below, and the conversation is undone while its store still exists.
+	discardPrivateOpenCodeState := p.privateOpenCodeStateDiscard
+	defer func() {
+		if failure != nil && !privateAttachmentsLaunched && discardPrivateOpenCodeState != nil {
+			discardPrivateOpenCodeState()
+		}
+	}()
 	if p.launchAuthority != nil {
 		if err := p.launchAuthority(); err != nil {
 			return nil, &spawnFailure{Status: 403, Kind: "teleport_revoked", Msg: err.Error()}
@@ -6970,7 +6983,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if p.privateAttachmentRootCleanup != nil {
 		privateAttachmentCleanup = p.privateAttachmentRootCleanup
 	}
-	privateAttachmentsLaunched := false
 	defer func() {
 		if !privateAttachmentsLaunched {
 			privateAttachmentCleanup()
@@ -7379,9 +7391,23 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			if p.AgentID == "" {
 				p.AgentID = db.NewAgentID()
 			}
-			if _, allocationErr := allocatePrivateOpenCodeState(p.AgentID); allocationErr != nil {
+			discard, allocationErr := claimPrivateOpenCodeState(p.AgentID)
+			if allocationErr != nil {
 				return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 					"failed to allocate private OpenCode state: " + allocationErr.Error()}
+			}
+			if discard != nil {
+				discardPrivateOpenCodeState = discard
+			}
+			if discardState := discardPrivateOpenCodeState; discardState != nil {
+				// Not every failure below stops the server, and it must not
+				// outlive the state it serves from.
+				discardPrivateOpenCodeState = func() {
+					if openCodeLaunch != nil {
+						_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+					}
+					discardState()
+				}
 			}
 		}
 		sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
@@ -7822,6 +7848,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		}
+		// A confirmed failure can come after the fork, when the deferred check
+		// no longer runs.
+		if discardPrivateOpenCodeState != nil {
+			discardPrivateOpenCodeState()
+			discardPrivateOpenCodeState = nil
 		}
 		federationSpawnFailed(p.AgentID, "spawn", err.Error())
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
@@ -8358,8 +8390,14 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_network", err.Error()}
 	}
+	var discardPrivateState func()
+	defer func() {
+		if discardPrivateState != nil {
+			discardPrivateState()
+		}
+	}()
 	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
-		if _, err := allocatePrivateOpenCodeState(p.AgentID); err != nil {
+		if discardPrivateState, err = claimPrivateOpenCodeState(p.AgentID); err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"failed to allocate private OpenCode state: " + err.Error()}
 		}
@@ -8407,6 +8445,7 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	continuation.privateAttachmentRootReserved =
 		p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
 	continuation.privateAttachmentRootCleanup = privateRootCleanup
+	continuation.privateOpenCodeStateDiscard, discardPrivateState = discardPrivateState, nil
 	*syncProofCleanup = false // the continuation owns the proof markers now
 
 	type deferredResult struct {
