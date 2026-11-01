@@ -732,9 +732,12 @@ export async function handleRowAction(action) {
         if (!confirmed) return;
         const r = await api(`/api/agents/${encodeURIComponent(agent)}/compact`, { method: 'POST', credentials: 'same-origin' });
         if (!r.ok) {
-          let detail = await r.text();
-          try { detail = JSON.parse(detail).error || detail; } catch (_) { /* plain error */ }
-          toast(`compact ${label} failed: ${detail}`, true);
+          const text = await r.text();
+          let body = {};
+          try { body = JSON.parse(text); } catch (_) { /* plain error */ }
+          // A slow compaction is running, not failed: the daemon stopped waiting.
+          if (body.code === 'settling') toast(`${label} is still compacting`);
+          else toast(`compact ${label} failed: ${body.error || text}`, true);
           return;
         }
         toast(`Asked ${label} to compact`);

@@ -1635,6 +1635,7 @@ const (
 	slashFailureBusy         slashFailure = "busy"
 	slashFailureUnsupported  slashFailure = "unsupported"
 	slashFailureDisconnected slashFailure = "disconnected"
+	slashFailureSettling     slashFailure = "settling"
 )
 
 // dispatchSlashCommand is injectSlashCommand's body, reporting which channel
@@ -2539,6 +2540,9 @@ func slashFailureDetail(failure slashFailure, target, slash string) string {
 		return "target conv " + short8(target) + " cannot map " + slash + " to a supported typed control operation"
 	case slashFailureDisconnected:
 		return "target conv " + short8(target) + " selected the Codex app-server drive, but its verified control channel is disconnected; relaunch or resume it"
+	case slashFailureSettling:
+		return "target conv " + short8(target) + " is still running " + slash +
+			"; it finishes on its own, and retrying only checks on it"
 	case slashFailureControl:
 		return "target conv " + short8(target) + " could not dispatch " + slash +
 			" through its managed API channel; it is deliberately not typed into the " +
