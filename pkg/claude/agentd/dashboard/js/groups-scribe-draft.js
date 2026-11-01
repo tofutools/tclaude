@@ -89,7 +89,7 @@ function useScribeDraft(api, draft) {
     let stopped = false;
     let timer = null;
     const poll = async () => {
-      const [chat, stored] = await Promise.allSettled([api.scribeChat(draft.scribe.agentId), api.getTemplate(draft.templateId)]);
+      const [chat, stored] = await Promise.allSettled([api.scribeChat(draft.scribe.agentId), api.getTemplateHead(draft.templateId)]);
       if (stopped) return;
       setState((prev) => {
         const read = chat.status === 'fulfilled' ? chat.value : null;
@@ -116,11 +116,12 @@ function useScribeDraft(api, draft) {
 // before the save does not count: a scribe's welcome turn can end after the
 // request was mailed, and the turn that does the work then looks closed.
 // Review waits for this, because a scribe still writing would change the head
-// under the step list and Start runs the head.
+// under the step list and Start runs the head. A missing time is not finished:
+// stopping the scribe still opens the draft.
 export function scribeFinished({ messages, live, ready }) {
   const last = messages.at(-1);
   if (!ready || live || last?.role !== 'scribe') return false;
-  return !(Date.parse(last.at) < Date.parse(ready.authoredAt));
+  return Date.parse(last.at) >= Date.parse(ready.authoredAt);
 }
 
 // ScribeDraft is the group body while a scribe drafts: the request, its live

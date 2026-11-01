@@ -287,6 +287,11 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     getTemplate(templateId) {
       return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, {}, fetchImpl);
     },
+    // getTemplateHead reads the same view of the current version with who
+    // saved it and when (authoredAt), which the full read leaves out.
+    getTemplateHead(templateId) {
+      return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}?authorship=omit`, {}, fetchImpl);
+    },
     // saveTemplate saves a new version of a stored template against the
     // sourceHash it was opened at; a 409 means someone saved in between.
     async saveTemplate(templateId, { template, edges, layout }, { sourceHash = '', listed, pinGroup = '', attemptKey = randomUUID() } = {}) {

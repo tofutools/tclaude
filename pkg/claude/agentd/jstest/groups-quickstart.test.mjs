@@ -119,6 +119,7 @@ function scribeApi({ chat, stored = null, summonError = null, sendError = null }
   api.stopAgent = async (id) => { api.calls.stop.push(id); return { action: 'soft_stopped' }; };
   api.scribeChat = async () => chat();
   api.getTemplate = async (id) => { api.calls.get.push(id); return stored?.() || { sourceHash: 'a'.repeat(64), template: { id, nodes: {} }, edges: [] }; };
+  api.getTemplateHead = api.getTemplate;
   return api;
 }
 
@@ -226,6 +227,7 @@ test('a reply from before the last save is not the end of the turn', async (t) =
   assert.equal(scribeFinished({ messages: [human, closing], ready, live: { items: [] } }), false, 'a turn is open');
   assert.equal(scribeFinished({ messages: [human, closing, human], ready }), false, 'the operator asked for more');
   assert.equal(scribeFinished({ messages: [human, closing], ready: null }), false, 'nothing saved');
+  assert.equal(scribeFinished({ messages: [human, closing], ready: {} }), false, 'an unknown save time is not finished');
 });
 
 test('a failed start takes the empty draft out of the group', async (t) => {
