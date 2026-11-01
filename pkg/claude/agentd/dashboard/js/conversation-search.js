@@ -54,15 +54,15 @@ function ResultAction({ row, wizard }) {
 }
 
 function ResultRow({ row, wizard }) {
-  return html`<li class="conv-search-row" data-conv-result=${row.conv_id}>
-    <div class="conv-search-head">
+  return html`<li class="content-search-row" data-conv-result=${row.conv_id}>
+    <div class="content-search-head">
       <span class=${row.online ? 'online' : 'offline'} title=${row.online ? 'online' : 'offline'}>${row.online ? '●' : '○'}</span>
       <span class="rowname">${row.title || '(untitled)'}</span>
       ${row.agent_id ? html`<span class="muted">${row.retired ? 'retired agent' : 'agent'}</span>` : null}
       ${row.modified ? html`<span class="last-hook">${relTime(row.modified)}</span>` : null}
       <span class="row-actions"><${ResultAction} row=${row} wizard=${wizard} /></span>
     </div>
-    ${row.matches.map((match, index) => html`<div class="conv-search-match" key=${index}>${match.text}</div>`)}
+    ${row.matches.map((match, index) => html`<div class="content-search-match" key=${index}>${match.text}</div>`)}
   </li>`;
 }
 
@@ -93,8 +93,8 @@ export function ConversationSearchPanel({ wizard = false, onClose, search = sear
   }, [settled]);
 
   const rows = outcome.found?.results || [];
-  return html`<section id="conversation-search" class="conv-search" aria-label="Search conversation content">
-    <div class="conv-search-bar">
+  return html`<div id="conversation-search" class="content-search" role="search">
+    <div class="content-search-bar">
       <input ref=${inputRef} id="conversation-search-input" type="text" autocomplete="off" spellcheck=${false}
         maxlength=${CONVERSATION_SEARCH_MAX} value=${query}
         aria-label="Search conversation content"
@@ -109,6 +109,6 @@ export function ConversationSearchPanel({ wizard = false, onClose, search = sear
           : outcome.phase === 'done' ? outcomeText(outcome.found)
             : `Type at least ${CONVERSATION_SEARCH_MIN} characters. Titles and transcripts are searched, newest first.`
     }</div>
-    ${rows.length ? html`<ul class="conv-search-results">${rows.map((row) => html`<${ResultRow} key=${row.conv_id} row=${row} wizard=${wizard} />`)}</ul>` : null}
-  </section>`;
+    ${rows.length ? html`<ul class="content-search-results">${rows.map((row) => html`<${ResultRow} key=${row.conv_id} row=${row} wizard=${wizard} />`)}</ul>` : null}
+  </div>`;
 }
