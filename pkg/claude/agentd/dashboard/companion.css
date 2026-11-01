@@ -383,7 +383,6 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 
 /* Dictation (tcl-sqxkb0). */
 .companion-floating .companion-mic { color: var(--cmp-text); font-size: 13px; }
-.companion-mic-note { color: var(--cmp-text); font-size: 11px; white-space: nowrap; cursor: help; }
 .companion-floating .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }
 /* Continuous mode runs for minutes, and a pulse repaints every frame: the draft shows it's on. */
 .companion-floating .companion-mic.on.steady { animation: none; }

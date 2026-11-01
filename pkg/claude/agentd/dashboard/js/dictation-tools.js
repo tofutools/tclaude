@@ -481,7 +481,6 @@ export function FloatingTools({
       <button type="button" class=${`companion-tool companion-mic${listening ? ' on' : ''}${continuing ? ' steady' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
         aria-label=${micLabel} disabled=${!!block}
         title=${block?.why || micTitle} onClick=${toggle}>${listening ? '⏺' : '🎤'}</button>
-      ${block && html`<span class="companion-mic-note" title=${block.why}>${block.note}</span>`}
       ${onAnnotate && html`<button type="button" class="companion-tool companion-annotate" aria-label=${annotateLabel}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${onAnnotate}>✎</button>`}
       ${children}

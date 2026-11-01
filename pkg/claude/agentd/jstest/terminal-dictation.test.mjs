@@ -233,7 +233,8 @@ test('a closed terminal shows no tools', async (t) => {
 test('on a non-secure page the mic is disabled and says why', async (t) => {
   const s = await setup(t, { secure: false });
   assert.equal(s.$('.companion-mic').disabled, true);
-  assert.match(s.$('.companion-mic-note').textContent, /HTTPS or localhost/);
+  assert.match(s.$('.companion-mic').title, /plain HTTP pages/);
+  assert.ok(!s.$('.companion-mic-note'), 'the tooltip says it, with no text beside the tools');
 });
 
 test('a detached window shows failures on the terminal, and the mic clears them', async (t) => {

@@ -267,7 +267,7 @@ The same tools float over agent terminals in the
 open, and starting one mic stops another. It uses your browser's speech recognition,
 and in Chrome the audio is recognized by Google's service.
 
-Where dictation can't work, the mic is disabled and a note beside it says why. That
+Where dictation can't work, the mic is disabled and its tooltip says why. That
 covers browsers without speech recognition, and plain HTTP pages away from localhost.
 Browsers refuse the microphone on those pages, so no site permission helps. To
 dictate, open the dashboard on `localhost` or over HTTPS, for example with

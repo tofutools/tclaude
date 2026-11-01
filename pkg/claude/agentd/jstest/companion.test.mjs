@@ -1946,17 +1946,18 @@ async function openWithMic(t, { supported, secure }) {
   return { mic: view.container.querySelector('.companion-mic'), note: view.container.querySelector('.companion-mic-note'), container: view.container };
 }
 
-test('a browser without speech recognition gets a disabled mic and a note saying so', async (t) => {
+test('a browser without speech recognition gets a disabled mic whose tooltip says so', async (t) => {
   const { mic, note, container } = await openWithMic(t, { supported: false, secure: true });
   assert.equal(mic.disabled, true);
-  assert.match(note.textContent, /this browser/);
+  assert.match(mic.title, /no speech recognition/);
+  assert.equal(note, null);
   assert.equal(container.querySelector('.companion-context'), null, 'view only serves dictation');
 });
 
-test('a plain http page gets a disabled mic and a note saying what it needs', async (t) => {
+test('a plain http page gets a disabled mic whose tooltip says what it needs', async (t) => {
   const { mic, note } = await openWithMic(t, { supported: true, secure: false });
   assert.equal(mic.disabled, true);
-  assert.match(note.textContent, /HTTPS or localhost/);
+  assert.equal(note, null);
   assert.match(mic.title, /tailscale serve/);
 });
 
