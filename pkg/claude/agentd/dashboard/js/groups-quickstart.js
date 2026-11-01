@@ -458,7 +458,7 @@ function previewNow(node) {
 // edits one of the group's saved processes ({templateId, sourceHash}):
 // saving writes a new version of that template instead of a new one.
 // `groupInfo` is the group's process context ({roles, defaultSpawnProfile}).
-export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, groupInfo = null, api, source, wizard = false, onClose, onGraph = null, onNewer = null, notify = defaultNotify }) {
+export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, groupInfo = null, runAgent = null, api, source, wizard = false, onClose, onGraph = null, onNewer = null, notify = defaultNotify }) {
   const [list, setList] = useState(initial);
   const [name, setName] = useState(initial.template?.name || '');
   const [values, setValues] = useState({});
@@ -599,11 +599,11 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       const params = Object.fromEntries(needs.params.filter((param) => values[param.name] !== undefined).map((param) => [param.name, values[param.name]]));
       const ref = saved ? created.current.ref : '';
       await api.startGroupRun({
-        templateId, group: group.name, params, authorizeProgramProfiles: programProfiles.filter((p) => authorized.has(p)),
+        templateId, ...(runAgent ? { agent: runAgent.id } : { group: group.name }), params, authorizeProgramProfiles: programProfiles.filter((p) => authorized.has(p)),
         ...(ref ? { [reviewed ? 'templateRef' : 'expectedRef']: ref } : {}),
       });
       markQuickStart();
-      notify(`Started ${label} in ${group.name}`);
+      notify(runAgent ? `Started ${label} for ${runAgent.name}` : `Started ${label} in ${group.name}`);
       void source?.refresh?.();
       onClose();
     } catch (cause) {

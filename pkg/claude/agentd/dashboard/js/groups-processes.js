@@ -168,7 +168,12 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
   });
   const openDraft = () => act(async () => {
     const chosen = templates.find((template) => template.id === templateId);
-    await onOpenTemplate({ templateId, name: chosen?.name || templateId });
+    // An agent-scoped start stays one from the editor it opens.
+    const bound = agentScoped ? agents.find((member) => member.agent_id === agent) : null;
+    await onOpenTemplate({
+      templateId, name: chosen?.name || templateId,
+      ...(bound ? { runAgent: { id: bound.agent_id, name: memberName(bound) } } : {}),
+    });
   });
   const toggleProfile = (profile, on) => setAuthorized((current) => {
     const next = new Set(current);
@@ -181,7 +186,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     : (wizard ? `Begin a rite for ${group.name}` : `Start a process in ${group.name}`);
   const agents = agentScoped ? members.filter((member) => member.agent_id) : [];
   return html`<form class="gp-start-form" aria-label=${label} data-start-scope=${agentScoped ? 'agent' : 'group'} onSubmit=${start}
-    onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+    onKeyDown=${(event) => { if (event.key === 'Escape' && !busy) { event.stopPropagation(); onClose(); } }}>
     ${agentScoped
     ? html`<span class="pk-chip pk-scope pk-scope-agent">◉ ${wizard ? 'hero-bound' : 'agent scope'}</span>
       ${agents.length
@@ -199,7 +204,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
       </select>`}
     <button type="submit" class="primary" disabled=${busy || !!draftWarning || !templateId || missing.length > 0 || (agentScoped && !agent)}
       title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}</button>
-    <button type="button" onClick=${onClose}>cancel</button>
+    <button type="button" disabled=${busy} onClick=${onClose}>cancel</button>
     ${draftWarning && html`<${DraftStartWarning} warning=${draftWarning} busy=${busy} openDisabled=${!onOpenTemplate} onOpen=${openDraft} onStartAnyway=${startAnyway} />`}
     ${onBuild && html`<button type="button" class="gq-link" data-process-new=${group.name} onClick=${onBuild}
       title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? 'or shape a new rite ▸' : 'or build a new one ▸'}</button>`}
@@ -555,6 +560,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         notify=${notify || defaultNotify} onClose=${() => setQuick(null)} onSteps=${toSteps} />`
     : editing
     ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null} groupInfo=${entry}
+        runAgent=${quick.process?.runAgent || null}
         api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)}
         onGraph=${quick.saved && quick.process ? toGraph : null}
         onNewer=${quick.saved && quick.process ? (view) => openStored(quick.process, view) : null} />`

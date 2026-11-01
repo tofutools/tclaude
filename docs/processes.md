@@ -345,9 +345,8 @@ scribe cannot start a run, and nothing runs until you press *Start now*. *Start
 now* runs the version on screen: if a newer one was saved after you opened it,
 say by asking the scribe for more through the graph editor's dock, nothing
 starts, and you choose between reviewing the newer version and starting the one
-you reviewed. *Start* in a process's ▶ strip, like *+ start process* in the group
-body, runs the current version, and asks
-first only while a scribe is at work on it: when its scribe is mid-turn, or when
+you reviewed. *Start* in a process's ▶ strip, like the group's start form, runs the current
+version, and asks first only while a scribe is at work on it: when its scribe is mid-turn, or when
 a running scribe saved a version you have not opened from the group. Reviewing
 in the graph editor does not count, so that version can ask once. You then open
 the draft or start anyway, and if the version changes before you answer, nothing

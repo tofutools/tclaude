@@ -1222,7 +1222,7 @@ for (const [name, options] of [
 
 // The group body's start form asks the same question.
 async function formStart(t, options = {}) {
-  const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0 } = options;
+  const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0, opener = '[data-process-start]' } = options;
   const api = scribeApi({ chat: () => ({ messages: [] }), stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
   api.listTemplates = async () => [{ id: 'tmpl_1', name: 'Ship it' }];
   let refusals = moved;
@@ -1232,7 +1232,7 @@ async function formStart(t, options = {}) {
     return startRun(request);
   };
   const view = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online, status: 'idle', scope: 'tmpl_1' })] });
-  await view.click(view.root.querySelector('[data-process-start]'));
+  await view.click(view.root.querySelector(opener));
   await view.settle();
   const form = view.root.querySelector('.gp-start-form');
   await view.harness.act(() => view.harness.fireEvent(form, 'submit'));
@@ -1266,6 +1266,22 @@ test('the start form opens the draft it asks about', async (t) => {
   assert.equal(root.querySelector('.gp-start-form'), null, 'the review replaces the form');
   assert.equal(api.calls.start.length, 0, 'opening it starts nothing');
   assert.ok(root.querySelector('[data-mini-editor="tmpl_1"], [data-step-start]'), 'the draft is open');
+});
+
+test('opening the draft from an agent-scoped form still starts it for that agent', async (t) => {
+  const { root, api, click, settle, harness } = await formStart(t, { opener: '[data-process-start-agent]' });
+  const agent = root.querySelector('[data-start-agent] option').getAttribute('value');
+  assert.ok(agent);
+  await click(root.querySelector('[data-start-draft-open]'));
+  await settle();
+  const start = root.querySelector('[data-step-start]');
+  assert.ok(start, 'the steps open');
+  for (const box of root.querySelectorAll('[data-start-profile]')) await harness.act(() => box.click());
+  await click(start);
+  await settle();
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].agent, agent);
+  assert.equal(api.calls.start[0].group, undefined, 'a review does not widen it to the group');
 });
 
 test('the start form asks again when the version moved under the question', async (t) => {
