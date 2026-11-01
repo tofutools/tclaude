@@ -415,13 +415,13 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const pickPwf = () => importerRef.current?.querySelector('[data-pwf-file]')?.click();
   const fileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
   // Only a .pwf is taken: any other file falls through to the page's own drop
-  // (a .paf), and an open dialog keeps its review.
+  // (a .paf), and one dropped on the importer's own dialog changes nothing.
   const pwfDrop = {
     onDragOver: (event) => { if (!fileDrag(event)) return; event.preventDefault(); setPwfOver(true); },
     onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPwfOver(false); },
     onDrop: (event) => {
       setPwfOver(false);
-      if (!fileDrag(event) || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (!fileDrag(event) || event.target.closest?.('.modal-overlay, [role="dialog"]')) return;
       const file = [...(event.dataTransfer.files || [])].find((f) => /\.pwf$/i.test(f.name));
       if (!file) return;
       event.preventDefault();

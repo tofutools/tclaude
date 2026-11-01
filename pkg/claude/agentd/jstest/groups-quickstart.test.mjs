@@ -836,6 +836,11 @@ test('dropping a .pwf on a group reviews it for that group; other files fall thr
   const fetched = stubImportFetch(t);
   const imports = () => fetched.filter((url) => url.startsWith('/v1/process/import'));
   const { root, settle, harness } = await mount(t);
+  // The page always holds hidden dialogs; they must not stop a drop.
+  const idle = harness.document.body.appendChild(harness.document.createElement('div'));
+  idle.setAttribute('role', 'dialog');
+  idle.setAttribute('aria-modal', 'true');
+  t.after(() => idle.remove());
   const group = root.querySelector('[data-process-group="webshop"]');
   const other = await dropFile(harness, group, pwfFile('agent.paf'));
   await settle();
