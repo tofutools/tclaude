@@ -18,6 +18,7 @@ const (
 )
 
 func startAgentMessageAttachmentCleanup(stop <-chan struct{}) {
+	migrateLegacyMessageAttachments()
 	reconcileAgentMessageAttachments()
 	go func() {
 		ticker := time.NewTicker(agentMessageAttachmentCleanupInterval)

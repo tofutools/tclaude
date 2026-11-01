@@ -86,6 +86,16 @@ The output has a `Headers:` block (Message-ID, From, To, Group, Subject,
 Date, **Reply-To**, **Reply-Cmd**) followed by `Body:`. Reading marks
 the message as read; pass `--keep-unread` if you want to defer that.
 
+A message with attachments says so. The files are out of a sandbox's reach, so
+fetch them through the daemon; it prints where each one landed:
+
+```bash
+tclaude agent inbox attachment 42              # all of them, to a private temp dir
+tclaude agent inbox attachment 42 mock.png -o mock.png
+```
+
+To send one, add `--attach <file>` to `agent message` or `agent reply`.
+
 The `Reply-To` and `Reply-Cmd` headers are how you reply — see below.
 
 To browse multiple messages:

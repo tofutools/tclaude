@@ -25,7 +25,7 @@ import (
 //	POST /api/profiles/{id}/share     mail the artifacts to an agent
 //
 // Sharing rides the same durable operator-message path as the dashboard's
-// message composer: the files are copied into agent-readable message storage
+// message composer: the files are copied into daemon-private message storage
 // and arrive as attachments, so the recipient can open them with its own
 // tools (`go tool pprof`, reading summary.txt) without dashboard access.
 

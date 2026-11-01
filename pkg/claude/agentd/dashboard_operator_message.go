@@ -24,7 +24,15 @@ const (
 	operatorMessageMaxSubject = 256
 )
 
-var operatorMessageAttachmentsBase = filepath.Join(config.APIDir(), "message-files")
+// operatorMessageAttachmentsBase holds every stored message attachment. It sits
+// under the data root, which no sandboxed agent can reach, so a file goes only
+// to whoever may read its message, through GET
+// /v1/messages/{id}/attachments/{attachment}.
+var operatorMessageAttachmentsBase = filepath.Join(config.DataDir(), "message-files")
+
+// legacyMessageAttachmentsBase is where they lived in the agent-visible API
+// tree, readable by every local agent. The daemon moves them out at startup.
+var legacyMessageAttachmentsBase = filepath.Join(config.APIDir(), "message-files")
 
 func registerDashboardOperatorMessageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/operator-message", handleDashboardOperatorMessage)
@@ -207,7 +215,7 @@ func validAttachmentToken(token string) bool {
 }
 
 // consumeOperatorAttachmentBatch copies browser staging files into durable,
-// agent-readable storage. Only an opaque daemon-issued batch token is trusted;
+// daemon-private storage. Only an opaque daemon-issued batch token is trusted;
 // paths supplied by the browser never cross this boundary.
 func consumeOperatorAttachmentBatch(token string) ([]db.AgentMessageAttachment, string, error) {
 	if token == "" {
