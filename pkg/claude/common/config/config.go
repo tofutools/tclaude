@@ -2055,13 +2055,16 @@ const (
 	VoiceActionSend = "send"
 	VoiceActionWake = "wake"
 	VoiceActionStop = "stop"
+	// VoiceActionSteward wakes the Steward, whatever has focus.
+	VoiceActionSteward = "steward"
 )
 
 // VoicePhraseDefaults are the known actions in display order, with neutral
 // defaults. The wake phrase avoids words people say to their agents.
 var VoicePhraseDefaults = []VoicePhrase{
 	{Action: VoiceActionSend, Phrase: "send now", Enabled: new(true)},
-	{Action: VoiceActionWake, Phrase: "hey tofu", Enabled: new(false)},
+	{Action: VoiceActionWake, Phrase: "hey agent", Enabled: new(false)},
+	{Action: VoiceActionSteward, Phrase: "hey stewie", Enabled: new(false)},
 	{Action: VoiceActionStop, Phrase: "stop listening", Enabled: new(true)},
 }
 
@@ -2086,10 +2089,10 @@ func cleanVoicePhrase(phrase string) string {
 
 // Voice resolves dashboard.voice for its readers: every known action with its
 // cleaned phrase, "" when it is off, the wake listener only when it has an
-// active phrase of its own, and the silence send clamped into range. A wake
-// phrase equal to an active send phrase would send and wake on the same words,
-// so it counts as off, and so does a stop phrase equal to either. Nil-safe on
-// the receiver.
+// active wake phrase of its own, and the silence send clamped into range. A
+// wake phrase equal to an active send phrase would send and wake on the same
+// words, so it counts as off, as does a Steward phrase equal to either and a
+// stop phrase equal to any of them. Nil-safe on the receiver.
 func (c *Config) Voice() VoiceConfig {
 	var stored VoiceConfig
 	if c != nil && c.Dashboard != nil && c.Dashboard.Voice != nil {
@@ -2136,13 +2139,17 @@ func (c *Config) Voice() VoiceConfig {
 	if strings.EqualFold(phrases[VoiceActionWake], phrases[VoiceActionSend]) {
 		phrases[VoiceActionWake] = ""
 	}
-	if stop := phrases[VoiceActionStop]; strings.EqualFold(stop, phrases[VoiceActionSend]) || strings.EqualFold(stop, phrases[VoiceActionWake]) {
+	if steward := phrases[VoiceActionSteward]; strings.EqualFold(steward, phrases[VoiceActionSend]) || strings.EqualFold(steward, phrases[VoiceActionWake]) {
+		phrases[VoiceActionSteward] = ""
+	}
+	stop := phrases[VoiceActionStop]
+	if strings.EqualFold(stop, phrases[VoiceActionSend]) || strings.EqualFold(stop, phrases[VoiceActionWake]) || strings.EqualFold(stop, phrases[VoiceActionSteward]) {
 		phrases[VoiceActionStop] = ""
 	}
 	for _, known := range VoicePhraseDefaults {
 		out.Phrases = append(out.Phrases, VoicePhrase{Action: known.Action, Phrase: phrases[known.Action]})
 	}
-	if phrases[VoiceActionWake] == "" {
+	if phrases[VoiceActionWake] == "" && phrases[VoiceActionSteward] == "" {
 		out.WakeEnabled = false
 	}
 	return out

@@ -18,7 +18,7 @@ export function syncVoiceSection(doc = globalThis.document) {
     const field = doc.getElementById(`cfg-voice-phrase-${action}`);
     if (field) field.disabled = !checked(`cfg-voice-on-${action}`);
   }
-  const phrase = checked('cfg-voice-on-wake');
+  const phrase = checked('cfg-voice-on-wake') || checked('cfg-voice-on-steward');
   const listener = checked('cfg-voice-wake');
   const show = (id, shown) => { const note = doc.getElementById(id); if (note) note.hidden = !shown; };
   show('cfg-voice-wake-no-listener', phrase && !listener);

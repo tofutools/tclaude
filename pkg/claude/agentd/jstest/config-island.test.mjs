@@ -1002,7 +1002,7 @@ test('Config voice phrases: each has its own switch, and hands-free stays separa
   assert.equal(el('cfg-voice-on-wake').checked, false);
   assert.equal(el('cfg-voice-phrase-send').disabled, false);
   assert.equal(el('cfg-voice-phrase-wake').disabled, true);
-  assert.equal(el('cfg-voice-phrase-wake').value, 'hey tofu');
+  assert.equal(el('cfg-voice-phrase-wake').value, 'hey agent');
   assert.equal(voice(), undefined, 'the defaults store nothing');
   assert.equal(el('cfg-voice-mark').checked, true, 'dictated messages are marked by default');
   await click('cfg-voice-mark');
@@ -1070,7 +1070,7 @@ test('Config voice phrases: each has its own switch, and hands-free stays separa
   assert.equal(el('cfg-voice-wake').checked, false);
   assert.equal(el('cfg-voice-wake-no-phrase').hidden, true);
   assert.equal(el('cfg-voice-wake-no-listener').hidden, false);
-  assert.deepEqual(voice(), { phrases: [{ action: 'wake', phrase: 'hey tofu', enabled: true }] });
+  assert.deepEqual(voice(), { phrases: [{ action: 'wake', phrase: 'hey agent', enabled: true }] });
 
   // The room warning needs a wake that can really start.
   await click('cfg-voice-silence');
@@ -1087,7 +1087,7 @@ test('Config voice phrases: each has its own switch, and hands-free stays separa
   await click('cfg-voice-on-send');
   assert.ok(voice().phrases);
   el('cfg-voice-phrase-wake').value = ' ';
-  assert.throws(() => adapter.assembleConfig(), /Wake phrase: type a phrase/);
+  assert.throws(() => adapter.assembleConfig(), /Focused phrase: type a phrase/);
 
   // The older ways to turn a phrase off read as off, with text to come back to.
   adapter.populateConfigForm({ dashboard: { dictation_send_phrase: '' } });

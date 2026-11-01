@@ -51,12 +51,32 @@ export function pickWakeTarget(doc) {
   return focused || (showing.length === 1 ? showing[0] : null);
 }
 
+// The Steward's window, where this page has one: refusal() says why it can't
+// be switched to, '' when it can, and open(words, carry) switches and dictates
+// there, carrying continuous mode along when carry is set.
+let stewardDoor = null;
+
+export function registerStewardDoor(door) {
+  stewardDoor = door;
+  return () => { if (stewardDoor === door) stewardDoor = null; };
+}
+
+export function stewardRefusal() {
+  return stewardDoor ? stewardDoor.refusal() : 'There’s no Steward window on this page.';
+}
+
+export function openStewardDoor(words, carry = false) {
+  stewardDoor?.open(words, carry);
+}
+
 // createWakeListener runs the listener. onChange gets {state, detail, local}
 // (where the audio goes) and route, with state 'off', 'listening', 'paused', 'held' (a dictation or speech has
-// the mic), 'elsewhere' (another tab listens) or 'failed'.
+// the mic), 'elsewhere' (another tab listens) or 'failed'. One recognizer hears
+// both phrases, and onWake(words, action) says which it was: 'wake' or 'steward'.
 export function createWakeListener({
   win = globalThis.window,
   phrase = () => '',
+  stewardPhrase = () => '',
   onWake = () => {},
   onChange = () => {},
   pausedElsewhere = () => false,
@@ -192,10 +212,12 @@ export function createWakeListener({
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (!event.results[i].isFinal) continue;
         heardAnything = true;
-        const rest = wakePhraseRest(event.results[i][0].transcript, phrase());
+        const heard = event.results[i][0].transcript;
+        const steward = wakePhraseRest(heard, stewardPhrase());
+        const rest = steward ?? wakePhraseRest(heard, phrase());
         // A reply read aloud must not wake it, however the timing fell.
         if (rest === null || speechPlaying()) continue;
-        waking = rest;
+        waking = { words: rest, action: steward === null ? 'wake' : 'steward' };
         r.abort?.();
         return;
       }
@@ -216,7 +238,7 @@ export function createWakeListener({
     recognition = null;
     const free = afterRelease;
     afterRelease = null;
-    const words = waking;
+    const woken = waking;
     waking = null;
     const meant = stopping;
     stopping = false;
@@ -224,8 +246,8 @@ export function createWakeListener({
       free();
     } else if (meant) {
       // Stopped on purpose, so it says nothing about the recognizer.
-    } else if (words !== null) {
-      onWake(words);
+    } else if (woken !== null) {
+      onWake(woken.words, woken.action);
     } else if (local && lastError && lastError !== 'no-speech' && lastError !== 'aborted') {
       fail(`${NO_DOWNGRADE} (${lastError})`);
       return;

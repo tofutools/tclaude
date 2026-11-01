@@ -154,10 +154,13 @@ dictation, that dictation falls back to Google's service and tells you.
 
 **Hands-free (opt-in, all off by default).**
 
-- **Wake phrase.** Saying it, "hey tofu" by default, starts dictating with no click;
-  words after it start the draft. It needs two settings on: the wake phrase's own
-  checkbox and the wake phrase listener. Neither changes the other, and Config says
-  so when only one is on. Dictation goes to the terminal or chat window with
+- **Wake phrases.** The focused phrase, "hey agent" by default, starts dictating with
+  no click; words after it start the draft. The Steward phrase, "hey stewie" by
+  default, always switches to the Steward, opening or focusing its window, and
+  dictates there. It never starts a Steward: with none running you get a short notice.
+  One listener hears both. A phrase needs two settings on: its own checkbox and the
+  wake phrase listener. Neither changes the other, and Config says so when only one
+  is on. A phrase of common words may fire by mistake. Dictation goes to the terminal or chat window with
   focus, or the only one showing. Otherwise nothing happens and the indicator says so.
   Plain shells get a draft as usual. This keeps a microphone open while a tab is
   showing, so without on-device speech **everything said in the room goes to Google's
@@ -172,7 +175,9 @@ dictation, that dictation falls back to Google's service and tells you.
   another, with no wake phrase, while the agent is still working. Each one after the
   first sends on send after silence, or after 3 seconds if that is off, and queues
   while the agent is busy. It stays on the agent it started on: changing focus, closing that terminal
-  or hiding the tab stops it, and speech never moves to another agent. So do **Esc**,
+  or hiding the tab stops it, and speech never moves to another agent. The Steward
+  phrase is the one exception: said in continuous mode, it ends there and starts on
+  the Steward, and what was in the draft stays with the old agent, unsent. So do **Esc**,
   **Stop**, typing in the draft, a failed send, saying the stop phrase ("stop
   listening") on its own, and silence, 2 minutes by default. The draft shows it's on.
   It stops rather than sends when the agent is waiting on you, at a prompt or with an

@@ -8,11 +8,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { COMPANION_MESSAGE_MAX, companionMessageFits, composeCompanionMessage, markDictated } from './companion-model.js';
-import { createDictation, saysStop } from './companion-voice.js';
+import { createDictation, phraseLeadRest, saysStop } from './companion-voice.js';
 import { dictationBlock } from './insecure-origin.js';
 import { SILENCE_SEND_DEFAULT, voicePhrase } from './voice-config.js';
 import { localSpeechState, speechRouteLabel } from './voice-local.js';
-import { registerWakeTarget } from './voice-wake.js';
+import { openStewardDoor, registerWakeTarget, stewardRefusal } from './voice-wake.js';
 
 const html = htm.bind(h);
 
@@ -105,11 +105,34 @@ export function useDictation({
           stopListening();
           return;
         }
+        // Nor do the words of a switch to the Steward go to this agent.
+        const switching = phraseLeadRest(lastHeard.current.interim, loop.current ? latest.current.continuous?.stewardPhrase : '');
+        if (switching !== null) {
+          latest.current.setDraft(owner.current, joinDraft(base.current, lastHeard.current.settled || ''));
+          dictationRef.current.abort?.();
+          switchToSteward(switching);
+          return;
+        }
         void voiceSend(text, () => dictationRef.current.abort?.());
       } else if (quiet >= 500) {
         setSilenceLeft(Math.ceil(seconds - quiet / 1000));
       }
     }, 250);
+  }
+  // The one way out of a loop that keeps listening: the operator named the
+  // Steward. It ends here, and starts there if the phrase was said in a loop.
+  function switchToSteward(words) {
+    const refused = stewardRefusal();
+    if (refused) {
+      latest.current.notify(refused, true);
+      return false;
+    }
+    const carry = !!loop.current;
+    clearSilence();
+    endLoop();
+    dictationRef.current.abort?.();
+    openStewardDoor(words, carry);
+    return true;
   }
   function armIdle() {
     const live = loop.current;
@@ -254,6 +277,8 @@ export function useDictation({
     pauses: () => latest.current.pauses,
     stopPhrase: () => latest.current.continuous?.stopPhrase || '',
     onStopPhrase: stopListening,
+    stewardPhrase: () => (loop.current ? latest.current.continuous?.stewardPhrase || '' : ''),
+    onSteward: switchToSteward,
     onTaken: () => endLoop(),
     onSend: (heard) => {
       if (!own()) return;
@@ -323,6 +348,15 @@ export function useDictation({
     silenceLeft,
     continuing,
     stopPhrase: continuous?.stopPhrase || '',
+    // reserve holds the mic through a switch to this target, which handover
+    // then starts on, once the target is this one. carry starts a loop here.
+    reserve: () => dictation.keep?.(true),
+    release: () => dictation.keep?.(false),
+    handover(words, carry) {
+      if (carry && latest.current.continuous) beginLoop();
+      else dictation.keep?.(false);
+      opener.current(words);
+    },
     outgoing: (text) => (mark && dictatedDrafts.current.has(target.current) ? markDictated(text) : text),
     // Cancelling is final: words still arriving must not start it again.
     cancelSilence: stopListening,

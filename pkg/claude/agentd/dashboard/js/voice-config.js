@@ -10,9 +10,14 @@ export const VOICE_ACTIONS = Object.freeze([
     more: 'No pause is needed, and the phrase is left out of the message. It works in the companion window and agent terminals, never in a plain shell. Enter and the Send button always work.',
   }),
   Object.freeze({
-    action: 'wake', phrase: 'hey tofu', on: false, title: 'Wake phrase',
-    summary: 'say this to start dictating without a click',
-    more: 'Words after the phrase start the draft. Pick something you would not say to an agent. It must differ from the send phrase while both are on. It only does anything with the wake listener on, below.',
+    action: 'wake', phrase: 'hey agent', on: false, title: 'Focused phrase',
+    summary: 'say this to dictate to the focused agent or Steward without a click',
+    more: 'Words after the phrase start the draft. Pick something you would not say to an agent: common words may fire by mistake. It must differ from the other phrases that are on. It only does anything with the wake phrase listener on, below.',
+  }),
+  Object.freeze({
+    action: 'steward', phrase: 'hey stewie', on: false, title: 'Steward phrase',
+    summary: 'say this to switch to the Steward, whatever has focus, and dictate there',
+    more: "It opens or focuses the Steward's window, and words after the phrase start the draft. It never starts a Steward: with none running you get a short notice. It is also the one way to move continuous mode, which ends on the old agent and starts on the Steward. It only does anything with the wake phrase listener on, below.",
   }),
   Object.freeze({
     action: 'stop', phrase: 'stop listening', on: true, title: 'Stop phrase',
@@ -35,10 +40,11 @@ export const SILENCE_SEND_MAX = 30;
 const defaultPhrase = (action) => VOICE_ACTIONS.find((item) => item.action === action)?.phrase ?? '';
 
 // voicePhrase is an action's phrase, '' when it is off. A snapshot from before
-// the setting, or none yet, means the default.
+// the setting, or none yet, means the default, which may be off.
 export function voicePhrase(snapshot, action) {
   const stored = snapshot?.voice?.phrases?.find((item) => item.action === action);
-  return stored ? stored.phrase : defaultPhrase(action);
+  if (stored) return stored.phrase;
+  return VOICE_ACTIONS.find((item) => item.action === action)?.on ? defaultPhrase(action) : '';
 }
 
 export function voiceWakeOn(snapshot) {
@@ -53,7 +59,11 @@ export function voiceMarksDictated(snapshot) {
 // voiceContinuous is continuous mode's settings, null when it is off.
 export function voiceContinuous(snapshot) {
   if (snapshot?.voice?.continuous_enabled !== true) return null;
-  return { stopPhrase: voicePhrase(snapshot, 'stop'), idleSeconds: snapshot.voice.continuous_idle_seconds || CONTINUOUS_IDLE_DEFAULT };
+  return {
+    stopPhrase: voicePhrase(snapshot, 'stop'),
+    stewardPhrase: voiceWakeOn(snapshot) ? voicePhrase(snapshot, 'steward') : '',
+    idleSeconds: snapshot.voice.continuous_idle_seconds || CONTINUOUS_IDLE_DEFAULT,
+  };
 }
 
 // harnessTakesMailMidTurn reports whether continuous mode can run on an agent

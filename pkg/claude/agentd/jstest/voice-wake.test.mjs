@@ -405,6 +405,51 @@ test('the indicator shows the route and pauses in one click', async (t) => {
   assert.deepEqual(calls, ['pause']);
 });
 
+// ---- two wake phrases ----
+
+async function twoPhrases(t, { steward = 'hey stewie', wake = 'hey agent' } = {}) {
+  const harness = await createPreactHarness(t);
+  const wakeModule = await harness.importDashboardModule('js/voice-wake.js');
+  const fake = fakeWin(harness);
+  const time = clock();
+  const woken = [];
+  const listener = wakeModule.createWakeListener({
+    win: fake.win, phrase: () => wake, stewardPhrase: () => steward, onWake: (...args) => woken.push(args),
+    locks: null, ChannelImpl: null, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl,
+  });
+  t.after(() => listener.dispose());
+  await listener.setEnabled(true);
+  return { ...fake, woken, wakeModule };
+}
+
+test('one listener hears both phrases and says which it was', async (t) => {
+  const s = await twoPhrases(t);
+  assert.equal(s.made.length, 1, 'never two recognizers');
+  s.last().hear('hey stewie check the logs');
+  assert.deepEqual(s.woken, [['check the logs', 'steward']]);
+});
+
+test('the focused phrase wakes as it always did', async (t) => {
+  const s = await twoPhrases(t);
+  s.last().hear('hey agent fix the bug');
+  assert.deepEqual(s.woken, [['fix the bug', 'wake']]);
+});
+
+test('with one phrase off, only the other is heard', async (t) => {
+  const s = await twoPhrases(t, { steward: '' });
+  s.last().hear('hey stewie check the logs');
+  assert.deepEqual(s.woken, []);
+});
+
+test('with no window here the Steward phrase says so, and a door can refuse', async (t) => {
+  const s = await twoPhrases(t);
+  assert.match(s.wakeModule.stewardRefusal(), /no Steward window/);
+  const stop = s.wakeModule.registerStewardDoor({ refusal: () => 'not running', open() {} });
+  assert.equal(s.wakeModule.stewardRefusal(), 'not running');
+  stop();
+  assert.match(s.wakeModule.stewardRefusal(), /no Steward window/);
+});
+
 // ---- punctuation from pauses ----
 
 async function pausedDictation(t, { pauses = { comma: 0.7, period: 1.5 }, sendPhrase = '', lang = 'en-US' } = {}) {

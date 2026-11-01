@@ -37,6 +37,7 @@ import { WindowControls, windowControlsLook } from './companion-window-controls.
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
+import { registerStewardDoor } from './voice-wake.js';
 import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
@@ -164,6 +165,9 @@ function companionContinuous(snapshot, agent) {
   if (!mode || !agent || agent.presence || !harnessTakesMailMidTurn(snapshot, agent.harness || 'claude')) return null;
   return { ...mode, held: () => (agentWaitsOnOperator(snapshot, agent) ? `${agent.name} is waiting on you, so continuous mode stopped. Your words stay in the draft.` : '') };
 }
+
+// How long the Steward's window has to come up after its phrase.
+const STEWARD_WAKE_MS = 3000;
 
 // How recently a key in the terminal counts as still typing when a cue lands.
 const CUE_TYPING_WINDOW_MS = 3000;
@@ -371,6 +375,40 @@ export function CompanionApp({
     onRelease: () => { setFieldFocused(false); setFocusToken((n) => n + 1); },
   });
   const { listening, listeningRef } = dictation;
+  // The Steward phrase. The dictation only starts once the Steward is the
+  // target, so no word can land on the agent that had the focus, and the mic
+  // stays reserved until then so the wake listener doesn't take it back.
+  const stewardWake = useRef(null);
+  const wakeDoor = useRef(null);
+  wakeDoor.current = {
+    refusal: () => (steward?.online && steward.agentId !== shutDown?.agentId ? '' : `${customName || 'The Steward'} isn’t running. Start it from the companion.`),
+    open(words, carry) {
+      if (activeId === steward.agentId && composerShown.current) {
+        dictation.handover(words, carry);
+        return;
+      }
+      clearTimeout(stewardWake.current?.timer);
+      const timer = setTimeout(() => {
+        stewardWake.current = null;
+        dictation.release();
+        notify(`Could not open ${stewardLabel}, so nothing is listening.`, true);
+      }, STEWARD_WAKE_MS);
+      stewardWake.current = { agentId: steward.agentId, words, carry, timer };
+      dictation.reserve();
+      showAgent(steward.agentId, { reclaim: true });
+    },
+  };
+  useEffect(() => registerStewardDoor({
+    refusal: () => wakeDoor.current.refusal(),
+    open: (words, carry) => wakeDoor.current.open(words, carry),
+  }), []);
+  useEffect(() => {
+    const pendingWake = stewardWake.current;
+    if (!pendingWake || activeId !== pendingWake.agentId || !composerShown.current) return;
+    stewardWake.current = null;
+    clearTimeout(pendingWake.timer);
+    dictation.handover(pendingWake.words, pendingWake.carry);
+  });
 
   useEffect(() => writePref(prefs, COMPANION_TABS_PREF, JSON.stringify(tabs)), [tabs]);
   useEffect(() => {

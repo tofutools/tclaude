@@ -1690,3 +1690,50 @@ test('the + menu opens with the cursor in its search field, and Escape goes back
   assert.equal(view.container.querySelector('.companion-menu'), null);
   assert.equal(harness.document.activeElement, plus);
 });
+
+// ---- the Steward phrase ----
+
+function micCounting() {
+  const fake = fakeDictation();
+  const impl = fake.impl;
+  fake.starts = [];
+  fake.impl = (cb) => {
+    const made = impl(cb);
+    fake.reservations = [];
+    return { ...made, keep: (on) => fake.reservations.push(on), start: (options) => { fake.starts.push(options); made.start(); } };
+  };
+  return fake;
+}
+
+test('the Steward phrase opens its window and only then dictates there', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = micCounting();
+  const { view, harness, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }), dictationImpl: dictated.impl });
+  await harness.act(() => controller().open(A));
+  await harness.act(() => view.container.querySelector('input.companion-draft')?.focus?.());
+  const wake = await harness.importDashboardModule('js/voice-wake.js');
+  assert.equal(wake.stewardRefusal(), '');
+  await harness.act(() => wake.openStewardDoor('check the logs'));
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.equal(dictated.starts.length, 1);
+  assert.equal(dictated.reservations[0], true, 'the mic is held through the switch');
+  assert.equal(dictated.reservations.at(-1), false);
+  const field = view.container.querySelector('input.companion-draft');
+  assert.equal(field.getAttribute('aria-label'), 'Message steward-k3x');
+  assert.equal(field.value, 'check the logs');
+  await harness.act(() => dictated.callbacks.onText('and the rest'));
+  assert.equal(view.container.querySelector('input.companion-draft').value, 'check the logs and the rest');
+  await harness.act(() => controller().open(A));
+  assert.ok(!view.container.querySelector('input.companion-draft')?.value, 'no word landed on the agent that had the focus');
+});
+
+test('with no Steward running its phrase summons nothing', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = micCounting();
+  const { harness, requests, controller } = await setup(t, { prefs, dictationImpl: dictated.impl });
+  await harness.act(() => controller().open(A));
+  const wake = await harness.importDashboardModule('js/voice-wake.js');
+  assert.match(wake.stewardRefusal(), /isn’t running/);
+  assert.deepEqual(requests.filter((r) => String(r.url).includes('scribe')), []);
+  assert.equal(dictated.starts.length, 0);
+});
