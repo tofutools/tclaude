@@ -95,13 +95,14 @@ test('a nonsense saved spot falls back', async (t) => {
 test('model: a window at a spot stays on screen, the peek opens on the free side', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/companion-model.js');
+  const o = await harness.importDashboardModule('js/overlay-window-model.js');
   const vp = { width: 1000, height: 600 };
   const p = { x: 300, y: 100, w: 640, h: 420, snap: 'left' };
   assert.deepEqual(m.spotPlacement('top-left', p, vp, 90), { x: 16, y: 102, w: 640, h: 420, snap: '' });
   assert.deepEqual(m.spotPlacement('bottom-right', p, vp, 90), { x: 344, y: 139, w: 640, h: 420, snap: '' });
   assert.equal(m.spotPlacement('bottom-center', p, vp).x, 180);
   const tiny = m.spotPlacement('top-right', p, { width: 500, height: 400 }, 300);
-  assert.ok(tiny.x >= 0 && tiny.x + tiny.w <= 500 && tiny.y + tiny.h <= 400 - m.COMPANION_FOOTER_ROOM);
+  assert.ok(tiny.x >= 0 && tiny.x + tiny.w <= 500 && tiny.y + tiny.h <= 400 - o.OVERLAY_FOOTER_ROOM);
   const rect = { left: 16, right: 150, top: 100, bottom: 134 };
   assert.deepEqual(m.peekAnchor('top-left', rect, vp), { top: 142, left: 16 });
   assert.deepEqual(m.peekAnchor('bottom-right', rect, vp), { bottom: 508, right: 850 });

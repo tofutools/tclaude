@@ -254,15 +254,6 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
   content: ''; position: absolute; right: 6px; bottom: 6px; width: 7px; height: 7px;
   border-right: 2px solid #484f58; border-bottom: 2px solid #484f58;
 }
-.companion-resize { position: absolute; touch-action: none; }
-.companion-window.snapped-right .companion-resize { left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
-.companion-window.snapped-left .companion-resize { right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
-.companion-window.snapped-bottom .companion-resize { left: 0; right: 0; top: 0; height: 6px; cursor: ns-resize; }
-
-.companion-snap-guide {
-  position: fixed; z-index: 949; pointer-events: none; border-radius: 8px;
-  background: rgba(88, 166, 255, .10); border: 1px dashed var(--cmp-blue);
-}
 .companion-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-window { border-color: #7a5db0; }

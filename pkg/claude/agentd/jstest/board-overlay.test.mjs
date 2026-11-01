@@ -139,34 +139,43 @@ scenario('one board floats at a time: the one displaced goes back to a tab', asy
   assert.deepEqual(tabLabels(host), ['Release plan']);
 });
 
-scenario('opening the board the overlay shows brings the window forward, not a second editor', async ({ harness, host, overlayState }) => {
-  const body = harness.document.body;
+scenario('opening the board the overlay shows brings the window forward, not a second editor', async ({ harness, host, overlayHost, overlayState }) => {
+  const { raiseOverlayWindow } = await harness.importDashboardModule('js/overlay-window.js');
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
-  body.classList.remove('board-overlay-front');
+  await harness.act(async () => { raiseOverlayWindow(''); await wait(); });
   await harness.act(async () => { assert.equal(await overlayState.openBoardPane('plan'), null); await wait(); });
   assert.deepEqual(tabLabels(host), []);
-  assert.ok(body.classList.contains('board-overlay-front'));
+  assert.ok(overlayHost.querySelector('.board-overlay').classList.contains('overlay-window-front'));
 });
 
 scenario('clicking the overlay or the companion brings that one forward', async ({ harness, overlayHost, overlayState }) => {
   const doc = harness.document;
-  const body = doc.body;
-  const companion = body.appendChild(doc.createElement('div'));
-  companion.className = 'companion-window';
+  const { OverlayWindow, useOverlayWindow } = await harness.importDashboardModule('js/overlay-window.js');
+  const Other = () => {
+    const overlay = useOverlayWindow({ win: harness.window, defaultPlacement: () => ({ x: 0, y: 0, w: 400, h: 300, snap: '' }) });
+    return harness.html`<${OverlayWindow} id="companion" window=${overlay} lifts=${false} className="companion-window"
+      frameClass="companion-resize-frame" titlebarClass="companion-titlebar" label="Companion" />`;
+  };
+  const other = await harness.mount(harness.html`<${Other} />`);
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
-  const press = (node) => node.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true }));
-  press(companion);
-  assert.equal(body.classList.contains('board-overlay-front'), false);
-  press(overlayHost.querySelector('.board-overlay-titlebar'));
-  assert.equal(body.classList.contains('board-overlay-front'), true);
-  press(doc.querySelector('main'));
-  assert.equal(body.classList.contains('board-overlay-front'), true, 'the page behind changes nothing');
+  const companion = other.container.querySelector('.companion-window');
+  const board = () => overlayHost.querySelector('.board-overlay');
+  const press = (node) => harness.act(async () => { node.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true })); await wait(); });
+  await press(companion);
+  assert.equal(board().classList.contains('overlay-window-front'), false);
+  await press(overlayHost.querySelector('.board-overlay-titlebar'));
+  assert.equal(board().classList.contains('overlay-window-front'), true);
+  await press(overlayHost.querySelector('.board-overlay-resize-frame .window-resize-zone.e'));
+  assert.equal(board().classList.contains('overlay-window-front'), true);
+  await press(doc.querySelector('main'));
+  assert.equal(board().classList.contains('overlay-window-front'), true, 'the page behind changes nothing');
+  await other.unmount();
 });
 
 test('the overlay placement stays reachable and resizing holds the opposite corner', async (t) => {
   const harness = await createPreactHarness(t);
   const { defaultOverlayPlacement } = await harness.importDashboardModule('js/board-overlay.js');
-  const { resizedPlacement } = await harness.importDashboardModule('js/window-resize.js');
+  const { resizedPlacement } = await harness.importDashboardModule('js/overlay-window-model.js');
   const { defaultPlacement } = await harness.importDashboardModule('js/companion-model.js');
   const viewport = { width: 1600, height: 900 };
   const placed = defaultOverlayPlacement(viewport);
@@ -190,17 +199,17 @@ test('the overlay placement stays reachable and resizing holds the opposite corn
 
 test('a window opens where it was left if that fits, moved in first, and shrunk last', async (t) => {
   const harness = await createPreactHarness(t);
-  const { COMPANION_FOOTER_ROOM, fitPlacement } = await harness.importDashboardModule('js/companion-model.js');
+  const { OVERLAY_FOOTER_ROOM, fitPlacement } = await harness.importDashboardModule('js/overlay-window-model.js');
   const box = ({ x, y, w, h }) => [x, y, w, h];
   const viewport = { width: 1000, height: 700 };
   const saved = { x: 100, y: 80, w: 600, h: 400, snap: '' };
   assert.deepEqual(box(fitPlacement(saved, viewport)), [100, 80, 600, 400], 'a place that fits is untouched');
-  assert.deepEqual(box(fitPlacement({ ...saved, x: 900, y: 650 }, viewport)), [400, 700 - COMPANION_FOOTER_ROOM - 400, 600, 400],
+  assert.deepEqual(box(fitPlacement({ ...saved, x: 900, y: 650 }, viewport)), [400, 700 - OVERLAY_FOOTER_ROOM - 400, 600, 400],
     'one past the corner moves in at full size');
   assert.deepEqual(box(fitPlacement({ ...saved, x: -300, y: -50 }, viewport)), [0, 0, 600, 400], 'and from the other side');
   const big = fitPlacement({ ...saved, w: 1800, h: 1200 }, viewport);
   assert.ok(big.x >= 0 && big.x + big.w <= 1000, 'one too wide fits after shrinking');
-  assert.ok(big.y >= 0 && big.y + big.h <= 700 - COMPANION_FOOTER_ROOM, 'one too tall too');
+  assert.ok(big.y >= 0 && big.y + big.h <= 700 - OVERLAY_FOOTER_ROOM, 'one too tall too');
   const tiny = fitPlacement(saved, { width: 300, height: 150 });
   assert.deepEqual([tiny.w, tiny.h], [360, 220], 'the minimum size holds');
   assert.equal(tiny.x + tiny.w, 300, 'with the title bar controls still on screen');
@@ -209,8 +218,7 @@ test('a window opens where it was left if that fits, moved in first, and shrunk 
 
 test('an edge resizes one side only and holds the opposite edge', async (t) => {
   const harness = await createPreactHarness(t);
-  const { resizedPlacement } = await harness.importDashboardModule('js/window-resize.js');
-  const { COMPANION_FOOTER_ROOM } = await harness.importDashboardModule('js/companion-model.js');
+  const { OVERLAY_FOOTER_ROOM, resizedPlacement } = await harness.importDashboardModule('js/overlay-window-model.js');
   const viewport = { width: 1600, height: 900 };
   const start = { x: 300, y: 200, w: 600, h: 400, snap: '' };
   const box = ({ x, y, w, h }) => [x, y, w, h];
@@ -229,7 +237,7 @@ test('an edge resizes one side only and holds the opposite edge', async (t) => {
   assert.deepEqual(box(resizedPlacement(start, 'w', -5000, 0, viewport)), [0, 200, 900, 400], 'the viewport stops a left edge');
   assert.equal(resizedPlacement(start, 'e', 5000, 0, viewport).w, 1300, 'and a right edge');
   const low = resizedPlacement(start, 's', 0, 5000, viewport);
-  assert.equal(low.y + low.h, 900 - COMPANION_FOOTER_ROOM, 'and a bottom edge, above the footer');
+  assert.equal(low.y + low.h, 900 - OVERLAY_FOOTER_ROOM, 'and a bottom edge, above the footer');
 
   const past = { x: -100, y: 200, w: 600, h: 400, snap: '' };
   assert.deepEqual(box(resizedPlacement(past, 'w', 10, 0, viewport)), [-90, 200, 590, 400], 'a window past the limit shrinks without jumping');

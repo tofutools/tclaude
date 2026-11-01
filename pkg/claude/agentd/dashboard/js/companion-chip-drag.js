@@ -3,7 +3,8 @@
 // row: outlines show every spot, the nearest one lights up, and release settles
 // the row there. Anything shorter stays a click, and Esc puts the row back.
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { CHIP_SPOTS, nearestChipSpot, viewportOf } from './companion-model.js';
+import { CHIP_SPOTS, nearestChipSpot } from './companion-model.js';
+import { viewportOf } from './overlay-window-model.js';
 
 const DRAG_START_PX = 5;
 const SETTLE_MS = 260;

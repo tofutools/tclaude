@@ -1968,7 +1968,21 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 .video-preview-trigger:hover .video-preview-play,
 .video-preview-trigger:focus-visible .video-preview-play { border-color: #58a6ff; color: #dbeafe; }
 
-/* Edges and corners of a floating window (window-resize.js): 6px strips that
+/* The overlay window (js/overlay-window.js): all of them share one layer, and
+   the one last clicked is a step above it. The dialogs a window opens still
+   beat this rule, whose specificity they exceed. */
+body :is(.overlay-window, .window-resize-frame).overlay-window-front { z-index: 951; }
+/* A snapped panel's free edge. */
+.overlay-window-edge { position: absolute; touch-action: none; }
+.overlay-window.snapped-right .overlay-window-edge { left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.overlay-window.snapped-left .overlay-window-edge { right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.overlay-window.snapped-bottom .overlay-window-edge { left: 0; right: 0; top: 0; height: 6px; cursor: ns-resize; }
+.overlay-snap-guide {
+  position: fixed; z-index: 949; pointer-events: none; border-radius: 8px;
+  background: rgba(88, 166, 255, .10); border: 1px dashed #58a6ff;
+}
+
+/* Edges and corners of a floating window (overlay-window.js): 6px strips that
    straddle the edge, with the corners on top. The frame matches the window's
    layer and passes every other pointer through. */
 .window-resize-frame { position: fixed; z-index: 950; pointer-events: none; }

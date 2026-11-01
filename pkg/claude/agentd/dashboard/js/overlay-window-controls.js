@@ -1,5 +1,5 @@
-// companion-window-controls.js -- the companion window's minimize, maximize and
-// close buttons, drawn like the native ones of the browser's OS. The look
+// overlay-window-controls.js -- an overlay window's minimize, maximize and close
+// buttons, drawn like the native ones of the browser's OS. The look
 // decides the order too: macOS leads with close, the others end on it.
 import { h } from 'preact';
 import htm from 'htm';

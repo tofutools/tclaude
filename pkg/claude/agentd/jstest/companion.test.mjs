@@ -316,30 +316,31 @@ test('Ctrl+. toggles the window and unpinning the last tab closes it', async (t)
 
 test('viewportOf leaves out page scrollbars', async (t) => {
   const harness = await createPreactHarness(t);
-  const m = await harness.importDashboardModule('js/companion-model.js');
+  const o = await harness.importDashboardModule('js/overlay-window-model.js');
   const win = { innerWidth: 1280, innerHeight: 800, document: { documentElement: { clientWidth: 1265, clientHeight: 785 } } };
-  assert.deepEqual(m.viewportOf(win), { width: 1265, height: 785 });
-  assert.deepEqual(m.viewportOf({ innerWidth: 1000, innerHeight: 700 }), { width: 1000, height: 700 });
-  assert.deepEqual(m.viewportOf(null), { width: 1280, height: 800 });
+  assert.deepEqual(o.viewportOf(win), { width: 1265, height: 785 });
+  assert.deepEqual(o.viewportOf({ innerWidth: 1000, innerHeight: 700 }), { width: 1000, height: 700 });
+  assert.deepEqual(o.viewportOf(null), { width: 1280, height: 800 });
 });
 
 test('placement model: clamping, snap zones and status folding', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/companion-model.js');
+  const o = await harness.importDashboardModule('js/overlay-window-model.js');
   const vp = { width: 1200, height: 800 };
-  const clamped = m.clampPlacement({ x: 5000, y: -40, w: 100, h: 5000 }, vp);
-  assert.equal(clamped.w, m.COMPANION_MIN_W);
+  const clamped = o.clampPlacement({ x: 5000, y: -40, w: 100, h: 5000 }, vp);
+  assert.equal(clamped.w, o.OVERLAY_MIN_W);
   assert.ok(clamped.x <= vp.width - 80 && clamped.y === 0 && clamped.h <= vp.height);
-  assert.equal(m.snapZone({ x: 1195, y: 300 }, vp), 'right');
-  assert.equal(m.snapZone({ x: 3, y: 300 }, vp), 'left');
-  assert.equal(m.snapZone({ x: 600, y: 790 }, vp), 'bottom');
-  assert.equal(m.snapZone({ x: 600, y: 300 }, vp), '');
-  const right = m.zoneRect('right', vp, 60);
+  assert.equal(o.snapZone({ x: 1195, y: 300 }, vp), 'right');
+  assert.equal(o.snapZone({ x: 3, y: 300 }, vp), 'left');
+  assert.equal(o.snapZone({ x: 600, y: 790 }, vp), 'bottom');
+  assert.equal(o.snapZone({ x: 600, y: 300 }, vp), '');
+  const right = o.zoneRect('right', vp, 60);
   assert.equal(right.x + right.w, vp.width);
   assert.equal(right.y, 60);
-  assert.deepEqual(m.zoneRect('max', vp, 60), { x: 0, y: 60, w: vp.width, h: vp.height - m.COMPANION_FOOTER_ROOM - 60, snap: 'max' });
-  assert.equal(m.parsePlacement(JSON.stringify({ x: 1, y: 2, w: 3, h: 4, snap: 'max' })).snap, 'max');
-  const narrow = m.zoneRect('right', { width: 300, height: 800 }, 0);
+  assert.deepEqual(o.zoneRect('max', vp, 60), { x: 0, y: 60, w: vp.width, h: vp.height - o.OVERLAY_FOOTER_ROOM - 60, snap: 'max' });
+  assert.equal(o.parsePlacement(JSON.stringify({ x: 1, y: 2, w: 3, h: 4, snap: 'max' })).snap, 'max');
+  const narrow = o.zoneRect('right', { width: 300, height: 800 }, 0);
   assert.deepEqual([narrow.x, narrow.w], [0, 300], 'a snapped panel never outgrows a narrow viewport');
   assert.equal(m.companionStatus({ online: true, status: 'awaiting_input' }), 'needs');
   assert.equal(m.companionStatus({ online: true, status: 'main_agent_idle' }), 'working');
@@ -1368,7 +1369,7 @@ test('the classic look is the bar as it always was, with its one minimize', asyn
 
 test('an unknown or missing look follows the browser OS', async (t) => {
   const harness = await createPreactHarness(t);
-  const { windowControlsLook } = await harness.importDashboardModule('js/companion-window-controls.js');
+  const { windowControlsLook } = await harness.importDashboardModule('js/overlay-window-controls.js');
   assert.equal(windowControlsLook('auto', 'macos'), 'macos');
   assert.equal(windowControlsLook(undefined, 'windows'), 'windows');
   assert.equal(windowControlsLook('beos', 'linux'), 'linux');
@@ -1397,7 +1398,7 @@ test('maximize fills the room, survives a reload, and restores what it replaced'
   await harness.act(() => size().click());
   assert.ok(frame().classList.contains('snapped-max'));
   assert.equal(size().getAttribute('aria-label'), 'Restore');
-  assert.equal(view.container.querySelector('.companion-resize'), null, 'a maximized window has no free edge to pull');
+  assert.equal(view.container.querySelector('.overlay-window-edge'), null, 'a maximized window has no free edge to pull');
   assert.equal(view.container.querySelector('.companion-resize-frame'), null);
   assert.deepEqual(JSON.parse(prefs.getItem(pref)), { ...FLOATING, snap: 'max' }, 'the floating place is kept to come back to');
   await harness.act(() => size().click());
@@ -1422,7 +1423,7 @@ test('restore brings back the panel it replaced, across a reload and at its resi
   const frame = () => first.view.container.querySelector('.companion-window');
   const size = () => frame().querySelector('.companion-wc-maximize');
   const pull = (dx) => first.harness.act(async () => {
-    const handle = first.view.container.querySelector('.companion-resize');
+    const handle = first.view.container.querySelector('.overlay-window-edge');
     const event = (type, x) => Object.assign(new first.harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 200 });
     handle.dispatchEvent(event('pointerdown', 500));
     handle.dispatchEvent(event('pointermove', 500 + dx));
