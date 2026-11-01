@@ -547,7 +547,7 @@ func copyOpenCodeSession(from, to openCodeHistory, id, cwd string) error {
 		return err
 	}
 	if !same {
-		return errors.New("the copy does not read back the same")
+		return fmt.Errorf("the copy does not read back the same; a conversation from another project than %s changes when copied from there", cwd)
 	}
 	return nil
 }

@@ -178,11 +178,14 @@ records the assignment, then deletes the shared copy. If the copy fails, the
 agent stays as it was and the assignment reports why. A running agent is
 stopped first, as for any assignment with a restart.
 
-The move carries what `opencode export` carries, so the agent's todo list stays
-behind and is deleted with the shared copy. Older conversations from before a
-reincarnation stay in the shared store. There is no move back: under another
-implementation the server reads the shared store and cannot find the
-conversation, so assign `tclaude-layer` again to bring the agent back.
+The move carries what `opencode export` carries, so the agent's todo list is
+deleted with the shared copy, and the assignment's result says so. Older
+conversations from before a reincarnation stay in the shared store.
+
+There is no move back. Any other implementation reads the shared store, where
+the conversation no longer is, so assigning one to an agent with its conversation
+in private state is refused. To change that agent's posture, export it and import
+it under the posture you want.
 
 ### Imported agents
 

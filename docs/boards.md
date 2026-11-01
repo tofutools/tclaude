@@ -16,8 +16,8 @@ exported as an `.excalidraw` file.
 The **＋** at the right of the Collab tab strip lists the boards: pick one to
 open it in a tab, or give a title to create one. `/boards/<id>` opens that
 board's tab, and `/boards` opens the list. A board tab behaves like a terminal
-tab: it reorders, joins tab groups, and detaches into its own browser window
-(**⧉ tab**, or drag it off the strip), which **↩ dashboard** sends back. Like a
+tab: it reorders, joins tab groups, and detaches into its own browser tab
+(**⧉ tab**) or window (drag it off the strip), which **↩ dashboard** sends back. Like a
 terminal tab it lasts as long as its page: a reload brings back the board the
 URL names and any board in the overlay, and a new browser window starts with none. The URL of a deleted
 board opens nothing and becomes `/terminals`.

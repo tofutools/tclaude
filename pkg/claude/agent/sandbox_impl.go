@@ -135,6 +135,8 @@ type sandboxImplResp struct {
 	// agent to apply it.
 	Restart         string `json:"restart,omitempty"`
 	SwitchedClients int    `json:"switched_clients,omitempty"`
+	// Note is what an operator should know about what the assignment did.
+	Note string `json:"note,omitempty"`
 }
 
 // runSandboxImplShow reads one agent's durable posture and renders it.
@@ -247,6 +249,9 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 	}
 	if resp.TemporarySandbox {
 		fmt.Fprintln(stdout, "  note: the temporary dashboard sandbox unlock is active; it suspends this posture until restored")
+	}
+	if resp.Note != "" {
+		fmt.Fprintln(stdout, "  note: "+resp.Note)
 	}
 	if resp.Restart != "" {
 		fmt.Fprintln(stdout, "  restarted: the agent is running under the new implementation")

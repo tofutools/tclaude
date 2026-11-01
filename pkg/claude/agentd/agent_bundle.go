@@ -643,6 +643,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		profile = receiverSandboxProfile(profile, h, q.Get("group"), landingProfile)
+		// The receiver owns a teleport or direct move, by landing authority or by
+		// accepting the offer, and dropping its posture could stall the agent on
+		// prompts nobody answers. Everything else is a file.
+		if accepted, _ := r.Context().Value(acceptedMoveContextKey{}).(bool); authority == nil && !accepted {
+			var dropped []string
+			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
+			landingWarnings = append(landingWarnings, dropped...)
+		}
 		if _, fail := buildProfileFromJSON(profile); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
@@ -736,6 +744,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer landing.close()
 	preview.Landing, preview.History = landing, landing.history != nil
+	if noStart && h.UsesAuthoritativeServer() && landing.Rung == landingNative && landingModel != "" &&
+		(d.Origin == nil || d.Origin.Model != landingModel) {
+		// Only the launch prompt names a model to this harness, and an offline
+		// landing sends none, so the imported conversation's model carries on.
+		preview.Warnings = append(preview.Warnings, fmt.Sprintf(
+			"This offline landing records %s, but its conversation continues on the model it last used until you change it there. Start the import instead to apply the model now.",
+			landingModel))
+	}
 	// The posture this import launches under: the receiver's, which a
 	// recorded posture can tighten but not widen.
 	var postureGroup *db.AgentGroup
@@ -807,8 +823,8 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "group", "--apply requires --group naming an existing receiving group, as with agent spawn")
 		return
 	}
-	if noStart && (!preview.History || h.UsesAuthoritativeServer()) {
-		writeError(w, 400, "no_start", "only an agent whose conversation lands can be imported without starting, and not yet on OpenCode; import and start it instead")
+	if noStart && !preview.History {
+		writeError(w, 400, "no_start", "only an agent whose conversation lands can be imported without starting; import and start it instead")
 		return
 	}
 	var group *db.AgentGroup
@@ -1040,14 +1056,116 @@ func receiverCapsTheWall(h *harness.Harness, group, profile string) bool {
 	})
 }
 
+// receiverApprovalProfile applies receiverSandboxProfile's rule to the approval
+// policy, tool policy and auto-review a file recorded: they too land on the
+// explicit tier, so what is not proven no wider than a spawn here would resolve
+// is dropped and the receiver's value applies. Tightening stays. A value the
+// guard cannot judge is dropped. It returns a warning for each one dropped.
+func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []string) {
+	recorded := p
+	p.Approval, p.ToolGovernance, p.AutoReview = "", "", nil
+	var dropped []string
+	drop := func(field, value, kept string) {
+		dropped = append(dropped, fmt.Sprintf("This file asks for %s %s, which is wider than this node would give, or cannot be compared: %s applies.", field, value, kept))
+	}
+	recordedReview := recorded.AutoReview != nil && *recorded.AutoReview
+	unjudged := func() (spawnProfileJSON, []string) {
+		const kept = "the receiver's default"
+		if recorded.Approval != "" {
+			drop("approval", recorded.Approval, kept)
+		}
+		if recorded.ToolGovernance != "" {
+			drop("tools", recorded.ToolGovernance, kept)
+		}
+		if recordedReview {
+			drop("auto-review", "on", kept)
+		}
+		return p, dropped
+	}
+	landing, fail, err := resolveLaunchDefaults(group, profile, h.Name)
+	if fail != nil || err != nil {
+		return unjudged()
+	}
+	landingApproval, _, _, fail := resolveStringLaunchField("approval", "", h.Name, landing.tiers,
+		func(tier *db.SpawnProfile) string { return tier.Approval },
+		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
+	if fail != nil {
+		return unjudged()
+	}
+	if landingApproval, err = harness.ResolveApprovalPolicy(h, landingApproval); err != nil {
+		return unjudged()
+	}
+	landingReview, _, _, _, fail := resolveBoolLaunchField("auto_review", false, false, h.Name, landing.tiers,
+		func(tier *db.SpawnProfile) *bool { return tier.AutoReview },
+		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
+	if fail != nil {
+		return unjudged()
+	}
+	landingTools, _, _, fail := resolveStringLaunchField("tools", "", h.Name, landing.tiers,
+		func(tier *db.SpawnProfile) string { return tier.ToolGovernance },
+		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
+	if fail != nil {
+		return unjudged()
+	}
+	if landingTools, err = harness.ResolveToolGovernance(h, landingTools); err != nil {
+		return unjudged()
+	}
+
+	// A value equal to the landing's says nothing, and needs no judging.
+	approval := landingApproval
+	if recorded.Approval != "" && recorded.Approval != landingApproval {
+		if harness.ApprovalLineageAllowed(h.Name, landingApproval, landingReview, h.Name, recorded.Approval, landingReview) {
+			p.Approval, approval = recorded.Approval, recorded.Approval
+		} else {
+			drop("approval", recorded.Approval, "approval "+landingApproval)
+		}
+	}
+	if recorded.AutoReview != nil && recordedReview != landingReview {
+		if harness.ApprovalLineageAllowed(h.Name, landingApproval, landingReview, h.Name, approval, recordedReview) {
+			p.AutoReview = recorded.AutoReview
+		} else if recordedReview {
+			drop("auto-review", "on", "auto-review off")
+		}
+	}
+	if recorded.ToolGovernance != "" && recorded.ToolGovernance != landingTools {
+		if harness.ToolGovernanceNotWider(h, landingTools, recorded.ToolGovernance) {
+			p.ToolGovernance = recorded.ToolGovernance
+		} else {
+			drop("tools", recorded.ToolGovernance, "tools "+landingTools)
+		}
+	}
+	return p, dropped
+}
+
+// acceptedMoveContextKey marks an import of a teleport or move offer the
+// receiver accepted by hand.
+type acceptedMoveContextKey struct{}
+
 // bundleNoLaunchContextKey marks an agent import that lands offline
 // (start=false). Only handleAgentBundleImport sets it.
 type bundleNoLaunchContextKey struct{}
 
+// recordOfflineResumeProfile records where a server-authoritative conversation
+// landed. Resume cannot rebuild this from the harness's store as it does
+// elsewhere: a conversation in private state is in no listing the daemon can
+// read. The fallback is the posture bound at enrollment, not a baseline.
+func recordOfflineResumeProfile(convID, harnessName, cwd string) error {
+	relaunch, err := db.AgentRelaunchProfileForConv(convID)
+	if err != nil {
+		return fmt.Errorf("read the landed agent's relaunch profile: %w", err)
+	}
+	if relaunch == nil {
+		return fmt.Errorf("landed agent %s has no relaunch profile", short8(convID))
+	}
+	return db.SetConversationResumeProfile(convID, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: harnessName, Cwd: cwd, FallbackRelaunch: relaunch,
+	})
+}
+
 // landSpawnOffline finishes an enrolled, history-installed spawn without
-// starting a session. The conversation has no resume profile until resume
-// rebuilds it from the harness's own store, as for a group import member;
-// the agent's relaunch profile was bound at enrollment.
+// starting a session. A conversation with no resume profile gets one when
+// resume rebuilds it from the harness's own store, as for a group import
+// member; the agent's relaunch profile was bound at enrollment.
 func landSpawnOffline(p spawnParams, h *harness.Harness, convID string) (*spawnOutcome, *spawnFailure) {
 	// Resume never pre-trusts, so keep the launch's trust_dir promise now:
 	// otherwise the resumed pane stops on the trust dialog, and a Copilot API
