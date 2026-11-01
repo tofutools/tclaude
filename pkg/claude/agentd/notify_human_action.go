@@ -277,7 +277,7 @@ func resolveHumanAction(m *db.HumanMessage) (*humanActionTarget, error) {
 	case humanActionBoard:
 		board, err := db.GetCollabBoard(arg)
 		if err != nil {
-			return nil, errors.New("That board is gone.")
+			return nil, errors.New("that board is gone")
 		}
 		target.Board, target.Title = board.ID, boardActionTitle(board)
 	case humanActionPR:
