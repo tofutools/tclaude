@@ -120,7 +120,7 @@ func TestAudit_SpawnSnapshotKeepsEnvironmentNamesOnly(t *testing.T) {
 		"environment": []map[string]string{{"name": "API_TOKEN=" + secret, "value": "x"}},
 	})
 	require.Equal(t, http.StatusBadRequest, misplaced.Code, "spawn should be refused; body=%s", misplaced.Raw)
-	assert.Contains(t, misplaced.Raw, "environment[0].name is invalid")
+	assert.Contains(t, string(misplaced.Raw), "environment[0].name is invalid")
 	assert.NotContains(t, auditRowByVerb(t, "spawn").Detail, secret, "a value typed as a name")
 }
 
