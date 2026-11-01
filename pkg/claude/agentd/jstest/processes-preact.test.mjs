@@ -1492,6 +1492,26 @@ test('process scribe browser fallback opens a revealed terminal pane with live i
   await Promise.resolve();
   assert.equal(opened.length, 1);
   assert.equal(opened[0].seed.agent, agentId);
+  assert.equal(opened[0].seed.key, `window:${agentId}`);
   assert.equal(opened[0].seed.hideConv, agentId);
   assert.deepEqual(opened[0].options, { reveal: true });
+});
+
+test('a scribe terminal asks for the browser when web terminals are the default', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { dashboardState }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'),
+    harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/snapshot-store.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const agentId = `agt_${'d'.repeat(32)}`;
+  const bodies = [];
+  const actions = createProcessesActions({ state, notify() {}, fetchImpl: async (_, options) => { bodies.push(options.body); return { ok: true, json: async () => ({ mode: 'native' }) }; } });
+  const scribe = { agentId, online: true, name: 'process scribe' };
+  dashboardState.snapshot.value = { default_terminal: 'web' };
+  assert.equal(await actions.openScribe(scribe), true);
+  dashboardState.snapshot.value = { default_terminal: 'native' };
+  assert.equal(await actions.openScribe(scribe), true);
+  assert.deepEqual(bodies, [JSON.stringify({ web: true }), undefined]);
 });
