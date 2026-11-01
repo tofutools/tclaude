@@ -152,6 +152,14 @@ export function processScribeTaskRef(handoff, origin = globalThis.location?.orig
   });
 }
 
+// processScribeDraftLabel is the task label of a scribe drafting a new process
+// from a group, which is how a reload tells it from a scribe the operator
+// summoned onto a process from the graph editor. Summoning that same template
+// from the editor relabels the scribe, and then it is the editor's.
+export function processScribeDraftLabel(templateId) {
+  return `draft: ${templateId}`;
+}
+
 function trustedTaskURL(value) {
   const raw = String(value || '');
   if (!raw) return '';

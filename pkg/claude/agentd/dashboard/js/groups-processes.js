@@ -29,7 +29,8 @@ import {
 import {
   GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen,
 } from './groups-quickstart.js';
-import { ScribeDraft, draftWithScribe } from './groups-scribe-draft.js';
+import { ScribeDraft, draftWithScribe, leaveScribeDraft, restorableScribeDraft } from './groups-scribe-draft.js';
+import { processScribeSessions } from './process-scribe.js';
 import { viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
 import { SavedProcesses } from './groups-saved-processes.js';
@@ -397,7 +398,7 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
 // process controls and the Processes section: the Agents and Processes
 // sections, each with its own controls on its header line, then
 // `fused.after` (the group's triggers).
-function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null, confirm = shellConfirm }) {
+function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null, confirm = shellConfirm, scribes = [] }) {
   const [starting, setStarting] = useState(false);
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
   // group that has processes), {list, origin, saved} (the step-list editor;
@@ -469,23 +470,21 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const people = groupRoster({ members }, busy);
   // The step list may have saved a version (a refused start keeps it open):
   // the graph continues from that one, so its CAS base is the newest.
-  const toGraph = ({ view, changed, sourceHash }) => {
+  const toGraph = ({ view, changed, sourceHash, ref }) => {
     const resaved = !!sourceHash && sourceHash !== quick.saved?.sourceHash;
     setQuick({
       mode: 'graph', key: Date.now(), process: quick.process, changed,
       stored: resaved && !changed ? view : quick.stored,
-      view: { ...view, sourceHash: sourceHash || quick.saved?.sourceHash || '' },
+      view: { ...view, sourceHash: sourceHash || quick.saved?.sourceHash || '', currentRef: ref || quick.saved?.ref || '' },
     });
   };
-  const toSteps = ({ list, changed }) => setQuick({
+  const toSteps = ({ list, changed, sourceHash, ref }) => setQuick({
     list, origin: '', key: Date.now(), process: quick.process, stored: quick.stored,
-    saved: { templateId: quick.process.templateId, sourceHash: quick.view.sourceHash || '', listed: !!quick.process.listed, changed },
+    saved: { templateId: quick.process.templateId, sourceHash: sourceHash || quick.view.sourceHash || '', ref: ref || quick.view.currentRef || '', listed: !!quick.process.listed, changed },
   });
-  // A draft the scribe saved opens as any saved process does: the step list,
-  // or the inline graph when the list cannot show it.
-  const reviewDraft = ({ draft }, view) => {
-    const process = savedProcesses.find((saved) => saved.templateId === draft.templateId)
-      || { templateId: draft.templateId, name: draft.name, listed: false };
+  // A stored version opens as any saved process does: the step list, or the
+  // inline graph when the list cannot show it.
+  const openStored = (process, view) => {
     const converted = viewToStepList(view);
     if (!converted.ok) {
       setQuick({ mode: 'graph', key: Date.now(), process, view, stored: view });
@@ -493,12 +492,28 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     }
     setQuick({
       list: converted.list, origin: '', key: Date.now(), process, stored: view,
-      saved: { templateId: draft.templateId, sourceHash: String(view.sourceHash || ''), listed: false },
+      saved: { templateId: process.templateId, sourceHash: String(view.sourceHash || ''), ref: String(view.currentRef || ''), listed: !!process.listed },
     });
   };
+  const reviewDraft = ({ draft }, view) => {
+    leaveScribeDraft(draft.templateId);
+    openStored(savedProcesses.find((saved) => saved.templateId === draft.templateId)
+      || { templateId: draft.templateId, name: draft.name, listed: false }, view);
+  };
+  const closeDraft = ({ draft }) => {
+    leaveScribeDraft(draft.templateId);
+    setQuick(null);
+  };
+  // A scribe outlives its panel: after a reload or a tab change, its draft
+  // comes back on its own unless the operator already left it. Only with
+  // nothing else open, so it never replaces what they are doing.
+  const restoring = !quick && !starting ? restorableScribeDraft(scribes, savedProcesses) : null;
+  useEffect(() => {
+    if (restoring) setQuick({ mode: 'scribe', key: Date.now(), draft: restoring });
+  }, [restoring?.templateId]);
   const quickStart = editing && quick.mode === 'scribe'
     ? html`<${ScribeDraft} key=${quick.key} group=${group} draft=${quick.draft} api=${api} wizard=${wizard} notify=${notify || defaultNotify}
-        onReview=${(view) => reviewDraft(quick, view)} onClose=${() => setQuick(null)} />`
+        onReview=${(view) => reviewDraft(quick, view)} onClose=${() => closeDraft(quick)} />`
     : editing && quick.mode === 'graph'
     ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${quick.process}
         view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
@@ -506,7 +521,8 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     : editing
     ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null} groupInfo=${entry}
         api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)}
-        onGraph=${quick.saved && quick.process ? toGraph : null} />`
+        onGraph=${quick.saved && quick.process ? toGraph : null}
+        onNewer=${quick.saved && quick.process ? (view) => openStored(quick.process, view) : null} />`
     : picking ? html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
         onEditList=${(list, origin) => setQuick({ list, origin, key: Date.now() })}
         onOpenGraph=${(view, name) => (view
@@ -530,7 +546,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     dropped=${droppedPwf} onImported=${() => void source.refresh()} /></span>`;
   const body = html`${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}
-      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || quick.draft?.templateId || '' : ''}
+      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || quick.draft?.templateId || '' : ''} scribes=${scribes}
       onEdit=${(edit) => {
         setStarting(false);
         setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
@@ -644,7 +660,7 @@ export function GroupProcessBody({ group, fused = null }) {
   if (!own) return html`<${UnsharedRuns} group=${group} wizard=${perspective.wizard} fused=${fused} />`;
   return html`<${GroupRuns} group=${own} roster=${perspective.rosters.get(own.name)} context=${perspective.context}
     filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
-    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} confirm=${perspective.confirm} />`;
+    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} confirm=${perspective.confirm} scribes=${perspective.scribes} />`;
 }
 
 // UnsharedRuns stands in for the runs of a group on a node whose run context
@@ -796,7 +812,8 @@ export function GroupsProcessesFocus({
         onSelectRun=${(runId) => onFocusRun({ group: focusedRun.group, runId })} />
     </div>`;
   }
-  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify, fused, confirm };
+  const scribes = processScribeSessions({ groups: allGroups || [] });
+  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify, fused, confirm, scribes };
   if (fused) {
     return html`<div class="gp-focus gf-focus" data-groups-fused ref=${fusedFrame}>
       ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}

@@ -338,8 +338,14 @@ process template. The draft is saved to the group (pinned, not listed in the lib
 and the group body shows the scribe's live reply, where you can answer it.
 When it finishes, *Review steps* opens the draft in the step list. *Stop
 scribe* stops it, keeps the draft and opens what it saved so far, and *open in
-graph editor* continues with the scribe beside the canvas. The scribe cannot
-start a run, and nothing runs until you press *Start now*. The step
+graph editor* continues with the scribe beside the canvas. A reload or a tab
+change brings the panel back while the scribe is running; *hide* leaves the
+scribe working, and *✎ Scribe* in the process's ▶ strip reopens the panel. The
+scribe cannot start a run, and nothing runs until you press *Start now*. *Start
+now* runs the version on screen: if a newer one was saved after you opened it,
+say by asking the scribe for more through the graph editor's dock, nothing
+starts, and you choose between reviewing the newer version and starting the one
+you reviewed. The step
 list edits a process as numbered steps, each done by a specific agent, any
 member with a role, anyone free in the group, you, or a command; one line sets
 what an agent step does when no member can take it (wait, spawn the group's

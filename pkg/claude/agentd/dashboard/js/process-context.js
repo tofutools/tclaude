@@ -323,6 +323,10 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'DELETE',
       }, fetchImpl);
     },
+    // deleteTemplate removes a template with its history, pins and listing.
+    async deleteTemplate(templateId) {
+      return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, { method: 'DELETE' }, fetchImpl);
+    },
     // spawnProfileNames lists the node's spawn profiles for a fallback picker.
     async spawnProfileNames() {
       const body = await processRequest('/api/spawn-profiles', {}, fetchImpl);
@@ -369,13 +373,16 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       return body.diagnostics || [];
     },
     // startGroupRun starts a run scoped to a group, or to one agent when
-    // agent is given instead.
-    async startGroupRun({ templateId, group, agent, params = {}, authorizeProgramProfiles = [], attemptKey = randomUUID() }) {
+    // agent is given instead. `expectedRef` refuses the start with
+    // process_run_template_moved if the head is no longer that version;
+    // `templateRef` runs that version even though a newer one exists.
+    async startGroupRun({ templateId, group, agent, params = {}, authorizeProgramProfiles = [], expectedRef = '', templateRef = '', attemptKey = randomUUID() }) {
       const path = '/v1/process/runs';
       const filled = Object.fromEntries(Object.entries(params).filter(([, value]) => String(value ?? '') !== ''));
       const body = JSON.stringify({
         templateId, ...(agent ? { agent } : { group }), ...(Object.keys(filled).length ? { params: filled } : {}),
         authorizeProgramProfiles: [...authorizeProgramProfiles],
+        ...(expectedRef ? { expectedRef } : {}), ...(templateRef ? { templateRef } : {}),
       });
       return processRequest(path, {
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,

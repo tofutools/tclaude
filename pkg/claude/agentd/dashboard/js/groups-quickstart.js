@@ -59,6 +59,7 @@ export async function openInGraphEditor(api, view, name) {
 // scribeDraftRequest appends, the request fits the scribe's prompt limit.
 export const DRAFT_DESCRIPTION_MAX = 1200;
 const DRAFT_NAME_MAX = 60;
+const DRAFT_GROUP_CONTEXT = '\n\nThis process is for the agent group "';
 
 // scribeDraftName names the draft template after the description's first
 // line, so it is recognisable in the group and the editor.
@@ -74,7 +75,7 @@ export function scribeDraftName(text) {
 // not listed.
 export function scribeDraftRequest(text, groupName, roster = []) {
   const request = String(text || '').trim().slice(0, DRAFT_DESCRIPTION_MAX);
-  const head = `${request}\n\nThis process is for the agent group "${groupName}". Draft its steps for this group's agents, using a role rather than a name wherever a role fits, and steps for me (the human) or commands where the description asks for them. Leave it as a saved draft: do not start it.`;
+  const head = `${request}${DRAFT_GROUP_CONTEXT}${groupName}". Draft its steps for this group's agents, using a role rather than a name wherever a role fits, and steps for me (the human) or commands where the description asks for them. Leave it as a saved draft: do not start it.`;
   const members = roster.map((member) => `- ${member.name}${member.role ? ` (role: ${member.role})` : ''}`);
   if (!members.length) return `${head}\nThe group has no members yet.`;
   let body = `${head}\nIts members:`;
@@ -87,6 +88,11 @@ export function scribeDraftRequest(text, groupName, roster = []) {
     listed += 1;
   }
   return listed < members.length ? `${body}\n…and ${members.length - listed} more` : body;
+}
+
+// scribeDraftAsked reads the operator's own words back out of that request.
+export function scribeDraftAsked(body) {
+  return String(body || '').split(DRAFT_GROUP_CONTEXT)[0].trim();
 }
 
 // QUICKSTART_PREF remembers that the operator is past the first run: 'used'
@@ -452,7 +458,7 @@ function previewNow(node) {
 // edits one of the group's saved processes ({templateId, sourceHash}):
 // saving writes a new version of that template instead of a new one.
 // `groupInfo` is the group's process context ({roles, defaultSpawnProfile}).
-export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, groupInfo = null, api, source, wizard = false, onClose, onGraph = null, notify = defaultNotify }) {
+export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, groupInfo = null, api, source, wizard = false, onClose, onGraph = null, onNewer = null, notify = defaultNotify }) {
   const [list, setList] = useState(initial);
   const [name, setName] = useState(initial.template?.name || '');
   const [values, setValues] = useState({});
@@ -461,6 +467,10 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [diagnostics, setDiagnostics] = useState([]);
+  // newerKey is the view Start was refused for: a newer version of the saved
+  // process exists, and these steps are not it. Editing them leaves the choice
+  // behind, because a save then meets the template's own stale-version error.
+  const [newerKey, setNewerKey] = useState('');
   // preview is the server's "who it will use now" for the view it was asked
   // about ({key, nodes}); a stale one is ignored until the next answer.
   const [preview, setPreview] = useState({ key: '', nodes: null });
@@ -474,7 +484,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     // `changed`: the graph view handed over unsaved edits, so these steps
     // are not what is stored.
     created.current = saved
-      ? { key: saved.changed ? '' : viewKey, id: saved.templateId, sourceHash: saved.sourceHash || '', pinned: true, listed: !!saved.listed }
+      ? { key: saved.changed ? '' : viewKey, id: saved.templateId, sourceHash: saved.sourceHash || '', ref: saved.ref || '', pinned: true, listed: !!saved.listed }
       : { key: '', id: '' };
   }
   const needs = templateStartRequirements(view.template);
@@ -541,7 +551,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         const head = await api.getTemplate(cause.body.id).catch(() => null);
         const listingFailed = cause.body.code === 'process_template_listing';
         created.current = {
-          key: viewKey, id: String(cause.body.id), sourceHash: String(head?.sourceHash || ''), body: null,
+          key: viewKey, id: String(cause.body.id), sourceHash: String(head?.sourceHash || ''), ref: String(head?.currentRef || ''), body: null,
           pinned: !!current.pinned, listed: listingFailed ? !!current.listed : (!!current.listed || !!listed),
         };
         throw cause;
@@ -562,7 +572,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   const storeSteps = async (current, { listed, pinGroup }) => {
     if (current.id) {
       const body = await api.saveTemplate(current.id, view, { sourceHash: current.sourceHash, ...(listed ? { listed } : {}), ...(pinGroup && !current.pinned ? { pinGroup } : {}) });
-      created.current = { ...current, key: viewKey, body, sourceHash: String(body?.sourceHash || ''), pinned: current.pinned || !!pinGroup, listed: current.listed || !!listed };
+      created.current = { ...current, key: viewKey, body, sourceHash: String(body?.sourceHash || ''), ref: String(body?.ref || ''), pinned: current.pinned || !!pinGroup, listed: current.listed || !!listed };
     } else {
       const body = await api.createTemplate(view, { ...(listed === undefined ? {} : { listed }), ...(pinGroup ? { pinGroup } : {}) });
       const id = String(body?.id || '');
@@ -572,7 +582,11 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     return created.current.id;
   };
   const label = name.trim() || 'this process';
-  const start = async () => {
+  // The start names the version on screen, so a save made elsewhere since it
+  // opened cannot run in its place, with command consent given for other
+  // steps. `reviewed` is the operator's answer to that refusal: run this
+  // version anyway.
+  const start = async ({ reviewed = false } = {}) => {
     if (busy || !name.trim() || missing.length || hasErrors || unconsented.length) return;
     setBusy('start');
     setError('');
@@ -583,16 +597,37 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       // Only the inputs the steps still use: a renamed {{param}} leaves its
       // old value behind in `values`.
       const params = Object.fromEntries(needs.params.filter((param) => values[param.name] !== undefined).map((param) => [param.name, values[param.name]]));
-      await api.startGroupRun({ templateId, group: group.name, params, authorizeProgramProfiles: programProfiles.filter((p) => authorized.has(p)) });
+      const ref = saved ? created.current.ref : '';
+      await api.startGroupRun({
+        templateId, group: group.name, params, authorizeProgramProfiles: programProfiles.filter((p) => authorized.has(p)),
+        ...(ref ? { [reviewed ? 'templateRef' : 'expectedRef']: ref } : {}),
+      });
       markQuickStart();
       notify(`Started ${label} in ${group.name}`);
       void source?.refresh?.();
       onClose();
     } catch (cause) {
+      if (cause.body?.code === 'process_run_template_moved') {
+        setNewerKey(viewKey);
+        return;
+      }
       const named = unauthorizedProfiles(cause.message);
       if (named.length) setExtraProfiles((current) => [...new Set([...current, ...named])]);
       setError(cause.message);
     } finally {
+      setBusy('');
+    }
+  };
+  // Reopens the editor on the head; what the operator saw there is gone, so
+  // they review the newer version before it can start.
+  const reviewNewer = async () => {
+    if (busy) return;
+    setBusy('newer');
+    setError('');
+    try {
+      onNewer(await api.getTemplate(created.current.id));
+    } catch (cause) {
+      setError(cause.message);
       setBusy('');
     }
   };
@@ -651,6 +686,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     : hasErrors ? 'Fix the problems first'
       : missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first`
         : unconsented.length ? `Allow ${consentSubject(consents.find((c) => c.profile === unconsented[0]))} to run first` : '';
+  const newer = !!newerKey && newerKey === viewKey;
   const whoRows = list.steps.map((step, i) => ({ step, i, now: nowOf(step) }));
   const title = saved ? (wizard ? 'Rite' : 'Process') : (wizard ? 'New rite' : 'New process');
   return html`<section class="gq-editor" aria-label=${saved ? `Edit ${label} of ${group.name}` : `New process for ${group.name}`} data-step-editor=${group.name}
@@ -664,7 +700,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         ${onGraph && html`<span class="gm-toggle" role="group" aria-label="View">
           <button type="button" aria-pressed="true" class="on">☰ Steps</button>
           <button type="button" data-mini-graph title="Show the same draft as a graph"
-            onClick=${() => onGraph({ view, changed: created.current.key !== viewKey, sourceHash: created.current.sourceHash })}>◈ Graph</button>
+            onClick=${() => onGraph({ view, changed: created.current.key !== viewKey, sourceHash: created.current.sourceHash, ref: created.current.ref })}>◈ Graph</button>
         </span>`}
         <span class="gq-spacer"></span>
         ${origin && html`<span class="gq-dim">from starter ${origin}</span>`}
@@ -708,9 +744,17 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         <b>${now.label}</b> · step ${i + 1}${now.waits || now.spawns ? html` · <span>${now.detail}</span>` : ''}</li>`)}
         ${!whoRows.length && html`<li class="gq-dim">nobody yet</li>`}</ul>
       ${general.length > 0 && html`<div class="gq-problems" role="alert">${general.map((problem) => html`<div key=${problem}>${problem}</div>`)}</div>`}
+      ${newer && html`<div class="gq-newer" role="alert" data-step-newer>
+        <p>A newer version of ${label} was saved after you opened it, so nothing started. The steps here are the older version.</p>
+        <div class="gq-newer-acts">
+          ${onNewer && html`<button type="button" class="gq-btn primary" data-step-newer-review disabled=${!!busy} onClick=${reviewNewer}>${busy === 'newer' ? 'opening…' : 'Review the newer version'}</button>`}
+          <button type="button" class="gq-btn" data-step-newer-start disabled=${!!busy || !!blockedWhy} title=${blockedWhy || 'Run the steps shown here. The newer version stays the current one.'}
+            onClick=${() => start({ reviewed: true })}>${busy === 'start' ? 'starting…' : '▶ Start this older version'}</button>
+        </div>
+      </div>`}
       <div class="gq-foot">
-        <button type="button" class="gq-btn primary" data-step-start disabled=${!!busy || !!blockedWhy} title=${blockedWhy}
-          onClick=${start}>${busy === 'start' ? 'starting…' : '▶ Start now'}</button>
+        <button type="button" class="gq-btn primary" data-step-start disabled=${!!busy || !!blockedWhy || newer} title=${newer ? 'Choose a version above' : blockedWhy}
+          onClick=${() => start()}>${busy === 'start' ? 'starting…' : '▶ Start now'}</button>
         <button type="button" class="gq-btn" data-step-save-group disabled=${!!busy || !name.trim() || hasErrors}
           title=${saved ? `Save a new version of ${label}` : `Save to ${group.name}'s processes, for one-click reruns; the template library lists it only once you publish it`}
           onClick=${saveToGroup}>${busy === 'group' ? 'saving…' : saved ? 'Save' : `Save to ${group.name}`}</button>

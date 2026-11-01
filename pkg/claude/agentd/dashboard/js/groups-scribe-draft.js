@@ -11,16 +11,64 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { markQuickStart, scribeDraftName, scribeDraftRequest } from './groups-quickstart.js';
+import { markQuickStart, scribeDraftAsked, scribeDraftName, scribeDraftRequest } from './groups-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
+import { dashPrefs } from './prefs.js';
 import {
   PROCESS_SCRIBE_CHAT_SUBJECT, PROCESS_SCRIBE_GRANT_META, PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_PROMPT_MAX, PROCESS_SCRIBE_SLUGS,
-  processScribeBrief, processScribeChatLive, processScribeChatMessage, processScribeChatTranscript, processScribeGrantBody, processScribeHandoff, processScribeTaskRef,
+  processScribeBrief, processScribeChatLive, processScribeChatMessage, processScribeChatTranscript, processScribeDraftLabel, processScribeGrantBody, processScribeHandoff, processScribeTaskRef,
 } from './process-scribe.js';
 
 const html = htm.bind(h);
 
 export const SCRIBE_DRAFT_POLL_MS = 2000;
+const LEFT_DRAFTS_PREF = 'tclaude.dash.groupsProcesses.leftScribeDrafts';
+const LEFT_DRAFTS_MAX = 50;
+
+function leftDrafts() {
+  try {
+    const stored = JSON.parse(dashPrefs.getItem(LEFT_DRAFTS_PREF) || '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch { return []; }
+}
+
+function setLeftDrafts(ids) {
+  try { dashPrefs.setItem(LEFT_DRAFTS_PREF, JSON.stringify(ids.slice(-LEFT_DRAFTS_MAX))); } catch { /* best effort */ }
+}
+
+// leaveScribeDraft remembers that the operator is done with a draft's panel
+// (they reviewed it or hid it), so it does not come back on a reload while its
+// scribe stays up. reopenScribeDraft undoes that.
+export function leaveScribeDraft(templateId) {
+  setLeftDrafts([...leftDrafts().filter((id) => id !== templateId), templateId]);
+}
+
+export function reopenScribeDraft(templateId) {
+  setLeftDrafts(leftDrafts().filter((id) => id !== templateId));
+}
+
+// scribeDraftsOf are the drafts in `processes` with a live scribe still on
+// them, rebuilt from the snapshot's scribes: only a scribe started by Draft
+// steps carries the draft label. What the panel knew at the start and the
+// snapshot does not (the first version, the operator's words) is left empty
+// for it to work out.
+export function scribeDraftsOf(scribes, processes) {
+  return processes.flatMap((process) => {
+    const scribe = scribes.find((candidate) => candidate.online && candidate.scope?.id === process.templateId
+      && candidate.taskLabel === processScribeDraftLabel(process.templateId));
+    if (!scribe) return [];
+    return [{
+      templateId: process.templateId, name: process.name, sourceHash: '', request: '',
+      scribe: { agentId: scribe.agentId, convId: scribe.convId, name: scribe.name },
+    }];
+  });
+}
+
+// restorableScribeDraft is the draft whose panel a group brings back by itself.
+export function restorableScribeDraft(scribes, processes) {
+  const left = leftDrafts();
+  return scribeDraftsOf(scribes, processes).find((draft) => !left.includes(draft.templateId)) || null;
+}
 
 // draftWithScribe asks the operator to approve the scribe's grant and only
 // then stores a near-empty template, saved to the group (pinned, not listed
@@ -29,7 +77,7 @@ export const SCRIBE_DRAFT_POLL_MS = 2000;
 // request goes as operator mail, not in the brief, because that is what the
 // chat route reads as an open turn: its live tail, and when the turn ends. A
 // declined approval stores and starts nothing and answers null. A failed
-// start takes the empty draft out of the group again.
+// start deletes the empty draft again, so nothing is left behind unlisted.
 export async function draftWithScribe(api, { group, text, roster = [], confirm }) {
   const name = scribeDraftName(text);
   const approved = await confirm({
@@ -54,7 +102,7 @@ export async function draftWithScribe(api, { group, text, roster = [], confirm }
     const task = processScribeTaskRef(handoff);
     const scribe = await api.summonScribe({
       name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS, exclusive: true, scope: handoff.scope,
-      brief: processScribeBrief(handoff), task_ref_url: task.url, task_ref_label: task.label, background: true,
+      brief: processScribeBrief(handoff), task_ref_url: task.url, task_ref_label: processScribeDraftLabel(templateId), background: true,
     });
     agentId = String(scribe?.agent_id || '');
     const convId = String(scribe?.conv_id || '');
@@ -71,7 +119,7 @@ export async function draftWithScribe(api, { group, text, roster = [], confirm }
     };
   } catch (cause) {
     if (agentId) await api.stopAgent(agentId).catch(() => {});
-    await api.unpinProcess(group.name, templateId).catch(() => {});
+    await api.deleteTemplate(templateId).catch(() => api.unpinProcess(group.name, templateId).catch(() => {}));
     throw cause;
   }
 }
@@ -79,6 +127,13 @@ export async function draftWithScribe(api, { group, text, roster = [], confirm }
 // draftSteps counts what the scribe saved, for the ready line.
 function draftSteps(view) {
   return Object.values(view?.template?.nodes || {}).filter((node) => node?.performer).length;
+}
+
+// scribeSaved says a stored version is the scribe's work rather than the empty
+// draft it started from. A re-attached panel does not have that first version,
+// so it goes by whether there are any steps.
+function scribeSaved(draft, view) {
+  return draft.sourceHash ? String(view.sourceHash || '') !== draft.sourceHash : draftSteps(view) > 0;
 }
 
 // useScribeDraft polls the scribe's conversation and the draft template.
@@ -98,7 +153,7 @@ function useScribeDraft(api, draft) {
         return {
           messages: read ? processScribeChatTranscript(read) : prev.messages,
           live: read ? processScribeChatLive(read) : prev.live,
-          ready: view && String(view.sourceHash || '') !== draft.sourceHash ? view : prev.ready,
+          ready: view && scribeSaved(draft, view) ? view : prev.ready,
           error: failed ? failed.message || String(failed) : '',
           loaded: prev.loaded || !!read,
         };
@@ -137,6 +192,7 @@ export function ScribeDraft({ group, draft, api, wizard = false, notify, onRevie
   // shows the operator's own words instead.
   const request = messages.findIndex((message) => message.role === 'human');
   const log = messages.filter((message, index) => index !== request);
+  const asked = draft.request || scribeDraftAsked(messages[request]?.body);
   const last = messages.at(-1);
   const working = busy === 'send' || !!live || last?.role === 'human' || !loaded;
   const finished = scribeFinished({ messages, live, ready });
@@ -189,7 +245,7 @@ export function ScribeDraft({ group, draft, api, wizard = false, notify, onRevie
       <h3>${wizard ? `A scribe sets down ${draft.name}` : `A scribe is drafting ${draft.name}`}</h3>
       <span class="gq-tag" title="It holds process.templates.read and process.templates.manage: it can save process templates, and it cannot start a run">background · ${draft.scribe.name}</span>
     </div>
-    <p class="gq-draft-ask" data-scribe-request>${draft.request}</p>
+    ${asked && html`<p class="gq-draft-ask" data-scribe-request>${asked}</p>`}
     <div class="gq-draft-log" aria-live="polite">
       ${log.map((message) => html`<div key=${message.id} class=${`gq-draft-msg is-${message.role}`} data-scribe-msg=${message.role}>${message.body}</div>`)}
       ${(live?.items || []).map((item, index) => html`<div key=${index} class=${item.kind === 'tool' ? 'gq-draft-tool' : 'gq-draft-msg is-scribe is-live'} data-scribe-live=${item.kind}>${item.text}</div>`)}
@@ -208,6 +264,7 @@ export function ScribeDraft({ group, draft, api, wizard = false, notify, onRevie
         onClick=${openReview}>Review steps</button>
       <button type="button" class="gq-btn" data-scribe-graph onClick=${graph} title="Continue with this scribe beside the graph editor">⤢ open in graph editor</button>
       <button type="button" class="gq-link" data-scribe-stop disabled=${!!busy} onClick=${stop} title="Stop the scribe; the draft stays in the group, and what it saved opens for review">${busy === 'stop' ? 'stopping…' : 'stop scribe'}</button>
+      <button type="button" class="gq-link" data-scribe-hide disabled=${!!busy} onClick=${onClose} title="Hide this panel and leave the scribe working; ▶ on the process brings it back">hide</button>
     </div>
     ${(failure || error) && html`<div class="gq-error" role="alert">${failure || error}</div>`}
   </section>`;
