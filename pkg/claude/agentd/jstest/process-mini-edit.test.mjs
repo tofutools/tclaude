@@ -206,3 +206,16 @@ test('alongside is offered only where the fork can close; joins move with the pa
   assert.match(m.canDelete(ship, 'end'), /steps still end here/);
   assert.throws(() => m.deleteStep(ship, 'end'), /steps still end here/);
 });
+
+test('a decision has no sub line, so its fallback marks its label', () => {
+  const view = {
+    template: { nodes: {
+      ask: { type: 'decision', name: 'Review', performer: { kind: 'agent', role: 'qa' } },
+      work: { type: 'task', name: 'Work', performer: { kind: 'agent', role: 'dev' } },
+    } },
+    edges: [],
+  };
+  const { nodes } = m.draftProjection(view, { noteOf: () => '↯ fail' });
+  assert.equal(nodes.find((node) => node.id === 'ask').label, 'Review ↯ fail');
+  assert.equal(nodes.find((node) => node.id === 'work').label, 'Work', 'a task shows it on its sub line');
+});

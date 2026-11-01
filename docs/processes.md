@@ -335,7 +335,10 @@ shown for your approval first, and the draft is never started for you. The step
 list edits a process as numbered steps, each done by a specific agent, any
 member with a role, anyone free in the group, you, or a command; one line sets
 what an agent step does when no member can take it (wait, spawn the group's
-default spawn profile, or fail: the template's `fallback`); your answers to a *you* step branch to
+default spawn profile or another profile you pick, or fail: the template's
+`fallback`), and an agent step can override that with its own choice under
+its Who picker, or follow the process; a step that does not simply wait shows
+its fallback (`↯ spawn opus-lead`, `↯ fail`) on its node; your answers to a *you* step branch to
 later steps, and `{{name}}` in a prompt becomes a start input. A preview, the
 start inputs and who each step would use now (the daemon's resolve-preview,
 a dry run of the group rules) update as you edit. A command

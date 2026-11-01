@@ -616,6 +616,32 @@ test('a save whose pin failed keeps the stored template, so a retry only pins it
   assert.deepEqual(api.calls.pin, [{ group: 'webshop', id: 'tmpl_x' }]);
 });
 
+test('the fallback names a spawn profile, for the process and per step, and the preview shows it', async (t) => {
+  const api = fakeApi({ preview: () => ({}) });
+  api.spawnProfileNames = async () => ['sonnet-dev', 'opus-lead'];
+  const context = { ...EMPTY_CONTEXT, groups: [{ ...EMPTY_CONTEXT.groups[0], defaultSpawnProfile: 'sonnet-dev', roles: [{ role: 'qa', count: 0 }] }] };
+  const { root, click, setValue, settle } = await mount(t, { api, context });
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'triage');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await settle();
+  await setValue(steps(root)[0].querySelector('.gq-who-select'), 'role:qa', 'change');
+  await setValue(editor.querySelector('[data-process-fallback] select'), 'spawn:opus-lead', 'change');
+  const own = () => steps(root)[0].querySelector('[data-step-fallback] select');
+  assert.match(own().querySelector('option[value=""]').textContent, /as the process: spawn opus-lead/);
+  await setValue(own(), 'fail', 'change');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  await settle();
+  const last = api.calls.preview.at(-1);
+  assert.deepEqual(last.view.template.fallback, { action: 'spawn', profile: 'opus-lead' });
+  assert.deepEqual(last.view.template.nodes[steps(root)[0].dataset.step].performer.fallback, { action: 'fail' });
+  assert.match(editor.querySelector('[data-process-fallback]').textContent, /1 step sets its own/);
+  assert.match(editor.querySelector('[data-step-flow]').textContent, /↯ fail/);
+  await setValue(own(), '', 'change');
+  assert.equal(own().dataset.fallbackValue, '', 'back to following the process');
+});
+
 test('who-now reads the server\'s resolve-preview; the process fallback and anyone free are pickable', async (t) => {
   const api = fakeApi({ preview: (view) => Object.fromEntries(Object.entries(view.template.nodes)
     .filter(([, node]) => node.performer?.kind === 'agent')

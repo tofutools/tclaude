@@ -12,7 +12,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { templateStartRequirements, unauthorizedProfiles } from './process-context.js';
 import {
-  STARTERS, ownFallback, whoFromValue, whoNow, whoOptions, whoValue,
+  STARTERS, fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, ownFallback, setStepFallback, stepFallbackValue,
+  whoFromValue, whoNow, whoOptions, whoValue,
 } from './process-quickstart.js';
 import {
   YOU_CONTINUE, blankStepList, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
@@ -225,6 +226,39 @@ export function WhoPicker({ step, roster, roles, onChange }) {
   </select>`;
 }
 
+// useSpawnProfiles reads the node's spawn profile names for the fallback
+// pickers. Without them a picker still offers the group's default.
+export function useSpawnProfiles(api) {
+  const [profiles, setProfiles] = useState([]);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve(api?.spawnProfileNames?.()).then((names) => { if (live && names) setProfiles(names); }).catch(() => {});
+    return () => { live = false; };
+  }, [api]);
+  return profiles;
+}
+
+// FallbackPicker chooses what happens when no member can take an agent step.
+// `inherit` is the label of following the process; without it the picker is
+// the process's own.
+export function FallbackPicker({ value, inherit = '', defaultSpawnProfile = '', profiles = [], label, onChange }) {
+  const options = fallbackChoices({ current: value, inherit, defaultSpawnProfile, profiles });
+  return html`<select class="gq-fallback-select" aria-label=${label} data-fallback-value=${value} value=${value}
+    onChange=${(event) => onChange(fallbackFromValue(event.currentTarget.value))}>
+    ${options.map((option) => html`<option key=${option.value} value=${option.value} disabled=${option.disabled}>${option.label}</option>`)}
+  </select>`;
+}
+
+// inheritLabel names what a step gets by following the process's fallback.
+export function inheritLabel(fallback, defaultSpawnProfile = '') {
+  const action = fallback?.action || 'wait';
+  if (action === 'spawn') {
+    const profile = fallback.profile || defaultSpawnProfile;
+    return profile ? `as the process: spawn ${profile}` : 'as the process: wait (no default spawn profile)';
+  }
+  return action === 'fail' ? 'as the process: fail' : 'as the process: wait';
+}
+
 // Answers edits a decision step's answers: a person's, or the verdicts an
 // agent decider picks between. Emptying an agent's verdicts makes it a plain
 // agent step again; a person always keeps one answer.
@@ -294,7 +328,7 @@ function Answers({ list, step, onChange }) {
   </div>`;
 }
 
-function StepRow({ list, step, index, roster, roles, now, problems, onChange, onMove, onRemove }) {
+function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo, onChange, onMove, onRemove }) {
   const kind = stepKind(step);
   const decision = step.node.type === 'decision';
   // Prompts read {{name}}, the step list's shorthand; edits expand it back.
@@ -332,6 +366,13 @@ function StepRow({ list, step, index, roster, roles, now, problems, onChange, on
     <div class="gq-who">
       <${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} />
       <div class=${`gq-res${now.waits ? ' waits' : ''}`}>${now.detail}</div>
+      ${kind === 'agent' && html`<label class="gq-step-fallback" data-step-fallback=${step.id} title="What this step does when no member can take it">
+        <span aria-hidden="true">↯</span>
+        <${FallbackPicker} value=${stepFallbackValue(step)} label=${`If no member can take step ${index + 1}`}
+          inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
+          defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
+          onChange=${(next) => onChange(setStepFallback(step, next))} />
+      </label>`}
     </div>
     <div class="gq-row-act">
       <button type="button" aria-label=${`Move step ${index + 1} up`} disabled=${index === 0} onClick=${() => onMove(-1)}>↑</button>
@@ -486,6 +527,8 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   const served = preview.key === viewKey ? preview.nodes : null;
   const nowOf = (step) => previewNow(served?.[step.id]) || whoNow(step, roster, { fallback, defaultSpawnProfile });
   const roles = groupInfo?.roles || null;
+  const profiles = useSpawnProfiles(api);
+  const fallbackInfo = { fallback, defaultSpawnProfile, profiles };
   const { out: stepProblems, general } = problemsByStep(diagnostics, list);
   const missing = needs.params.filter((param) => param.required && !String(values[param.name] ?? '').trim());
   const hasErrors = diagnostics.some((d) => d.severity === 'error');
@@ -497,11 +540,10 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   const agentSteps = list.steps.filter((step) => step.node.performer?.kind === 'agent');
   const fallbackAction = fallback?.action || 'wait';
   const ownFallbacks = agentSteps.filter(ownFallback).length;
-  const spawnProfile = fallback?.profile || defaultSpawnProfile;
-  const setFallback = (action) => {
+  const setFallback = (next) => {
     const template = { ...list.template };
-    if (action === 'wait') delete template.fallback;
-    else template.fallback = { action, ...(action === 'spawn' && fallback?.profile ? { profile: fallback.profile } : {}) };
+    if (!next || next.action === 'wait') delete template.fallback;
+    else template.fallback = next;
     update({ ...list, template });
   };
   // ensureSaved stores the steps once per edit and returns the template id.
@@ -650,7 +692,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         <span class="gq-spacer"></span>
         ${origin && html`<span class="gq-dim">from starter ${origin}</span>`}
       </div>
-      ${list.steps.map((step, index) => html`<${StepRow} key=${step.id} list=${list} step=${step} index=${index} roster=${roster} roles=${roles} now=${whoRows[index].now}
+      ${list.steps.map((step, index) => html`<${StepRow} key=${step.id} fallbackInfo=${fallbackInfo} list=${list} step=${step} index=${index} roster=${roster} roles=${roles} now=${whoRows[index].now}
         problems=${stepProblems.get(step.id) || []} onChange=${change}
         onMove=${(delta) => update(moveStep(list, step.id, delta))} onRemove=${() => update(removeStep(list, step.id))} />`)}
       ${!list.steps.length && html`<div class="gq-empty">No steps yet. Add the first one.</div>`}
@@ -662,18 +704,14 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       ${agentSteps.length > 0 && html`<div class="gq-fallback" data-process-fallback=${fallbackAction}>
         <span aria-hidden="true">↯</span>
         <label>If no member can take an agent step:
-          <select aria-label="When no member can take a step" value=${fallbackAction} onChange=${(event) => setFallback(event.currentTarget.value)}>
-            <option value="wait">wait for one</option>
-            <option value="spawn" disabled=${!spawnProfile && fallbackAction !== 'spawn'}>${spawnProfile
-    ? `spawn one with profile ${spawnProfile}` : 'spawn one (the group has no default spawn profile)'}</option>
-            <option value="fail">fail the step</option>
-          </select></label>
+          <${FallbackPicker} value=${fallbackValue(fallback) || 'wait'} label="When no member can take a step"
+            defaultSpawnProfile=${defaultSpawnProfile} profiles=${profiles} onChange=${setFallback} /></label>
         ${ownFallbacks > 0 && html`<span class="gq-dim" data-own-fallbacks=${ownFallbacks}>· ${ownFallbacks === 1 ? '1 step sets its own' : `${ownFallbacks} steps set their own`}</span>`}
       </div>`}
     </div>
     <div class="gq-side">
       <div class="gq-sec">Preview</div>
-      <${FlowPreview} flow=${stepListFlow(list, { whoOf: (step) => nowOf(step).label })} wizard=${wizard} />
+      <${FlowPreview} flow=${stepListFlow(list, { whoOf: (step) => { const now = nowOf(step); const note = now.spawns ? '' : fallbackNote(step, fallbackInfo); return note ? `${now.label} ${note}` : now.label; } })} wizard=${wizard} />
       ${needs.params.length > 0 && html`<div class="gq-sec">Start inputs <span class="gq-dim">· found in the steps</span></div>
         <div class="gq-params">${needs.params.map((param) => html`<label key=${param.name} class="gq-param">
           <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>

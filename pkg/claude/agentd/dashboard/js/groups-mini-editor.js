@@ -23,7 +23,8 @@ import {
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import { collapseParamShorthand, setStepName, setStepText, setStepWho, stepText, stepWho, viewToStepList } from './process-step-list.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
-import { WhoPicker, defaultNotify, markQuickStart } from './groups-quickstart.js';
+import { FallbackPicker, WhoPicker, defaultNotify, inheritLabel, markQuickStart, useSpawnProfiles } from './groups-quickstart.js';
+import { fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
 
 const html = htm.bind(h);
 
@@ -32,15 +33,18 @@ const VALIDATE_DELAY_MS = 400;
 // A pointer that moves this far from a handle is a drag, not a click.
 const DRAG_SLOP = 8;
 
-// whoLine is a step's sub line in the graph: who does it.
-function whoLine(node) {
+// whoLine is a step's sub line in the graph: who does it, and its fallback
+// when that is not to wait.
+function whoLine(node, fallbackInfo) {
   const who = stepWho({ node });
-  if (who.mode === 'agent') return who.agent;
-  if (who.mode === 'role') return `any ${who.role}`;
-  if (who.mode === 'anyone') return 'anyone free';
+  const note = fallbackNote({ node }, fallbackInfo);
+  const agent = (label) => (note ? `${label} ${note}` : label);
+  if (who.mode === 'agent') return agent(who.agent);
+  if (who.mode === 'role') return agent(`any ${who.role}`);
+  if (who.mode === 'anyone') return agent('anyone free');
   if (who.mode === 'you') return 'you';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
-  return 'pick who';
+  return agent('pick who');
 }
 
 function viewOf(model) {
@@ -67,7 +71,7 @@ function KindChips({ onPick, disabled = '', label = '' }) {
 }
 
 // Inspector is the compact editor of one step: the step list's fields.
-function Inspector({ view, id, roster, roles, onApply, onKind, onClose, onFullEditor }) {
+function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onClose, onFullEditor }) {
   const node = view.template.nodes[id];
   if (!node) return null;
   const kind = miniKind(node);
@@ -96,6 +100,10 @@ function Inspector({ view, id, roster, roles, onApply, onKind, onClose, onFullEd
     <label class="gm-field"><span>Step</span><input type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepName(s, event.currentTarget.value)))} /></label>
     <div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} /></div>
+    ${kind === 'agent' && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
+      label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
+      defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
+      onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
     <label class="gm-field"><span>${label}</span><textarea rows="3" data-mini-text value=${text}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))}></textarea></label>
     <div class="gm-field"><span>${node.type === 'decision' ? 'Outcomes' : 'Then'}</span><div class="gm-outcomes">
@@ -201,6 +209,8 @@ export function MiniGraphEditor({
   }, [!!menu, !!picker]);
   const errors = diagnostics.filter((d) => d.severity === 'error');
   const roles = groupInfo?.roles || null;
+  const profiles = useSpawnProfiles(api);
+  const fallbackInfo = { fallback: draft.template.fallback || null, defaultSpawnProfile: String(groupInfo?.defaultSpawnProfile || ''), profiles };
   // apply lands one operation's result as one undoable edit.
   const apply = (result, focus = undefined) => {
     setError('');
@@ -292,7 +302,7 @@ export function MiniGraphEditor({
       ${menu && html`<${StructureMenu} view=${draft} menu=${menu} onRun=${run} onClose=${() => setMenu(null)}
         onWrap=${() => { setMenu(null); void fullEditor(); }} />`}`;
   };
-  const projection = draftProjection(draft, { whoOf: (id, node) => whoLine(node), name });
+  const projection = draftProjection(draft, { whoOf: (id, node) => whoLine(node, fallbackInfo), noteOf: (id, node) => fallbackNote({ node }, fallbackInfo), name });
   return html`<section class="gm-card" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
     onKeyDown=${(event) => {
       if (event.key === 'Escape' && (menu || picker)) { event.stopPropagation(); setMenu(null); setPicker(null); }
@@ -335,7 +345,7 @@ export function MiniGraphEditor({
         onNodeClick=${(node) => { setMenu(null); setPicker(null); setSelected(node.id === selected ? '' : node.id); }}
         onNodeContextMenu=${openMenu} onNodeHover=${setHover} overlay=${overlay} />
     </div>
-    ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles}
+    ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
       onApply=${(result) => apply(result)} onClose=${() => setSelected('')} onFullEditor=${fullEditor}
       onKind=${(kind, who) => run(() => {
         const result = changeKind(draft, selected, kind);
