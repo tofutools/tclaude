@@ -96,6 +96,12 @@
 .companion-add:hover, .companion-controls button:hover { background: #21262d; color: var(--cmp-text); }
 .companion-controls { display: flex; gap: 2px; margin-left: 4px; }
 .companion-controls .companion-steward-sudo { width: auto; padding: 0 5px; font-size: 11px; }
+.companion-controls .companion-steward-roster { width: auto; padding: 0 5px; font-size: 11px; white-space: nowrap; }
+.companion-controls .steward-roster-menu button { width: auto; height: auto; min-width: 0; padding: 3px 8px; font-size: 12px; border-radius: 6px; border: 1px solid #2a3340; background: #21262d; color: #c9d1d9; white-space: nowrap; }
+.companion-controls .steward-roster-menu button.primary { background: #1f6feb; border-color: #388bfd; color: #fff; }
+.companion-controls .steward-roster-menu button.steward-roster-remove { padding: 2px 6px; }
+.companion-controls .steward-roster-menu button.steward-roster-candidate { justify-content: flex-start; text-align: left; overflow: hidden; text-overflow: ellipsis; border-color: transparent; background: none; }
+.companion-controls .steward-roster-menu button.steward-roster-candidate:hover { background: #21262d; }
 .companion-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
 .companion-controls button:disabled:hover { background: none; color: var(--cmp-muted); }
 

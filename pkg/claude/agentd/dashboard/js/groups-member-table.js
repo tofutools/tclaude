@@ -917,6 +917,18 @@ function SendElsewhereItems({ member, group, snapshot }) {
     ${TELEPORT_ROUTES && kind === 'visiting' && !pageNode && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall hero home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
 }
 
+// MakeStewardMenuItem hands this agent the Steward role, with a confirmation.
+// It is this node's operator's: not on another node's row, and absent with Collab
+// off like the rest of the Steward.
+function MakeStewardMenuItem({ member, group, snapshot }) {
+  const remote = snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) || (member.fleet_node?.id && !isPageNode(member.fleet_node.id));
+  if (snapshot?.collab_enabled !== true || remote || !member.agent_id) return null;
+  if (member.state?.harness === 'shell' || member.agent_id === snapshot.steward_active) return null;
+  const label = member.title || member.conv_id;
+  return html`<${MenuButton} member=${member} act="make-steward" regular="✦ make Steward…" wizard="✦ crown Steward…"
+    title=${`Make ${label} the Steward. It keeps its conversation and working directory, and you choose what happens to the current one.`} />`;
+}
+
 function MenuSeparator() {
   return html`<div class="menu-sep" role="separator"></div>`;
 }
@@ -941,6 +953,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
       <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this hero an owner of the party')} />` : null}
     <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this hero's grimoire of permanent boons and bindings")} />
     <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this hero a time-bounded sudo boon')} />
+    <${MakeStewardMenuItem} member=${member} group=${group} snapshot=${snapshot} />
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
     <${FastModeMenuItem} member=${member} />

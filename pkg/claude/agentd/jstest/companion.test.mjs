@@ -168,8 +168,7 @@ test('summoning the Steward posts a scoped scribe summon and attaches its termin
   assert.equal(post.body.background, true);
   assert.ok(!post.body.exclusive, 'the Steward keeps per-command --ask-human approvals available');
   assert.equal(post.body.slugs, undefined, 'the daemon decides a Steward\'s access');
-  assert.match(post.body.brief, /tclaude agent board show/);
-  assert.match(post.body.brief, /--ask-human/);
+  assert.equal(post.body.brief, undefined, 'the daemon writes a Steward\'s brief');
   assert.deepEqual(closed.at(-1), [S], 'any Terminals-tab pane of the agent is closed first');
   // The summoned agent is not in a snapshot yet: the tab stays and says so.
   assert.match(view.container.textContent, /Starting the agent/);

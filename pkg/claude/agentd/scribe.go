@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -160,7 +161,17 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	titleBase := "" // the group's name, unless the operator named this agent
 	// The Steward is a Collab surface; other scribes are not.
 	isSteward := body.Scope != nil && strings.TrimSpace(body.Scope.Kind) == stewardScopeKind
+	// The group holds Stewards and nothing else: a summon that lands there
+	// without being one would prune them without demoting them.
+	if !isSteward && strings.TrimSpace(body.Name) == stewardGroupName {
+		writeError(w, http.StatusBadRequest, "name", "the name "+stewardGroupName+" is the Steward's")
+		return
+	}
 	if isSteward {
+		// Who is a Steward is the human's alone, whatever the caller holds.
+		if !requireHuman(w, r, "summon a Steward") {
+			return
+		}
 		if !collabRoutesEnabled() {
 			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
 			return
@@ -186,7 +197,7 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 		if unknown := unknownStewardSlugs(cfg); len(unknown) > 0 {
 			slog.Warn("steward.default_permissions: skipping unknown permission slugs", "slugs", unknown)
 		}
-		body.Brief = stewardBrief(body.Brief, cfg)
+		body.Brief = stewardBrief(strings.TrimSpace(stewardBaseBrief+"\n"+body.Brief), cfg)
 		titleBase = cfg.StewardName()
 	}
 
@@ -320,6 +331,9 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	if !reused {
 		spawnUse.keep()
 	}
+	if isSteward {
+		adoptSummonedSteward(out.ConvID)
+	}
 
 	resp := map[string]any{
 		"name":    out.Name,
@@ -411,7 +425,10 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	// Dead sessions are no longer doing useful parallel work. Preserve the old
 	// cleanup behavior by unlinking them, while every live scribe stays in the
 	// group and continues its independent editing task.
-	pruneDeadScribes(g)
+	// A Steward's group is pruned once its replacement exists: adoptSummonedSteward.
+	if g.Name != stewardGroupName {
+		pruneDeadScribes(g)
+	}
 	if scopeKey != "" {
 		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief, taskURL, taskLabel, focus); reused != nil || reuseFail != nil {
 			return reused, reused != nil, reuseFail
@@ -475,10 +492,7 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 			autoFetchKnowledgeSource(cfg)
 		}
 	}
-	// Sudo stands on the operator's approval, so only the operator's own summon
-	// passes it on: an agent could otherwise write a brief for a Steward holding
-	// what it does not hold itself.
-	if scopeKey == stewardScopeKind+"/" && spawnerConvID == "" {
+	if scopeKey == stewardScopeKind+"/" {
 		inheritStewardCarriedSudo(outcome.ConvID)
 	}
 	out := &scribeOutcome{Name: p.Name, ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}
@@ -787,13 +801,13 @@ func uniqueScribeName(base string) string {
 // Live members are deliberately retained: they may be editing different
 // profiles or templates in parallel. Removing membership does not delete the
 // old conversation.
-func pruneDeadScribes(g *db.AgentGroup) {
+func pruneDeadScribes(g *db.AgentGroup, keep ...string) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return
 	}
 	for _, m := range members {
-		if pickAliveSession(m.ConvID) != nil {
+		if pickAliveSession(m.ConvID) != nil || slices.Contains(keep, m.ConvID) {
 			continue
 		}
 		if err := db.RemoveAgentGroupMember(g.ID, m.ConvID); err != nil {

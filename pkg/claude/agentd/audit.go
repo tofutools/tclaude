@@ -274,6 +274,9 @@ var auditRoutes = []auditRoute{
 
 	// Permissions.
 	{method: http.MethodPost, segs: []string{"permissions", "grant"}, verb: "permissions.grant", describe: describePerm},
+	{method: http.MethodPost, segs: []string{"steward", "handover"}, verb: "steward.handover", describe: describeStewardHandover},
+	{method: http.MethodPost, segs: []string{"steward", "step-down"}, verb: "steward.step-down", describe: describeStewardHandover},
+	{method: http.MethodPost, segs: []string{"steward", "roster", "remove"}, verb: "steward.roster-remove", describe: describeStewardHandover},
 	{method: http.MethodPost, segs: []string{"permissions", "deny"}, verb: "permissions.deny", describe: describePerm},
 	{method: http.MethodPost, segs: []string{"permissions", "revoke"}, verb: "permissions.revoke", describe: describePerm},
 	{method: http.MethodPost, segs: []string{"permissions"}, verb: "permissions.set", describe: describePermSet},
@@ -1441,6 +1444,15 @@ func describePermSet(c *auditCtx) {
 	}
 	sort.Strings(parts)
 	c.fields.Detail = auditClip(strings.Join(parts, ", "), 120)
+}
+
+func describeStewardHandover(c *auditCtx) {
+	var b struct {
+		Agent string `json:"agent"`
+		Then  string `json:"then"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	c.fields.Detail = auditClip(strings.TrimSpace(b.Agent+" "+b.Then), auditDetailMax)
 }
 
 func describeSudo(c *auditCtx) {
