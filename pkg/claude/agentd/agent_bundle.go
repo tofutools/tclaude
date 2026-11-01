@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -658,8 +659,17 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
 			landingWarnings = append(landingWarnings, dropped...)
 			profile.Environment = fileEnvironment
+			// A teleport offer's route is no file's: its credential mode wrote it,
+			// checked against this receiver's landing policy.
+			route := ""
+			if offer, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer); offer != nil && offer.Descriptor.Teleport != nil {
+				route, profile.ModelProxy = profile.ModelProxy, ""
+			}
 			profile, dropped = receiverLaunchFieldsProfile(profile, h, q.Get("group"), landingProfile)
 			landingWarnings = append(landingWarnings, dropped...)
+			if route != "" {
+				profile.ModelProxy = route
+			}
 		} else if accepted {
 			// The grant trusts this peer with moves, and it says nothing about what
 			// the operator is accepting, so show what a file would have lost.
@@ -1079,6 +1089,40 @@ func receiverCapsTheWall(h *harness.Harness, group, profile string) bool {
 // explicit tier, so what is not proven no wider than a spawn here would resolve
 // is dropped and the receiver's value applies. Tightening stays. A value the
 // guard cannot judge is dropped. It returns a warning for each one dropped.
+// receiverContextFeatures is the map a file's context features land as, and what
+// it asked for and did not get. An explicit map replaces the tiers' whole, so it
+// starts from what a spawn here resolves, and takes the file's trims on top. A
+// trim that takes away instructions or policy rather than a capability is not a
+// tightening, and neither is keeping a feature a tier here trims.
+func receiverContextFeatures(recorded map[string]string, h *harness.Harness, tiers []launchProfileTier) (map[string]string, []string) {
+	names := slices.Sorted(maps.Keys(recorded))
+	requested, err := harness.ResolveContextFeatures(h, recorded)
+	if err != nil {
+		return nil, names
+	}
+	landing, _, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
+	if fail != nil {
+		return nil, names
+	}
+	out := maps.Clone(landing)
+	if out == nil {
+		out = map[string]string{}
+	}
+	var cut []string
+	for _, feature := range slices.Sorted(maps.Keys(requested)) {
+		switch trim := requested[feature] == harness.ContextFeatureOff; {
+		case trim && !harness.ContextFeatureGuidesTheAgent(feature):
+			out[feature] = harness.ContextFeatureOff
+		case requested[feature] != landing[feature] && (trim || landing[feature] == harness.ContextFeatureOff):
+			cut = append(cut, feature)
+		}
+	}
+	if len(out) == 0 {
+		return nil, cut
+	}
+	return out, cut
+}
+
 // fileFieldDropped is the warning for what a file asks for and does not get.
 func fileFieldDropped(what string) string {
 	return fmt.Sprintf("This file asks for %s, which a spawn here would not give, so it is not applied.", what)
@@ -1120,6 +1164,28 @@ func receiverLaunchFieldsProfile(p spawnProfileJSON, h *harness.Harness, group, 
 			drop("peer messaging")
 		}
 	}
+	if p.AutoMemory != nil && *p.AutoMemory {
+		p.AutoMemory = nil
+		if !gives("auto_memory", func(tier *db.SpawnProfile) *bool { return tier.AutoMemory }) {
+			drop("auto memory")
+		}
+	}
+	if p.CopilotAPI != nil && *p.CopilotAPI {
+		p.CopilotAPI = nil
+		if !gives("copilot_api", func(tier *db.SpawnProfile) *bool { return tier.CopilotAPI }) {
+			drop("the Copilot API drive")
+		}
+	}
+	// Auto-continuing past a question an agent asked is an explicit opt-in.
+	if recorded := strings.TrimSpace(p.AskUserQuestionTimeout); recorded != "" {
+		p.AskUserQuestionTimeout = ""
+		given, _, _, fail := resolveStringLaunchField("ask_user_question_timeout", "", h.Name, tiers,
+			func(tier *db.SpawnProfile) string { return tier.AskUserQuestionTimeout },
+			func(v string) (string, error) { return v, nil })
+		if fail != nil || given != recorded {
+			drop("a question timeout of " + recorded)
+		}
+	}
 	// A proxy carries the whole conversation, and "off" steps around the one a
 	// spawn here would use. Left blank, this resolves to the receiver's own.
 	if recorded := strings.TrimSpace(p.ModelProxy); recorded != "" {
@@ -1131,23 +1197,11 @@ func receiverLaunchFieldsProfile(p spawnProfileJSON, h *harness.Harness, group, 
 			drop("model proxy " + recorded)
 		}
 	}
-	// "off" trims a feature, which only takes something away. "on" keeps one a
-	// tier here trims, so it stays with the receiver.
 	if len(p.ContextFeatures) > 0 {
-		landing, _, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
-		kept := map[string]string{}
-		var names []string
-		for feature, state := range p.ContextFeatures {
-			if state != harness.ContextFeatureOn {
-				kept[feature] = state
-			} else if fail != nil || landing[feature] == harness.ContextFeatureOff {
-				names = append(names, feature)
-			}
-		}
-		p.ContextFeatures = kept
-		if len(names) > 0 {
-			slices.Sort(names)
-			drop("context features " + strings.Join(names, ", "))
+		var cut []string
+		p.ContextFeatures, cut = receiverContextFeatures(p.ContextFeatures, h, tiers)
+		if len(cut) > 0 {
+			drop("context features " + strings.Join(cut, ", "))
 		}
 	}
 	// A variable can change what the harness loads or how it decides, so none is

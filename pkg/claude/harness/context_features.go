@@ -203,6 +203,16 @@ func (h *Harness) CanContextFeatures() bool {
 	return h.SupportsContextFeatures()
 }
 
+// ContextFeatureGuidesTheAgent reports a feature whose trim removes instructions
+// or policy the agent should follow, not a capability it might use.
+func ContextFeatureGuidesTheAgent(slug string) bool {
+	switch slug {
+	case "claude-mds", "policy-skills", "org-memory", "git-instructions":
+		return true
+	}
+	return false
+}
+
 // ValidateContextFeatureState normalizes one state value. A blank or "default"
 // state means "no override" and normalizes to "", which callers drop.
 func ValidateContextFeatureState(state string) (string, error) {

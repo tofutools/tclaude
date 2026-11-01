@@ -97,7 +97,9 @@ receiving side.
   never wider: a wider value is dropped, and the preview and the import result
   say so. A directory trust, remote control or environment variables it asks
   for are dropped the same way, unless a spawn here gives them, as are peer
-  messaging, a model proxy and context features a tier here trims. The warning
+  messaging, auto memory, the Copilot API drive, a question timeout, a model
+  proxy, a context feature a tier here trims, and a trim of the repo's or
+  organization's instructions. Other trims add to the receiver's. The warning
   names variables, not their values, and a group file's environment goes the
   same way. A teleport or direct move keeps all of
   this, so a moved agent does not stall on prompts, when it lands automatically

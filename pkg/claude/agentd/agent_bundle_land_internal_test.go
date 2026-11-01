@@ -168,11 +168,27 @@ func TestReceiverLaunchFieldsProfile(t *testing.T) {
 			recorded: spawnProfileJSON{ModelProxy: "off"},
 		},
 		{
-			name:        "a feature on against a trim here is dropped, a trim stays",
+			name:        "a feature on against a trim here is dropped, a trim adds to the receiver's",
 			landing:     db.SpawnProfile{ContextFeatures: map[string]string{"workflows": "off"}},
-			recorded:    spawnProfileJSON{ContextFeatures: map[string]string{"workflows": "on", "artifact": "off"}},
-			want:        spawnProfileJSON{ContextFeatures: map[string]string{"artifact": "off"}},
+			recorded:    spawnProfileJSON{ContextFeatures: map[string]string{"workflows": "ON", "artifact": "off"}},
+			want:        spawnProfileJSON{ContextFeatures: map[string]string{"workflows": "off", "artifact": "off"}},
 			wantDropped: []string{"context features workflows"},
+		},
+		{
+			name:     "a default erases no trim",
+			landing:  db.SpawnProfile{ContextFeatures: map[string]string{"workflows": "off"}},
+			recorded: spawnProfileJSON{ContextFeatures: map[string]string{"artifact": "default"}},
+			want:     spawnProfileJSON{ContextFeatures: map[string]string{"workflows": "off"}},
+		},
+		{
+			name:        "trimming the repo's instructions is no tightening",
+			recorded:    spawnProfileJSON{ContextFeatures: map[string]string{"claude-mds": "off"}},
+			wantDropped: []string{"context features claude-mds"},
+		},
+		{
+			name:        "auto memory, the Copilot drive and a question timeout are dropped",
+			recorded:    spawnProfileJSON{AutoMemory: &yes, CopilotAPI: &yes, AskUserQuestionTimeout: "60s"},
+			wantDropped: []string{"auto memory", "Copilot API", "question timeout of 60s"},
 		},
 		{
 			name:        "environment is dropped, named and not quoted",
@@ -194,6 +210,9 @@ func TestReceiverLaunchFieldsProfile(t *testing.T) {
 			assert.Equal(t, tc.want.TrustDir, got.TrustDir)
 			assert.Equal(t, tc.want.RemoteControl, got.RemoteControl)
 			assert.Nil(t, got.PeerMessaging)
+			assert.Nil(t, got.AutoMemory)
+			assert.Nil(t, got.CopilotAPI)
+			assert.Empty(t, got.AskUserQuestionTimeout)
 			assert.Empty(t, got.ModelProxy)
 			if len(tc.want.ContextFeatures) > 0 {
 				assert.Equal(t, tc.want.ContextFeatures, got.ContextFeatures)
