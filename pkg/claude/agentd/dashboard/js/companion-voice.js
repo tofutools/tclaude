@@ -288,22 +288,24 @@ export function punctuateAtPauses(text, marks, lang) {
 }
 
 // createPauseMarks turns the gaps between recognition results into marks. The
-// clock runs from the last result that added words: the result that finishes
-// a phrase arrives during the pause, and adds none. pauses() gives the
-// {comma, period} seconds, 0 for off, and is read as the words come. Results
-// can rewrite words already heard, so a mark can land a word off. The gaps go
-// to the console at debug level, to tune the settings against.
+// clock runs from the last words the recognizer showed while they were spoken.
+// The final result of a phrase arrives during the pause, so it never starts a
+// gap or the clock, even when it adds a word: heard's settling says so.
+// pauses() gives the {comma, period} seconds, 0 for off, and is read as the
+// words come. Results can rewrite words already heard, so a mark can land a
+// word off. The gaps go to the console at debug level, to tune the settings
+// against.
 export function createPauseMarks(lang, pauses, now) {
   const marks = new Map();
   let counted = 0;
   let at = 0;
   const usable = pauseMarksApply(lang);
   return {
-    heard(text) {
+    heard(text, settling = false) {
       const total = spokenWords(text).length;
       const { comma = 0, period = 0 } = pauses() || {};
       for (const position of marks.keys()) if (position > total) marks.delete(position);
-      if (total > counted) {
+      if (total > counted && !settling) {
         const quiet = (now() - at) / 1000;
         if (usable && counted && (comma || period)) {
           console.debug(`[voice] ${quiet.toFixed(2)}s pause after ${counted} words`);
@@ -393,12 +395,14 @@ export function createDictation(win = globalThis.window, {
     let sent = false;
     let heard = false;
     let fallBack = false;
+    let interimShowing = false;
     stopped = false;
     r.onresult = (event) => {
       // Words after a send would bring the sent text back.
       if (recognition !== r || sent) return;
       heard = true;
       let interim = '';
+      let finished = false;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         const phrase = result[0].transcript;
@@ -406,12 +410,13 @@ export function createDictation(win = globalThis.window, {
           interim += phrase;
           continue;
         }
+        finished = true;
         const rest = stopped ? null : sendPhraseRest(phrase, sendPhrase());
         if (rest !== null) {
           finals.push(rest);
           const text = finals.join(' ').replace(/\s+/g, ' ').trim();
           sent = true;
-          pauseMarks.heard(text);
+          pauseMarks.heard(text, interimShowing);
           const marked = pauseMarks.render(text);
           onText?.(marked);
           onSend?.(marked);
@@ -421,7 +426,8 @@ export function createDictation(win = globalThis.window, {
         finals.push(phrase);
       }
       const text = `${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim();
-      pauseMarks.heard(text);
+      pauseMarks.heard(text, interimShowing && finished && !interim.trim());
+      interimShowing = !!interim.trim();
       onText?.(pauseMarks.render(text));
     };
     r.onerror = (event) => {

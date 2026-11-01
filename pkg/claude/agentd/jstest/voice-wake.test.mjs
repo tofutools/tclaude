@@ -447,6 +447,22 @@ test('the clock runs from the last new words, not the result that finishes a phr
   assert.equal(s.text(), 'first part, next', 'the final arrived in the pause and restarted nothing');
 });
 
+test('a final that adds the last word is no pause, and the real one is measured from speech', async (t) => {
+  const s = await pausedDictation(t);
+  s.interim(0, 'please fix the');
+  s.final(0.9, 'please fix the bug');
+  assert.equal(s.text(), 'please fix the bug');
+  s.interim(2, 'and the test');
+  assert.equal(s.text(), 'please fix the bug. And the test');
+});
+
+test('a final that adds words with no interim first still marks the pause', async (t) => {
+  const s = await pausedDictation(t);
+  s.final(0, 'first part');
+  s.final(1, 'second part');
+  assert.equal(s.text(), 'first part, second part');
+});
+
 test('a pause inside an unfinished phrase marks the right word', async (t) => {
   const s = await pausedDictation(t);
   s.interim(0, 'one two');
