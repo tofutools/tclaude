@@ -23,7 +23,7 @@ import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
   agentBlockedOnOperator, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
-  defaultPlacement, isAgentId, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent,
+  defaultPlacement, isAgentId, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { useChipDrag } from './companion-chip-drag.js';
@@ -33,7 +33,8 @@ import { OverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } f
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
-import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
+import { ApprovalCard, ClearContext, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
+import { relativeAge } from './pr-review-model.js';
 import { StewardRoster } from './steward-roster.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { hasShownOverlay } from './overlay-stack.js';
@@ -145,7 +146,13 @@ const STEWARD_WAKE_MS = 3000;
 // How recently a key in the terminal counts as still typing when a cue lands.
 const CUE_TYPING_WINDOW_MS = 3000;
 
-function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, onClose, busy, trigger }) {
+// stewardReturnNote says how far back a Steward's conversation picks up.
+function stewardReturnNote({ lastRan }) {
+  const age = relativeAge(lastRan);
+  return age ? `Same conversation. Last ran ${age}.` : 'Same conversation.';
+}
+
+function AddMenu({ agents, tabs, steward, stewardLabel, returning, onResumeSteward, onSummonSteward, onPin, onClose, busy, trigger }) {
   const [filter, setFilter] = useState('');
   const menuRef = useRef(null);
   const filterRef = useRef(null);
@@ -164,7 +171,15 @@ function AddMenu({ agents, tabs, steward, stewardLabel, onSummonSteward, onPin, 
   }, [agents, tabs, steward, filter]);
   const stewardPinned = steward && tabs.includes(steward.agentId);
   return html`<div ref=${menuRef} class="companion-menu" role="menu" aria-label="Add a companion">
-    ${!stewardPinned && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
+    ${returning && html`<button type="button" role="menuitem" class="companion-menu-steward companion-menu-resume" disabled=${busy} onClick=${onResumeSteward}>
+      <span class="companion-avatar steward" aria-hidden="true">✦</span>
+      <span><b>Resume ${returning.name}</b><small>${stewardReturnNote(returning)}</small></span>
+    </button>`}
+    ${returning && html`<button type="button" role="menuitem" class="companion-menu-steward companion-menu-fresh" disabled=${busy} onClick=${onSummonSteward}>
+      <span class="companion-avatar steward" aria-hidden="true">✦</span>
+      <span><b>Start fresh</b><small>A new Steward. ${returning.name} goes on the roster.</small></span>
+    </button>`}
+    ${!stewardPinned && !returning && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
     </button>`}
@@ -469,6 +484,15 @@ export function CompanionApp({
 
   useEffect(() => registerController({ open: (agentId, options) => showAgent(agentId, options) }), [showAgent]);
 
+  // The Steward that can come back, by Resume. One just shut down can still show
+  // as online for a poll, so it stands in for the roster until then.
+  const rosterReturn = steward?.online && steward.agentId !== shutDown?.agentId ? null : stewardToResume(stewardRoster);
+  const returning = shutDown || rosterReturn ? {
+    agentId: shutDown?.agentId || rosterReturn.agent_id,
+    name: shutDown?.name || (rosterReturn.agent_id === steward?.agentId ? steward.name : rosterReturn.name),
+    lastRan: stewardRoster.find((entry) => entry.agent_id === (shutDown?.agentId || rosterReturn.agent_id))?.last_ran || '',
+  } : null;
+
   const summonSteward = useCallback(async () => {
     if (steward?.online && steward.agentId !== shutDown?.agentId) {
       showAgent(steward.agentId);
@@ -772,12 +796,26 @@ export function CompanionApp({
 
   async function resume(agent) {
     try {
-      const response = await fetchImpl(`/api/agents/${encodeURIComponent(agent.agentId)}/resume`, { method: 'POST', credentials: 'same-origin' });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      await resumeAgent(fetchImpl, agent.agentId);
       notify(`Resuming ${agent.name}…`);
+      return true;
     } catch (error) {
       notify(`Could not resume ${agent.name}: ${error?.message || error}`, true);
+      return false;
+    }
+  }
+
+  async function resumeSteward() {
+    if (!returning || busy) return;
+    setBusy(true);
+    setMenu(false);
+    try {
+      if (await resume(returning)) {
+        setShutDown(null);
+        showAgent(returning.agentId, { starting: true });
+      }
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -1150,6 +1188,7 @@ export function CompanionApp({
           onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
         ${activeAgent?.steward && !showQueue && html`<${StewardAccessControls} agent=${activeAgent} openPermissions=${openPermissions} openSudo=${openSudo} />
           <${StewardShutdown} agent=${activeAgent} fetchImpl=${fetchImpl} onDown=${stewardShutDown} />`}
+        ${activeAgent?.online && activeAgent.harness !== 'shell' && !showQueue && html`<${ClearContext} agent=${activeAgent} fetchImpl=${fetchImpl} notify=${notify} />`}
         ${openStewardHandover && activeAgent && !showQueue && (activeAgent.steward || stewardRoster.some((entry) => entry.agent_id === activeAgent.agentId)) && html`<${StewardRoster}
           roster=${stewardRoster} agents=${agents} fetchImpl=${fetchImpl} notify=${notify} openHandover=${openStewardHandover} showAgent=${showAgent} />`}
         ${activeAgent?.online && !showQueue && html`
@@ -1167,7 +1206,7 @@ export function CompanionApp({
     titlebarClass=${`companion-titlebar overlay-look-${look}`} label="Companion" controls=${controls}
     lead=${html`<span class="companion-grip" aria-hidden="true">⋮⋮</span>`} title=${titlebarContent}>
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
-      stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} trigger=${addRef} />`}
+      stewardLabel=${stewardLabel} returning=${returning} onResumeSteward=${resumeSteward} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} trigger=${addRef} />`}
     <div class=${`companion-body${showComposer && showField && activeApprovals.length + activeDecisions.length ? ' clear-strip' : ''}`}>
       ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
         ${activeApprovals.length > 0 && html`<p class="companion-decide-note" role="status">${activeAgent.name} also has
@@ -1180,18 +1219,24 @@ export function CompanionApp({
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>
-        ${shutDown && html`<p class="companion-shutdown-note" role="status"><b>${shutDown.name}</b> is shut down. Its conversation stays in history.</p>`}
+        ${shutDown && html`<p class="companion-shutdown-note" role="status"><b>${shutDown.name}</b> is shut down. You can pick its conversation back up.</p>`}
         <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
           groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
         <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, 🛡 and sudo in the title bar change its access.</p>
-        <button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : shutDown ? `Start a new ${customName || 'Steward'}` : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>
+        ${returning ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>${busy ? 'Working…' : `Resume ${returning.name}`}</button>
+          <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
+          <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>`
+        : html`<button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>`}
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
       ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
       ${activeAgent && parked.has(activeAgent.agentId) && showComposer && html`<div class="companion-floating-anchor">${messageTools()}</div>`}
       ${activeAgent && !activeAgent.online && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is offline.</p>
-        <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
+        ${activeAgent.agentId === returning?.agentId ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>Resume</button>
+          <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
+          <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>`
+        : html`<button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>`}
       </div>`}
       ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is open ${detached.has(activeAgent.agentId) ? 'in its own window' : 'in the Collab tab'}.</p>

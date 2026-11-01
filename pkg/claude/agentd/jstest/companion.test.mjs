@@ -119,13 +119,17 @@ test('shutting a Steward down asks first, retires it, and offers a new one', asy
   const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
   await harness.act(() => controller().open(S));
   await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
-  const retires = () => calls.filter(([, url]) => url.endsWith('/retire'));
-  assert.deepEqual(retires(), [], 'nothing happens before the confirmation');
-  assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /ends its conversation/);
+  const stops = () => calls.filter(([, url]) => url.endsWith('/stop'));
+  assert.deepEqual(stops(), [], 'nothing happens before the confirmation');
+  assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /keeps its conversation/);
   await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await Promise.resolve(); await Promise.resolve(); });
-  assert.deepEqual(retires(), [['POST', `/api/agents/${encodeURIComponent(S)}/retire`]]);
+  assert.deepEqual(stops(), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]], 'it stops; it is not retired');
+  assert.equal(calls.some(([, url]) => url.endsWith('/retire')), false);
   assert.match(view.container.querySelector('.companion-shutdown-note').textContent, /is shut down/);
-  assert.match(view.container.textContent, /Start a new Steward/);
+  assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
+  assert.match(view.container.querySelector('.companion-fresh-steward').textContent, /Start fresh/);
+  await harness.act(async () => { view.container.querySelector('.companion-resume-steward').click(); await Promise.resolve(); await Promise.resolve(); });
+  assert.equal(calls.at(-1)[1], `/api/agents/${encodeURIComponent(S)}/resume`, 'Resume is the same agent');
 });
 
 test('a refused shut-down stays on the Steward and says why', async (t) => {
@@ -133,7 +137,7 @@ test('a refused shut-down stays on the Steward and says why', async (t) => {
   const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
   await harness.act(() => controller().open(S));
   await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await Promise.resolve(); await Promise.resolve(); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
   assert.match(view.container.querySelector('.steward-shutdown-error').textContent, /nothing to retire/);
   assert.equal(view.container.querySelector('.companion-shutdown-note'), null);
 });
@@ -1983,4 +1987,35 @@ test('a Steward in its own window gets focus and keeps its terminal', async (t) 
   assert.equal(opened.closed, false);
   assert.equal((closed || []).length, before, 'nothing took its terminal');
   assert.equal(dictated.starts.length, 0);
+});
+
+test('Clear context asks first, for any agent that is not a shell', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([url, options.body]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, controller } = await setup(t, { fetchImpl, prefs, snapshot: snapshotWith() });
+  await harness.act(() => controller().open(A));
+  const clear = () => view.container.querySelector('.companion-clear-context');
+  assert.ok(clear());
+  await harness.act(() => clear().querySelector('.companion-clear-open').click());
+  assert.match(clear().querySelector('.steward-shutdown-confirm').textContent, /same identity and permissions/);
+  assert.deepEqual(calls.filter(([url]) => url.endsWith('/reincarnate')), [], 'nothing happens before the confirmation');
+  await harness.act(async () => { clear().querySelector('.danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+  assert.deepEqual(calls.filter(([url]) => url.endsWith('/reincarnate')), [[`/api/agents/${encodeURIComponent(A)}/reincarnate`, '{"mode":"clear"}']]);
+});
+
+test('an offline Steward in the seat offers Resume and Start fresh; with none, only a summon', async (t) => {
+  const snapshot = snapshotWith({ steward: true });
+  snapshot.groups[1].members[0].online = false;
+  snapshot.steward_roster = [{ agent_id: S, name: 'steward-k3x', seat: 'active', online: false, last_ran: new Date(Date.now() - 2 * 3600e3).toISOString() }];
+  const { view, harness, controller } = await setup(t, { snapshot });
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: /Open the companion/ }).click());
+  assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
+  assert.match(view.container.textContent, /Last ran 2h ago/);
+  assert.ok(view.container.querySelector('.companion-fresh-steward'));
+
+  const fresh = await setup(t, { snapshot: snapshotWith() });
+  await fresh.harness.act(() => fresh.harness.getByRole(fresh.view.container, 'button', { name: /Open the companion/ }).click());
+  assert.equal(fresh.view.container.querySelector('.companion-resume-steward'), null);
+  assert.equal(fresh.view.container.querySelector('.companion-fresh-steward'), null);
 });

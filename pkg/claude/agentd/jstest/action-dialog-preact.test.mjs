@@ -1178,3 +1178,18 @@ test('sandbox-impl dialog discloses a host that cannot run the selected implemen
     'operator must not have to learn this from a failed POST');
   assert.equal(host.querySelector('#sandbox-impl-assign').disabled, false);
 });
+
+test('reincarnate dialog offers Clear context with nothing to fill in', async (t) => {
+  const mounted = await mountDialogs(t, 'reincarnate-agent', { conv: 'abcdefgh-1234', label: 'worker' });
+  const { harness, host, calls } = mounted;
+  const clear = host.querySelector('input[value="clear"]');
+  clear.checked = true;
+  clear.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#reincarnate-clear-fields'));
+  assertAbsent(host.querySelector('#reincarnate-agent-followup'));
+  const submit = host.querySelector('#reincarnate-agent-submit');
+  assert.equal(submit.disabled, false);
+  await harness.act(async () => { submit.click(); await Promise.resolve(); });
+  assert.equal(calls.find(([name]) => name === 'reincarnate')[1].mode, 'clear');
+});

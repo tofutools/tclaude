@@ -333,7 +333,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       <div class="modal-meta" id="reincarnate-agent-meta">target: ${target}</div>
       <div class="reincarnate-mode" id="reincarnate-mode" role="radiogroup" aria-label="Reincarnate mode">
         <label>
-          <input type="radio" name="reincarnate-mode" value="self" checked=${!force} onChange=${() => setMode('self')} />
+          <input type="radio" name="reincarnate-mode" value="self" checked=${mode === 'self'} onChange=${() => setMode('self')} />
           <span><${Words} plain="Ask the agent to reincarnate itself" wizard="Ask the hero to reincarnate itself"/></span>
           <span class="opt-note"><${Words}
             plain="— graceful. Sends the agent a message; at its next clean point it writes its own handoff, collecting the context that matters, then reincarnates. May take a moment. Recommended."
@@ -348,8 +348,13 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
             wizard="— immediate. The daemon summons the successor and dismisses the original at once. The hero cannot write its own handoff — use only when it is stuck or unresponsive."
           /></span>
         </label>
+        <label>
+          <input type="radio" name="reincarnate-mode" value="clear" checked=${mode === 'clear'} onChange=${() => setMode('clear')} />
+          <span>Clear context</span>
+          <span class="opt-note">— same agent, identity and permissions on a fresh conversation, with its startup context sent again. Nothing is handed over, and it remembers nothing from this one.</span>
+        </label>
       </div>
-      ${!force ? html`
+      ${mode === 'self' ? html`
         <div id="reincarnate-self-fields">
           <p class="modal-hint"><${Words}
             plain="The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state."
@@ -359,6 +364,10 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
             <span class="cron-create-label">Focus hint</span>
             <textarea ref=${focusHintRef} id="reincarnate-agent-focus" rows="3" maxlength="4000" value=${focusHint} placeholder="optional — what should it concentrate on while gathering context for its handoff? e.g. focus on the open questions about X, or capture the current state of subsystem Y. Leave blank for a general handoff." spellcheck="false" onInput=${(event) => setFocusHint(event.currentTarget.value)}></textarea>
           </label>
+        </div>
+      ` : mode === 'clear' ? html`
+        <div id="reincarnate-clear-fields">
+          <p class="modal-hint">The conversation stays in history. A Steward gets its role brief again; any other agent gets its group and profile startup context and a pointer to its briefing.</p>
         </div>
       ` : html`
         <div id="reincarnate-force-fields">
@@ -378,8 +387,8 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
         <span class="spacer"></span>
         <button id="reincarnate-agent-submit" class="primary" type="button" disabled=${busy || (force && !normaliseFollowUp(followUp))} onClick=${submit}>
           <${Words}
-            plain=${busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask agent')}
-            wizard=${busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask hero')}
+            plain=${mode === 'clear' ? (busy ? 'Clearing…' : 'Clear context') : busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask agent')}
+            wizard=${mode === 'clear' ? (busy ? 'Clearing…' : 'Clear context') : busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask hero')}
           />
         </button>
       </div>

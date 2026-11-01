@@ -72,6 +72,7 @@ back here**.
 | 🛡 | Edit permissions (Steward only) |
 | sudo | Open the [sudo editor](dashboard-access.md) (Steward only) |
 | ⏻ | Shut the Steward down, after asking (Steward only) |
+| ⟲ | Clear the agent's context, after asking (not for shell agents) |
 | ✉ | Send a queued message (Ctrl/Cmd+M) |
 | ⧉ | Detach it into its own browser window |
 | ⇄ | Morph it, with Move, Teleport, Clone and Recall home a pick away |
@@ -382,11 +383,29 @@ as **also running**. Only one is active, and **Switch** makes one of them active
 
 ### Shutting it down
 
-⏻ shuts the Steward down, after asking: it ends the conversation and retires the
-agent, so what was given to this Steward only ends with it, and the window then
-offers **Start a new Steward**. A new one is a fresh agent; the old conversation stays in history. A
-detached Steward window has the same ⏻ in its header; its **Start a new Steward**
-closes the window and the new one opens in the companion.
+⏻ shuts the Steward down, after asking: it stops, and keeps its seat, its
+conversation and what it holds. After that, and whenever no Steward is running,
+the window and **✦ Steward** offer two ways on:
+
+| Action | What it does |
+|---|---|
+| **Resume** | Brings back the same agent on the same conversation, and says how long ago it last ran. It catches up with its levels as any Steward does when it resumes. |
+| **Start fresh** | Summons a new Steward, with no memory of the old one. The old one goes on the roster, without Steward access, and its conversation stays in history. |
+
+With no earlier Steward, the window offers only the summon. A detached Steward window
+has the same ⏻ in its header. Its **Resume** brings the agent back in that window, and
+its **Start fresh** closes the window and the new one opens in the companion. To end
+an agent for good, retire it.
+
+### Clearing context
+
+⟲ gives the agent on the active tab a fresh conversation, after asking: the same
+agent, identity and permissions, and it remembers nothing from before. The old
+conversation stays in history. It is a reincarnation with no handoff, so it works
+on every harness except a shell, and it is also a mode of the **Reincarnate agent**
+dialog. A Steward gets its role brief again. Any other agent gets its identity, its
+group and profile startup context and a pointer to its original briefing, unless its
+group's re-injection setting narrows that.
 
 ### Other Steward settings
 

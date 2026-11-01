@@ -194,6 +194,8 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
   color: #fff; font: inherit; font-size: 13px; cursor: pointer;
 }
 .companion-primary:disabled { opacity: .6; cursor: progress; }
+.companion-secondary { display: block; margin: 0 auto; padding: 4px 12px; background: none; border: 1px solid var(--cmp-border, #30363d); border-radius: 6px; color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer; }
+.companion-secondary:disabled { opacity: .6; cursor: progress; }
 
 .companion-floating-anchor { position: relative; height: 0; z-index: 3; }
 .companion-floating {

@@ -310,3 +310,71 @@ func TestSteward_NameBelongsToTheSteward(t *testing.T) {
 	})))
 	assert.Equalf(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 }
+
+// A shut-down Steward stays seated and resumable, and its roster entry says when
+// it last ran, which is what the window offers Resume from. Starting fresh is an
+// ordinary summon and puts it on the roster.
+func TestSteward_ShutDownCanResumeOrStartFresh(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	s.mustHandover(handoverWorker, "keep")
+	s.f.MarkOffline("tclaude-hand1")
+
+	roster := s.rosterRows()
+	require.Len(t, roster, 1)
+	assert.Equal(t, s.agentID(handoverWorker), roster[0].AgentID)
+	assert.Equal(t, db.StewardSeatActive, roster[0].Seat, "stopping does not take the seat")
+	assert.False(t, roster[0].Online)
+	assert.NotEmpty(t, roster[0].LastRan)
+
+	fresh := s.summon()
+	roster = s.rosterRows()
+	require.Len(t, roster, 2)
+	assert.Equal(t, s.agentID(fresh), roster[0].AgentID)
+	assert.Equal(t, db.StewardSeatStandby, roster[1].Seat, "the old one goes on the roster")
+}
+
+// Clear context keeps the agent and starts a new conversation with its role.
+func TestSteward_ClearContextKeepsTheAgentAndRestoresTheBrief(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	steward := s.summon()
+	s.f.HaveAliveSession(steward, "stwd", "tclaude-stwd", s.f.TestCwd("work"))
+	agentID := s.agentID(steward)
+
+	rec := postReincarnate(t, s.dash, steward, map[string]any{"mode": "clear"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var out struct {
+		NewConv string `json:"new_conv"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.NotEqual(t, steward, out.NewConv)
+
+	assert.Equal(t, agentID, s.agentID(out.NewConv), "the same agent")
+	assert.Equal(t, "grant", stewardOverride(t, out.NewConv, agentd.PermFleetRead), "the same permissions")
+	roster := s.rosterRows()
+	require.NotEmpty(t, roster)
+	assert.Equal(t, agentID, roster[0].AgentID, "the same seat")
+
+	rows, err := db.ListAgentMessagesForConv(out.NewConv, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Contains(t, rows[0].Body, "You are still their Steward")
+	assert.Contains(t, rows[0].Body, "Your access, set by the operator", "the brief comes back")
+}
+
+func (s *stewardHandoverFlow) rosterRows() []stewardRosterRow {
+	s.t.Helper()
+	rec := testharness.Serve(s.dash, testharness.JSONRequest(s.t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(s.t, http.StatusOK, rec.Code)
+	var snap struct {
+		Roster []stewardRosterRow `json:"steward_roster"`
+	}
+	require.NoError(s.t, json.Unmarshal(rec.Body.Bytes(), &snap))
+	return snap.Roster
+}
+
+type stewardRosterRow struct {
+	AgentID string `json:"agent_id"`
+	Seat    string `json:"seat"`
+	Online  bool   `json:"online"`
+	LastRan string `json:"last_ran"`
+}

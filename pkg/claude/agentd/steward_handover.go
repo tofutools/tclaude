@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -249,6 +250,8 @@ type stewardRosterEntry struct {
 	Seat    string `json:"seat"`
 	Online  bool   `json:"online"`
 	Harness string `json:"harness,omitempty"`
+	// LastRan is when an offline one was last seen running.
+	LastRan string `json:"last_ran,omitempty"`
 }
 
 // stewardRosterView lists the active Steward, then the others, in seat order.
@@ -266,6 +269,11 @@ func stewardRosterView() []stewardRosterEntry {
 		out := stewardRosterEntry{AgentID: agentID, Name: agent.FreshTitle(conv), Seat: seat, Online: pickAliveSession(conv) != nil}
 		if h := harnessForConv(conv); h != nil {
 			out.Harness = h.Name
+		}
+		if !out.Online {
+			if sess, err := db.FindSessionByConvID(conv); err == nil && sess != nil {
+				out.LastRan = sess.UpdatedAt.UTC().Format(time.RFC3339)
+			}
 		}
 		return out, true
 	}

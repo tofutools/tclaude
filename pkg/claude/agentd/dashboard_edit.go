@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/startupctx"
 )
 
 // Mutating endpoints for the dashboard. These live on the loopback
@@ -1339,7 +1340,7 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 	runCloneOrchestration(w, r, res.ConvID, dashboardGranter, "", nil, body)
 }
 
-// reincarnateMode* are the two modes the dashboard reincarnate button
+// reincarnateMode* are the modes the dashboard reincarnate button
 // offers, selected by the POST body's `mode` field.
 //
 //   - "self" is the DEFAULT. The daemon does NOT reincarnate the
@@ -1354,6 +1355,9 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 const (
 	reincarnateModeSelf  = "self"
 	reincarnateModeForce = "force"
+	// reincarnateModeClear is Clear context: a force reincarnate whose handoff
+	// the daemon writes, because there is nothing to hand over on purpose.
+	reincarnateModeClear = "clear"
 )
 
 // dashboardReincarnateAgent handles POST /api/agents/{conv}/reincarnate.
@@ -1414,11 +1418,55 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		r.ContentLength = int64(len(raw))
 		handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
+	case reincarnateModeClear:
+		followUp, err := json.Marshal(map[string]string{"follow_up": clearContextBrief(res.ConvID)})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(followUp))
+		r.ContentLength = int64(len(followUp))
+		handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("unknown reincarnate mode %q (want %q or %q)",
-				mode, reincarnateModeSelf, reincarnateModeForce))
+			fmt.Sprintf("unknown reincarnate mode %q (want %q, %q or %q)",
+				mode, reincarnateModeSelf, reincarnateModeForce, reincarnateModeClear))
 	}
+}
+
+// clearContextBrief is what an agent comes back to after Clear context. A
+// reincarnate carries no brief of its own, so a Steward gets its role again and
+// any other agent its durable startup context. Reincarnation needs a follow-up,
+// and whatever cannot be composed or would not fit falls back to a plain note.
+func clearContextBrief(conv string) string {
+	const note = "The operator cleared your context, so this is a new conversation. Your identity, groups and permissions are unchanged. " +
+		"Use `tclaude agent` commands to get your bearings, then wait for instructions."
+	if collabRoutesEnabled() && slices.Contains(stewardConvs(), conv) {
+		cfg, err := config.LoadShared()
+		if err != nil {
+			slog.Warn("clear context: read config failed", "error", err)
+			return note
+		}
+		const lead = "The operator cleared your context, so this is a new conversation. You are still their Steward. Wait for them.\n\n"
+		if brief := stewardBrief(lead+stewardRoleBrief(), cfg); isValidInitialMessage(brief) {
+			return brief
+		}
+		return note
+	}
+	agentID, err := db.AgentIDForConv(conv)
+	if err != nil {
+		slog.Warn("clear context: resolve agent failed", "conv", short8(conv), "error", err)
+		return note
+	}
+	reinjection, err := startupctx.ComposeReinjection(agentID, startupctx.BoundaryReset)
+	if err != nil {
+		slog.Warn("clear context: compose startup context failed", "conv", short8(conv), "error", err)
+		return note
+	}
+	if reinjection.Body == "" || !isValidInitialMessage(reinjection.Body) {
+		return note
+	}
+	return reinjection.Body
 }
 
 // dashboardAskSelfReincarnate is the "self" reincarnate mode — the

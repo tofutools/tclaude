@@ -421,3 +421,27 @@ func TestDashboardReincarnate_ForceMode_RejectsControlCharFollowUp(t *testing.T)
 	require.NoError(t, err)
 	assert.Empty(t, rows, "a rejected force request writes no inbox row")
 }
+
+// Clear context works for any agent: the daemon writes the follow-up, so the
+// fresh conversation gets the group's startup context and a pointer to the brief.
+func TestDashboardReincarnate_ClearContextReinjectsStartupContext(t *testing.T) {
+	f := newFlow(t)
+	const conv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaa9c1"
+	f.HaveGroup("team")
+	_, err := db.SetAgentGroupDefaultContext("team", "Use worktrees.")
+	require.NoError(t, err)
+	f.HaveMember("team", conv)
+	f.HaveAliveSession(conv, "clr", "tclaude-clr", f.TestCwd("work"))
+
+	rec := postReincarnate(t, reincDashMux(t), conv, map[string]any{"mode": "clear"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var out struct {
+		NewConv string `json:"new_conv"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	rows, err := db.ListAgentMessagesForConv(out.NewConv, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Contains(t, rows[0].Body, "The operator cleared your context")
+	assert.Contains(t, rows[0].Body, "Use worktrees.")
+}

@@ -171,7 +171,7 @@ export function createActionDialogActions({
       } finally { clearTimeout(timer); }
     },
     async reincarnateAgent({ conv, node = '', label, mode, focusHint, followUp }, owner) {
-      const body = mode === 'force'
+      const body = mode === 'clear' ? { mode: 'clear' } : mode === 'force'
         ? { mode: 'force', follow_up: normaliseFollowUp(followUp) }
         : { mode: 'self', ...(focusHint.trim() ? { focus_hint: focusHint.trim() } : {}) };
       if (mode === 'force' && !body.follow_up) throw new Error('follow-up is required for force reincarnate');
@@ -181,7 +181,8 @@ export function createActionDialogActions({
       });
       state.close(owner);
       announceNodeChanged(node);
-      if (mode === 'force') {
+      if (mode === 'clear') notify(`cleared ${label}'s context`);
+      else if (mode === 'force') {
         const suffix = payload.new_title ? ` → ${payload.new_title}`
           : payload.new_conv ? ` → ${String(payload.new_conv).slice(0, 8)}` : '';
         notify(`reincarnated ${label}${suffix}`);
