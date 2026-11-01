@@ -208,10 +208,6 @@ func handleDashboardKnowledgeSourcePost(w http.ResponseWriter, r *http.Request) 
 		policy = config.StewardSourceNever
 	case "remove":
 		policy = config.StewardSourceNever
-		if err := knowledgeBase().Remove(); err != nil {
-			writeKnowledgeError(w, err)
-			return
-		}
 	default:
 		writeError(w, http.StatusBadRequest, "action", "action must be once, each_version, never or remove")
 		return
@@ -232,8 +228,16 @@ func handleDashboardKnowledgeSourcePost(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "config", err.Error())
 		return
 	}
-	if body.Action == "once" || body.Action == "each_version" {
+	switch body.Action {
+	case "once", "each_version":
 		knowledgeBase().StartFetch()
+	case "remove":
+		// After the save: a snapshot in between would see no source and a choice
+		// still open, and put the question back.
+		if err := knowledgeBase().Remove(); err != nil {
+			writeKnowledgeError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, newKnowledgeSourceView(cfg))
 }
