@@ -34,7 +34,14 @@ export function revealInCompanion(selector, { tabs = true } = {}) {
 }
 
 // floatInCompanion moves the agent to its chat overlay window, the one a tab
-// dragged off the companion gets. It reports whether a companion handled it.
-export function floatInCompanion(agentId) {
-  return controller ? controller.float(agentId) === true : false;
+// dragged off the companion gets, at at if it was dragged there. It reports
+// whether a companion handled it.
+export function floatInCompanion(agentId, at = null) {
+  return controller ? controller.float(agentId, at) === true : false;
+}
+
+// reclaimInCompanion shows an agent's companion tab again when the tab is waiting
+// on a browser window of it. It reports whether one was.
+export function reclaimInCompanion(selector) {
+  return controller ? controller.reclaim(selector) === true : false;
 }

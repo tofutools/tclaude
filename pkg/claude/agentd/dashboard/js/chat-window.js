@@ -9,10 +9,9 @@ import htm from 'htm';
 import { actionsFor, approvalsFor, companionAgents, companionStatus, companionStatusLabel, decisionsFor, defaultPlacement } from './companion-model.js';
 import { ApprovalCard } from './companion-approval.js';
 import { AgentCog } from './companion-cog.js';
-import { parsePlacement, viewportOf } from './overlay-window-model.js';
-import { closeOverlayWindow, minimizeOverlayWindow, placedOverlayWindow } from './overlay-instances.js';
+import { closeOverlayWindow, minimizeOverlayWindow, useDropPoint } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { OverlayWindow, readPref, useOverlayWindow, writePref } from './overlay-window.js';
+import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { ActionCards } from './message-action.js';
 import { ShellHere } from './terminal-here.js';
@@ -23,21 +22,14 @@ const html = htm.bind(h);
 export const CHAT_PLACEMENT_PREF = 'tclaude.dash.chat-window.placement';
 
 export function ChatWindow({
-  instance, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, showAgent = null, Terminal, DecisionCard, StatusDot,
+  instance, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onSeparateWindow = null, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, showAgent = null, Terminal, DecisionCard, StatusDot,
 }) {
   const agentId = instance.agent;
   const agent = companionAgents(snapshot.value).get(agentId) || null;
   const name = agent?.name || instance.label;
   const open = !instance.minimized;
   const placementKey = `${CHAT_PLACEMENT_PREF}.${agentId}`;
-  // Where it was dropped is its place from now on, floating, and every panel
-  // size it had stays saved.
-  useState(() => {
-    if (!instance.at) return;
-    const saved = parsePlacement(readPref(prefs, placementKey)) || defaultPlacement(viewportOf(win));
-    writePref(prefs, placementKey, JSON.stringify({ ...saved, ...instance.at, snap: '' }));
-  });
-  useEffect(() => { if (instance.at) placedOverlayWindow(instance.id); }, []);
+  useDropPoint(instance, { win, prefs, prefKey: placementKey, start: defaultPlacement });
   const overlay = useOverlayWindow({
     id: instance.id, win, prefs, prefKey: placementKey, defaultPlacement, snaps: true, open,
     onRefocus: () => setFocusToken((n) => n + 1),
@@ -75,6 +67,7 @@ export function ChatWindow({
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const title = html`<span class="chat-window-title" title=${`${name}: ${label}`}><${StatusDot} status=${agent ? companionStatus(agent) : 'offline'} /> ${name}</span>
     <button type="button" class="board-overlay-action" title="Move this agent back to a tab of the companion" onClick=${() => onBackToTab(instance)}>Back to a tab</button>
+    ${agent?.online && onSeparateWindow && html`<button type="button" class="board-overlay-action" title="Move this agent to a browser window of its own" onClick=${() => onSeparateWindow(instance, overlay.windowRef.current?.getBoundingClientRect?.())}>Open in separate window</button>`}
     <div class="companion-controls"><${AgentCog} agent=${agent} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
       openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${companionAgents(snapshot.value)} showAgent=${showAgent}
       fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardDown} askShutDownRef=${askShutDown} /></div>

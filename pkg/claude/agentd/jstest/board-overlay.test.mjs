@@ -76,7 +76,7 @@ const scenario = (name, ...args) => {
   test(name, async (t) => {
     const env = await setup(t, ...args);
     try {
-      await body(env);
+      await body({ ...env, t });
     } finally {
       env.dispose();
     }
@@ -95,7 +95,7 @@ async function agentPane(harness) {
 
 async function fakeCompanion(harness, float) {
   const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
-  return registerCompanionController({ open: () => true, float, reveal: () => false });
+  return registerCompanionController({ open: () => true, float, reveal: () => false, reclaim: () => false });
 }
 
 scenario('an agent\'s tab moves to its chat, and the operator stays on Terminals', AGENT_ON, async ({ harness, host, windows, click, button }) => {
@@ -127,6 +127,132 @@ scenario('with Collab off an agent\'s tab offers no overlay', { ...AGENT_ON, col
 scenario('with no companion to float it, an agent\'s tab offers no overlay', AGENT_ON, async ({ harness, host, button }) => {
   await agentPane(harness);
   assert.equal(button(host, 'Open in overlay'), undefined);
+});
+
+// A tab pulled off the strip and let go at (x, y). The fake strip has no size.
+async function dragOut(harness, host, label, x = 400, y = 300) {
+  const tab = [...host.querySelectorAll('.mux-tab')].find((node) => node.textContent.includes(label));
+  await harness.act(async () => {
+    harness.fireEvent(tab, 'dragstart', { dataTransfer: { setData() {} } });
+    harness.fireEvent(tab, 'dragend', { clientX: x, clientY: y, screenX: x, screenY: y });
+    await wait(5);
+    await wait(5);
+  });
+}
+
+function fakeOpen(t, harness, target = (urls) => ({ location: { replace: (url) => urls.push(url) } })) {
+  const urls = [];
+  const previous = [globalThis.open, harness.window.open];
+  globalThis.open = harness.window.open = () => target(urls);
+  t.after(() => { [globalThis.open, harness.window.open] = previous; });
+  return urls;
+}
+
+const seedOf = (url) => JSON.parse(decodeURIComponent(url.split('#open=')[1]));
+
+// What a separate window sends back to the page that opened it.
+async function handOff(harness, seed) {
+  const { receiveSeparateWindow } = await harness.importDashboardModule('js/terminal-shell-island.js');
+  const { createTerminalShellActions } = await harness.importDashboardModule('js/terminal-shell-actions.js');
+  const { terminalShellState: state } = await harness.importDashboardModule('js/terminal-shell-state.js');
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  let accepted;
+  await harness.act(async () => {
+    accepted = await receiveSeparateWindow({ ...seed, initialRetry: true }, { actions: createTerminalShellActions({ state }), snapshot: dashboardState.snapshot });
+    await wait(5);
+  });
+  return accepted;
+}
+
+scenario('a board dragged off the strip floats where it was dropped', async ({ t, harness, host, overlayHost, overlayState, island, dashPrefs }) => {
+  const urls = fakeOpen(t, harness);
+  await harness.act(async () => { await overlayState.openBoardPane('plan', 'Release plan'); await wait(); await wait(); });
+  await dragOut(harness, host, 'Release plan', 400, 300);
+  assert.deepEqual(tabLabels(host), []);
+  assert.ok(overlayHost.querySelector('.board-overlay'), 'it floats');
+  assert.deepEqual(urls, [], 'a browser window is a deliberate click');
+  const saved = JSON.parse(dashPrefs.getItem(`${island.BOARD_OVERLAY_PLACEMENT_PREF}.plan`));
+  assert.deepEqual([saved.x, saved.y, saved.snap], [280, 286, '']);
+});
+
+scenario('an agent\'s tab dragged off the strip floats its chat at the drop point', AGENT_ON, async ({ t, harness, host }) => {
+  const urls = fakeOpen(t, harness);
+  const floated = [];
+  const stop = await fakeCompanion(harness, (agent, at) => { floated.push([agent, at]); return true; });
+  try {
+    await agentPane(harness);
+    await dragOut(harness, host, 'builder', 400, 300);
+    assert.deepEqual(floated, [[AGENT, { x: 280, y: 286 }]]);
+    assert.deepEqual(urls, []);
+  } finally { stop(); }
+});
+
+scenario('what cannot float still pops out when dragged', { ...AGENT_ON, collab_enabled: false }, async ({ t, harness, host }) => {
+  const urls = fakeOpen(t, harness);
+  const stop = await fakeCompanion(harness, () => assert.fail('it cannot float'));
+  try {
+    await agentPane(harness);
+    await dragOut(harness, host, 'builder');
+    assert.equal(urls.length, 1);
+    assert.equal(seedOf(urls[0]).floats, undefined, 'the window does not offer an overlay it cannot get');
+    assert.deepEqual(tabLabels(host), []);
+  } finally { stop(); }
+});
+
+scenario('a tab\'s separate window asks for a real window and may come back to an overlay', async ({ t, harness, host, overlayState, click, button }) => {
+  const features = [];
+  const urls = [];
+  const previous = harness.window.open;
+  harness.window.open = (_url, _name, feature) => {
+    features.push(feature);
+    return { location: { replace: (url) => urls.push(url) } };
+  };
+  t.after(() => { harness.window.open = previous; });
+  await harness.act(async () => { await overlayState.openBoardPane('plan', 'Release plan'); await wait(); await wait(); });
+  await click(button(host, 'Open in separate window'));
+  await harness.act(() => wait(5));
+  assert.equal(seedOf(urls[0]).board, 'plan');
+  assert.equal(seedOf(urls[0]).floats, true);
+  assert.equal(features.length, 1);
+});
+
+scenario('a floating board moves to a separate window, and stays if pop-ups are blocked', async ({ t, harness, overlayHost, overlayState, windows, click, button }) => {
+  let blocked = true;
+  const urls = [];
+  const previous = globalThis.open;
+  globalThis.open = () => (blocked ? null : { location: { replace: (url) => urls.push(url) } });
+  t.after(() => { globalThis.open = previous; });
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await click(button(overlayHost, 'Open in separate window'));
+  assert.equal(windows.overlayWindows.value.length, 1);
+  blocked = false;
+  await click(button(overlayHost, 'Open in separate window'));
+  assert.equal(windows.overlayWindows.value.length, 0);
+  assert.equal(seedOf(urls[0]).board, 'plan');
+  assert.equal(seedOf(urls[0]).floats, true);
+});
+
+scenario('a separate window sent to the overlay floats there, with no tab', async ({ harness, host, overlayHost }) => {
+  assert.ok(await handOff(harness, { board: 'plan', label: 'Release plan', overlay: true }));
+  assert.ok(overlayHost.querySelector('.board-overlay'));
+  assert.deepEqual(tabLabels(host), []);
+});
+
+scenario('a separate window that can no longer float lands in a tab', { ...COLLAB_ON, collab_enabled: false }, async ({ harness, windows, state }) => {
+  assert.ok(await handOff(harness, { board: 'plan', label: 'Release plan', overlay: true }));
+  assert.deepEqual(windows.overlayWindows.value, []);
+  assert.equal(state.panes.value.length, 1, 'a handoff never loses it');
+});
+
+scenario('Back to a tab from a separate window goes to the companion tab waiting on it', AGENT_ON, async ({ harness, state }) => {
+  const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
+  const reclaimed = [];
+  const stop = registerCompanionController({ open: () => true, float: () => true, reveal: () => false, reclaim: (agent) => { reclaimed.push(agent); return true; } });
+  try {
+    await handOff(harness, { ws: `/api/open-window-ws/${AGENT}`, key: `window:${AGENT}`, agent: AGENT, hideConv: AGENT, label: 'builder' });
+    assert.deepEqual(reclaimed, [AGENT]);
+    assert.deepEqual(state.panes.value, []);
+  } finally { stop(); }
 });
 
 scenario('a board moves from its tab into the overlay and back', async ({ harness, host, overlayHost, overlayState, state, click, button }) => {

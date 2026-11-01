@@ -12,15 +12,17 @@ import htm from 'htm';
 import { BoardEditor, BoardsGate } from './board-island.js';
 import { onBoardDeleted } from './board-manage.js';
 import { BOARD_WINDOW_KIND, boardOverlays, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
+import { boardPaneSeed, isBoardId } from './board-model.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
 import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
-import { isBoardId } from './board-model.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { closeOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { closeOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, overlayWindows, useDropPoint } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { TERMINAL_WINDOW_KIND, validTerminalWindow } from './terminal-window-model.js';
 import { OverlayWindow, overlayStackReset, readPref, useOverlayWindow } from './overlay-window.js';
+import { elementScreenPoint } from './terminal-drag-out.js';
+import { detachSeedWindow } from './terminals-tab.js';
 
 const html = htm.bind(h);
 
@@ -47,9 +49,17 @@ function BoardOverlayWindow({ instance, index, snapshot, fetchImpl, notify, pref
     const base = parsePlacement(readPref(prefs, BOARD_OVERLAY_PLACEMENT_PREF)) || defaultOverlayPlacement(viewport);
     return clampPlacement({ ...base, x: base.x + index * CASCADE_PX, y: base.y + index * CASCADE_PX, snap: '' }, viewport);
   };
-  const overlay = useOverlayWindow({ id: instance.id, win, prefs, prefKey: `${BOARD_OVERLAY_PLACEMENT_PREF}.${instance.board}`, defaultPlacement: startPlacement, snaps: true, open });
+  const prefKey = `${BOARD_OVERLAY_PLACEMENT_PREF}.${instance.board}`;
+  useDropPoint(instance, { win, prefs, prefKey, start: startPlacement });
+  const overlay = useOverlayWindow({ id: instance.id, win, prefs, prefKey, defaultPlacement: startPlacement, snaps: true, open });
   const look = windowControlsLook(snapshot.value?.window_controls);
   const close = () => closeOverlayWindow(instance.id);
+  // A blocked pop-up leaves it where it is.
+  const toSeparateWindow = () => {
+    const rect = overlay.windowRef.current?.getBoundingClientRect?.();
+    if (detachSeedWindow({ ...boardPaneSeed(board.id, board.label), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) close();
+    else notify('Could not open a separate window: allow pop-ups for this dashboard.', true);
+  };
   useEffect(() => onBoardDeleted((id) => {
     if (id === instance.board) closeOverlayWindow(instance.id);
   }), [instance.id, instance.board]);
@@ -64,6 +74,7 @@ function BoardOverlayWindow({ instance, index, snapshot, fetchImpl, notify, pref
   const title = html`<span class="board-overlay-title">✎ ${board.label}</span>
     <button type="button" class="board-overlay-action" title="Move this board back to a tab of the Collab view"
       onClick=${() => void returnBoardToTab(board.id)}>Back to a tab</button>
+    <button type="button" class="board-overlay-action" title="Move this board to a browser window of its own" onClick=${toSeparateWindow}>Open in separate window</button>
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Close this window" aria-label=${`Close ${board.label}`}
       onClick=${close}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.id} window=${overlay} open=${open} className="board-overlay" frameClass="board-overlay-resize-frame"

@@ -19,8 +19,9 @@ session on. Pick one to open it in a tab. The box at the top searches titles and
 a new title makes a board with **Create** or Enter, and the title of one that
 exists opens it. `/boards/<id>` opens that board's tab, and `/boards` opens the
 list. A board tab behaves like a terminal
-tab: it reorders, joins tab groups, and detaches into its own browser tab
-(**⧉ tab**) or window (drag it off the strip), which **↩ dashboard** sends back. Like a
+tab: it reorders, joins tab groups, and moves between a tab, an overlay window and a
+browser window of its own, with **Open in overlay**, **Open in separate window** and
+**Back to a tab**. Dragging it off the strip floats it where you drop it. Like a
 terminal tab it lasts as long as its page: a reload brings back the board the
 URL names and any board in the overlay, and a new browser window starts with none. The URL of a deleted
 board opens nothing and becomes `/terminals`.
@@ -37,7 +38,7 @@ right-click menu. The dialog names the board and every agent on it, and offers
 the board closes, a browser tab of its own says the board was deleted, and
 everyone who was on it, stopped agents included, gets a message saying so.
 
-**Open in overlay**, on the board or its tab's right-click menu, floats the
+**Open in overlay**, on the board or its tab's right-click menu, or dragging its tab off the strip, floats the
 board in its own window over every dashboard view, apart from the companion
 window, so you can work in both at once. It moves like the companion: drag it by
 its title bar, resize it from any edge or corner, and snap it to an edge or into a
@@ -47,7 +48,7 @@ over the title bar zooms the board. It has the companion's
 the bottom of the page; with the Classic look it has a plain × instead. Several
 boards can float at once, each in its own window, and the open windows come back
 after a reload. Clicking the overlay
-or the companion brings that one forward. **Back to a tab** returns the board to the strip.
+or the companion brings that one forward. **Back to a tab** returns the board to the strip, and **Open in separate window** moves it to a browser window.
 
 ### Drawing
 

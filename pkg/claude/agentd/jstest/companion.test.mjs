@@ -2336,3 +2336,17 @@ test('a failed resume is reported and leaves the way back open', async (t) => {
   await assert.rejects(resumeAgent(answer({ action: 'error', detail: 'no pane' }), S), /no pane/);
   await assert.rejects(resumeAgent(answer({ action: 'error:missing_cwd', detail: '/gone' }), S), (error) => error.recoverable === true);
 });
+
+test('a chat moves to a separate window, and its way back is a companion tab', async (t) => {
+  const places = [];
+  const { view, harness, controller } = await setup(t, { detachWindow: (agent, _label, options) => { places.push([agent, options]); return { closed: false, focus() {}, close() {} }; } });
+  await harness.act(async () => { controller().float(A); await new Promise((r) => setTimeout(r, 0)); });
+  const chat = view.container.querySelector('.chat-window');
+  const move = [...chat.querySelectorAll('button')].find((button) => button.textContent === 'Open in separate window');
+  await harness.act(async () => { harness.fireEvent(move, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(places.length, 1);
+  assert.equal(view.container.querySelector('.chat-window'), null, 'one place at a time');
+  await harness.act(async () => { assert.equal(controller().reclaim(A), true); await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(view.container.querySelector('.companion-tab'));
+  assert.equal(controller().reclaim(A), false, 'nothing is waiting any more');
+});

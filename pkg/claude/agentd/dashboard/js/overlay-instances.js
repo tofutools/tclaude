@@ -5,7 +5,9 @@
 // companion is the one window that is not here: it is always the same one.
 
 import { signal } from '@preact/signals';
-import { forgetOverlayWindow, raiseOverlayWindow } from './overlay-window.js';
+import { useEffect, useState } from 'preact/hooks';
+import { parsePlacement, viewportOf } from './overlay-window-model.js';
+import { forgetOverlayWindow, raiseOverlayWindow, readPref, writePref } from './overlay-window.js';
 
 // In session storage, as the companion's open state is: a reload brings the
 // windows back, another browser tab does not get a second set.
@@ -52,6 +54,18 @@ export function labelOverlayWindow(id, label) {
 // The drop point of a window dragged out, which only its first placement reads.
 export function placedOverlayWindow(id) {
   patchWindow(id, { at: undefined });
+}
+
+// useDropPoint makes where a window was dropped its place from now on, floating,
+// with every panel size it had still saved. It runs before the window reads its
+// placement.
+export function useDropPoint(instance, { win, prefs, prefKey, start }) {
+  useState(() => {
+    if (!instance.at) return;
+    const saved = parsePlacement(readPref(prefs, prefKey)) || start(viewportOf(win));
+    writePref(prefs, prefKey, JSON.stringify({ ...saved, ...instance.at, snap: '' }));
+  });
+  useEffect(() => { if (instance.at) placedOverlayWindow(instance.id); }, []);
 }
 
 // keepOverlayWindows reads the saved set, keeping only windows valid(window)

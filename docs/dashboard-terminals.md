@@ -30,14 +30,21 @@ pending permission request, a **🔑** opens the
   group. Like the tabs in them, groups belong to their browser window and end
   with it, so a reload starts without them.
 - **Right-click a tab** (or Shift+F10) for `New group from this tab`, `Add to
-  "<group>"`, `Remove from group`, `Detach tab`, `Close tab`, `Close other tabs`
+  "<group>"`, `Remove from group`, `Open in separate window`, `Close tab`, `Close other tabs`
   and `Close all tabs`. Boards, directory shells, group shells and running local agents add
   `Open in overlay`.
 - **Right-click a group** for `Expand group` or `Collapse group`, `Rename group…`,
   `Ungroup tabs` and `Close tabs in group`. Double-click or press F2 to rename.
-- **Detach** a tab by dragging it off the strip, which opens its own browser
-  window, or with **⧉ tab** or `Detach tab`, which open it in a new browser tab.
-  **↩ dashboard**, or dragging the pop-out's header back, reattaches it.
+- **Move** a terminal between three places, one at a time: a tab, an overlay window
+  and a separate browser window. Each place offers the other two. A tab has **Open in
+  overlay** and **Open in separate window**, an overlay window has **Back to a tab**
+  and **Open in separate window**, and a separate window has **Back to a tab** and
+  **Open in overlay**. Dragging a separate window's header back works like **Back to a
+  tab**. A separate window offers **Open in overlay** only while the dashboard that
+  opened it is there to take it, and a terminal that can't float any more lands in a tab.
+- **Drag a tab off the strip** to float it where you drop it. What can't float opens in
+  a separate window instead: a peer's terminal, an offline agent, and anything with
+  Collab off.
 - **Float** a directory or group shell with **Open in overlay** (needs Collab). It
   moves, snaps and splits like a board's window, on the same tmux session, and
   **Back to a tab** returns it. Closing the window leaves the shell running. A peer's

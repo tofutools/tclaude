@@ -171,7 +171,8 @@ export function createStandaloneTerminalsPage({
     statusPollSelector = null;
   }
 
-  async function reattachPane(pane) {
+  // overlay asks the dashboard to float it instead of giving it a tab.
+  async function reattachPane(pane, { overlay = false } = {}) {
     if (disposed || !pane) return false;
     // This window is about to close, which would cut a save off. An edit that
     // could not be saved keeps the board here, where it still exists.
@@ -181,6 +182,7 @@ export function createStandaloneTerminalsPage({
       ...pane.seed,
       label: pane.label,
       initialRetry: true,
+      ...(overlay && { overlay: true }),
     };
     if (seed.hideConv) detachConversations.delete(seed.hideConv);
     await actions.closePane(pane.key);

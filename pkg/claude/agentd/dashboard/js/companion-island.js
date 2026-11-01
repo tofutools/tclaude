@@ -544,10 +544,17 @@ export function CompanionApp({
 
   // A tab of the Terminals tab moves here too.
   const floatAgent = useRef(null);
-  floatAgent.current = (selector) => {
+  floatAgent.current = (selector, at) => {
     const agent = companionAgentOf(snapshot.peek(), selector);
     if (!agent) return false;
-    floatTab(agent);
+    floatTab(agent, at);
+    return true;
+  };
+  const reclaimAgent = useRef(null);
+  reclaimAgent.current = (selector) => {
+    const agentId = companionAgentOf(snapshot.peek(), selector)?.agentId || selector;
+    if (!parked.has(agentId)) return false;
+    reclaim(agentId);
     return true;
   };
   const revealAgent = useRef(null);
@@ -569,7 +576,8 @@ export function CompanionApp({
   };
   useEffect(() => registerController({
     open: (agentId, options) => showAgent(agentId, options),
-    float: (selector) => floatAgent.current(selector),
+    float: (selector, at) => floatAgent.current(selector, at),
+    reclaim: (selector) => reclaimAgent.current(selector),
     reveal: (selector, options) => revealAgent.current(selector, options),
   }), [showAgent]);
 
@@ -997,17 +1005,25 @@ export function CompanionApp({
 
   // The window has one attach to the terminal, so it lets go first. A blocked
   // pop-up leaves everything where it was.
-  function detachToWindow(agent) {
-    const rect = windowRef.current?.getBoundingClientRect?.();
+  function detachToWindow(agent, rect = windowRef.current?.getBoundingClientRect?.()) {
     const size = rect ? { width: rect.width, height: rect.height } : null;
     const opened = detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: elementScreenPoint(win, rect) });
     if (!opened) {
       notify('Could not detach: allow pop-ups for this dashboard.', true);
-      return;
+      return false;
     }
     detachedWindows.current.set(agent.agentId, opened);
     setParked((current) => new Set(current).add(agent.agentId));
     setDetached((current) => new Set(current).add(agent.agentId));
+    return true;
+  }
+
+  // Its way back is a companion tab, as Back to a tab from the chat gives it.
+  function chatToWindow(instance, rect) {
+    const agent = agents.get(instance.agent);
+    if (!agent || !detachToWindow(agent, rect)) return;
+    closeOverlayWindow(instance.id);
+    setTabs((current) => withTab(current, agent.agentId));
   }
 
   // Attach first: the window sees it lost the terminal, so closing it cannot
@@ -1453,7 +1469,7 @@ export function CompanionApp({
   return html`
     ${overlayWindows.value.filter((window) => window.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} fetchImpl=${fetchImpl} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
-      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onStewardDown=${stewardShutDown} stewardRoster=${stewardRoster} openPermissions=${openPermissions} openSudo=${openSudo} openStewardHandover=${openStewardHandover} showAgent=${showAgent} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
+      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onSeparateWindow=${detachWindow ? chatToWindow : null} onStewardDown=${stewardShutDown} stewardRoster=${stewardRoster} openPermissions=${openPermissions} openSudo=${openSudo} openStewardHandover=${openStewardHandover} showAgent=${showAgent} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
     ${overlayWindows.value.filter((window) => window.kind === TERMINAL_WINDOW_KIND).map((instance) => html`<${TerminalWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} Terminal=${CompanionTerminal} />`)}
     ${windowView}

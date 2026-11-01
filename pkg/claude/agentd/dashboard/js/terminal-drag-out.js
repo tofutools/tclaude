@@ -9,8 +9,8 @@
 //
 // The rule is deliberately conservative. Anything it cannot recognise — a
 // cancelled drag, a coordinate the browser did not report — resolves to "not a
-// drag-out", so the gesture degrades to the explicit ⧉ tab / ↩ dashboard
-// buttons instead of half-firing.
+// drag-out", so the gesture degrades to the explicit buttons instead of
+// half-firing.
 
 export const DRAG_OUT_MARGIN = 56;
 
@@ -52,11 +52,9 @@ export function dragLeftRegion(event, region, margin = DRAG_OUT_MARGIN) {
   return draggedOut(dragOutPoint(event), rect, margin);
 }
 
-// A tab dragged off the strip lands in a window of its own rather than another
-// tab of the window it just left — dragging a terminal *out* should get it out
-// of the way, which a tab behind the dashboard does not. Only window features
-// make a browser choose a window over a tab; passing none (the ⧉ tab button and
-// the tab context menu) still opens an ordinary tab.
+// A terminal leaving for a separate window gets a real window rather than another
+// tab of the one it just left. Only window features make a browser choose a
+// window over a tab.
 //
 // Every browser treats the features as a request. A user setting that forces
 // tabs, or a screen too small for the asked-for size, quietly wins; the handoff

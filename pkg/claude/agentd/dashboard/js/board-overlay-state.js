@@ -42,8 +42,8 @@ export async function openLinkedBoard(id, fetchImpl = (...args) => globalThis.fe
 }
 
 // openBoardOverlay floats a board in a window of its own.
-export function openBoardOverlay(id, label) {
-  openOverlayWindow({ id: boardWindowId(id), kind: BOARD_WINDOW_KIND, board: id, label: label || id });
+export function openBoardOverlay(id, label, at = null) {
+  openOverlayWindow({ id: boardWindowId(id), kind: BOARD_WINDOW_KIND, board: id, label: label || id, at });
 }
 
 // returnBoardToTab moves a floating board back to a tab and shows it.

@@ -27,12 +27,13 @@ import {
 } from './human-notification-attention.js';
 import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
-import { companionAvailable, openInCompanion } from './companion-facade.js';
+import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
 import { boardOverlays, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
-import { chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
+import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
+import { droppedAt } from './overlay-window-model.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { overlayWindows } from './overlay-instances.js';
 import { shellToast } from './shell-state.js';
@@ -86,7 +87,13 @@ export function tabDragStartedOnClose(target) {
 // floats through the companion, which a page without one cannot do.
 function paneFloats(pane, snapshot) {
   if (snapshot?.collab_enabled !== true) return false;
-  return overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
+  return !!pane.seed.board || overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
+}
+
+// soloFloats reports whether a separate window offers Open in overlay: the page
+// that opened it said it could float, and that page is still there to take it.
+function soloFloats(pane, win = globalThis.window) {
+  return !!pane.seed.floats && !!win?.opener && !win.opener.closed;
 }
 
 // A chat window in the page. With Collab off the saved set is still there.
@@ -371,7 +378,7 @@ function TerminalPane({
           <span
             class=${`mux-pane-title mux-pane-title-drag${dragging ? ' dragging' : ''}`}
             draggable="true"
-            title="Drag off this header — or click ↩ dashboard — to move this terminal back to the dashboard's Terminals tab"
+            title="Drag off this header — or click Back to a tab — to move this terminal back to the dashboard's Terminals tab"
             onDragStart=${startTitleDrag}
             onDragEnd=${endTitleDrag}
           >${paneTitle(pane)}</span>
@@ -403,10 +410,11 @@ function TerminalPane({
           <span>Arcane palette</span>
         </label>
         ${solo ? html`
-          <button type="button" class="mux-btn" title="Move this terminal back to its dashboard tab" onClick=${() => void actions.reattachPane(pane.key)}>↩ dashboard</button>
+          <button type="button" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>Back to a tab</button>
+          ${soloFloats(pane) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay</button>` : null}
         ` : html`
           ${paneFloats(pane, processSnapshot?.value) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>` : null}
-          <button type="button" class="mux-btn" title="Move this terminal to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>
+          <button type="button" class="mux-btn" title="Move this terminal to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: paneFloats(pane, processSnapshot?.value) })}>Open in separate window</button>
         `}
       </div>
       ${stewardDown ? html`<${StewardDownNotice} pane=${pane} actions=${actions} />` : null}
@@ -522,10 +530,11 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     fetchImpl=${fetchFromPage} notify=${shellToast} onOpenAgent=${(agent) => openInCompanion(agent)}
     onTitle=${(title) => actions.setPaneLabel(pane.key, title)}
     headActions=${solo
-      ? html`<button type="button" class="mux-btn" title="Move this board back to its dashboard tab" onClick=${() => void actions.reattachPane(pane.key)}>↩ dashboard</button>`
+      ? html`<button type="button" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>Back to a tab</button>
+        ${soloFloats(pane) ? html`<button type="button" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay</button>` : null}`
       : html`
         <button type="button" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>
-        <button type="button" class="mux-btn" title="Move this board to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>`} />` : null;
+        <button type="button" class="mux-btn" title="Move this board to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Open in separate window</button>`} />` : null;
   return html`<div
     class=${`mux-pane mux-pane-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
     id=${pane.id}
@@ -824,7 +833,7 @@ function PaneTab({
       key: pane.key,
       board,
       boardId: pane.seed.board,
-      floats: board || paneFloats(pane, snapshot?.value),
+      floats: paneFloats(pane, snapshot?.value),
       groupId,
       label: pane.label,
       trigger: event.currentTarget,
@@ -1188,7 +1197,7 @@ function PaneContextMenu({
     ...(menu.groupId ? [item('Remove from group', () => actions.assignPaneToGroup(menu.key, null))] : []),
     separator,
     ...(menu.floats ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
-    item('Detach tab', () => actions.popOutPane(menu.key)),
+    item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
     separator,
     ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'mux-tab-menu-item danger', refocus: false })] : []),
     item('Close tab', () => actions.closePane(menu.key)),
@@ -1388,15 +1397,18 @@ function TerminalTabs({
   // treat that as "pull this terminal out of the dashboard". A drop on a
   // sibling tab (reorder) or a cancelled drag never reaches the detach.
   //
-  // Dragging a terminal out asks for it out of the way, so this lands in a
-  // window of its own — sized to the pane it is leaving and placed where the
-  // drag was released — rather than in another tab behind the dashboard. The
-  // ⧉ tab button and the tab context menu still open an ordinary tab.
+  // Dragging a terminal out asks for it out of the way, so it floats where it
+  // was dropped. What cannot float lands in a browser window of its own, sized to
+  // the pane it is leaving and placed where the drag was released.
   const endTabDrag = (event) => {
     const key = dragKeyRef.current;
     const detach = !droppedRef.current && key && dragLeftRegion(event, tabsRef.current);
     clearDrag();
     if (!detach) return;
+    if (paneFloats(state.panes.value.find((pane) => pane.key === key), snapshot?.value)) {
+      void actions.openPaneInOverlay(key, { at: droppedAt(event) });
+      return;
+    }
     void actions.popOutPane(key, {
       detachTo: {
         size: panesRef.current?.getBoundingClientRect?.(),
@@ -1718,7 +1730,7 @@ function TerminalTabs({
     widget.focus();
   }, [current.revealRequest, solo]);
 
-  // A board pop-out goes away by script after ↩ dashboard, which must not prompt.
+  // A board pop-out goes away by script after Back to a tab, which must not prompt.
   const confirmsReload = solo ? current.panes.some((pane) => !pane.seed.board) : hasPanes;
   useEffect(() => {
     if (!confirmsReload) return undefined;
@@ -1952,7 +1964,7 @@ function TerminalTabs({
         <div id="mux-empty">
           <div class="mux-empty-title">No terminals open</div>
           <div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu item and pick a browser option — it opens in the dashboard's <code>Terminals</code> tab.</div>
-          <div>Each terminal there has a <code>⧉ tab</code> button that pops it out into its own browser tab.</div>
+          <div>Each terminal there has an <code>Open in separate window</code> button that moves it to a browser window of its own.</div>
         </div>
       ` : null}
     </div>
@@ -1961,6 +1973,16 @@ function TerminalTabs({
 
 function hasRemotePane(state) {
   return state.panes.peek().some((pane) => pane.seed?.remote?.peer);
+}
+
+// receiveSeparateWindow takes a terminal back from its separate window: to the
+// overlay if it asked and can float, to the companion tab waiting on it, or else
+// to a tab here.
+export async function receiveSeparateWindow(seed, { actions, snapshot = null, runtimeLoader = null }) {
+  const overlay = !!seed.overlay && paneFloats({ seed }, snapshot?.value);
+  if (!overlay && agentSessionSeed(seed) && reclaimInCompanion(seed.agent)) return true;
+  if (runtimeLoader && !seed.board) await runtimeLoader();
+  return actions.receiveHandoffPane(seed, { overlay });
 }
 
 function TerminalBadge({ state }) {
@@ -1992,10 +2014,7 @@ export function mountTerminalShellIsland({
   const runtimeLoader = widgetFactory === mountTerminalWidget ? loadXtermRuntime : null;
   const unregisterController = registerTerminalShellController(actions, runtimeLoader);
   const unbindHandoff = bindTerminalHandoffReceiver({
-    openSeed: async (seed) => {
-      if (runtimeLoader && !seed.board) await runtimeLoader();
-      return actions.receiveHandoffPane(seed);
-    },
+    openSeed: (seed) => receiveSeparateWindow(seed, { actions, snapshot, runtimeLoader }),
   });
   // Path routing for the tab (/terminals/<agent-id>). Bound here rather than in
   // TerminalTabs because the standalone pop-out shares that component and owns

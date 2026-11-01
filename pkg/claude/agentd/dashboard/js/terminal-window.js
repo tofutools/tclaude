@@ -7,13 +7,14 @@ import { computed } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { defaultPlacement } from './companion-model.js';
-import { closeOverlayWindow, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { closeOverlayWindow, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayWindows, useDropPoint } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { TERMINAL_WINDOW_KIND, paneSeedOf } from './terminal-window-model.js';
-import { openTerminalPane, setFloatingTerminals } from './terminals-tab.js';
+import { elementScreenPoint } from './terminal-drag-out.js';
+import { detachSeedWindow, openTerminalPane, setFloatingTerminals } from './terminals-tab.js';
 
 const html = htm.bind(h);
 
@@ -44,8 +45,10 @@ export function TerminalWindow({ instance, snapshot, prefs, win, notify, widgetF
   const name = instance.label || 'Terminal';
   const open = !instance.minimized;
   const [focusToken, setFocusToken] = useState(1);
+  const prefKey = `${TERMINAL_WINDOW_PREF}.${instance.paneKey}`;
+  useDropPoint(instance, { win, prefs, prefKey, start: defaultPlacement });
   const overlay = useOverlayWindow({
-    id: instance.id, win, prefs, prefKey: `${TERMINAL_WINDOW_PREF}.${instance.paneKey}`, defaultPlacement, snaps: true, open,
+    id: instance.id, win, prefs, prefKey, defaultPlacement, snaps: true, open,
     onRefocus: () => setFocusToken((n) => n + 1),
   });
   useLayoutEffect(() => {
@@ -66,8 +69,15 @@ export function TerminalWindow({ instance, snapshot, prefs, win, notify, widgetF
     close();
     void openTerminalPane(paneSeedOf(instance));
   };
+  // A blocked pop-up leaves it where it is.
+  const toSeparateWindow = () => {
+    const rect = overlay.windowRef.current?.getBoundingClientRect?.();
+    if (detachSeedWindow({ ...paneSeedOf(instance), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) close();
+    else notify('Could not open a separate window: allow pop-ups for this dashboard.', true);
+  };
   const title = html`<span class="chat-window-title" title=${name}>⌨ ${name}</span>
     <button type="button" class="board-overlay-action" title="Move this terminal back to a tab" onClick=${backToTab}>Back to a tab</button>
+    <button type="button" class="board-overlay-action" title="Move this terminal to a browser window of its own" onClick=${toSeparateWindow}>Open in separate window</button>
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Close (the shell keeps running)" aria-label=${`Close ${name}`} onClick=${close}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.id} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Terminal ${name}`} title=${title}

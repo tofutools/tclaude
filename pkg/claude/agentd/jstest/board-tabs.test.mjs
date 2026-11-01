@@ -383,7 +383,7 @@ test('detaching a board carries it to the solo page, which renders it and sends 
   });
   await harness.act(async () => { await page.start(); await wait(); });
   assert.ok(host.querySelector('svg.board-canvas'), 'the solo page renders the board');
-  assert.ok([...host.querySelectorAll('button')].some((b) => b.textContent.includes('↩ dashboard')));
+  assert.ok([...host.querySelectorAll('button')].some((b) => b.textContent.includes('Back to a tab')));
   assert.ok(requests.includes('/api/snapshot?standalone=1'), 'it reads the roster, to name the agents on the board');
   page.dispose();
 });
@@ -423,7 +423,7 @@ async function soloWithEdit(t, patchAnswer) {
   await pointer('PointerDown', 100, 100);
   await pointer('PointerMove', 220, 160);
   await pointer('PointerUp', 220, 160);
-  const back = [...host.querySelectorAll('button')].find((b) => b.textContent.includes('↩ dashboard'));
+  const back = [...host.querySelectorAll('button')].find((b) => b.textContent.includes('Back to a tab'));
   return { harness, page, replaced, back };
 }
 

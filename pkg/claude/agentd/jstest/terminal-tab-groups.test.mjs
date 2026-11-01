@@ -438,7 +438,7 @@ test('a tab context menu offers the grouping commands drag-and-drop cannot reach
 
   const menu = await openMenu('b');
   assert.deepEqual([...menu.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent),
-    ['New group from this tab', 'Add to “group 1”', 'Detach tab', 'Close tab', 'Close other tabs', 'Close all tabs']);
+    ['New group from this tab', 'Add to “group 1”', 'Open in separate window', 'Close tab', 'Close other tabs', 'Close all tabs']);
   await harness.act(() => harness.fireEvent(
     getByRole(menu, 'menuitem', { name: 'Add to “group 1”' }), 'click',
   ));
@@ -446,7 +446,7 @@ test('a tab context menu offers the grouping commands drag-and-drop cannot reach
 
   const joined = await openMenu('b');
   assert.deepEqual([...joined.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent),
-    ['New group from this tab', 'Remove from group', 'Detach tab', 'Close tab', 'Close other tabs', 'Close all tabs'],
+    ['New group from this tab', 'Remove from group', 'Open in separate window', 'Close tab', 'Close other tabs', 'Close all tabs'],
     'the stack a tab is already in is offered as a leave, not as a join');
   await harness.act(() => harness.fireEvent(
     getByRole(joined, 'menuitem', { name: 'Remove from group' }), 'click',
