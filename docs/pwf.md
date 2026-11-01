@@ -47,6 +47,19 @@ A step that names one specific agent (an
 has different agents, so export points those steps out and they wait there
 until someone reassigns them.
 
+Export also scans the workflow for paths from your machine. A path under a
+home directory reveals a username, and a path outside the standard system
+directories may not exist on the importing node. `export` warns and lists each
+one with the field it is in, and the dashboard's share button asks first; the
+file is still written, and the importer's review shows the same list. Replace
+them with a param, or a path relative to the run's directory. Commands,
+arguments and param defaults are checked against the standard system
+directories (`/bin`, `/sbin`, `/usr`, `/lib`, `/dev`, `/proc`, `/sys`, `/tmp`,
+`/var/tmp`). Prompts and other text are checked for paths under the usual
+machine-specific roots only (such as `/home`, `/Users`, `/opt`, `/srv` and
+`/mnt`), and a template's source for home paths, since a comment travels too.
+It is a heuristic: it finds paths, not secrets.
+
 Check a file without a daemon and without changing anything:
 
 ```bash
@@ -55,8 +68,9 @@ tclaude agent process-templates inspect ship-feature.pwf
 
 `inspect` verifies the file and prints what the workflow needs: its inputs,
 the agent roles its steps ask for, the steps that ask you something, every
-command it would run, the steps that name a specific agent, and anything that
-keeps it from running (validation problems).
+command it would run, the steps that name a specific agent, paths from the
+exporting machine, and anything that keeps it from running (validation
+problems).
 
 Import it on another node:
 
@@ -122,6 +136,7 @@ run (see [Processes](processes.md#running)). Export needs
 - Template text (prompts, questions, descriptions) travels as written. Keep
   secrets, internal hostnames and customer details out of it.
 - Prefer roles over specific agents, so the workflow runs anywhere.
+- Deal with the paths `export` warns about.
 
 ### Before you import
 
@@ -132,6 +147,7 @@ run (see [Processes](processes.md#running)). Export needs
 - An `update` replaces your current version of a template you already have,
   unless you import it under a new id with `--rename`.
 - Map roles the review flags, or those steps wait for a role nobody has.
+- Check the paths the review lists: a step using one may fail here.
 
 ## File format
 

@@ -76,6 +76,7 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 		_, _ = stdout.Write(data)
 		if archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits()); err == nil {
 			warnWorkflowProblems(stderr, archive)
+			warnWorkflowPaths(stderr, archive.Paths)
 		}
 		return rcOK
 	}
@@ -96,6 +97,7 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 		fmt.Fprintf(stdout, "Note: %d step(s) name a specific agent, which the importing node will not have; they wait until reassigned there.\n", n)
 	}
 	warnWorkflowProblems(stderr, archive)
+	warnWorkflowPaths(stderr, archive.Paths)
 	return rcOK
 }
 
@@ -107,6 +109,28 @@ func warnWorkflowProblems(stderr io.Writer, archive *pwf.Archive) {
 	}
 	fmt.Fprintln(stderr, "Warning: the workflow fails validation. It was exported as it is, but it cannot run until these are fixed:")
 	renderProblems(stderr, archive.Problems)
+}
+
+// warnWorkflowPaths warns about paths in an export. Like a validation problem
+// it does not stop the export; the author decides whether to fix them.
+func warnWorkflowPaths(stderr io.Writer, paths []pwf.PathFinding) {
+	if len(paths) == 0 {
+		return
+	}
+	fmt.Fprintln(stderr, "Warning: the workflow carries paths from this machine. It was exported with them; replace them with a param or a relative path before sharing:")
+	renderPaths(stderr, paths)
+}
+
+// renderPaths lists machine-specific paths. They come from the file, so each
+// goes through shown.
+func renderPaths(out io.Writer, paths []pwf.PathFinding) {
+	for _, p := range paths {
+		why := "may not exist elsewhere"
+		if p.Kind == pwf.PathHome {
+			why = "reveals a username"
+		}
+		fmt.Fprintf(out, "  %s: %s (%s)\n", shown(p.Where), shown(p.Path), why)
+	}
 }
 
 // renderProblems lists what keeps a workflow from running as carried. Every
@@ -171,13 +195,21 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 		if problems == nil {
 			problems = []string{}
 		}
-		_ = enc.Encode(map[string]any{"workflow": a.Workflow, "signatures": sigs, "problems": problems})
+		paths := a.Paths
+		if paths == nil {
+			paths = []pwf.PathFinding{}
+		}
+		_ = enc.Encode(map[string]any{"workflow": a.Workflow, "signatures": sigs, "problems": problems, "paths": paths})
 		return rcOK
 	}
 	renderWorkflow(stdout, a.Workflow)
 	if len(a.Problems) > 0 {
 		fmt.Fprintln(stdout, "Fails validation (it imports, but cannot run until fixed):")
 		renderProblems(stdout, a.Problems)
+	}
+	if len(a.Paths) > 0 {
+		fmt.Fprintln(stdout, "Paths from the machine it was exported on:")
+		renderPaths(stdout, a.Paths)
 	}
 	if len(a.Signatures) == 0 {
 		fmt.Fprintln(stdout, "Signature: none (valid but unverified)")
@@ -191,8 +223,9 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 // workflowImportJSON mirrors the daemon's import preview (pwfImportView).
 type workflowImportJSON struct {
 	pwf.Workflow
-	RootID     string   `json:"rootId"`
-	Problems   []string `json:"problems"`
+	RootID     string            `json:"rootId"`
+	Problems   []string          `json:"problems"`
+	Paths      []pwf.PathFinding `json:"paths"`
 	Signatures []struct {
 		KeyID  string `json:"keyId"`
 		Status string `json:"status"`
@@ -285,6 +318,10 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 	if len(view.Problems) > 0 {
 		fmt.Fprintln(stdout, "Fails validation (it imports, but cannot run until fixed here):")
 		renderProblems(stdout, view.Problems)
+	}
+	if len(view.Paths) > 0 {
+		fmt.Fprintln(stdout, "Paths from the machine it was exported on (steps using them may need changing here):")
+		renderPaths(stdout, view.Paths)
 	}
 	renderImportChanges(stdout, &view)
 	if !p.Yes {
