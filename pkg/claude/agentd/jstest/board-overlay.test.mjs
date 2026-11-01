@@ -12,7 +12,9 @@ const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 const COLLAB_ON = { collab_enabled: true, agents: [], groups: [] };
 const BOARDS = [{ id: 'plan', title: 'Release plan' }, { id: 'map', title: 'Team map' }];
 
-async function setup(t, snapshotValue = COLLAB_ON) {
+// A scenario with a stand-in for the companion goes without the real one, and so
+// without the windows it shows.
+async function setup(t, snapshotValue = COLLAB_ON, { companion = true } = {}) {
   const harness = await createPreactHarness(t);
   const doc = harness.document;
   const nav = doc.body.appendChild(doc.createElement('nav'));
@@ -31,7 +33,8 @@ async function setup(t, snapshotValue = COLLAB_ON) {
   host.id = 'terminals-root';
   nav.appendChild(doc.createElement('span')).id = 'terminals-badge-root';
   const overlayHost = doc.body.appendChild(doc.createElement('div'));
-  overlayHost.id = 'board-overlay-root';
+  overlayHost.appendChild(doc.createElement('div')).id = 'board-overlay-root';
+  overlayHost.appendChild(doc.createElement('div')).id = 'companion-root';
 
   const previous = globalThis.fetch;
   globalThis.fetch = async (url) => {
@@ -57,6 +60,7 @@ async function setup(t, snapshotValue = COLLAB_ON) {
   const cleanups = [
     await loader.mountTerminalsFeature({ fetchImpl: async () => ({ ok: true }), widgetFactory: () => { throw new Error('no terminals here'); } }),
     await loader.mountBoardOverlayFeature({ notify: () => {} }),
+    ...(companion ? [await loader.mountCompanionFeature({ notify: () => {} })] : []),
   ];
   await harness.act(() => wait());
   return {
@@ -98,7 +102,7 @@ async function fakeCompanion(harness, float) {
   return registerCompanionController({ open: () => true, float, reveal: () => false, reclaim: () => false });
 }
 
-scenario('an agent\'s tab moves to its chat, and the operator stays on Terminals', AGENT_ON, async ({ harness, host, windows, click, button }) => {
+scenario('an agent\'s tab moves to its chat, and the operator stays on Terminals', AGENT_ON, { companion: false }, async ({ harness, host, windows, click, button }) => {
   const floated = [];
   const stop = await fakeCompanion(harness, (agent) => {
     floated.push(agent);
@@ -116,7 +120,7 @@ scenario('an agent\'s tab moves to its chat, and the operator stays on Terminals
   } finally { stop(); }
 });
 
-scenario('with Collab off an agent\'s tab offers no overlay', { ...AGENT_ON, collab_enabled: false }, async ({ harness, host, button }) => {
+scenario('with Collab off an agent\'s tab offers no overlay', { ...AGENT_ON, collab_enabled: false }, { companion: false }, async ({ harness, host, button }) => {
   const stop = await fakeCompanion(harness, () => true);
   try {
     await agentPane(harness);
@@ -175,7 +179,7 @@ scenario('a board dragged off the strip floats where it was dropped', async ({ t
   assert.deepEqual([saved.x, saved.y, saved.snap], [280, 286, '']);
 });
 
-scenario('an agent\'s tab dragged off the strip floats its chat at the drop point', AGENT_ON, async ({ t, harness, host }) => {
+scenario('an agent\'s tab dragged off the strip floats its chat at the drop point', AGENT_ON, { companion: false }, async ({ t, harness, host }) => {
   const urls = fakeOpen(t, harness);
   const floated = [];
   const stop = await fakeCompanion(harness, (agent, at) => { floated.push([agent, at]); return true; });
@@ -187,7 +191,7 @@ scenario('an agent\'s tab dragged off the strip floats its chat at the drop poin
   } finally { stop(); }
 });
 
-scenario('what cannot float still pops out when dragged', { ...AGENT_ON, collab_enabled: false }, async ({ t, harness, host }) => {
+scenario('what cannot float still pops out when dragged', { ...AGENT_ON, collab_enabled: false }, { companion: false }, async ({ t, harness, host }) => {
   const urls = fakeOpen(t, harness);
   const stop = await fakeCompanion(harness, () => assert.fail('it cannot float'));
   try {
@@ -255,7 +259,7 @@ scenario('Back to a tab leaves a board that has since floated where it is', asyn
   assert.deepEqual(state.panes.value, [], 'one place at a time');
 });
 
-scenario('Back to a tab leaves an agent that has since found a place there', AGENT_ON, async ({ harness, state }) => {
+scenario('Back to a tab leaves an agent that has since found a place there', AGENT_ON, { companion: false }, async ({ harness, state }) => {
   const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
   const shown = [];
   const stop = registerCompanionController({ open: () => true, float: () => true, reclaim: () => false, reveal: (agent) => { shown.push(agent); return true; } });
@@ -266,7 +270,7 @@ scenario('Back to a tab leaves an agent that has since found a place there', AGE
   } finally { stop(); }
 });
 
-scenario('Back to a tab from a separate window goes to the companion tab waiting on it', AGENT_ON, async ({ harness, state }) => {
+scenario('Back to a tab from a separate window goes to the companion tab waiting on it', AGENT_ON, { companion: false }, async ({ harness, state }) => {
   const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
   const reclaimed = [];
   const stop = registerCompanionController({ open: () => true, float: () => true, reveal: () => false, reclaim: (agent) => { reclaimed.push(agent); return true; } });
@@ -605,4 +609,14 @@ scenario('Ctrl+wheel over the title bar goes to the board, not the page', async 
   bar.dispatchEvent(zoom);
   assert.equal(zoom.defaultPrevented, true, 'the page does not zoom');
   assert.deepEqual(heard, [-120]);
+});
+
+scenario('a board in a window is page content to the agents, and a chat window is not', async ({ harness, overlayState, overlayHost }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  const guide = await harness.importDashboardModule('js/companion-guide.js');
+  const title = overlayHost.querySelector('.board-overlay .board-overlay-title');
+  assert.ok(title.closest('#companion-root'), 'every window is shown from one island');
+  assert.equal(title.closest(guide.COMPANION_CHROME), null, 'so a board stays open to marks and annotation');
+  const chrome = overlayHost.querySelector('#companion-root').appendChild(harness.document.createElement('button'));
+  assert.ok(chrome.closest(guide.COMPANION_CHROME), 'and the rest of the island stays out of them');
 });

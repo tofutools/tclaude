@@ -22,6 +22,10 @@ export const GUIDE_MARK_PATIENCE_MS = 1000;
 // target.
 export const GUIDE_SETTLE_MS = 350;
 
+// The companion's own chrome, which agents never point at. Every overlay window
+// is shown from the companion's island, and a board in one is the page's content.
+export const COMPANION_CHROME = '#companion-root :not(.board-overlay, .board-overlay *)';
+
 export const TARGET_SELECTOR = [
   'button', 'a[href]', '[role="button"]', '[role="tab"]', '[role="menuitem"]', '[role="link"]',
   'summary', 'label', 'h1', 'h2', 'h3', 'h4', 'th', 'legend', 'input[type="submit"]',
@@ -78,7 +82,7 @@ function visible(el) {
 // a control or heading (a graph node, a table cell) matches too, and a
 // better text match wins over a control: an exact "Review" node beats a
 // "Request review" button. Among equal matches the innermost element wins.
-export function findGuideTarget(doc, target, { exclude = '#companion-root', loose = false } = {}) {
+export function findGuideTarget(doc, target, { exclude = COMPANION_CHROME, loose = false } = {}) {
   if (!doc || !target) return null;
   const strict = findIn(doc.querySelectorAll(TARGET_SELECTOR), target, exclude);
   if (!loose) return strict.el;

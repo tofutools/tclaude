@@ -9,7 +9,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { TARGET_SELECTOR, textOf } from './companion-guide.js';
+import { COMPANION_CHROME, TARGET_SELECTOR, textOf } from './companion-guide.js';
 import { terminalRow } from './dashboard-capture.js';
 
 const html = htm.bind(h);
@@ -323,7 +323,7 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
     if (root) root.style.pointerEvents = 'none';
     try {
       return resolveStroke(points, (x, y) => {
-        const el = doc && elementAt(doc, x, y, '.annotate-root, #companion-root');
+        const el = doc && elementAt(doc, x, y, `.annotate-root, ${COMPANION_CHROME}`);
         if (!el) return null;
         const line = terminalLineAt(el, y);
         return line === undefined ? labelFor(el) : line;

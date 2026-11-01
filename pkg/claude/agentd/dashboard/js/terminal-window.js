@@ -6,10 +6,9 @@ import { h } from 'preact';
 import { computed } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { defaultPlacement } from './companion-model.js';
-import { closeOverlayWindow, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayTabs, useDropPoint } from './overlay-instances.js';
+import { closeOverlayWindow, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
+import { OverlayWindow } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { TERMINAL_WINDOW_KIND, paneSeedOf } from './terminal-window-model.js';
@@ -17,8 +16,6 @@ import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow, openTerminalPane, setFloatingTerminals } from './terminals-tab.js';
 
 const html = htm.bind(h);
-
-export const TERMINAL_WINDOW_PREF = 'tclaude.dash.terminal-window.placement';
 
 export const terminalOverlays = computed(() => overlayTabs.value.filter((tab) => tab.kind === TERMINAL_WINDOW_KIND));
 
@@ -41,16 +38,11 @@ setFloatingTerminals((key) => {
   return showing.has(floating.id);
 });
 
-export function TerminalWindow({ instance, snapshot, prefs, win, notify, widgetFactory, loadRuntime, Terminal }) {
+export function TerminalWindow({ instance, overlay, focusRef, snapshot, prefs, win, notify, widgetFactory, loadRuntime, Terminal }) {
   const name = instance.label || 'Terminal';
   const open = !instance.minimized;
   const [focusToken, setFocusToken] = useState(1);
-  const prefKey = `${TERMINAL_WINDOW_PREF}.${instance.paneKey}`;
-  useDropPoint(instance, { win, prefs, prefKey, start: defaultPlacement });
-  const overlay = useOverlayWindow({
-    id: instance.id, win, prefs, prefKey, defaultPlacement, snaps: true, open,
-    onRefocus: () => setFocusToken((n) => n + 1),
-  });
+  focusRef.current = () => setFocusToken((n) => n + 1);
   useLayoutEffect(() => {
     showing.add(instance.id);
     return () => showing.delete(instance.id);
@@ -79,7 +71,7 @@ export function TerminalWindow({ instance, snapshot, prefs, win, notify, widgetF
     <button type="button" class="board-overlay-action" title="Move this terminal back to a tab" onClick=${backToTab}>Back to a tab</button>
     <button type="button" class="board-overlay-action" title="Move this terminal to a browser window of its own" onClick=${toSeparateWindow}>Open in separate window</button>
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Close (the shell keeps running)" aria-label=${`Close ${name}`} onClick=${close}>×</button>`}`;
-  return html`<${OverlayWindow} id=${instance.id} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
+  return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Terminal ${name}`} title=${title}
     controls=${{ look, closeLabel: `Close ${name}`, closeTitle: 'Close (the shell keeps running)', onClose: close, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
     <div class="companion-body" id=${instance.id}>
