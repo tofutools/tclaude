@@ -323,6 +323,29 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       const body = await processRequest('/api/spawn-profiles', {}, fetchImpl);
       return (Array.isArray(body) ? body : []).map((profile) => String(profile?.name || '')).filter(Boolean);
     },
+    // summonScribe starts a process scribe (POST /api/scribe). The caller holds
+    // the operator's approval of body.slugs; see draftWithScribe.
+    async summonScribe(body) {
+      return processRequest('/api/scribe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }, fetchImpl);
+    },
+    // scribeChat reads a scribe's transcript and live tail; sendScribeMessage
+    // is the operator's mail to it.
+    async scribeChat(agentId) {
+      return processRequest(`/api/scribe/${encodeURIComponent(agentId)}/chat`, {}, fetchImpl);
+    },
+    async sendScribeMessage(convId, { subject, body }) {
+      return processRequest('/api/operator-message', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: convId, subject, body }),
+      }, fetchImpl);
+    },
+    // stopAgent soft-stops a scribe; its templates and conversation stay.
+    async stopAgent(agentId) {
+      return processRequest(`/api/agents/${encodeURIComponent(agentId)}/stop`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: false }),
+      }, fetchImpl);
+    },
     // resolvePreview asks who would take each agent step of an unsaved view
     // if it started in `group` now: {nodes: {<nodeId>: {agentId, name,
     // reason, spawnProfile, waits, fails}}}. A dry run with no effects.

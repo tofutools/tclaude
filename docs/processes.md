@@ -327,11 +327,19 @@ All of it goes through the same daemon routes and permissions as the CLI.
 with no processes shows *Get started* in its body; afterwards (or once you
 dismiss it) it folds to *No processes yet · Get started ▸*. From it, pick a starter (filled from the group's roles and
 members), reuse a library template, or begin a blank step list. Or describe
-the flow in plain words and press *Draft steps*: the description becomes a
-draft saved to the group (pinned, not listed in the library), opened in the
-graph editor with a process scribe (see *Co-design with a scribe* below) asked to draft its steps
-for the group's members and roles. The scribe's request and permissions are
-shown for your approval first, and the draft is never started for you. The step
+the flow in plain words and press *Draft steps*: a process scribe drafts the
+steps in the background, with no terminal, for the group's members and roles.
+This uses a model run, so it only ever starts from that click, after you
+approve the scribe's access: the same exact grant as any process scribe
+(`process.templates.read` and `process.templates.manage`, every other
+permission denied, scoped to one new draft; see *Co-design with a scribe*
+below). The draft is saved to the group (pinned, not listed in the library),
+and the group body shows the scribe's live reply, where you can answer it.
+When it finishes, its draft opens in the step list for review; *Review steps*
+opens what it has saved so far, *open in graph editor* continues with the
+scribe beside the canvas, and *stop scribe* stops it and keeps the draft. A
+scribe can save versions of the draft and nothing else, and nothing runs until
+you press *Start now*. The step
 list edits a process as numbered steps, each done by a specific agent, any
 member with a role, anyone free in the group, you, or a command; one line sets
 what an agent step does when no member can take it (wait, spawn the group's

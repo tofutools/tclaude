@@ -89,29 +89,6 @@ export function scribeDraftRequest(text, groupName, roster = []) {
   return listed < members.length ? `${body}\n…and ${members.length - listed} more` : body;
 }
 
-// draftWithScribe stores a near-empty template named after the description
-// and saved to the group (pinned, not listed in the library), then opens it
-// in the graph editor with a process scribe requested on it. The scribe is
-// scoped to a stored template, which is why the draft is stored first; the
-// editor still shows the request and asks for the scribe's permissions
-// before anything is sent, and nothing runs.
-export async function draftWithScribe(api, { group, text, roster = [] }) {
-  const name = scribeDraftName(text);
-  // Loaded on demand, as the Processes tab does: the graph model is not part
-  // of the Groups tab's startup.
-  const { blankEditView } = await import('./process-edit-model.js');
-  const view = blankEditView(name);
-  const body = await api.createTemplate(view, { listed: false, pinGroup: group.name });
-  const id = String(body?.id || '');
-  if (!id) throw new Error('the template was not created');
-  markQuickStart();
-  handOffProcessDraft({
-    id, name, view: createdEditView(view, id, body),
-    scribe: { prompt: scribeDraftRequest(text, group.name, roster) },
-  });
-  return id;
-}
-
 // QUICKSTART_PREF remembers that the operator is past the first run: 'used'
 // once they created or started a process here, 'dismissed' once they closed
 // the Get started panel. Either folds an empty group's panel to one line.
@@ -175,8 +152,8 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
         placeholder="Describe the flow in plain words, e.g. implement the issue, have the reviewer check it, I approve, then merge" />
       <button type="submit" class="gq-btn primary" disabled=${!onDraft || pending || !description.trim()}
         title=${wizard
-          ? 'Open the rite in the graph editor and ask a process scribe to set down its steps from your words. You see what it is asked, and grant its access, first. Nothing is performed.'
-          : 'Opens the process in the graph editor and asks a process scribe to draft its steps from your words. You see the request and approve the scribe\'s access first; nothing runs.'}
+          ? 'Ask a process scribe, working in the background, to set down the rite\'s steps from your words. It uses a model run. You grant its access first, and you review the steps before anything is performed.'
+          : 'Asks a process scribe, in the background, to draft the steps from your words. It uses a model run. You approve its access first and review the steps here; nothing runs until you press Start.'}
       >✨ Draft steps</button>
     </form>
     ${onImport && html`<p class="gq-import"><button type="button" class="gq-link" data-quickstart-import disabled=${pending} onClick=${onImport}

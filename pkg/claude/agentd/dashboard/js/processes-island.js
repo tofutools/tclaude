@@ -91,9 +91,6 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
         editor = value;
         if (disposed) { editor?.destroy?.(); return; }
         state.setEditor(editor);
-        // A hand-over that asked for a scribe opens its request preview now,
-        // with the operator's words prefilled; they still confirm it.
-        if (spec.scribe?.prompt) void editor?.requestScribe?.('template', { prompt: spec.scribe.prompt });
       })
       .catch((cause) => { if (!disposed) { setError(cause.message); state.setNotice(`Could not open editor: ${cause.message}`); } });
     return () => { disposed = true; state.setEditor(null); editor?.destroy?.(); };
@@ -188,8 +185,7 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   document.addEventListener('tclaude:restore-location', restore);
   registerCleanup(() => document.removeEventListener('tclaude:restore-location', restore));
   // A process handed over from Groups › Processes (the quick start) opens in
-  // the full editor: a template it just created (with a scribe requested on
-  // it, for "Draft steps"), or the new-template dialog.
+  // the full editor: a template it just created, or the new-template dialog.
   const takeDraft = () => {
     const draft = takeProcessDraft();
     if (draft?.create) actions.openCreate();
@@ -197,7 +193,7 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
       // The editor may hold unsaved edits of another template; the draft is
       // already saved, so declining only leaves it in Templates.
       void Promise.resolve(actions.canLeaveEditor ? actions.canLeaveEditor() : true).then((ok) => {
-        if (ok) return actions.openEditor(draft.id, false, draft.name || '', { view: draft.view, readable: true, scribe: draft.scribe || null });
+        if (ok) return actions.openEditor(draft.id, false, draft.name || '', { view: draft.view, readable: true });
         state.setNotice?.(`${draft.name || draft.id} is saved in Templates.`);
         return undefined;
       });

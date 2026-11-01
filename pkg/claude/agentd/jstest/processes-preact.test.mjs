@@ -501,21 +501,6 @@ test('imperative editor boundary mounts once, survives parent updates, updates b
   await mounted.unmount(); assert.equal(destroys, 2);
 });
 
-test('imperative editor boundary asks the opened editor for a handed-off scribe request', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessEditorBoundary }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const requested = [];
-  const openEditor = async () => ({ model: { dirty: false }, requestScribe: async (...args) => { requested.push(args); return true; }, destroy() {} });
-  const spec = { id: 'tmpl_1', name: 'draft', blank: false, key: 'tmpl_1:1', scribe: { prompt: 'Draft the steps.' } };
-  const mounted = await harness.mount(harness.html`<${ProcessEditorBoundary} spec=${spec} state=${state} actions=${{}} confirmDiscard=${async () => true} openEditor=${openEditor} />`);
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  assert.deepEqual(requested, [['template', { prompt: 'Draft the steps.' }]]);
-  await mounted.unmount();
-});
-
 test('process template library renders both-skin scribe entry and sends library scope', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([

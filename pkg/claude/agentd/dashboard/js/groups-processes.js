@@ -27,8 +27,11 @@ import {
   ProcessGraphRow, agentRunIndex, enabled, groupProcessCounts,
 } from './groups-process-indicators.js';
 import {
-  GetStarted, StepListEditor, defaultNotify, draftWithScribe, markQuickStart, openInGraphEditor, quickStartSeen,
+  GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen,
 } from './groups-quickstart.js';
+import { ScribeDraft, draftWithScribe } from './groups-scribe-draft.js';
+import { viewToStepList } from './process-step-list.js';
+import { shellConfirm } from './shell-state.js';
 import { SavedProcesses } from './groups-saved-processes.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
@@ -394,7 +397,7 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
 // process controls and the Processes section: the Agents and Processes
 // sections, each with its own controls on its header line, then
 // `fused.after` (the group's triggers).
-function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null }) {
+function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null, confirm = shellConfirm }) {
   const [starting, setStarting] = useState(false);
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
   // group that has processes), {list, origin, saved} (the step-list editor;
@@ -478,7 +481,25 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     list, origin: '', key: Date.now(), process: quick.process, stored: quick.stored,
     saved: { templateId: quick.process.templateId, sourceHash: quick.view.sourceHash || '', listed: !!quick.process.listed, changed },
   });
-  const quickStart = editing && quick.mode === 'graph'
+  // A draft the scribe saved opens as any saved process does: the step list,
+  // or the inline graph when the list cannot show it.
+  const reviewDraft = ({ draft }, view) => {
+    const process = savedProcesses.find((saved) => saved.templateId === draft.templateId)
+      || { templateId: draft.templateId, name: draft.name, listed: false };
+    const converted = viewToStepList(view);
+    if (!converted.ok) {
+      setQuick({ mode: 'graph', key: Date.now(), process, view, stored: view });
+      return;
+    }
+    setQuick({
+      list: converted.list, origin: '', key: Date.now(), process, stored: view,
+      saved: { templateId: draft.templateId, sourceHash: String(view.sourceHash || ''), listed: false },
+    });
+  };
+  const quickStart = editing && quick.mode === 'scribe'
+    ? html`<${ScribeDraft} key=${quick.key} group=${group} draft=${quick.draft} api=${api} wizard=${wizard} notify=${notify || defaultNotify}
+        onReview=${(view) => reviewDraft(quick, view)} onClose=${() => setQuick(null)} />`
+    : editing && quick.mode === 'graph'
     ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${quick.process}
         view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
         notify=${notify || defaultNotify} onClose=${() => setQuick(null)} onSteps=${toSteps} />`
@@ -491,7 +512,8 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         onOpenGraph=${(view, name) => (view
           ? openInGraphEditor(api, view, name).catch((cause) => (notify || defaultNotify)(`Could not open the graph editor: ${cause.message}`, true))
           : handOffProcessDraft({ create: true }))}
-        onDraft=${(text) => draftWithScribe(api, { group, text, roster: people })
+        onDraft=${(text) => draftWithScribe(api, { group, text, roster: people, confirm })
+          .then((draft) => { if (draft) { setQuick({ mode: 'scribe', key: Date.now(), draft }); void source?.refresh?.(); } })
           .catch((cause) => (notify || defaultNotify)(`Could not draft the process: ${cause.message}`, true))}
         onImport=${pickPwf}
         onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
@@ -622,7 +644,7 @@ export function GroupProcessBody({ group, fused = null }) {
   if (!own) return html`<${UnsharedRuns} group=${group} wizard=${perspective.wizard} fused=${fused} />`;
   return html`<${GroupRuns} group=${own} roster=${perspective.rosters.get(own.name)} context=${perspective.context}
     filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
-    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} />`;
+    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} confirm=${perspective.confirm} />`;
 }
 
 // UnsharedRuns stands in for the runs of a group on a node whose run context
@@ -738,7 +760,7 @@ function findFocusGroup(focusedRun, rosters, groups) {
 // run context: until it is ready the tree shows as in Agents.
 export function GroupsProcessesFocus({
   groups, allGroups = null, filter = DEFAULT_RUN_FILTER, wizard = false, source = processContext, api = processRunApi,
-  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null, notify = undefined, fused = false,
+  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null, notify = undefined, fused = false, confirm = undefined,
 }) {
   const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
   const current = normalizeRunFilter(filter);
@@ -774,7 +796,7 @@ export function GroupsProcessesFocus({
         onSelectRun=${(runId) => onFocusRun({ group: focusedRun.group, runId })} />
     </div>`;
   }
-  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify, fused };
+  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify, fused, confirm };
   if (fused) {
     return html`<div class="gp-focus gf-focus" data-groups-fused ref=${fusedFrame}>
       ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}

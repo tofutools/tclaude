@@ -3,7 +3,7 @@ import { idempotentRequestHeaders } from './request-idempotency.js';
 import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 import { dashboardState } from './snapshot-store.js';
 import {
-  PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
+  PROCESS_SCRIBE_GRANT_META, PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeGrantBody, processScribeHandoff,
   processScribeScopeLabel, processScribeSessions, processScribeTaskRef,
 } from './process-scribe.js';
 import { randomUUID } from './insecure-origin.js';
@@ -153,10 +153,8 @@ export function createProcessesActions({
     if (navigate) announceLocation();
     return true;
   }
-  // `scribe` ({prompt}) asks for a process scribe on the template once its
-  // editor is up: the Groups quick start's "Draft steps" hands one over.
-  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false, scribe = null } = {}) {
-    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, scribe, key: `${id}:${blank}:${Date.now()}` });
+  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false } = {}) {
+    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, key: `${id}:${blank}:${Date.now()}` });
     state.setNotice(blank ? `Blank template “${name}” ready.` : `Opening ${name || id}.`);
     // `navigate: false` is the router restoring this location FROM the URL —
     // pushing it back would forge a duplicate history entry.
@@ -285,8 +283,8 @@ export function createProcessesActions({
         : '';
       const approved = await confirm({
         title: exactLive ? 'Reuse or replace process scribe?' : 'Grant process-scribe access?',
-        body: `Scope: ${target}. The daemon reuses a live same-scope scribe only when its exact permissions match and it has no active temporary elevation; otherwise this approval creates a fresh scribe receiving only process.templates.read and process.templates.manage while leaving the existing scribe unchanged. Every other registered capability is explicitly denied. Manage allows validated CAS saves, but summoning never instantiates or runs a process.${transition}`,
-        meta: 'process.templates.read + process.templates.manage',
+        body: processScribeGrantBody(target, transition),
+        meta: PROCESS_SCRIBE_GRANT_META,
         okLabel: exactLive ? 'Reuse or summon' : incompatible.length ? 'Start separate scribe' : 'Grant & summon',
       });
       if (!approved) {
