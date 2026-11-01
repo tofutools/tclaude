@@ -338,6 +338,144 @@ func (l groupLanding) summary() string {
 	return where + ", history " + l.Rung + l.Posture.summary()
 }
 
+// groupInspection is the daemon's analysis of a group archive.
+type groupInspection struct {
+	Source          string `json:"source"`
+	SourceGroup     string `json:"source_group"`
+	FormatVersion   int    `json:"format_version"`
+	SchemaVersion   int    `json:"schema_version"`
+	SourceHome      string `json:"source_home"`
+	SourceOS        string `json:"source_os"`
+	ExportedAt      string `json:"exported_at"`
+	AgentCount      int    `json:"agent_count"`
+	MessageCount    int    `json:"message_count"`
+	ConvCount       int    `json:"conv_count"`
+	MissingConvs    int    `json:"missing_convs"`
+	TargetName      string `json:"target_name"`
+	TargetNameValid bool   `json:"target_name_valid"`
+	TargetNameError string `json:"target_name_error"`
+	GroupNameTaken  bool   `json:"group_name_taken"`
+	ConvCollisions  []struct {
+		ConvID string `json:"conv_id"`
+		Title  string `json:"title"`
+	} `json:"conv_collisions"`
+	Findings []struct {
+		Kind      string   `json:"kind"`
+		Count     int      `json:"count"`
+		Locations []string `json:"locations"`
+	} `json:"findings"`
+	Signatures       []importSignature `json:"signatures,omitempty"`
+	Landings         []groupLanding    `json:"landings"`
+	FileWarnings     []string          `json:"file_warnings"`
+	Confirm          *importConfirm    `json:"confirm"`
+	CarriedWorkflows []carriedWorkflow `json:"carried_workflows"`
+}
+
+// refused says why this node would refuse the import as asked.
+func (insp *groupInspection) refused() string {
+	switch {
+	case !insp.TargetNameValid:
+		return "invalid group name: " + shown(insp.TargetNameError)
+	case insp.GroupNameTaken:
+		return fmt.Sprintf("a group named %q already exists", insp.TargetName)
+	}
+	return ""
+}
+
+// renderGroupInspection prints what a person reviews before importing a group.
+func renderGroupInspection(out io.Writer, insp *groupInspection) {
+	fmt.Fprintf(out, "Archive contents:\n")
+	if insp.Source == "paf" {
+		fmt.Fprintf(out, "  archive:        group PAF\n")
+	}
+	fmt.Fprintf(out, "  source group:   %s\n", shown(insp.SourceGroup))
+	fmt.Fprintf(out, "  agents:         %d\n", insp.AgentCount)
+	fmt.Fprintf(out, "  messages:       %d\n", insp.MessageCount)
+	fmt.Fprintf(out, "  conversations:  %d", insp.ConvCount)
+	if insp.MissingConvs > 0 {
+		fmt.Fprintf(out, " (%d with no .jsonl content)", insp.MissingConvs)
+	}
+	fmt.Fprintln(out)
+	if insp.SourceOS != "" || insp.SourceHome != "" {
+		fmt.Fprintf(out, "  source machine: %s, home %s\n", shown(insp.SourceOS), shown(insp.SourceHome))
+	}
+	if insp.ExportedAt != "" {
+		fmt.Fprintf(out, "  exported at:    %s\n", shown(insp.ExportedAt))
+	}
+	fmt.Fprintf(out, "  format version: %d\n", insp.FormatVersion)
+	if len(insp.Signatures) == 0 {
+		fmt.Fprintln(out, "  signature:      none (unverified)")
+	}
+	for _, sig := range insp.Signatures {
+		fmt.Fprintf(out, "  signature:      %s, key %s (%s)\n", shown(sig.Status), shown(sig.KeyID), shown(sig.Trust))
+	}
+	for _, w := range insp.CarriedWorkflows {
+		fmt.Fprintf(out, "  also carries:   workflow %s, not imported here; review it with process-templates import --workflow %s\n", shown(w.Root), shown(w.Key))
+	}
+
+	if len(insp.Findings) > 0 {
+		fmt.Fprintf(out, "\nCredential scan (this node):\n")
+		for _, f := range insp.Findings {
+			fmt.Fprintf(out, "  %s: %d occurrence(s); first locations: %s\n", shown(f.Kind), f.Count, shownAll(f.Locations))
+		}
+	}
+	insp.Confirm.print(out)
+	warnings := insp.FileWarnings
+	if insp.Confirm != nil && insp.Confirm.CanKeep && len(insp.Confirm.Items) > 0 {
+		warnings = insp.Confirm.Warnings
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(out, "\nWarning: %s\n", shown(w))
+	}
+	if len(insp.Landings) > 0 {
+		fmt.Fprintf(out, "\nMembers land:\n")
+		for _, l := range insp.Landings {
+			fmt.Fprintf(out, "  %s: %s\n", shown(l.Title), shown(l.summary()))
+			for _, w := range l.Warnings {
+				fmt.Fprintf(out, "    warning: %s\n", shown(w))
+			}
+		}
+	}
+
+	fmt.Fprintf(out, "\nWould import as: %s\n", shown(insp.TargetName))
+	switch {
+	case !insp.TargetNameValid:
+		fmt.Fprintf(out, "  REFUSED: invalid group name — %s\n", shown(insp.TargetNameError))
+	case insp.GroupNameTaken:
+		fmt.Fprintf(out, "  REFUSED: a group named %q already exists — pass --as to import under a free name\n", insp.TargetName)
+	default:
+		fmt.Fprintf(out, "  OK: the name is free\n")
+	}
+
+	if len(insp.ConvCollisions) > 0 {
+		fmt.Fprintf(out, "\n%d conv-id(s) already exist locally — each would be imported as a fresh copy (-i-N):\n",
+			len(insp.ConvCollisions))
+		for _, c := range insp.ConvCollisions {
+			fmt.Fprintf(out, "  %s  (%s)\n", shown(short(c.ConvID)), shown(c.Title))
+		}
+	} else {
+		fmt.Fprintf(out, "\nNo conv-id collisions — every conversation id would be preserved.\n")
+	}
+}
+
+// GroupImportReview renders the daemon's group import preview as the CLI does,
+// for an approval popup.
+func GroupImportReview(preview []byte) (ImportReview, error) {
+	var insp groupInspection
+	if err := json.Unmarshal(preview, &insp); err != nil {
+		return ImportReview{}, err
+	}
+	var full, summary strings.Builder
+	renderGroupInspection(&full, &insp)
+	fmt.Fprintf(&summary, "Group: %s, landing as %s\n", clipped(insp.SourceGroup), clipped(insp.TargetName))
+	fmt.Fprintf(&summary, "Holds: %d agent(s), %d conversation(s), %d message(s)\n", insp.AgentCount, insp.ConvCount, insp.MessageCount)
+	summarizeSignatures(&summary, insp.Signatures)
+	summarizeFindings(&summary, len(insp.Findings), func(i int) (string, int) { return insp.Findings[i].Kind, insp.Findings[i].Count })
+	summarizeConfirm(&summary, insp.Confirm)
+	summarizeWorkflows(&summary, insp.CarriedWorkflows)
+	return ImportReview{Summary: summary.String(), Full: full.String(), Refused: insp.refused()}, nil
+}
+
 // runGroupsImportDryRun drives `groups import --dry-run`: it POSTs the
 // archive to the inspect endpoint, which analyses it WITHOUT importing
 // anything, and prints the manifest summary plus the group-name and
@@ -350,39 +488,7 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			path += "&into=" + url.QueryEscape(into)
 		}
 	}
-	var insp struct {
-		Source          string `json:"source"`
-		SourceGroup     string `json:"source_group"`
-		FormatVersion   int    `json:"format_version"`
-		SchemaVersion   int    `json:"schema_version"`
-		SourceHome      string `json:"source_home"`
-		SourceOS        string `json:"source_os"`
-		ExportedAt      string `json:"exported_at"`
-		AgentCount      int    `json:"agent_count"`
-		MessageCount    int    `json:"message_count"`
-		ConvCount       int    `json:"conv_count"`
-		MissingConvs    int    `json:"missing_convs"`
-		TargetName      string `json:"target_name"`
-		TargetNameValid bool   `json:"target_name_valid"`
-		TargetNameError string `json:"target_name_error"`
-		GroupNameTaken  bool   `json:"group_name_taken"`
-		ConvCollisions  []struct {
-			ConvID string `json:"conv_id"`
-			Title  string `json:"title"`
-		} `json:"conv_collisions"`
-		Findings []struct {
-			Kind      string   `json:"kind"`
-			Count     int      `json:"count"`
-			Locations []string `json:"locations"`
-		} `json:"findings"`
-		Landings         []groupLanding `json:"landings"`
-		FileWarnings     []string       `json:"file_warnings"`
-		Confirm          *importConfirm `json:"confirm"`
-		CarriedWorkflows []struct {
-			Key  string `json:"key"`
-			Root string `json:"root"`
-		} `json:"carried_workflows"`
-	}
+	var insp groupInspection
 	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
@@ -398,72 +504,7 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 	}
 
 	fmt.Fprintf(stdout, "Dry run — nothing was imported.\n\n")
-	fmt.Fprintf(stdout, "Archive contents:\n")
-	if insp.Source == "paf" {
-		fmt.Fprintf(stdout, "  archive:        group PAF\n")
-	}
-	fmt.Fprintf(stdout, "  source group:   %s\n", insp.SourceGroup)
-	fmt.Fprintf(stdout, "  agents:         %d\n", insp.AgentCount)
-	fmt.Fprintf(stdout, "  messages:       %d\n", insp.MessageCount)
-	fmt.Fprintf(stdout, "  conversations:  %d", insp.ConvCount)
-	if insp.MissingConvs > 0 {
-		fmt.Fprintf(stdout, " (%d with no .jsonl content)", insp.MissingConvs)
-	}
-	fmt.Fprintln(stdout)
-	if insp.SourceOS != "" || insp.SourceHome != "" {
-		fmt.Fprintf(stdout, "  source machine: %s, home %s\n", insp.SourceOS, insp.SourceHome)
-	}
-	if insp.ExportedAt != "" {
-		fmt.Fprintf(stdout, "  exported at:    %s\n", insp.ExportedAt)
-	}
-	fmt.Fprintf(stdout, "  format version: %d\n", insp.FormatVersion)
-	for _, w := range insp.CarriedWorkflows {
-		fmt.Fprintf(stdout, "  also carries:   workflow %s, not imported here; review it with process-templates import --workflow %s\n", shown(w.Root), shown(w.Key))
-	}
-
-	if len(insp.Findings) > 0 {
-		fmt.Fprintf(stdout, "\nCredential scan (this node):\n")
-		for _, f := range insp.Findings {
-			fmt.Fprintf(stdout, "  %s: %d occurrence(s); first locations: %s\n", f.Kind, f.Count, strings.Join(f.Locations, ", "))
-		}
-	}
-	insp.Confirm.print(stdout)
-	warnings := insp.FileWarnings
-	if insp.Confirm != nil && insp.Confirm.CanKeep && len(insp.Confirm.Items) > 0 {
-		warnings = insp.Confirm.Warnings
-	}
-	for _, w := range warnings {
-		fmt.Fprintf(stdout, "\nWarning: %s\n", w)
-	}
-	if len(insp.Landings) > 0 {
-		fmt.Fprintf(stdout, "\nMembers land:\n")
-		for _, l := range insp.Landings {
-			fmt.Fprintf(stdout, "  %s: %s\n", l.Title, l.summary())
-			for _, w := range l.Warnings {
-				fmt.Fprintf(stdout, "    warning: %s\n", w)
-			}
-		}
-	}
-
-	fmt.Fprintf(stdout, "\nWould import as: %s\n", insp.TargetName)
-	switch {
-	case !insp.TargetNameValid:
-		fmt.Fprintf(stdout, "  REFUSED: invalid group name — %s\n", insp.TargetNameError)
-	case insp.GroupNameTaken:
-		fmt.Fprintf(stdout, "  REFUSED: a group named %q already exists — pass --as to import under a free name\n", insp.TargetName)
-	default:
-		fmt.Fprintf(stdout, "  OK: the name is free\n")
-	}
-
-	if len(insp.ConvCollisions) > 0 {
-		fmt.Fprintf(stdout, "\n%d conv-id(s) already exist locally — each would be imported as a fresh copy (-i-N):\n",
-			len(insp.ConvCollisions))
-		for _, c := range insp.ConvCollisions {
-			fmt.Fprintf(stdout, "  %s  (%s)\n", short(c.ConvID), c.Title)
-		}
-	} else {
-		fmt.Fprintf(stdout, "\nNo conv-id collisions — every conversation id would be preserved.\n")
-	}
+	renderGroupInspection(stdout, &insp)
 	return rcOK
 }
 

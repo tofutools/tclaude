@@ -500,9 +500,7 @@ func processImportApprovalFacts(r *http.Request, data []byte) string {
 	return processImportApprovalText(review, q.Get("apply") == "1", q.Get("replace") == "1")
 }
 
-// processImportApprovalText leads with what approving does and what must not be
-// missed, because the file decides how long the rest is and where its commands
-// come in it. A review past the preview limit says so before anything else.
+// processImportApprovalText states what approving does for a workflow import.
 func processImportApprovalText(review agent.ImportReview, apply, replace bool) string {
 	lead := "Approving lets the agent read this review. Nothing is imported yet."
 	switch {
@@ -516,12 +514,7 @@ func processImportApprovalText(review agent.ImportReview, apply, replace bool) s
 	case review.Refused != "":
 		lead += " This node would refuse it: " + review.Refused
 	}
-	full := review.Full
-	if len(full) > maxApprovalBodyPreview {
-		lead = "This review is too long to show in full, so commands past the cut are not listed. Decline unless you have read all of it.\n" + lead
-		full = strings.ToValidUTF8(full[:maxApprovalBodyPreview], "") + "\n…[truncated]"
-	}
-	return lead + "\n\n" + review.Summary + "\n" + full
+	return approvalReviewText(lead, review)
 }
 
 func processImportReview(r *http.Request, data []byte) (agent.ImportReview, error) {

@@ -66,7 +66,7 @@ func (c *importConfirm) print(out io.Writer) {
 		if item.Default {
 			tick = "*"
 		}
-		fmt.Fprintf(out, "  %s %s  (%s)\n      %s\n", tick, item.ID, item.Label, item.Gives)
+		fmt.Fprintf(out, "  %s %s  (%s)\n      %s\n", tick, shown(item.ID), shown(item.Label), shown(item.Gives))
 	}
 	if !c.CanKeep {
 		fmt.Fprintln(out, "Only a human on this node can keep these; this caller keeps none.")

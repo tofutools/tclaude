@@ -12,7 +12,6 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
-	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 )
@@ -308,35 +307,10 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	}
 	// The complete resolved definition is reviewable in both modes, including
 	// launch authority fields and advisory permission provenance.
-	var formatted strings.Builder
 	if p.JSON {
 		fmt.Fprintln(out, string(result))
 	} else {
-		var value any
-		_ = json.Unmarshal(result, &value)
-		pretty, _ := json.MarshalIndent(value, "", "  ")
-		formatted.Write(pretty)
-		fmt.Fprintln(out, formatted.String())
-		var preview struct {
-			Unresolved       []configbundle.Placeholder `json:"unresolved"`
-			CarriedWorkflows []struct {
-				Key  string `json:"key"`
-				Root string `json:"root"`
-			} `json:"carried_workflows"`
-			importOutcome
-		}
-		_ = json.Unmarshal(result, &preview)
-		if p.Apply {
-			preview.print(out)
-		} else {
-			preview.Confirm.print(out)
-		}
-		for _, p := range preview.Unresolved {
-			fmt.Fprintf(out, "Unresolved %s %s (original: %q): --set %s=value or --keep-paths\n", p.Item, p.Field, p.Original, p.Name)
-		}
-		for _, w := range preview.CarriedWorkflows {
-			fmt.Fprintf(out, "Also carries workflow %s, not imported here: review it with process-templates import --workflow %s\n", shown(w.Root), shown(w.Key))
-		}
+		renderAgentImport(out, result, p.Apply)
 		if !p.Apply {
 			fmt.Fprintln(out, "Preview only. Use --apply --group NAME to create an agent.")
 		}
