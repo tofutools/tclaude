@@ -318,6 +318,11 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'DELETE',
       }, fetchImpl);
     },
+    // spawnProfileNames lists the node's spawn profiles for a fallback picker.
+    async spawnProfileNames() {
+      const body = await processRequest('/api/spawn-profiles', {}, fetchImpl);
+      return (Array.isArray(body) ? body : []).map((profile) => String(profile?.name || '')).filter(Boolean);
+    },
     // resolvePreview asks who would take each agent step of an unsaved view
     // if it started in `group` now: {nodes: {<nodeId>: {agentId, name,
     // reason, spawnProfile, waits, fails}}}. A dry run with no effects.

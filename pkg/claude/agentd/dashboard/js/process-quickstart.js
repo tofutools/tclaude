@@ -236,6 +236,72 @@ export function ownFallback(step) {
   return !!performer.fallback?.action || performer.spawn === 'allowed';
 }
 
+// fallbackValue / fallbackFromValue map a fallback to a picker's value and
+// back: '' for none, 'wait', 'fail', 'spawn' for the group's default spawn
+// profile, and 'spawn:<profile>' for a named one.
+export function fallbackValue(fallback) {
+  if (!fallback?.action) return '';
+  return fallback.action === 'spawn' && fallback.profile ? `spawn:${fallback.profile}` : fallback.action;
+}
+
+export function fallbackFromValue(value) {
+  if (!value) return null;
+  if (value.startsWith('spawn:')) return { action: 'spawn', profile: value.slice(6) };
+  return { action: value };
+}
+
+// stepFallbackValue is the picker's value for a step's own fallback. A legacy
+// spawn opt-in reads as what it does.
+export function stepFallbackValue(step) {
+  const performer = step?.node?.performer || {};
+  if (!ownFallback(step)) return '';
+  return fallbackValue(performer.fallback?.action ? performer.fallback : stepFallback(step));
+}
+
+// setStepFallback returns the step with its own fallback set, or cleared so
+// the process's applies. The legacy spawn field goes with it: the template
+// validator refuses a step carrying both.
+export function setStepFallback(step, fallback) {
+  const node = JSON.parse(JSON.stringify(step.node));
+  const performer = node.performer || {};
+  delete performer.fallback;
+  if (fallback || performer.spawn === 'allowed') delete performer.spawn;
+  if (fallback) performer.fallback = fallback;
+  return { ...step, node };
+}
+
+// fallbackChoices lists a fallback picker's options. `inherit` adds the
+// per-step choice of following the process. The current value stays listed
+// even if its profile no longer exists, so opening a step never rewrites it.
+export function fallbackChoices({ current = '', inherit = '', defaultSpawnProfile = '', profiles = [] } = {}) {
+  const named = [...new Set(profiles)].filter((name) => name && (name !== defaultSpawnProfile || current === `spawn:${name}`));
+  const options = [
+    ...(inherit ? [{ value: '', label: inherit }] : []),
+    { value: 'wait', label: 'wait for one' },
+    {
+      value: 'spawn',
+      label: defaultSpawnProfile ? `spawn one with profile ${defaultSpawnProfile}` : 'spawn one (the group has no default spawn profile)',
+      disabled: !defaultSpawnProfile && current !== 'spawn',
+    },
+    ...named.map((name) => ({ value: `spawn:${name}`, label: `spawn one with profile ${name}` })),
+  ];
+  if (current && !options.some((option) => option.value === current)) {
+    options.push({ value: current, label: `spawn one with profile ${current.slice(6)}` });
+  }
+  options.push({ value: 'fail', label: 'fail the step' });
+  return options;
+}
+
+// fallbackNote is the short mark an agent step's node carries when it does
+// not simply wait, so what happens without a member reads off the graph.
+export function fallbackNote(step, { fallback = null, defaultSpawnProfile = '' } = {}) {
+  if (step?.node?.performer?.kind !== 'agent') return '';
+  const { action, profile } = stepFallback(step, fallback);
+  if (action === 'fail') return '↯ fail';
+  if (action === 'spawn') return `↯ spawn ${profile || defaultSpawnProfile || 'default'}`;
+  return '';
+}
+
 // whoNow guesses who a step uses if the run started now: the named agent, the
 // first idle member with the role, or what its fallback does when nobody can.
 // The server's resolve-preview replaces this guess once it answers.
