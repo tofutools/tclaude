@@ -1,3 +1,5 @@
+import { openInCompanion } from './companion-facade.js';
+import { handOverSteward, handoverSummary } from './steward-roster.js';
 import { clonePayload } from './clone-payload.js';
 import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js';
 import { pickDirectory as defaultPickDirectory } from './helpers.js';
@@ -102,6 +104,7 @@ export function createActionDialogActions({
     openExport: state.openExport,
     openSandboxImpl: state.openSandboxImpl,
     openLaunchTarget: state.openLaunchTarget,
+    openStewardHandover: state.openStewardHandover,
     openTerminalDirectory: state.openTerminalDirectory,
     openTerminalChooser: state.openTerminalChooser,
     finishChoice: state.finishChoice,
@@ -275,6 +278,13 @@ export function createActionDialogActions({
 			announceNodeChanged(node);
 			await refresh();
 		},
+    async handOverSteward({ agent, then }, owner) {
+      const outcome = await handOverSteward(fetchImpl, agent, then);
+      state.close(owner);
+      notify(handoverSummary(outcome), !!outcome.warning);
+      await refresh();
+      openInCompanion(agent);
+    },
     async clonePreset({ source, create, name }, owner) {
       const cleanName = String(name || '').trim();
       if (!cleanName) throw new Error('name is required');

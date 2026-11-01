@@ -57,6 +57,7 @@ export function isAgentId(value) {
 export function companionAgents(snapshot) {
   const out = new Map();
   const customName = String(snapshot?.steward_name || '');
+  const activeId = String(snapshot?.steward_active || '');
   const add = (member, steward, scribe, group = '') => {
     const agentId = member?.agent_id;
     if (!isAgentId(agentId)) return;
@@ -71,7 +72,8 @@ export function companionAgents(snapshot) {
     out.set(agentId, Object.freeze({
       agentId,
       convId: String(member.conv_id || ''),
-      name: (steward && customName) || String(member.title || member.name || agentId.slice(0, 12)),
+      // The operator's name for the Steward means the one in the seat.
+      name: ((activeId ? agentId === activeId : steward) && customName) || String(member.title || member.name || agentId.slice(0, 12)),
       online: member.online === true,
       status: String(member.state?.status || ''),
       detail: String(member.state?.status_detail || ''),
@@ -80,6 +82,7 @@ export function companionAgents(snapshot) {
       group: String(group || prev?.group || ''),
       presence: member.federation_presence || prev?.presence || null,
       steward: steward || prev?.steward === true,
+      active: agentId === activeId,
       scribe: scribe || prev?.scribe === true,
     }));
   };
@@ -106,10 +109,12 @@ export function companionLaunchData(agent, fleet, now = Date.now()) {
   };
 }
 
-// stewardAgent picks the live Steward, else the most recently listed one.
+// stewardAgent picks the Steward in the seat, running or not. With nobody seated
+// it is the live Steward, else the most recently listed one.
 export function stewardAgent(agents) {
   let fallback = null;
   for (const agent of agents.values()) {
+    if (agent.active) return agent;
     if (!agent.steward) continue;
     if (agent.online) return agent;
     fallback = fallback || agent;

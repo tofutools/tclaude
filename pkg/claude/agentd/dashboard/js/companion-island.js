@@ -33,6 +33,7 @@ import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js'
 import { MarksLayer, marksKey } from './companion-marks.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
+import { StewardRoster } from './steward-roster.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
@@ -246,6 +247,7 @@ export function CompanionApp({
   locks = win?.navigator?.locks,
   onComposeMessage = null,
   openMorph = null,
+  openStewardHandover = null,
   openPermissions = null,
   openSudo = null,
   detachWindow = null,
@@ -257,6 +259,7 @@ export function CompanionApp({
   const customName = snapshot.value?.steward_name || '';
   const stewardLabel = customName || 'the Steward';
   const steward = useMemo(() => stewardAgent(agents), [agents]);
+  const stewardRoster = snapshot.value?.steward_roster || [];
   const [tabs, setTabs] = useState(() => parseTabs(readPref(prefs, COMPANION_TABS_PREF)));
   const sessionPrefs = useMemo(() => {
     if (sessionPrefsImpl) return sessionPrefsImpl;
@@ -1336,6 +1339,8 @@ export function CompanionApp({
           onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
         ${activeAgent?.steward && !showQueue && html`<${StewardAccessControls} agent=${activeAgent} openPermissions=${openPermissions} openSudo=${openSudo} />
           <${StewardShutdown} agent=${activeAgent} fetchImpl=${fetchImpl} onDown=${stewardShutDown} />`}
+        ${openStewardHandover && activeAgent && !showQueue && (activeAgent.steward || stewardRoster.some((entry) => entry.agent_id === activeAgent.agentId)) && html`<${StewardRoster}
+          roster=${stewardRoster} agents=${agents} fetchImpl=${fetchImpl} notify=${notify} openHandover=${openStewardHandover} showAgent=${showAgent} />`}
         ${activeAgent?.online && !showQueue && html`
           ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${composeToActive}>✉</button>`}
           ${detachWindow && !parked.has(activeAgent.agentId) && html`<button type="button" class="companion-detach" aria-label=${`Detach ${activeAgent.name} into its own window`} title="Detach into its own browser window" onClick=${() => detachToWindow(activeAgent)}>⧉</button>`}

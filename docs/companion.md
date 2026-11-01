@@ -250,6 +250,60 @@ Stewards: change standing permissions in the 🛡 editor, Config defaults in
 **Config > Steward**,
 and access from a group or from owning one in Groups.
 
+### Making another agent the Steward
+
+Any running agent can become the Steward. Choose **✦ make Steward…** in its ⚙ menu,
+on Groups, the fused fleet view or a terminal tab. **✦** in the Steward's title bar
+does the same, and holds the roster. Only you can do this: there is no permission or
+sudo for it, so an agent can't make itself or another agent the Steward, even if a
+message talks it into trying.
+
+The confirmation shows what changes:
+
+- **What it gains.** Your Reads and Writes levels, default permissions and what you
+  stored for all future Stewards, as for a summon, plus the brief, capture guide and
+  knowledge base, by message.
+- **What it already holds beyond that.** This stays, and becomes part of what the
+  Steward can do, so it's listed, with a warning if the agent can hand out
+  permissions. A deny on a Steward permission stays too.
+- **What happens to the old Steward.** **Keep on the roster**, **Keep as a normal
+  agent** or **Retire it**.
+
+The new Steward keeps its conversation, context, harness, working directory, sandbox
+and groups, and joins the `steward` group alongside them. The rest of the fleet
+doesn't change. A sandboxed agent stays sandboxed: Steward commands reach the daemon
+over its socket, and files such as captures have to go where it can write. Any
+harness can be the Steward except a plain shell, and an agent visiting from another
+node can't. Voice doesn't work on OpenCode, as for any OpenCode agent.
+
+An offline agent can take the role too. Its brief waits until you resume it.
+
+### One active Steward, and the roster
+
+One Steward is active. `steward`, your chosen name, the companion's **✦** and a
+changed-name message all mean that agent, even while it's offline. Until you first
+choose, the newest running Steward is the active one. Summoning a Steward yourself
+makes the new one active.
+
+Agents on the roster are normal agents, without Steward access, so only the active
+Steward holds it. **✦** in the title bar lists them:
+
+| Action | What it does |
+|---|---|
+| **Switch** | Makes a standby active in one click, and the old Steward goes on the roster. If the standby holds more than a Steward's defaults, the confirmation opens first. |
+| **Stand down** | Takes the active Steward out of the role with nobody in its place. It goes on the roster and keeps running. |
+| **×** | Takes a standby off the roster. It stays a normal agent. |
+| **Make another agent the Steward…** | Finds a running agent and opens the confirmation. |
+
+Leaving the role removes what the role gave and nothing else. What you granted that
+agent separately, in its permissions editor or with sudo, stays, and the confirmation
+lists it. Coming back gives the role's access again, except anything you took off it
+yourself. If you summon a new Steward while the active one is offline, the old one
+goes on the roster the same way. Retiring an agent takes it off the roster.
+
+Other live Stewards, such as a second one summoned earlier, stay as they are and show
+as **also running**. Only one is active, and **Switch** makes one of them active.
+
 ### Shutting it down
 
 ⏻ shuts the Steward down, after asking: it ends the conversation and retires the
@@ -273,13 +327,25 @@ can't read or write them, and config bundles don't carry them.
 
 ### Messaging the Steward
 
-An agent can answer a message from the Steward with `tclaude agent reply <id>`,
+`steward` always reaches the active Steward. If it's offline, the send fails and says
+so. An agent can answer a message from the Steward with `tclaude agent reply <id>`,
 whatever its groups and permissions. Writing to it first, with `tclaude agent message
 steward`, needs `message.direct` or a shared group, like any other agent. With Collab
 on, `steward` and your chosen name always mean the Steward, even if another agent has
 that name.
 
 ## Commands behind this
+
+**`tclaude agent steward`** chooses the Steward from your own terminal. It's for you
+only: the daemon refuses an agent, and the commands need Collab.
+
+```bash
+tclaude agent steward ls                            # the active Steward and the roster
+tclaude agent steward set <agent>                   # show what would change
+tclaude agent steward set <agent> --then keep --yes # do it; --then is roster, keep or retire
+tclaude agent steward step-down [agent]             # leave the role, nobody in its place
+tclaude agent steward rm <agent>                    # take a standby off the roster
+```
 
 **`tclaude agent fleet`** is the brief. It lists agents in every group, including
 ungrouped ones, with status, task link and presented PRs, then ranks what needs you:

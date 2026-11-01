@@ -23,6 +23,10 @@ floating window, the **companion**, so it stays with you as you move between tab
 
 ![The companion window open over the Groups tab. It introduces the Steward as a helper for all of tclaude and has a green Summon the Steward button.](../assets/learn-steward-summon.png)
 
+Or make an agent you already have the Steward: **✦ make Steward…** in its ⚙ menu.
+[Making another agent the Steward](../companion.md#making-another-agent-the-steward)
+says what changes.
+
 The window has a real terminal, so you type to the Steward as you would to any
 agent. Move the window by its title bar, drag it to a screen edge to snap it, and
 press **Ctrl+.** to minimize it or bring it back.

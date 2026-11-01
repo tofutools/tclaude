@@ -255,3 +255,16 @@ func TestStewardHandover_OperatorSummonReplacesAnOfflineSteward(t *testing.T) {
 	_, held := stewardOverrideHeld(t, handoverWorker, agentd.PermFleetRead)
 	assert.False(t, held)
 }
+
+func TestSteward_SummonWithoutABriefGetsTheDaemons(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	rec := testharness.Serve(s.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"},
+	})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	rows, err := db.ListAgentMessagesForConv(decodeScribeResp(t, rec).ConvID, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Contains(t, rows[len(rows)-1].Body, "tclaude agent board show")
+	assert.Contains(t, rows[len(rows)-1].Body, "--ask-human")
+}

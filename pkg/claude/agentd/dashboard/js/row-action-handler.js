@@ -20,7 +20,7 @@ import {
 import {
   chooseTerminalAction, chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
   openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
-  openTaskLinkDialog, openLaunchTargetDialog } from './action-dialog-controller.js';
+  openTaskLinkDialog, openLaunchTargetDialog, openStewardHandoverDialog } from './action-dialog-controller.js';
 import { launchAgent } from './launch-target-dialog.js';
 import { ensureClaudeSubscription, switchToOwnLogin } from './subscription-relaunch.js';
 import { fleetState } from './fleet-state.js';
@@ -694,6 +694,10 @@ export async function handleRowAction(action) {
         // Reuse the standard group form, pinned to this group as parent,
         // on the group's node.
         openGroupCreateModal(undefined, group, node);
+        return;
+      }
+      case 'make-steward': {
+        openStewardHandoverDialog({ agent, label });
         return;
       }
       case 'send-elsewhere': {

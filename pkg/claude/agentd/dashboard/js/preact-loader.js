@@ -306,6 +306,10 @@ const companionDescriptor = createIslandDescriptor({
         closeTerminalPanes: closeTerminalsForConvs, onComposeMessage: dependencies.onComposeMessage,
         openPermissions: dependencies.openPermissions, openSudo: dependencies.openSudo,
         detachWindow: (agent, label, options) => detachWebWindow(agent, label, options),
+        openStewardHandover: async (agent, label) => {
+          const { openStewardHandoverDialog } = await import('./action-dialog-controller.js');
+          return openStewardHandoverDialog({ agent, label });
+        },
         openMorph: async (agent) => {
           const controllerModule = import('./action-dialog-controller.js');
           const launchModule = import('./launch-target-dialog.js');
