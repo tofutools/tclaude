@@ -37,8 +37,9 @@ const maxPWFUpload = 32 << 20
 //
 // A template that fails validation exports as it is, as the store saves it:
 // the file carries it and every reader reports its problems. With check=1
-// the response is those problems as JSON instead of the file, so the
-// dashboard can ask before sharing a workflow that cannot run yet.
+// the response is those problems and the machine-specific paths the file
+// would carry as JSON instead of the file, so the dashboard can ask before
+// sharing a workflow that cannot run yet or that reveals a username.
 func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 		return
@@ -68,7 +69,15 @@ func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 		if problems == nil {
 			problems = []string{}
 		}
-		writeProcessJSON(w, http.StatusOK, map[string]any{"problems": problems})
+		paths, err := pwf.ScanPaths(bundle)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+			return
+		}
+		if paths == nil {
+			paths = []pwf.PathFinding{}
+		}
+		writeProcessJSON(w, http.StatusOK, map[string]any{"problems": problems, "paths": paths})
 		return
 	}
 	opts := pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}}
@@ -191,7 +200,9 @@ type pwfImportView struct {
 	// Problems keep the workflow from running as carried (pwf
 	// Archive.Problems): it imports all the same, and a run refuses to start
 	// until they are fixed here.
-	Problems  []string              `json:"problems"`
+	Problems []string `json:"problems"`
+	// Paths are machine-specific paths the file carries (pwf Archive.Paths).
+	Paths     []pwf.PathFinding     `json:"paths"`
 	Templates []pwfTemplateImported `json:"templates"`
 	// RoleMap lists every role name the agent steps use (the role they ask
 	// for and the profile a fallback spawns) and what they use after the
@@ -407,6 +418,7 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 		Title: wf.Title, Summary: wf.Summary, Root: wf.Root, RootID: planned[wf.Root].ID, Readme: string(a.Readme),
 		Params: wf.Params, Roles: wf.Roles, Programs: wf.Programs, Assignees: wf.Assignees, Humans: wf.Humans,
 		Problems:   append([]string{}, a.Problems...),
+		Paths:      append([]pwf.PathFinding{}, a.Paths...),
 		Signatures: pwfSignatureViews(a.Signatures), RoleMap: []pwfRoleMapping{}, LocalRoles: local,
 		Rename: opts.Rename, Group: opts.Group,
 	}

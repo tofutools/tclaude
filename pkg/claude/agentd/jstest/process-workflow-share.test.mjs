@@ -241,3 +241,23 @@ test('WorkflowExportButton takes a look, a reason and a disabled state from its 
   assert.equal(button.disabled, true);
   assert.equal(button.title, 'Save first');
 });
+
+test('exportWorkflow: paths from this machine are shared only after the operator confirms', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { exportWorkflow } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const paths = [{ where: 'ship: nodes.merge.performer.run', path: '/home/alice/bin/gh', kind: 'home' }, { where: 'ship: description', path: '/opt/acme/x', kind: 'machine' }];
+  const fetchImpl = async (url) => (String(url).endsWith('check=1')
+    ? { ok: true, json: async () => ({ problems: [], paths }) }
+    : { ok: true, blob: async () => 'file' });
+  const asked = [];
+  let downloads = 0;
+  const run = (answer) => exportWorkflow('ship', { fetchImpl, download: () => { downloads += 1; }, confirm: async (request) => { asked.push(request); return answer; } });
+
+  assert.equal(await run(false), '');
+  assert.equal(downloads, 0);
+  assert.equal(await run(true), '');
+  assert.equal(downloads, 1);
+  assert.match(asked[0].title, /paths from this machine/);
+  assert.match(asked[0].body, /\/home\/alice\/bin\/gh \(reveals a username\), in ship: nodes\.merge\.performer\.run/);
+  assert.match(asked[0].body, /\/opt\/acme\/x \(may not exist elsewhere\)/);
+});

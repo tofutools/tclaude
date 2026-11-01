@@ -107,3 +107,16 @@ func TestRenderImportChanges(t *testing.T) {
 	assert.Contains(t, text, "review@sha256:cc as review@sha256:dd (roles mapped) (here now: review@sha256:ee")
 	assert.Contains(t, text, "Pins the process to group webshop.")
 }
+
+// A path warning names the place and why it matters, and a path from a file
+// cannot redraw the terminal.
+func TestRenderPaths(t *testing.T) {
+	var out bytes.Buffer
+	renderPaths(&out, []pwf.PathFinding{
+		{Where: "ship: nodes.run.performer.run", Path: "/home/alice/bin/x", Kind: pwf.PathHome},
+		{Where: "ship: nodes.run.performer.args[0]", Path: "/opt/\x1b[2Kx", Kind: pwf.PathMachine},
+	})
+	assert.Contains(t, out.String(), "  ship: nodes.run.performer.run: /home/alice/bin/x (reveals a username)\n")
+	assert.Contains(t, out.String(), `"/opt/\x1b[2Kx" (may not exist elsewhere)`)
+	assert.NotContains(t, out.String(), "\x1b")
+}

@@ -490,3 +490,80 @@ func TestFilesWrittenBeforeRoleSelectorsWereListedStillOpen(t *testing.T) {
 	_, err = open(t, forged)
 	require.ErrorContains(t, err, "workflow.json does not match its templates")
 }
+
+const pathsSource = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: paths
+description: Reads /opt/acme/conf and the /v1/process/templates route, and/or /usr/share/doc.
+# copied from /home/carol/old.yaml
+start: s
+params:
+  dir:
+    type: string
+    default: /srv/app
+nodes:
+  s:
+    type: start
+    next:
+      pass: run
+  run:
+    type: task
+    performer:
+      kind: program
+      profile: git
+      run: /home/alice/bin/deploy
+      args: ["--config=/etc/acme/x", "/usr/bin/env", "https://example.com/home/nobody/x", "{{ params.dir }}/rel", "s/a/b/", "/tmp/x", "~/x", "/var/tmp/y"]
+    next:
+      pass: ask
+  ask:
+    type: task
+    performer:
+      kind: human
+      ask: 'Is file:///Users/bob/report.txt or /mnt/c/Users/dan/x or C:\Users\erin\x right? See ~/notes.'
+    next:
+      pass: done
+  done:
+    type: end
+`
+
+// The scan names machine-specific paths and where they are, leaves URLs,
+// relative paths and system paths alone, and a reader gets the same list as
+// the writer without it being stored in the file.
+func TestScanPaths(t *testing.T) {
+	_, ref, err := pwf.ParseTemplate([]byte(pathsSource))
+	require.NoError(t, err)
+	b := pwf.Bundle{Root: ref, Templates: []pwf.Template{{Head: true, Source: []byte(pathsSource)}}}
+	paths, err := pwf.ScanPaths(b)
+	require.NoError(t, err)
+
+	type got struct{ where, path, kind string }
+	var seen []got
+	for _, p := range paths {
+		seen = append(seen, got{p.Where, p.Path, p.Kind})
+	}
+	assert.ElementsMatch(t, []got{
+		{"paths: description", "/opt/acme/conf", pwf.PathMachine},
+		{"paths: params.dir.default", "/srv/app", pwf.PathMachine},
+		{"paths: nodes.run.performer.run", "/home/alice/bin/deploy", pwf.PathHome},
+		{"paths: nodes.run.performer.args[0]", "/etc/acme/x", pwf.PathMachine},
+		{"paths: nodes.run.performer.args[6]", "~/x", pwf.PathMachine},
+		{"paths: nodes.ask.performer.ask", "/Users/bob/report.txt", pwf.PathHome},
+		{"paths: nodes.ask.performer.ask", "/mnt/c/Users/dan/x", pwf.PathHome},
+		{"paths: nodes.ask.performer.ask", `C:\Users\erin\x`, pwf.PathHome},
+		{"paths: source", "/home/carol/old.yaml", pwf.PathHome},
+	}, seen)
+
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, b, pwf.WriteOptions{}))
+	a, err := pwf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, paths, a.Paths)
+}
+
+func TestScanPathsCleanWorkflow(t *testing.T) {
+	_, ref, err := pwf.ParseTemplate([]byte(rootSource))
+	require.NoError(t, err)
+	paths, err := pwf.ScanPaths(pwf.Bundle{Root: ref, Templates: []pwf.Template{{Head: true, Source: []byte(rootSource)}}})
+	require.NoError(t, err)
+	assert.Empty(t, paths)
+}

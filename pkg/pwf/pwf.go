@@ -195,6 +195,9 @@ type Archive struct {
 	// file does not carry. Readers recompute it rather than trusting the
 	// file, so it is not part of workflow.json.
 	Problems []string
+	// Paths are the machine-specific paths the file carries (see pathscan.go),
+	// recomputed the same way.
+	Paths []PathFinding
 }
 
 // Root returns the root template.
@@ -461,17 +464,7 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 		return err
 	}
 	wf := Summarize(b.Root, byRef, order)
-	wf.Title = strings.TrimSpace(b.Title)
-	if wf.Title == "" {
-		wf.Title = byRef[b.Root].Parsed.Name
-	}
-	if wf.Title == "" {
-		wf.Title = byRef[b.Root].Parsed.ID
-	}
-	wf.Summary = strings.TrimSpace(b.Summary)
-	if wf.Summary == "" {
-		wf.Summary = byRef[b.Root].Parsed.Description
-	}
+	wf.Title, wf.Summary = workflowText(b, byRef[b.Root].Parsed)
 	if err := checkText(wf.Title, wf.Summary); err != nil {
 		return err
 	}
@@ -552,6 +545,22 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 		}
 	}
 	return zw.Close()
+}
+
+// workflowText is the title and summary a bundle is written with: the
+// exporter's, or the root template's when it gave none.
+func workflowText(b Bundle, root *model.Template) (string, string) {
+	title, summary := strings.TrimSpace(b.Title), strings.TrimSpace(b.Summary)
+	if title == "" {
+		title = root.Name
+	}
+	if title == "" {
+		title = root.ID
+	}
+	if summary == "" {
+		summary = root.Description
+	}
+	return title, summary
 }
 
 // requiredFeatures is the manifest's requires list for a workflow. It is never
@@ -726,6 +735,9 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 			return nil, errors.New("pwf: workflow.json does not match its templates")
 		}
 		a.Workflow.Roles = derived.Roles
+	}
+	if a.Paths, err = scanPaths(a.Workflow.Title, a.Workflow.Summary, a.Readme, inOrder(a.Templates, a.Order)); err != nil {
+		return nil, err
 	}
 	if err := a.readSignatures(files, read); err != nil {
 		return nil, err

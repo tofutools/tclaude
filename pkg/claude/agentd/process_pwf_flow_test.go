@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -186,6 +187,30 @@ func TestProcessWorkflowExportImportFailingValidation(t *testing.T) {
 	require.Equal(t, http.StatusOK, applied.Code, applied.Body.String())
 	got := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/pwf-draft", nil)
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
+}
+
+// Export says which paths come from this machine before the file is shared,
+// the file still exports, and the importer's review shows the same list.
+func TestProcessWorkflowExportScansForMachinePaths(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	source := strings.Replace(pwfRootSource, "run: gh", "run: /home/alice/bin/gh", 1)
+	put := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/pwf-ship", map[string]any{"source": source})
+	require.Equal(t, http.StatusCreated, put.Code, put.Body.String())
+
+	check := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-ship/export?check=1", nil)
+	require.Equal(t, http.StatusOK, check.Code, check.Body.String())
+	var checked struct{ Paths []pwf.PathFinding }
+	testharness.DecodeJSON(t, check, &checked)
+	want := []pwf.PathFinding{{Where: "pwf-ship: nodes.merge.performer.run", Path: "/home/alice/bin/gh", Kind: pwf.PathHome}}
+	assert.Equal(t, want, checked.Paths)
+
+	exported := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-ship/export", nil)
+	require.Equal(t, http.StatusOK, exported.Code, exported.Body.String())
+	prev := pwfRaw(t, f, http.MethodPost, "/v1/process/import", exported.Body.Bytes())
+	require.Equal(t, http.StatusOK, prev.Code, prev.Body.String())
+	var review struct{ Paths []pwf.PathFinding }
+	testharness.DecodeJSON(t, prev, &review)
+	assert.Equal(t, want, review.Paths)
 }
 
 func TestProcessWorkflowExportUnknownTemplate(t *testing.T) {
