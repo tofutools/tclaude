@@ -34,12 +34,19 @@ import (
 const maxPWFUpload = 32 << 20
 
 // GET /v1/process/templates/{id}/export?version=&title=&summary=[&check=1]
+// [&assignee=<agent>=<role>...][&assignees=roles][&strict=1]
 //
 // A template that fails validation exports as it is, as the store saves it:
 // the file carries it and every reader reports its problems. With check=1
 // the response is those problems and the machine-specific paths the file
 // would carry as JSON instead of the file, so the dashboard can ask before
-// sharing a workflow that cannot run yet or that reveals a username.
+// sharing a workflow that cannot run yet or that reveals a username. It also
+// lists the steps naming a specific agent, with the agent's role here when it
+// has exactly one.
+//
+// assignee= and assignees=roles export those steps with a role instead (see
+// process_pwf_export.go). strict=1 refuses to export anything a check would
+// point out.
 func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 		return
@@ -77,8 +84,34 @@ func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 		if paths == nil {
 			paths = []pwf.PathFinding{}
 		}
-		writeProcessJSON(w, http.StatusOK, map[string]any{"problems": problems, "paths": paths})
+		assignees, err := pwfAssigneesWithRoles(r, bundle)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, map[string]any{"problems": problems, "paths": paths, "assignees": assignees})
 		return
+	}
+	roles, err := pwfExportRoles(r, bundle)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if bundle, err = pwfConvertAssignees(bundle, roles); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+		return
+	}
+	if q.Get("strict") == "1" {
+		issues, err := pwfStrictIssues(bundle)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+			return
+		}
+		if len(issues) > 0 {
+			writeError(w, http.StatusUnprocessableEntity, "process_export_not_portable",
+				"not exported, because the workflow is not portable:\n  "+strings.Join(issues, "\n  "))
+			return
+		}
 	}
 	opts := pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}}
 	// Signed only when this node already has a federation identity; exporting

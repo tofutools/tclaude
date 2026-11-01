@@ -244,9 +244,12 @@ type pwfPlanned struct {
 type pwfPlanner struct {
 	a       *pwf.Archive
 	roleMap map[string]string
-	renames map[string]string
-	done    map[string]*pwfPlanned
-	active  map[string]bool
+	// assignees turns a step naming an agent into one asking for a role; an
+	// export sets it (pwfConvertAssignees).
+	assignees map[string]string
+	renames   map[string]string
+	done      map[string]*pwfPlanned
+	active    map[string]bool
 }
 
 func (p *pwfPlanner) plan(ref string) (*pwfPlanned, error) {
@@ -308,6 +311,9 @@ func (p *pwfPlanner) rewriteNodes(nodes map[string]model.Node, changed *bool) er
 		forEachPerformer(&node, func(_ string, perf *model.Performer) {
 			if perf.Kind != model.PerformerAgent {
 				return
+			}
+			if role, ok := p.assignees[perf.Assignee]; ok {
+				perf.Role, perf.Assignee, *changed = role, "", true
 			}
 			*changed = p.mapName(&perf.Profile) || *changed
 			*changed = p.mapName(&perf.Role) || *changed

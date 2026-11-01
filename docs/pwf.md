@@ -42,10 +42,22 @@ the dashboard's share button asks before downloading it. The importing node
 sees the same list in its review, and the workflow cannot run there until the
 problems are fixed.
 
-A step that names one specific agent (an
-`assignee`) is exported as written, but it is not portable: the importing node
-has different agents, so export points those steps out and they wait there
-until someone reassigns them.
+A step that names one specific agent (an `assignee`) is not portable: the
+importing node has different agents, so the step waits there until someone
+reassigns it. Export points those steps out and writes them as they are unless
+you give them a role instead:
+
+```bash
+tclaude agent process-templates export ship-feature --assignees-to-roles
+tclaude agent process-templates export ship-feature --assignee-role checkout=dev
+```
+
+`--assignees-to-roles` uses the role the agent holds in your groups, and prints
+it; an agent with no role or several keeps its name, or give it one with
+`--assignee-role <agent>=<role>`. The dashboard's share button offers the same
+conversion, and those steps then export with the role. This changes the
+exported templates only, not yours, so their refs differ from the stored ones
+and importing the file back here shows them as `update`.
 
 Export also scans the workflow for paths from your machine. A path under a
 home directory reveals a username, and a path outside the standard system
@@ -59,6 +71,16 @@ directories (`/bin`, `/sbin`, `/usr`, `/lib`, `/dev`, `/proc`, `/sys`, `/tmp`,
 machine-specific roots only (such as `/home`, `/Users`, `/opt`, `/srv` and
 `/mnt`), and a template's source for home paths, since a comment travels too.
 It is a heuristic: it finds paths, not secrets.
+
+`--strict` turns all of this into a refusal: export writes nothing and lists
+every path, every step still naming an agent and every validation problem.
+Use it where a workflow must be portable, such as in a script that publishes
+one. Assignees that come from a `{{ params.x }}` are chosen per run, so they
+do not count. Converted assignees do not count either:
+
+```bash
+tclaude agent process-templates export ship-feature --strict --assignees-to-roles
+```
 
 Check a file without a daemon and without changing anything:
 

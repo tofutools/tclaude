@@ -51,31 +51,40 @@ export function pathLine(finding) {
 }
 
 // exportConfirmation is the confirm() request before sharing a workflow that
-// fails validation or carries paths from this machine. Both export as they
-// are, the way a draft saves; the importer sees the same lists in their
-// review.
-export function exportConfirmation(id, problems, paths) {
+// fails validation, carries paths from this machine or names specific agents.
+// Problems and paths export as they are, the way a draft saves, and the
+// importer sees the same lists in their review. A step naming an agent that
+// has a role here is shared with that role instead; the rest stay named.
+export function exportConfirmation(id, problems, paths, assignees = []) {
   const parts = [];
+  const converted = assignees.filter((a) => a.role);
+  const kept = assignees.filter((a) => !a.role);
   if (problems.length > 0) parts.push(`${id} cannot run until these are fixed. You can still share it; whoever imports it sees the same list.\n\n${listed(problems)}`);
   if (paths.length > 0) parts.push(`${id} carries paths from this machine. A param or a relative path travels better; whoever imports it sees the same list.\n\n${listed(paths.map(pathLine))}`);
+  if (converted.length > 0) parts.push(`These steps name an agent the importing node will not have, so they are shared with the agent's role instead.\n\n${listed(converted.map((a) => `${a.name} becomes role ${a.role}, in ${a.steps.join(', ')}`))}`);
+  if (kept.length > 0) parts.push(`These agents have no single role here, so their steps stay named and wait on the importing node until reassigned.\n\n${listed(kept.map((a) => `${a.name}, in ${a.steps.join(', ')}`))}`);
+  let title = 'Share a workflow that names specific agents?';
+  if (problems.length > 0) title = 'Share a workflow that fails validation?';
+  else if (paths.length > 0) title = 'Share a workflow with paths from this machine?';
   return {
-    title: problems.length > 0 ? 'Share a workflow that fails validation?' : 'Share a workflow with paths from this machine?',
+    title,
     body: parts.join('\n\n'),
     preformatted: true,
-    okLabel: 'Share anyway',
+    okLabel: converted.length > 0 ? 'Use roles and share' : 'Share anyway',
   };
 }
 
-// exportWorkflow downloads <id>.pwf, asking first when it fails validation or
-// carries paths from this machine. It resolves to '' (also when the operator
+// exportWorkflow downloads <id>.pwf, asking first when exportConfirmation has
+// anything to say. It resolves to '' (also when the operator
 // declines) or an error message.
 export async function exportWorkflow(id, { fetchImpl = fetch, download = downloadBlob, confirm = shellConfirm } = {}) {
   const url = `/v1/process/templates/${encodeURIComponent(id)}/export`;
   const check = await fetchImpl(`${url}?check=1`, { credentials: 'same-origin' });
   if (!check.ok) return errorText(check);
-  const { problems = [], paths = [] } = await check.json().catch(() => ({}));
-  if ((problems.length > 0 || paths.length > 0) && !(await confirm(exportConfirmation(id, problems, paths)))) return '';
-  const response = await fetchImpl(url, { credentials: 'same-origin' });
+  const { problems = [], paths = [], assignees = [] } = await check.json().catch(() => ({}));
+  if ((problems.length > 0 || paths.length > 0 || assignees.length > 0)
+    && !(await confirm(exportConfirmation(id, problems, paths, assignees)))) return '';
+  const response = await fetchImpl(assignees.some((a) => a.role) ? `${url}?assignees=roles` : url, { credentials: 'same-origin' });
   if (!response.ok) return errorText(response);
   download(await response.blob(), `${String(id).replace(/[^A-Za-z0-9._-]+/g, '-')}.pwf`);
   return '';
