@@ -258,6 +258,14 @@ var proxyEngineActivatedSmokes = map[string]map[string][]string{
 			"TestPinnedProxyHarnessCooperation",
 			"TestPinnedProxyToolEgress",
 		},
+		// pi's arm of the same smoke launches the pinned PiMinimumVersion behind
+		// the real floor with its filtered-network environment. Unlike Gemini it
+		// honours the proxy variables without NODE_USE_ENV_PROXY, so neither the
+		// launch nor the smoke sets it.
+		PiName: {
+			"TestPinnedProxyHarnessCooperation",
+			"TestPinnedProxyToolEgress",
+		},
 	},
 	"darwin": {
 		DefaultName:  {"TestPinnedProxyHarnessCooperationDarwin"},
@@ -272,7 +280,6 @@ var proxyEngineUnavailableReasons = map[string]map[string]string{
 	"linux": {
 		CopilotName: "Copilot's private networking contract does not enforce proxy destination rules; use its supported private routed posture",
 		ShellName:   "No shell-specific proxy carriage smoke has activated this target",
-		PiName:      "No pi-specific proxy carriage smoke has activated this target",
 	},
 	"darwin": {
 		GeminiName:  "No Gemini-specific Darwin proxy carriage smoke has activated this target",
