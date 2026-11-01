@@ -52,7 +52,7 @@ function sized(node, left, top, width, height) {
 }
 
 // The test DOM's SVG lacks these handlers, so Preact listens under the JSX name.
-const JSX_CASE = { pointerdown: 'PointerDown', pointermove: 'PointerMove', pointerup: 'PointerUp', wheel: 'Wheel' };
+const JSX_CASE = { pointerdown: 'PointerDown', pointermove: 'PointerMove', pointerup: 'PointerUp', wheel: 'Wheel', dblclick: 'DblClick' };
 function fire(harness, target, type, init) {
   return harness.act(() => harness.fireEvent(target, `on${type}` in target ? type : JSX_CASE[type], init));
 }
@@ -67,6 +67,31 @@ async function layOut(harness, root) {
   sized(root.querySelector('.board-minimap-frame'), 800, 400, 200, 120);
   await fire(harness, root.querySelector('svg.board-canvas'), 'wheel', { deltaX: 40, deltaY: 0, clientX: 0, clientY: 0 });
 }
+
+test('Ctrl+wheel zooms the board over its inputs and controls, not the page', async (t) => {
+  const { harness, mount } = await setup(t);
+  const root = await mount(boardFetch({ version: 1, elements: [] }));
+  const svg = root.querySelector('svg.board-canvas');
+  sized(svg, 0, 0, 1000, 600);
+  const zoom = () => root.querySelector('.board-zoom').textContent;
+  const editor = root.querySelector('.board-editor');
+  const wheel = (target, init) => {
+    let event;
+    return harness.act(() => { event = harness.fireEvent(target, 'onwheel' in editor ? 'wheel' : 'Wheel', { clientX: 100, clientY: 100, deltaX: 0, ...init }); }).then(() => event);
+  };
+  const twice = { deltaY: -Math.log(2) / 0.002, ctrlKey: true };
+
+  await fire(harness, svg, 'dblclick', { clientX: 200, clientY: 200 });
+  const input = root.querySelector('.board-text-input');
+  assert.ok(input, 'the editor is open');
+  assert.ok((await wheel(input, twice)).defaultPrevented, 'the browser leaves the page alone');
+  assert.equal(zoom(), '200%');
+
+  assert.ok((await wheel(root.querySelector('select.board-group'), { ...twice, deltaY: Math.log(2) / 0.002 })).defaultPrevented);
+  assert.equal(zoom(), '100%', 'a control outside the canvas too');
+
+  assert.equal((await wheel(root.querySelector('select.board-group'), { deltaY: 40 })).defaultPrevented, false, 'a plain scroll out there is the page\'s');
+});
 
 test('the grid scrolls and zooms with the board', async (t) => {
   const { harness, mount } = await setup(t);

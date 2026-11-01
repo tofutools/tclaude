@@ -1341,17 +1341,28 @@ export function BoardEditor({
     setView((v) => ({ ...v, x: x - rect.width / 2 / v.zoom, y: y - rect.height / 2 / v.zoom }));
   }, []);
 
+  // onWheel takes the whole editor: Ctrl+wheel (a trackpad pinch arrives as
+  // one) must zoom the board over its text inputs and controls too, or the
+  // browser zooms the page instead.
   function onWheel(event) {
+    const target = event.target;
+    if (target?.closest?.('.board-minimap-frame')) return; // zooms the map
+    const zooming = event.ctrlKey || event.metaKey;
+    if (!zooming && !target?.closest?.('.board-canvas-wrap')) return;
+    if (!zooming && target?.closest?.('.board-context, .board-quick')) return; // a menu scrolls
     event.preventDefault();
-    const rect = svgRef.current?.getBoundingClientRect?.() || { left: 0, top: 0 };
-    if (event.ctrlKey || event.metaKey) {
-      const zoom = Math.min(4, Math.max(0.2, view.zoom * Math.exp(-event.deltaY * 0.002)));
-      const mx = (event.clientX - rect.left) / view.zoom + view.x;
-      const my = (event.clientY - rect.top) / view.zoom + view.y;
-      setView({ zoom, x: mx - (event.clientX - rect.left) / zoom, y: my - (event.clientY - rect.top) / zoom });
-    } else {
+    setContextMenu(null);
+    if (!zooming) {
       setView({ ...view, x: view.x + event.deltaX / view.zoom, y: view.y + event.deltaY / view.zoom });
+      return;
     }
+    const rect = svgRef.current?.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
+    // Over the toolbar or the title, the point to hold still is the middle.
+    const canvas = target?.closest?.('.board-canvas-wrap');
+    const px = canvas ? event.clientX - rect.left : rect.width / 2;
+    const py = canvas ? event.clientY - rect.top : rect.height / 2;
+    const zoom = Math.min(4, Math.max(0.2, view.zoom * Math.exp(-event.deltaY * 0.002)));
+    setView({ zoom, x: px / view.zoom + view.x - px / zoom, y: py / view.zoom + view.y - py / zoom });
   }
 
   // -- text -------------------------------------------------------------------
@@ -1605,7 +1616,7 @@ export function BoardEditor({
   // list lets Preact skip every shape, which a board of thousands needs.
   const drawn = useMemo(() => live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} onLine=${!!drawnById.get(el.containerId)?.points} />`), [tick, flash]);
 
-  return html`<div ref=${rootRef} class="board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }}>
+  return html`<div ref=${rootRef} class="board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }} onWheel=${onWheel}>
     <header class="board-head">
       <h2 class="board-title">${meta.title}</h2>
       <span class=${`board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>
@@ -1673,7 +1684,7 @@ export function BoardEditor({
       <svg ref=${svgRef} class=${`board-canvas tool-${tool}`} role="img" aria-label=${`Board ${meta.title}`} data-board-id=${boardId}
         onPointerDown=${onPointerDown} onPointerMove=${onPointerMove} onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp}
         onPointerLeave=${() => setHoverShape('')}
-        onWheel=${(event) => { setContextMenu(null); onWheel(event); }} onDblClick=${onDoubleClick} onContextMenu=${onContextMenu}>
+        onDblClick=${onDoubleClick} onContextMenu=${onContextMenu}>
         <g data-board-viewport transform=${transform}>
           ${drawn}
           ${(sels.length > 0 || band || snapShape || offer) && html`<g data-board-chrome>
