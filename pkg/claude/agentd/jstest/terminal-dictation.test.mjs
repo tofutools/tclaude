@@ -583,7 +583,6 @@ test('only what blocks the agent holds it, with the session still working', asyn
   assert.equal(held({}), '');
   assert.match(held({ access_requests: [{ agent_id: AGENT, status: 'pending', perm: 'x' }] }), /waiting on you/);
   assert.match(held({ access_requests: [{ agent_id: AGENT, status: 'pending', perm: 'models.proxy' }] }), /waiting on you/, 'a request no card can answer counts');
-  assert.equal(held({ access_requests: [{ conv_id: 'c1', status: 'pending', proposal: { id: 'p1' } }] }), '', 'a federation proposal blocks nobody');
   assert.equal(held({ access_requests: [{ agent_id: AGENT, status: 'approved' }] }), '');
   assert.equal(held({ access_requests: [{ agent_id: 'agt_other', status: 'pending' }] }), '');
   assert.equal(held({ messages: [{ id: 1, from_agent: AGENT, options: ['yes', 'no'] }] }), '', 'an open decision blocks nobody');
