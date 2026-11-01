@@ -817,7 +817,8 @@ async function dropFile(harness, target, file) {
 }
 
 test('Get started imports a .pwf into the group, through the shared review', async (t) => {
-  const calls = stubImportFetch(t);
+  const fetched = stubImportFetch(t);
+  const imports = () => fetched.filter((url) => url.startsWith('/v1/process/import'));
   const { root, click, settle, harness } = await mount(t);
   let picked = 0;
   const input = root.querySelector('[data-process-group="webshop"] [data-pwf-file]');
@@ -827,8 +828,9 @@ test('Get started imports a .pwf into the group, through the shared review', asy
   Object.defineProperty(input, 'files', { configurable: true, value: [pwfFile('ship.pwf')] });
   await harness.act(() => harness.fireEvent(input, 'change'));
   await settle();
-  assert.ok(calls[0].startsWith('/v1/process/import?') && calls[0].includes('group=webshop'), calls[0]);
-  assert.equal(calls.some((url) => url.includes('apply=1')), false, 'nothing is stored before the review');
+  assert.equal(imports().length, 1);
+  assert.ok(imports()[0].includes('group=webshop'), imports()[0]);
+  assert.equal(imports().some((url) => url.includes('apply=1')), false, 'nothing is stored before the review');
   assert.ok(harness.document.querySelector('[data-pwf-group]') || root.querySelector('[data-pwf-group]'), 'the review opens');
 });
 
