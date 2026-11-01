@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
@@ -434,6 +435,58 @@ func TestAgentImport_RecordedApprovalDoesNotWiden(t *testing.T) {
 	require.NotNil(t, landed)
 	require.NotNil(t, landed.ApprovalPolicy)
 	assert.Equal(t, bypass, *landed.ApprovalPolicy)
+}
+
+// No grant in a group file goes live on import. A deny only takes away, and a job
+// stays for a human to review, off and not speaking as the operator.
+func TestGroupImport_FileAuthorityDoesNotLand(t *testing.T) {
+	f := newFlow(t)
+	const conv = "file-authority-agent"
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "file-authority",
+		Group:         groupexport.Group{Permissions: []groupexport.GroupPermission{{Slug: agentd.PermGroupsMembersSpawn, GrantedBy: "file"}}},
+		Permissions: []groupexport.Permission{
+			{ConvID: conv, Slug: agentd.PermGroupsMembersSpawn, Effect: db.PermEffectGrant, GrantedBy: "file"},
+			{ConvID: conv, Slug: agentd.PermAgentRetire, Effect: db.PermEffectGrant, ScopeJSON: `{"target_agent":["agt_original_actor"]}`, GrantedBy: "file"},
+			{ConvID: conv, Slug: "self.rename", Effect: db.PermEffectDeny, GrantedBy: "file"},
+		},
+		SudoGrants: []groupexport.SudoGrant{
+			{ConvID: conv, Slug: "human.notify", GrantedBy: "file"},
+			{ConvID: conv, Slug: "human.clipboard", GrantedBy: "file", RevokedAt: "2026-01-01T00:00:00Z"},
+			{ConvID: conv, Slug: "self.rename", GrantedBy: "file", ExpiresAt: "2026-01-01T00:00:00Z"},
+		},
+		CronJobs: []groupexport.CronJob{{Name: "nightly", TargetKind: db.CronTargetGroup, IntervalSeconds: 60, Enabled: 1, OperatorAuthored: true}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+
+	rec, _ := importGroupWith(t, f, archive, url.Values{"into": {testutil.CanonicalTempDir(t)}})
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for _, listed := range []string{"group permission " + agentd.PermGroupsMembersSpawn, "sudo grant human.notify", "nightly"} {
+		assert.Contains(t, rec.Body.String(), listed)
+	}
+	assert.Contains(t, rec.Body.String(), "permission "+agentd.PermAgentRetire, "a grant that never lands cannot refuse the import")
+	assert.NotContains(t, rec.Body.String(), "human.clipboard", "an ended sudo grant is history, not a grant lost")
+	assert.NotContains(t, rec.Body.String(), "sudo grant self.rename", "an ended sudo grant is history, not a grant lost")
+	g, err := db.GetAgentGroupByName("file-authority")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	permissions, err := db.ListAgentGroupPermissionRows(g.ID)
+	require.NoError(t, err)
+	assert.Empty(t, permissions)
+	overrides, err := db.ListAgentPermissionOverridesForConv(conv)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"self.rename": db.PermEffectDeny}, overrides)
+	sudo, err := db.ListActiveSudoGrants(conv)
+	require.NoError(t, err)
+	assert.Empty(t, sudo)
+	jobs, err := db.ListAgentCronJobs()
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.False(t, jobs[0].Enabled)
+	assert.False(t, jobs[0].OperatorAuthored)
 }
 
 // A group file's environment would reach every spawn into the new group, so it

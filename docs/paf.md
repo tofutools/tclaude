@@ -89,7 +89,11 @@ receiving side.
   as a second copy.
 - **Authority is advisory.** Groups, roles, permissions and ownerships in a PAF
   are provenance. They never become grants on the receiver unless that
-  receiver's own policy approves them explicitly. Ownership never travels.
+  receiver's own policy approves them explicitly. A group import drops a
+  file's permission grants and sudo grants, and lists them in its preview and
+  result; a deny stays, since it only takes away. Scheduled jobs land disabled
+  for a human to review. Members and their roles stay. Agent ownership never
+  travels; a group's owners are part of its member structure.
 - **Posture is decided by the receiver.** The recorded sandbox and approval
   posture is shown at import, but the landing profile and the receiver's
   policy decide how the new agent actually runs. A file can make its sandbox,
@@ -1679,7 +1683,7 @@ own state that other systems are not expected to share:
 | `environment.json` placeholders | `item`, `field` | The configuration item and field a placeholder stands in. |
 | `environment.json` | `harness.<name>` | Settings only one harness has, such as `harness.claude.auto_compact_window`. |
 | `group.json` | `group` | Group settings: description, standing orders, environment, group permissions, member limit and similar. |
-| `group.json` members | `owner` | The member owned the group (advisory; ownership never travels). |
+| `group.json` members | `owner` | The member owned the group. A group import keeps it as member structure; elsewhere it is advisory. |
 | `ext/tclaude/mail-deliveries.json` | entry | The mail delivery ledger a continuation carries. |
 | `ext/tclaude/group-state.json` | entry | A group's tclaude state in the group export's shape: members, owners, permissions, enrollment, cron jobs, messages, audit trail and per-conversation metadata. Each conversation's harness and history live in its agent. |
 | `manifest.json` | `converted_from` | The legacy carrier a PAF was converted from: `format`, `format_version`, `tclaude_version`, `created_at`. |
