@@ -1689,7 +1689,8 @@ func TestVoice(t *testing.T) {
 	off := nilConfig.Voice()
 	assert.False(t, off.WakeEnabled)
 	assert.Zero(t, off.SilenceSendSeconds)
-	assert.Equal(t, VoicePhraseDefaults, off.Phrases)
+	assert.Equal(t, []VoicePhrase{{Action: VoiceActionSend, Phrase: "send now"}, {Action: VoiceActionWake}}, off.Phrases,
+		"the send phrase is on by default and the wake phrase off")
 
 	voice := func(v VoiceConfig) VoiceConfig { return (&Config{Dashboard: &DashboardConfig{Voice: &v}}).Voice() }
 	phrase := func(v VoiceConfig, action string) string {
@@ -1700,20 +1701,40 @@ func TestVoice(t *testing.T) {
 		}
 		return "missing"
 	}
-	on := voice(VoiceConfig{WakeEnabled: true, SilenceSendSeconds: 1})
+	wakeOn := VoicePhrase{Action: VoiceActionWake, Phrase: "hey tofu", Enabled: new(true)}
+	on := voice(VoiceConfig{WakeEnabled: true, SilenceSendSeconds: 1, Phrases: []VoicePhrase{wakeOn}})
 	assert.True(t, on.WakeEnabled)
+	assert.Equal(t, "hey tofu", phrase(on, VoiceActionWake))
 	assert.Equal(t, SilenceSendSecondsMin, on.SilenceSendSeconds)
 	assert.Equal(t, SilenceSendSecondsMax, voice(VoiceConfig{SilenceSendSeconds: 900}).SilenceSendSeconds)
 
-	same := voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{{VoiceActionWake, "Send  Now"}}})
+	wakeSaying := func(words string) VoicePhrase {
+		return VoicePhrase{Action: VoiceActionWake, Phrase: words, Enabled: new(true)}
+	}
+	same := voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{wakeSaying("Send  Now")}})
 	assert.False(t, same.WakeEnabled, "a wake phrase equal to the send phrase is off")
 	assert.Equal(t, "", phrase(same, VoiceActionWake))
-	assert.False(t, voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{{VoiceActionWake, ""}}}).WakeEnabled)
+	assert.False(t, voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{wakeSaying("")}}).WakeEnabled)
+
+	listenerOnly := voice(VoiceConfig{WakeEnabled: true})
+	assert.False(t, listenerOnly.WakeEnabled, "the listener needs an active wake phrase")
+	phraseOnly := voice(VoiceConfig{Phrases: []VoicePhrase{wakeOn}})
+	assert.False(t, phraseOnly.WakeEnabled, "an active wake phrase needs the listener")
+	assert.Equal(t, "hey tofu", phrase(phraseOnly, VoiceActionWake))
+
+	sendOff := VoicePhrase{Action: VoiceActionSend, Phrase: "over", Enabled: new(false)}
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{sendOff}}), VoiceActionSend), "an off phrase matches nothing")
+	freed := voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{sendOff, wakeSaying("over")}})
+	assert.True(t, freed.WakeEnabled, "an off send phrase doesn't clash with the wake phrase")
+	assert.Equal(t, "over", phrase(freed, VoiceActionWake))
+	unset := voice(VoiceConfig{Phrases: []VoicePhrase{{Action: VoiceActionSend, Phrase: "over"}, {Action: VoiceActionWake, Phrase: "yo"}}})
+	assert.Equal(t, "over", phrase(unset, VoiceActionSend), "no Enabled keeps the default on")
+	assert.Equal(t, "", phrase(unset, VoiceActionWake), "no Enabled keeps the default off")
 
 	legacy := ""
 	cfg := &Config{Dashboard: &DashboardConfig{DictationSendPhrase: &legacy}}
 	assert.Equal(t, "", phrase(cfg.Voice(), VoiceActionSend), "the earlier key still counts")
-	cfg.Dashboard.Voice = &VoiceConfig{Phrases: []VoicePhrase{{VoiceActionSend, "over"}, {"unknown", "x"}}}
+	cfg.Dashboard.Voice = &VoiceConfig{Phrases: []VoicePhrase{{Action: VoiceActionSend, Phrase: "over"}, {Action: "unknown", Phrase: "x"}}}
 	assert.Equal(t, "over", phrase(cfg.Voice(), VoiceActionSend), "the list wins")
 	assert.Len(t, cfg.Voice().Phrases, len(VoicePhraseDefaults))
 }

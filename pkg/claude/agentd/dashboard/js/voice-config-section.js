@@ -1,19 +1,29 @@
 // voice-config-section.js -- the parts of Config's Voice section that aren't
-// plain fields: the warning for the two hands-free settings together, and the
-// on-device speech row, which lives in this browser rather than in config.json.
+// plain fields: what the phrase checkboxes and hands-free switches do to each
+// other's display, and the on-device speech row, which lives in this browser rather than in config.json.
 
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { VOICE_ACTIONS } from './voice-config.js';
 import { forgetOnDevice, installLocalSpeech, localSpeechState, onDeviceChosen, speechServiceName } from './voice-local.js';
 
 const html = htm.bind(h);
 
-// syncVoiceWarning shows the warning when wake and silence send are both on.
-export function syncVoiceWarning(doc = globalThis.document) {
-  const warning = doc.getElementById('cfg-voice-hands-free-warning');
-  if (!warning) return;
-  warning.hidden = !(doc.getElementById('cfg-voice-wake')?.checked && doc.getElementById('cfg-voice-silence')?.checked);
+// syncVoiceSection disables the text of a phrase that is off and shows the
+// notes for combinations. It only displays: no setting changes another.
+export function syncVoiceSection(doc = globalThis.document) {
+  const checked = (id) => !!doc.getElementById(id)?.checked;
+  for (const { action } of VOICE_ACTIONS) {
+    const field = doc.getElementById(`cfg-voice-phrase-${action}`);
+    if (field) field.disabled = !checked(`cfg-voice-on-${action}`);
+  }
+  const phrase = checked('cfg-voice-on-wake');
+  const listener = checked('cfg-voice-wake');
+  const show = (id, shown) => { const note = doc.getElementById(id); if (note) note.hidden = !shown; };
+  show('cfg-voice-wake-no-listener', phrase && !listener);
+  show('cfg-voice-wake-no-phrase', listener && !phrase);
+  show('cfg-voice-hands-free-warning', phrase && listener && checked('cfg-voice-silence'));
 }
 
 function usingLine(state, win) {

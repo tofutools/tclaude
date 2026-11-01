@@ -1,6 +1,6 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
-import { SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, storedVoicePhrases, voicePhrase, voicePhrasesClash } from './voice-config.js';
-import { syncVoiceWarning } from './voice-config-section.js';
+import { SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, storedVoicePhrases, voiceFormPhrase, voicePhrasesClash } from './voice-config.js';
+import { syncVoiceSection } from './voice-config-section.js';
 import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS, closeTabsChecked, closeTabsStored } from './terminal-close-tabs.js';
@@ -563,19 +563,16 @@ function populateConfigForm(cfg) {
   // actions to in-browser web terminals. Default web (checked); only an
   // explicit dashboard.default_terminal:"native" unchecks it.
   $('#cfg-dashboard-default-web-terminal').checked = cfg.dashboard?.default_terminal !== 'native';
-  // Voice phrases: absent is the default, an explicit "" is off, and the send
-  // phrase's earlier key still counts until a save moves it into the list.
   const voice = cfg.dashboard?.voice || {};
-  const legacySend = cfg.dashboard?.dictation_send_phrase;
   for (const { action } of VOICE_ACTIONS) {
-    const listed = voice.phrases?.some((item) => item.action === action);
-    $(`#cfg-voice-phrase-${action}`).value = action === 'send' && !listed && legacySend !== undefined
-      ? legacySend : voicePhrase({ voice }, action);
+    const { phrase, on } = voiceFormPhrase(cfg.dashboard, action);
+    $(`#cfg-voice-phrase-${action}`).value = phrase;
+    $(`#cfg-voice-on-${action}`).checked = on;
   }
   $('#cfg-voice-wake').checked = voice.wake_enabled === true;
   $('#cfg-voice-silence').checked = voice.silence_send_seconds > 0;
   $('#cfg-voice-silence-seconds').value = voice.silence_send_seconds > 0 ? voice.silence_send_seconds : '';
-  syncVoiceWarning();
+  syncVoiceSection();
 
   const terminalAttach = (cfg.dashboard && cfg.dashboard.terminal_attach) || {};
   setSelectValue($('#cfg-terminal-attach-mode'), terminalAttach.mode || 'repair');
@@ -943,8 +940,13 @@ function assembleConfig() {
   // default_terminal: web is the default, so store only the NON-default
   // "native" and drop the key otherwise — mirrors the Go resolver.
   if (!$('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'native'; else delete dashboard.default_terminal;
-  const phrases = Object.fromEntries(VOICE_ACTIONS.map(({ action }) => [action, $(`#cfg-voice-phrase-${action}`).value.trim()]));
-  if (voicePhrasesClash(phrases.wake, phrases.send)) throw new Error('The wake phrase and the send phrase must differ.');
+  const phrases = Object.fromEntries(VOICE_ACTIONS.map(({ action }) => [action, {
+    phrase: $(`#cfg-voice-phrase-${action}`).value.trim(), on: $(`#cfg-voice-on-${action}`).checked,
+  }]));
+  for (const { action, title } of VOICE_ACTIONS) {
+    if (phrases[action].on && !phrases[action].phrase) throw new Error(`${title}: type a phrase, or untick it to turn it off.`);
+  }
+  if (phrases.wake.on && phrases.send.on && voicePhrasesClash(phrases.wake.phrase, phrases.send.phrase)) throw new Error('The wake phrase and the send phrase must differ.');
   const voiceConfig = { ...(dashboard.voice || {}) };
   const voiceList = storedVoicePhrases(phrases);
   if (voiceList.length) voiceConfig.phrases = voiceList; else delete voiceConfig.phrases;
