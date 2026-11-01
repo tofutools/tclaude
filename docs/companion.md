@@ -378,6 +378,11 @@ lists it. Coming back gives the role's access again, except anything you took of
 yourself. If you summon a new Steward while the active one is offline, the old one
 goes on the roster the same way, once the new one is running. Retiring an agent takes it off the roster.
 
+An agent going on the roster has its scheduled jobs and standing orders paused, and is
+told so. They run again if it takes the seat, except any you disabled yourself. One
+kept as a normal agent keeps them running. Taking a standby off the roster leaves them
+paused, shown as `steward-standby`, until someone enables them.
+
 Other live Stewards, such as a second one summoned earlier, stay as they are and show
 as **also running**. Only one is active, and **Switch** makes one of them active.
 

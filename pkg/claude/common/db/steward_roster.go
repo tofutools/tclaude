@@ -58,6 +58,73 @@ func ListStewardRoster() ([]StewardRosterEntry, error) {
 	return out, rows.Err()
 }
 
+// PauseStewardStandbyJobs pauses what a Steward going on the roster owns: its
+// enabled cron jobs and standing orders, together, as a retirement does. Only
+// enabled rows take the marker, so one the human disabled stays disabled when
+// ResumeStewardStandbyJobs runs. It returns how many it paused.
+func PauseStewardStandbyJobs(agentID string) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	jobs, err := tx.Exec(`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = ?
+		WHERE owner_agent = ? AND enabled = 1`, CronDisabledReasonStewardStandby, agentID)
+	if err != nil {
+		return 0, err
+	}
+	orders, err := tx.Exec(`UPDATE agent_standing_orders
+		SET enabled = 0, disabled_reason = ?, row_version = row_version + 1, updated_at = ?
+		WHERE owner_agent = ? AND enabled = 1`,
+		StandingDisabledReasonStewardStandby, formatStandingTime(time.Now()), agentID)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	paused, _ := jobs.RowsAffected()
+	pausedOrders, _ := orders.RowsAffected()
+	return int(paused + pausedOrders), nil
+}
+
+// ResumeStewardStandbyJobs undoes PauseStewardStandbyJobs for an agent back in
+// the seat. The marker is the crux: only what that call paused runs again. The
+// last run is left alone, so a long pause does not fire a flood of catch-ups.
+func ResumeStewardStandbyJobs(agentID string) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	jobs, err := tx.Exec(`UPDATE agent_cron_jobs SET enabled = 1, disabled_reason = ''
+		WHERE owner_agent = ? AND disabled_reason = ?`, agentID, CronDisabledReasonStewardStandby)
+	if err != nil {
+		return 0, err
+	}
+	orders, err := tx.Exec(`UPDATE agent_standing_orders
+		SET enabled = 1, disabled_reason = '', row_version = row_version + 1, updated_at = ?
+		WHERE owner_agent = ? AND disabled_reason = ?`,
+		formatStandingTime(time.Now()), agentID, StandingDisabledReasonStewardStandby)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	resumed, _ := jobs.RowsAffected()
+	resumedOrders, _ := orders.RowsAffected()
+	return int(resumed + resumedOrders), nil
+}
+
 // SetActiveSteward seats an agent and takes the seat's last holder off the
 // roster, all at once. The caller says what became of that holder.
 func SetActiveSteward(agentID, by string) error {

@@ -191,7 +191,7 @@ func adoptSummonedSteward(conv string) {
 		if err := db.SetStewardStandby(agentID, granterLabel("")); err != nil {
 			slog.Warn("steward: put offline Steward on the roster failed", "conv", short8(offline), "error", err)
 		}
-		tellStoodDown(offline, agent.FreshTitle(conv), demotion, true)
+		tellStoodDown(offline, agent.FreshTitle(conv), demotion, true, pauseStandbyJobs(agentID))
 	}
 	pruneDeadScribes(g, conv)
 	agentID, err := db.AgentIDForConv(conv)
@@ -199,6 +199,7 @@ func adoptSummonedSteward(conv string) {
 		slog.Warn("steward: resolve agent for the seat failed", "conv", short8(conv), "error", err)
 		return
 	}
+	resumeStandbyJobs(agentID)
 	if err := db.SetActiveSteward(agentID, granterLabel("")); err != nil {
 		slog.Warn("steward: seat failed", "conv", short8(conv), "error", err)
 	}
@@ -533,10 +534,14 @@ func seatSteward(cfg *config.Config, res *agent.Resolved, then, by string) (*ste
 		}
 		return nil, "", &spawnFailure{http.StatusInternalServerError, "io", "take the seat: " + err.Error()}
 	}
+	resumed := resumeStandbyJobs(agentID)
 	name := agent.FreshTitle(conv)
 	out := &stewardHandoverOutcome{AgentID: agentID, Name: name}
 	note := "The operator made you their Steward. You keep this conversation, your working directory, your groups and what you already held. " +
 		"Finish or park what you were doing as they prefer. From now on this is your role:\n\n"
+	if resumed > 0 {
+		note = fmt.Sprintf("Your %d paused scheduled job(s) are running again. ", resumed) + note
+	}
 	if _, err := queueAgentMessage(&db.AgentMessage{GroupID: g.ID, ToConv: conv, Subject: "You are now the Steward",
 		Body: stewardBrief(note+stewardRoleBrief(), cfg), ToRecipients: []string{conv}}); err != nil {
 		out.Warning = "could not send the Steward's brief: " + err.Error()
@@ -580,13 +585,37 @@ func leaveStewardSeat(g *db.AgentGroup, conv, successor, then, by string) (strin
 			return "", err
 		}
 	}
-	tellStoodDown(conv, successor, demotion, then == stewardThenRoster)
+	paused := 0
+	if then == stewardThenRoster {
+		paused = pauseStandbyJobs(agentID)
+	}
+	tellStoodDown(conv, successor, demotion, then == stewardThenRoster, paused)
 	return "", nil
+}
+
+// pauseStandbyJobs stops what a Steward on the roster scheduled from coming from
+// an agent no longer in the role. It logs a failure: the demotion stands either way.
+func pauseStandbyJobs(agentID string) int {
+	paused, err := db.PauseStewardStandbyJobs(agentID)
+	if err != nil {
+		slog.Warn("steward: pause a standby's scheduled jobs failed", "agent", agentID, "error", err)
+	}
+	return paused
+}
+
+// resumeStandbyJobs runs what going on the roster paused. It says how many, for
+// the agent's message.
+func resumeStandbyJobs(agentID string) int {
+	resumed, err := db.ResumeStewardStandbyJobs(agentID)
+	if err != nil {
+		slog.Warn("steward: resume scheduled jobs failed", "agent", agentID, "error", err)
+	}
+	return resumed
 }
 
 // tellStoodDown tells a former Steward what happened. One that is not running
 // reads it when it resumes, on a conversation that still says it is the Steward.
-func tellStoodDown(conv, successor string, demotion *stewardDemotion, onRoster bool) {
+func tellStoodDown(conv, successor string, demotion *stewardDemotion, onRoster bool, paused int) {
 	body := "The operator stood you down as Steward"
 	if successor != "" {
 		body = "The operator made " + successor + " the Steward in your place"
@@ -597,6 +626,9 @@ func tellStoodDown(conv, successor string, demotion *stewardDemotion, onRoster b
 	}
 	if onRoster {
 		body += " You are on the roster, so they can bring you back."
+	}
+	if paused > 0 {
+		body += fmt.Sprintf(" Your %d scheduled job(s) are paused until you take the seat again.", paused)
 	}
 	if _, err := queueAgentMessage(&db.AgentMessage{ToConv: conv, Subject: "You are no longer the Steward", Body: body}); err != nil {
 		slog.Warn("steward: stand-down message failed", "conv", short8(conv), "error", err)

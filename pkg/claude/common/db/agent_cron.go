@@ -51,6 +51,9 @@ const (
 	// retiring the group's members left it with no live recipients. A later
 	// `groups resume` re-enables exactly the jobs carrying this marker.
 	CronDisabledReasonGroupRetired = "group-retired"
+	// CronDisabledReasonStewardStandby — a job paused because its owner left the
+	// Steward's seat for the roster. It runs again when the owner is reseated.
+	CronDisabledReasonStewardStandby = "steward-standby"
 )
 
 // ErrAgentCronOwnerRetired is the canonical rejection for a cron write whose
