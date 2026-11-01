@@ -366,6 +366,9 @@ export function CompanionApp({
   // Agents just summoned or opened but not yet in a snapshot: kept pinned (and
   // shown as starting) until a snapshot lists them or PENDING_MS passes.
   const pending = useRef(new Map());
+  // Agents just resumed: the snapshot still shows them offline, so they read as
+  // starting until it says online or PENDING_MS passes.
+  const [resuming, setResuming] = useState(() => new Set());
   // A tab whose agent has a window of its own is not here: the session has one view.
   const hasWindow = (agentId) => overlayWindows.value.some((window) => window.id === chatWindowId(agentId));
   const docked = tabs.filter((id) => !hasWindow(id));
@@ -464,10 +467,10 @@ export function CompanionApp({
   };
   useEffect(() => {
     if (!snapshot.value) return;
-    const keep = new Set([...pending.current.keys(), open ? activeId : ''].filter(Boolean));
+    const keep = new Set([...pending.current.keys(), ...resuming, open ? activeId : ''].filter(Boolean));
     const next = syncHelperTabs(tabs, agents, closedList(), keep);
     if (next !== tabs) setTabs(next);
-  }, [agents, snapshot.value, open, activeId]);
+  }, [agents, snapshot.value, open, activeId, resuming]);
 
   // However an agent comes to be attached here (a tab chosen, a reload, the
   // active tab closing), this view takes over from its Terminals pane.
@@ -486,6 +489,16 @@ export function CompanionApp({
     const keep = (id) => agents.has(id) || pending.current.has(id);
     if (tabs.some((id) => !keep(id))) setTabs((current) => current.filter(keep));
   }, [agents]);
+
+  useEffect(() => {
+    const up = [...resuming].filter((id) => agents.get(id)?.online);
+    if (up.length) setResuming((current) => new Set([...current].filter((id) => !up.includes(id))));
+  }, [agents, resuming]);
+  useEffect(() => {
+    if (!resuming.size) return undefined;
+    const timer = setTimeout(() => setResuming(new Set()), PENDING_MS);
+    return () => clearTimeout(timer);
+  }, [resuming]);
 
   // A detached agent stays in its own window: opening its tab only shows where
   // it went. Attaching here would throw that window off the terminal, and the
@@ -555,7 +568,8 @@ export function CompanionApp({
   // The Steward that can come back, by Resume. One just shut down can still show
   // as online for a poll, so it stands in for the roster until then.
   const rosterReturn = steward?.online && steward.agentId !== shutDown?.agentId ? null : stewardToResume(stewardRoster);
-  const returning = shutDown || rosterReturn ? {
+  // One already resuming offers no second start: Start fresh would make two.
+  const returning = (shutDown || rosterReturn) && !resuming.has(shutDown?.agentId || rosterReturn.agent_id) ? {
     agentId: shutDown?.agentId || rosterReturn.agent_id,
     name: shutDown?.name || (rosterReturn.agent_id === steward?.agentId ? steward.name : rosterReturn.name),
     lastRan: stewardRoster.find((entry) => entry.agent_id === (shutDown?.agentId || rosterReturn.agent_id))?.last_ran || '',
@@ -650,6 +664,7 @@ export function CompanionApp({
   // Closing is the window's ✕ asking: then the window goes as a close does, and
   // Resume waits in ✦ Steward.
   function stewardShutDown(agent, { closing = false } = {}) {
+    setResuming((current) => without(current, agent.agentId));
     detachedWindows.current.get(agent.agentId)?.close?.();
     detachedWindows.current.delete(agent.agentId);
     setParked((current) => without(current, agent.agentId));
@@ -921,14 +936,18 @@ export function CompanionApp({
   }
 
   async function resume(agent) {
+    const started = () => setResuming((current) => new Set(current).add(agent.agentId));
     try {
       await resumeAgent(fetchImpl, agent.agentId);
       notify(`Resuming ${agent.name}…`);
+      started();
       return true;
     } catch (error) {
       if (error?.recoverable) {
         const { resumeAgentReq } = await import('./dashboard-operations.js');
-        return resumeAgentReq(agent.agentId, agent.name);
+        const resumed = await resumeAgentReq(agent.agentId, agent.name);
+        if (resumed) started();
+        return resumed;
       }
       notify(`Could not resume ${agent.name}: ${error?.message || error}`, true);
       return false;
@@ -1246,7 +1265,7 @@ export function CompanionApp({
   const activeActions = activeAgent ? actionsFor(snapshot.value, activeAgent) : [];
   const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
   const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
-  const starting = !activeAgent && activeId && pending.current.has(activeId);
+  const starting = activeAgent ? !activeAgent.online && resuming.has(activeId) : activeId && pending.current.has(activeId);
 
   // A terminal that lost its attach while hidden, for example to a Terminals
   // tab pane, has nothing to show, so reopening starts a fresh connection.
@@ -1373,7 +1392,7 @@ export function CompanionApp({
       </div>`}
       ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
       ${activeAgent && parked.has(activeAgent.agentId) && showComposer && html`<div class="companion-floating-anchor">${messageTools()}</div>`}
-      ${activeAgent && !activeAgent.online && html`<div class="companion-empty">
+      ${activeAgent && !activeAgent.online && !starting && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is offline.</p>
         ${activeAgent.agentId === returning?.agentId ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>Resume</button>
           <p class="companion-empty-note">${stewardReturnNote(returning)}</p>

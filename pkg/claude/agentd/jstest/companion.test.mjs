@@ -2138,6 +2138,79 @@ test('an offline Steward in the seat offers Resume and Start fresh; with none, o
   assert.equal(fresh.view.container.querySelector('.companion-fresh-steward'), null);
 });
 
+const offlineSteward = () => {
+  const snapshot = snapshotWith({ steward: true });
+  const member = snapshot.groups.flatMap((group) => group.members).find((candidate) => candidate.agent_id === S);
+  return { ...snapshot, steward_roster: [{ agent_id: S, name: 'steward-k3x', seat: 'active', online: false, resumable: true }], groups: snapshot.groups.map((group) => ({ ...group, members: group.members.map((one) => (one === member ? { ...one, online: false } : one)) })) };
+};
+const resumeOk = async () => ({ ok: true, json: async () => ({ action: 'resumed' }), text: async () => '' });
+const flush = async () => { await Promise.resolve(); await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
+
+test('a resumed Steward shows it starting, not the same choice again, until it is online', async (t) => {
+  const { view, harness, controller, snap } = await setup(t, { snapshot: offlineSteward(), fetchImpl: resumeOk });
+  await harness.act(() => controller().open(S));
+  await harness.act(async () => { view.container.querySelector('.companion-resume-steward').click(); await flush(); });
+  assert.match(view.container.textContent, /Starting the agent/);
+  assert.equal(view.container.querySelector('.companion-resume-steward'), null);
+  assert.equal(view.container.querySelector('.companion-fresh-steward'), null);
+  await harness.act(() => { snap.value = snapshotWith({ steward: true }); });
+  assert.doesNotMatch(view.container.textContent, /Starting the agent/);
+  assert.ok(view.container.querySelector('.companion-term-host'), 'the real terminal');
+});
+
+test('a plain agent\'s Resume shows it starting too', async (t) => {
+  const offline = { ...snapshotWith(), groups: snapshotWith().groups.map((group) => ({ ...group, members: group.members.map((one) => (one.agent_id === A ? { ...one, online: false } : one)) })) };
+  const { view, harness, controller } = await setup(t, { snapshot: offline, fetchImpl: resumeOk });
+  await harness.act(() => controller().open(A));
+  const resume = [...view.container.querySelectorAll('.companion-primary')].find((button) => button.textContent === 'Resume');
+  await harness.act(async () => { resume.click(); await flush(); });
+  assert.match(view.container.textContent, /Starting the agent/);
+});
+
+test('a resume that never comes up falls back to the offline choice', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { view, harness, controller } = await setup(t, { snapshot: offlineSteward(), fetchImpl: resumeOk });
+  const settle = () => harness.act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+  await harness.act(() => controller().open(S));
+  await harness.act(async () => { view.container.querySelector('.companion-resume-steward').click(); });
+  await settle();
+  assert.match(view.container.textContent, /Starting the agent/);
+  await harness.act(async () => { t.mock.timers.tick(30001); });
+  await settle();
+  assert.doesNotMatch(view.container.textContent, /Starting the agent/);
+  assert.ok(view.container.querySelector('.companion-resume-steward'), 'the way back is open again');
+});
+
+test('minimizing while it starts keeps the tab, and offers no second start', async (t) => {
+  const { view, harness, controller, snap } = await setup(t, { snapshot: offlineSteward(), fetchImpl: resumeOk });
+  await harness.act(() => controller().open(S));
+  await harness.act(async () => { view.container.querySelector('.companion-resume-steward').click(); await flush(); });
+  const ctrlDot = () => harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  await ctrlDot();
+  await harness.act(() => { snap.value = { ...offlineSteward() }; });
+  await ctrlDot();
+  assert.match(view.container.textContent, /Starting the agent/);
+  assert.equal(view.container.querySelector('.companion-fresh-steward'), null);
+});
+
+test('the ＋ menu offers no resume or fresh start while it starts', async (t) => {
+  const { view, harness, controller } = await setup(t, { snapshot: offlineSteward(), fetchImpl: resumeOk });
+  await harness.act(() => controller().open(S));
+  await harness.act(async () => { view.container.querySelector('.companion-resume-steward').click(); await flush(); });
+  await harness.act(() => view.container.querySelector('.companion-add').click());
+  assert.equal(view.container.querySelector('.companion-menu-resume'), null);
+  assert.equal(view.container.querySelector('.companion-menu-fresh'), null);
+});
+
+test('a resume that fails stays on the offline choice', async (t) => {
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ action: 'error', detail: 'no pane' }), text: async () => '' });
+  const { view, harness, controller } = await setup(t, { snapshot: offlineSteward(), fetchImpl });
+  await harness.act(() => controller().open(S));
+  await harness.act(async () => { view.container.querySelector('.companion-resume-steward').click(); await flush(); });
+  assert.doesNotMatch(view.container.textContent, /Starting the agent/);
+  assert.ok(view.container.querySelector('.companion-resume-steward'));
+});
+
 test('a failed resume is reported and leaves the way back open', async (t) => {
   const { resumeAgent } = await (await import('./preact-harness.mjs')).createPreactHarness(t).then((harness) => harness.importDashboardModule('js/companion-approval.js'));
   const answer = (body) => async () => ({ ok: true, json: async () => body });
