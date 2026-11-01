@@ -343,6 +343,15 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-mic-note { color: var(--cmp-text); font-size: 11px; white-space: nowrap; cursor: help; }
 .companion-floating .companion-mic.on { border-color: var(--cmp-red); color: var(--cmp-red); animation: companion-pulse 1.5s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .companion-floating .companion-mic.on { animation: none; } }
+.companion-send-hint { flex: none; color: var(--cmp-muted); font-size: 11px; white-space: nowrap; }
+/* The same tools over a Terminals-tab pane: there they only brighten on them,
+   and step below a process bar, which holds the same corner. */
+.mux-pane .companion-floating:hover { opacity: 1; }
+.mux-pane:has(.pk-pane-overlay) .companion-floating { top: 44px; }
+.companion-pane-notice {
+  position: absolute; top: 42px; right: 8px; max-width: 60%; padding: 5px 8px; border: 1px solid var(--cmp-red); border-radius: 6px;
+  background: var(--cmp-bar); color: var(--cmp-text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
 
 /* Agent marks on the operator's view (tcl-0waby5): hand-drawn circles,
    underlines and arrows a cue draws over the page. */

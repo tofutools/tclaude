@@ -188,52 +188,81 @@ export function speechRecognitionCtor(win = globalThis.window) {
   return win?.SpeechRecognition || win?.webkitSpeechRecognition || null;
 }
 
-// isSendCommand reports whether one finished phrase is the spoken command
-// "send" on its own. The recognizer finishes a phrase at every pause, so
-// "send" only counts when the operator paused before it: "I want to send
-// the report" or "don't send" never send.
-export function isSendCommand(phrase) {
-  return /^\s*send(?: it)?[.!]?\s*$/i.test(String(phrase || ''));
+export const DEFAULT_SEND_PHRASE = 'send now';
+
+// sendPhraseRest looks for the spoken send phrase at the very end of one
+// finished phrase and returns the words before it, or null when it isn't
+// there. No pause is needed before it, because the recognizer only finishes a
+// phrase at a long one, so a common word would fire mid-sentence: hence a
+// distinctive phrase, and only at the end. Case and the punctuation the
+// recognizer adds don't count. An empty send phrase never matches.
+export function sendPhraseRest(phrase, sendPhrase) {
+  const words = String(sendPhrase || '').split(/\s+/)
+    .map((word) => word.replace(/^\p{P}+|\p{P}+$/gu, '').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'))
+    .filter(Boolean);
+  if (!words.length) return null;
+  const match = new RegExp(`(?:^|[\\s\\p{P}])${words.join('[\\s\\p{P}]+')}[\\s\\p{P}]*$`, 'iu').exec(String(phrase || ''));
+  return match ? phrase.slice(0, match.index).replace(/[\s,;:]+$/, '') : null;
+}
+
+// A page has one microphone to give: the dictation that holds it, whichever
+// terminal it belongs to.
+let openDictation = null;
+
+// dictationOpen reports whether any dictation on this page is listening, so
+// nothing is spoken into the open mic.
+export function dictationOpen() {
+  return !!openDictation?.active;
 }
 
 // createDictation wraps the browser's speech recognition: interim and final
 // text arrive through onText (the whole utterance so far), onState reports
-// listening on/off, and onSend fires when the operator says "send" as a
-// phrase of its own. stop() still delivers the words already heard but never
-// sends; abort() drops them. Chrome's recognizer runs in Google's cloud; the
-// button says so.
-export function createDictation(win = globalThis.window, { onText, onState, onSend, lang } = {}) {
+// listening on/off, and onSend fires when a finished phrase ends with the send
+// phrase, which sendPhrase() returns ('' for none). Interim text never sends:
+// it is still changing, so "send now please" would fire early. Starting one
+// dictation drops any other on the page. stop() still delivers the words
+// already heard but never sends; abort() drops them. Chrome's recognizer runs
+// in Google's cloud; the button says so.
+export function createDictation(win = globalThis.window, { onText, onState, onSend, sendPhrase = () => '', lang } = {}) {
   const Ctor = speechRecognitionCtor(win);
   let recognition = null;
   let stopped = false;
-  return {
+  const dictation = {
     supported: !!Ctor,
     get active() { return !!recognition; },
     start() {
       if (!Ctor || recognition) return;
+      if (openDictation !== dictation) openDictation?.abort();
+      openDictation = dictation;
       const r = new Ctor();
       r.continuous = true;
       r.interimResults = true;
       r.lang = lang || win?.navigator?.language || 'en-US';
       const finals = [];
+      let sent = false;
       stopped = false;
       r.onresult = (event) => {
-        if (recognition !== r) return;
+        // Words after a send would bring the sent text back.
+        if (recognition !== r || sent) return;
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
           const phrase = result[0].transcript;
           if (!result.isFinal) {
             interim += phrase;
-          } else if (isSendCommand(phrase) && !stopped) {
+            continue;
+          }
+          const rest = stopped ? null : sendPhraseRest(phrase, sendPhrase());
+          if (rest !== null) {
+            finals.push(rest);
             const text = finals.join(' ').replace(/\s+/g, ' ').trim();
+            sent = true;
             onText?.(text);
             onSend?.(text);
             r.stop();
             return;
-          } else {
-            finals.push(phrase);
           }
+          finals.push(phrase);
         }
         onText?.(`${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim());
       };
@@ -257,4 +286,5 @@ export function createDictation(win = globalThis.window, { onText, onState, onSe
       if (r) onState?.(false);
     },
   };
+  return dictation;
 }

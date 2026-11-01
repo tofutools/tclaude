@@ -44,6 +44,7 @@ import { GroupsInteractionProvider, useGroupsInteractions } from './groups-inter
 import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions, reassignCandidates } from './process-terminal-overlay.js';
 import { agentRunBounds } from './process-agent-stepper.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { PaneDictation } from './terminal-dictation.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -393,6 +394,9 @@ function TerminalPane({
         onTakeOver=${() => void actions.widgetFor(pane.id)?.takeOver()} />
       ${files && filesOK ? html`<${RemoteFilesPanel} terminal=${pane.seed.ws} viewer=${remote.viewer}
         peer=${pane.seed.remote.peerLabel || pane.seed.remote.peer} onClose=${() => setFiles(false)} />` : null}
+      <${PaneDictation} pane=${pane} active=${active} solo=${solo} status=${status} actions=${actions}
+        canType=${!pane.seed.remote || remote?.mode === 'interactive'} snapshot=${processSnapshot}
+        target=${composeAgent(pane) ? composeTarget(pane, actions) : null} />
       <${OpaqueTerminalHost}
         descriptor=${pane}
         runtimeID=${pane.id}

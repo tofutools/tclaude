@@ -584,6 +584,11 @@ type DashboardConfig struct {
 	// (off) is distinguishable from an absent key (default). See
 	// (*Config).RecentPRWindowDays.
 	RecentPRWindowDays *int `json:"recent_pr_window_days,omitempty"`
+	// DictationSendPhrase is what the operator says at the end of a dictated
+	// message to send it to an agent. A *string so an explicit "" (spoken send
+	// off) is distinguishable from an absent key (the default). See
+	// (*Config).DictationSendPhrase.
+	DictationSendPhrase *string `json:"dictation_send_phrase,omitempty"`
 	// GroupQuickOptions selects how the editable "quick option" chips in each
 	// group <summary> header (📝 description, 📁 default dir, 🧠 default
 	// profile, 🔗 links) are displayed — one of GroupQuickOptions{Hover,
@@ -2003,6 +2008,25 @@ const (
 	RecentPRWindowDaysDefault = 3
 	RecentPRWindowDaysMax     = 30
 )
+
+// DictationSendPhraseDefault / DictationSendPhraseMaxRunes bound the spoken
+// send phrase — config dashboard.dictation_send_phrase.
+const (
+	DictationSendPhraseDefault  = "send now"
+	DictationSendPhraseMaxRunes = 60
+)
+
+// DictationSendPhrase reports the spoken send phrase, with its whitespace
+// collapsed. Default DictationSendPhraseDefault (absent block / nil pointer),
+// "" means spoken send is off, and anything past the rune cap is cut so a
+// hand-edited config stays displayable. Nil-safe on the receiver.
+func (c *Config) DictationSendPhrase() string {
+	if c == nil || c.Dashboard == nil || c.Dashboard.DictationSendPhrase == nil {
+		return DictationSendPhraseDefault
+	}
+	phrase := []rune(strings.Join(strings.Fields(*c.Dashboard.DictationSendPhrase), " "))
+	return strings.TrimSpace(string(phrase[:min(len(phrase), DictationSendPhraseMaxRunes)]))
+}
 
 // AlwaysShowOpenPRs reports whether the dashboard footer's Open PRs
 // indicator stays mounted with zero open pull requests — config

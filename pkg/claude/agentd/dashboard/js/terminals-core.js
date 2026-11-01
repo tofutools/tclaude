@@ -888,6 +888,14 @@ export function mountTerminalWidget({
       return connect();
     },
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
+    // paste delivers text as terminal input, by the path keystrokes take, and
+    // says whether it could: a closed socket or a watch-only view takes none.
+    paste(text) {
+      if (disposed || !ws || ws.readyState !== WebSocketCtor.OPEN) return false;
+      if (remote && remoteState.mode !== 'interactive') return false;
+      term.paste(text);
+      return true;
+    },
     setActive(next) {
       if (disposed) return;
       isActive = !!next;

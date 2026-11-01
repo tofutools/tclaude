@@ -1081,6 +1081,9 @@ type snapshotPayload struct {
 	// Collab switch. Re-read on every snapshot so a Config-tab change takes
 	// effect without restarting agentd, matching collabRoute.
 	CollabEnabled bool `json:"collab_enabled"`
+	// DictationSendPhrase is the spoken phrase that sends a dictated message,
+	// empty when spoken send is off. Never omitted: absent means the default.
+	DictationSendPhrase string `json:"dictation_send_phrase"`
 	// StewardName is what the operator calls their Steward, empty by default.
 	StewardName string `json:"steward_name,omitempty"`
 	// StewardElevated is what each live Steward holds beyond Config and the
@@ -3491,6 +3494,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		UsageCollapseSubviews:         cfg.UsageCollapseSubviews(),
 		ProcessesEnabled:              cfg.ProcessesEnabled(),
 		CollabEnabled:                 cfg.CollabEnabled(),
+		DictationSendPhrase:           cfg.DictationSendPhrase(),
 		StewardName:                   cfg.StewardName(),
 		TriggersEnabled:               triggersEnabled,
 		GroupsRouteMapEnabled:         groupsRouteMapEnabled,
