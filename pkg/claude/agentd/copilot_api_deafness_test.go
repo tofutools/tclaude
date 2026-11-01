@@ -85,10 +85,12 @@ func TestCopilotAPIBootstrapFailureIsObservedAgainstTheLaunchThatFailed(t *testi
 	assert.True(t, awaitChannelFailed(t, fixture.convID),
 		"a bootstrap that returned an error has finished its whole bounded attempt and "+
 			"nothing re-runs it, so this launch is deaf for good and something has to say so")
+	// The failure is recorded first and the shutdown follows it on the bootstrap
+	// goroutine, so seeing the failure does not mean the shutdown has happened.
 	select {
 	case got := <-crashed:
 		assert.Equal(t, fixture.convID, got)
-	default:
+	case <-time.After(5 * time.Second):
 		t.Fatal("the failed bootstrap was observed but the launch was left alive and deaf")
 	}
 }

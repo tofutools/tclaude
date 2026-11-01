@@ -6,6 +6,7 @@ export const PROCESS_SCRIBE_NAME = 'process-scribe';
 export const PROCESS_SCRIBE_SLUGS = ['process.templates.read', 'process.templates.manage'];
 export const PROCESS_SCRIBE_SCOPE_KIND = 'process-template';
 export const PROCESS_SCRIBE_SCOPE_PREFIX = `Reusable scribe scope: ${PROCESS_SCRIBE_SCOPE_KIND}/`;
+export const PROCESS_SCRIBE_GRANT_META = PROCESS_SCRIBE_SLUGS.join(' + ');
 export const PROCESS_SCRIBE_PROMPT_MAX = 2000;
 export const PROCESS_SCRIBE_CONTEXT_ITEM_MAX = 128;
 export const PROCESS_SCRIBE_CONTEXT_BYTE_MAX = 7000;
@@ -130,6 +131,13 @@ export function processScribeHandoff({ kind = 'library', id = '', currentRef = '
 export function processScribeScopeLabel(scope = {}) {
   if (scope.kind !== PROCESS_SCRIBE_SCOPE_KIND) return '';
   return scope.id ? `template ${scope.id}` : 'process-template library';
+}
+
+// processScribeGrantBody is the approval every process-scribe summon shows:
+// what the grant is, so the operator decides on the same words wherever a
+// scribe starts.
+export function processScribeGrantBody(target, transition = '') {
+  return `Scope: ${target}. The daemon reuses a live same-scope scribe only when its exact permissions match and it has no active temporary elevation; otherwise this approval creates a fresh scribe receiving only process.templates.read and process.templates.manage while leaving the existing scribe unchanged. Every other registered capability is explicitly denied. Manage allows validated CAS saves, but summoning never instantiates or runs a process.${transition}`;
 }
 
 export function processScribeTaskRef(handoff, origin = globalThis.location?.origin || '') {
