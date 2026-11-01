@@ -18,11 +18,11 @@ import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
+  BOARD_FONTS, BOARD_TEXT_STYLE, boardFont, boardFontSizes, sameTextStyle, textStyleOf,
   ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardIdFromTitle, boardTopZ, bump, changeBounds,
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
   entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
   QUICK_SHAPES, reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, stackOrder, suggestedShape, toExcalidraw, topHit, withLabels,
-  BOARD_FONTS, BOARD_TEXT_STYLE, boardFont, boardFontSizes, sameTextStyle, textStyleOf,
 } from './board-model.js';
 import { BoardContextMenu } from './board-context-menu.js';
 import { clipboardReadNote } from './insecure-origin.js';
@@ -226,6 +226,7 @@ export function BoardEditor({
   const [color, setColor] = useState(BOARD_COLORS[0]);
   const [fill, setFill] = useState(BOARD_FILLS[0]);
   const [routing, setRouting] = useState('straight'); // for the next line drawn
+  const [textStyle, setTextStyle] = useState(BOARD_TEXT_STYLE); // for the next text
   const [hoverShape, setHoverShape] = useState(''); // id of the shape showing its snap points
   const [selected, setSelected] = useState([]); // ids
   const pointerAt = useRef(null); // the last board point under the pointer, for paste
@@ -241,8 +242,6 @@ export function BoardEditor({
   // it unmounts); the ref lets the second call see the edit already finished.
   const editingRef = useRef(null);
   const setEditingText = (value) => { editingRef.current = value; setEditingTextState(value); };
-  const textInputRef = useRef(null);
-  const [textStyle, setTextStyle] = useState(BOARD_TEXT_STYLE); // for the next text
   const [flash, setFlash] = useState(() => new Set());
   const [invite, setInvite] = useState(false);
   const inviteRef = useRef(null);
@@ -1418,7 +1417,7 @@ export function BoardEditor({
   // which change what is being typed.
   function leaveText(event) {
     const to = event.relatedTarget;
-    if (to === textInputRef.current || to?.closest?.('.board-text-controls')) return;
+    if (to?.closest?.('.board-text-input, .board-text-controls')) return;
     finishText();
   }
 
@@ -1439,7 +1438,7 @@ export function BoardEditor({
     const open = editingRef.current;
     if (open) {
       setEditingText({ ...open, style: { ...open.style, ...changes } });
-      textInputRef.current?.focus();
+      rootRef.current?.querySelector?.('.board-text-input')?.focus();
     } else if (chosen.length) {
       commit(withArrows(chosen.map((el) => bump(el, { ...changes, width: 0, height: 0 }))));
     }
@@ -1756,7 +1755,7 @@ export function BoardEditor({
           </g>`}
         </g>
       </svg>
-      ${editingText && html`<textarea ref=${textInputRef} class=${`board-text-input${editingText.centred ? ' centred' : ''}`} autoFocus
+      ${editingText && html`<textarea class=${`board-text-input${editingText.centred ? ' centred' : ''}`} autoFocus
         style=${`left:${(editingText.x - view.x) * view.zoom}px;top:${(editingText.y - view.y) * view.zoom}px;font-size:${shownText.fontSize * view.zoom}px;color:${editingText.color};font-family:${boardFont(shownText).css};font-weight:${shownText.fontWeight || 'normal'};font-style:${shownText.fontStyle || 'normal'}`}
         value=${editingText.text}
         onInput=${(event) => setEditingText({ ...editingText, text: event.currentTarget.value })}

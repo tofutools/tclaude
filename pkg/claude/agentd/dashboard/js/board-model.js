@@ -27,6 +27,9 @@ export function boardToolDigit(index) {
   return index < 9 ? String(index + 1) : index === 9 ? '0' : '';
 }
 
+export const BOARD_COLORS = Object.freeze(['#1e1e1e', '#e03131', '#2f9e44', '#1971c2', '#f08c00', '#9c36b5']);
+export const BOARD_FILLS = Object.freeze(['transparent', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99', '#eebefa']);
+
 // Text styles. fontFamily is Excalidraw's number, so a family survives the
 // .excalidraw export; an element without one is in the board's own hand.
 export const BOARD_FONTS = Object.freeze([
@@ -62,9 +65,6 @@ export function sameTextStyle(a, b) {
 export function boardFontSizes(current) {
   return BOARD_FONT_SIZES.includes(current) ? BOARD_FONT_SIZES : [...BOARD_FONT_SIZES, current].sort((a, b) => a - b);
 }
-
-export const BOARD_COLORS = Object.freeze(['#1e1e1e', '#e03131', '#2f9e44', '#1971c2', '#f08c00', '#9c36b5']);
-export const BOARD_FILLS = Object.freeze(['transparent', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99', '#eebefa']);
 
 const BOARD_GRID = 20; // board units between the paper's dots
 const BOARD_GRID_MIN_PX = 12; // closer than this they turn into a texture
