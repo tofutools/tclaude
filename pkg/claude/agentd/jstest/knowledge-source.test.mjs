@@ -74,6 +74,7 @@ test('the Config row shows a failed action', async (t) => {
   const fetchImpl = async () => ({ ok: false, status: 500, text: async () => 'disk full' });
   const { container } = await harness.mount(harness.html`<${KnowledgeSourceRow} snapshot=${snap} fetchImpl=${fetchImpl} />`);
   assert.match(container.textContent, /3 files, 28 MiB on disk for v1\.2\.3/);
+  assert.equal(harness.getByRole(container, 'button', { name: 'Remove' }).className, 'cfg-inline', 'styled like the other Config row buttons');
   await harness.act(async () => { harness.getByRole(container, 'button', { name: 'Remove' }).click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.match(harness.getByRole(container, 'alert').textContent, /disk full/);
 });

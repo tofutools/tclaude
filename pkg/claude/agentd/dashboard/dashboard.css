@@ -1,5 +1,10 @@
 
 * { box-sizing: border-box; }
+/* The page has no color-scheme, so a bare checkbox or radio renders as a white
+   native box. :where keeps these at zero specificity: any rule that tints a
+   particular control still wins. */
+:where(input[type="checkbox"], input[type="radio"]) { color-scheme: dark; accent-color: #58a6ff; }
+:where(body.wizard) :where(input[type="checkbox"], input[type="radio"]) { accent-color: #a97bd6; }
 /* The `hidden` attribute must ALWAYS win. The UA sheet's `[hidden] { display: none }`
    lives in the user-agent origin, which any author `display: flex/grid/inline-block/…`
    rule beats (author origin > UA origin, regardless of specificity or order) — so the
@@ -6637,12 +6642,12 @@ body.wizard .group-pending-title-wizard { display: inline; }
   color: #f0a3a0;
 }
 .jobs-error button { margin-left: 8px; }
-.filter-bar button.clear-filter {
+:is(.filter-bar, .content-search-bar) button.clear-filter {
   background: transparent; border: none; color: #7d8590;
   cursor: pointer; padding: 4px 8px; font-size: 12px;
   font-family: inherit;
 }
-.filter-bar button.clear-filter:hover { color: #d4d4d4; }
+:is(.filter-bar, .content-search-bar) button.clear-filter:hover { color: #d4d4d4; }
 .filter-bar .spacer { flex: 1; }
 .filter-bar button.primary {
   background: #1f6feb; border: 1px solid #1f6feb; color: white;
@@ -9405,7 +9410,11 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-preview .gi-warn, .paf-members .gi-warn { color: #f0883e; overflow-wrap: anywhere; }
 .import-confirm-group { margin-top: 6px; }
 .import-confirm-item { margin: 3px 0; }
-.import-confirm-reveal { font-size: 11px; padding: 1px 7px; margin-left: 22px; }
+.import-confirm-reveal {
+  background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9;
+  cursor: pointer; font-family: inherit; font-size: 11px; padding: 1px 7px; margin-left: 22px;
+}
+.import-confirm-reveal:hover { border-color: #58a6ff; }
 .import-confirm-value { display: block; margin-left: 22px; overflow-wrap: anywhere; }
 .paf-landing-selects { display: inline-flex; gap: 6px; }
 .paf-rung { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 10px; border: 1px solid #30363d; white-space: nowrap; }

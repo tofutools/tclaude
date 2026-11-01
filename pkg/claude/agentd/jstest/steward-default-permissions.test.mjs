@@ -20,6 +20,7 @@ test('the Config row counts what is stored and opens the editor on future Stewar
   const mounted = await harness.mount(harness.html`<${StewardDefaultPermissions} fetchImpl=${fetchImpl} openEditor=${(options) => { opened = options; }} />`);
   assert.equal(mounted.container.querySelector('#cfg-steward-permissions-summary').textContent, '2 added, 1 denied', 'a stored grant the levels give adds nothing');
 
+  assert.equal(mounted.container.querySelector('#cfg-steward-permissions-edit').className, 'cfg-inline', 'styled like the other Config row buttons');
   await harness.act(async () => { mounted.container.querySelector('#cfg-steward-permissions-edit').click(); });
   for (let i = 0; i < 50 && !opened; i += 1) await new Promise((resolve) => { setTimeout(resolve, 5); });
   assert.deepEqual(opened.stewardLevels, ['fleet.read']);
