@@ -27,7 +27,7 @@ func stewardCmd() *cobra.Command {
 		Long:        "One agent is the active Steward: it gets the \"steward\" address, the Config name and the companion. Former Stewards can stand by on the roster, without Steward access.\n\n" + stewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			stewardLsCmd(), stewardSetCmd(), stewardStepDownCmd(), stewardRemoveCmd(),
+			stewardLsCmd(), stewardSetCmd(), stewardStepDownCmd(), stewardRemoveCmd(), stewardExternalCmd(),
 		},
 	}.ToCobra()
 }

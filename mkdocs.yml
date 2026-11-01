@@ -52,6 +52,7 @@ nav:
       - Library panel: dashboard-library.md
       - Terminals and Collab: dashboard-terminals.md
       - Companion and Steward: companion.md
+      - External stewards: external-steward.md
       - Boards: boards.md
       - Messages: dashboard-messages.md
       - Automations and Plugins: dashboard-automations.md

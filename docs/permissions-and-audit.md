@@ -9,6 +9,9 @@ to an audit trail. The daemon is fail-closed: the CLI refuses to fall back to
 direct database access when `agentd` is down, so killing the daemon never
 bypasses authorization.
 
+The one exception to process identity is an [external steward](external-steward.md),
+which proves itself with a credential and is still judged as an ordinary agent.
+
 Identity is resolved from the kernel, not from tokens agents could leak or
 forge — see [Agents and groups](agents-and-groups.md). A human caller passes
 every gate; an agent caller is checked against permission slugs.

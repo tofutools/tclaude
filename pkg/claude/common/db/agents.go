@@ -736,6 +736,12 @@ func RetireAgentByID(agentID, by, reason string) (bool, error) {
 			AgentRecoveryStatusBackoff, AgentRecoveryStatusRestarting); err != nil {
 			return false, err
 		}
+		// Retiring an external steward ends its credentials for good: bringing
+		// the agent back does not bring them back.
+		if _, err := tx.Exec(`UPDATE external_steward_credentials SET revoked_at = ?
+			WHERE agent_id = ? AND revoked_at IS NULL`, dbTime(time.Now()), agentID); err != nil {
+			return false, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err

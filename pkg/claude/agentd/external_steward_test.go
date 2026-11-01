@@ -1,0 +1,220 @@
+package agentd
+
+import (
+	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
+)
+
+// Whatever else a request carries, a verified external steward is an agent.
+// requireHuman asks classify and nothing else, so this is what stops a route
+// added later from letting one through.
+func TestExternalStewardClassify_NeverHuman(t *testing.T) {
+	for bits := range 16 {
+		p := &peer{
+			PID: 7, ConvID: "ext-1", ExternalSteward: true,
+			HasClaudeAncestor: bits&1 != 0, HumanTokenValid: bits&2 != 0, DashboardHuman: bits&4 != 0,
+		}
+		if bits&8 != 0 {
+			p.PID = 0
+		}
+		assert.Equal(t, classAgent, classify(p), "peer %+v", p)
+		rec := httptest.NewRecorder()
+		r := requestWithPeer(p)
+		assert.False(t, requireHuman(rec, r, "test"), "peer %+v", p)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	}
+}
+
+// The human can be decided in one place only. A new check that reads the raw
+// fields would get around classify, and so around the test above.
+func TestExternalSteward_OnlyClassifyReadsHumanFields(t *testing.T) {
+	allowed := map[string]bool{
+		"identity.go": true,
+		// These two only pick an audit label, and never decide anything.
+		"scribe.go": true, "steward_handover.go": true,
+	}
+	fset := token.NewFileSet()
+	pkgs := parseAgentdSources(t, fset)
+	for name, file := range pkgs {
+		ast.Inspect(file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if ok && (sel.Sel.Name == "HumanTokenValid" || sel.Sel.Name == "DashboardHuman") && !allowed[name] {
+				t.Errorf("%s reads %s; route it through classify()", fset.Position(sel.Pos()), sel.Sel.Name)
+			}
+			return true
+		})
+	}
+}
+
+func parseAgentdSources(t *testing.T, fset *token.FileSet) map[string]*ast.File {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	out := map[string]*ast.File{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err)
+		out[name] = file
+	}
+	return out
+}
+
+// sourceRoutes reads every route registered with mux.HandleFunc in the source,
+// so a route added later is in the sweep without anyone listing it.
+func sourceRoutes(t *testing.T) (routes []sourceRoute) {
+	t.Helper()
+	fset := token.NewFileSet()
+	files := parseAgentdSources(t, fset)
+	gated := map[string]bool{}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "requireHuman" {
+						gated[fn.Name.Name] = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) != 2 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || (sel.Sel.Name != "HandleFunc" && sel.Sel.Name != "Handle") {
+				return true
+			}
+			lit, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			pattern, err := strconv.Unquote(lit.Value)
+			require.NoError(t, err)
+			handler := ""
+			ast.Inspect(call.Args[1], func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok && gated[id.Name] {
+					handler = id.Name
+				}
+				return true
+			})
+			routes = append(routes, sourceRoute{pattern: pattern, gatedHandler: handler})
+			return true
+		})
+	}
+	return routes
+}
+
+type sourceRoute struct {
+	pattern      string
+	gatedHandler string
+}
+
+// humanGatedOpenReads are reads of a handler that gates only its writes.
+var humanGatedOpenReads = map[string]bool{
+	"GET /v1/agent/aliases": true, // same threat model as /v1/peers
+}
+
+var routeParam = regexp.MustCompile(`\{[^}]+\}`)
+
+func (s sourceRoute) requests() []*http.Request {
+	method, path, ok := strings.Cut(s.pattern, " ")
+	if !ok {
+		method, path = "", s.pattern
+	}
+	path = strings.ReplaceAll(routeParam.ReplaceAllString(path, "x"), "...", "")
+	methods := []string{method}
+	if method == "" {
+		methods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+	}
+	var out []*http.Request
+	for _, m := range methods {
+		r := httptest.NewRequest(m, path, strings.NewReader(`{}`))
+		out = append(out, r)
+	}
+	return out
+}
+
+// Every route whose handler gates on requireHuman, and every /v1 route that
+// looks like answering a question, refuses the principal. The route list comes
+// from the source, so a new requireHuman route is covered the day it is added.
+func TestExternalSteward_RefusedByEveryHumanAndApprovalRoute(t *testing.T) {
+	resetTestDB(t)
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Collab: true}, Steward: &config.StewardConfig{ExternalEnabled: true}}))
+	approval := regexp.MustCompile(`(?i)approv|decision|access-request|answer|confirm`)
+	mux := buildMux()
+	gated, answering := 0, 0
+	for _, route := range sourceRoutes(t) {
+		isV1 := strings.Contains(route.pattern, "/v1/")
+		isApproval := isV1 && approval.MatchString(route.pattern)
+		if !isV1 || (route.gatedHandler == "" && !isApproval) {
+			continue
+		}
+		if route.gatedHandler != "" {
+			gated++
+		}
+		if isApproval {
+			answering++
+		}
+		for _, r := range route.requests() {
+			if humanGatedOpenReads[r.Method+" "+r.URL.Path] {
+				continue
+			}
+			rec := httptest.NewRecorder()
+			p := &peer{PID: 1, HasClaudeAncestor: true, ConvID: "ext-sweep", ExternalSteward: true}
+			mux.ServeHTTP(rec, r.WithContext(context.WithValue(r.Context(), peerKey{}, p)))
+			assert.Falsef(t, rec.Code >= 200 && rec.Code < 300, "%s %s (%s) let an external steward through: %s",
+				r.Method, r.URL.Path, route.gatedHandler, rec.Body.String())
+		}
+	}
+	// The sweep is worth nothing if the source walk stops finding routes.
+	assert.Greater(t, gated, 20, "human-gated routes found")
+	assert.Greater(t, answering, 3, "approval routes found")
+}
+
+// Nothing makes a never-listed slug usable: not a standing grant, not a group
+// grant, and not the popup, which does not even open.
+func TestExternalSteward_NeverListRefusedAtTheGate(t *testing.T) {
+	require.NotEmpty(t, externalStewardNever)
+	for _, slug := range externalStewardNever {
+		require.Truef(t, IsKnownPermSlug(slug), "%s is not a registered slug", slug)
+		rec := httptest.NewRecorder()
+		r := requestWithPeer(&peer{PID: 1, HasClaudeAncestor: true, ConvID: "ext-1", ExternalSteward: true})
+		r.Header.Set("X-Tclaude-Ask-Human", "30s")
+		_, ok := requirePermission(rec, r, slug)
+		assert.Falsef(t, ok, slug)
+		assert.Equalf(t, http.StatusForbidden, rec.Code, slug)
+		assert.Containsf(t, rec.Body.String(), externalStewardCeilingCode, slug)
+	}
+	src := permSources{resolvable: true, externalSteward: true,
+		override: map[string]overridePermSource{}, sudo: map[string]sudoPermSource{}, group: map[string][]string{}}
+	for _, slug := range externalStewardNever {
+		src.override[slug] = overridePermSource{Effect: "grant"}
+		src.group[slug] = []string{""}
+		assert.Equalf(t, permDeny, resolvePermissionVerdictFrom(src, slug, true).Resolution, slug)
+	}
+}

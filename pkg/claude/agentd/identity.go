@@ -67,6 +67,9 @@ type peer struct {
 	HasClaudeAncestor bool
 	HumanTokenValid   bool
 	DashboardHuman    bool
+	// ExternalSteward is set only by authenticateExternalSteward: ConvID is the
+	// principal a verified credential named, not anything in the process tree.
+	ExternalSteward bool
 }
 
 // peerFromContext returns the peer attached by the identity middleware.
@@ -114,7 +117,12 @@ const (
 //     caller is therefore never offered the token branch.
 //   - Only a caller with no CC ancestor is eligible to be the human, and
 //     only with a valid token. Anything else is classUnconfirmed → 403.
+//   - An external steward comes before all of these: it is an agent whatever
+//     else the request carries, which is what keeps it out of requireHuman.
 func classify(p *peer) callerClass {
+	if p.ExternalSteward {
+		return classAgent
+	}
 	if p.DashboardHuman {
 		return classHuman
 	}
@@ -263,6 +271,13 @@ func withIdentity(h http.Handler) http.Handler {
 			if pid, err := peerPID(uconn); err == nil {
 				p.PID = pid
 				claimedID := strings.TrimSpace(r.Header.Get(agentipc.SessionClaimHeader))
+				if credential := externalStewardCredentialFrom(r); credential != "" {
+					if !authenticateExternalSteward(w, r, p, claimedID, credential) {
+						return
+					}
+					h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), peerKey{}, p)))
+					return
+				}
 				runtimeClaim := strings.TrimSpace(r.Header.Get(session.HTTPProxyRuntimeClaimHeader))
 				httpGatewayRoute := strings.HasPrefix(r.URL.Path, "/v1/models/") || r.URL.Path == "/v1/http/environment" || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/")
 				proofClaim, proofKey := "pane:"+claimedID, brokerProofKey
@@ -736,6 +751,8 @@ type permSources struct {
 	// authorization is structurally tied to one target group (routes). The
 	// ordinary resolver still unions group scopes through group above.
 	groupRows map[string][]db.AgentGroupPermission
+	// externalSteward applies the ceiling: see external_steward.go.
+	externalSteward bool
 }
 
 // loadPermSources reads every standing source for convID. Read errors
@@ -777,10 +794,12 @@ func loadPermSourcesForState(convID string, failOnTierReadError, allowAway bool)
 		override:   map[string]overridePermSource{},
 		group:      map[string][]string{},
 		groupRows:  map[string][]db.AgentGroupPermission{},
+
+		externalSteward: db.IsExternalStewardConv(convID),
 	}
 	// ListActiveSudoGrants orders by expires_at ascending, so the first
 	// row for a slug is the one LookupActiveSudoGrantID would have picked.
-	if grants, err := db.ListActiveSudoGrants(convID); err == nil {
+	if grants, err := db.ListActiveSudoGrants(convID); err == nil && !out.externalSteward {
 		for _, g := range grants {
 			if g == nil {
 				continue
@@ -854,6 +873,12 @@ func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug 
 func resolvePermissionVerdictFrom(src permSources, slug string, defaultAllowed bool) permVerdict {
 	if !src.resolvable {
 		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
+	}
+	if src.externalSteward {
+		if externalStewardRefuses(slug) {
+			return permVerdict{Resolution: permDeny, Source: permSourceNone}
+		}
+		defaultAllowed = false
 	}
 	if grant, ok := src.sudo[slug]; ok && grant.ID != 0 {
 		return permVerdict{Resolution: permAllow, Source: permSourceSudo, SudoGrantID: grant.ID, ScopeJSON: []string{grant.ScopeJSON}}
@@ -1341,6 +1366,13 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 		return "", false
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.
+	}
+	// Before any standing check or popup: not even the human can approve one
+	// of these for an external steward.
+	if p.ExternalSteward && externalStewardRefuses(perm) {
+		writeError(w, http.StatusForbidden, externalStewardCeilingCode,
+			"an external steward can never use "+perm)
+		return "", false
 	}
 	title := ""
 	row, _ := db.GetConvIndex(p.ConvID)

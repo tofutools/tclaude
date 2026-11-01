@@ -229,6 +229,10 @@ type sudoGrantJSON struct {
 
 func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	p := peerFromContext(r.Context())
+	if p.ExternalSteward {
+		writeError(w, http.StatusForbidden, externalStewardCeilingCode, externalStewardSudoRefusal)
+		return
+	}
 	var body sudoRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())

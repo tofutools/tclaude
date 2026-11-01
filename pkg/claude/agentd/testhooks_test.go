@@ -6,7 +6,10 @@ import (
 	"errors"
 	clconfig "github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/federation/client"
+	"net"
+	"path/filepath"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -2477,4 +2480,60 @@ func SetApprovalHeldBytesForTest(n int64) (restore func()) {
 	return func() {
 		maxApprovalHeldBytes, maxApprovalHeldBytesPerCaller, approvalBodyFreeBytes = total, perCaller, free
 	}
+}
+
+// AsExternalStewardPeer attaches the peer a verified external steward
+// credential produces.
+func AsExternalStewardPeer(r *http.Request, convID string) *http.Request {
+	p := &peer{PID: 1, HasClaudeAncestor: true, ConvID: convID, ExternalSteward: true}
+	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
+}
+
+// SetExternalCallerManagedForTest says whether the socket peer counts as a
+// tclaude-managed agent.
+func SetExternalCallerManagedForTest(managed bool) (restore func()) {
+	old := externalCallerManaged
+	externalCallerManaged = func(int, string) bool { return managed }
+	return func() { externalCallerManaged = old }
+}
+
+// ExternalStewardNeverForTest lists the slugs the ceiling refuses.
+func ExternalStewardNeverForTest() []string { return slices.Clone(externalStewardNever) }
+
+// RegularAgentMessageQueueLimitForTest is the regular-message backlog cap.
+const RegularAgentMessageQueueLimitForTest = regularAgentMessageQueueLimit
+
+// DaemonSocketClientForTest serves the production identity middleware and mux
+// on a real Unix socket in the test's temp dir, and returns a client for it. It
+// never touches the operator's daemon.
+func DaemonSocketClientForTest(t *testing.T) *http.Client {
+	t.Helper()
+	// Not t.TempDir: its path holds the test name and can outgrow sun_path.
+	dir, err := os.MkdirTemp("", "es")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "d.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{
+		Handler: withIdentity(buildMux()), ReadHeaderTimeout: time.Second,
+		ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
+			if unixConn, ok := conn.(*net.UnixConn); ok {
+				return context.WithValue(ctx, unixConnKey{}, unixConn)
+			}
+			return ctx
+		},
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	return &http.Client{Transport: &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		},
+	}}
 }
