@@ -114,9 +114,13 @@ export const TERMINAL_FONT_MAX = 32;
 export const TERMINAL_FONT_STEP = 1;
 const ZOOM_WHEEL_PX_PER_HALF_STEP = 15;
 const ZOOM_WHEEL_MAX_PX = 30; // a mouse notch is one step, however large its delta
-// Zooming changes the font at once, but refits the grid, which resizes the pty
-// and makes the harness redraw, only when the gesture settles.
-const ZOOM_FIT_DELAY_MS = 150;
+// A zoom shows at once as a scale on the rendered screen, which the compositor
+// can do in a frame. The real font and the refit wait for the gesture to settle,
+// because a font change repaints every row, and a refit resizes the pty and
+// makes the harness redraw. A click only waits for the scale to paint; a wheel
+// waits long enough to span a gesture's events.
+const ZOOM_CLICK_SETTLE_MS = 32;
+const ZOOM_WHEEL_SETTLE_MS = 110;
 // How long a shared view waits for the peer to answer its own size report
 // before saying another viewer limits the size.
 const REMOTE_LIMITED_GRACE_MS = 800;
@@ -301,6 +305,8 @@ export function mountTerminalWidget({
   let zoomFont = Number.isFinite(initialFontSize) ? clampFont(initialFontSize) : null;
   let zoomWheelRest = 0;
   let zoomFitTimer = null;
+  // The size a zoom is previewing, until it settles.
+  let zoomPending = null;
 
   const term = new TerminalCtor({
     cursorBlink: true,
@@ -321,24 +327,37 @@ export function mountTerminalWidget({
   reportFont();
 
   function reportFont() {
-    if (!disposed) onFontChange({ size: term.options.fontSize, zoomed: zoomFont !== null });
+    if (!disposed) onFontChange({ size: zoomPending ?? term.options.fontSize, zoomed: zoomFont !== null });
   }
 
-  function setZoom(next) {
+  function previewZoom(size) {
+    const screen = host.getElementsByClassName?.('xterm-screen')[0];
+    if (!screen) return;
+    screen.style.transformOrigin = '0 0';
+    screen.style.transform = size === null ? '' : `scale(${size / term.options.fontSize})`;
+  }
+
+  function setZoom(next, settleMs = ZOOM_CLICK_SETTLE_MS) {
     if (disposed) return;
     zoomFont = next;
-    term.options.fontSize = next ?? TERMINAL_FONT_DEFAULT;
+    zoomPending = next ?? TERMINAL_FONT_DEFAULT;
+    previewZoom(zoomPending);
     reportFont();
     if (zoomFitTimer !== null) clearTimeoutImpl(zoomFitTimer);
     zoomFitTimer = setTimeoutImpl(() => {
       zoomFitTimer = null;
+      // Font and grid change in one tick, so xterm paints them once.
+      const size = zoomPending;
+      zoomPending = null;
+      previewZoom(null);
+      term.options.fontSize = size;
       fit();
       reportFont();
-    }, ZOOM_FIT_DELAY_MS);
+    }, settleMs);
   }
 
-  function zoomBy(step) {
-    if (!disposed) setZoom(clampFont(term.options.fontSize + step));
+  function zoomBy(step, settleMs) {
+    if (!disposed) setZoom(clampFont((zoomPending ?? term.options.fontSize) + step), settleMs);
   }
 
   // zoomWheel takes Ctrl+wheel, which is also how a browser reports a trackpad
@@ -353,7 +372,7 @@ export function mountTerminalWidget({
     const halves = Math.trunc(zoomWheelRest / ZOOM_WHEEL_PX_PER_HALF_STEP);
     if (!halves) return;
     zoomWheelRest -= halves * ZOOM_WHEEL_PX_PER_HALF_STEP;
-    zoomBy(-halves * TERMINAL_FONT_STEP / 2);
+    zoomBy(-halves * TERMINAL_FONT_STEP / 2, ZOOM_WHEEL_SETTLE_MS);
   }
   // Capture: xterm would otherwise take the wheel for the application first.
   host.addEventListener?.('wheel', zoomWheel, { capture: true, passive: false });
@@ -378,7 +397,10 @@ export function mountTerminalWidget({
   documentRef.addEventListener('tclaude:terminal-palette', syncTheme);
 
   function fit() {
-    if (disposed) return;
+    // A pending zoom settles with its own fit. Until then the font is the old
+    // one, and a remote host's panel may be shrunk by the preview's scrollbars,
+    // so a fit here would report the peer a wrong grid.
+    if (disposed || zoomPending !== null) return;
     if (remote && remoteState.shared) { fitShared(); return; }
     if (remote) { fitRemote(); return; }
     try { fitAddon.fit(); } catch (_) { /* host may not be laid out yet */ }
@@ -954,7 +976,7 @@ export function mountTerminalWidget({
       takeOverNext = true;
       return connect();
     },
-    zoomBy,
+    zoomBy: (step) => zoomBy(step),
     zoomWheel,
     resetZoom: () => setZoom(null),
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
