@@ -263,6 +263,16 @@ export function saysStop(heard, stopPhrase, sendPhrase) {
   return isWholePhrase(heard, stopPhrase) || isWholePhrase(sendPhraseRest(heard, sendPhrase), stopPhrase);
 }
 
+// phraseLeadRest returns the words after a spoken phrase that opens a finished
+// phrase, or null when it doesn't open it.
+export function phraseLeadRest(heard, phrase) {
+  const pattern = phrasePattern(phrase);
+  if (!pattern) return null;
+  const text = String(heard || '');
+  const match = new RegExp(`^[\\s\\p{P}]*${pattern}(?=$|[\\s\\p{P}])`, 'iu').exec(text);
+  return match ? text.slice(match[0].length).replace(/^[\s,;:.!?]+/, '') : null;
+}
+
 // phrasePattern is a spoken phrase as a regular expression source, or '' for
 // an empty phrase: its words as text, whatever punctuation lies between them.
 export function phrasePattern(phrase) {
@@ -362,10 +372,13 @@ export function dictationOpen() {
 // phrase that is all of stopPhrase() fires onStopPhrase instead of landing in
 // the text. keep(true) holds the mic for this dictation between recognizers, so
 // the wake listener stays out of a loop that is about to start another one, and
-// onTaken says another dictation took the mic. onText's second argument is
-// {interim, settled}: the words still changing, and the text without them.
+// onTaken says another dictation took the mic. A finished phrase opening with
+// stewardPhrase() goes to onSteward with its words instead of landing in the
+// text; onSteward answering false leaves this dictation running. onText's
+// second argument is {interim, settled}: the words still changing, and the
+// text without them.
 export function createDictation(win = globalThis.window, {
-  onText, onState, onSend, onRoute, onStopPhrase, onTaken, sendPhrase = () => '', stopPhrase = () => '', pauses = () => null, lang, now = () => Date.now(),
+  onText, onState, onSend, onRoute, onStopPhrase, onSteward, onTaken, sendPhrase = () => '', stopPhrase = () => '', stewardPhrase = () => '', pauses = () => null, lang, now = () => Date.now(),
 } = {}) {
   const Ctor = speechRecognitionCtor(win);
   let recognition = null;
@@ -391,11 +404,16 @@ export function createDictation(win = globalThis.window, {
       recognition?.stop();
     },
     keep(on) {
+      const previous = on && openDictation !== dictation ? openDictation : null;
+      if (on) openDictation = dictation;
       keeping = on;
-      if (!on) micChanged();
+      // Reserved first, so the wake listener never sees a free mic in between.
+      previous?.takeOver();
+      micChanged();
     },
     takeOver() {
       onTaken?.();
+      keeping = false;
       dictation.abort();
     },
     abort() {
@@ -444,6 +462,13 @@ export function createDictation(win = globalThis.window, {
           sent = true;
           onText?.(pauseMarks.render(finals.join(' ').replace(/\s+/g, ' ').trim()), { interim: '', settled: '' });
           onStopPhrase?.();
+          return;
+        }
+        const switching = stopped ? null : phraseLeadRest(phrase, stewardPhrase());
+        if (switching !== null) {
+          onText?.(pauseMarks.render(finals.join(' ').replace(/\s+/g, ' ').trim()), { interim: '', settled: '' });
+          if (onSteward?.(switching) === false) continue;
+          sent = true;
           return;
         }
         if (rest !== null) {

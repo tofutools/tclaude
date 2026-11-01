@@ -1702,8 +1702,8 @@ func TestVoice(t *testing.T) {
 	assert.False(t, off.WakeEnabled)
 	assert.Zero(t, off.SilenceSendSeconds)
 	assert.True(t, *off.MarkDictated, "dictated messages are marked by default")
-	assert.Equal(t, []VoicePhrase{{Action: VoiceActionSend, Phrase: "send now"}, {Action: VoiceActionWake}, {Action: VoiceActionStop, Phrase: "stop listening"}}, off.Phrases,
-		"the send and stop phrases are on by default and the wake phrase off")
+	assert.Equal(t, []VoicePhrase{{Action: VoiceActionSend, Phrase: "send now"}, {Action: VoiceActionWake}, {Action: VoiceActionSteward}, {Action: VoiceActionStop, Phrase: "stop listening"}}, off.Phrases,
+		"the send and stop phrases are on by default and the wake phrases off")
 	assert.False(t, off.ContinuousEnabled, "continuous mode is off by default")
 	assert.Equal(t, ContinuousIdleSecondsDefault, off.ContinuousIdleSeconds)
 
@@ -1752,6 +1752,16 @@ func TestVoice(t *testing.T) {
 	stopAs := func(words string) VoicePhrase { return VoicePhrase{Action: VoiceActionStop, Phrase: words} }
 	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{stopAs("Send Now")}}), VoiceActionStop), "a stop phrase equal to the send phrase is off")
 	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{wakeOn, stopAs("hey tofu")}}), VoiceActionStop), "a stop phrase equal to the wake phrase is off")
+
+	stewardOn := func(words string) VoicePhrase {
+		return VoicePhrase{Action: VoiceActionSteward, Phrase: words, Enabled: new(true)}
+	}
+	stewardOnly := voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{stewardOn("hey stewie")}})
+	assert.True(t, stewardOnly.WakeEnabled, "either wake phrase gives the listener something to hear")
+	assert.Equal(t, "hey stewie", phrase(stewardOnly, VoiceActionSteward))
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{{Action: VoiceActionSteward, Phrase: "hey stewie"}}}), VoiceActionSteward), "the Steward phrase is off by default")
+	assert.Equal(t, "", phrase(voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{wakeOn, stewardOn("Hey  Tofu")}}), VoiceActionSteward), "the two wake phrases must differ")
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{stewardOn("stop listening")}}), VoiceActionStop), "a stop phrase equal to the Steward phrase is off")
 
 	sendOff := VoicePhrase{Action: VoiceActionSend, Phrase: "over", Enabled: new(false)}
 	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{sendOff}}), VoiceActionSend), "an off phrase matches nothing")

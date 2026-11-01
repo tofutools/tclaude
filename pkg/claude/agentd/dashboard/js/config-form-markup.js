@@ -535,7 +535,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <${ConfigInput} type="checkbox" id=${`cfg-voice-on-${action}`} aria-label=${`${title} on`} onChange=${() => syncVoiceSection()} />
           <${ConfigInput} type="text" id=${`cfg-voice-phrase-${action}`} data-voice-action=${action} maxLength="60" aria-label=${title} style="width:14em" />
         </${Setting}>`)}
-        <div class="cfg-hint" id="cfg-voice-wake-no-listener" style="padding-left:0" hidden>The wake phrase won't start anything until the wake phrase listener below is on too.</div>
+        <div class="cfg-hint" id="cfg-voice-wake-no-listener" style="padding-left:0" hidden>A wake phrase won't start anything until the wake phrase listener below is on too.</div>
       </${Group}>
       <${Group} title="Dictation">
         <${Setting} title="Mark dictated messages" forId="cfg-voice-mark" k="dashboard.voice.mark_dictated"
@@ -555,7 +555,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more="It dictates into the terminal or chat window with focus, or the only one showing; otherwise it stays idle and says so. An indicator shows whenever it is on, with a Pause button. It stops while the tab is hidden, runs in one tab at a time, and waits while a reply is read aloud. Plain HTTP pages can't use it, because browsers refuse the microphone there.">
           <${Toggle} id="cfg-voice-wake" onChange=${() => syncVoiceSection()} />
         </${Setting}>
-        <div class="cfg-hint" id="cfg-voice-wake-no-phrase" style="padding-left:0" hidden>The listener has nothing to listen for until the wake phrase above is on too.</div>
+        <div class="cfg-hint" id="cfg-voice-wake-no-phrase" style="padding-left:0" hidden>The listener has nothing to listen for until a wake phrase above is on too.</div>
         <${Setting} title="On-device speech" summary="Recognition that stays on this machine, for dictation and the wake listener. It's a language pack Chrome downloads and manages, not part of tclaude. Its size isn't known here. Nothing downloads without your click, and accuracy may differ."
           more="Once installed it is used automatically. If it later stops working, the wake listener stops and says why rather than switching to a speech service; a dictation carries on through the service and says so. This row is about this browser, so it isn't saved with the settings below.">
           <${LocalSpeechRow} />

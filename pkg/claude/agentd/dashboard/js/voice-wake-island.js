@@ -8,7 +8,7 @@ import htm from 'htm';
 import { dictationBlock } from './insecure-origin.js';
 import { speechRecognitionCtor } from './companion-voice.js';
 import { voicePhrase, voiceWakeOn } from './voice-config.js';
-import { createWakeListener, pickWakeTarget } from './voice-wake.js';
+import { createWakeListener, openStewardDoor, pickWakeTarget, stewardRefusal } from './voice-wake.js';
 
 const html = htm.bind(h);
 const PAUSE_PREF = 'tclaude.dash.voice.wake-paused';
@@ -37,13 +37,16 @@ function writeLastWindow(win, id) {
 export function VoiceWake({ snapshot, win = globalThis.window, listenerImpl = createWakeListener }) {
   const value = snapshot.value;
   const phrase = voicePhrase(value, 'wake');
-  const wanted = voiceWakeOn(value) && !!phrase;
+  const stewardPhrase = voicePhrase(value, 'steward');
+  const wanted = voiceWakeOn(value) && !!(phrase || stewardPhrase);
   const block = dictationBlock(!!speechRecognitionCtor(win), win);
   const usable = wanted && !block;
   const [view, setView] = useState({ state: 'off', detail: '', local: false });
   const [notice, setNotice] = useState('');
   const phraseRef = useRef(phrase);
   phraseRef.current = phrase;
+  const stewardRef = useRef(stewardPhrase);
+  stewardRef.current = stewardPhrase;
   const listener = useRef(null);
   useEffect(() => {
     if (!usable) return undefined;
@@ -56,12 +59,19 @@ export function VoiceWake({ snapshot, win = globalThis.window, listenerImpl = cr
     const wake = listenerImpl({
       win,
       phrase: () => phraseRef.current,
+      stewardPhrase: () => stewardRef.current,
       onChange: setView,
       pausedElsewhere: () => readPaused(win),
-      onWake: (words) => {
+      onWake: (words, action = 'wake') => {
         // The lock sits with the first visible window, which may not be the
         // one the operator is in, and its terminal would be the wrong target.
         const otherWindow = win.document.hasFocus?.() === false && readLastWindow(win) !== self;
+        if (action === 'steward') {
+          const refused = otherWindow ? `Heard “${stewardRef.current}”, but this isn’t the window you’re using.` : stewardRefusal();
+          if (refused) say(refused);
+          else openStewardDoor(words);
+          return;
+        }
         const target = otherWindow ? null : pickWakeTarget(win.document);
         if (target) target.start(words);
         else say(`Heard “${phraseRef.current}”, but no terminal here has focus. Click the one you mean and say it again.`);
@@ -101,7 +111,7 @@ export function VoiceWake({ snapshot, win = globalThis.window, listenerImpl = cr
   }
   if (!usable || view.state === 'off') return null;
   const text = {
-    listening: `Listening for “${phrase}”: ${view.route}`,
+    listening: `Listening for ${[phrase, stewardPhrase].filter(Boolean).map((words) => `“${words}”`).join(' or ')}: ${view.route}`,
     held: 'Wake phrase waits while the mic or a reply is busy',
     elsewhere: 'Wake phrase is listening in another tab',
     paused: 'Wake phrase paused',

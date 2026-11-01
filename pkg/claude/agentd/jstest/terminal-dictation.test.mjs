@@ -313,6 +313,15 @@ test('a one-breath wake starts the silence countdown', async (t) => {
   assert.match(s.posted[0].body.body, /^\[dictated\] fix the bug/);
 });
 
+test('a one-breath wake leaves the send phrase out of the draft', async (t) => {
+  const s = await setup(t);
+  const { pickWakeTarget } = await s.harness.importDashboardModule('js/voice-wake.js');
+  const pane = s.harness.document.body.appendChild(s.harness.document.createElement('div'));
+  pane.id = 'pane-p';
+  await s.harness.act(() => pickWakeTarget(s.harness.document).start('fix the bug send now'));
+  assert.equal(s.$('.companion-draft').value, 'fix the bug');
+});
+
 test('pauses never punctuate in a plain shell', async (t) => {
   const s = await setup(t, { ...SHELL, pauses: { comma_pause_seconds: 0.01 } });
   await s.mic();
@@ -671,4 +680,84 @@ test('continuous mode never runs on a plain shell or a peer', async (t) => {
   assert.equal(paneContinuous({ seed: { harness: 'claude', remote: true } }, { agent: AGENT }, snapshot, 'a'), null);
   assert.equal(paneContinuous({ seed: { harness: 'claude' } }, { agent: 'agt_other' }, snapshot, 'a'), null, 'not in this node\'s roster');
   assert.equal(paneContinuous({ seed: { harness: 'claude' } }, { agent: AGENT }, { ...snapshot, voice: {} }, 'a'), null, 'off by default');
+});
+
+// ---- the Steward phrase in continuous mode ----
+
+const STEWARD_PHRASES = [{ action: 'send', phrase: 'send now' }, { action: 'steward', phrase: 'hey stewie' }, { action: 'stop', phrase: 'stop listening' }];
+const STEWARD_VOICE = { wake_enabled: true };
+async function setupStewardLoop(t, { refusal = '', voice = STEWARD_VOICE } = {}) {
+  const s = await continuous(t, { voice: { ...voice, phrases: STEWARD_PHRASES } });
+  const { registerStewardDoor } = await s.harness.importDashboardModule('js/voice-wake.js');
+  s.opened = [];
+  t.after(registerStewardDoor({ refusal: () => refusal, reserve() {}, open: (...args) => s.opened.push(args) }));
+  await s.mic();
+  await says(s, 'one send now');
+  await reopened(s);
+  return s;
+}
+
+test('the Steward phrase ends continuous here and carries it there', async (t) => {
+  const s = await setupStewardLoop(t);
+  await says(s, 'half a thought');
+  await says(s, 'hey stewie check the logs');
+  assert.deepEqual(s.opened, [['check the logs', true]]);
+  assert.deepEqual(bodies(s), ['[dictated] one'], 'nothing more goes to the old agent');
+  assert.equal(s.$('.companion-draft').value, 'half a thought', 'the draft stays here, unsent');
+  assert.ok(!s.$('.companion-continuous'));
+  await reopened(s);
+  await s.harness.act(() => wait(3300));
+  assert.deepEqual(bodies(s), ['[dictated] one']);
+  assert.equal(s.speech.made.length, 2, 'this pane stopped listening');
+});
+
+test('an unfinished Steward phrase never goes to the old agent on silence', async (t) => {
+  const s = await setupStewardLoop(t);
+  await says(s, 'hey stewie look at this', false);
+  await s.harness.act(() => wait(3300));
+  assert.deepEqual(bodies(s), ['[dictated] one']);
+  assert.deepEqual(s.opened, [['look at this', true]]);
+});
+
+test('with no Steward running the phrase says so and continuous stays where it is', async (t) => {
+  const s = await setupStewardLoop(t, { refusal: 'The Steward isn’t running.' });
+  await says(s, 'hey stewie check the logs');
+  assert.deepEqual(s.opened, []);
+  assert.equal(s.notices.at(-1), 'The Steward isn’t running.');
+  assert.ok(s.$('.companion-continuous'), 'nothing moved');
+  assert.equal(s.$('.companion-draft').value, '', 'the phrase stays out of the draft');
+  assert.deepEqual(bodies(s), ['[dictated] one']);
+});
+
+test('a refused Steward phrase on silence stays out of what is sent next', async (t) => {
+  const s = await setupStewardLoop(t, { refusal: 'The Steward isn’t running.' });
+  await says(s, 'hey stewie check the logs', false);
+  await s.harness.act(() => wait(3300));
+  await reopened(s);
+  assert.equal(s.notices.at(-1), 'The Steward isn’t running.');
+  await says(s, 'next sentence');
+  assert.equal(s.$('.companion-draft').value, 'next sentence');
+  await s.harness.act(() => wait(3300));
+  assert.deepEqual(bodies(s), ['[dictated] one', '[dictated] next sentence']);
+});
+
+test('inside a sentence the Steward phrase is plain text', async (t) => {
+  const s = await setupStewardLoop(t);
+  await says(s, 'ask hey stewie about it');
+  assert.deepEqual(s.opened, []);
+  assert.equal(s.$('.companion-draft').value, 'ask hey stewie about it');
+});
+
+test('with the wake listener off the Steward phrase is plain text', async (t) => {
+  const s = await setupStewardLoop(t, { voice: {} });
+  await says(s, 'hey stewie check the logs');
+  assert.deepEqual(s.opened, []);
+  assert.equal(s.$('.companion-draft').value, 'hey stewie check the logs');
+});
+
+test('before a loop runs, a dictation takes the Steward phrase as words', async (t) => {
+  const s = await continuous(t, { voice: { ...STEWARD_VOICE, phrases: STEWARD_PHRASES } });
+  await s.mic();
+  await says(s, 'hey stewie is a name');
+  assert.equal(s.$('.companion-draft').value, 'hey stewie is a name');
 });
