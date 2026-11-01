@@ -443,7 +443,8 @@ asked to with `--save`.
 
 A capture shows whatever is on screen, including open messages and terminal
 output, which reaches the Steward even though it cannot read agents' mail
-through the API. Password fields are masked. Hover styles are not reproduced,
+through the API. Password fields and fields holding tokens, keys or environment
+values are masked, in the image and in the text that comes with it. Hover styles are not reproduced,
 and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
 in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
 command fails there. It needs Collab, like the rest of the Steward.

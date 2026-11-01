@@ -4,7 +4,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureContext, cssUrls, describeElement, rewriteCss, startCapturePresence } from '../dashboard/js/dashboard-capture.js';
+import { captureContext, cloneVisible, cssUrls, describeElement, rewriteCss, startCapturePresence } from '../dashboard/js/dashboard-capture.js';
+import { parseHTML } from './third_party/linkedom.mjs';
 
 function element(tag, { attrs = {}, text = '', parent = null, classes = [] } = {}) {
   return {
@@ -18,6 +19,66 @@ function element(tag, { attrs = {}, text = '', parent = null, classes = [] } = {
 test('a field is named but its value never is', () => {
   const field = element('input', { attrs: { 'aria-label': 'Token' }, text: 'ignored' });
   assert.deepEqual(describeElement(field), { tag: 'input', role: '', label: 'Token', text: '', id: '', ref: '', board_element: '' });
+});
+
+function maskedPage(body) {
+  const { window } = parseHTML(`<!doctype html><html><body>${body}</body></html>`);
+  window.getComputedStyle = () => ({ display: 'block', position: 'static' });
+  return window;
+}
+
+function capturedHtml(win) {
+  const clone = cloneVisible(win.document.body, { win, inline: async () => null, tasks: [] });
+  return clone.outerHTML;
+}
+
+const SECRET = 'sk-live-s3cret-value';
+
+test('a capture never holds what a masked field or display holds', () => {
+  const win = maskedPage(`
+    <input id="plain" data-capture-mask type="text" title="${SECRET}">
+    <input id="shown" data-capture-mask type="password">
+    <input id="password" type="password">
+    <textarea id="bearer" data-capture-mask readonly>${SECRET}</textarea>
+    <code id="once" data-capture-mask>${SECRET}<span>${SECRET}</span></code>
+    <input id="empty" data-capture-mask type="text">
+    <input id="open" type="text">`);
+  const set = (id, value) => { win.document.getElementById(id).value = value; };
+  set('plain', SECRET);
+  set('shown', SECRET);
+  set('password', SECRET);
+  set('open', 'not a secret');
+  // Toggled to visible by a show button: the marker is what keeps it masked.
+  win.document.getElementById('shown').type = 'text';
+
+  const html = capturedHtml(win);
+  assert.ok(!html.includes(SECRET), html);
+  assert.equal((html.match(/••••••••/g) || []).length, 5, 'each one that holds something says so');
+  const page = maskedPage(html.replace(/^<body[^>]*>|<\/body>$/g, '')).document;
+  assert.equal(page.getElementById('empty').getAttribute('value'), '', 'an empty field stays empty');
+  assert.equal(page.getElementById('open').getAttribute('value'), 'not a secret', 'an ordinary field keeps its value');
+  assert.equal(page.getElementById('password').getAttribute('type'), 'text');
+});
+
+test('the context carries no masked text, selected or under the cursor', () => {
+  const win = maskedPage(`
+    <textarea id="bearer" data-capture-mask readonly>${SECRET}</textarea>
+    <label id="wrap"><code id="once" data-capture-mask>${SECRET}</code></label>
+    <button id="ok">Save</button>`);
+  const { document } = win;
+  const once = document.getElementById('once');
+  assert.equal(describeElement(once).text, '');
+  assert.equal(describeElement(document.getElementById('wrap')).text, '', 'nor from around it');
+  assert.equal(describeElement(document.getElementById('ok')).text, 'Save', 'ordinary text is still described');
+
+  const selecting = (text, node) => ({ toString: () => text, containsNode: (el) => el === node });
+  const context = (selection) => captureContext({
+    win: { document, location: { pathname: '/' }, innerWidth: 1, innerHeight: 1, getSelection: () => selection }, tab: 'x',
+  });
+  assert.equal(context(selecting(SECRET, once)).selection, undefined, 'a selection over a masked display');
+  assert.equal(context(selecting('words', null)).selection, 'words', 'ordinary text is still shared');
+  Object.defineProperty(document, 'activeElement', { value: document.getElementById('bearer'), configurable: true });
+  assert.equal(context(selecting(SECRET, null)).selection, undefined, 'a field that selected itself on focus');
 });
 
 test('a board element under the cursor is named', () => {

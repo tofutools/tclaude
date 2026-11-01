@@ -7,13 +7,17 @@
 // page's own stylesheets and draws that to a canvas, so a capture can only hold
 // this page. A clone cannot hold live state, so what the DOM does not carry is
 // copied over: field values, scroll offsets, canvases and images. Hover styles
-// do not survive, password fields are masked, and elements marked
-// data-capture-skip (the capture's own cue) are left out.
+// do not survive, and elements marked data-capture-skip (the capture's own cue)
+// are left out. Password fields and elements marked data-capture-mask, which is
+// any that holds a token, key or secret whatever its type, are masked: neither
+// the image nor the context carries what they hold.
 // dashboard-imperative-boundary: browser-io
 
 import { randomUUID } from './insecure-origin.js';
 
 export const CAPTURE_PRESENCE_MS = 1500;
+const CAPTURE_MASK = '••••••••';
+const MASKED = '[data-capture-mask], input[type="password"]';
 export const CAPTURE_HIDDEN_PRESENCE_MS = 10000;
 // A peer's page cannot see whether this node has Collab on, so it asks, and
 // keeps asking rarely in case it is switched on.
@@ -34,6 +38,19 @@ const clip = (value, max = CAPTURE_TEXT_MAX) => String(value || '').replace(/\s+
 
 // describeElement names an element for an agent. A field's value is never
 // included: the agent asks what has focus, not what is typed in it.
+function holdsMasked(el, control) {
+  return !!(el.closest?.(MASKED) || control.querySelector?.(MASKED));
+}
+
+// selectionIsMasked covers a secret selected in place, which a field that
+// selects itself on focus does as soon as it is clicked.
+function selectionIsMasked(win) {
+  const doc = win.document;
+  if (doc.activeElement?.closest?.(MASKED)) return true;
+  const selection = win.getSelection?.();
+  return [...(doc.querySelectorAll?.(MASKED) || [])].some((el) => selection?.containsNode?.(el, true));
+}
+
 export function describeElement(el, y = null) {
   if (!el?.tagName) return null;
   const control = el.closest?.('button, a[href], [role="button"], [role="tab"], [role="menuitem"], [role="link"], label, summary, th, input, select, textarea') || el;
@@ -42,7 +59,7 @@ export function describeElement(el, y = null) {
     tag: String(control.tagName || '').toLowerCase(),
     role: control.getAttribute?.('role') || '',
     label: clip(control.getAttribute?.('aria-label') || control.getAttribute?.('title') || control.getAttribute?.('placeholder')),
-    text: field ? '' : clip(terminalRow(el, y)?.textContent ?? control.innerText ?? control.textContent),
+    text: field || holdsMasked(el, control) ? '' : clip(terminalRow(el, y)?.textContent ?? control.innerText ?? control.textContent),
     id: control.id || '',
     ref: control.id ? `#${control.id}` : '',
     board_element: el.closest?.('[data-element]')?.getAttribute?.('data-element') || '',
@@ -101,7 +118,7 @@ export function captureContext({ win, tab, pointer, marks = [], now = Date.now()
   const active = doc.activeElement;
   if (active && active !== doc.body && active !== doc.documentElement) context.focus = describeElement(active);
   const selection = clip(win.getSelection?.()?.toString?.(), 400);
-  if (selection) context.selection = selection;
+  if (selection && !selectionIsMasked(win)) context.selection = selection;
   const board = boardContext(doc);
   if (board) context.board = board;
   if (marks.length) context.marks = marks;
@@ -310,10 +327,10 @@ async function pageCss(doc, inline) {
   return rewriteCss(parts.join('\n'));
 }
 
-function copyFieldState(source, clone) {
+function copyFieldState(source, clone, masked) {
   const tag = source.tagName.toLowerCase();
   if (tag === 'textarea') {
-    clone.textContent = source.value;
+    clone.textContent = masked && source.value ? CAPTURE_MASK : source.value;
   } else if (tag === 'select') {
     for (const [i, option] of [...source.options].entries()) {
       if (option.selected) clone.options?.[i]?.setAttribute('selected', 'selected');
@@ -321,9 +338,9 @@ function copyFieldState(source, clone) {
     }
   } else if (tag === 'input') {
     const type = (source.type || '').toLowerCase();
-    if (type === 'password') {
-      clone.setAttribute('value', source.value ? '••••••••' : '');
-      clone.setAttribute('type', 'text');
+    if (masked || type === 'password') {
+      clone.setAttribute('value', source.value ? CAPTURE_MASK : '');
+      if (type === 'password') clone.setAttribute('type', 'text');
     } else if (type === 'checkbox' || type === 'radio') {
       if (source.checked) clone.setAttribute('checked', 'checked');
       else clone.removeAttribute('checked');
@@ -335,7 +352,7 @@ function copyFieldState(source, clone) {
 
 // cloneVisible copies the rendered part of the tree. tasks collects the async
 // work (image data) to finish before serialising.
-function cloneVisible(source, { win, inline, tasks }, scroller = { x: 0, y: 0 }) {
+export function cloneVisible(source, { win, inline, tasks }, scroller = { x: 0, y: 0 }) {
   if (source.nodeType === 3) return source.cloneNode(false);
   if (source.nodeType !== 1) return null;
   const tag = source.tagName.toLowerCase();
@@ -345,10 +362,17 @@ function cloneVisible(source, { win, inline, tasks }, scroller = { x: 0, y: 0 })
   if (style.display === 'none') return null;
   const doc = win.document;
 
-  if (tag === 'canvas' || tag === 'video' || tag === 'iframe') return frozenSurface(source, tag, style, doc);
+  const masked = source.hasAttribute('data-capture-mask');
+  if (!masked && (tag === 'canvas' || tag === 'video' || tag === 'iframe')) return frozenSurface(source, tag, style, doc);
 
   const clone = source.cloneNode(false);
-  copyFieldState(source, clone);
+  copyFieldState(source, clone, masked);
+  if (masked) {
+    // Its children are never visited: a textarea's hold its text, too.
+    clone.removeAttribute('title');
+    if (!/^(input|textarea|select)$/.test(tag)) clone.textContent = CAPTURE_MASK;
+    return clone;
+  }
   if (tag === 'img') {
     clone.removeAttribute('srcset');
     const src = source.currentSrc || source.src;

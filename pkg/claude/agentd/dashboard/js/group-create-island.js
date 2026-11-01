@@ -440,7 +440,7 @@ function GroupCreateDialog({
               disabled=${disabled}
               onInput=${(event) => setField('environment', draft.environment.map((row, rowIndex) =>
                 rowIndex === index ? { ...row, name: event.currentTarget.value } : row))} />
-            <input class="sbx-env-value" placeholder="value" value=${entry.value}
+            <input data-capture-mask class="sbx-env-value" placeholder="value" value=${entry.value}
               disabled=${disabled}
               onInput=${(event) => setField('environment', draft.environment.map((row, rowIndex) =>
                 rowIndex === index ? { ...row, value: event.currentTarget.value } : row))} />
