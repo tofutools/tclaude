@@ -68,6 +68,11 @@ test('the context carries no masked text, selected or under the cursor', () => {
   const { document } = win;
   const once = document.getElementById('once');
   assert.equal(describeElement(once).text, '');
+  const wrap = document.getElementById('wrap');
+  wrap.setAttribute('title', SECRET);
+  assert.equal(describeElement(once).label, '', 'a title can repeat the value');
+  wrap.setAttribute('aria-label', 'Invite');
+  assert.equal(describeElement(once).label, 'Invite', 'but a field keeps its name');
   assert.equal(describeElement(document.getElementById('wrap')).text, '', 'nor from around it');
   assert.equal(describeElement(document.getElementById('ok')).text, 'Save', 'ordinary text is still described');
 

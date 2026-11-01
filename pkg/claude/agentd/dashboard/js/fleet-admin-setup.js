@@ -339,7 +339,7 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
   return html`<div class="fs-body" data-setup-step="hub">
     <h3>Join a hub</h3>
     ${JOIN_HOWTO}
-    <label class="fa-ns-row"><span class="fa-k">join code</span><textarea id="fleet-setup-code" rows="2" value=${code} placeholder="tchj_… (paste it as is; line breaks are fine)" autocomplete="off" spellcheck="false" onInput=${onCode}></textarea></label>
+    <label class="fa-ns-row"><span class="fa-k">join code</span><textarea data-capture-mask id="fleet-setup-code" rows="2" value=${code} placeholder="tchj_… (paste it as is; line breaks are fine)" autocomplete="off" spellcheck="false" onInput=${onCode}></textarea></label>
     <label class="fa-ns-row"><span class="fa-k">this node's name</span><input id="fleet-setup-name" value=${form.name} placeholder="how other nodes see this one" autocomplete="off" onInput=${set('name')} /></label>
     <${JoinPreview} preview=${preview} />
     ${JOIN_CODE.test(code) && html`<div class="fs-actions"><button id="fleet-setup-code-join" type="button" class="primary" disabled=${busy || !preview?.hub_url || preview.expired} onClick=${() => joinCode(code, form.name.trim())}>Join hub…</button></div>`}

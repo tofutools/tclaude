@@ -55,11 +55,13 @@ export function describeElement(el, y = null) {
   if (!el?.tagName) return null;
   const control = el.closest?.('button, a[href], [role="button"], [role="tab"], [role="menuitem"], [role="link"], label, summary, th, input, select, textarea') || el;
   const field = /^(input|select|textarea)$/i.test(control.tagName || '');
+  const masked = holdsMasked(el, control);
   const out = {
     tag: String(control.tagName || '').toLowerCase(),
     role: control.getAttribute?.('role') || '',
-    label: clip(control.getAttribute?.('aria-label') || control.getAttribute?.('title') || control.getAttribute?.('placeholder')),
-    text: field || holdsMasked(el, control) ? '' : clip(terminalRow(el, y)?.textContent ?? control.innerText ?? control.textContent),
+    // A masked element's title can repeat its value; aria-label only names it.
+    label: clip(control.getAttribute?.('aria-label') || (masked ? '' : control.getAttribute?.('title')) || control.getAttribute?.('placeholder')),
+    text: field || masked ? '' : clip(terminalRow(el, y)?.textContent ?? control.innerText ?? control.textContent),
     id: control.id || '',
     ref: control.id ? `#${control.id}` : '',
     board_element: el.closest?.('[data-element]')?.getAttribute?.('data-element') || '',

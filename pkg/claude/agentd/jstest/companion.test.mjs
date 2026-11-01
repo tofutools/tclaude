@@ -951,6 +951,12 @@ test('annotation strokes are classified and named by what is under them', async 
   input.type = 'password'; input.value = 'hunter2'; input.setAttribute('placeholder', 'API token');
   doc.body.appendChild(input);
   assert.deepEqual(m.labelFor(input), { text: 'API token', role: 'field' });
+
+  const secret = harness.document.body.appendChild(harness.document.createElement('div'));
+  secret.innerHTML = '<p id="masked-card">Invite: <code data-capture-mask>sk-live-s3cret</code></p>';
+  const code = secret.querySelector('code');
+  assert.equal(m.labelFor(code), null, 'a marked secret is not named by its text');
+  assert.equal(m.labelFor(secret.querySelector('#masked-card')), null, 'nor by the text around it');
 });
 
 test('marking up the page sends the agent a numbered description of the marks', async (t) => {

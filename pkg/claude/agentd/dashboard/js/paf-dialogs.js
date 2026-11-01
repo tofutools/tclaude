@@ -253,7 +253,7 @@ export function ImportConfirmList({ confirm, overrides, setOverrides, reveal }) 
         <${Check} id=${`import-keep-${item.id}`} checked=${canKeep && (overrides[item.id] ?? !!item.default)} disabled=${!canKeep}
           onChange=${(value) => setOverrides({ ...overrides, [item.id]: value })} hint=${item.gives}>${item.label}</${Check}>
         ${item.revealable && canKeep && shown[item.id]?.value === undefined && html`<button type="button" class="import-confirm-reveal" onClick=${() => show(item)}>Reveal value</button>`}
-        ${shown[item.id]?.value !== undefined && html`<code class="import-confirm-value">${shown[item.id].value}</code>`}
+        ${shown[item.id]?.value !== undefined && html`<code data-capture-mask class="import-confirm-value">${shown[item.id].value}</code>`}
         ${shown[item.id]?.error && html`<div class="gi-warn">⚠ ${shown[item.id].error}</div>`}
       </div>`)}
     </div>`)}
