@@ -82,6 +82,9 @@ import {
 } from './resolved-defaults.js';
 
 const html = htm.bind(h);
+// A harness change clears context trims, which no field shows, so a fill of it waits.
+const SPAWN_CONTEXT_CLAIM = ['agent-spawn-harness'];
+const NO_CLAIMS = [];
 const NEW_USAGE_PROFILE = '/new-usage-profile';
 
 // liveUsageProfiles reads the usage profiles off the live snapshot rather
@@ -1029,8 +1032,6 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         operatorSet.current.add('contextFeatures');
         profileOverrides.current.add('contextFeatures');
         setDraft((before) => ({ ...before, contextFeatures: { ...kept } }));
-        // A harness change resets these, and no field shows them, so hold that here.
-        claimField('spawn', 'agent-spawn-harness');
       },
     });
   };
@@ -1930,7 +1931,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       Use SSH compatibility workaround
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
-    <${FormFillBar} form="spawn" keepValues=${!!queued} fillable=${!current.options.autoSpawn} />
+    <${FormFillBar} form="spawn" keepValues=${!!queued} fillable=${!current.options.autoSpawn}
+      claims=${Object.keys(draft.contextFeatures || {}).length ? SPAWN_CONTEXT_CLAIM : NO_CLAIMS} />
     <div class="modal-buttons">
       ${queued && html`<button id="agent-spawn-queued-discard" class="confirm-danger" type="button" disabled=${busy}
         title="Remove this prepared spawn from the queue without launching it"

@@ -10,6 +10,8 @@ import { parseHTML } from './third_party/linkedom.mjs';
 
 const ROW = `
   <input id="agent-spawn-name" value="">
+  <input id="agent-spawn-wt-branch" value="">
+  <input id="agent-spawn-wt-sync" type="checkbox">
   <textarea id="agent-spawn-init-msg"></textarea>
   <select id="agent-spawn-harness"><option value="claude">Claude Code</option><option value="codex">Codex CLI</option></select>
   <select id="agent-spawn-usage-profile"><option value="">inherited</option><option value="/new" data-no-fill="">new</option></select>
@@ -39,7 +41,7 @@ function page() {
   for (const select of root.querySelectorAll('select')) {
     let current = select.querySelector('option')?.getAttribute('value') ?? '';
     Object.defineProperty(select, 'value', { get: () => current, set: (value) => { current = value; } });
-    Object.defineProperty(select, 'options', { get: () => [...select.querySelectorAll('option')].map((option) => ({ value: option.getAttribute('value'), label: option.textContent, textContent: option.textContent, hasAttribute: (name) => option.hasAttribute(name) })) });
+    Object.defineProperty(select, 'options', { configurable: true, get: () => [...select.querySelectorAll('option')].map((option) => ({ value: option.getAttribute('value'), label: option.textContent, textContent: option.textContent, hasAttribute: (name) => option.hasAttribute(name) })) });
   }
   for (const box of root.querySelectorAll('input[type="checkbox"]')) {
     let checked = false;
@@ -269,6 +271,57 @@ test('leaving a field for Undo does not make what Undo writes the operator\'s', 
   await undoFill('spawn', { win: p.window, tick: async () => p.settle() });
   assert.equal(value(p, 'init-msg'), '');
   assert.deepEqual(filledIn('spawn'), []);
+  p.stop();
+});
+
+test('undo leaves alone what the operator types while it runs', async () => {
+  const p = page();
+  await fill(p, { 'agent-spawn-init-msg': 'a', 'agent-spawn-name': 'b' });
+  let once = () => typed(p, 'agent-spawn-init-msg', 'mine');
+  await undoFill('spawn', { win: p.window, tick: async () => { once(); once = () => {}; } });
+  assert.equal(value(p, 'init-msg'), 'mine');
+  assert.equal(value(p, 'name'), '');
+  p.stop();
+});
+
+test('a browse result during a fill stays', async () => {
+  const p = page();
+  typed(p, 'agent-spawn-name', 'old');
+  const tick = async () => { p.document.getElementById('agent-spawn-name').value = 'browsed'; claimField('spawn', 'agent-spawn-name'); };
+  await applyFill({ win: p.window, tick, request: { form: 'spawn', agent: 'a', fields: [{ field: 'agent-spawn-model', value: 'opus' }] } });
+  assert.equal(value(p, 'name'), 'browsed');
+  p.stop();
+});
+
+test('undo leaves a synced worktree for the form to work out again', async () => {
+  const p = page();
+  await fill(p, { 'agent-spawn-wt-sync': 'true' });
+  const harness = p.document.getElementById('agent-spawn-harness');
+  const once = () => { p.document.getElementById('agent-spawn-wt-branch').value = 'moved'; harness.removeEventListener('change', once); };
+  harness.addEventListener('change', once);
+  await fill(p, { 'agent-spawn-harness': 'codex' });
+  const writes = [];
+  p.document.getElementById('agent-spawn-wt-branch').addEventListener('input', (event) => writes.push(event.target.value));
+  await undoFill('spawn', { win: p.window, tick: p.tick });
+  assert.deepEqual(writes, []);
+  assert.deepEqual(filledIn('spawn').filter((field) => field.id === 'agent-spawn-wt-branch'), []);
+  p.stop();
+});
+
+test('an operator value the undone harness took away is listed, not blanked', async () => {
+  const p = page();
+  const approval = p.document.getElementById('agent-spawn-approval');
+  await fill(p, { 'agent-spawn-harness': 'codex' });
+  typed(p, 'agent-spawn-approval', 'yolo');
+  // Undoing the harness resets approval and no longer offers yolo.
+  const options = Object.getOwnPropertyDescriptor(approval, 'options').get;
+  p.document.getElementById('agent-spawn-harness').addEventListener('change', () => {
+    approval.value = 'auto';
+    Object.defineProperty(approval, 'options', { configurable: true, get: () => options().filter((option) => option.value !== 'yolo') });
+  });
+  await undoFill('spawn', { win: p.window, tick: p.tick });
+  assert.equal(value(p, 'approval'), 'auto');
+  assert.deepEqual(filledIn('spawn').map((field) => field.id), ['agent-spawn-approval']);
   p.stop();
 });
 

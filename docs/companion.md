@@ -705,7 +705,9 @@ names that agent. The spawn form and Config take fills. Field ids come from
 - A field you edited stays yours: a fill won't touch it, before or after, and
   **Undo all** keeps your edit. That includes anything your own change moved, such
   as the fields a profile pick set, and a directory you browsed to. A queued spawn's
-  stored values count as yours.
+  stored values count as yours. If undoing a harness removes a value you picked for
+  it, the field stays listed in the bar. A fill of the harness is refused while the
+  form holds context trims, because changing harness would clear them.
 - Some fields reset others: a harness resets its sandbox, approval and model
   fields, for example. A fill of one is refused while you own what it would reset.
   Otherwise everything it moved is listed, warned about and undone with it.

@@ -33,6 +33,7 @@ const SPAWN_RESETS = new Map(Object.entries({
   harness: spawnIds(
     'model', 'model-codex', 'model-custom', 'effort', 'fast-mode', 'sandbox', 'sandbox-impl', 'approval', 'approval-reviewer', 'tools', 'ask-timeout', 'trust-dir', 'remote-control',
     'ssh-workaround', 'auto-memory', 'peer-messaging', 'auto-compact-window', 'context-window-max', 'copilot-api', 'codex-app-server',
+    'sandbox-profile', 'usage-profile', 'allow-unenforced-sandbox',
   ),
   group: [...SPAWN_WORKTREE, ...spawnIds('remote-control', 'sandbox-profile', 'group-context')],
   cwd: SPAWN_WORKTREE,
@@ -58,6 +59,9 @@ export const FILL_FORMS = Object.freeze({
     accepts: (id) => SPAWN_FIELDS.has(id),
     widens: (el) => SPAWN_FIELDS.get(el.id) || '',
     resets: (id) => SPAWN_RESETS.get(id) || [],
+    // With sync on, the form works these out again from the name. Writing them
+    // back would turn sync off, and the worktree list may still be loading.
+    rederives: (id, doc) => SPAWN_WORKTREE.includes(id) && !!doc.getElementById('agent-spawn-wt-sync')?.checked,
   },
   // Config's sections stay mounted while hidden, and the rail flags the ones a
   // fill changed, so a field can be filled in a section that is not open.
@@ -66,6 +70,7 @@ export const FILL_FORMS = Object.freeze({
     accepts: (id) => id.startsWith('cfg-') && id !== 'cfg-filter',
     widens: configWidens,
     resets: () => [],
+    rederives: () => false,
   },
 });
 
@@ -85,8 +90,10 @@ const valuesIn = (root) => new Map(fieldsIn(root).map((el) => [el.id, readField(
 
 // writeField sends a value through the control's own handlers. watch.writing
 // tells the watch this is not the operator: a checkbox's click() arrives trusted.
+// A select that no longer offers the value is left alone: it would read as blank.
 function writeField(win, watch, el, value) {
   watch.sweep();
+  if (el.tagName === 'SELECT' && ![...el.options].some((option) => option.value === value)) return;
   watch.writing = true;
   try {
     if (el.type === 'checkbox' || el.type === 'radio') {
@@ -187,7 +194,9 @@ export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl 
 // claimField is for a change that fires no event, such as a directory chosen in
 // a browse dialog: that field is the operator's.
 export function claimField(form, id) {
-  watches.get(form)?.owned.add(id);
+  const watch = watches.get(form);
+  watch?.owned.add(id);
+  watch?.kept?.delete(id);
   const held = filledIn(form);
   if (held.some((field) => field.id === id)) setFilled(form, held.filter((field) => field.id !== id));
 }
@@ -321,12 +330,14 @@ export const undoFill = (name, { win = globalThis.window, tick = defaultTick } =
 async function undoForm(name, win, tick) {
   const watch = watches.get(name);
   if (!watch) return;
+  const form = FILL_FORMS[name];
+  const left = (field) => field.cascade && form.rederives(field.id, win.document);
   watch.sweep();
   watch.kept = valuesIn(watch.root);
   const held = filledIn(name);
   const restore = async (field) => {
     const el = win.document.getElementById(field.id);
-    if (!el || readField(el) === field.before) return;
+    if (!el || watch.owned.has(field.id) || left(field) || readField(el) === field.before) return;
     writeField(win, watch, el, field.before);
     await tick();
     watch.look();
@@ -337,8 +348,15 @@ async function undoForm(name, win, tick) {
   watch.look();
   setFilled(name, filledIn(name).filter((field) => {
     const el = win.document.getElementById(field.id);
-    return el && readField(el) !== field.before;
+    return el && !left(field) && readField(el) !== field.before;
   }));
+  // A value only the undone harness offers cannot come back, so it is listed.
+  const lost = [...watch.kept].filter(([id]) => watch.owned.has(id) && win.document.getElementById(id));
+  const changes = lost.map(([id, before]) => {
+    const el = win.document.getElementById(id);
+    return { el, before, after: readField(el), cascade: true };
+  }).filter((change) => change.before !== change.after);
+  if (changes.length) record(name, form, win, held[0]?.agent, changes);
 }
 
 // fillSummary is what the bar says. A form can have been filled by several agents.

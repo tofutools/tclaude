@@ -6,7 +6,7 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { FILL_FORMS, filledIn, fillSummary, onFillsChange, undoFill, watchForm } from './form-fill.js';
+import { claimField, FILL_FORMS, filledIn, fillSummary, onFillsChange, undoFill, watchForm } from './form-fill.js';
 
 const html = htm.bind(h);
 
@@ -25,7 +25,7 @@ function markFields(root, fields) {
 // form reloads, read here so that no larger part of a form subscribes to it, and
 // a form with one takes no fill until it has loaded. A form that is not fillable
 // has no watch, so a fill finds it closed.
-export function FormFillBar({ form, generation, keepValues = false, fillable = true, win = globalThis.window }) {
+export function FormFillBar({ form, generation, keepValues = false, fillable = true, claims = [], win = globalThis.window }) {
   const ref = useRef(null);
   const rootOf = () => ref.current?.closest(FILL_FORMS[form].root) || null;
   const loaded = generation?.value;
@@ -34,6 +34,9 @@ export function FormFillBar({ form, generation, keepValues = false, fillable = t
     const waiting = generation && !loaded;
     return root && fillable && !waiting ? watchForm(form, root, { win, keepValues }) : undefined;
   }, [form, loaded, fillable]);
+  // After the watch starts: these are fields the operator holds through something
+  // that is not a field.
+  useEffect(() => { for (const id of claims) claimField(form, id); }, [form, loaded, fillable, claims.join()]);
   const [, redraw] = useState(0);
   useEffect(() => onFillsChange(() => redraw((count) => count + 1)), []);
   const fields = filledIn(form);
