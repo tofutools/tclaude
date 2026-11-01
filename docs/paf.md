@@ -784,7 +784,9 @@ posture it is the shared store, shared with other unsandboxed OpenCode agents.
 
 Members imported by an earlier version are left as they are, running or not:
 they keep the baseline posture, with no tclaude sandbox. Move one with
-[`sandbox-impl set`](sandboxing.md#reassigning-an-existing-agent).
+[`sandbox-impl set`](sandboxing.md#reassigning-an-existing-agent), except an
+OpenCode member onto tclaude's sandbox, which has to be
+[imported again](sandboxing.md#reassigning-an-existing-agent).
 
 `tclaude paf inspect`, `validate` and `render` also read group export zips,
 converting them on read.

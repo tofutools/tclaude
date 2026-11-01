@@ -944,7 +944,8 @@ func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview 
 // receiverSandboxProfile drops the sandbox posture an agent bundle recorded.
 // These fields would land on the spawn's explicit tier, above every receiver
 // default, so a file could widen the receiving group's posture. An imported
-// agent takes the receiver's instead. Only tclaude's sandbox stays, so that a
+// agent takes the receiver's instead, which also means a tighter harness mode
+// does not travel. Only tclaude's sandbox stays, so that a
 // move does not take an agent's wall away with it; it is as tight as the
 // implementation gets, and the normal launch gates refuse it where this node
 // cannot run it.

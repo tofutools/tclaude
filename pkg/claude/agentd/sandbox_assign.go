@@ -336,7 +336,8 @@ func openCodeStateAssignmentFailure(h *harness.Harness, agentID, implementation 
 	}
 	return &spawnFailure{http.StatusConflict, "opencode_state_unallocated",
 		"this OpenCode agent keeps its conversation in the shared store, which tclaude's sandbox cannot read; " +
-			"export it and import it into a group whose sandbox is tclaude's, which installs the conversation in private state"}
+			"export it and import it where tclaude's sandbox is the receiving group's spawn profile or the install default, " +
+			"which installs the conversation in private state"}
 }
 
 // assignedHarnessBuiltinMode decides which harness-builtin mode the new posture

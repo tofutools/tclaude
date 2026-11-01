@@ -173,8 +173,10 @@ default is recorded instead unless `--sandbox` pins one.
 An OpenCode agent with no private state allocation cannot be assigned
 tclaude's sandbox. Its conversation is in the shared store, which the sandboxed
 server cannot read, so the assignment refuses rather than leave an agent whose
-every resume fails. Export it and import it into a group that uses tclaude's
-sandbox: the import installs the conversation in private state.
+every resume fails. Export it, then import it with `paf import --group` into a
+group whose spawn profile uses tclaude's sandbox, or import it or its group while
+tclaude's sandbox is the install default or the global profile's choice: the
+import installs the conversation in private state.
 
 ### Imported agents
 

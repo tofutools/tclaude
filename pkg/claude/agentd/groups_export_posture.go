@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -92,12 +93,14 @@ func resolveLandingPosture(
 	}
 	h := defaults.harness
 	implementation, source := string(defaults.implementation), defaults.implementationSource
+	resolvedBy := defaults.resolvedBy
 	if requestedImplementation != "" {
 		implementation, source = requestedImplementation, agent.ProvExplicit
+		resolvedBy = joinProvenanceSources("the agent file", defaults.sandboxSource)
 	}
 	posture := &landingPosture{
 		SandboxImplementation: implementation, Sandbox: defaults.sandbox,
-		ResolvedBy: defaults.resolvedBy, modeSource: defaults.sandboxSource,
+		ResolvedBy: resolvedBy, modeSource: defaults.sandboxSource,
 	}
 	refuse := func(fail *spawnFailure) (*landingPosture, error) {
 		posture.Refused, posture.refusal = fail.Msg, fail
@@ -117,6 +120,12 @@ func resolveLandingPosture(
 		return refuse(fail)
 	}
 	posture.Sandbox = posture.mode
+	if home, err := os.UserHomeDir(); err == nil && harness.CodexSandboxCwdConflict(nativeMode, cwd, home) {
+		return refuse(&spawnFailure{http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
+			"refusing to land a %s agent in %q under sandbox %q: it would expose "+
+				"~/.tclaude / ~/.codex / ~/.claude to the agent's writes; import into a project subdirectory",
+			h.Name, cwd, nativeMode)})
+	}
 
 	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
 	if !sandboxProfilesDisabled(h.Name, nativeMode, implementation) {
@@ -134,7 +143,7 @@ func resolveLandingPosture(
 		return refuse(fail)
 	}
 	if _, fail := planSandboxProfileAccessForLaunch(h.Name, nativeMode, &snapshot, implementation,
-		session.ModelTransportLaunchContext{Model: model, Cwd: cwd}, false); fail != nil {
+		session.ModelTransportLaunchContext{Model: model, Cwd: nearestExistingDir(cwd)}, false); fail != nil {
 		return refuse(fail)
 	}
 	for _, applied := range snapshot.Applied {
@@ -150,6 +159,24 @@ func resolveLandingPosture(
 	return posture, nil
 }
 
+// nearestExistingDir is cwd or its closest existing ancestor. --into may only
+// have named the landing directory so far, and the gates that run a harness
+// probe need somewhere to run it, without a refused import leaving a directory
+// behind.
+func nearestExistingDir(cwd string) string {
+	for cwd != "" {
+		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
+			return cwd
+		}
+		parent := filepath.Dir(cwd)
+		if parent == cwd {
+			break
+		}
+		cwd = parent
+	}
+	return cwd
+}
+
 func isTclaudeLayer(implementation string) bool {
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
 	return err == nil && normalized == sandboxpolicy.ImplementationTclaudeLayer
@@ -161,6 +188,10 @@ func planGroupPostures(ls []*groupMemberLanding, exp *groupexport.Export, cwd st
 		posture, err := resolveLandingPosture(nil, l.Harness, "", l.Model, cwd, exp.Group.Environment)
 		if err != nil {
 			return fmt.Errorf("resolve the posture of %s: %w", l.Title, err)
+		}
+		if l.history == nil {
+			// Configuration only: no conversation goes in either store.
+			posture.OpenCodeState = ""
 		}
 		l.Posture = posture
 	}

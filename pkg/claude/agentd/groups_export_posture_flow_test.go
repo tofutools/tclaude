@@ -316,3 +316,39 @@ func TestAgentImport_OfflineLandingResumesInTheReceiverPosture(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "tclaude-layer", got)
 }
+
+// The spawn gate on Codex's workspace root applies to an import too.
+func TestGroupImport_RefusesCodexLandingOverHome(t *testing.T) {
+	f := newFlow(t)
+	t.Setenv("CODEX_HOME", "")
+	archive := exportClaudeMember(t, f, "paf")
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	q := url.Values{"into": {home}, "as": {"crew-home"}, "harness": {"codex"}, "confirm_history_loss": {"true"}}
+
+	dry := inspectGroupWith(t, f, archive, q)
+	require.Len(t, dry, 1)
+	assert.Contains(t, dry[0].Posture.Refused, "project subdirectory")
+
+	rec, _ := importGroupWith(t, f, archive, q)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "invalid_cwd")
+}
+
+// A member with no conversation has nothing in either store to report.
+func TestGroupImport_ConfigOnlyOpenCodeMemberReportsNoState(t *testing.T) {
+	f := newFlow(t)
+	store := fakeOpenCodeStore(t)
+	const source = "ses_0123456789abcdefghijklmnov"
+	seedOpenCodeSession(t, store, source, "scout", testutil.CanonicalTempDir(t))
+	f.HaveGroup("crew")
+	f.HaveMember("crew", source)
+	archive := exportGroupAs(t, f, "crew", "zip")
+	setSandboxImplDefault(t, f, "tclaude-layer")
+
+	rec, landings := importGroupWith(t, f, archive, url.Values{"into": {f.TestCwd("dst")}, "as": {"crew-zip"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, landings, 1)
+	assert.Equal(t, "tclaude-layer", landings[0].Posture.SandboxImplementation)
+	assert.Empty(t, landings[0].Posture.OpenCodeState)
+}

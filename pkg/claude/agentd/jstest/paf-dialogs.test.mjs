@@ -169,8 +169,8 @@ test('a group preview offers per-member harness and model and re-inspects with t
     source: 'paf', source_group: 'crew', format_version: 5, agent_count: 2, message_count: 3, conv_count: 2, missing_convs: 0,
     target_name: 'crew', target_name_valid: true, group_name_taken: false, conv_collisions: [], findings: [],
     landings: [
-      { conv_id: 'c1', title: 'alice', source_harness: 'claude', harness: 'claude', rung: 'native' },
-      { conv_id: 'c2', title: 'cody', source_harness: 'opencode', harness: 'opencode', rung: 'none', warnings: ['config only'] },
+      { conv_id: 'c1', title: 'alice', source_harness: 'claude', harness: 'claude', rung: 'native', posture: { sandbox_implementation: 'tclaude-layer', sandbox_profiles: ['walled'], resolved_by: 'install default' } },
+      { conv_id: 'c2', title: 'cody', source_harness: 'opencode', harness: 'opencode', rung: 'none', warnings: ['config only'], posture: { sandbox_implementation: 'tclaude-layer', opencode_state: 'private', refused: 'no bwrap here' } },
     ],
   };
   const actions = {
@@ -184,6 +184,8 @@ test('a group preview offers per-member harness and model and re-inspects with t
   const rows = [...host.querySelectorAll('#group-import-landings tbody tr')];
   assert.deepEqual(rows.map((row) => row.dataset.member), ['alice', 'cody']);
   assert.match(rows[1].textContent, /config only/);
+  assert.match(rows[0].textContent, /tclaude-layer · walled/);
+  assert.match(rows[1].textContent, /no bwrap here/);
   await choose(host.querySelector('#group-import-member-c2-harness'), 'codex');
   await settle();
   assert.deepEqual(inspected.at(-1).members, { c2: { harness: 'codex', model: '' } });
