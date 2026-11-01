@@ -13,6 +13,7 @@
 //
 // Everything here is DOM-free so it can be tested directly.
 import { presenceView } from './agent-presence.js';
+import { OVERLAY_FOOTER_ROOM, OVERLAY_MIN_H, OVERLAY_MIN_W, fitPlacement } from './overlay-window-model.js';
 
 export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
 // What this window is showing is per browser tab (sessionStorage): an open
@@ -32,16 +33,8 @@ export const COMPANION_CHIP_SPOT_PREF = 'tclaude.dash.companion.chip-spot';
 export const COMPANION_WINDOW_SPOT_PREF = 'tclaude.dash.companion.window-spot';
 export const COMPANION_MAX_TABS = 8;
 
-export const COMPANION_MIN_W = 360;
-export const COMPANION_MIN_H = 220;
 export const COMPANION_DEFAULT_W = 640;
 export const COMPANION_DEFAULT_H = 420;
-// Distance from a viewport edge at which a drag offers to snap.
-export const COMPANION_SNAP_EDGE = 28;
-// The share of the viewport a snapped window takes.
-export const COMPANION_SNAP_SHARE = 0.42;
-// Room kept for the fixed footer bar below a placement.
-export const COMPANION_FOOTER_ROOM = 29;
 
 export const STEWARD_NAME = 'steward';
 export const STEWARD_SCOPE = Object.freeze({ kind: 'steward' });
@@ -206,85 +199,9 @@ export function nextActive(tabs, removed) {
 }
 
 export function defaultPlacement(viewport) {
-  const w = Math.min(COMPANION_DEFAULT_W, Math.max(COMPANION_MIN_W, viewport.width - 48));
-  const h = Math.min(COMPANION_DEFAULT_H, Math.max(COMPANION_MIN_H, viewport.height - 140));
-  return { x: viewport.width - w - 24, y: viewport.height - h - COMPANION_FOOTER_ROOM - 56, w, h, snap: '' };
-}
-
-export function parsePlacement(raw) {
-  try {
-    const p = JSON.parse(raw || 'null');
-    if (!p || typeof p !== 'object') return null;
-    const nums = ['x', 'y', 'w', 'h'].every((k) => Number.isFinite(p[k]));
-    if (!nums) return null;
-    const snap = ['left', 'right', 'bottom', 'max'].includes(p.snap) ? p.snap : '';
-    const placement = { x: p.x, y: p.y, w: p.w, h: p.h, snap };
-    return snap === 'max' && ['left', 'right', 'bottom'].includes(p.restoreSnap) ? { ...placement, restoreSnap: p.restoreSnap } : placement;
-  } catch {
-    return null;
-  }
-}
-
-// clampPlacement keeps a floating window reachable: at least its title bar
-// stays on screen whatever the viewport did since it was saved.
-export function clampPlacement(p, viewport) {
-  const maxW = Math.max(COMPANION_MIN_W, viewport.width - 8);
-  const maxH = Math.max(COMPANION_MIN_H, viewport.height - COMPANION_FOOTER_ROOM - 8);
-  const w = Math.round(Math.min(maxW, Math.max(COMPANION_MIN_W, p.w)));
-  const h = Math.round(Math.min(maxH, Math.max(COMPANION_MIN_H, p.h)));
-  const x = Math.round(Math.min(viewport.width - 80, Math.max(80 - w, p.x)));
-  const y = Math.round(Math.min(viewport.height - COMPANION_FOOTER_ROOM - 36, Math.max(0, p.y)));
-  return { x, y, w, h, snap: p.snap || '' };
-}
-
-// fitPlacement is where a window opens: exactly its saved place when that fits,
-// otherwise moved in, and smaller only if the viewport cannot hold it. Unlike
-// clampPlacement it keeps the whole title bar on screen, because the close and
-// minimize controls sit at its right end. A viewport narrower than the minimum
-// width keeps that right end. The result is never saved, so a larger browser
-// brings back the operator's own size.
-export function fitPlacement(p, viewport) {
-  const { w, h, snap } = clampPlacement(p, viewport);
-  const right = viewport.width - w;
-  const x = Math.round(Math.max(Math.min(0, right), Math.min(p.x, right)));
-  const y = Math.round(Math.max(0, Math.min(p.y, viewport.height - COMPANION_FOOTER_ROOM - h)));
-  return { x, y, w, h, snap };
-}
-
-// snapZone names the edge a dragged window would snap to for a pointer
-// position, or '' to keep floating.
-export function snapZone(pointer, viewport) {
-  if (pointer.x >= viewport.width - COMPANION_SNAP_EDGE) return 'right';
-  if (pointer.x <= COMPANION_SNAP_EDGE) return 'left';
-  if (pointer.y >= viewport.height - COMPANION_FOOTER_ROOM - COMPANION_SNAP_EDGE) return 'bottom';
-  return '';
-}
-
-// viewportOf is the area a fixed window can use. innerWidth and innerHeight
-// include page scrollbars, which would cover a window snapped to that edge.
-export function viewportOf(win) {
-  const root = win?.document?.documentElement;
-  return {
-    width: root?.clientWidth || win?.innerWidth || 1280,
-    height: root?.clientHeight || win?.innerHeight || 800,
-  };
-}
-
-// zoneRect is the rectangle a snapped window occupies: a full-height side
-// panel below the top bar, a full-width bottom drawer above the footer, or for
-// a maximized window all the room between the two.
-export function zoneRect(zone, viewport, top = 0) {
-  const bottom = viewport.height - COMPANION_FOOTER_ROOM;
-  if (zone === 'max') return { x: 0, y: top, w: viewport.width, h: Math.max(COMPANION_MIN_H, bottom - top), snap: zone };
-  if (zone === 'right' || zone === 'left') {
-    const w = Math.min(viewport.width, Math.max(COMPANION_MIN_W, Math.round(viewport.width * COMPANION_SNAP_SHARE)));
-    return { x: zone === 'right' ? viewport.width - w : 0, y: top, w, h: Math.max(COMPANION_MIN_H, bottom - top), snap: zone };
-  }
-  if (zone === 'bottom') {
-    const h = Math.max(COMPANION_MIN_H, Math.round((bottom - top) * COMPANION_SNAP_SHARE));
-    return { x: 0, y: bottom - h, w: viewport.width, h, snap: zone };
-  }
-  return null;
+  const w = Math.min(COMPANION_DEFAULT_W, Math.max(OVERLAY_MIN_W, viewport.width - 48));
+  const h = Math.min(COMPANION_DEFAULT_H, Math.max(OVERLAY_MIN_H, viewport.height - 140));
+  return { x: viewport.width - w - 24, y: viewport.height - h - OVERLAY_FOOTER_ROOM - 56, w, h, snap: '' };
 }
 
 // The chips' snap spots. Corners and mid-bottom only: a mid-side spot would sit
@@ -320,7 +237,7 @@ export function spotPlacement(spot, p, viewport, top = 0) {
   let x = CHIP_INSET_X;
   if (spot.endsWith('right')) x = viewport.width - p.w - CHIP_INSET_X;
   if (spot.endsWith('center')) x = (viewport.width - p.w) / 2;
-  const y = spot.startsWith('top') ? top + CHIP_INSET_Y : viewport.height - COMPANION_FOOTER_ROOM - p.h - CHIP_INSET_Y;
+  const y = spot.startsWith('top') ? top + CHIP_INSET_Y : viewport.height - OVERLAY_FOOTER_ROOM - p.h - CHIP_INSET_Y;
   return fitPlacement({ ...p, x, y, snap: '' }, viewport);
 }
 

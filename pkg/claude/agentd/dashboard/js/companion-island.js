@@ -18,23 +18,24 @@
 // Terminals" parks this tab instead of fighting over the session.
 
 import { h, render } from 'preact';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
-  agentWaitsOnOperator, clampPlacement, fitPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
-  defaultPlacement, isAgentId, nextActive, parseChipSpot, parsePlacement, parseTabs, peekAnchor, snapZone, spotPlacement, stewardAgent, viewportOf,
-  parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
+  COMPANION_ACTIVE_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
+  agentWaitsOnOperator, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
+  defaultPlacement, isAgentId, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent,
+  parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { useChipDrag } from './companion-chip-drag.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
-import { ResizeFrame, resizedPlacement, savedAfterResize } from './window-resize.js';
+import { OverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
+import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
 import { StewardRoster } from './steward-roster.js';
-import { WindowControls, windowControlsLook } from './companion-window-controls.js';
+import { windowControlsLook } from './overlay-window-controls.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
@@ -48,44 +49,12 @@ import { useDismissablePopover } from './hover-popover.js';
 const html = htm.bind(h);
 
 const PEEK_DELAY_MS = 220;
-const COMPANION_TEAR_OFF_PX = 4;
 const PENDING_MS = 30000;
 // How long a minimized window keeps its terminal attached, so reopening it
 // shows content at once. After this it detaches and the next open reconnects.
 const WARM_MS = 5 * 60 * 1000;
 
-// snapTopOf is where a snapped side panel starts: just below the nav bar.
-function snapTopOf(win) {
-  try {
-    const bottom = win?.document?.querySelector?.('nav')?.getBoundingClientRect?.().bottom;
-    return Number.isFinite(bottom) && bottom > 0 ? Math.round(bottom) : 0;
-  } catch {
-    return 0;
-  }
-}
 const PEEK_REFRESH_MS = 1500;
-
-function reducedMotion(win) {
-  try {
-    return !!win?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-  } catch {
-    return false;
-  }
-}
-
-function readPref(prefs, key) {
-  try {
-    return prefs?.getItem?.(key) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function writePref(prefs, key, value) {
-  try {
-    prefs?.setItem?.(key, value);
-  } catch { /* prefs unavailable: the session keeps working */ }
-}
 
 function Avatar({ agent }) {
   const steward = agent?.steward;
@@ -288,13 +257,17 @@ export function CompanionApp({
   });
   const [open, setOpen] = useState(() => readPref(sessionPrefs, COMPANION_OPEN_PREF) === '1');
   const [chipSpot, setChipSpot] = useState(() => parseChipSpot(readPref(prefs, COMPANION_CHIP_SPOT_PREF)));
-  const [placement, setPlacement] = useState(() => {
-    const vp = viewportOf(win);
-    const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
-    if (saved?.snap) return zoneRect(saved.snap, vp, snapTopOf(win));
-    return fitPlacement(saved || defaultPlacement(vp), vp);
+  const overlay = useOverlayWindow({
+    win, prefs, prefKey: COMPANION_PLACEMENT_PREF, defaultPlacement, snaps: true, open,
+    // A floating window opens at the chips' spot until the operator moves it.
+    spotted: (base, viewport, top) => {
+      const spot = readPref(prefs, COMPANION_WINDOW_SPOT_PREF);
+      return spot ? spotPlacement(parseChipSpot(spot), base, viewport, top) : null;
+    },
+    onPlaced: () => writePref(prefs, COMPANION_WINDOW_SPOT_PREF, ''),
+    onRefocus: () => setFocusToken((n) => n + 1),
   });
-  const [guide, setGuide] = useState(null);
+  const { windowRef, openFrom, releaseFocus } = overlay;
   const [menu, setMenu] = useState(false);
   const addRef = useRef(null);
   const [busy, setBusy] = useState(false);
@@ -349,17 +322,10 @@ export function CompanionApp({
   const voiceStatuses = useRef(new Map());
   const voiceDecisions = useRef(new Map());
   const [sending, setSending] = useState(false);
-  const windowRef = useRef(null);
   const chipRects = useRef(new Map());
-  const openFrom = useRef(null);
   // Agents just summoned or opened but not yet in a snapshot: kept pinned (and
   // shown as starting) until a snapshot lists them or PENDING_MS passes.
   const pending = useRef(new Map());
-  // The cleanup of an in-flight drag or resize, run if the island unmounts.
-  const gesture = useRef(null);
-  const panelBeforeMaximize = useRef(null);
-  useEffect(() => () => gesture.current?.(), []);
-
   const activeId = tabs.includes(active) ? active : (tabs[0] || '');
   const activeAgent = activeId ? agents.get(activeId) || null : null;
   const [terminalFont, onTerminalFontChange] = useTerminalFont('companion', activeId, prefs);
@@ -550,18 +516,7 @@ export function CompanionApp({
   const minimize = useCallback(() => {
     setMenu(false);
     setDeciding(false);
-    const node = windowRef.current;
-    const chip = chipRects.current.get(activeId);
-    if (!node || !chip || reducedMotion(win) || typeof node.animate !== 'function') {
-      setOpen(false);
-      return;
-    }
-    const from = node.getBoundingClientRect();
-    const animation = node.animate([
-      { transform: 'none', opacity: 1 },
-      { transform: `translate(${chip.left - from.left}px, ${chip.top - from.top}px) scale(${chip.width / from.width}, ${chip.height / from.height})`, opacity: 0.4 },
-    ], { duration: 160, easing: 'cubic-bezier(.4,0,.8,.4)', fill: 'forwards' });
-    animation.onfinish = () => { setOpen(false); animation.cancel(); };
+    overlay.shrinkTo(chipRects.current.get(activeId), () => setOpen(false));
   }, [activeId, win]);
 
   const toggle = useCallback(() => {
@@ -613,107 +568,10 @@ export function CompanionApp({
   }, [open]);
   useEffect(() => () => clearTimeout(warmTimer.current), []);
 
-  // Reopen where the operator left it, if that still fits.
-  useLayoutEffect(() => {
-    if (open) setPlacement((p) => (p.snap ? p : floatingPlacement()));
-  }, [open]);
-
-  // Grow the window out of the chip it was opened from.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const from = openFrom.current;
-    openFrom.current = null;
-    const node = windowRef.current;
-    if (!from || !node || reducedMotion(win) || typeof node.animate !== 'function') return;
-    // The effect above only queued the move, so the node isn't there yet.
-    const target = placement.snap ? placement : floatingPlacement();
-    const to = { left: target.x, top: target.y, width: target.w, height: target.h };
-    if (!to.width || !to.height) return;
-    node.animate([
-      { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`, opacity: 0.5, borderRadius: '20px' },
-      { transform: 'none', opacity: 1, borderRadius: '10px' },
-    ], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
-  }, [open]);
-
-  // Keep a floating window on screen when the browser resizes, working from the
-  // saved placement so a larger browser restores what a smaller one shrank.
-  useEffect(() => {
-    const onResize = () => {
-      panelBeforeMaximize.current = null;
-      setPlacement((p) => (p.snap ? zoneRect(p.snap, viewportOf(win), snapTop()) : floatingPlacement()));
-    };
-    win?.addEventListener?.('resize', onResize);
-    return () => win?.removeEventListener?.('resize', onResize);
-  }, [win]);
-
-  function snapTop() {
-    return snapTopOf(win);
-  }
-
-  function floatingPlacement() {
-    const vp = viewportOf(win);
-    const saved = { ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || defaultPlacement(vp)), snap: '' };
-    const spot = readPref(prefs, COMPANION_WINDOW_SPOT_PREF);
-    return spot ? spotPlacement(parseChipSpot(spot), saved, vp, snapTop()) : fitPlacement(saved, vp);
-  }
-
-  // A move keeps the saved size: the window may only be small for this viewport.
-  function withSavedSize(p) {
-    const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
-    return saved ? { ...p, w: saved.w, h: saved.h } : p;
-  }
-
-  function savePlacement(p) {
-    writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
-  }
-
-  // The operator placed the window themselves: that now beats the chips' spot.
-  function saveMovedWindow(p) {
-    savePlacement(p);
-    writePref(prefs, COMPANION_WINDOW_SPOT_PREF, '');
-  }
-
   function moveChips(spot) {
     setChipSpot(spot);
     writePref(prefs, COMPANION_CHIP_SPOT_PREF, spot);
     writePref(prefs, COMPANION_WINDOW_SPOT_PREF, spot === DEFAULT_CHIP_SPOT ? '' : spot);
-  }
-
-  // A click on the title bar or other empty space leaves focus on the page.
-  // Give it back to the terminal, so typing works and the border returns.
-  // Controls keep their click, which may have opened a dialog, and a text
-  // selection survives so it can be copied.
-  function onWindowClick(event) {
-    if (event.target.closest?.('button, a, input, textarea, select, label')) return;
-    if (win?.getSelection?.()?.isCollapsed === false) return;
-    const active = win?.document?.activeElement;
-    if (!active || active === win.document.body) setFocusToken((n) => n + 1);
-  }
-
-  // A mouse press leaves focus on the control, where the next key meant for the
-  // terminal would press it again. Keyboard activation (detail 0) stays put.
-  function releaseFocus(event) {
-    if (!event?.detail) return;
-    event.currentTarget?.blur?.();
-    setFocusToken((n) => n + 1);
-  }
-
-  // Restore goes back to the panel the window was maximized from, or floating.
-  // The pref keeps which edge that was; a resized panel's size lives only here.
-  function toggleMaximize(event) {
-    const { restoreSnap = '', ...saved } = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || placement;
-    if (placement.snap === 'max') {
-      const panel = panelBeforeMaximize.current;
-      const next = !restoreSnap ? floatingPlacement()
-        : panel?.snap === restoreSnap ? panel : zoneRect(restoreSnap, viewportOf(win), snapTop());
-      setPlacement(next);
-      savePlacement({ ...saved, snap: restoreSnap });
-    } else {
-      panelBeforeMaximize.current = placement.snap ? placement : null;
-      setPlacement(zoneRect('max', viewportOf(win), snapTop()));
-      savePlacement({ ...saved, snap: 'max', ...(placement.snap && { restoreSnap: placement.snap }) });
-    }
-    releaseFocus(event);
   }
 
   function closeActive(event) {
@@ -723,104 +581,6 @@ export function CompanionApp({
     }
     closeTab(activeAgent.agentId);
     releaseFocus(event);
-  }
-
-  function onTitlePointerDown(event) {
-    if (event.button !== 0 || event.target.closest?.('button, input, [role="tab"]')) return;
-    const node = windowRef.current;
-    if (!node) return;
-    event.preventDefault();
-    const handle = event.currentTarget;
-    handle.setPointerCapture?.(event.pointerId);
-    let start = placement;
-    const sx = event.clientX;
-    const sy = event.clientY;
-    let zone = '';
-    let last = start;
-    let moved = false;
-    const move = (m) => {
-      if (start.snap) {
-        // A click leaves a snapped window alone. Tearing it off takes a real
-        // move, and restores a floating size under the pointer.
-        if (Math.hypot(m.clientX - sx, m.clientY - sy) < COMPANION_TEAR_OFF_PX) return;
-        const vp = viewportOf(win);
-        const floating = clampPlacement({ ...defaultPlacement(vp), ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || {}), snap: '' }, vp);
-        start = { ...floating, x: sx - floating.w / 2, y: sy - 14, snap: '' };
-      }
-      moved = true;
-      last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
-      setPlacement(last);
-      zone = snapZone({ x: m.clientX, y: m.clientY }, viewportOf(win));
-      setGuide(zone ? zoneRect(zone, viewportOf(win), snapTop()) : null);
-    };
-    const up = () => {
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', up);
-      handle.removeEventListener('pointercancel', up);
-      setGuide(null);
-      if (zone) {
-        setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
-        saveMovedWindow({ ...withSavedSize(last), snap: zone });
-      } else if (moved) {
-        // A click shows the fitted placement, which is not the operator's to keep.
-        saveMovedWindow(withSavedSize(last));
-      }
-    };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', up);
-    handle.addEventListener('pointercancel', up);
-    gesture.current = () => {
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', up);
-      handle.removeEventListener('pointercancel', up);
-    };
-  }
-
-  function onResizePointerDown(event, zone = '') {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    handle.setPointerCapture?.(event.pointerId);
-    const start = placement;
-    const sx = event.clientX;
-    const sy = event.clientY;
-    let last = start;
-    let moved = false;
-    const move = (m) => {
-      moved = true;
-      const dx = m.clientX - sx;
-      const dy = m.clientY - sy;
-      // A snapped panel resizes along its free edge only.
-      if (start.snap === 'right') last = { ...start, x: start.x + dx, w: start.w - dx };
-      else if (start.snap === 'left') last = { ...start, w: start.w + dx };
-      else if (start.snap === 'bottom') last = { ...start, y: start.y + dy, h: start.h - dy };
-      else last = resizedPlacement(start, zone, dx, dy, viewportOf(win));
-      if (start.snap) {
-        const vp = viewportOf(win);
-        const w = Math.min(vp.width, Math.max(COMPANION_MIN_W, last.w));
-        const h = Math.max(COMPANION_MIN_H, last.h);
-        // Keep the panel glued to its edge however far the drag overshoots.
-        last = { ...last, w, h };
-        if (start.snap === 'right') last.x = vp.width - w;
-        if (start.snap === 'bottom') last.y = start.y + start.h - h;
-      }
-      setPlacement(last);
-    };
-    const up = () => {
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', up);
-      handle.removeEventListener('pointercancel', up);
-      if (!start.snap && moved) saveMovedWindow(savedAfterResize(last, zone, parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF))));
-    };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', up);
-    handle.addEventListener('pointercancel', up);
-    gesture.current = () => {
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', up);
-      handle.removeEventListener('pointercancel', up);
-    };
   }
 
   // Peek: a short hover delay, then the pane text, refreshed while hovered.
@@ -1309,7 +1069,6 @@ export function CompanionApp({
     </button>`}
   </div>`;
 
-  const style = `left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`;
   const status = activeAgent ? statusOf(activeAgent) : 'offline';
   const activeApprovals = activeAgent ? approvals(activeAgent) : [];
   const activeElevated = elevatedAccess(snapshot.value, activeAgent);
@@ -1347,15 +1106,12 @@ export function CompanionApp({
   // Close takes the tab being shown off the window, as its own × does. With
   // no such tab there is nothing to close, so the window just goes away.
   const closesTab = activeAgent && !showQueue;
-  const windowControls = look !== 'classic' && html`<${WindowControls} look=${look} maximized=${placement.snap === 'max'}
-    closeLabel=${closesTab ? `Close ${activeAgent.name}` : 'Close'} closeTitle=${closesTab ? 'Close (the agent keeps running)' : 'Close'}
-    onMinimize=${minimize} onMaximize=${toggleMaximize} onClose=${closeActive} />`;
+  const controls = {
+    look, closeLabel: closesTab ? `Close ${activeAgent.name}` : 'Close', closeTitle: closesTab ? 'Close (the agent keeps running)' : 'Close',
+    onMinimize: minimize, onClose: closeActive,
+  };
 
-  const windowView = (open || warm) && html`<section ref=${windowRef}
-    class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${open ? '' : ' companion-window-warm'}`}
-    style=${style} role="dialog" aria-label="Companion" aria-modal="false" aria-hidden=${open ? undefined : 'true'} onClick=${onWindowClick}>
-    <header class=${`companion-titlebar companion-look-${look}`} onPointerDown=${onTitlePointerDown}>
-      ${look === 'macos' ? windowControls : html`<span class="companion-grip" aria-hidden="true">⋮⋮</span>`}
+  const titlebarContent = html`
       <div class="companion-tabs" role="tablist" aria-label="Companion agents">
         ${chipAgents.map((agent) => {
           const tabStatus = statusOf(agent);
@@ -1400,8 +1156,12 @@ export function CompanionApp({
         `}
         ${look === 'classic' && html`<button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>`}
       </div>
-      ${look !== 'macos' && windowControls}
-    </header>
+`;
+
+  const windowView = html`<${OverlayWindow} id="companion" window=${overlay} lifts=${false} open=${open} mounted=${open || warm}
+    className=${`companion-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
+    titlebarClass=${`companion-titlebar companion-look-${look}`} label="Companion" controls=${controls}
+    lead=${html`<span class="companion-grip" aria-hidden="true">⋮⋮</span>`} title=${titlebarContent}>
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} trigger=${addRef} />`}
     <div class=${`companion-body${showComposer && showField && activeApprovals.length + activeDecisions.length ? ' clear-strip' : ''}`}>
@@ -1450,13 +1210,10 @@ export function CompanionApp({
       label=${`Message ${activeAgent.name}`} fieldRef=${fieldRef} onSubmit=${send}
       onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)}
       onEdit=${(text) => { speaker.cancel(); setDraft(activeAgent.agentId, text); }} />`}
-    ${placement.snap && placement.snap !== 'max' && html`<div class="companion-resize" aria-hidden="true" onPointerDown=${(event) => onResizePointerDown(event)}></div>`}
-  </section>`;
+  <//>`;
 
   return html`
-    ${guide && html`<div class="companion-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
     ${windowView}
-    ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} className="companion-resize-frame" onResizeStart=${onResizePointerDown} />`}
     ${chipSlots}
     ${chips}
     ${annotation.overlay}
