@@ -32,8 +32,18 @@ test('everything the operator opens paints above the resting chips', async () =>
   const zOf = (selector) => rules.find((r) => r.selector === selector)?.z;
   const chips = zOf('.companion-chips');
   assert.ok(chips > 6, 'above page content');
+  assert.equal(zOf('.knowledge-source-card'), chips, 'the docs offer rests with the chips');
+  assert.ok(zOf('.fleet-map:has(.fleet-edge-link.open)') > chips, 'the map carries its link popover over the chips');
   const under = rules.filter((r) => opened.test(r.selector) && !nested.test(r.selector) && r.z <= chips);
   assert.deepEqual(under.map((r) => `${r.selector} (${r.z})`), []);
+});
+
+test('the docs offer stays above a window or board, but not above a dialog', async () => {
+  const rule = (await zRules()).find((r) => /companion-window:not/.test(r.selector) && r.selector.endsWith('.knowledge-source-card'));
+  assert.ok(rule.z > 951, 'above the companion window and a front board');
+  assert.match(rule.selector, /:not\(:has\(\.modal-overlay\.show, \.manage-overlay\.show\)\)/);
+  const css = await readFile(new URL('../dashboard/companion.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(max-width: 660px\) \{\s*body\.dock-open \.knowledge-source-card \{ z-index: 45; \}/, 'a narrow window keeps it off the dock\'s underside');
 });
 
 test('the chips step clear of the dock instead of covering its menus', async () => {

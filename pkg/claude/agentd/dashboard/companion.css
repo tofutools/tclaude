@@ -463,11 +463,19 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 
 /* A decision an agent put to the operator (notify-human --option). */
 .knowledge-source-card {
-  position: fixed; left: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 950;
+  position: fixed; left: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 10;
   display: flex; flex-direction: column; gap: 8px; box-sizing: border-box;
   width: 380px; max-width: calc(100vw - 32px); padding: 12px 14px; border-radius: 8px;
   background: var(--cmp-bar); color: var(--cmp-text); border: 1px solid var(--cmp-blue);
   box-shadow: 0 6px 18px rgba(0, 0, 0, .45); font-size: 12px; line-height: 1.45;
+}
+/* Rests on the chips' layer, under whatever the operator opens. An open window
+   or board must not hide its question, so it rises over them, unless a dialog
+   is up. */
+body:has(.companion-window:not(.companion-window-warm), .board-overlay):not(:has(.modal-overlay.show, .manage-overlay.show)) .knowledge-source-card { z-index: 952; }
+/* Too narrow to fit beside the dock: rest on it, as the chips do. */
+@media (max-width: 660px) {
+  body.dock-open .knowledge-source-card { z-index: 45; }
 }
 .knowledge-source-card.failed { border-color: var(--cmp-red); }
 .knowledge-source-card p { margin: 0; overflow-wrap: anywhere; }
