@@ -323,8 +323,8 @@ type ProcessRunContextQuery struct {
 
 // ListScopedActiveProcessRuns returns the most recently updated non-terminal
 // runs bound to a group or an agent, newest first within each scope. It is
-// the candidate set of the in-context read model; unscoped runs stay in the
-// Processes list only.
+// the candidate set of the in-context read model; unscoped runs appear in
+// `tclaude process runs ls` only.
 func ListScopedActiveProcessRuns(query ProcessRunContextQuery) ([]ProcessRunSummary, error) {
 	return listProcessRunContext(query, `status NOT IN ('completed', 'failed', 'canceled')`)
 }

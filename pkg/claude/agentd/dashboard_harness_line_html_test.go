@@ -48,10 +48,10 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must(`class="harness-name" title=${tooltip}>${shortLabel}</span>`,
 		"an unknown future harness keeps a visible text fallback and accepts the general tooltip")
 
-	// The reasoning-effort level (JOH-37) trails the model — "CC · Opus 4.8
+	// The reasoning-effort level (JOH-37) trails the model — "<logo> · Opus 4.8
 	// hi" — read off state.effort_level, with its own styled span and a
 	// full-name tooltip. Omitted when absent so models without effort support
-	// stay at "CC · Opus 4.8".
+	// stay at "<logo> · Opus 4.8".
 	must("state.effort_level", "HarnessLine reads the effort level off the agent's state")
 	must("const EFFORT_LABELS = {", "effort levels have compact display labels")
 	must("low: 'lw'", "low effort is displayed as lw")

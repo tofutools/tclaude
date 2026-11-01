@@ -13,7 +13,7 @@ import (
 // Scenario: the LLM model an agent runs on — written to the sessions
 // row by the statusline hook (UpdateSessionModel, fed from Claude Code's
 // model.display_name) — must surface on /api/snapshot so the dashboard
-// can show "CC · Opus 4.8" under the per-row controls and in the
+// can show "<logo> · Opus 4.8" under the per-row controls and in the
 // status-dot tooltip. Rides on the same row read as the context meter;
 // no new poller, no new data source.
 //

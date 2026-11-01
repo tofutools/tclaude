@@ -4549,7 +4549,7 @@ tr:hover .row-actions { opacity: 1; }
    cell (.agent-ctl) so the controls sit together — no empty gap from
    the dot living in its own column. */
 .agent-ctl { display: inline-flex; align-items: center; gap: 6px; }
-/* The harness + model line ("CC · Opus 4.8") sits UNDER the dot/focus/
+/* The harness + model line ("<logo> · Opus 4.8") sits UNDER the dot/focus/
    cog cluster in the same first cell — no extra column. One continuous
    muted string, no chip/box: the harness prefix and the middot sit a
    shade dimmer than the model name (the bit that actually varies), which
@@ -4595,7 +4595,7 @@ tr:hover .row-actions { opacity: 1; }
    current effort level. */
 .agent-harness .harness-effort { color: #d2a8ff; margin-left: 5px; }
 /* Per-agent API cost ("$0.42") trailing the harness/model line —
-   "CC · Opus 4.8 high $0.42". Only rendered when the session reported
+   "<logo> · Opus 4.8 high $0.42". Only rendered when the session reported
    nonzero cost on API/enterprise pricing (harnessLine omits the token
    otherwise), so subscription rows never carry it. Muted money-green,
    a shade brighter than the harness text, like the effort token. */
@@ -4613,7 +4613,7 @@ body.cost-whatif .agent-harness .harness-cost-whatif { display: inline; }
 body.agent-cost-hidden .agent-harness .harness-cost { display: none; }
 tr:hover .agent-harness { color: #c9d1d9; }
 /* Per-agent sandbox indicator — a bare 🔒 (or ⚠) glyph trailing the harness
-   line, next to the 📱 remote indicator: "CC · Opus 4.8 high 🔒 📱". No frame
+   line, next to the 📱 remote indicator: "<logo> · Opus 4.8 high 🔒 📱". No frame
    and no text; the mode, the resolved verdict and the deciding settings file
    all live in the tooltip. It was a framed chip on its own line below the
    controls, which spent a row of height per agent on what a padlock conveys.
@@ -4655,7 +4655,7 @@ tr:hover .agent-harness { color: #c9d1d9; }
 .agent-harness .runtime-meta-offline .harness-sep { color: #9aa4af; }
 .agent-harness .runtime-meta-offline .harness-cost-whatif { color: #969c79; }
 /* Per-agent "remote on" indicator — a bare 📱 glyph trailing the harness
-   line ("CC · Opus 4.8 high 📱"), shown ONLY when Remote Access is armed
+   line ("<logo> · Opus 4.8 high 📱"), shown ONLY when Remote Access is armed
    (best-known) — an off agent carries none, so an armed one stands out as
    reachable from the Claude app/phone. No frame/box (the brief: just the
    symbol is enough); it sits inline with the effort/cost tokens with a small
