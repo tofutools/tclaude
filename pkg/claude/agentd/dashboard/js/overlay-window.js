@@ -25,7 +25,7 @@ import {
   clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapZone, viewportOf, zoneRect,
 } from './overlay-window-model.js';
 import {
-  coveringPath, detachSpot, dropZone, fits, keepingWindows, leavesOf, movedLine, nodeAt, parseSplit, roomPair, splitLayout, withWindow, withoutWindow,
+  coveringPath, detachSpot, dropZone, fits, keepingWindows, leavesOf, movedEdge, movedLine, nodeAt, parseSplit, rectZone, roomPair, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
 
@@ -196,7 +196,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   const joins = id && snaps && open && placement.snap && placement.snap !== 'max' ? placement.snap : '';
   useLayoutEffect(() => {
     if (!joins) return undefined;
-    showWindow(id, { zone: joins, rect: () => shownRef.current, release: () => releaseFromSplit() });
+    showWindow(id, { zone: joins, rect: () => shownRef.current, pin: () => pinPanelSize() });
     return () => hideWindow(id);
   }, [joins]);
 
@@ -247,37 +247,56 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     onPlaced?.();
   }
 
-  function releaseFromSplit() {
-    const floating = floatingPlacement();
-    setPlacement(floating);
-    saveMovedWindow({ ...(saved() || floating), snap: '' });
+  // A window out of a split goes back to its panel, so that takes the size it
+  // has now. An unlocked window stays that size when the split later ends.
+  function pinPanelSize() {
+    const { snap, w, h } = shownRef.current;
+    const current = saved();
+    if (snap && current) savePlacement({ ...current, panels: { ...current.panels, [snap]: { w, h } } });
   }
 
-  // Where a drop at pointer lands: { zone, tree?, guide }, or null to float. On
-  // a window in a split or one snapped alone, the drop splits that window. At the
-  // room's edge a window opposite this one pairs with it. Otherwise it just snaps.
-  function dropPlan(pointer) {
+  // Where a drop at pointer lands: { zone, tree?, guide }, or null to float. In
+  // a split's empty cell, the window takes it. On a window in a split or one
+  // snapped alone, the drop splits that window. At the room's edge, windows
+  // snapped alone make a tree together, each keeping its kind of snap. Otherwise
+  // it just snaps.
+  function dropPlan(raw) {
     const viewport = viewportOf(win);
-    const room = snapZone(pointer, viewport, snapTop());
+    const room = snapZone(raw, viewport, snapTop());
+    const bounds = splitArea();
+    // The room's edge reaches past it, over the footer.
+    const pointer = { x: Math.max(bounds.x, Math.min(bounds.x + bounds.w - 1, raw.x)), y: Math.max(bounds.y, Math.min(bounds.y + bounds.h - 1, raw.y)) };
     const plain = room ? { zone: room, guide: snappedPlacement(room) } : null;
     const savedTree = splitTree.peek();
     const others = [...snappedWindows.peek()].filter(([other]) => other !== id);
     const here = new Set([...others.map(([other]) => other), id]);
-    const planned = (tree, zone) => {
+    const planned = (tree, zone = '') => {
       const next = tree && layoutOf(keepingWindows(tree, here));
-      return next?.rects[id] ? { zone: zone === 'top' ? 'top-left' : zone, tree, guide: next.rects[id] } : null;
+      const rect = next?.rects[id];
+      return rect ? { zone: zone === 'top' ? 'top-left' : zone || rectZone(rect, bounds), tree, guide: rect } : null;
     };
     const live = liveSplit.peek();
-    for (const [other, { rect, zone: otherZone }] of others) {
-      const saved = leavesOf(savedTree).includes(other);
-      // A window outside the split cannot start a tree of its own: there is one.
-      if (live && !saved) continue;
-      const zone = dropZone(pointer, rect());
-      if (zone && (!room || live)) return planned(withWindow(saved ? savedTree : { id: other }, other, zone, id), zone) || plain;
-      const pair = room ? roomPair(other, room, id, otherZone) : null;
-      if (pair) return planned(saved ? withWindow(savedTree, other, room, id) : pair, room) || plain;
+    // A gap is a path in the showing tree, which is the saved one with nobody away.
+    if (live && live === savedTree) {
+      const inside = ({ rect }) => pointer.x >= rect.x && pointer.x < rect.x + rect.w && pointer.y >= rect.y && pointer.y < rect.y + rect.h;
+      const gap = layoutOf(live)?.gaps.find(inside);
+      if (gap) return planned(withinGap(savedTree, gap, pointer, id, room)) || plain;
     }
-    return plain;
+    const inTree = (other) => leavesOf(savedTree).includes(other);
+    // A window outside the split cannot start a tree of its own: there is one.
+    const targets = others.filter(([other]) => !live || inTree(other));
+    if (!room || live) {
+      for (const [other, { rect }] of targets) {
+        const zone = dropZone(pointer, rect());
+        if (zone) return planned(withWindow(inTree(other) ? savedTree : { id: other }, other, zone, id), zone) || plain;
+      }
+    }
+    if (live || !room) return plain;
+    for (const [other, { zone }] of targets.filter(([other]) => inTree(other))) {
+      if (roomPair(other, room, id, zone)) return planned(withWindow(savedTree, other, room, id), room) || plain;
+    }
+    const alone = targets.filter(([other]) => !inTree(other)).map(([other, { zone }]) => [other, zone]);
+    return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
   }
 
   function track(event, onMove, onEnd) {
@@ -342,6 +361,10 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    if (cell) {
+      resizeSplitEdges(event, zone);
+      return;
+    }
     const start = placement;
     const sx = event.clientX;
     const sy = event.clientY;
@@ -378,12 +401,26 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     }, () => saveSplit(prefs, splitTree.peek()));
   }
 
-  // Detach ends the split at a line, and every window under it floats.
-  function detachLine(path) {
-    const windows = snappedWindows.peek();
+  // A window's edge an unlocked line left it moves live, like a line.
+  function resizeSplitEdges(event, zone) {
+    const moves = [...zone].map((side) => layout.edges[id]?.[side]).filter(Boolean)
+      .map((edge) => ({ edge, path: coveringPath(splitTree.peek(), leavesOf(nodeAt(liveSplit.peek(), edge.path))) }));
+    track(event, (m) => {
+      const pointer = { x: m.clientX, y: m.clientY };
+      splitTree.value = moves.reduce((tree, { edge, path }) => movedEdge(tree, path, edge, pointer), splitTree.peek());
+    }, () => {
+      saveSplit(prefs, splitTree.peek());
+      pinPanelSize();
+    });
+  }
+
+  // Detach unlocks one line. The windows stay snapped where they are, and each
+  // side then resizes on its own: a space or an overlap can open, with no line.
+  function detachLine(path, axis) {
     const ids = leavesOf(nodeAt(liveSplit.peek(), path));
-    saveSplit(prefs, ids.reduce(withoutWindow, splitTree.peek()));
-    for (const member of ids) windows.get(member)?.release();
+    const savedPath = coveringPath(splitTree.peek(), ids);
+    for (const member of ids) snappedWindows.peek().get(member)?.pin();
+    saveSplit(prefs, unlockedLine(splitTree.peek(), savedPath, axis));
   }
 
   // A mouse press leaves focus on the control, where the next key meant for the
@@ -436,7 +473,8 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   }
 
   const splitLines = cell && leavesOf(liveSplit.value)[0] === id ? layout : null;
-  return { placement: shown, inSplit: !!cell, level: levelOf(cell ? SPLIT_UNIT : id), splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo };
+  const edges = cell ? splitEdges(layout.edges[id]) : freeEdges(placement.snap);
+  return { placement: shown, edges, level: levelOf(cell ? SPLIT_UNIT : id), splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo };
 }
 
 export function ResizeFrame({ placement, level, className, onResizeStart, onPointerDownCapture }) {
@@ -450,7 +488,8 @@ export function ResizeFrame({ placement, level, className, onResizeStart, onPoin
 // SplitLines are a split's shared edges: each drags to redistribute only its own
 // node's children, and a quad's crossing moves both of its lines. A line's detach
 // button comes out as the pointer nears the line's centre, so nothing waits over
-// the windows' content. One window draws them all, as they belong to none.
+// the windows' content, drawn last because another line can end on that spot.
+// One window draws them all, as they belong to none.
 function SplitLines({ overlay }) {
   const { lines, crossings } = overlay.splitLines;
   const above = overlay.level + 1;
@@ -470,12 +509,12 @@ function SplitLines({ overlay }) {
   }, [overlay.win]);
   return html`${spots.map(({ line, spot }, index) => html`<div key=${`${line.path.join()}:${line.axis}`} class=${`overlay-split-line ${line.axis}`} role="separator"
       aria-orientation=${line.axis === 'x' ? 'vertical' : 'horizontal'} style=${`left:${line.x}px;top:${line.y}px;width:${line.w}px;height:${line.h}px;z-index:${above}`}
-      onPointerDown=${(event) => overlay.onLinePointerDown(event, [line.axis], line.path, line.area)}></div>
-    <button type="button" key=${`detach:${line.path.join()}:${line.axis}`} class=${`overlay-split-detach${near === index ? ' near' : ''}`}
-      title="Detach: these windows float again" aria-label="Detach the windows at this split line" style=${`left:${spot.x}px;top:${spot.y}px;z-index:${above}`}
-      onClick=${() => overlay.detachLine(line.path)}>⇱</button>`)}
+      onPointerDown=${(event) => overlay.onLinePointerDown(event, [line.axis], line.path, line.area)}></div>`)}
     ${crossings.map((crossing) => html`<div key=${crossing.path.join()} class="overlay-split-cross" aria-hidden="true" style=${`left:${crossing.x}px;top:${crossing.y}px;z-index:${above}`}
-      onPointerDown=${(event) => overlay.onLinePointerDown(event, ['x', 'y'], crossing.path, crossing.area)}></div>`)}`;
+      onPointerDown=${(event) => overlay.onLinePointerDown(event, ['x', 'y'], crossing.path, crossing.area)}></div>`)}
+    ${spots.map(({ line, spot }, index) => html`<button type="button" key=${`detach:${line.path.join()}:${line.axis}`} class=${`overlay-split-detach${near === index ? ' near' : ''}`}
+      title="Detach: each side then resizes on its own" aria-label="Unlock this split line" style=${`left:${spot.x}px;top:${spot.y}px;z-index:${above}`}
+      onClick=${() => overlay.detachLine(line.path, line.axis)}>⇱</button>`)}`;
 }
 
 // OverlayWindow draws what useOverlayWindow (the window prop) runs. id names it
@@ -505,7 +544,7 @@ export function OverlayWindow({ id, window: overlay, open = true, mounted = open
         ${look !== 'macos' && windowControls}
       </header>
       ${children}
-      ${(overlay.inSplit ? [] : freeEdges(placement.snap)).map((edge) => html`<div key=${edge} class=${`overlay-window-edge ${edge}`} aria-hidden="true"
+      ${overlay.edges.map((edge) => html`<div key=${edge} class=${`overlay-window-edge ${edge}`} aria-hidden="true"
         onPointerDown=${(event) => overlay.onResizePointerDown(event, edge)}></div>`)}
     </section>`}
     ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} level=${level} className=${`${frameClass}${front}`}
