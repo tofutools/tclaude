@@ -41,7 +41,7 @@ pending permission request, a **🔑** opens the
   separately from the one in Groups. Green is API spend, and muted italic `≈$…` is
   a subscription what-if estimate. A tab's tooltip always has its cost.
 
-**Zoom** a terminal by pinching or Ctrl+scrolling over it, or with **−**, **+** and
+**Zoom** a terminal by pinching or Ctrl+scrolling over it or its floating tools, or with **−**, **+** and
 **⟲** (reset) in the floating tools in its upper right corner, which show the current
 size. The page stays as it is. Each terminal keeps its size, separately in a Terminals
 tab and in the companion, across reloads. A zoom changes the rows and columns once the

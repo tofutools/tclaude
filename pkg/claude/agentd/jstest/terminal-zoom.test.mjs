@@ -51,6 +51,26 @@ test('a fit the terminal chose is not remembered as a zoom', async (t) => {
   assert.equal(prefs.map.size, 0);
 });
 
+test('Ctrl+wheel anywhere on the tools panel reaches the terminal, and stops with the controls', async (t) => {
+  const { harness, zoom } = await setup(t);
+  const wheels = [];
+  const widget = { zoomWheel: (event) => wheels.push(event.target) };
+  const view = await harness.mount(harness.html`<div class="companion-floating">
+    <button type="button" class="companion-mic">mic</button>
+    <${zoom.TerminalZoom} font=${{ size: 15, zoomed: false }} widget=${() => widget} />
+  </div>`);
+  const panel = view.container.querySelector('.companion-floating');
+  const mic = view.container.querySelector('.companion-mic');
+  const size = view.container.querySelector('.term-zoom-size');
+
+  for (const target of [mic, panel, size]) harness.fireEvent(target, 'wheel', { ctrlKey: true, deltaY: -120 });
+  assert.deepEqual(wheels, [mic, panel, size], 'once each, wherever the pointer is');
+
+  await view.unmount();
+  harness.fireEvent(panel, 'wheel', { ctrlKey: true, deltaY: -120 });
+  assert.equal(wheels.length, 3);
+});
+
 test('the controls step, show the size, reset, and leave the keyboard alone', async (t) => {
   const { harness, zoom } = await setup(t);
   const calls = [];
