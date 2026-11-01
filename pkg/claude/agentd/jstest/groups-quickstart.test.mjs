@@ -94,8 +94,10 @@ test('an empty group offers Get started: starters, the library, a blank list and
 });
 
 const SCRIBE = { agent_id: `agt_${'a'.repeat(32)}`, conv_id: 'conv-scribe', name: 'process-scribe-k3' };
+const [T0, T1, T2] = ['2026-11-01T06:00:00Z', '2026-11-01T06:01:00Z', '2026-11-01T06:02:00Z'];
 const SAVED_DRAFT = {
   sourceHash: 'b'.repeat(64),
+  authoredAt: T1,
   template: { id: 'tmpl_1', name: 'Build it', start: 'start', nodes: {
     start: { type: 'start' },
     build: { type: 'task', name: 'Build', performer: { kind: 'agent', role: 'dev', prompt: 'Build it' } },
@@ -175,34 +177,55 @@ test('an approved draft runs a background scribe here, with the same grant as an
   assert.equal(api.calls.start.length, 0);
 });
 
-test('a finished draft opens in the step list for review, and nothing runs', async (t) => {
+test('a finished draft waits for the operator, with the scribe\'s last word readable, and nothing runs', async (t) => {
   const api = scribeApi({
-    chat: () => ({ messages: [{ id: 'h1', role: 'human', body: 'go' }, { id: 's1', role: 'scribe', body: 'Saved it.' }] }),
+    chat: () => ({ messages: [{ id: 'h1', role: 'human', body: 'go', at: T0 }, { id: 's1', role: 'scribe', body: 'Saved it. Is QA right?', at: T2 }] }),
     stored: () => SAVED_DRAFT,
   });
   withOrigin(t);
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
   await view.settle();
-  const editor = view.root.querySelector('[data-step-editor="webshop"]');
-  assert.ok(editor, 'the draft opens for review');
+  const panel = view.root.querySelector('[data-scribe-draft]');
+  assert.ok(panel, 'it does not open over the closing message');
+  assert.match(panel.textContent, /Is QA right\?/);
+  assert.match(panel.querySelector('[data-scribe-ready]').textContent, /Draft saved: 1 step\./);
+  await view.click(panel.querySelector('[data-scribe-review]'));
+  await view.settle();
+  assert.ok(view.root.querySelector('[data-step-editor="webshop"]'), 'the draft opens for review');
   assert.deepEqual(steps(view.root).map((el) => el.dataset.step), ['build']);
   assert.equal(api.calls.start.length, 0, 'nothing runs until Start');
 });
 
-test('a draft saved mid-turn waits for the scribe, and Review opens it early', async (t) => {
+test('a draft saved mid-turn cannot be reviewed until the scribe is stopped', async (t) => {
   const api = scribeApi({
-    chat: () => ({ messages: [{ id: 'h1', role: 'human', body: 'go' }], live: { items: [{ kind: 'text', text: 'still at it' }] } }),
+    chat: () => ({ messages: [{ id: 'h1', role: 'human', body: 'go', at: T0 }], live: { items: [{ kind: 'text', text: 'still at it' }] } }),
     stored: () => SAVED_DRAFT,
   });
   withOrigin(t);
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
   const panel = view.root.querySelector('[data-scribe-draft]');
-  assert.ok(panel, 'a turn in progress is not opened over');
-  assert.match(panel.querySelector('[data-scribe-ready]').textContent, /Draft saved: 1 step\./);
-  await view.click(panel.querySelector('[data-scribe-review]'));
-  assert.ok(view.root.querySelector('[data-step-editor="webshop"]'));
+  assert.match(panel.querySelector('[data-scribe-ready]').textContent, /1 step saved so far/);
+  assert.equal(panel.querySelector('[data-scribe-review]').disabled, true, 'Start runs the head, which it may still change');
+  await view.click(panel.querySelector('[data-scribe-stop]'));
+  await view.settle();
+  assert.deepEqual(api.calls.stop, [SCRIBE.agent_id]);
+  assert.ok(view.root.querySelector('[data-step-editor="webshop"]'), 'what it saved opens once it is stopped');
+});
+
+test('a reply from before the last save is not the end of the turn', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { scribeFinished } = await harness.importDashboardModule('js/groups-scribe-draft.js');
+  const ready = { authoredAt: T1 };
+  const human = { role: 'human', at: T0 };
+  const welcome = { role: 'scribe', at: T0 };
+  const closing = { role: 'scribe', at: T2 };
+  assert.equal(scribeFinished({ messages: [human, welcome], ready }), false, 'a welcome turn ended, then the work began');
+  assert.equal(scribeFinished({ messages: [human, closing], ready }), true);
+  assert.equal(scribeFinished({ messages: [human, closing], ready, live: { items: [] } }), false, 'a turn is open');
+  assert.equal(scribeFinished({ messages: [human, closing, human], ready }), false, 'the operator asked for more');
+  assert.equal(scribeFinished({ messages: [human, closing], ready: null }), false, 'nothing saved');
 });
 
 test('a failed start takes the empty draft out of the group', async (t) => {

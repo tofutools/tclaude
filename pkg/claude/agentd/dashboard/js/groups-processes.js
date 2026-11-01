@@ -530,7 +530,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     dropped=${droppedPwf} onImported=${() => void source.refresh()} /></span>`;
   const body = html`${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}
-      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || '' : ''}
+      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || quick.draft?.templateId || '' : ''}
       onEdit=${(edit) => {
         setStarting(false);
         setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
