@@ -1,6 +1,6 @@
-// terminal-dictation.js -- the overlay chat windows' floating tools over a
+// terminal-dictation.js -- the companion window's floating tools over a
 // Terminals-tab pane (tcl-meljd0). An agent's pane talks to the agent: the
-// draft goes as operator mail, exactly as in an overlay window, and the send
+// draft goes as operator mail, exactly as in the companion, and the send
 // phrase can be spoken. Any other pane has a program reading its input, where a
 // mis-heard line could run a command, so its draft is only pasted to the
 // prompt: an explicit key or click, no newline, and the Enter that runs it

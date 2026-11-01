@@ -1,5 +1,5 @@
 // dictation-tools.js -- the floating tools and draft field shared by every
-// terminal the operator can talk to: the overlay chat windows
+// terminal the operator can talk to: the companion window
 // (companion-island.js) and the Terminals tab (terminal-dictation.js). The
 // speech recognition itself lives in companion-voice.js.
 

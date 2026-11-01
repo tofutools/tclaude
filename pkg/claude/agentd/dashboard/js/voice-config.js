@@ -7,7 +7,7 @@ export const VOICE_ACTIONS = Object.freeze([
   Object.freeze({
     action: 'send', phrase: 'send now', title: 'Send phrase',
     summary: 'say this at the very end of a dictated message to send it to an agent',
-    more: 'No pause is needed, and the phrase is left out of the message. It works in overlay chat windows and agent terminals, never in a plain shell. Enter and the Send button always work. Leave it empty to turn spoken send off.',
+    more: 'No pause is needed, and the phrase is left out of the message. It works in the companion window and agent terminals, never in a plain shell. Enter and the Send button always work. Leave it empty to turn spoken send off.',
   }),
   Object.freeze({
     action: 'wake', phrase: 'hey tofu', title: 'Wake phrase',
