@@ -683,6 +683,37 @@ needs no new filesystem access, whatever the sandbox. It holds what ships with
 tclaude and nothing of your setup: no config, startup prompts, messages or
 credentials. Screenshots and the preliminary v2 designs are left out.
 
+### Filling in forms
+
+`tclaude agent guide fill --form spawn --set agent-spawn-name=reviewer` puts
+values into your open form, so an agent can propose them while you stay in charge.
+It needs `dashboard.forms.fill`, which isn't given to anyone by default, the
+Steward included. Any agent you assign it to can fill, and everything it shows
+names that agent. The spawn form and Config take fills. Field ids come from
+[`guide capture --form`](#form-values-as-text).
+
+- A fill never submits and presses nothing. You read what landed, then act.
+- Values go through each field's own handling, so a harness change updates its
+  dependent fields and the normal validation runs. A field reports `filled`,
+  `filled_changed` if the form altered the value, or why it was refused.
+- Filled fields stay highlighted, and a bar next to submit lists them. **Undo all**
+  puts back what was there. Config also flags the changed sections on its rail,
+  because a fill can reach a section that isn't open.
+- A field you edited stays yours: a fill won't touch it, before or after, and
+  **Undo all** keeps your edit. That includes anything your own change moved, such
+  as the fields a profile pick set. A queued spawn's stored values count as yours.
+- A password or a field marked secret can't be filled, so environment values
+  can't either. The spawn form's disabled and hidden fields are refused too.
+- Any change to a field that can widen access shows an orange highlight and a
+  warning, such as `Stewie widened: sandbox, approval`. That covers sandbox,
+  approval, tools, owner, directory trust and similar spawn fields, and
+  permissions, remote access, daemon access, proxies and the notification command
+  in Config. Whether a value is actually wider depends on the harness, so any
+  change warns.
+
+Fills apply in order, one at a time, so set a harness before its model. A hidden
+tab is left alone, as with a capture.
+
 ### Saved captures
 
 `guide capture --save` keeps a capture on this machine

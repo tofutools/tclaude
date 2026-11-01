@@ -1,3 +1,4 @@
+import { FormFillBar } from './form-fill-bar.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { dashboardState } from './snapshot-store.js';
@@ -1925,6 +1926,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       Use SSH compatibility workaround
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
+    <${FormFillBar} form="spawn" keepValues=${!!queued} />
     <div class="modal-buttons">
       ${queued && html`<button id="agent-spawn-queued-discard" class="confirm-danger" type="button" disabled=${busy}
         title="Remove this prepared spawn from the queue without launching it"

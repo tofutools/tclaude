@@ -15,6 +15,7 @@
 // dashboard-imperative-boundary: browser-io
 
 import { MASKED, snapshotPage, snapshotText } from './capture-snapshot.js';
+import { applyFill } from './form-fill.js';
 import { randomUUID } from './insecure-origin.js';
 
 export const CAPTURE_PRESENCE_MS = 1500;
@@ -160,7 +161,7 @@ export function trackPointer(win, now = Date.now) {
 // startCapturePresence tells the daemon this tab is open and whether it is on
 // screen, and answers a capture aimed at it. It returns a stop function.
 export function startCapturePresence({
-  win, fetchImpl, tab, onCapture, onMarks, marks = () => [], render = renderPage, snapshot = snapshotPage, randomId = () => randomUUID(win.crypto),
+  win, fetchImpl, tab, onCapture, onMarks, marks = () => [], render = renderPage, snapshot = snapshotPage, fill = applyFill, randomId = () => randomUUID(win.crypto),
   setTimeoutImpl = (fn, ms) => win.setTimeout(fn, ms), clearTimeoutImpl = (id) => win.clearTimeout(id),
 }) {
   const doc = win.document;
@@ -183,18 +184,26 @@ export function startCapturePresence({
     absent = response?.status === 404;
     return response?.ok ? response.json() : null;
   };
+  const answerCapture = async (request) => {
+    // Let the cue paint first, so the operator sees it before the page
+    // stalls for the render.
+    await new Promise((resolve) => setTimeoutImpl(resolve, 60));
+    const context = captureContext({ win, tab: tab(), pointer: tracker.pointer, marks: marks() });
+    const page = snapshot(win);
+    const png = await render({ win, fetchImpl, pointer: tracker.pointer?.inside ? tracker.pointer : null, snapshot: page });
+    const body = { png: await blobToBase64(png, win), context };
+    if (request.form) body.form_text = snapshotText(page);
+    return body;
+  };
+  const answerFill = async (request) => {
+    const result = await fill({ win, request: { ...request.fill, agent: request.agent_name || 'An agent' } });
+    return result.error ? { error: result.error } : { fill: result.fields };
+  };
   const answer = async (request) => {
     onCapture?.(request);
     let body;
     try {
-      // Let the cue paint first, so the operator sees it before the page
-      // stalls for the render.
-      await new Promise((resolve) => setTimeoutImpl(resolve, 60));
-      const context = captureContext({ win, tab: tab(), pointer: tracker.pointer, marks: marks() });
-      const page = snapshot(win);
-      const png = await render({ win, fetchImpl, pointer: tracker.pointer?.inside ? tracker.pointer : null, snapshot: page });
-      body = { png: await blobToBase64(png, win), context };
-      if (request.form) body.form_text = snapshotText(page);
+      body = request.fill ? await answerFill(request) : await answerCapture(request);
     } catch (err) {
       body = { error: String(err?.message || err || 'render failed') };
     }

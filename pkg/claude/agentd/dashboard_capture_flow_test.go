@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -283,6 +284,122 @@ func TestDashboardFormsCapture_IsNotGivenToASteward(t *testing.T) {
 	conv := c.summon()
 	_, held := stewardOverrideHeld(t, conv, agentd.PermDashboardFormsCapture)
 	assert.False(t, held, "form values are opt-in, for the Steward like any agent")
+}
+
+// fillRequest asks for a fill on its own goroutine, as the waiting CLI does.
+func (c *captureFlow) fillRequest(req *http.Request) <-chan *httptest.ResponseRecorder {
+	out := make(chan *httptest.ResponseRecorder, 1)
+	go func() { out <- testharness.Serve(c.f.Mux, req) }()
+	return out
+}
+
+func fillBody(t *testing.T) *http.Request {
+	t.Helper()
+	return testharness.JSONRequest(t, http.MethodPost, "/v1/dashboard/fill", map[string]any{
+		"form": "spawn", "fields": []map[string]string{{"field": "agent-spawn-name", "value": "reviewer"}},
+	})
+}
+
+func TestDashboardFill_ReachesTheTabAndReportsEachField(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("tab", true, true)
+	waiting := c.fillRequest(agentd.AsHumanPeer(fillBody(t)))
+	var delivered struct {
+		Capture struct {
+			ID   string `json:"id"`
+			Fill struct {
+				Form   string `json:"form"`
+				Fields []struct {
+					Field string `json:"field"`
+					Value string `json:"value"`
+				} `json:"fields"`
+			} `json:"fill"`
+		} `json:"capture"`
+	}
+	require.Eventually(t, func() bool {
+		rec := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
+			map[string]any{"client": "tab", "focused": true, "visible": true}))
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &delivered))
+		return delivered.Capture.ID != ""
+	}, 5*time.Second, 5*time.Millisecond)
+	assert.Equal(t, "spawn", delivered.Capture.Fill.Form)
+	require.Len(t, delivered.Capture.Fill.Fields, 1)
+	assert.Equal(t, "reviewer", delivered.Capture.Fill.Fields[0].Value)
+
+	require.Equal(t, http.StatusNoContent, c.answer(delivered.Capture.ID, map[string]any{
+		"fill": []map[string]string{{"field": "agent-spawn-name", "status": "filled"}, {"field": "agent-spawn-sandbox", "status": "filled", "widens": "sandbox"}},
+	}))
+	rec := <-waiting
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{"fields":[{"field":"agent-spawn-name","status":"filled"},{"field":"agent-spawn-sandbox","status":"filled","widens":"sandbox"}]}`, rec.Body.String())
+}
+
+func TestDashboardFill_SaysWhyAFormCouldNotBeFilled(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("tab", true, true)
+	waiting := c.fillRequest(agentd.AsHumanPeer(fillBody(t)))
+	id := c.await(func() string { return c.ping("tab", true, true) })
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"error": "the spawn form is not open"}))
+	rec := <-waiting
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "the spawn form is not open")
+}
+
+func TestDashboardFill_OnlyTheOptedInFormsAndBoundedFields(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("tab", true, true)
+	for name, body := range map[string]map[string]any{
+		"unknown form": {"form": "groups", "fields": []map[string]string{{"field": "a", "value": "b"}}},
+		"no fields":    {"form": "spawn", "fields": []map[string]string{}},
+		"unnamed":      {"form": "spawn", "fields": []map[string]string{{"field": "", "value": "b"}}},
+		"huge value":   {"form": "spawn", "fields": []map[string]string{{"field": "a", "value": strings.Repeat("x", 17<<10)}}},
+	} {
+		rec := testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/dashboard/fill", body)))
+		assert.Equal(t, http.StatusBadRequest, rec.Code, name)
+	}
+}
+
+func TestDashboardFill_NeedsItsOwnPermission(t *testing.T) {
+	c := newCaptureFlow(t)
+	const conv = "capt-aaaa-bbbb-cccc-000000000003"
+	c.f.HaveConvWithTitle(conv, "worker")
+	c.f.HaveGroup("team")
+	c.f.HaveMember("team", conv)
+	c.f.HaveAliveSession(conv, "capt", "tclaude-capt", c.f.TestCwd("work"))
+	c.ping("tab", true, true)
+	ask := func() int {
+		return testharness.Serve(c.f.Mux, agentd.AsAgentPeer(fillBody(t), conv)).Code
+	}
+	t.Cleanup(agentd.SetCaptureTimeoutForTest(10 * time.Millisecond))
+
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardCapture, "test"))
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardFormsCapture, "test"))
+	assert.Equal(t, http.StatusForbidden, ask(), "reading a form does not allow filling it")
+
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardFormsFill, "test"))
+	waiting := c.fillRequest(agentd.AsAgentPeer(fillBody(t), conv))
+	var named string
+	require.Eventually(t, func() bool {
+		rec := testharness.Serve(c.dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
+			map[string]any{"client": "tab", "focused": true, "visible": true}))
+		var resp struct {
+			Capture struct {
+				AgentName string `json:"agent_name"`
+			} `json:"capture"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		named = resp.Capture.AgentName
+		return named != ""
+	}, 5*time.Second, 5*time.Millisecond)
+	assert.Equal(t, "worker", named, "the highlight and warning name the agent the daemon identified, not one it claims")
+	assert.Equal(t, http.StatusGatewayTimeout, (<-waiting).Code, "granted, it reached the tab")
+}
+
+func TestDashboardFormsFill_IsNotGivenToASteward(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	conv := c.summon()
+	_, held := stewardOverrideHeld(t, conv, agentd.PermDashboardFormsFill)
+	assert.False(t, held, "filling is opt-in, for the Steward like any agent")
 }
 
 func TestDashboardCapture_NeedsPermission(t *testing.T) {

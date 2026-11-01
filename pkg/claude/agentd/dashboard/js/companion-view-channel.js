@@ -90,7 +90,8 @@ export function CompanionViewChannel({ activeTab, notify, fetchImpl = globalThis
     if (!win?.document) return undefined;
     return startCapturePresence({
       win, fetchImpl, tab: () => activeTab.value,
-      onCapture: (request) => setCaptureNotice(`${request.agent_name || 'An agent'} captured this view${request.form ? ' and read its form values' : ''}`),
+      onCapture: (request) => setCaptureNotice(`${request.agent_name || 'An agent'} ${request.fill ? 'is filling in this form'
+        : `captured this view${request.form ? ' and read its form values' : ''}`}`),
       onMarks: receiveMarks, marks: () => markReport.current,
     });
   }, [win, fetchImpl]);

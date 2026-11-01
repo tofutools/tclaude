@@ -276,6 +276,14 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 @keyframes companion-guide-in { from { opacity: 0; transform: scale(1.15); } }
 @keyframes companion-guide-pulse { 50% { box-shadow: 0 0 0 10px rgba(163, 113, 247, .08), 0 0 24px rgba(163, 113, 247, .35); } }
 .companion-guide-anchor { position: fixed; z-index: 953; }
+/* What an agent filled stays visible until the operator edits or undoes it. */
+[data-agent-filled="plain"] { outline: 2px solid #58a6ff; outline-offset: 1px; }
+[data-agent-filled="widens"] { outline: 2px solid #f0883e; outline-offset: 1px; }
+.form-fill-bar { margin: 10px 0; padding: 8px 10px; border: 1px solid #58a6ff; border-radius: 6px; background: rgba(88, 166, 255, 0.1); font-size: 13px; }
+.form-fill-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.form-fill-undo { flex: none; }
+.form-fill-warn { margin-top: 6px; color: #f0883e; font-weight: 600; }
+
 .companion-capture-notice {
   position: fixed; z-index: 954; top: 12px; left: 50%; transform: translateX(-50%);
   padding: 6px 14px; border-radius: 999px; pointer-events: none;

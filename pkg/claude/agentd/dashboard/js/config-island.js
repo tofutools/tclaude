@@ -84,7 +84,7 @@ export function ConfigApp({ state, dependencies = {} }) {
     handleConfigEvent(event);
   };
   return html`<div ref=${root} class="config-island">
-    <${ConfigFormMarkup} lists=${lists} onListChange=${changeList} onFormEvent=${routeFormEvent} dirtyPanels=${state.dirtyPanels} />
+    <${ConfigFormMarkup} lists=${lists} onListChange=${changeList} onFormEvent=${routeFormEvent} dirtyPanels=${state.dirtyPanels} loads=${state.metadata} />
     <${ConfigDiffModal} model=${state.diff.value} close=${state.cancelDiff} />
   </div>`;
 }
