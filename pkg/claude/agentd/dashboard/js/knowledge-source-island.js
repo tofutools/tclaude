@@ -130,9 +130,9 @@ export function KnowledgeSourceRow({ snapshot, fetchImpl = globalThis.fetch }) {
         : `Not downloaded. About ${mib(view.download_bytes)} from ${view.origin}, about ${mib(view.stored_bytes)} on disk`;
   return html`<div class="knowledge-source-row">
     <span id="cfg-knowledge-source-state">${label}</span>
-    ${ready && html`<button type="button" class="btn-sm" disabled=${busy} title="Delete the stored copy and set this to Never"
+    ${ready && html`<button type="button" class="cfg-inline" disabled=${busy} title="Delete the stored copy and set this to Never"
       onClick=${() => act('remove')}>Remove</button>`}
-    ${!ready && view.state !== 'fetching' && !/no commit/.test(view.detail || '') && html`<button type="button" class="btn-sm" disabled=${busy}
+    ${!ready && view.state !== 'fetching' && !/no commit/.test(view.detail || '') && html`<button type="button" class="cfg-inline" disabled=${busy}
       onClick=${() => act('once')}>Download now</button>`}
     ${error && html`<span class="knowledge-source-error" role="alert">${error}</span>`}
   </div>`;

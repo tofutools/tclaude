@@ -44,7 +44,7 @@ export function StewardDefaultPermissions({ fetchImpl = (...args) => globalThis.
   if (!access) return html`<span class="cfg-hint" id="cfg-steward-permissions-summary">Needs Collab</span>`;
   return html`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end">
     <span class="cfg-hint" id="cfg-steward-permissions-summary">${stewardPermissionSummary(access)}</span>
-    <button type="button" id="cfg-steward-permissions-edit" onClick=${open}>Edit…</button>
+    <button type="button" class="cfg-inline" id="cfg-steward-permissions-edit" onClick=${open}>Edit…</button>
     ${error && html`<span class="cfg-hint" role="alert">${error}</span>`}
   </div>`;
 }
