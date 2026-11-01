@@ -31,13 +31,13 @@ function Glyph({ path }) {
 export function WindowControls({ look, maximized, closeLabel, closeTitle, onMinimize, onMaximize, onClose }) {
   const glyphs = GLYPHS[look];
   const sizeLabel = maximized ? 'Restore' : 'Maximize';
-  const minimize = html`<button type="button" class="companion-wc-minimize" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)"
+  const minimize = onMinimize && html`<button type="button" class="overlay-wc-minimize" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)"
     onClick=${onMinimize}><${Glyph} path=${glyphs.minimize} /></button>`;
-  const size = html`<button type="button" class="companion-wc-maximize" aria-label=${sizeLabel} title=${sizeLabel}
+  const size = html`<button type="button" class="overlay-wc-maximize" aria-label=${sizeLabel} title=${sizeLabel}
     onClick=${onMaximize}><${Glyph} path=${maximized ? glyphs.restore : glyphs.maximize} /></button>`;
-  const close = html`<button type="button" class="companion-wc-close" aria-label=${closeLabel} title=${closeTitle}
+  const close = html`<button type="button" class="overlay-wc-close" aria-label=${closeLabel} title=${closeTitle}
     onClick=${onClose}><${Glyph} path=${glyphs.close} /></button>`;
-  return html`<div class="companion-window-controls" role="group" aria-label="Window">
+  return html`<div class="overlay-window-controls" role="group" aria-label="Window">
     ${look === 'macos' ? [close, minimize, size] : [minimize, size, close]}
   </div>`;
 }

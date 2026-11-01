@@ -1973,10 +1973,44 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
    beat this rule, whose specificity they exceed. */
 body :is(.overlay-window, .window-resize-frame).overlay-window-front { z-index: 951; }
 /* A snapped panel's free edge. */
-.overlay-window-edge { position: absolute; touch-action: none; }
-.overlay-window.snapped-right .overlay-window-edge { left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
-.overlay-window.snapped-left .overlay-window-edge { right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
-.overlay-window.snapped-bottom .overlay-window-edge { left: 0; right: 0; top: 0; height: 6px; cursor: ns-resize; }
+.overlay-window.snapped { border-radius: 0; box-shadow: 0 0 24px rgba(0, 0, 0, .5); }
+.overlay-window-edge { position: absolute; z-index: 2; touch-action: none; }
+.overlay-window-edge:is(.e, .w) { top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.overlay-window-edge:is(.n, .s) { left: 0; right: 0; height: 6px; cursor: ns-resize; }
+.overlay-window-edge:is(.nw, .ne, .sw, .se) { width: 12px; height: 12px; }
+.overlay-window-edge:is(.e, .ne, .se) { right: 0; }
+.overlay-window-edge:is(.w, .nw, .sw) { left: 0; }
+.overlay-window-edge:is(.n, .nw, .ne) { top: 0; }
+.overlay-window-edge:is(.s, .sw, .se) { bottom: 0; }
+.overlay-window-edge:is(.nw, .se) { cursor: nwse-resize; }
+.overlay-window-edge:is(.ne, .sw) { cursor: nesw-resize; }
+.overlay-window-controls { flex: none; position: relative; z-index: 1; display: flex; align-items: center; background: var(--cmp-bar); }
+.overlay-window-controls button { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
+.overlay-window-controls svg { display: block; fill: none; stroke: currentColor; pointer-events: none; }
+
+.overlay-look-macos { padding-left: 10px; }
+.overlay-look-macos .overlay-window-controls { gap: 8px; margin-right: 8px; }
+.overlay-look-macos .overlay-window-controls button { width: 12px; height: 12px; border-radius: 50%; color: transparent; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .2); }
+.overlay-look-macos .overlay-window-controls svg { width: 8px; height: 8px; stroke-width: 1.4; }
+.overlay-look-macos .overlay-wc-close { background: #ff5f57; }
+.overlay-look-macos .overlay-wc-minimize { background: #febc2e; }
+.overlay-look-macos .overlay-wc-maximize { background: #28c840; }
+.overlay-look-macos .overlay-window-controls:is(:hover, :focus-within) button { color: rgba(0, 0, 0, .6); }
+.overlay-look-macos .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: 2px; }
+
+.overlay-look-windows { padding-right: 0; }
+.overlay-look-windows .overlay-window-controls { align-self: stretch; margin-left: 4px; }
+.overlay-look-windows .overlay-window-controls button { width: 44px; height: 100%; background: none; color: var(--cmp-text); }
+.overlay-look-windows .overlay-window-controls svg { width: 11px; height: 11px; stroke-width: 1; }
+.overlay-look-windows .overlay-window-controls button:hover { background: #21262d; }
+.overlay-look-windows .overlay-window-controls .overlay-wc-close:hover { background: #c42b1c; color: #fff; }
+.overlay-look-windows .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: -2px; }
+
+.overlay-look-linux .overlay-window-controls { gap: 6px; margin-left: 4px; }
+.overlay-look-linux .overlay-window-controls button { width: 22px; height: 22px; border-radius: 50%; background: #30363d; color: var(--cmp-text); }
+.overlay-look-linux .overlay-window-controls svg { width: 10px; height: 10px; stroke-width: 1.5; }
+.overlay-look-linux .overlay-window-controls button:hover { background: #484f58; }
+.overlay-look-linux .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: 1px; }
 .overlay-snap-guide {
   position: fixed; z-index: 949; pointer-events: none; border-radius: 8px;
   background: rgba(88, 166, 255, .10); border: 1px dashed #58a6ff;

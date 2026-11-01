@@ -43,7 +43,8 @@ page without blocking it, and comes back when you reload the tab.
 
 - **Move it** by its title bar. Resize it from any edge or corner.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
-  panel or drawer.
+  panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free
+  edges to resize it; each spot keeps the size you gave it, across reloads too.
 - **Each agent is a tab**, up to eight. **＋** summons the Steward or pins another
   live agent, and **×** unpins one. The agent keeps running.
 - **Scribes and Stewards** get a tab and a pill by themselves. One you close stays

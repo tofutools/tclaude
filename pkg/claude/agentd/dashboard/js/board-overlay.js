@@ -1,9 +1,9 @@
 // board-overlay.js -- a board in a floating window of its own (tcl-h4y60w),
 // apart from the companion window, so the operator can work in both at once.
 // It floats over every dashboard view, and moves like the companion: drag by
-// the title bar, resize from any edge or corner, stay reachable when the browser
-// shrinks, and keep its place. It does not snap to edges. overlay-window.js is
-// the window; this file is the board in it.
+// the title bar, resize from any edge or corner, snap to an edge or a corner,
+// maximize, stay reachable when the browser shrinks, and keep its place.
+// overlay-window.js is the window; this file is the board in it.
 
 import { h, render } from 'preact';
 import htm from 'htm';
@@ -12,6 +12,7 @@ import { boardOverlay, boardOverlayRaise, returnBoardToTab, setBoardOverlayLabel
 import { OVERLAY_FOOTER_ROOM, clampPlacement } from './overlay-window-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { isBoardId } from './board-model.js';
+import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, frontOverlayWindow, raiseOverlayWindow, useOverlayWindow } from './overlay-window.js';
 
 const html = htm.bind(h);
@@ -45,14 +46,25 @@ function readOpen(win) {
 }
 
 function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) {
-  const overlay = useOverlayWindow({ win, prefs, prefKey: BOARD_OVERLAY_PLACEMENT_PREF, defaultPlacement: defaultOverlayPlacement });
+  const overlay = useOverlayWindow({ win, prefs, prefKey: BOARD_OVERLAY_PLACEMENT_PREF, defaultPlacement: defaultOverlayPlacement, snaps: true });
+  const look = windowControlsLook(snapshot.value?.window_controls);
+  const close = () => { boardOverlay.value = null; };
+  // The title bar is outside the editor, whose Ctrl+wheel zooms the board.
+  // Anywhere else in the window that gesture would zoom the whole page.
+  function onTitleWheel(event) {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const { deltaY, ctrlKey, metaKey } = event;
+    overlay.windowRef.current?.querySelector?.('.board-editor')?.dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY, ctrlKey, metaKey }));
+  }
   const title = html`<span class="board-overlay-title">✎ ${board.label}</span>
     <button type="button" class="board-overlay-action" title="Move this board back to a tab of the Collab view"
       onClick=${() => void returnBoardToTab()}>Back to a tab</button>
-    <button type="button" class="board-overlay-close" title="Close this window" aria-label=${`Close ${board.label}`}
-      onClick=${() => { boardOverlay.value = null; }}>×</button>`;
+    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Close this window" aria-label=${`Close ${board.label}`}
+      onClick=${close}>×</button>`}`;
   return html`<${OverlayWindow} id=${OVERLAY_ID} window=${overlay} className="board-overlay" frameClass="board-overlay-resize-frame"
-    titlebarClass="board-overlay-titlebar" label=${`Board ${board.label}`} title=${title}>
+    titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Board ${board.label}`} title=${title}
+    controls=${{ look, closeLabel: `Close ${board.label}`, closeTitle: 'Close this window', onClose: close }} onTitleWheel=${onTitleWheel}>
     <${BoardEditor} key=${board.id} boardId=${board.id} snapshot=${snapshot} win=${win} fetchImpl=${fetchImpl}
       notify=${notify} onTitle=${(title) => setBoardOverlayLabel(board.id, title)} onOpenAgent=${(agent) => openInCompanion(agent)} />
   <//>`;
