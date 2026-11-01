@@ -55,6 +55,15 @@ var (
 	hashRE       = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
+// FeatureLoops marks a workflow with bounded loops (Workflow.Loops). A reader
+// that predates loops cannot show them in its review, so the marker makes it
+// refuse the file by name instead. Files written before the marker existed
+// carry loops without it and still open.
+const FeatureLoops = "loops"
+
+// knownFeatures are the requires values this reader understands.
+var knownFeatures = map[string]bool{FeatureLoops: true}
+
 // Manifest is manifest.json: the format header and every entry's hash.
 type Manifest struct {
 	Format     string       `json:"format"`
@@ -481,7 +490,7 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 	}
 	zw := zip.NewWriter(out)
 	man := Manifest{Format: Format, PwfVersion: Version, Kind: KindWorkflow, CreatedAt: created.UTC().Truncate(time.Second).Format(time.RFC3339),
-		Producer: opts.Producer, Requires: []string{}, Root: b.Root}
+		Producer: opts.Producer, Requires: requiredFeatures(wf), Root: b.Root}
 	add := func(name, mediaType string, data []byte) error {
 		if int64(len(data)) > limits.MaxMetadataBytes {
 			return fmt.Errorf("pwf: entry %q exceeds %d bytes", name, limits.MaxMetadataBytes)
@@ -545,6 +554,26 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 	return zw.Close()
 }
 
+// requiredFeatures is the manifest's requires list for a workflow. It is never
+// nil: requires is a required field of the manifest.
+func requiredFeatures(w Workflow) []string {
+	features := []string{}
+	if len(w.Loops) > 0 {
+		features = append(features, FeatureLoops)
+	}
+	return features
+}
+
+func unknownFeatures(requires []string) []string {
+	var unknown []string
+	for _, feature := range requires {
+		if !knownFeatures[feature] {
+			unknown = append(unknown, feature)
+		}
+	}
+	return unknown
+}
+
 // Open reads and fully verifies a PWF file: container rules, manifest,
 // entry sizes and hashes, every template's validity and ref, the closure,
 // workflow.json against the templates, and signatures. Signature trust is
@@ -592,8 +621,8 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 	if m.Kind != KindWorkflow {
 		return nil, fmt.Errorf("pwf: unsupported kind %q", m.Kind)
 	}
-	if len(m.Requires) > 0 {
-		return nil, fmt.Errorf("pwf: file requires features this reader does not support: %s", strings.Join(m.Requires, ", "))
+	if unknown := unknownFeatures(m.Requires); len(unknown) > 0 {
+		return nil, fmt.Errorf("pwf: file requires features this reader does not support: %s", strings.Join(unknown, ", "))
 	}
 	listed := map[string]paf.Entry{}
 	for _, e := range m.Entries {

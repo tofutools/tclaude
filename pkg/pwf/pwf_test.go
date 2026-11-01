@@ -323,6 +323,73 @@ func TestSummaryListsBoundedLoops(t *testing.T) {
 	plain, err := open(t, writeBundle(t))
 	require.NoError(t, err)
 	assert.Nil(t, plain.Workflow.Loops, "a workflow without loops carries no loops field")
+	assert.Equal(t, []string{}, plain.Manifest.Requires, "a workflow without loops requires nothing")
+	assert.Equal(t, []string{pwf.FeatureLoops}, a.Manifest.Requires, "loops are marked so an older reader refuses the file by name")
+}
+
+// TestLoopsInASubprocessAreMarked covers a loop that is not in the root: an
+// older reader would drop it from the review all the same.
+func TestLoopsInASubprocessAreMarked(t *testing.T) {
+	root := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: outer
+name: Outer
+start: rework
+nodes:
+  rework:
+    type: subprocess
+    subprocess:
+      templateRef: rework
+    next: {success: done}
+  done: {type: end, result: success}
+`
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, pwf.Bundle{
+		Root: refOf(t, root),
+		Templates: []pwf.Template{
+			{Source: []byte(root), Head: true},
+			{Source: []byte(loopSource), Head: true},
+		},
+	}, pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: "test"}, CreatedAt: time.Unix(1_700_000_000, 0)}))
+	a, err := open(t, buf.Bytes())
+	require.NoError(t, err)
+	assert.Equal(t, []string{pwf.FeatureLoops}, a.Manifest.Requires)
+}
+
+func rewriteManifest(t *testing.T, data []byte, change func(*pwf.Manifest)) []byte {
+	t.Helper()
+	return rezip(t, data, func(name string, body []byte) ([]byte, bool) {
+		if name != pwf.ManifestPath {
+			return body, true
+		}
+		var m pwf.Manifest
+		require.NoError(t, json.Unmarshal(body, &m))
+		change(&m)
+		out, err := json.Marshal(m)
+		require.NoError(t, err)
+		return out, true
+	})
+}
+
+// TestRequiresRefusesOnlyUnknownFeatures pins both sides of the marker: a
+// feature this reader does not know is refused by name alongside one it does,
+// and a file from before the marker, with loops but no marker, still opens.
+func TestRequiresRefusesOnlyUnknownFeatures(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, pwf.Bundle{
+		Root:      refOf(t, loopSource),
+		Templates: []pwf.Template{{Source: []byte(loopSource), Head: true}},
+	}, pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: "test"}, CreatedAt: time.Unix(1_700_000_000, 0)}))
+
+	unknown := rewriteManifest(t, buf.Bytes(), func(m *pwf.Manifest) { m.Requires = []string{pwf.FeatureLoops, "teleport"} })
+	_, err := open(t, unknown)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support: teleport")
+
+	legacy := rewriteManifest(t, buf.Bytes(), func(m *pwf.Manifest) { m.Requires = []string{} })
+	a, err := open(t, legacy)
+	require.NoError(t, err)
+	assert.Len(t, a.Workflow.Loops, 1)
 }
 
 const roleSelectorSource = `apiVersion: tclaude.dev/v1alpha1
