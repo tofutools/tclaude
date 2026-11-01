@@ -111,6 +111,10 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		// conversation resumed under it. Ignored for an agent that is already
 		// stopped, which the assignment leaves stopped.
 		Restart bool `json:"restart,omitempty"`
+		// ConfirmMoveOut accepts what moving an OpenCode agent out of private
+		// state does. Without it such an assignment is refused with those facts,
+		// so every client shows the same ones.
+		ConfirmMoveOut bool `json:"confirm_move_out,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "decode request: "+err.Error())
@@ -243,6 +247,14 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 			sandboxImplementationUnavailableKind, err.Error())
 		return
 	}
+	// Last of the refusals, so the operator is not asked to accept a move the
+	// assignment would refuse anyway, and before a running agent is stopped.
+	if !body.ConfirmMoveOut && !isTclaudeLayer(implementation) {
+		if fail := openCodeMoveOutConfirmation(h, agentID, convID, current.Cwd); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
+		}
+	}
 
 	previous := current.SandboxImplementation
 	var note string
@@ -339,6 +351,69 @@ const openCodeMoveNote = "the conversation moved into private state, and its tod
 
 const openCodeMoveOutNote = "the agent's conversations moved to the shared OpenCode store, where agents " +
 	"outside tclaude's sandbox can read them, and their todo lists were deleted: OpenCode's export does not carry them"
+
+// openCodeMoveOutConfirmKind is the refusal a client answers by asking the
+// operator and sending confirm_move_out.
+const openCodeMoveOutConfirmKind = "opencode_move_out_confirm"
+
+// openCodeMoveOutFacts is what an operator accepts by moving count conversations
+// out of private state.
+func openCodeMoveOutFacts(count int) string {
+	conversations := fmt.Sprintf("%d conversations", count)
+	if count == 1 {
+		conversations = "1 conversation"
+	}
+	return "This moves " + conversations + " out of this OpenCode agent's private state to the shared " +
+		"OpenCode store. Agents outside tclaude's sandbox can read them once moved. Their todo lists are " +
+		"deleted, because OpenCode's export does not carry them. Private conversation storage is something " +
+		"only OpenCode has here: other harnesses keep conversations in a state root shared per harness, " +
+		"so moving out puts this agent where those already are."
+}
+
+// openCodeMoveOutConfirmation refuses an assignment that would move an OpenCode
+// agent out of private state, naming what the move does. Nil when nothing would
+// move.
+func openCodeMoveOutConfirmation(h *harness.Harness, agentID, convID, cwd string) *spawnFailure {
+	if h.Name != harness.OpenCodeName {
+		return nil
+	}
+	refuse := func(err error) *spawnFailure {
+		return &spawnFailure{http.StatusInternalServerError, "opencode_state_read", err.Error()}
+	}
+	_, private, err := openCodeStateToMoveOut(h, agentID, convID, cwd)
+	if err != nil {
+		return refuse(err)
+	}
+	if private == nil {
+		return nil
+	}
+	conversations, err := harness.OpenCodeConversations(private.History, cwd)
+	if err != nil {
+		return refuse(err)
+	}
+	return &spawnFailure{http.StatusConflict, openCodeMoveOutConfirmKind, openCodeMoveOutFacts(len(conversations))}
+}
+
+// openCodeStateToMoveOut returns the private state an assignment off tclaude's
+// sandbox moves, and a nil history when it moves none: no allocation, or one that
+// does not hold the conversation.
+func openCodeStateToMoveOut(
+	h *harness.Harness, agentID, convID, cwd string,
+) (*db.OpenCodeAgentStateAllocation, *harness.Harness, error) {
+	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	if err != nil || allocation == nil || allocation.Mode != db.OpenCodeStatePrivate {
+		return nil, nil, err
+	}
+	private, err := openCodeHistoryForAgent(h, agentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	held, err := harness.OpenCodeHoldsConversation(private.History, convID, cwd)
+	if err != nil || !held {
+		return nil, nil, err
+	}
+	return allocation, private, nil
+}
 
 // openCodePrivateStateRefusal refuses a launch off tclaude's sandbox while the
 // OpenCode conversation is in private state. Any other implementation reads the
@@ -484,22 +559,11 @@ func moveOpenCodeStateOut(
 		return func() {}, func() {}, "", &spawnFailure{http.StatusInternalServerError, "opencode_state_move",
 			"move the conversation out of private state: " + err.Error()}
 	}
-	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
-	if err != nil {
-		return commit, undo, "", &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
-	}
-	if allocation == nil || allocation.Mode != db.OpenCodeStatePrivate {
-		return commit, undo, "", nil
-	}
-	private, err := openCodeHistoryForAgent(h, agentID)
+	allocation, private, err := openCodeStateToMoveOut(h, agentID, convID, cwd)
 	if err != nil {
 		return refuse(err)
 	}
-	held, err := harness.OpenCodeHoldsConversation(private.History, convID, cwd)
-	if err != nil {
-		return refuse(err)
-	}
-	if !held {
+	if private == nil {
 		return commit, undo, "", nil
 	}
 	if err := stopOpenCodeServerForMove(convID); err != nil {

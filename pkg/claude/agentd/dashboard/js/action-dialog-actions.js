@@ -16,16 +16,18 @@ async function responseError(response) {
   const text = await response.text();
   try {
     const payload = JSON.parse(text);
-    if (payload?.error) return String(payload.error);
+    if (payload?.error) return { message: String(payload.error), code: String(payload.code || '') };
   } catch (_) { /* retain plain-text response below */ }
-  return text || `HTTP ${response.status}`;
+  return { message: text || `HTTP ${response.status}`, code: '' };
 }
 
 async function requestJSON(fetchImpl, url, options = {}) {
   const response = await fetchImpl(url, { credentials: 'same-origin', ...options });
   if (!response.ok) {
-    const error = new Error(await responseError(response));
+    const { message, code } = await responseError(response);
+    const error = new Error(message);
     error.status = response.status;
+    error.code = code;
     throw error;
   }
   try { return await response.json(); } catch (_) { return {}; }
@@ -374,11 +376,15 @@ export function createActionDialogActions({
         requestJSON(api, '/api/spawn-launch-catalog', { signal }).catch((cause) => { if (cause?.name === 'AbortError') throw cause; return null; })]);
       return { ...data, catalog: { harnesses: catalog?.harnesses || [], sandbox_impl: catalog?.sandbox_impl || {} } };
     },
-    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, restart = false }, owner) {
+    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, restart = false, confirmMoveOut = false }, owner) {
       const payload = await requestJSON(
         nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ implementation, sandbox: sandbox || '', ...(restart ? { restart: true } : {}) }),
+          body: JSON.stringify({
+            implementation, sandbox: sandbox || '',
+            ...(restart ? { restart: true } : {}),
+            ...(confirmMoveOut ? { confirm_move_out: true } : {}),
+          }),
         },
       );
       state.close(owner);

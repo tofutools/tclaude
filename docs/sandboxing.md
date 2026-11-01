@@ -191,6 +191,15 @@ deleted. Agents outside tclaude's sandbox can read the shared store, so these
 conversations are no longer private, and the assignment's result says so.
 Assigning tclaude's sandbox again moves only the current conversation back.
 
+This move asks first. Before anything stops or moves, the dashboard shows how many
+conversations will be exposed, that agents outside tclaude's sandbox can read them
+once moved, and that todo lists are deleted, and you confirm it there. On the
+command line `sandbox-impl set` refuses with the same facts unless you pass
+`--yes`. Nothing asks when the agent has no private state. Private conversation
+storage is something only OpenCode has here: other harnesses keep conversations
+in a state root shared per harness, so moving out puts this agent where those
+already are.
+
 If a conversation cannot move, the assignment is refused and the agent stays as
 it was. One reason is that the shared store already holds a different conversation
 under the same id. To change that agent's posture, export it and import it under

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,6 +69,7 @@ type sandboxImplSetParams struct {
 	Implementation string `pos:"true" help:"harness-builtin | tclaude-layer | resource-only | off"`
 	Sandbox        string `long:"sandbox" optional:"true" help:"Pin the harness-builtin sandbox mode recorded alongside the implementation. Omitted, the agent's recorded mode is carried through the same resolution a launch applies."`
 	Restart        bool   `long:"restart" optional:"true" help:"If the agent is running, stop it (it must be idle), assign, and resume the same conversation under the new implementation. Without it, a running agent is refused."`
+	Yes            bool   `long:"yes" short:"y" optional:"true" help:"Accept moving an OpenCode agent out of private state, which is otherwise refused with what the move does."`
 	JSON           bool   `long:"json" help:"Emit the stable JSON object instead of the human view"`
 	AskHuman       string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
@@ -91,7 +93,9 @@ func sandboxImplSetCmd() *cobra.Command {
 			"ceiling it cannot carry are all refused now rather than at wake time — where a relaunch " +
 			"has no allow-unenforced override to rescue it. `resource-only` additionally probes that " +
 			"this host can actually create the per-agent cgroup, since a relaunch would only degrade " +
-			"to a notice.",
+			"to a notice.\n\n" +
+			"Moving an OpenCode agent out of private state is refused without --yes: the refusal " +
+			"says how many conversations move, who can read them afterwards, and what is deleted.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *sandboxImplSetParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Agent).SetAlternativesFunc(completeConvSelectors)
@@ -120,6 +124,10 @@ func sandboxImplementationChoices() []string {
 // conversations, each a few OpenCode runs, and resuming it. The default budget
 // gave up while the daemon carried on.
 const sandboxImplSetTimeout = 3 * time.Minute
+
+// sandboxMoveOutConfirmCode is the daemon's refusal of an assignment that would
+// move an OpenCode agent out of private state unconfirmed.
+const sandboxMoveOutConfirmCode = "opencode_move_out_confirm"
 
 // sandboxImplResp mirrors the daemon's sandbox-impl payload.
 type sandboxImplResp struct {
@@ -202,10 +210,17 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 		"sandbox":        strings.TrimSpace(p.Sandbox),
 		"restart":        p.Restart,
 	}
+	if p.Yes {
+		body["confirm_move_out"] = true
+	}
 	var resp sandboxImplResp
 	if err := DaemonRequest(http.MethodPost,
 		sandboxImplPath(target), body, &resp, DaemonOpts{AskHuman: ask, Timeout: sandboxImplSetTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
+		var daemonErr *DaemonError
+		if errors.As(err, &daemonErr) && daemonErr.Code == sandboxMoveOutConfirmCode {
+			fmt.Fprintln(stderr, "Run again with --yes to move them.")
+		}
 		return MapDaemonErrorToRC(err)
 	}
 	return printSandboxImpl(&resp, p.JSON, stdout, stderr)
