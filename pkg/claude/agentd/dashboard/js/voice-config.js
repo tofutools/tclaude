@@ -52,7 +52,7 @@ export function voiceFormPhrase(dashboard, action) {
   const known = VOICE_ACTIONS.find((item) => item.action === action);
   const stored = dashboard?.voice?.phrases?.find((item) => item.action === action);
   const legacy = action === 'send' ? dashboard?.dictation_send_phrase : undefined;
-  const phrase = (stored ? stored.phrase : legacy ?? known.phrase).trim();
+  const phrase = (stored ? stored.phrase ?? '' : legacy ?? known.phrase).trim();
   return { phrase: phrase || known.phrase, on: !!phrase && (stored?.enabled ?? known.on) };
 }
 

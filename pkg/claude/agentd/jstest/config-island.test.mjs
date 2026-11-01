@@ -1046,6 +1046,8 @@ test('Config voice phrases: each has its own switch, and hands-free stays separa
   assert.equal(el('cfg-voice-phrase-send').value, 'over');
   adapter.populateConfigForm({ dashboard: { voice: { phrases: [{ action: 'send', phrase: '' }] } } });
   assert.equal(el('cfg-voice-on-send').checked, false);
+  adapter.populateConfigForm({ dashboard: { voice: { phrases: [{ action: 'send', enabled: true }] } } });
+  assert.equal(el('cfg-voice-on-send').checked, false, 'a hand-edited entry with no phrase loads');
   await mounted.unmount();
 });
 
