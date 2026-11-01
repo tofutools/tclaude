@@ -230,7 +230,7 @@ body.slop, body.vegas {
 /* The overlay (js/board-overlay.js, tcl-h4y60w): a board in its own window, on
    the companion's layer. Whichever was clicked last is on top. */
 .board-overlay {
-  position: fixed; z-index: 950; display: flex; flex-direction: column; overflow: hidden;
+  position: fixed; z-index: var(--overlay-level, 930); display: flex; flex-direction: column; overflow: hidden;
   background: var(--board-bg); color: var(--board-text); border: 1px solid #3d4451; border-radius: 10px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .6);
 }

@@ -28,8 +28,10 @@ window, so you can work in both at once. It moves like the companion: drag it by
 its title bar, resize it from any edge or corner, and snap it to an edge or into a
 corner. A resized panel keeps its size, and the window keeps its place. Ctrl+wheel
 over the title bar zooms the board. It has the companion's
-[window controls](companion.md) except minimize, since a board has no pill to
-shrink into; with the Classic look it has a plain × instead. Clicking the overlay
+[window controls](companion.md), and minimizing puts it in the dock of pills at
+the bottom of the page; with the Classic look it has a plain × instead. Several
+boards can float at once, each in its own window, and the open windows come back
+after a reload. Clicking the overlay
 or the companion brings that one forward. **Back to a tab** returns the board to the strip. One
 board floats at a time: opening another sends the first back to a tab.
 

@@ -35,13 +35,21 @@ const html = htm.bind(h);
 const RESIZE_ZONES = ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'];
 const TEAR_OFF_PX = 4;
 
-// The id of the window in front. Every window shares one z-index layer, where
-// DOM order decides, so the companion is in front until another is raised. A
-// window with lifts steps above that layer when it is the one in front.
-export const frontOverlayWindow = signal('');
+// The ids of the windows raised so far, front last. Levels come from it: every
+// window is below what sits at 950, such as agent marks. A window never raised
+// stays at the bottom, where DOM order leaves the companion on top. A split moves
+// as one, and its lines sit one above it: anything raised over it covers them.
+const OVERLAY_TOP_LEVEL = 948;
+export const OVERLAY_BOTTOM_LEVEL = 930;
+const overlayStack = signal([]);
+export const frontOverlayWindow = computed(() => overlayStack.value[overlayStack.value.length - 1] || '');
 
 export function raiseOverlayWindow(id) {
-  frontOverlayWindow.value = id;
+  overlayStack.value = [...overlayStack.peek().filter((other) => other !== id), ...(id ? [id] : [])];
+}
+
+export function overlayStackReset() {
+  overlayStack.value = [];
 }
 
 export const OVERLAY_SPLIT_PREF = 'tclaude.dash.overlay-split';
@@ -55,6 +63,24 @@ const snappedWindows = signal(new Map());
 // The part of the tree showing now, or null.
 const liveSplit = computed(() => keepingWindows(splitTree.value, new Set(snappedWindows.value.keys())));
 let splitLoadedFrom = null;
+
+const SPLIT_UNIT = '\0split';
+// The stack as levels, front first, with a split as one entry.
+const stackUnits = computed(() => {
+  const split = new Set(leavesOf(liveSplit.value));
+  return [...new Set(overlayStack.value.map((id) => (split.has(id) ? SPLIT_UNIT : id)).reverse())];
+});
+
+function levelOf(unit) {
+  const depth = stackUnits.value.indexOf(unit);
+  return depth < 0 ? OVERLAY_BOTTOM_LEVEL : Math.max(OVERLAY_BOTTOM_LEVEL, OVERLAY_TOP_LEVEL - 2 * depth);
+}
+
+// forgetOverlayWindow takes a closed window out of the stack and any split.
+export function forgetOverlayWindow(id) {
+  overlayStack.value = overlayStack.peek().filter((other) => other !== id);
+  if (leavesOf(splitTree.peek()).includes(id)) saveSplit(splitLoadedFrom, withoutWindow(splitTree.peek(), id));
+}
 
 function loadSplit(prefs) {
   if (splitLoadedFrom === prefs) return;
@@ -232,13 +258,15 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       const next = tree && layoutOf(keepingWindows(tree, here));
       return next?.rects[id] ? { zone: zone === 'top' ? 'top-left' : zone, tree, guide: next.rects[id] } : null;
     };
+    const live = liveSplit.peek();
     for (const [other, { rect, zone: otherZone }] of others) {
+      const saved = leavesOf(savedTree).includes(other);
       // A window outside the split cannot start a tree of its own: there is one.
-      if (savedTree && !leavesOf(savedTree).includes(other)) continue;
+      if (live && !saved) continue;
       const zone = dropZone(pointer, rect());
-      if (zone && (!room || liveSplit.peek())) return planned(withWindow(savedTree || { id: other }, other, zone, id), zone) || plain;
-      const pair = room && !savedTree ? roomPair(other, room, id, otherZone) : null;
-      if (pair) return planned(pair, room) || plain;
+      if (zone && (!room || live)) return planned(withWindow(saved ? savedTree : { id: other }, other, zone, id), zone) || plain;
+      const pair = room ? roomPair(other, room, id, otherZone) : null;
+      if (pair) return planned(saved ? withWindow(savedTree, other, room, id) : pair, room) || plain;
     }
     return plain;
   }
@@ -399,12 +427,12 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   }
 
   const splitLines = cell && leavesOf(liveSplit.value)[0] === id ? layout : null;
-  return { placement: shown, inSplit: !!cell, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo };
+  return { placement: shown, inSplit: !!cell, level: levelOf(cell ? SPLIT_UNIT : id), splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo };
 }
 
-export function ResizeFrame({ placement, className, onResizeStart, onPointerDownCapture }) {
+export function ResizeFrame({ placement, level, className, onResizeStart, onPointerDownCapture }) {
   return html`<div class=${`window-resize-frame ${className}`} aria-hidden="true" onPointerDownCapture=${onPointerDownCapture}
-    style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`}>
+    style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px;${level}`}>
     ${RESIZE_ZONES.map((zone) => html`<div key=${zone} class=${`window-resize-zone ${zone}`}
       onPointerDown=${(event) => onResizeStart(event, zone)}></div>`)}
   </div>`;
@@ -416,6 +444,7 @@ export function ResizeFrame({ placement, className, onResizeStart, onPointerDown
 // the windows' content. One window draws them all, as they belong to none.
 function SplitLines({ overlay }) {
   const { lines, crossings } = overlay.splitLines;
+  const above = overlay.level + 1;
   const crossingOf = (line) => crossings.find((crossing) => crossing.path.join() === line.path.join()) || null;
   const spots = lines.map((line) => ({ line, spot: detachSpot(line, crossingOf(line)) }));
   const [near, setNear] = useState(-1);
@@ -431,25 +460,25 @@ function SplitLines({ overlay }) {
     return () => overlay.win?.removeEventListener?.('pointermove', onMove, true);
   }, [overlay.win]);
   return html`${spots.map(({ line, spot }, index) => html`<div key=${`${line.path.join()}:${line.axis}`} class=${`overlay-split-line ${line.axis}`} role="separator"
-      aria-orientation=${line.axis === 'x' ? 'vertical' : 'horizontal'} style=${`left:${line.x}px;top:${line.y}px;width:${line.w}px;height:${line.h}px`}
+      aria-orientation=${line.axis === 'x' ? 'vertical' : 'horizontal'} style=${`left:${line.x}px;top:${line.y}px;width:${line.w}px;height:${line.h}px;z-index:${above}`}
       onPointerDown=${(event) => overlay.onLinePointerDown(event, [line.axis], line.path, line.area)}></div>
     <button type="button" key=${`detach:${line.path.join()}:${line.axis}`} class=${`overlay-split-detach${near === index ? ' near' : ''}`}
-      title="Detach: these windows float again" aria-label="Detach the windows at this split line" style=${`left:${spot.x}px;top:${spot.y}px`}
+      title="Detach: these windows float again" aria-label="Detach the windows at this split line" style=${`left:${spot.x}px;top:${spot.y}px;z-index:${above}`}
       onClick=${() => overlay.detachLine(line.path)}>⇱</button>`)}
-    ${crossings.map((crossing) => html`<div key=${crossing.path.join()} class="overlay-split-cross" aria-hidden="true" style=${`left:${crossing.x}px;top:${crossing.y}px`}
+    ${crossings.map((crossing) => html`<div key=${crossing.path.join()} class="overlay-split-cross" aria-hidden="true" style=${`left:${crossing.x}px;top:${crossing.y}px;z-index:${above}`}
       onPointerDown=${(event) => overlay.onLinePointerDown(event, ['x', 'y'], crossing.path, crossing.area)}></div>`)}`;
 }
 
 // OverlayWindow draws what useOverlayWindow (the window prop) runs. id names it
-// for stacking; a window last in the DOM passes lifts={false}, as it is already
-// on top of its layer and whatever shares that layer keeps its place. mounted keeps a hidden window in the page, for content that
-// must stay alive while minimized. lead and title are the title bar's content,
+// for stacking. mounted keeps a hidden window in the page, for content that must
+// stay alive while minimized. lead and title are the title bar's content,
 // and controls, { look, closeLabel, closeTitle, onMinimize, onClose }, adds the
 // native buttons, which the classic look leaves to the content. A window with
 // nowhere to minimize to leaves out onMinimize.
-export function OverlayWindow({ id, window: overlay, lifts = true, open = true, mounted = open, className, frameClass, titlebarClass, label, lead = null, title, controls = null, onTitleWheel = null, children }) {
+export function OverlayWindow({ id, window: overlay, open = true, mounted = open, className, frameClass, titlebarClass, label, lead = null, title, controls = null, onTitleWheel = null, children }) {
   const { placement, guide } = overlay;
-  const front = lifts && frontOverlayWindow.value === id ? ' overlay-window-front' : '';
+  const front = frontOverlayWindow.value === id ? ' overlay-window-front' : '';
+  const level = `--overlay-level:${overlay.level}`;
   const raise = () => raiseOverlayWindow(id);
   const { look, ...buttons } = controls || {};
   const windowControls = look && look !== 'classic' && html`<${WindowControls} look=${look} maximized=${placement.snap === 'max'}
@@ -458,7 +487,7 @@ export function OverlayWindow({ id, window: overlay, lifts = true, open = true, 
     ${guide && html`<div class="overlay-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
     ${mounted && html`<section ref=${overlay.windowRef}
       class=${`overlay-window ${className}${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${front}`}
-      style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`}
+      style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px;${level}`}
       role="dialog" aria-label=${label} aria-modal="false" aria-hidden=${open ? undefined : 'true'}
       onClick=${overlay.onWindowClick} onPointerDownCapture=${raise}>
       <header class=${titlebarClass} onPointerDown=${overlay.onTitlePointerDown} onWheel=${onTitleWheel}>
@@ -470,7 +499,7 @@ export function OverlayWindow({ id, window: overlay, lifts = true, open = true, 
       ${(overlay.inSplit ? [] : freeEdges(placement.snap)).map((edge) => html`<div key=${edge} class=${`overlay-window-edge ${edge}`} aria-hidden="true"
         onPointerDown=${(event) => overlay.onResizePointerDown(event, edge)}></div>`)}
     </section>`}
-    ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} className=${`${frameClass}${front}`}
+    ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} level=${level} className=${`${frameClass}${front}`}
       onResizeStart=${overlay.onResizePointerDown} onPointerDownCapture=${raise} />`}
     ${overlay.splitLines && html`<${SplitLines} overlay=${overlay} />`}`;
 }

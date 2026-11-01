@@ -1,32 +1,30 @@
-// board-overlay-state.js -- which board floats in the overlay window
+// board-overlay-state.js -- which boards float in overlay windows
 // (board-overlay.js, tcl-h4y60w), held apart from the island so the terminal
-// shell can move a board in and out of it. One board at a time. Opening a board
-// starts here rather than in terminals-tab.js, whose facade stays free of Preact.
+// shell can move a board in and out of one. A board opens in one place at a
+// time: a tab or a window. Opening a board starts here rather than in
+// terminals-tab.js, whose facade stays free of Preact.
 
-import { signal } from '@preact/signals';
+import { computed } from '@preact/signals';
 import { boardPaneSeed } from './board-model.js';
+import { closeOverlayWindow, labelOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { openTerminalPane } from './terminals-tab.js';
 
-// { id, label }, or null while the overlay is closed.
-export const boardOverlay = signal(null);
-// Bumped to bring the window forward: someone asked for the board it shows.
-export const boardOverlayRaise = signal(0);
+export const BOARD_WINDOW_KIND = 'board';
+export const boardWindowId = (id) => `board:${id}`;
 
-// placeBoardInOverlay shows a board in the overlay and returns the board it
-// displaced, if any: that one needs a tab to go back to.
-export function placeBoardInOverlay(id, label) {
-  const previous = boardOverlay.peek();
-  boardOverlay.value = { id, label: label || id };
-  boardOverlayRaise.value += 1;
-  return previous && previous.id !== id ? previous : null;
-}
+// { id, label, minimized, ... } per board window, where id is the window's and
+// board the board's.
+export const boardOverlays = computed(() => overlayWindows.value.filter((window) => window.kind === BOARD_WINDOW_KIND));
+
+const windowOf = (board) => boardOverlays.peek().find((window) => window.board === board);
 
 // openBoardPane opens a collab board as a tab beside the terminals, or brings
-// its tab forward. A board floating in the overlay stays there and comes
-// forward instead: it opens in one place at a time.
+// its tab forward. A board floating in a window stays there and comes forward
+// instead.
 export function openBoardPane(id, label, options) {
-  if (boardOverlay.peek()?.id === id) {
-    boardOverlayRaise.value += 1;
+  const floating = windowOf(id);
+  if (floating) {
+    openOverlayWindow(floating);
     return Promise.resolve(null);
   }
   return openTerminalPane(boardPaneSeed(id, label), options);
@@ -43,23 +41,20 @@ export async function openLinkedBoard(id, fetchImpl = (...args) => globalThis.fe
   return openBoardPane(id);
 }
 
-// openBoardOverlay floats a board in the overlay window. The board it displaces
-// goes back to a tab, quietly: nothing is closed by opening something else.
+// openBoardOverlay floats a board in a window of its own.
 export function openBoardOverlay(id, label) {
-  const displaced = placeBoardInOverlay(id, label);
-  if (displaced) void openBoardPane(displaced.id, displaced.label, { reveal: false, activate: false });
+  openOverlayWindow({ id: boardWindowId(id), kind: BOARD_WINDOW_KIND, board: id, label: label || id });
 }
 
-// returnBoardToTab moves the overlay's board back to a tab and shows it.
-export function returnBoardToTab() {
-  const board = boardOverlay.peek();
-  if (!board) return Promise.resolve(null);
-  boardOverlay.value = null;
-  return openBoardPane(board.id, board.label);
+// returnBoardToTab moves a floating board back to a tab and shows it.
+export function returnBoardToTab(id) {
+  const floating = windowOf(id);
+  if (!floating) return Promise.resolve(null);
+  closeOverlayWindow(floating.id);
+  return openBoardPane(id, floating.label);
 }
 
-// By id: a load still in flight when the board was replaced answers for the old one.
+// By id: a load still in flight when the window closed answers for nothing.
 export function setBoardOverlayLabel(id, label) {
-  const current = boardOverlay.peek();
-  if (current?.id === id && label && label !== current.label) boardOverlay.value = { ...current, label };
+  if (label) labelOverlayWindow(boardWindowId(id), label);
 }

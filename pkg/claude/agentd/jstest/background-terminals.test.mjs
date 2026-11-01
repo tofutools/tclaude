@@ -147,9 +147,9 @@ test('a board with a session lists under Boards, opens as a board tab and leaves
 test('a board row hides while its board floats, and is left out of a peer\'s page', async (t) => {
   const harness = await createPreactHarness(t);
   const { visibleBackgroundTerminals, localBackgroundRows } = await harness.importDashboardModule('js/background-terminals.js');
-  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], null).length, 1);
-  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], { id: 'other' }).length, 1);
-  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], { id: 'plan' }).length, 0);
+  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], []).length, 1);
+  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], [{ board: 'other' }]).length, 1);
+  assert.equal(visibleBackgroundTerminals([BOARD_ROW], [], [{ board: 'plan' }]).length, 0);
   assert.deepEqual(localBackgroundRows([ROWS[0], BOARD_ROW], ''), [ROWS[0], BOARD_ROW]);
   assert.deepEqual(localBackgroundRows([ROWS[0], BOARD_ROW], 'peer-1'), [ROWS[0]],
     'this node\'s board routes are out of reach from a peer\'s page');

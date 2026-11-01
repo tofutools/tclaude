@@ -27,7 +27,7 @@ import {
   openGroupWebTermPane, openWebTermPane, openWebWindowPane, waitForTerminalSettled,
 } from './terminals-tab.js';
 import { boardPaneKey } from './board-model.js';
-import { boardOverlay, openBoardPane } from './board-overlay-state.js';
+import { boardOverlays, openBoardPane } from './board-overlay-state.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { tickedNodes } from './fleet-scope.js';
 import { remoteSessionAgents } from './remote-session-status.js';
@@ -190,15 +190,15 @@ export function startBackgroundTerminalsPoll({
 // visibleBackgroundTerminals drops rows whose pane is already open here: the
 // listing lags an attach by up to one poll. A peer's agent is open when a
 // remote pane shows it, whichever mode it opened in. A board is open in its tab
-// or floating in the overlay.
-export function visibleBackgroundTerminals(rows, panes, overlay = boardOverlay.value) {
+// or floating in a window.
+export function visibleBackgroundTerminals(rows, panes, floating = boardOverlays.value) {
   const open = new Set();
   for (const pane of panes || []) {
     open.add(pane.key);
     const remote = pane.seed?.remote;
     if (remote?.peer && remote.agent) open.add(`peer:${remote.peer}:${remote.agent}`);
   }
-  if (overlay) open.add(boardPaneKey(overlay.id));
+  for (const window of floating || []) open.add(boardPaneKey(window.board));
   return (rows || []).filter((row) => !row.key || !open.has(row.key));
 }
 

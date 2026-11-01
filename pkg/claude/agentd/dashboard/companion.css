@@ -96,7 +96,7 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
    under toasts (960), confirmations (1000) and the access banner. A plain
    modal's document-level keys (Esc, Tab) still reach it from the draft row. */
 .companion-window {
-  position: fixed; z-index: 950; display: flex; flex-direction: column;
+  position: fixed; z-index: var(--overlay-level, 930); display: flex; flex-direction: column;
   background: var(--cmp-bg); color: var(--cmp-text);
   border: 1px solid var(--cmp-edge); border-radius: 10px; overflow: hidden;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .6); transform-origin: 0 0;
@@ -370,6 +370,9 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-floating .companion-tool:disabled { opacity: .5; cursor: not-allowed; }
 .companion-floating .companion-annotate { color: var(--cmp-amber-text); font-size: 14px; }
 .companion-floating .companion-shell { color: #e6edf3; }
+/* A chat's own window (js/chat-window.js), and a tab about to become one. */
+.chat-window-title { flex: 1 1 auto; min-width: 0; overflow: hidden; display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.companion-tab button.tearing { opacity: .55; cursor: grabbing; }
 
 /* One-click starters for the Steward (guided setup, tcl-bifqbb). */
 

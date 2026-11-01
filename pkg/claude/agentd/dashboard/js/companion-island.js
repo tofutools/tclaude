@@ -30,6 +30,9 @@ import { useChipDrag } from './companion-chip-drag.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { OverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
+import { closeOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
+import { ChatWindow } from './chat-window.js';
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -56,6 +59,8 @@ const PENDING_MS = 30000;
 const WARM_MS = 5 * 60 * 1000;
 
 const PEEK_REFRESH_MS = 1500;
+// How far a tab is pulled off the strip before it comes away as a window.
+const TAB_TEAR_PX = 40;
 
 function Avatar({ agent }) {
   const steward = agent?.steward;
@@ -446,6 +451,12 @@ export function CompanionApp({
   // window has no idea why. Only Bring it back here reclaims it.
   const showAgent = useCallback((agentId, { focus = true, starting = false, reclaim = false } = {}) => {
     if (!isAgentId(agentId)) return false;
+    // A chat opens in one place: its window, when it has one.
+    const chat = overlayWindows.peek().find((window) => window.id === chatWindowId(agentId));
+    if (chat && !reclaim) {
+      openOverlayWindow(chat);
+      return true;
+    }
     const agent = agents.get(agentId);
     // An id the snapshot does not know is only accepted for an agent this
     // window just started; other callers keep their own fallback.
@@ -501,6 +512,48 @@ export function CompanionApp({
     if (!next.length && !keepOpen) setOpen(false);
     setTabs(next);
   }, [tabs, activeId, agents]);
+
+  // floatTab moves a tab into a window of its own, at at if it was dragged there.
+  function floatTab(agent, at = null) {
+    setParked((current) => without(current, agent.agentId));
+    setDetached((current) => without(current, agent.agentId));
+    closeTab(agent.agentId);
+    openOverlayWindow({ id: chatWindowId(agent.agentId), kind: CHAT_WINDOW_KIND, agent: agent.agentId, label: agent.name, at });
+  }
+
+  // A press on a tab stays a click until it is pulled well off the tab strip.
+  function onTabPointerDown(event, agent) {
+    if (event.button !== 0) return;
+    const handle = event.currentTarget;
+    const strip = handle.closest('.companion-titlebar')?.getBoundingClientRect?.();
+    if (!strip) return;
+    handle.setPointerCapture?.(event.pointerId);
+    let torn = false;
+    const off = (m) => m.clientY < strip.top - TAB_TEAR_PX || m.clientY > strip.bottom + TAB_TEAR_PX
+      || m.clientX < strip.left - TAB_TEAR_PX || m.clientX > strip.right + TAB_TEAR_PX;
+    const move = (m) => {
+      torn = off(m);
+      handle.classList.toggle('tearing', torn);
+    };
+    const up = (m) => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      handle.classList.remove('tearing');
+      if (torn && m.type === 'pointerup') {
+        handle.addEventListener('click', (click) => { click.preventDefault(); click.stopPropagation(); }, { capture: true, once: true });
+        floatTab(agent, { x: m.clientX - 120, y: m.clientY - 14 });
+      }
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  }
+
+  function chatBackToTab(instance) {
+    closeOverlayWindow(instance.id);
+    showAgent(instance.agent, { reclaim: true });
+  }
 
   // The window stays open on the shut-down state, with the way to start again.
   // A detached window of it goes too: it has nothing left to show.
@@ -1018,7 +1071,7 @@ export function CompanionApp({
   const decisions = (agent) => decisionsFor(snapshot.value, agent);
   // A pending approval or decision is the clearest "needs you" there is.
   const statusOf = (agent) => (approvals(agent).length || decisions(agent).length ? 'needs' : companionStatus(agent));
-  const chipAgents = tabs.map((id) => agents.get(id)).filter(Boolean);
+  const chipAgents = tabs.filter((id) => !overlayWindows.value.some((window) => window.agent === id)).map((id) => agents.get(id)).filter(Boolean);
   const queue = pendingDecisions(snapshot.value);
   const toApprove = pendingApprovals(snapshot.value);
   const elsewhere = toApprove.filter((request) => !chipAgents.some((agent) => approvalsFor({ access_requests: [request] }, agent).length));
@@ -1122,7 +1175,8 @@ export function CompanionApp({
           const selected = agent.agentId === activeId && !showQueue;
           return html`<div key=${agent.agentId} class=${`companion-tab${selected ? ' selected' : ''}`}>
             <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'}
-              title=${`${agent.name}: ${companionStatusLabel(tabStatus)}`}
+              title=${`${agent.name}: ${companionStatusLabel(tabStatus)}. Drag out for a window of its own.`}
+              onPointerDown=${(event) => onTabPointerDown(event, agent)}
               onClick=${() => showAgent(agent.agentId)}>
               <${Avatar} agent=${agent} /><span>${agent.name}</span>${elevatedAccess(snapshot.value, agent) && html`<span class="companion-tab-elevated" title="Elevated access">🔓</span>`}<${StatusDot} status=${tabStatus} />
             </button>
@@ -1154,6 +1208,7 @@ export function CompanionApp({
           roster=${stewardRoster} agents=${agents} fetchImpl=${fetchImpl} notify=${notify} openHandover=${openStewardHandover} showAgent=${showAgent} />`}
         ${activeAgent?.online && !showQueue && html`
           ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${composeToActive}>✉</button>`}
+          <button type="button" class="companion-float" aria-label=${`Float ${activeAgent.name} in an overlay window of its own`} title="Float in an overlay window of its own" onClick=${() => floatTab(activeAgent)}>▣</button>
           ${detachWindow && !parked.has(activeAgent.agentId) && html`<button type="button" class="companion-detach" aria-label=${`Detach ${activeAgent.name} into its own window`} title="Detach into its own browser window" onClick=${() => detachToWindow(activeAgent)}>⧉</button>`}
           ${openMorph && html`<button type="button" class="companion-morph" aria-label=${`Morph ${activeAgent.name}`} title="Morph: relaunch on another harness, model or profile"
             onClick=${() => openMorph(activeAgent)}>⇄</button>`}
@@ -1162,7 +1217,7 @@ export function CompanionApp({
       </div>
 `;
 
-  const windowView = html`<${OverlayWindow} id="companion" window=${overlay} lifts=${false} open=${open} mounted=${open || warm}
+  const windowView = html`<${OverlayWindow} id="companion" window=${overlay} open=${open} mounted=${open || warm}
     className=${`companion-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
     titlebarClass=${`companion-titlebar overlay-look-${look}`} label="Companion" controls=${controls}
     lead=${html`<span class="companion-grip" aria-hidden="true">⋮⋮</span>`} title=${titlebarContent}>
@@ -1217,6 +1272,9 @@ export function CompanionApp({
   <//>`;
 
   return html`
+    ${overlayWindows.value.filter((window) => window.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
+      snapshot=${snapshot} prefs=${prefs} win=${win} fetchImpl=${fetchImpl} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
+      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
     ${windowView}
     ${chipSlots}
     ${chips}
