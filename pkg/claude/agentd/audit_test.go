@@ -131,6 +131,7 @@ func TestMatchAuditRoute(t *testing.T) {
 		{"dashboard spawn", http.MethodPost, "/api/groups/crew/spawn", true, "spawn", db.AuditSourceDashboard, map[string]string{"name": "crew"}},
 		{"cli message", http.MethodPost, "/v1/messages", true, "message", db.AuditSourceCLI, nil},
 		{"dashboard message singular", http.MethodPost, "/api/message", true, "message", db.AuditSourceDashboard, nil},
+		{"dashboard board delete", http.MethodDelete, "/api/boards/plan", true, "board.delete", db.AuditSourceDashboard, map[string]string{"id": "plan"}},
 		{"cli agent verb", http.MethodPost, "/v1/agent/worker/reincarnate", true, "", db.AuditSourceCLI, map[string]string{"conv": "worker", "verb": "reincarnate"}},
 		{"dashboard agents verb", http.MethodPost, "/api/agents/worker/retire", true, "", db.AuditSourceDashboard, map[string]string{"conv": "worker", "verb": "retire"}},
 		{"cli permissions grant", http.MethodPost, "/v1/permissions/grant", true, "permissions.grant", db.AuditSourceCLI, nil},

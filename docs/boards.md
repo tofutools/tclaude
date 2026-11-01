@@ -13,14 +13,29 @@ exported as an `.excalidraw` file.
 
 ## In the dashboard
 
-The **＋** at the right of the Collab tab strip lists the boards: pick one to
-open it in a tab, or give a title to create one. `/boards/<id>` opens that
-board's tab, and `/boards` opens the list. A board tab behaves like a terminal
+The **＋** at the right of the Collab tab strip lists the boards, one line each:
+in their groups, newest first, with a green dot on a board an agent has a
+session on. Pick one to open it in a tab. The box at the top searches titles and groups;
+a new title makes a board with **Create** or Enter, and the title of one that
+exists opens it. `/boards/<id>` opens that board's tab, and `/boards` opens the
+list. A board tab behaves like a terminal
 tab: it reorders, joins tab groups, and detaches into its own browser tab
 (**⧉ tab**) or window (drag it off the strip), which **↩ dashboard** sends back. Like a
 terminal tab it lasts as long as its page: a reload brings back the board the
 URL names and any board in the overlay, and a new browser window starts with none. The URL of a deleted
 board opens nothing and becomes `/terminals`.
+
+A board is stored in this tclaude instance, not in a file of its own. To get one
+out, **⤓** on its row or in its header downloads an `.excalidraw` file.
+**Import…** under the list makes a new board of such a file, named after it.
+What a board cannot hold, such as images, is left out, and the dashboard says
+how many elements that was.
+
+To delete a board, use **🗑** on its row or **Delete board…** on its tab's
+right-click menu. The dialog names the board and every agent on it, and offers
+**⤓ Export first**, because a delete cannot be undone. Any tab or window showing
+the board closes, a browser tab of its own says the board was deleted, and
+everyone who was on it, stopped agents included, gets a message saying so.
 
 **Open in overlay**, on the board or its tab's right-click menu, floats the
 board in its own window over every dashboard view, apart from the companion

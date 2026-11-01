@@ -333,6 +333,8 @@ type boardSummaryJSON struct {
 	ElementCount int       `json:"element_count"`
 	Participants []string  `json:"participants"`
 	Group        string    `json:"group,omitempty"`
+	Agents       int       `json:"agents"`           // on it, invited or through its group
+	Active       bool      `json:"active,omitempty"` // an agent holds a session on it
 }
 
 type boardJSON struct {
@@ -418,14 +420,38 @@ func serveBoardList(w http.ResponseWriter) {
 		writeBoardStoreError(w, err)
 		return
 	}
+	sessions, err := db.ListCollabBoardSessions()
+	if err != nil {
+		writeBoardStoreError(w, err)
+		return
+	}
+	active := make(map[string]bool, len(sessions))
+	for _, s := range sessions {
+		active[s.BoardID] = true
+	}
 	out := make([]boardSummaryJSON, 0, len(boards))
 	for _, b := range boards {
 		out = append(out, boardSummaryJSON{
 			ID: b.ID, Title: b.Title, Version: b.Version, UpdatedAt: b.UpdatedAt,
 			ElementCount: b.ElementCount, Participants: b.Participants, Group: b.GroupName,
+			Agents: len(boardAudience(b)), Active: active[b.ID],
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"boards": out})
+}
+
+// boardAudience is everyone on the board: its group's members are on it as well
+// as those invited.
+func boardAudience(b *db.CollabBoard) []string {
+	audience := slices.Clone(b.Participants)
+	if members, err := db.CollabBoardGroupMembers(b); err == nil {
+		for _, m := range members {
+			if !slices.Contains(audience, m) {
+				audience = append(audience, m)
+			}
+		}
+	}
+	return audience
 }
 
 // resolveBoardGroup turns a group name into its id for linking a board; ""
@@ -748,18 +774,48 @@ func handleDashboardBoardDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := deleteBoardAndSnapshot(id); err != nil {
+	// Who was on it can only be read before it goes.
+	b, err := db.GetCollabBoard(id)
+	if err != nil {
 		writeBoardStoreError(w, err)
 		return
 	}
-	if err := removeBoardRegions(id); err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "remove event images: "+err.Error())
+	audience := boardAudience(b)
+	if err := deleteBoardAndSnapshot(id); err != nil {
+		writeBoardStoreError(w, err)
 		return
 	}
 	boardEvents.forget(id)
 	boardPresence.forget(id)
 	boardLive.publish(id, "")
+	tellBoardDeleted(id, audience)
+	setAuditTargetLabel(r, "board "+id)
+	if err := removeBoardRegions(id); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "remove event images: "+err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// tellBoardDeleted mails everyone who was on a deleted board. Unlike activity
+// mail this goes to stopped agents too: the news is still true when they
+// resume. A board that is gone stays gone whoever could not be told, so a
+// failure is only logged. Operator-authored, this quotes the id, which is held
+// to [a-z0-9-], and not the title, which any agent with boards.write can set.
+func tellBoardDeleted(id string, audience []string) {
+	body := fmt.Sprintf("The operator deleted board %s. Its contents are gone, and `tclaude agent board` commands for it now fail.", id)
+	for _, agentID := range audience {
+		a, err := db.GetAgent(agentID)
+		if err != nil || !a.Active() || a.CurrentConvID == "" {
+			continue
+		}
+		if _, _, err := queueRegularAgentMessage(&db.AgentMessage{
+			FromConv: "", ToConv: a.CurrentConvID, Subject: "[board " + id + "]", Body: body,
+			ToRecipients: []string{a.CurrentConvID}, OperatorAuthored: true,
+		}); err != nil {
+			slog.Warn("boards: tell agent of deleted board", "board", id, "agent", agentID, "error", err)
+		}
+	}
 }
 
 // PUT /api/boards/{id}/snapshot?version=N — the dashboard's PNG rendering of
@@ -989,17 +1045,8 @@ func handleDashboardBoardEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "at most one board event per board every 3s")
 		return
 	}
-	// The board's group's members are on it as well as those invited.
-	audience := slices.Clone(b.Participants)
-	if members, err := db.CollabBoardGroupMembers(b); err == nil {
-		for _, m := range members {
-			if !slices.Contains(audience, m) {
-				audience = append(audience, m)
-			}
-		}
-	}
 	var online []*db.Agent
-	for _, agentID := range audience {
+	for _, agentID := range boardAudience(b) {
 		a, err := db.GetAgent(agentID)
 		if err != nil || !a.Active() || a.CurrentConvID == "" || !isConvOnlineIn(a.CurrentConvID, alive) {
 			continue

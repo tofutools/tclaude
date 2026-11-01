@@ -84,8 +84,8 @@ test('the board list creates a board and opens it', async (t) => {
   const view = await harness.mount(harness.html`<${BoardList} fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${(id, label) => opened.push([id, label])} />`);
   await harness.act(() => wait());
   assert.match(view.container.textContent, /Old board/);
-  assert.match(view.container.textContent, /3 elements · 1 agent/);
-  const input = view.container.querySelector('input[aria-label="New board title"]');
+  assert.match(view.container.textContent, /1 agent/);
+  const input = view.container.querySelector('input[aria-label="Search boards, or title a new one"]');
   await harness.input(input, 'Release flow');
   await harness.act(async () => {
     input.closest('form').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -94,6 +94,167 @@ test('the board list creates a board and opens it', async (t) => {
   const create = requests.find((r) => r.method === 'POST');
   assert.deepEqual(create.body, { title: 'Release flow', id: 'release-flow' });
   assert.deepEqual(opened, [['release-flow', 'Release flow']]);
+});
+
+const LISTED = [
+  { id: 'new', title: 'Newest', group: 'beta', element_count: 1, agents: 2, active: true, updated_at: '2026-01-10T12:00:00Z' },
+  { id: 'solo', title: 'Solo', element_count: 0, agents: 0, updated_at: '2026-01-10T11:00:00Z' },
+  { id: 'old', title: 'Older', group: 'alpha', element_count: 2, agents: 1, updated_at: '2026-01-09T12:00:00Z' },
+  { id: 'older', title: 'Oldest', group: 'beta', element_count: 3, agents: 0, updated_at: '2026-01-01T12:00:00Z' },
+];
+
+test('the board list groups boards on one line each, and filters them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardList } = await harness.importDashboardModule('js/board-island.js');
+  const fetchImpl = async () => ok({ boards: LISTED });
+  const view = await harness.mount(harness.html`<${BoardList} compact fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${() => {}} />`);
+  await harness.act(() => wait());
+  const names = () => [...view.container.querySelectorAll('.board-section-name span:first-child')].map((el) => el.textContent);
+  const rows = () => [...view.container.querySelectorAll('.board-row-title')].map((el) => el.textContent);
+  assert.deepEqual(names(), ['beta', 'alpha', 'No group'], 'groups by their newest board, no group last');
+  assert.deepEqual(rows(), ['Newest', 'Oldest', 'Older', 'Solo']);
+  assert.ok(view.container.querySelector('.board-row-dot.active'));
+  assert.match(view.container.textContent, /Stored in this tclaude instance, not in a file/);
+  const input = view.container.querySelector('.board-new input');
+  await harness.input(input, 'ALPHA');
+  assert.deepEqual(rows(), ['Older'], 'a search finds a group too');
+  await harness.input(input, 'older');
+  assert.equal(view.container.querySelector('.board-new button').disabled, false, 'Enter needs a default button that works');
+  assert.equal(view.container.querySelector('.board-new button').textContent, 'Open', 'a title that exists is no new board');
+  await harness.input(input, 'nothing here');
+  assert.match(view.container.textContent, /No board matches/);
+});
+
+test('the box opens the board it names rather than making a second', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardList } = await harness.importDashboardModule('js/board-island.js');
+  const methods = [];
+  const fetchImpl = async (url, init = {}) => { methods.push(init.method || 'GET'); return ok({ boards: LISTED }); };
+  const opened = [];
+  const view = await harness.mount(harness.html`<${BoardList} fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${(id) => opened.push(id)} />`);
+  await harness.act(() => wait());
+  const input = view.container.querySelector('.board-new input');
+  await harness.input(input, 'solo');
+  await harness.act(async () => {
+    input.closest('form').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+    await wait();
+  });
+  assert.deepEqual(opened, ['solo']);
+  assert.ok(!methods.includes('POST'));
+});
+
+test('the delete dialog names the board and who is on it, and the list follows', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardList } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardDeleteHost, onBoardDeleted } = await harness.importDashboardModule('js/board-manage.js');
+  let boards = LISTED;
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => {
+    requests.push(`${init.method || 'GET'} ${url}`);
+    if (url === '/api/boards') return ok({ boards });
+    if (init.method === 'DELETE') { boards = boards.filter((b) => b.id !== 'new'); return { ok: true, status: 204, json: async () => { throw new Error('no body'); } }; }
+    return ok({ id: 'new', title: 'Newest', group: 'beta', participants: ['agt_a'], group_members: ['agt_a', 'agt_b'], elements: [{ id: 'e1' }, { id: 'e2' }] });
+  };
+  const snapshot = harness.signals.signal({ agents: [] });
+  const notes = [];
+  const gone = [];
+  t.after(onBoardDeleted((id) => gone.push(id)));
+  const view = await harness.mount(harness.html`<div>
+    <${BoardList} fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${() => {}} />
+    <${BoardDeleteHost} snapshot=${snapshot} fetchImpl=${fetchImpl} notify=${(text) => notes.push(text)} />
+  </div>`);
+  await harness.act(() => wait());
+  await harness.act(async () => { harness.fireEvent(view.container.querySelector('button[aria-label="Delete Newest"]'), 'click'); await wait(); });
+  await harness.act(() => wait());
+  const dialog = view.container.querySelector('.board-delete');
+  assert.match(dialog.textContent, /Delete “Newest”\?/);
+  assert.match(dialog.textContent, /2 elements, in group beta/);
+  assert.match(dialog.textContent, /cannot be undone/);
+  assert.match(dialog.textContent, /Agents on it are told/);
+  const people = [...dialog.querySelectorAll('.board-delete-people li')].map((el) => el.textContent.trim());
+  assert.equal(people.length, 2);
+  assert.match(people[1], /through the group/);
+  assert.ok(!requests.some((r) => r.startsWith('DELETE')));
+  await harness.act(async () => { harness.fireEvent(dialog.querySelector('.board-delete-confirm'), 'click'); await wait(); await wait(); });
+  assert.ok(requests.includes('DELETE /api/boards/new'));
+  assert.deepEqual(gone, ['new'], 'whatever shows the board hears of it');
+  assert.deepEqual(notes, ['Deleted “Newest”.']);
+  assert.equal(view.container.querySelector('.board-delete'), null);
+  assert.ok(!view.container.textContent.includes('Newest'), 'the list reads again');
+});
+
+test('an .excalidraw file reads as a new board, in stacking order and without what it cannot hold', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { fromExcalidraw, toExcalidraw } = await harness.importDashboardModule('js/board-model.js');
+  assert.equal(fromExcalidraw('not json'), null);
+  assert.equal(fromExcalidraw('{"type":"excalidraw/clipboard","elements":[]}'), null);
+  const box = { id: 'box', type: 'rectangle', x: 1, y: 2, width: 30, height: 40 };
+  const top = { id: 'top', type: 'ellipse', x: 5, y: 5, width: 10, height: 10, z: 2 };
+  const under = { id: 'arrow', type: 'arrow', x: 0, y: 0, points: [[0, 0], [9, 9]], startBinding: { elementId: 'box' } };
+  const file = JSON.parse(toExcalidraw([top, box, under]));
+  file.elements.push({ id: 'pic', type: 'image', x: 0, y: 0 }, { id: 'dead', type: 'rectangle', x: 0, y: 0, isDeleted: true });
+  const { elements, skipped } = fromExcalidraw(JSON.stringify(file));
+  assert.equal(skipped, 1, 'the image, not the deleted element');
+  assert.deepEqual(elements.map((el) => el.type), ['rectangle', 'arrow', 'ellipse']);
+  assert.ok(!elements.some((el) => ['box', 'top', 'arrow'].includes(el.id)), 'ids are fresh');
+  assert.equal(elements[1].startBinding.elementId, elements[0].id, 'a binding follows its shape');
+});
+
+test('importing a file makes a board under the file name, and a failed one leaves none', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { importBoardFile } = await harness.importDashboardModule('js/board-manage.js');
+  const text = JSON.stringify({ type: 'excalidraw', elements: [{ id: 'a', type: 'rectangle', x: 0, y: 0, width: 5, height: 5 }] });
+  const file = { name: 'Release flow.excalidraw', size: text.length, text: async () => text };
+  const requests = [];
+  let refuse = false;
+  const fetchImpl = async (url, init = {}) => {
+    requests.push({ url, method: init.method, body: init.body ? JSON.parse(init.body) : null });
+    if (init.method === 'POST') return ok({ id: JSON.parse(init.body).id, title: JSON.parse(init.body).title }, 201);
+    if (init.method === 'PATCH' && refuse) return { ok: false, status: 400, json: async () => ({ error: 'bad element' }) };
+    return ok({ version: 1 });
+  };
+  const made = await importBoardFile(file, { fetchImpl, taken: ['release-flow'] });
+  assert.deepEqual(made, { id: 'release-flow-2', title: 'Release flow', skipped: 0 });
+  assert.equal(requests[1].url, '/api/boards/release-flow-2');
+  assert.equal(requests[1].body.elements.length, 1);
+  refuse = true;
+  requests.length = 0;
+  await assert.rejects(importBoardFile(file, { fetchImpl }), /bad element/);
+  assert.deepEqual(requests.map((r) => r.method), ['POST', 'PATCH', 'DELETE']);
+  await assert.rejects(importBoardFile({ ...file, text: async () => '{}' }, { fetchImpl }), /not an .excalidraw file/);
+});
+
+test('an open editor says so when its board is gone, and not when collab is off', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { BoardEditor } = await harness.importDashboardModule('js/board-island.js');
+  const { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } = await harness.importDashboardModule('js/board-manage.js');
+  const gone = [];
+  t.after(onBoardDeleted((id) => gone.push(id)));
+  const snapshot = harness.signals.signal({ agents: [] });
+  const notFound = (code) => async () => ({ ok: false, status: 404, json: async () => ({ error: 'nope', code }) });
+  const disabled = await harness.mount(harness.html`<${BoardEditor} boardId="off" snapshot=${snapshot} win=${harness.window} WebSocketCtor=${null} fetchImpl=${notFound('collab_disabled')} />`);
+  await harness.act(() => wait());
+  assert.deepEqual(gone, []);
+  assert.equal(disabled.container.querySelector('.board-gone'), null);
+  const asked = await harness.mount(harness.html`<${BoardDeleteHost} snapshot=${snapshot} fetchImpl=${notFound('collab_disabled')} notify=${() => {}} />`);
+  await harness.act(async () => { askDeleteBoard({ id: 'off' }); await wait(); });
+  await harness.act(() => wait());
+  assert.deepEqual(gone, [], 'nor does the delete dialog take collab off for a deletion');
+  assert.match(asked.container.textContent, /nope/);
+  await harness.act(async () => { boardDeleteRequest.value = null; await wait(); });
+  const deleted = await harness.mount(harness.html`<${BoardEditor} boardId="plan" snapshot=${snapshot} win=${harness.window} WebSocketCtor=${null} fetchImpl=${notFound('not_found')} />`);
+  await harness.act(() => wait());
+  assert.deepEqual(gone, ['plan']);
+  assert.match(deleted.container.textContent, /This board was deleted/);
+});
+
+test('board ages stay short enough for a row', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { boardAge } = await harness.importDashboardModule('js/board-model.js');
+  const now = Date.parse('2026-02-01T00:00:00Z');
+  const ago = (ms) => new Date(now - ms).toISOString();
+  assert.deepEqual([ago(5e3), ago(12 * 6e4), ago(3 * 36e5), ago(2 * 864e5), ago(21 * 864e5)].map((iso) => boardAge(iso, now)), ['now', '12m', '3h', '2d', '3w']);
+  assert.equal(boardAge(''), '');
 });
 
 // Preact listens for the lowercase event only where the element has an

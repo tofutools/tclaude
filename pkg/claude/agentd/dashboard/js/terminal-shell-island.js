@@ -29,6 +29,7 @@ import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } f
 import { pendingApprovals } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
+import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
 import { boardOverlays, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
@@ -496,6 +497,10 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
   useEffect(() => {
     if (active && manageTitle) document.title = `${pane.label ? `${pane.label} — ` : ''}tclaude board`;
   }, [active, manageTitle, pane.label]);
+  // A pop-out's page is this one board: it stays, and the editor says so.
+  useEffect(() => onBoardDeleted((id) => {
+    if (id === pane.seed.board && !solo) void actions.closePane(pane.key);
+  }), [pane.key, pane.seed.board, solo]);
   const editor = seen.current && snapshot ? html`<${BoardEditor}
     boardId=${pane.seed.board} onScreen=${active} snapshot=${snapshot} win=${window}
     visible=${() => solo || !!document.getElementById('tab-terminals')?.classList.contains('active')}
@@ -517,17 +522,20 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
 // It reads the snapshot itself so the strip does not re-render on each poll.
 function BoardMenu({ state, snapshot }) {
   const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
   const rootRef = useRef(null);
   const request = state.boardMenuRequest.value;
   useEffect(() => { if (request) setOpen(true); }, [request]);
-  useDismissablePopover(rootRef, open, () => setOpen(false));
+  // The delete dialog and the file picker are outside the menu, and the menu is
+  // waiting for them.
+  useDismissablePopover(rootRef, open && !boardDeleteRequest.value && !picking, () => setOpen(false));
   if (snapshot?.value?.collab_enabled !== true) return null;
   return html`<div ref=${rootRef} class="mux-board-slot">
     <button type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       title="Open a board in a tab, or create one" aria-label="Open or create a board"
       onClick=${() => setOpen((value) => !value)}>＋</button>
     ${open ? html`<div class="mux-board-menu" role="dialog" aria-label="Boards">
-      <${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast}
+      <${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast} onPicking=${setPicking}
         onOpen=${(id, label) => { setOpen(false); void openBoardPane(id, label); }} />
     </div>` : null}
   </div>`;
@@ -800,6 +808,7 @@ function PaneTab({
       kind: 'pane',
       key: pane.key,
       board,
+      boardId: pane.seed.board,
       groupId,
       label: pane.label,
       trigger: event.currentTarget,
@@ -1165,6 +1174,7 @@ function PaneContextMenu({
     ...(menu.board ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
     item('Detach tab', () => actions.popOutPane(menu.key)),
     separator,
+    ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'mux-tab-menu-item danger', refocus: false })] : []),
     item('Close tab', () => actions.closePane(menu.key)),
     item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
     item('Close all tabs', () => actions.closeAllPanes(), { className: 'mux-tab-menu-item danger' }),
@@ -1875,6 +1885,7 @@ function TerminalTabs({
         </div>
         ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
+      ${snapshot ? html`<${BoardDeleteHost} snapshot=${snapshot} fetchImpl=${fetchFromPage} notify=${shellToast} />` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
         closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
         focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}

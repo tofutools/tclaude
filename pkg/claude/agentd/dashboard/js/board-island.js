@@ -19,13 +19,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import {
   BOARD_FONTS, BOARD_TEXT_STYLE, boardFont, boardFontSizes, sameTextStyle, textStyleOf,
-  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardIdFromTitle, boardTopZ, bump, changeBounds,
+  ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardTopZ, bump, changeBounds,
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
   entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
   QUICK_SHAPES, reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, stackOrder, suggestedShape, toExcalidraw, topHit, withLabels,
-  BOARD_ZOOM_MAX, BOARD_ZOOM_MIN, clampBoardZoom,
+  BOARD_ZOOM_MAX, BOARD_ZOOM_MIN, boardAge, clampBoardZoom, groupBoards,
 } from './board-model.js';
 import { BoardContextMenu } from './board-context-menu.js';
+import { announceBoardDeleted, askDeleteBoard, boardIsGone, exportBoard, freeBoardId, importBoardFile } from './board-manage.js';
 import { clipboardReadNote } from './insecure-origin.js';
 import { BoardMinimap } from './board-minimap.js';
 import { BoardQuickMenu, QUICK_MENU_SIZE } from './board-quick-menu.js';
@@ -107,6 +108,7 @@ async function jsonOrThrow(response) {
   if (!response.ok) {
     const error = new Error(body.message || body.error || `${response.status} ${response.statusText}`);
     error.status = response.status;
+    error.code = body.code;
     throw error;
   }
   return body;
@@ -216,6 +218,7 @@ export function BoardEditor({
   boardId, fetchImpl, notify = () => {}, snapshot, win, WebSocketCtor = win?.WebSocket, rasterize = rasterizeBoard, onOpenAgent,
   onScreen = true, visible = null, headActions = null, onTitle = null,
 }) {
+  const [gone, setGone] = useState(false);
   const elements = useRef(new Map());
   // The live elements as drawn, by id: lines on their shapes and text on its
   // container. One Map refilled on each change, as the minimap expects.
@@ -319,6 +322,7 @@ export function BoardEditor({
     let settling = false;
     let lastLoad = 0;
     let presenceShown = false;
+    let missing = false;
     const load = async (since) => {
       try {
         const query = since ? `?since=${since}` : '';
@@ -354,13 +358,21 @@ export function BoardEditor({
         setStatus('ready');
       } catch (error) {
         retry = true;
-        if (!disposed.current) setStatus(since ? 'offline' : `error: ${error?.message || error}`);
+        if (disposed.current) return;
+        if (boardIsGone(error)) {
+          missing = true;
+          setGone(true);
+          notify(`The board ${boardId} was deleted.`);
+          announceBoardDeleted(boardId);
+          return;
+        }
+        setStatus(since ? 'offline' : `error: ${error?.message || error}`);
       }
     };
     const due = () => !liveOpen || stale || retry
       || Date.now() - lastLoad >= (presenceShown ? BOARD_LIVE_PRESENCE_MS : BOARD_LIVE_CHECK_MS);
     const tick = async () => {
-      if (disposed.current || ticking) return;
+      if (disposed.current || missing || ticking) return;
       ticking = true;
       settling = false;
       clearTimeout(pollTimer);
@@ -406,7 +418,7 @@ export function BoardEditor({
       liveSocket.onclose = () => {
         liveOpen = false;
         liveSocket = null;
-        if (disposed.current) return;
+        if (disposed.current || missing) return;
         liveRetry = setTimeout(connect, liveDelay);
         liveDelay = Math.min(liveDelay * 2, BOARD_LIVE_RETRY_MAX_MS);
       };
@@ -1693,6 +1705,7 @@ export function BoardEditor({
   const editingId = editingText?.id || '';
   const drawn = useMemo(() => live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} onLine=${!!drawnById.get(el.containerId)?.points} editing=${el.id === editingId} />`), [tick, flash, editingId]);
 
+  if (gone) return html`<p class="board-gone" role="status">This board was deleted.</p>`;
   return html`<div ref=${rootRef} class="board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }} onWheel=${onWheel}>
     <header class="board-head">
       <h2 class="board-title">${meta.title}</h2>
@@ -1841,11 +1854,33 @@ export function BoardEditor({
 
 // -- the board list ---------------------------------------------------------------
 
-// BoardList offers every board, and a new one; `compact` is the strip's + menu.
-export function BoardList({ fetchImpl, notify, onOpen, compact = false }) {
+// BoardRow is one board on one line; its export and delete show on hover.
+function BoardRow({ board, onOpen, onExport, onDelete }) {
+  const label = board.title || board.id;
+  const agents = board.agents ?? board.participants?.length ?? 0;
+  const elements = `${board.element_count ?? 0} element${board.element_count === 1 ? '' : 's'}`;
+  const changed = board.updated_at ? new Date(board.updated_at).toLocaleString() : '';
+  return html`<li class="board-row">
+    <button type="button" class="board-row-open" title=${`${label}: ${elements}${changed ? `, changed ${changed}` : ''}`} onClick=${() => onOpen(board.id, label)}>
+      <span class=${`board-row-dot${board.active ? ' active' : ''}`} title=${board.active ? 'An agent has a session on it' : ''}></span>
+      <span class="board-row-title">${label}</span>
+      ${agents > 0 && html`<span class="board-row-agents">${agents} agent${agents === 1 ? '' : 's'}</span>`}
+      <span class="board-row-age">${boardAge(board.updated_at)}</span>
+    </button>
+    <button type="button" class="board-row-action" title="Download as .excalidraw" aria-label=${`Export ${label}`} onClick=${() => onExport(board)}>⤓</button>
+    <button type="button" class="board-row-action danger" title="Delete this board" aria-label=${`Delete ${label}`} onClick=${() => onDelete(board)}>🗑</button>
+  </li>`;
+}
+
+// BoardList offers every board, and a new one; one box does both. `compact` is
+// the strip's + menu. onPicking says while a file is being chosen and read, when
+// a menu around the list must stay open: the file input is inside it.
+export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, compact = false }) {
   const [boards, setBoards] = useState(null);
   const [title, setTitle] = useState('');
   const [error, setError] = useState('');
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef(null);
   const load = useCallback(async () => {
     try {
       const result = await jsonOrThrow(await fetchImpl('/api/boards', { credentials: 'same-origin' }));
@@ -1856,14 +1891,20 @@ export function BoardList({ fetchImpl, notify, onOpen, compact = false }) {
     }
   }, [fetchImpl]);
   useEffect(() => { void load(); }, [load]);
+  const clean = title.trim();
+  const same = (boards || []).find((b) => (b.title || b.id).toLowerCase() === clean.toLowerCase());
   async function create(event) {
     event.preventDefault();
-    const clean = title.trim();
     if (!clean) return;
+    // The box filters too, so naming a board that exists means that board.
+    if (same) {
+      onOpen(same.id, same.title || same.id);
+      return;
+    }
     try {
       const board = await jsonOrThrow(await fetchImpl('/api/boards', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: clean, id: boardIdFromTitle(clean) || undefined }),
+        body: JSON.stringify({ title: clean, id: freeBoardId(clean, (boards || []).map((b) => b.id)) || undefined }),
       }));
       setTitle('');
       onOpen(board.id, board.title || clean);
@@ -1871,21 +1912,56 @@ export function BoardList({ fetchImpl, notify, onOpen, compact = false }) {
       notify(`Could not create the board: ${err?.message || err}`, true);
     }
   }
+  async function exportRow(board) {
+    try {
+      await exportBoard(board.id, fetchImpl);
+    } catch (err) {
+      notify(`Could not export the board: ${err?.message || err}`, true);
+    }
+  }
+  async function importFile(event) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) {
+      onPicking(false);
+      return;
+    }
+    setImporting(true);
+    try {
+      const board = await importBoardFile(file, { fetchImpl, taken: (boards || []).map((b) => b.id) });
+      if (board.skipped) notify(`Imported “${board.title}”. ${board.skipped} element${board.skipped === 1 ? ' a board cannot hold was' : 's a board cannot hold were'} left out.`);
+      onOpen(board.id, board.title);
+    } catch (err) {
+      notify(`Could not import ${file.name}: ${err?.message || err}`, true);
+    } finally {
+      setImporting(false);
+      onPicking(false);
+    }
+  }
+  const groups = groupBoards(boards || [], clean);
   return html`<div class=${`board-list${compact ? ' compact' : ''}`}>
     <form class="board-new" onSubmit=${create}>
-      <input type="text" placeholder="New board title, e.g. Release flow" aria-label="New board title" maxLength="120"
+      <input type="text" placeholder="Search, or type a title to create" aria-label="Search boards, or title a new one" maxLength="120"
         value=${title} onInput=${(event) => setTitle(event.currentTarget.value)} />
-      <button type="submit" disabled=${!title.trim()}>Create board</button>
+      <button type="submit" disabled=${!clean}>${same ? 'Open' : 'Create'}</button>
     </form>
     ${error && html`<p class="board-error" role="alert">Boards are unavailable: ${error}</p>`}
     ${boards === null && !error && html`<p class="board-muted">Loading boards…</p>`}
-    ${boards && !boards.length && html`<p class="board-muted">No boards yet. A board is a shared canvas: you draw, agents read it as shapes and as an image, and draw back.</p>`}
-    <div class="board-cards">
-      ${(boards || []).map((b) => html`<button key=${b.id} type="button" class="board-card" onClick=${() => onOpen(b.id, b.title || b.id)}>
-        <b>${b.title || b.id}</b>
-        <span>${b.element_count ?? 0} element${b.element_count === 1 ? '' : 's'}${b.participants?.length ? ` · ${b.participants.length} agent${b.participants.length === 1 ? '' : 's'}` : ''}${b.group ? ` · group ${b.group}` : ''}</span>
-        <small>${b.updated_at ? new Date(b.updated_at).toLocaleString() : ''}</small>
-      </button>`)}
+    ${boards && !boards.length && html`<p class="board-muted">No boards yet. A board is a shared canvas: you draw, agents read it and draw back.</p>`}
+    ${boards?.length > 0 && !groups.length && html`<p class="board-muted">No board matches. Create makes one with this title.</p>`}
+    <div class="board-groups">
+      ${groups.map(({ name, boards: rows }) => html`<div key=${name} class="board-section" role="group" aria-label=${name ? `Group ${name}` : 'Boards without a group'}>
+        ${(name || groups.length > 1) && html`<h3 class="board-section-name"><span>${name || 'No group'}</span><span class="board-section-count">${rows.length}</span></h3>`}
+        <ul class="board-rows">
+          ${rows.map((board) => html`<${BoardRow} key=${board.id} board=${board} onOpen=${onOpen} onExport=${exportRow}
+            onDelete=${() => askDeleteBoard({ id: board.id, title: board.title, onDeleted: load })} />`)}
+        </ul>
+      </div>`)}
+    </div>
+    <div class="board-store">
+      <span>Stored in this tclaude instance, not in a file. ⤓ exports one.</span>
+      <button type="button" class="board-import" disabled=${importing} onClick=${() => { onPicking(true); fileRef.current?.click(); }}>${importing ? 'Importing…' : 'Import…'}</button>
+      <input ref=${fileRef} type="file" accept=".excalidraw,.json,application/json" hidden aria-label="Import an .excalidraw file" onChange=${importFile} onCancel=${() => onPicking(false)} />
     </div>
   </div>`;
 }

@@ -114,6 +114,35 @@ export function boardIdFromTitle(title) {
   return isBoardId(id) ? id : '';
 }
 
+// groupBoards sorts a board listing into its groups, those that match `query`:
+// the groups in the order of their newest board, and the boards without one
+// last. Boards come newest first.
+export function groupBoards(boards, query = '') {
+  const wanted = query.trim().toLowerCase();
+  const groups = new Map();
+  for (const board of boards) {
+    if (wanted && !`${board.title || ''} ${board.id} ${board.group || ''}`.toLowerCase().includes(wanted)) continue;
+    const name = board.group || '';
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(board);
+  }
+  const rows = [...groups].map(([name, members]) => ({ name, boards: members }));
+  return [...rows.filter(({ name }) => name), ...rows.filter(({ name }) => !name)];
+}
+
+// boardAge says how long ago a board changed, as briefly as a row allows.
+export function boardAge(iso, now = Date.now()) {
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return '';
+  const minutes = Math.max(0, Math.floor((now - at) / 60000));
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return days < 14 ? `${days}d` : `${Math.floor(days / 7)}w`;
+}
+
 let idCounter = 0;
 export function newElementId(random = Math.random) {
   idCounter = (idCounter + 1) % 1e6;
@@ -833,6 +862,7 @@ export function clipboardText(elements) {
 
 const PASTE_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'arrow', 'line', 'freedraw', 'text']);
 const MAX_COORD = 1e6;
+const MAX_FILE_ELEMENTS = 5000;
 const MAX_TEXT_BYTES = 4000;
 const COLOR = /^(#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3}|transparent)$/;
 const ELEMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -1061,6 +1091,19 @@ function excalidrawLinks(elements) {
     const links = bound.get(el.id);
     return { ...el, ...(links ? { boundElements: links } : {}), ...(el.containerId ? { verticalAlign: 'middle' } : {}) };
   });
+}
+
+// fromExcalidraw reads an .excalidraw file as elements for a new board, with
+// fresh ids, and counts those a board cannot hold, such as images; null when
+// the text is no such file.
+export function fromExcalidraw(text) {
+  let data = null;
+  try { data = JSON.parse(text); } catch { return null; }
+  if (data?.type !== 'excalidraw' || !Array.isArray(data.elements)) return null;
+  const live = data.elements.filter((el) => el && !el.isDeleted);
+  const ordered = stacked(new Map(live.map((el, i) => [el.id ?? `#${i}`, el])));
+  const clean = ordered.slice(0, MAX_FILE_ELEMENTS).map(sanitizeElement).filter(Boolean);
+  return { elements: cloneElements(clean, 0, 0), skipped: live.length - clean.length };
 }
 
 // toExcalidraw wraps elements as an .excalidraw file.
