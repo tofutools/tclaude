@@ -58,9 +58,10 @@ test('a saved window nothing shows gives up its place, so the terminal can open'
   const harness = await createPreactHarness(t);
   const { openTerminalPane } = await harness.importDashboardModule('js/terminals-tab.js');
   const { overlayWindows } = await harness.importDashboardModule('js/overlay-instances.js');
+  const { windowOfTab } = await harness.importDashboardModule('js/overlay-tab-model.js');
   await harness.importDashboardModule('js/terminal-window.js');
   const { terminalWindowOf } = await harness.importDashboardModule('js/terminal-window-model.js');
-  overlayWindows.value = [terminalWindowOf(groupShell)];
+  overlayWindows.value = [windowOfTab(terminalWindowOf(groupShell))];
   assert.equal(await openTerminalPane(groupShell.seed), null, 'it falls through to the Terminals tab, which is not mounted here');
   assert.deepEqual(overlayWindows.value, []);
 });

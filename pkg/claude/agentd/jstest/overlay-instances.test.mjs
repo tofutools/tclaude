@@ -111,10 +111,48 @@ test('the open windows survive a reload, and invalid ones do not', async (t) => 
   t.after(stop);
   assert.deepEqual(instances.overlayWindows.value.map((window) => window.id), ['x']);
   instances.openOverlayWindow({ id: 'z', kind: 'k', label: 'Z', at: { x: 1, y: 2 } });
-  const saved = JSON.parse(store.get(instances.OVERLAY_WINDOWS_KEY));
+  const saved = JSON.parse(store.get(instances.OVERLAY_WINDOWS_KEY)).windows;
   assert.deepEqual(saved.map((window) => window.id), ['x', 'z']);
   assert.equal(saved[1].at, undefined, 'a drop point is not a place to reopen at');
   assert.ok(harness);
+});
+
+test('windows saved before tabs come back in the split and the stack they had', async (t) => {
+  const { harness, instances, overlay, prefs, level, mounted } = await setup(t, PAIR);
+  const store = new Map([[instances.OVERLAY_WINDOWS_KEY, JSON.stringify([
+    { id: 'a', kind: 'k', label: 'A', minimized: false },
+    { id: 'b', kind: 'k', label: 'B', minimized: true },
+  ])]]);
+  const win = { sessionStorage: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) } };
+  t.after(instances.keepOverlayWindows(win, (tab) => tab.kind === 'k'));
+  assert.deepEqual(instances.overlayWindows.value.map(({ id, active }) => [id, active]), [['a', 'a'], ['b', 'b']]);
+  assert.deepEqual(instances.overlayWindows.value.map((window) => window.tabs.map((tab) => tab.label)), [['A'], ['B']]);
+  assert.deepEqual(instances.overlayTabs.value.map(({ id, minimized }) => [id, minimized]), [['a', false], ['b', true]]);
+  await harness.act(() => overlay.raiseOverlayWindow('a'));
+  assert.ok(mounted.container.querySelector('.overlay-split-line'), 'the split still holds them, by the same ids');
+  assert.ok(level('a') > level('b'));
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR);
+  // What this page writes, it reads back the same.
+  const again = JSON.parse(store.get(instances.OVERLAY_WINDOWS_KEY));
+  assert.deepEqual(again.windows.map((window) => window.id), ['a', 'b']);
+  assert.deepEqual(again.minimizedTabs, []);
+});
+
+test('every way into a window finds it by its tab', async (t) => {
+  const { instances } = await setup(t);
+  instances.overlayWindows.value = [{ id: 'w', tabs: [{ id: 'p', kind: 'k', label: 'P' }, { id: 'q', kind: 'k', label: 'Q' }], active: 'p', minimized: true }];
+  t.after(() => { instances.overlayWindows.value = []; });
+  instances.openOverlayWindow({ id: 'q', kind: 'k', label: 'Q' });
+  assert.equal(instances.overlayWindows.value.length, 1, 'a tab opens in one place at a time');
+  assert.deepEqual([instances.overlayWindows.value[0].minimized, instances.overlayWindows.value[0].active], [false, 'q']);
+  instances.labelOverlayWindow('q', 'Renamed');
+  assert.deepEqual(instances.overlayTabs.value.map((tab) => tab.label), ['P', 'Renamed']);
+  instances.focusOverlayWindow('p');
+  assert.equal(instances.overlayWindows.value[0].focusAsked, 1);
+  instances.minimizeOverlayWindow('p');
+  assert.equal(instances.overlayWindows.value[0].minimized, true, 'minimizing takes the whole window');
+  instances.closeOverlayWindow('q');
+  assert.deepEqual(instances.overlayWindows.value, []);
 });
 
 // A pointer on an unlocked edge of the window, in the room's coordinates.

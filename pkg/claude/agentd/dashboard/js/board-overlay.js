@@ -17,7 +17,7 @@ import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-w
 import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { closeOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, overlayWindows, useDropPoint } from './overlay-instances.js';
+import { closeOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, overlayTabs, overlayWindows, useDropPoint } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { TERMINAL_WINDOW_KIND, validTerminalWindow } from './terminal-window-model.js';
 import { OverlayWindow, overlayStackReset, readPref, useOverlayWindow } from './overlay-window.js';
@@ -88,7 +88,7 @@ function BoardOverlayWindow({ instance, index, snapshot, fetchImpl, notify, pref
 // OverlayDock holds the minimized windows of every kind. A chat that needs the
 // operator says so here, as a chip does, so it never looks silently busy.
 function OverlayDock({ snapshot }) {
-  const minimized = overlayWindows.value.filter((window) => window.minimized);
+  const minimized = overlayTabs.value.filter((tab) => tab.minimized);
   if (!minimized.length) return null;
   const agents = companionAgents(snapshot.value);
   const needs = ({ kind, agent }) => {

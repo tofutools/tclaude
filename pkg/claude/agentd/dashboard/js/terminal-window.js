@@ -7,7 +7,7 @@ import { computed } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { defaultPlacement } from './companion-model.js';
-import { closeOverlayWindow, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayWindows, useDropPoint } from './overlay-instances.js';
+import { closeOverlayWindow, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayTabs, useDropPoint } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
@@ -20,7 +20,7 @@ const html = htm.bind(h);
 
 export const TERMINAL_WINDOW_PREF = 'tclaude.dash.terminal-window.placement';
 
-export const terminalOverlays = computed(() => overlayWindows.value.filter((window) => window.kind === TERMINAL_WINDOW_KIND));
+export const terminalOverlays = computed(() => overlayTabs.value.filter((tab) => tab.kind === TERMINAL_WINDOW_KIND));
 
 // The windows really in the page. With Collab off the saved set is still there
 // but nothing shows it, so it must not answer for a terminal.
