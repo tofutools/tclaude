@@ -33,6 +33,7 @@ import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
 import { StewardRoster } from './steward-roster.js';
+import { WindowControls, windowControlsLook } from './companion-window-controls.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
@@ -337,6 +338,7 @@ export function CompanionApp({
   const pending = useRef(new Map());
   // The cleanup of an in-flight drag or resize, run if the island unmounts.
   const gesture = useRef(null);
+  const snapBeforeMaximize = useRef('');
   useEffect(() => () => gesture.current?.(), []);
 
   const activeId = tabs.includes(active) ? active : (tabs[0] || '');
@@ -603,6 +605,21 @@ export function CompanionApp({
     if (win?.getSelection?.()?.isCollapsed === false) return;
     const active = win?.document?.activeElement;
     if (!active || active === win.document.body) setFocusToken((n) => n + 1);
+  }
+
+  // Restore goes back to the snap the window was maximized from, or floating.
+  function toggleMaximize() {
+    const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
+    if (placement.snap === 'max') {
+      const snap = snapBeforeMaximize.current;
+      const next = snap ? zoneRect(snap, viewportOf(win), snapTop()) : floatingPlacement();
+      setPlacement(next);
+      savePlacement({ ...(saved || next), snap });
+      return;
+    }
+    snapBeforeMaximize.current = placement.snap;
+    setPlacement(zoneRect('max', viewportOf(win), snapTop()));
+    savePlacement({ ...(saved || placement), snap: 'max' });
   }
 
   function onTitlePointerDown(event) {
@@ -1215,11 +1232,19 @@ export function CompanionApp({
     withContext=${withContext} onContext=${setWithContext}
     annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${startAnnotating} />`;
 
+  const look = windowControlsLook(snapshot.value?.window_controls);
+  // Close takes the tab being shown off the window, as its own × does. With
+  // no such tab there is nothing to close, so the window just goes away.
+  const closesTab = activeAgent && !showQueue;
+  const windowControls = look !== 'classic' && html`<${WindowControls} look=${look} maximized=${placement.snap === 'max'}
+    closeLabel=${closesTab ? `Close ${activeAgent.name}` : 'Close'} closeTitle=${closesTab ? 'Close (the agent keeps running)' : 'Close'}
+    onMinimize=${minimize} onMaximize=${toggleMaximize} onClose=${() => (closesTab ? closeTab(activeAgent.agentId) : minimize())} />`;
+
   const windowView = (open || warm) && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${open ? '' : ' companion-window-warm'}`}
     style=${style} role="dialog" aria-label="Companion" aria-modal="false" aria-hidden=${open ? undefined : 'true'} onClick=${onWindowClick}>
-    <header class="companion-titlebar" onPointerDown=${onTitlePointerDown}>
-      <span class="companion-grip" aria-hidden="true">⋮⋮</span>
+    <header class=${`companion-titlebar companion-look-${look}`} onPointerDown=${onTitlePointerDown}>
+      ${look === 'macos' ? windowControls : html`<span class="companion-grip" aria-hidden="true">⋮⋮</span>`}
       <div class="companion-tabs" role="tablist" aria-label="Companion agents">
         ${chipAgents.map((agent) => {
           const tabStatus = statusOf(agent);
@@ -1262,8 +1287,9 @@ export function CompanionApp({
           ${openMorph && html`<button type="button" class="companion-morph" aria-label=${`Morph ${activeAgent.name}`} title="Morph: relaunch on another harness, model or profile"
             onClick=${() => openMorph(activeAgent)}>⇄</button>`}
         `}
-        <button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>
+        ${look === 'classic' && html`<button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>`}
       </div>
+      ${look !== 'macos' && windowControls}
     </header>
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} trigger=${addRef} />`}
@@ -1312,7 +1338,7 @@ export function CompanionApp({
       label=${`Message ${activeAgent.name}`} fieldRef=${fieldRef} onSubmit=${send}
       onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)}
       onEdit=${(text) => { speaker.cancel(); setDraft(activeAgent.agentId, text); }} />`}
-    ${placement.snap && html`<div class="companion-resize" aria-hidden="true" onPointerDown=${(event) => onResizePointerDown(event)}></div>`}
+    ${placement.snap && placement.snap !== 'max' && html`<div class="companion-resize" aria-hidden="true" onPointerDown=${(event) => onResizePointerDown(event)}></div>`}
   </section>`;
 
   return html`

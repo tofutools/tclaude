@@ -24,6 +24,13 @@ const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 function isModifiedClick(e) {
   return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0;
 }
+// browserOS names the operating system the browser runs on: 'macos', 'windows',
+// or 'linux' for anything else.
+function browserOS() {
+  const platform = navigator.platform || navigator.userAgent || '';
+  if (/Mac|iPhone|iPad/.test(platform)) return 'macos';
+  return /Win/.test(platform) ? 'windows' : 'linux';
+}
 // isMacChromeZeroReleaseLeave recognises the all-zero dragleave (null
 // relatedTarget, zero client AND screen coordinates) that macOS Chrome emits
 // at the in-place mouse release ending a Cmd/Ctrl copy drag, typically
@@ -35,7 +42,7 @@ function isMacChromeZeroReleaseLeave(e) {
   return !e.relatedTarget
     && e.clientX === 0 && e.clientY === 0
     && e.screenX === 0 && e.screenY === 0
-    && /Mac/.test(navigator.platform || navigator.userAgent)
+    && browserOS() === 'macos'
     && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
     && !/(?:Edg|OPR|Vivaldi)\//.test(navigator.userAgent)
     && !navigator.brave;
@@ -609,7 +616,7 @@ function syncWizardOrbit() {
 export {
   syncBotAnimations,
   syncWizardOrbit,
-  $, $$, isModifiedClick, isMacChromeZeroReleaseLeave, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
+  $, $$, isModifiedClick, browserOS, isMacChromeZeroReleaseLeave, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
   makeModalResizable, bindModalSubmitHotkey,
   harnessCanRename, harnessCanRemoteControl, harnessCanCompact,
   relTime, shortCwd, displayModel, offlineDefault, groupOfflineOverride, setGroupOfflineOverride, groupShowOffline,

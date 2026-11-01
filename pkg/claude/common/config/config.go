@@ -604,6 +604,10 @@ type DashboardConfig struct {
 	// them: "dim" (default), "blur", "both" or "none". Blur is slow in a
 	// browser without GPU acceleration. See (*Config).OverlayBackdrop.
 	OverlayBackdrop string `json:"overlay_backdrop,omitempty"`
+	// WindowControls picks the look of the companion window's controls:
+	// "auto" (default, follows the browser's OS), "macos", "windows", "linux"
+	// or "classic". See (*Config).WindowControls.
+	WindowControls string `json:"window_controls,omitempty"`
 	// DefaultTerminal selects how the dashboard's spawn auto-focus, per-agent
 	// focus / open-window / open-terminal actions open a console — one of
 	// DefaultTerminal{Native, Web}. "native" pops a native OS window (falling
@@ -2184,6 +2188,18 @@ func (c *Config) OverlayBackdrop() string {
 		}
 	}
 	return "dim"
+}
+
+// WindowControls returns dashboard.window_controls, with "auto" for anything
+// unset or unknown.
+func (c *Config) WindowControls() string {
+	if c != nil && c.Dashboard != nil {
+		switch v := c.Dashboard.WindowControls; v {
+		case "macos", "windows", "linux", "classic":
+			return v
+		}
+	}
+	return "auto"
 }
 
 // GroupQuickOptions reports the display mode for the group <summary> quick-
