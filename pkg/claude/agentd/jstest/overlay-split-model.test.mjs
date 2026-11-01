@@ -131,18 +131,6 @@ test('a window comes back into the cell it left, and the rest stay', async (t) =
   }
 });
 
-test('windows facing each other pair up and fill the room', async (t) => {
-  const { roomPair } = await model(t);
-  assert.deepEqual(roomPair('a', 'right', 'b', 'left'), pair('x', 'a', 'b'));
-  assert.deepEqual(roomPair('a', 'left', 'b', 'right'), pair('x', 'b', 'a'));
-  assert.deepEqual(roomPair('a', 'top-right', 'b', 'top-left'), pair('x', 'a', 'b'), 'a row of corners stands side by side');
-  assert.deepEqual(roomPair('a', 'bottom-right', 'b', 'top-left'), pair('x', 'a', 'b'), 'and so does a diagonal');
-  assert.deepEqual(roomPair('a', 'bottom-left', 'b', 'top-left'), pair('y', 'a', 'b'), 'a column of corners stacks');
-  assert.deepEqual(roomPair('a', 'top-left', 'b', 'bottom'), pair('y', 'b', 'a'));
-  assert.equal(roomPair('a', 'left', 'b', 'left'), null);
-  assert.equal(roomPair('a', 'left', 'b', 'bottom'), null);
-});
-
 test('a drop on a half splits that window, and the fourth corner makes a quad', async (t) => {
   const { withWindow } = await model(t);
   const two = pair('x', 'a', 'b');

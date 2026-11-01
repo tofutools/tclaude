@@ -282,20 +282,6 @@ function pairOf(axis, first, second) {
   return { axis, at: 0.5, a: first, b: second };
 }
 
-// roomPair is the tree two snapped windows make, or null where their zones do
-// not face each other. Windows on opposite sides stand side by side, and two
-// corners of one side stack: the pair fills the room rather than leave a hole.
-export function roomPair(placed, zone, id, placedZone) {
-  const [one, other] = [{ id }, { id: placed }];
-  if (sideOf(zone) && sideOf(placedZone) && sideOf(zone) !== sideOf(placedZone)) {
-    return sideOf(zone) === 'left' ? pairOf('x', one, other) : pairOf('x', other, one);
-  }
-  if (endOf(zone) && endOf(placedZone) && endOf(zone) !== endOf(placedZone)) {
-    return endOf(zone) === 'top' ? pairOf('y', one, other) : pairOf('y', other, one);
-  }
-  return null;
-}
-
 // The room's four cells, top left to bottom right, and the ones each zone takes.
 const ZONE_CELLS = Object.freeze({
   'top-left': [0], 'top-right': [1], 'bottom-left': [2], 'bottom-right': [3], left: [0, 2], right: [1, 3], bottom: [2, 3],

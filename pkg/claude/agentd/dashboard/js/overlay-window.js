@@ -25,7 +25,7 @@ import {
   clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapReach, snapZone, viewportOf, zoneRect,
 } from './overlay-window-model.js';
 import {
-  detachSpot, dropZone, edgeMeets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, parseSplit, rectZone, roomPair, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
+  detachSpot, dropZone, edgeMeets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, parseSplit, rectZone, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
 
@@ -301,9 +301,6 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       }
     }
     if (live || !room) return plain;
-    for (const [other, { zone }] of targets.filter(([other]) => inTree(other))) {
-      if (roomPair(other, room, id, zone)) return planned(withWindow(savedTree, other, room, id), room) || plain;
-    }
     const alone = targets.filter(([other]) => !inTree(other)).map(([other, { zone }]) => [other, zone]);
     return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
   }
@@ -470,10 +467,14 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   // which may have opened a dialog, and a text selection survives so it can be copied.
   function onWindowClick(event) {
     if (event.target.closest?.('button, a, input, textarea, select, label')) return;
-    if (win?.getSelection?.()?.isCollapsed === false) return;
     const node = windowRef.current;
-    if (node?.contains?.(win?.document?.activeElement)) return;
-    node?.focus?.({ preventScroll: true });
+    const selection = win?.getSelection?.();
+    if (selection?.isCollapsed === false && node?.contains?.(selection.anchorNode)) return;
+    // The window itself holds focus after a press on its content: that is not
+    // the content having it.
+    const active = win?.document?.activeElement;
+    if (active !== node && node?.contains?.(active)) return;
+    if (active !== node) node?.focus?.({ preventScroll: true });
     onRefocus?.();
   }
 

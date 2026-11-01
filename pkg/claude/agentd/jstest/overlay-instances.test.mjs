@@ -19,15 +19,16 @@ async function setup(t, tree = null) {
   const prefs = memoryPrefs();
   if (tree) prefs.setItem(overlay.OVERLAY_SPLIT_PREF, JSON.stringify(tree));
   for (const id of ['a', 'b', 'c']) prefs.setItem(`p.${id}`, JSON.stringify({ x: 0, y: 0, w: 400, h: 300, snap: id === 'c' ? '' : 'left' }));
+  const refocused = [];
   function Win({ id }) {
-    const window = overlay.useOverlayWindow({ id, win: harness.window, prefs, prefKey: `p.${id}`, defaultPlacement: () => ({ x: 0, y: 0, w: 400, h: 300, snap: '' }), snaps: true });
+    const window = overlay.useOverlayWindow({ id, onRefocus: () => refocused.push(id), win: harness.window, prefs, prefKey: `p.${id}`, defaultPlacement: () => ({ x: 0, y: 0, w: 400, h: 300, snap: '' }), snaps: true });
     return harness.html`<${overlay.OverlayWindow} id=${id} window=${window} className=${`w-${id}`} frameClass="f" titlebarClass="t" label=${id} title="x">body<//>`;
   }
   const { h } = harness.preact;
   const mounted = await harness.mount(h('div', null, ...['a', 'b', 'c'].map((id) => h(Win, { key: id, id }))));
   const level = (id) => Number(mounted.container.querySelector(`.w-${id}`).style.getPropertyValue('--overlay-level'));
   const lineLevel = () => Number(mounted.container.querySelector('.overlay-split-line').style.zIndex);
-  return { harness, overlay, instances, prefs, mounted, level, lineLevel };
+  return { harness, overlay, instances, prefs, mounted, level, lineLevel, refocused };
 }
 
 const PAIR = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { id: 'b' } };
@@ -82,6 +83,14 @@ test('a click on a title bar brings focus to the window, and a control keeps its
   const other = mounted.container.querySelector('.w-b');
   await click(other.querySelector('.t'));
   assert.ok(harness.document.activeElement === other, 'and moves with the next click, from another window');
+});
+
+test('a click that left focus on the window itself hands it to the content', async (t) => {
+  const { harness, mounted, refocused } = await setup(t, PAIR);
+  const section = mounted.container.querySelector('.w-a');
+  section.focus();
+  await harness.act(() => section.querySelector('.t').dispatchEvent(new harness.window.Event('click', { bubbles: true })));
+  assert.deepEqual(refocused, ['a'], 'as a browser leaves it after a press on content that takes no focus');
 });
 
 test('a window opens once, and comes back rather than opening twice', async (t) => {
