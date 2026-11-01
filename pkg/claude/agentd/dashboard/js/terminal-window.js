@@ -4,10 +4,10 @@
 
 import { h } from 'preact';
 import { computed } from '@preact/signals';
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { defaultPlacement } from './companion-model.js';
-import { closeOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { closeOverlayWindow, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
@@ -33,8 +33,10 @@ export const terminalWindowsShowing = () => showing.size > 0;
 setFloatingTerminals((key) => {
   const floating = terminalOverlays.peek().find((window) => window.paneKey === key);
   if (!floating) return false;
-  if (showing.has(floating.id)) openOverlayWindow(floating);
-  else closeOverlayWindow(floating.id);
+  if (showing.has(floating.id)) {
+    openOverlayWindow(floating);
+    focusOverlayWindow(floating.id);
+  } else closeOverlayWindow(floating.id);
   return showing.has(floating.id);
 });
 
@@ -55,6 +57,7 @@ export function TerminalWindow({ instance, snapshot, prefs, win, notify, widgetF
   const [generation, setGeneration] = useState(0);
   const widgetRef = useRef(null);
   const [font, onFontChange] = useTerminalFont('companion', instance.paneKey, prefs);
+  useEffect(() => { if (instance.focusAsked) setFocusToken((n) => n + 1); }, [instance.focusAsked]);
   const pane = { key: instance.id, id: instance.id, label: name, seed: {} };
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const look = windowControlsLook(snapshot.value?.window_controls);

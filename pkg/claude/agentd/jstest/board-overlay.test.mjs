@@ -95,7 +95,7 @@ async function agentPane(harness) {
 
 async function fakeCompanion(harness, float) {
   const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
-  return registerCompanionController({ open: () => true, float });
+  return registerCompanionController({ open: () => true, float, reveal: () => false });
 }
 
 scenario('an agent\'s tab moves to its chat, and the operator stays on Terminals', AGENT_ON, async ({ harness, host, windows, click, button }) => {

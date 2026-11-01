@@ -70,8 +70,13 @@ page without blocking it, and comes back when you reload the tab.
 - **Scribes and Stewards** get a tab and a pill by themselves. One you close stays
   closed until you bring it back with **＋**.
 
-An offline agent's tab has **Resume**. A tab that moved elsewhere has **Bring it
-back here**.
+An offline agent's tab has **Resume**. A tab detached into a browser window has
+**Bring it back here**. Moving an agent to the Collab tab closes its companion tab,
+since an agent is in one place at a time.
+
+Focusing an agent from anywhere shows it where it already is. A row's eye, its cog,
+the palette and a message's link restore its overlay window and raise it, or open
+its companion tab, and only otherwise open a terminal.
 
 ### Title bar buttons
 

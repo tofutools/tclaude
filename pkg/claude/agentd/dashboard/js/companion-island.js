@@ -15,7 +15,7 @@
 //
 // A web terminal attach displaces any other web view of the same session, so
 // opening an agent here first closes its Terminals-tab pane, and "open in
-// Terminals" parks this tab instead of fighting over the session.
+// Terminals" closes this tab instead of fighting over the session.
 
 import { h, render } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -31,7 +31,7 @@ import { useChipDrag } from './companion-chip-drag.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
-import { closeOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { closeOverlayWindow, focusOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
 import { ChatWindow } from './chat-window.js';
 import { TerminalWindow } from './terminal-window.js';
@@ -285,11 +285,17 @@ export function CompanionApp({
   const stewardLabel = customName || 'the Steward';
   const steward = useMemo(() => stewardAgent(agents), [agents]);
   const stewardRoster = snapshot.value?.steward_roster || [];
-  const [tabs, setTabs] = useState(() => parseTabs(readPref(prefs, COMPANION_TABS_PREF)));
   const sessionPrefs = useMemo(() => {
     if (sessionPrefsImpl) return sessionPrefsImpl;
     try { return win?.sessionStorage ?? null; } catch { return null; }
   }, [win, sessionPrefsImpl]);
+  // A tab an older page parked for the Terminals tab is not restored: the pane has
+  // the session, and the tab would only take it back.
+  const [tabs, setTabs] = useState(() => {
+    const inWindows = new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF)));
+    const gone = new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF)).filter((id) => !inWindows.has(id)));
+    return parseTabs(readPref(prefs, COMPANION_TABS_PREF)).filter((id) => !gone.has(id));
+  });
   const [active, setActive] = useState(() => {
     const saved = readPref(sessionPrefs, COMPANION_ACTIVE_PREF) || readPref(prefs, COMPANION_ACTIVE_PREF);
     return isAgentId(saved) ? saved : '';
@@ -319,7 +325,8 @@ export function CompanionApp({
   const detachedRef = useRef(detached);
   detachedRef.current = detached;
   const detachedWindows = useRef(new Map());
-  const [parked, setParked] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF))));
+  // A tab parked for a browser window of the agent, which keeps the way back.
+  const [parked, setParked] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF)).filter((id) => detached.has(id))));
   const [statuses, setStatuses] = useState({});
   const [reconnectable, setReconnectable] = useState({});
   const terminalWidgetRef = useRef(null);
@@ -510,6 +517,7 @@ export function CompanionApp({
     const chat = overlayWindows.peek().find((window) => window.id === chatWindowId(agentId));
     if (chat && !reclaim) {
       openOverlayWindow(chat);
+      if (focus) focusOverlayWindow(chat.id);
       return true;
     }
     const agent = agents.get(agentId);
@@ -534,7 +542,7 @@ export function CompanionApp({
     return true;
   }, [agents, closeTerminalPanes]);
 
-  // A tab of the Terminals tab moves here too, parked or not on the tab strip.
+  // A tab of the Terminals tab moves here too.
   const floatAgent = useRef(null);
   floatAgent.current = (selector) => {
     const agent = companionAgentOf(snapshot.peek(), selector);
@@ -542,9 +550,27 @@ export function CompanionApp({
     floatTab(agent);
     return true;
   };
+  const revealAgent = useRef(null);
+  revealAgent.current = (selector, { tabs: orTab }) => {
+    const agentId = companionAgentOf(snapshot.peek(), selector)?.agentId || selector;
+    const chat = overlayWindows.peek().find((window) => window.id === chatWindowId(agentId));
+    if (chat) {
+      openOverlayWindow(chat);
+      focusOverlayWindow(chat.id);
+      return true;
+    }
+    if (detachedRef.current.has(agentId)) {
+      const opened = detachedWindows.current.get(agentId);
+      if (!opened) return showAgent(agentId);
+      opened.focus?.();
+      return true;
+    }
+    return orTab && tabs.includes(agentId) && !parked.has(agentId) && showAgent(agentId);
+  };
   useEffect(() => registerController({
     open: (agentId, options) => showAgent(agentId, options),
     float: (selector) => floatAgent.current(selector),
+    reveal: (selector, options) => revealAgent.current(selector, options),
   }), [showAgent]);
 
   // A shut-down Steward can come back without this window: from the Agents tab,
@@ -1009,7 +1035,8 @@ export function CompanionApp({
 
   function moveToTerminals(agent) {
     if (!openTerminalsPane) return;
-    setParked((current) => new Set(current).add(agent.agentId));
+    // It leaves here: a tab saying where it went would be one more thing to close.
+    closeTab(agent.agentId);
     // Let the companion's widget detach before the Terminals pane attaches.
     setTimeout(() => openTerminalsPane(agent.agentId, agent.name, agent.harness), 60);
   }
@@ -1352,7 +1379,7 @@ export function CompanionApp({
           onClick=${() => toggleVoice(activeAgent)}>${voiceAgents.has(activeAgent.agentId) ? '🔊' : '🔈'}</button>`}
         ${activeAgent?.online && !showQueue && onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${() => composeToActive()}>✉</button>`}
         <${AgentCog} agent=${activeAgent} deciding=${showQueue} parked=${activeAgent ? parked.has(activeAgent.agentId) : false} roster=${stewardRoster} showRoster=${showRoster}
-          onCollab=${openTerminalsPane && activeAgent ? () => moveToTerminals(activeAgent) : null} onFloat=${() => floatTab(activeAgent)}
+          onCollab=${openTerminalsPane && activeAgent && !parked.has(activeAgent.agentId) ? () => moveToTerminals(activeAgent) : null} onFloat=${() => floatTab(activeAgent)}
           onDetach=${detachWindow ? () => detachToWindow(activeAgent) : null} onMorph=${openMorph ? () => openMorph(activeAgent) : null}
           openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${agents} showAgent=${showAgent}
           fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardShutDown} askShutDownRef=${askShutDown} rosterRef=${rosterRef} />
@@ -1401,7 +1428,7 @@ export function CompanionApp({
         : html`<button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>`}
       </div>`}
       ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
-        <p><b>${activeAgent.name}</b> is open ${detached.has(activeAgent.agentId) ? 'in its own window' : 'in the Collab tab'}.</p>
+        <p><b>${activeAgent.name}</b> is open in its own window.</p>
         <button type="button" class="companion-primary" onClick=${() => reclaim(activeAgent.agentId)}>Bring it back here</button>
       </div>`}
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`

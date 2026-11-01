@@ -25,6 +25,14 @@ export function openInCompanion(agentId, options = {}) {
   return controller.open(agentId, options) !== false;
 }
 
+// revealInCompanion shows an agent where the companion holds it: its chat window,
+// restored and raised, or its browser window, and with tabs its companion tab. It
+// reports whether the companion held it, so a caller opens nothing of its own. A
+// tab parked for the Terminals tab is held there, not here.
+export function revealInCompanion(selector, { tabs = true } = {}) {
+  return controller ? controller.reveal(selector, { tabs }) === true : false;
+}
+
 // floatInCompanion moves the agent to its chat overlay window, the one a tab
 // dragged off the companion gets. It reports whether a companion handled it.
 export function floatInCompanion(agentId) {

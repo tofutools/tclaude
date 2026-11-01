@@ -20,11 +20,16 @@ export function overlayablePane(pane) {
 // An agent's live session, as a tab opens it. A shell of its stays a shell.
 const AGENT_ROUTE = /^\/api\/(?:open-window-ws|spawn-focus-ws)\//;
 
+// agentSessionSeed reports whether a pane's seed is a local agent's own session.
+export function agentSessionSeed(seed) {
+  return !seed?.remote && !!seed?.agent && AGENT_ROUTE.test(seed.ws || '');
+}
+
 // chatAgentOfPane is the local agent running in a Terminals pane, null when the
 // pane is anything else or the agent is not running: its chat would have nothing
 // to attach to.
 export function chatAgentOfPane(pane, snapshot) {
-  if (pane?.seed?.remote || !pane?.seed?.agent || !AGENT_ROUTE.test(pane.seed.ws || '')) return null;
+  if (!agentSessionSeed(pane?.seed)) return null;
   const agent = companionAgentOf(snapshot, pane.seed.agent);
   return agent?.online ? agent : null;
 }

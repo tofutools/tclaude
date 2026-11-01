@@ -214,12 +214,12 @@ test('shutting down a floated Steward leaves an open companion on Resume', async
   assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
 });
 
-test('a Terminals tab floats its agent as a chat, and a parked tab goes with it', async (t) => {
+test('moving to the Collab tab leaves no tab behind, and a Terminals tab floats as a chat', async (t) => {
   const { view, harness, controller } = await setup(t, { openTerminalsPane: () => {} });
   const tabOfAlpha = () => [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('alpha'));
   await harness.act(() => controller().open(A));
   await harness.act(() => view.container.querySelector('[aria-label="Open in the Collab tab"]').click());
-  assert.ok(tabOfAlpha(), 'parked in the companion while it is in the Collab tab');
+  assert.equal(tabOfAlpha(), undefined, 'nothing left to close by hand');
   let floated = false;
   await harness.act(() => { floated = controller().float('conv-a'); });
   assert.equal(floated, true, 'a pane may hold the conv id');
@@ -235,6 +235,40 @@ test('an agent that never had a tab floats without touching the companion', asyn
   await harness.act(() => controller().float(A));
   assert.ok(view.container.querySelector('.chat-window'));
   assert.ok(view.container.querySelector(`.companion-window:not(.chat-window):not(.companion-window-warm)`), 'still open');
+});
+
+test('reveal shows an agent where the companion holds it', async (t) => {
+  const { view, harness, controller, mounted } = await setup(t, { openTerminalsPane: () => {} });
+  const reveal = async (selector, options = { tabs: true }) => {
+    let answer;
+    await harness.act(() => { answer = controller().reveal(selector, options); });
+    return answer;
+  };
+  assert.equal(!!await reveal(A), false, 'nowhere here yet');
+  await harness.act(() => controller().open(A));
+  assert.equal(!!await reveal(A, { tabs: false }), false, 'a tab only counts when asked');
+  assert.equal(!!await reveal('conv-a'), true, 'by its conv id too');
+  await harness.act(() => view.container.querySelector('[aria-label="Open in the Collab tab"]').click());
+  assert.equal(!!await reveal(A), false, 'gone from here: the Terminals tab holds it');
+  await harness.act(() => { controller().float(A); });
+  const win = () => view.container.querySelector('.chat-window');
+  await harness.act(() => win().querySelector('.overlay-wc-minimize, [aria-label^="Minimize"]').click());
+  assert.equal(win()?.querySelector('.companion-term-host') ?? null, null, 'minimized');
+  assert.equal(!!await reveal(A, { tabs: false }), true);
+  assert.ok(win().querySelector('.companion-term-host'), 'restored');
+  const widget = mounted.at(-1);
+  const focused = widget.focused;
+  await reveal(A, { tabs: false });
+  assert.ok(widget.focused > focused, 'it takes the keyboard');
+  assert.equal(view.container.querySelectorAll('.chat-window').length, 1);
+});
+
+test('a detached tab has no Collab move: its way back is Bring it back here', async (t) => {
+  const { view, harness, controller } = await setup(t, { detachWindow: () => ({ closed: false, focus() {}, close() {} }), openTerminalsPane: () => {} });
+  await harness.act(() => controller().open(A));
+  assert.ok(view.container.querySelector('[aria-label="Open in the Collab tab"]'));
+  await harness.act(() => view.container.querySelector('.companion-detach').click());
+  assert.equal(view.container.querySelector('[aria-label="Open in the Collab tab"]'), null);
 });
 
 test('a floated agent that is no Steward still closes at once', async (t) => {

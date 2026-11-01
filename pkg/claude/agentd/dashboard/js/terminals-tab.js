@@ -2,6 +2,8 @@
 // launcher outside the Preact Terminal Shell feature. Callers keep stable
 // functions while the mounted feature owns descriptors, chrome and lifecycle.
 
+import { revealInCompanion } from './companion-facade.js';
+import { agentSessionSeed } from './terminal-window-model.js';
 import { createAgentRosterReconciler, normalizeSeed } from './terminals-core.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
@@ -30,6 +32,14 @@ export function setFloatingTerminals(lookup) {
   floatingTerminals = lookup;
 }
 
+// An agent is in one place at a time, and every way of showing it comes through
+// here. A window holds it first. A live pane in this tab beats a companion tab
+// that was left pinned: that pane is what has the session.
+function revealAgentPlace(selector) {
+  if (revealInCompanion(selector, { tabs: false })) return true;
+  return !controller?.hasAgentPane?.([selector]) && revealInCompanion(selector);
+}
+
 export function openTerminalPane(seedOrPromise, { reveal = true, activate = true } = {}) {
   // activate rides along only when a caller opts out, so every ordinary open
   // keeps the plain { reveal } contract.
@@ -40,6 +50,7 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     if (!seed) return null;
     const key = seed.key || seed.ws;
     if (floatingTerminals(key)) return { key, floating: true };
+    if (agentSessionSeed(seed) && revealAgentPlace(seed.agent)) return { key, floating: true };
     const current = controller;
     if (!current) return null;
     // A board pane has no xterm to load.
@@ -114,7 +125,10 @@ export function waitForTerminalSettled(key, options) {
   return controller?.waitForPaneSettled?.(key, options) || Promise.resolve(false);
 }
 
+// focusTerminalForConv shows an agent wherever it already is, and reports whether
+// it was anywhere: a caller opens a place for it only when not.
 export function focusTerminalForConv(selectors, options) {
+  if ((selectors || []).some(revealAgentPlace)) return true;
   return controller?.focusForSelectors(selectors, options) || false;
 }
 
