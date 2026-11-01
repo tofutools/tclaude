@@ -566,6 +566,7 @@ delivered to an agent in either, even when a show button has made it readable.
   rows`.
 - Terminals appear as `[terminal]`. Their output has no secret marker, so it
   stays out of the text, although the image shows it.
+- A confirm dialog's diff keeps environment values and hub invites masked.
 - `--save` keeps the image and context, never this text.
 
 Each field line gives its label, type, id and value:

@@ -11,6 +11,16 @@
 
 export const CAPTURE_MASK = '••••••••';
 export const MASKED = '[data-capture-mask], input[type="password"], input[autocomplete$="-password"]';
+// splitDiffSecret separates what a JSON diff line must keep from a capture, an
+// environment value or a hub invite, so that a dialog can show the operator the
+// line and mark that part. Such a dialog echoes values whose own fields are
+// masked, and the file behind it, not just what changed.
+const DIFF_SECRET = /^(\s*"(?:value|invite)":\s*)(.+)$/;
+export function splitDiffSecret(line) {
+  const match = DIFF_SECRET.exec(line);
+  return match ? [match[1], match[2]] : [line, ''];
+}
+
 // Text is capped well under what the daemon accepts, so a long page says it was
 // cut rather than being refused.
 export const CAPTURE_TEXT_MAX = 60000;
@@ -68,7 +78,9 @@ export function openForm(win) {
 function readField(source, tag) {
   if (tag === 'textarea') return { kind: 'textarea', value: source.value };
   if (tag === 'select') {
-    const options = [...source.options].map((option) => ({ label: spaced(option.label || option.textContent), selected: !!option.selected }));
+    const options = [...source.options].map((option) => ({
+      label: spaced(option.label || option.textContent), selected: !!option.selected, masked: !!option.closest(MASKED),
+    }));
     return { kind: 'select', options, multiple: !!source.multiple };
   }
   const kind = String(source.type || 'text').toLowerCase();
@@ -76,7 +88,8 @@ function readField(source, tag) {
   if (kind === 'checkbox' || kind === 'radio') return { kind, checked: !!source.checked };
   if (kind === 'file') return { kind };
   const list = source.getAttribute('list');
-  const choices = list ? [...(source.ownerDocument.getElementById(list)?.options || [])].map((option) => spaced(option.value)) : [];
+  const choices = list ? [...(source.ownerDocument.getElementById(list)?.options || [])]
+    .map((option) => ({ label: spaced(option.value), masked: !!option.closest(MASKED) })) : [];
   return { kind, value: source.value, choices };
 }
 
@@ -140,6 +153,7 @@ function readNode(source, read, where) {
     terminal: !!source.classList?.contains('xterm'),
     note: source.getAttribute('data-capture-note') || '',
     folded: source.getAttribute('aria-expanded') === 'false',
+    picked: ['aria-pressed', 'aria-checked', 'aria-selected'].some((name) => source.getAttribute(name) === 'true'),
     textless: source.getAttribute('data-capture-text') === 'none',
     scroll: { x: source.scrollLeft || 0, y: source.scrollTop || 0 },
   };
@@ -189,10 +203,25 @@ export function readPage(win) {
   const byElement = new Map();
   const root = readNode(doc.body, { win, form, viewport, byElement }, { inForm: false, collapsed: false, seen: true, clip: viewport });
   linkLabels(doc, byElement);
-  return { root, form: form ? byElement.get(form) || null : null, formTitle: form?.getAttribute('data-capture-form') || '' };
+  return {
+    root, form: form ? byElement.get(form) || null : null, formTitle: form?.getAttribute('data-capture-form') || '',
+    scroll: { x: win.scrollX || 0, y: win.scrollY || 0 },
+  };
 }
 
 // -- filter -------------------------------------------------------------------
+
+// scrub empties a node and all under it. A field's labels and the snapshot's
+// form point into the tree, so cutting a branch off would leave them reading it.
+function scrub(node) {
+  if (node.text !== undefined) {
+    node.text = '';
+    return;
+  }
+  node.scrubbed = true;
+  node.children.forEach(scrub);
+  Object.assign(node, { children: [], attrs: [], field: null, surface: null, src: '', note: '', labels: [] });
+}
 
 function holdsSomething(node) {
   if (node.field) return !!(node.field.value || node.field.options?.some((option) => option.selected));
@@ -209,6 +238,7 @@ function redact(node) {
   node.surface = null;
   node.src = '';
   node.note = '';
+  node.children.forEach(scrub);
   node.children = [];
   if (node.field) {
     node.field = { kind: node.field.kind, value: held ? CAPTURE_MASK : '' };
@@ -224,12 +254,14 @@ function filterNode(node) {
     return;
   }
   node.children = node.children.filter((child) => {
-    if (!child.skip) return true;
-    // A label link can still reach it.
-    child.children = [];
-    child.attrs = [];
-    return false;
+    if (child.skip) scrub(child);
+    return !child.skip;
   });
+  for (const list of [node.field?.options, node.field?.choices]) {
+    for (const option of list || []) {
+      if (option.masked) option.label = CAPTURE_MASK;
+    }
+  }
   node.children.forEach(filterNode);
 }
 
@@ -238,6 +270,8 @@ function filterNode(node) {
 // anything nested in it. It works in place, so nothing else keeps the original.
 export function filterSnapshot(snapshot) {
   filterNode(snapshot.root);
+  // A dialog inside something masked is masked, so it is not a form to read.
+  if (snapshot.form?.scrubbed) snapshot.form = null;
   return snapshot;
 }
 
@@ -317,7 +351,7 @@ function fieldValue(node) {
     const picked = field.options.filter((option) => option.selected).map((option) => JSON.stringify(option.label));
     return `${picked.join(', ') || '(none)'} (options: ${listed(field.options.map((option) => option.label))})`;
   }
-  const choices = field.choices?.length ? ` (suggestions: ${listed(field.choices)})` : '';
+  const choices = field.choices?.length ? ` (suggestions: ${listed(field.choices.map((choice) => choice.label))})` : '';
   return `${quoted(field.value)}${choices}`;
 }
 
@@ -346,10 +380,10 @@ function lineWriter(limit) {
     full: false,
     add(text) { line += text; },
     has: () => spaced(line) !== '',
-    flush() {
-      const text = spaced(line);
-      line = '';
-      if (!text || writer.full) return;
+    // exact keeps a line's spacing, which is part of a field's value.
+    exact(text) {
+      writer.flush();
+      if (writer.full) return;
       if (size + text.length > limit) {
         writer.full = true;
         lines.push(`(text cut at ${size} characters)`);
@@ -357,6 +391,11 @@ function lineWriter(limit) {
       }
       size += text.length + 1;
       lines.push(text);
+    },
+    flush() {
+      const text = spaced(line);
+      line = '';
+      if (text) writer.exact(text);
     },
     lines,
   };
@@ -384,11 +423,7 @@ function writeNode(node, out, scope, ancestors) {
     return;
   }
   if (node.field) {
-    if (scope.show(node)) {
-      out.flush();
-      out.add(fieldLine(node, ancestors));
-      out.flush();
-    }
+    if (scope.show(node)) out.exact(fieldLine(node, ancestors));
     return;
   }
   if (node.collapsed) {
@@ -406,7 +441,7 @@ function writeNode(node, out, scope, ancestors) {
   if (node.tag === 'button') {
     if (!scope.show(node)) return;
     const name = spaced(plainText(node)) || attrOf(node, 'aria-label') || attrOf(node, 'title');
-    if (name) out.add(` [${name}${node.folded ? ', collapsed' : ''}] `);
+    if (name) out.add(` [${name}${node.picked ? ', selected' : ''}${node.folded ? ', collapsed' : ''}] `);
     return;
   }
   const inline = INLINE.test(node.display || '');
@@ -414,6 +449,7 @@ function writeNode(node, out, scope, ancestors) {
   if (cell && out.has()) out.add(' | ');
   else if (!inline && !cell) out.flush();
   for (const child of node.children) writeNode(child, out, scope, [node, ...ancestors]);
+  if (node.picked && scope.show(node)) out.add(' [selected] ');
   if (node.folded && scope.show(node)) out.add(' [collapsed] ');
   if (!inline && !cell) out.flush();
   else out.add(' ');

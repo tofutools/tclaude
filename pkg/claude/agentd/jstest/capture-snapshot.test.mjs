@@ -5,10 +5,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { CAPTURE_MASK, filterSnapshot, openForm, readPage, snapshotPage, snapshotText } from '../dashboard/js/capture-snapshot.js';
+import { CAPTURE_MASK, filterSnapshot, openForm, readPage, snapshotPage, snapshotText, splitDiffSecret } from '../dashboard/js/capture-snapshot.js';
 import { parseHTML } from './third_party/linkedom.mjs';
 
 const SECRET = 'sk-live-s3cret-value';
+const SOURCE_DIR = new URL('../dashboard/js/', import.meta.url);
 
 // page builds a window. A style attribute's display and position are honoured,
 // and data-rect="left top right bottom" is an element's box.
@@ -75,6 +76,60 @@ test('a label cannot carry out what a masked element holds', () => {
   const text = textOf(win);
   assert.ok(!text.includes(SECRET), text);
   assert.ok(text.includes(CAPTURE_MASK), 'it says something was there');
+});
+
+test('nothing that points into a masked branch can read it', () => {
+  const win = page(`<div aria-modal="true" style="z-index:1">
+    <div data-capture-mask><span id="held">${SECRET}</span><label for="b">${SECRET}</label></div>
+    <div data-capture-skip><span id="cue">${SECRET}</span></div>
+    <input id="a" aria-labelledby="held" value="v">
+    <input id="b" value="v">
+    <input id="c" aria-labelledby="cue" value="v">
+    <select id="s" aria-label="Pick"><option data-capture-mask>${SECRET}</option><option selected>fine</option></select>
+    <input id="l" aria-label="Suggest" list="d" value="v"><datalist id="d"><option data-capture-mask value="${SECRET}"></option></datalist>
+  </div>`);
+  const text = textOf(win);
+  assert.ok(!text.includes(SECRET), text);
+  assert.match(text, /options: ••••••••, fine/);
+});
+
+test('a dialog inside something masked is not read as the open form', () => {
+  const win = page(`<div data-capture-mask data-rect="0 0 800 600"><div aria-modal="true" data-rect="0 0 800 600"><input id="p" value="${SECRET}"></div></div>`);
+  const text = textOf(win);
+  assert.ok(!text.includes(SECRET), text);
+  assert.match(text, /^Page: /);
+});
+
+test('a diff dialog keeps an environment value and an invite out of a capture', () => {
+  assert.deepEqual(splitDiffSecret(`    "value": "${SECRET}",`), ['    "value": ', `"${SECRET}",`]);
+  assert.deepEqual(splitDiffSecret(`  "invite": "${SECRET}"`), ['  "invite": ', `"${SECRET}"`]);
+  assert.deepEqual(splitDiffSecret('    "name": "API_KEY",'), ['    "name": "API_KEY",', '']);
+  const [plain, secret] = splitDiffSecret(`"value": "${SECRET}"`);
+  const text = textOf(page(`<div aria-modal="true"><span class="dl">+ ${plain}<span data-capture-mask>${secret}</span></span></div>`));
+  assert.ok(!text.includes(SECRET), text);
+  assert.ok(text.includes('"value":'), 'the line itself still reads');
+});
+
+test('every diff body marks its secrets through DiffLines', () => {
+  const bodies = readdirSync(SOURCE_DIR).filter((name) => name.endsWith('.js')).flatMap((file) => {
+    const source = readFileSync(new URL(file, SOURCE_DIR), 'utf8');
+    return [...source.matchAll(/class="config-diff">(.{0,40})/g)].map((match) => `${file}: ${match[1]}`);
+  });
+  assert.ok(bodies.length >= 2, 'the check still finds them');
+  assert.deepEqual(bodies.filter((body) => !body.includes('<${DiffLines}')), []);
+});
+
+test('a control reads as selected when the page says so', () => {
+  const win = page(`<div aria-modal="true"><button aria-pressed="false">Existing</button><button aria-pressed="true">Clone</button>
+    <div role="tab" aria-selected="true">General</div></div>`);
+  const text = textOf(win);
+  assert.match(text, /\[Existing\] +\[Clone, selected\]/);
+  assert.match(text, /General \[selected\]/);
+});
+
+test('a field line keeps the exact spacing of its value', () => {
+  const win = page('<div aria-modal="true"><input id="v" aria-label="Args" value="a  b"></div>');
+  assert.match(textOf(win), /Args \[text, #v\]: "a  b"/);
 });
 
 test('the text reaches past the viewport inside the open form, and not outside it', () => {
@@ -218,7 +273,6 @@ const NOT_SECRET = new Map([
   ['fleet-mg-prefix', 'the text before a key'],
 ]);
 const SECRET_NAME = /\b(?:token|secret|api[-_ ]?key|password|passphrase|bearer|credential)\b|-key\b/i;
-const SOURCE_DIR = new URL('../dashboard/js/', import.meta.url);
 
 // fieldTags finds the fields in a source file. An arrow function in a handler is
 // not the end of its tag.

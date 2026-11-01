@@ -63,7 +63,9 @@ const (
 	// captureMaxFormText bounds what the page sends: it cuts at 60k characters,
 	// which can take more bytes, and says so in the text.
 	captureMaxFormText = 256 << 10
-	captureMaxTextLine = 4 << 10
+	// captureMaxTextLine holds a field's longest value, 2k characters that can
+	// take several bytes each, with its label and options.
+	captureMaxTextLine = 16 << 10
 	captureMaxText     = 240
 )
 

@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { DiffLines } from './diff-lines.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
 import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, followSourceChoice, handleConfigEvent } from './config-form-adapter.js';
@@ -25,7 +26,7 @@ function ConfigDiffModal({ model, close }) {
       <h3 id="config-diff-title">Confirm config changes</h3>
       ${model.malformed && html`<div id="config-diff-warn" class="config-diff-warn" style="display:block">⚠ config.json on disk is corrupt and could not be parsed. The form shows DEFAULT values, not your previous settings. Saving replaces the corrupt file entirely — anything it contained is lost. The diff below is against defaults.</div>`}
       <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
-      <div id="config-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
+      <div id="config-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} /></div>
       <div class="modal-buttons">
         <button id="config-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button>
         <span class="spacer"></span>

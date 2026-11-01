@@ -28,6 +28,7 @@ import {
 } from './sandbox-profiles-data.js';
 import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
 import { pickDirectory } from './helpers.js';
+import { DiffLines } from './diff-lines.js';
 import { lineDiff } from './line-diff.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { wizWord } from './slop.js';
@@ -2200,7 +2201,7 @@ function SandboxDiffModal({ model, close }) {
     <div class="config-diff-modal">
       <h3 id="sandbox-profile-diff-title">Confirm sandbox profile changes</h3>
       <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
-      <div id="sandbox-profile-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
+      <div id="sandbox-profile-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} /></div>
       ${(model.notices || []).length > 0 && html`<section id="sandbox-profile-diff-evaluation" class="sbx-diff-evaluation" aria-labelledby="sandbox-profile-diff-evaluation-title">
         <h4 id="sandbox-profile-diff-evaluation-title">Evaluation warnings</h4>
         ${(model.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning" role="alert">⚠ ${notice.detail}</div>`)}

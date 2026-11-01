@@ -487,7 +487,7 @@ async function renderViewport({ win, fetchImpl, pointer, draw, snapshot = snapsh
   const tasks = [];
   // Offsetting the body keeps fixed elements where they are, which a transform
   // would not, and sticky ones still stick to the image's edges by themselves.
-  const page = { x: win.scrollX || 0, y: win.scrollY || 0 };
+  const page = snapshot.scroll;
   const body = buildNode(snapshot.root, { doc, inline, tasks });
   await Promise.all(tasks);
   if (page.x || page.y) {
