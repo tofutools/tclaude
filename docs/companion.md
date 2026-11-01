@@ -284,7 +284,7 @@ it to apply a change.
 |---|---|
 | **Reads** | **Operator level (default)**: fleet, boards, the dashboard view, processes, triggers, usage, costs, host and federation activity. **Fleet and boards only**: just those. Both list every agent and group. |
 | **Writes** | **Message agents (default)**: can reach any agent. **Boards and notifying you only**. **Message agents and start workers**: can also spawn and set task links. |
-| **Default permissions** | Extra permissions a new Steward starts with. `permissions.grant` and `permissions.revoke` aren't allowed. |
+| **Default permissions** | What a new Steward gets beyond Reads and Writes, or is denied from them. Opens the permission editor, and saves from there. |
 
 Every level can draw on boards, point at the dashboard and notify you. Anything else
 it asks for with `--ask-human`, and you approve it in the dashboard. **Message
@@ -301,7 +301,8 @@ never restarts the clock. The editors show which of the three sources each grant
 comes from: this Steward, all future Stewards, or the **Reads and Writes** levels.
 Changing or revoking a stored grant applies to later Stewards too, and the revoke
 says so, while revoking an instance-only grant affects that instance alone. A
-revoke by an agent stops at the instance: only you change what is stored.
+revoke by an agent stops at the instance: only you change what is stored. A stored
+deny outlasts anything done to one Steward: lift it here or in Config > Steward.
 
 **Config > Steward > Default permissions** edits the same stored list in the common
 permission editor, without a Steward running. It shows what a new Steward would

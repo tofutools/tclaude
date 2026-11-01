@@ -347,6 +347,12 @@ func saveStewardCarry(convID string, before map[string]db.PermissionOverride, ef
 		if !chosen && before[slug] == current[slug] {
 			continue
 		}
+		// What this one instance is given says nothing about a stored deny, and
+		// a running Steward can hold what later ones are denied. Only an explicit
+		// choice here, or the Config editor, lifts it.
+		if !chosen && stored[slug].Effect == db.PermEffectDeny {
+			continue
+		}
 		switch {
 		case effect != "default" && keep:
 			if err := db.SetStewardCarriedPermission(slug, current[slug], dashboardGranter); err != nil {
@@ -372,9 +378,14 @@ func holdsOverride(overrides map[string]db.PermissionOverride, slug string) bool
 // endStoredStewardPermission makes the operator's CLI revoke or deny hold for
 // later Stewards, as a sudo revoke and the editor do. Only a live Steward's own
 // row says anything about what is stored. An agent's revoke ends at the instance:
-// what is stored is the operator's alone.
+// what is stored is the operator's alone. So does anything on a stored deny: a
+// running Steward can hold what later ones are denied, and ending its grant must
+// not give that grant back to them.
 func endStoredStewardPermission(r *http.Request, convID, slug string) {
 	if classify(peerFromContext(r.Context())) != classHuman || !isLiveSteward(convID) {
+		return
+	}
+	if storedStewardPermissions()[slug].Effect != db.PermEffectGrant {
 		return
 	}
 	if err := db.DeleteStewardCarriedPermission(slug); err != nil {

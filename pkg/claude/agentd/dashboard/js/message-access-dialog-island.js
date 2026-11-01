@@ -1083,7 +1083,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const picked = currentEffect(row.slug) !== 'default';
     // A level slug's grant is what every Steward is born with, so there is
     // nothing to choose until it is denied.
-    const fromLevels = fromConfig && currentEffect(row.slug) !== 'deny';
+    const fromLevels = fromConfig && currentEffect(row.slug) === 'grant';
     const canCarry = !!stewardAccess && picked && !fromLevels;
     // The scope controls appear only where they can mean something: a slug
     // that declares dimensions, granted, in an editor whose save path can
@@ -1100,11 +1100,11 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     const heldNote = !(sudoMode && picked && row.granted && Object.keys(scopeOf(row.slug)).length) ? ''
       : scopeOf(row.slug).peer?.length ? 'This scope only covers work on that peer. What it holds here does not change.'
         : 'It already holds this. Until this grant ends, this scope replaces its own, group and default access. Ownership, membership and groups.admin still apply.';
-    const stewardSource = stewardAccess && (fromLevels ? 'Reads and Writes'
+    const stewardSource = stewardAccess && (fromConfig ? 'Reads and Writes'
       : stewardAccess.carried[row.slug] !== undefined ? 'all future Stewards' : 'this Steward only');
     const effText = sudoMode
       ? (row.granted ? `already held: ${stewardSource || row.sources.join(' + ')}` : 'not held now')
-      : stewardAccess && (picked || fromConfig) ? (fromLevels ? 'Reads and Writes' : carriedNow(row.slug) ? 'all future Stewards' : 'this Steward only')
+      : stewardAccess && picked ? (fromLevels ? 'Reads and Writes' : carriedNow(row.slug) ? 'all future Stewards' : 'this Steward only')
       : groupMode
       ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
       : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'

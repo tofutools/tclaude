@@ -334,6 +334,10 @@ func TestSteward_DefaultPermissions(t *testing.T) {
 	stored, err = db.ListStewardCarriedPermissions()
 	require.NoError(t, err)
 	assert.Len(t, stored, 1, "a save replaces what was stored")
+	audit, err := db.ListAuditLog(db.AuditLogFilter{Verb: "steward.default-permissions"})
+	require.NoError(t, err)
+	require.NotEmpty(t, audit, "changing what every future Steward holds is audited")
+	assert.Contains(t, audit[0].Detail, agentd.PermAgentTask+"=grant")
 }
 
 // A Steward summoned without a deny keeps its level grants, and nothing tells
@@ -426,7 +430,7 @@ func TestSteward_DefaultPermissionsAreTheOperators(t *testing.T) {
 	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
 	conv := decodeScribeResp(t, rec).ConvID
 	f.HaveAliveSession(conv, "stwd", "tclaude-stwd", f.TestCwd("work"))
-	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermNodeExec, db.Deny(), "operator"))
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermNodeExec, db.Grant(), "operator"))
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermPermissionsRevoke, db.PermEffectGrant, "test"))
 
 	for _, method := range []string{http.MethodGet, http.MethodPut} {
@@ -441,7 +445,43 @@ func TestSteward_DefaultPermissionsAreTheOperators(t *testing.T) {
 	require.Equalf(t, http.StatusOK, rec.Code, "revoke body=%s", rec.Body.String())
 	stored, err := db.ListStewardCarriedPermissions()
 	require.NoError(t, err)
-	assert.Equal(t, db.Deny(), stored[agentd.PermNodeExec], "an agent's revoke stops at the instance")
+	assert.Equal(t, db.Grant(), stored[agentd.PermNodeExec], "an agent's revoke stops at the instance")
+}
+
+// A running Steward can hold what later ones are denied, so nothing done to that
+// one instance lifts the deny, short of choosing to.
+func TestSteward_StoredDenyOutlastsInstanceEdits(t *testing.T) {
+	c := newStewardCarryFlow(t)
+	steward := c.summon()
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermFleetRead, db.Deny(), "operator"))
+	denied := func(step string) {
+		t.Helper()
+		stored, err := db.ListStewardCarriedPermissions()
+		require.NoError(t, err)
+		assert.Equal(t, db.Deny(), stored[agentd.PermFleetRead], step)
+	}
+
+	rec := c.post("/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermFleetRead: "default"}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	denied("taking the grant off this Steward")
+
+	rec = c.post("/api/permissions", map[string]any{"conv": steward, "overrides": map[string]string{agentd.PermFleetRead: "grant"}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	denied("giving it to this Steward only")
+
+	for _, verb := range []string{"deny", "revoke"} {
+		rec = testharness.Serve(c.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/permissions/"+verb,
+			map[string]any{"target": steward, "slug": agentd.PermFleetRead})))
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		denied("the operator's CLI " + verb)
+	}
+
+	rec = c.post("/api/permissions", map[string]any{"conv": steward,
+		"overrides": map[string]string{agentd.PermFleetRead: "grant"}, "carry": map[string]bool{agentd.PermFleetRead: true}})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	stored, err := db.ListStewardCarriedPermissions()
+	require.NoError(t, err)
+	assert.Equal(t, db.PermEffectGrant, stored[agentd.PermFleetRead].Effect, "an explicit choice does lift it")
 }
 
 // Only the operator's dashboard writes steward.default_permissions: the agent
