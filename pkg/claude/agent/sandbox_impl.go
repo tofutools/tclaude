@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -115,6 +116,11 @@ func sandboxImplementationChoices() []string {
 	}
 }
 
+// sandboxImplSetTimeout covers stopping the agent, moving its OpenCode
+// conversations, each a few OpenCode runs, and resuming it. The default budget
+// gave up while the daemon carried on.
+const sandboxImplSetTimeout = 3 * time.Minute
+
 // sandboxImplResp mirrors the daemon's sandbox-impl payload.
 type sandboxImplResp struct {
 	ConvID           string `json:"conv_id"`
@@ -198,7 +204,7 @@ func runSandboxImplSet(p *sandboxImplSetParams, stdout, stderr io.Writer) int {
 	}
 	var resp sandboxImplResp
 	if err := DaemonRequest(http.MethodPost,
-		sandboxImplPath(target), body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		sandboxImplPath(target), body, &resp, DaemonOpts{AskHuman: ask, Timeout: sandboxImplSetTimeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
