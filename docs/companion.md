@@ -155,7 +155,8 @@ dictation, that dictation falls back to Google's service and tells you.
 **Hands-free (opt-in, all off by default).**
 
 - **Wake phrases.** The focused phrase, "hey agent" by default, starts dictating with
-  no click; words after it start the draft. The Steward phrase, "hey stewie" by
+  no click; words after it start the draft, without a trailing send phrase, which
+  doesn't send here. The Steward phrase, "hey stewie" by
   default, always switches to the Steward, opening or focusing its window, and
   dictates there. A Steward in a window of its own gets focus instead, and you dictate
   there. It never starts a Steward: with none running you get a short notice.

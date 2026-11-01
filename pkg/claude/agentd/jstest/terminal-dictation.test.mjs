@@ -313,6 +313,15 @@ test('a one-breath wake starts the silence countdown', async (t) => {
   assert.match(s.posted[0].body.body, /^\[dictated\] fix the bug/);
 });
 
+test('a one-breath wake leaves the send phrase out of the draft', async (t) => {
+  const s = await setup(t);
+  const { pickWakeTarget } = await s.harness.importDashboardModule('js/voice-wake.js');
+  const pane = s.harness.document.body.appendChild(s.harness.document.createElement('div'));
+  pane.id = 'pane-p';
+  await s.harness.act(() => pickWakeTarget(s.harness.document).start('fix the bug send now'));
+  assert.equal(s.$('.companion-draft').value, 'fix the bug');
+});
+
 test('pauses never punctuate in a plain shell', async (t) => {
   const s = await setup(t, { ...SHELL, pauses: { comma_pause_seconds: 0.01 } });
   await s.mic();
@@ -730,12 +739,6 @@ test('a refused Steward phrase on silence stays out of what is sent next', async
   assert.equal(s.$('.companion-draft').value, 'next sentence');
   await s.harness.act(() => wait(3300));
   assert.deepEqual(bodies(s), ['[dictated] one', '[dictated] next sentence']);
-});
-
-test('a switch ending in the send phrase leaves it behind', async (t) => {
-  const s = await setupStewardLoop(t);
-  await says(s, 'hey stewie check the logs send now');
-  assert.deepEqual(s.opened, [['check the logs', true]]);
 });
 
 test('inside a sentence the Steward phrase is plain text', async (t) => {

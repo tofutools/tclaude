@@ -132,7 +132,7 @@ export function useDictation({
     reserveStewardDoor();
     endLoop(undefined, true);
     dictationRef.current.abort?.();
-    openStewardDoor(sendPhraseRest(heard, latest.current.sendPhrase) ?? heard, carry);
+    openStewardDoor(heard, carry);
     return true;
   }
   // The draft a caller needs next, ahead of the render that brings it.
@@ -330,8 +330,10 @@ export function useDictation({
     owner.current = target.current;
     dictation.start(options);
   };
-  opener.current = (words) => {
+  opener.current = (heard) => {
     if (block || listeningRef.current || !target.current) return;
+    // A wake phrase carries its words here, send phrase and all.
+    const words = sendPhraseRest(heard, latest.current.sendPhrase) ?? heard;
     const text = joinDraft(latest.current.draft, words);
     if (words) {
       dictatedDrafts.current.add(target.current);

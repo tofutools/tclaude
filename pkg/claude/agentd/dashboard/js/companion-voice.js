@@ -404,11 +404,11 @@ export function createDictation(win = globalThis.window, {
       recognition?.stop();
     },
     keep(on) {
-      if (on && openDictation !== dictation) {
-        openDictation?.takeOver();
-        openDictation = dictation;
-      }
+      const previous = on && openDictation !== dictation ? openDictation : null;
+      if (on) openDictation = dictation;
       keeping = on;
+      // Reserved first, so the wake listener never sees a free mic in between.
+      previous?.takeOver();
       micChanged();
     },
     takeOver() {
