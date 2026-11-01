@@ -1415,6 +1415,72 @@ test('maximize fills the room, survives a reload, and restores what it replaced'
   assert.ok(frame2().classList.contains('snapped-left'), 'restored to the side it was snapped to');
 });
 
+test('restore brings back the panel it replaced, across a reload and at its resized width', async (t) => {
+  const pref = 'tclaude.dash.companion.placement';
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: JSON.stringify({ ...FLOATING, snap: 'left' }) });
+  const first = await openLook(t, 'linux', { prefs });
+  const frame = () => first.view.container.querySelector('.companion-window');
+  const size = () => frame().querySelector('.companion-wc-maximize');
+  const pull = (dx) => first.harness.act(async () => {
+    const handle = first.view.container.querySelector('.companion-resize');
+    const event = (type, x) => Object.assign(new first.harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 200 });
+    handle.dispatchEvent(event('pointerdown', 500));
+    handle.dispatchEvent(event('pointermove', 500 + dx));
+    handle.dispatchEvent(event('pointerup', 500 + dx));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await pull(30);
+  const pulled = frame().style.width;
+  await first.harness.act(() => size().click());
+  await first.harness.act(() => size().click());
+  assert.ok(frame().classList.contains('snapped-left'));
+  assert.equal(frame().style.width, pulled, 'the resized panel comes back at its size');
+  await first.harness.act(() => size().click());
+  assert.equal(JSON.parse(prefs.getItem(pref)).restoreSnap, 'left');
+  const reloaded = await openLook(t, 'linux', { prefs });
+  const frame2 = () => reloaded.view.container.querySelectorAll('.companion-window')[0];
+  assert.ok(frame2().classList.contains('snapped-max'));
+  await reloaded.harness.act(() => frame2().querySelector('.companion-wc-maximize').click());
+  assert.ok(frame2().classList.contains('snapped-left'), 'the edge survives a reload');
+  assert.equal(JSON.parse(prefs.getItem(pref)).restoreSnap, undefined);
+});
+
+test('a mouse press hands focus back to the terminal, and the keyboard stays on the control', async (t) => {
+  const { view, harness, mounted } = await openLook(t, 'windows');
+  const size = () => view.container.querySelector('.companion-wc-maximize');
+  const before = mounted.at(-1).focused;
+  await harness.act(() => size().click());
+  assert.equal(mounted.at(-1).focused, before, 'Enter on the control keeps focus for the next key');
+  const press = (node) => harness.act(() => node.dispatchEvent(Object.assign(new harness.window.Event('click', { bubbles: true, cancelable: true }), { detail: 1 })));
+  await press(size());
+  assert.equal(mounted.at(-1).focused, before + 1, 'after maximize or restore');
+  await press(view.container.querySelector('.companion-wc-close'));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.notEqual(view.container.ownerDocument.activeElement?.className, 'companion-wc-close', 'the next key cannot close the next tab');
+});
+
+test('a click on the bar leaves a snapped window alone, and only a real move tears it off', async (t) => {
+  const pref = 'tclaude.dash.companion.placement';
+  const stored = JSON.stringify({ ...FLOATING, snap: 'max' });
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: stored });
+  const { view, harness } = await openLook(t, 'linux', { prefs });
+  const frame = () => view.container.querySelector('.companion-window');
+  const bar = view.container.querySelector('.companion-grip');
+  const press = (dx) => harness.act(async () => {
+    const event = (type, x) => Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 200 });
+    bar.dispatchEvent(event('pointerdown', 400));
+    if (dx) bar.dispatchEvent(event('pointermove', 400 + dx));
+    bar.dispatchEvent(event('pointerup', 400 + dx));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await press(0);
+  await press(2);
+  assert.ok(frame().classList.contains('snapped-max'), 'a click, or a hand that shook, keeps it');
+  assert.equal(prefs.getItem(pref), stored, 'and saves nothing');
+  await press(40);
+  assert.equal(frame().classList.contains('snapped'), false);
+});
+
 test('dragging by the bar works around the controls, and pressing a control starts no drag', async (t) => {
   const pref = 'tclaude.dash.companion.placement';
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: JSON.stringify({ ...FLOATING, snap: 'max' }) });

@@ -214,7 +214,8 @@ export function parsePlacement(raw) {
     const nums = ['x', 'y', 'w', 'h'].every((k) => Number.isFinite(p[k]));
     if (!nums) return null;
     const snap = ['left', 'right', 'bottom', 'max'].includes(p.snap) ? p.snap : '';
-    return { x: p.x, y: p.y, w: p.w, h: p.h, snap };
+    const placement = { x: p.x, y: p.y, w: p.w, h: p.h, snap };
+    return snap === 'max' && ['left', 'right', 'bottom'].includes(p.restoreSnap) ? { ...placement, restoreSnap: p.restoreSnap } : placement;
   } catch {
     return null;
   }

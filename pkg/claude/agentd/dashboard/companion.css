@@ -498,7 +498,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 
 /* The dialogs the window opens must not land behind it. Other plain modals
    stay under it, so an agent can be used beside the editor it is helping with. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show) :is(.companion-window, .companion-resize-frame) { z-index: 90; }
+body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show, #steward-handover-modal.show) :is(.companion-window, .companion-resize-frame) { z-index: 90; }
 
 /* The title bar sizes its buttons as icons; the shut-down confirmation hanging
    off it holds ordinary ones. */

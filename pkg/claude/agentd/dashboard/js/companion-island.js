@@ -45,6 +45,7 @@ import { useDismissablePopover } from './hover-popover.js';
 const html = htm.bind(h);
 
 const PEEK_DELAY_MS = 220;
+const COMPANION_TEAR_OFF_PX = 4;
 const PENDING_MS = 30000;
 // How long a minimized window keeps its terminal attached, so reopening it
 // shows content at once. After this it detaches and the next open reconnects.
@@ -338,7 +339,7 @@ export function CompanionApp({
   const pending = useRef(new Map());
   // The cleanup of an in-flight drag or resize, run if the island unmounts.
   const gesture = useRef(null);
-  const snapBeforeMaximize = useRef('');
+  const panelBeforeMaximize = useRef(null);
   useEffect(() => () => gesture.current?.(), []);
 
   const activeId = tabs.includes(active) ? active : (tabs[0] || '');
@@ -570,9 +571,10 @@ export function CompanionApp({
   // Keep a floating window on screen when the browser resizes, working from the
   // saved placement so a larger browser restores what a smaller one shrank.
   useEffect(() => {
-    const onResize = () => setPlacement((p) => (
-      p.snap ? zoneRect(p.snap, viewportOf(win), snapTop()) : floatingPlacement()
-    ));
+    const onResize = () => {
+      panelBeforeMaximize.current = null;
+      setPlacement((p) => (p.snap ? zoneRect(p.snap, viewportOf(win), snapTop()) : floatingPlacement()));
+    };
     win?.addEventListener?.('resize', onResize);
     return () => win?.removeEventListener?.('resize', onResize);
   }, [win]);
@@ -607,19 +609,39 @@ export function CompanionApp({
     if (!active || active === win.document.body) setFocusToken((n) => n + 1);
   }
 
-  // Restore goes back to the snap the window was maximized from, or floating.
-  function toggleMaximize() {
-    const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
+  // A mouse press leaves focus on the control, where the next key meant for the
+  // terminal would press it again. Keyboard activation (detail 0) stays put.
+  function releaseFocus(event) {
+    if (!event?.detail) return;
+    event.currentTarget?.blur?.();
+    setFocusToken((n) => n + 1);
+  }
+
+  // Restore goes back to the panel the window was maximized from, or floating.
+  // The pref keeps which edge that was; a resized panel's size lives only here.
+  function toggleMaximize(event) {
+    const { restoreSnap = '', ...saved } = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || placement;
     if (placement.snap === 'max') {
-      const snap = snapBeforeMaximize.current;
-      const next = snap ? zoneRect(snap, viewportOf(win), snapTop()) : floatingPlacement();
+      const panel = panelBeforeMaximize.current;
+      const next = !restoreSnap ? floatingPlacement()
+        : panel?.snap === restoreSnap ? panel : zoneRect(restoreSnap, viewportOf(win), snapTop());
       setPlacement(next);
-      savePlacement({ ...(saved || next), snap });
+      savePlacement({ ...saved, snap: restoreSnap });
+    } else {
+      panelBeforeMaximize.current = placement.snap ? placement : null;
+      setPlacement(zoneRect('max', viewportOf(win), snapTop()));
+      savePlacement({ ...saved, snap: 'max', ...(placement.snap && { restoreSnap: placement.snap }) });
+    }
+    releaseFocus(event);
+  }
+
+  function closeActive(event) {
+    if (!closesTab) {
+      minimize();
       return;
     }
-    snapBeforeMaximize.current = placement.snap;
-    setPlacement(zoneRect('max', viewportOf(win), snapTop()));
-    savePlacement({ ...(saved || placement), snap: 'max' });
+    closeTab(activeAgent.agentId);
+    releaseFocus(event);
   }
 
   function onTitlePointerDown(event) {
@@ -629,21 +651,21 @@ export function CompanionApp({
     event.preventDefault();
     const handle = event.currentTarget;
     handle.setPointerCapture?.(event.pointerId);
-    const vp = viewportOf(win);
     let start = placement;
-    const tornOff = !!start.snap;
-    if (start.snap) {
-      // Tearing a snapped window off restores a floating size under the pointer.
-      const floating = clampPlacement({ ...defaultPlacement(vp), ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || {}), snap: '' }, vp);
-      start = { ...floating, x: event.clientX - floating.w / 2, y: event.clientY - 14, snap: '' };
-      setPlacement(start);
-    }
     const sx = event.clientX;
     const sy = event.clientY;
     let zone = '';
     let last = start;
     let moved = false;
     const move = (m) => {
+      if (start.snap) {
+        // A click leaves a snapped window alone. Tearing it off takes a real
+        // move, and restores a floating size under the pointer.
+        if (Math.hypot(m.clientX - sx, m.clientY - sy) < COMPANION_TEAR_OFF_PX) return;
+        const vp = viewportOf(win);
+        const floating = clampPlacement({ ...defaultPlacement(vp), ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || {}), snap: '' }, vp);
+        start = { ...floating, x: sx - floating.w / 2, y: sy - 14, snap: '' };
+      }
       moved = true;
       last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
       setPlacement(last);
@@ -658,7 +680,7 @@ export function CompanionApp({
       if (zone) {
         setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
         savePlacement({ ...withSavedSize(last), snap: zone });
-      } else if (moved || tornOff) {
+      } else if (moved) {
         // A click shows the fitted placement, which is not the operator's to keep.
         savePlacement(withSavedSize(last));
       }
@@ -1238,7 +1260,7 @@ export function CompanionApp({
   const closesTab = activeAgent && !showQueue;
   const windowControls = look !== 'classic' && html`<${WindowControls} look=${look} maximized=${placement.snap === 'max'}
     closeLabel=${closesTab ? `Close ${activeAgent.name}` : 'Close'} closeTitle=${closesTab ? 'Close (the agent keeps running)' : 'Close'}
-    onMinimize=${minimize} onMaximize=${toggleMaximize} onClose=${() => (closesTab ? closeTab(activeAgent.agentId) : minimize())} />`;
+    onMinimize=${minimize} onMaximize=${toggleMaximize} onClose=${closeActive} />`;
 
   const windowView = (open || warm) && html`<section ref=${windowRef}
     class=${`companion-window${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${open ? '' : ' companion-window-warm'}`}
