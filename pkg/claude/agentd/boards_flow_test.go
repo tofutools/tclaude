@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -189,6 +190,46 @@ func TestBoardsDashboardCRUDMergeAndDeltas(t *testing.T) {
 // `board fleet-changes` tells the operator's deleted cards from a redraw's by
 // the tombstone's author, which a read with ?since= returns.
 // Connector and attached-text fields survive a save, a read and an undo.
+func TestBoardsKeepTextStyleAndDropWhatTheyCannotDraw(t *testing.T) {
+	_ = newFlow(t)
+	enableCollab(t)
+	dash := agentd.BuildDashboardHandlerForTest()
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(dash, boardDashReq(t, method, path, body))
+	}
+	require.Equal(t, http.StatusCreated, serve(http.MethodPost, "/api/boards", map[string]any{"id": "styled"}).Code)
+
+	text := func(id string, style map[string]any) map[string]any {
+		e := map[string]any{"id": id, "type": "text", "x": 0, "y": 0, "text": id, "version": 1, "versionNonce": 1}
+		maps.Copy(e, style)
+		return e
+	}
+	kept := text("kept", map[string]any{"fontSize": 32, "fontFamily": 3, "fontWeight": "bold", "fontStyle": "italic"})
+	foreign := text("foreign", map[string]any{"fontFamily": 8, "fontWeight": "900", "fontStyle": "oblique"})
+	wrongType := text("wrong-type", map[string]any{"fontFamily": "Virgil", "fontWeight": 700, "fontStyle": true})
+	patch := serve(http.MethodPatch, "/api/boards/styled", map[string]any{"elements": []any{kept, foreign, wrongType}})
+	require.Equal(t, http.StatusOK, patch.Code, "a font Excalidraw has and the board lacks refuses nothing: %s", patch.Body.String())
+
+	rec := serve(http.MethodGet, "/api/boards/styled", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var doc struct {
+		Elements []map[string]any `json:"elements"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &doc))
+	byID := map[string]map[string]any{}
+	for _, e := range doc.Elements {
+		byID[e["id"].(string)] = e
+	}
+	assert.EqualValues(t, 32, byID["kept"]["fontSize"])
+	assert.EqualValues(t, 3, byID["kept"]["fontFamily"])
+	assert.Equal(t, "bold", byID["kept"]["fontWeight"])
+	assert.Equal(t, "italic", byID["kept"]["fontStyle"])
+	for _, key := range []string{"fontFamily", "fontWeight", "fontStyle"} {
+		assert.NotContains(t, byID["foreign"], key)
+		assert.NotContains(t, byID["wrong-type"], key)
+	}
+}
+
 func TestBoardsKeepConnectorAndAttachedTextFields(t *testing.T) {
 	_ = newFlow(t)
 	enableCollab(t)

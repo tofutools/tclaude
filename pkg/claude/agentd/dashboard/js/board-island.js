@@ -18,6 +18,7 @@ import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
+  BOARD_FONTS, BOARD_TEXT_STYLE, boardFont, boardFontSizes, sameTextStyle, textStyleOf,
   ALIGNMENTS, BOARD_COLORS, BOARD_FILLS, BOARD_TOOLS, LINE_ROUTES, alignMoves, attachedText, bindingAt, boardGrid, boardIdFromTitle, boardTopZ, bump, changeBounds,
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
   entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
@@ -188,8 +189,9 @@ export function BoardElement({ el, flash = false, onLine = false }) {
       const lineX = el.textAlign === 'center' ? x + box.width / 2 : el.textAlign === 'right' ? x + box.width : x;
       // Text on a line masks the line behind it, so it stays readable.
       const halo = onLine ? { stroke: BOARD_PAPER, 'stroke-width': 5, 'paint-order': 'stroke' } : { stroke: 'none' };
+      const { fontWeight, fontStyle } = textStyleOf(el);
       return html`<text ...${common} ...${halo} fill=${stroke} x=${lineX} y=${y + size} font-size=${size} text-anchor=${TEXT_ANCHOR[el.textAlign] || null}
-        font-family="'Segoe Print','Comic Sans MS','Chalkboard SE',cursive" xml:space="preserve">
+        font-family=${boardFont(el).css} font-weight=${fontWeight || null} font-style=${fontStyle || null} xml:space="preserve">
         ${lines.map((line, i) => html`<tspan key=${i} x=${lineX} dy=${i ? size * 1.25 : 0}>${line || ' '}</tspan>`)}
       </text>`;
     }
@@ -227,6 +229,7 @@ export function BoardEditor({
   const [color, setColor] = useState(BOARD_COLORS[0]);
   const [fill, setFill] = useState(BOARD_FILLS[0]);
   const [routing, setRouting] = useState('straight'); // for the next line drawn
+  const [textStyle, setTextStyle] = useState(BOARD_TEXT_STYLE); // for the next text
   const [hoverShape, setHoverShape] = useState(''); // id of the shape showing its snap points
   const [selected, setSelected] = useState([]); // ids
   const pointerAt = useRef(null); // the last board point under the pointer, for paste
@@ -724,7 +727,7 @@ export function BoardEditor({
     forgetEdits(created);
     commit(step.filter(({ before }) => before).map(({ id, before }) => {
       const cur = elements.current.get(id);
-      return bump(cur || before, { ...before, version: cur?.version || before.version });
+      return bump(cur || before, { fontFamily: undefined, fontWeight: undefined, fontStyle: undefined, ...before, version: cur?.version || before.version });
     }), { record: false });
     if (!pending.current.size) refused.current = false;
     setSelected([]);
@@ -821,7 +824,7 @@ export function BoardEditor({
     const clean = cleanText(text);
     if (!clean.trim()) return;
     const at = pointerAt.current || { x: view.x + 40, y: view.y + 40 };
-    const el = newElement('text', { x: at.x, y: at.y, text: clean, fontSize: 20, strokeColor: color });
+    const el = newElement('text', { ...textStyle, x: at.x, y: at.y, text: clean, strokeColor: color });
     commit([el]);
     setSelected([el.id]);
   }
@@ -1388,9 +1391,9 @@ export function BoardEditor({
     if (el) {
       const centred = el.textAlign === 'center';
       const x = centred ? el.x + elementBounds(el).width / 2 : el.x;
-      setEditingText({ id: el.id, x, y: el.y, text: el.text || '', size: el.fontSize || 20, color: safeColor(el.strokeColor, '#1e1e1e'), isNew: false, centred });
+      setEditingText({ id: el.id, x, y: el.y, text: el.text || '', style: textStyleOf(el), color: safeColor(el.strokeColor, '#1e1e1e'), isNew: false, centred });
     } else {
-      setEditingText({ id: '', x: p.x, y: p.y - 12, text: '', size: 20, color, isNew: true });
+      setEditingText({ id: '', x: p.x, y: p.y - 12, text: '', style: textStyle, color, isNew: true });
     }
   }
 
@@ -1400,7 +1403,7 @@ export function BoardEditor({
     const label = labelOf(elements.current, shape.id);
     if (label) { beginText(drawnElements(elements.current).find((el) => el.id === label.id) || label); return; }
     const c = labelPoint(shape);
-    setEditingText({ id: '', shapeId: shape.id, x: c.x, y: c.y - 12, text: '', size: 20, color: safeColor(shape.strokeColor, '#1e1e1e'), isNew: true, centred: true });
+    setEditingText({ id: '', shapeId: shape.id, x: c.x, y: c.y - 12, text: '', style: textStyle, color: safeColor(shape.strokeColor, '#1e1e1e'), isNew: true, centred: true });
   }
 
   function onDoubleClick(event) {
@@ -1424,18 +1427,49 @@ export function BoardEditor({
       if (!text) return;
       const shape = t.shapeId && elements.current.get(t.shapeId);
       if (shape && !shape.isDeleted) {
-        const label = newLabel({ ...shape, ...routeConnector(shape, elements.current) }, text, { strokeColor: t.color });
+        const label = newLabel({ ...shape, ...routeConnector(shape, elements.current) }, text, { ...t.style, strokeColor: t.color });
         // A deleted `<id>-label` outranks a fresh version 1: revive it.
         const old = elements.current.get(label.id);
         commit([old ? bump(old, { ...label, version: old.version, isDeleted: false }) : label]);
       }
-      else commit([newElement('text', { x: t.x, y: t.y, text, fontSize: t.size, strokeColor: t.color })]);
+      else commit([newElement('text', { ...t.style, x: t.x, y: t.y, text, strokeColor: t.color })]);
       return;
     }
     const cur = elements.current.get(t.id);
     if (!cur) return;
     if (!text) remove([t.id]);
-    else if (text !== cur.text) commit(withArrows([bump(cur, { text, width: 0, height: 0 })]));
+    else if (text !== cur.text || !sameTextStyle(cur, t.style)) commit(withArrows([bump(cur, { ...t.style, text, width: 0, height: 0 })]));
+  }
+
+  // leaveText closes the editor unless the focus went to the text controls,
+  // which change what is being typed.
+  function leaveText(event) {
+    const to = event.relatedTarget;
+    if (to?.closest?.('.board-text-input, .board-text-controls')) return;
+    finishText();
+  }
+
+  // styledText is the text the style controls act on: the selection's own, and
+  // what its shapes and lines carry.
+  function styledText(chosen, owners) {
+    if (!chosen.length) return [];
+    const ids = new Set(chosen.map((el) => el.id));
+    const found = new Set(chosen.filter((el) => el.type === 'text').map((el) => el.id));
+    for (const [textId, ownerId] of owners) if (ids.has(ownerId)) found.add(textId);
+    return [...found].map((id) => elements.current.get(id)).filter(Boolean);
+  }
+
+  // chooseTextStyle sets the style for the next text, and for what is open or
+  // selected now. A box was measured for the old style, so it goes.
+  function chooseTextStyle(changes, chosen) {
+    setTextStyle((style) => ({ ...style, ...changes }));
+    const open = editingRef.current;
+    if (open) {
+      setEditingText({ ...open, style: { ...open.style, ...changes } });
+      rootRef.current?.querySelector?.('.board-text-input')?.focus();
+    } else if (chosen.length) {
+      commit(withArrows(chosen.map((el) => bump(el, { ...changes, width: 0, height: 0 }))));
+    }
   }
 
   // -- keyboard ---------------------------------------------------------------
@@ -1621,12 +1655,15 @@ export function BoardEditor({
   const aimed = gesture.current?.target || null;
   const aimedShape = aimed && drawnById.get(aimed.elementId);
   const band = gesture.current?.kind === 'band' ? normalizeBox(gesture.current.start.x, gesture.current.start.y, gesture.current.now.x, gesture.current.now.y) : null;
+  const owners = sels.length ? labelOwners(elements.current) : new Map();
   const arrangeable = (() => {
-    const owners = labelOwners(elements.current);
     const chosen = new Set(selected);
     return sels.filter((el) => el.type !== 'arrow' && !chosen.has(owners.get(el.id))).length;
   })();
   const aiming = !!gesture.current?.at;
+  const texts = styledText(sels, owners);
+  const showTextControls = !!editingText || tool === 'text' || texts.length > 0;
+  const shownText = textStyleOf(editingText ? editingText.style : texts[0] || textStyle);
   const pad = 6 / view.zoom;
   const transform = `scale(${view.zoom}) translate(${-view.x} ${-view.y})`;
   const paper = gridStyle(view);
@@ -1694,6 +1731,21 @@ export function BoardEditor({
       ${(lines.length > 0 || tool === 'arrow' || tool === 'line') && html`<span class="board-sep"></span>${LINE_ROUTES.map((r) => html`<button key=${r.id} type="button"
         class=${`board-tool${shownRouting === r.id ? ' on' : ''}`} aria-pressed=${shownRouting === r.id ? 'true' : 'false'} title=${r.label} aria-label=${r.label}
         onClick=${() => chooseRouting(r.id, lines)}>${r.icon}</button>`)}`}
+      ${showTextControls && html`<span class="board-sep"></span>
+        <span class="board-text-controls" role="group" aria-label="Text style">
+          <select class="board-text-select" aria-label="Text size" title="Text size" value=${shownText.fontSize}
+            onChange=${(event) => { chooseTextStyle({ fontSize: Number(event.currentTarget.value) }, texts); if (!editingRef.current) event.currentTarget.blur(); }} onBlur=${editingText ? leaveText : null}>
+            ${boardFontSizes(shownText.fontSize).map((size) => html`<option key=${size} value=${size}>${size}</option>`)}
+          </select>
+          <select class="board-text-select" aria-label="Font" title="Font" value=${shownText.fontFamily}
+            onChange=${(event) => { chooseTextStyle({ fontFamily: Number(event.currentTarget.value) }, texts); if (!editingRef.current) event.currentTarget.blur(); }} onBlur=${editingText ? leaveText : null}>
+            ${BOARD_FONTS.map((font) => html`<option key=${font.id} value=${font.id}>${font.label}</option>`)}
+          </select>
+          <button type="button" class=${`board-tool${shownText.fontWeight ? ' on' : ''}`} title="Bold" aria-label="Bold" aria-pressed=${shownText.fontWeight ? 'true' : 'false'}
+            onMouseDown=${(event) => event.preventDefault()} onClick=${() => chooseTextStyle({ fontWeight: shownText.fontWeight ? undefined : 'bold' }, texts)}><b>B</b></button>
+          <button type="button" class=${`board-tool${shownText.fontStyle ? ' on' : ''}`} title="Italic" aria-label="Italic" aria-pressed=${shownText.fontStyle ? 'true' : 'false'}
+            onMouseDown=${(event) => event.preventDefault()} onClick=${() => chooseTextStyle({ fontStyle: shownText.fontStyle ? undefined : 'italic' }, texts)}><i>I</i></button>
+        </span>`}
       <span class="board-sep"></span>
       <button type="button" class="board-tool" title="Undo (Ctrl+Z)" aria-label="Undo" onClick=${() => undo(false)}>↶</button>
       <button type="button" class="board-tool" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" onClick=${() => undo(true)}>↷</button>
@@ -1743,13 +1795,13 @@ export function BoardEditor({
         </g>
       </svg>
       ${editingText && html`<textarea class=${`board-text-input${editingText.centred ? ' centred' : ''}`} autoFocus
-        style=${`left:${(editingText.x - view.x) * view.zoom}px;top:${(editingText.y - view.y) * view.zoom}px;font-size:${editingText.size * view.zoom}px;color:${editingText.color}`}
+        style=${`left:${(editingText.x - view.x) * view.zoom}px;top:${(editingText.y - view.y) * view.zoom}px;font-size:${shownText.fontSize * view.zoom}px;color:${editingText.color};font-family:${boardFont(shownText).css};font-weight:${shownText.fontWeight || 'normal'};font-style:${shownText.fontStyle || 'normal'}`}
         value=${editingText.text}
         onInput=${(event) => setEditingText({ ...editingText, text: event.currentTarget.value })}
         onKeyDown=${(event) => {
           if (event.key === 'Escape' || (event.key === 'Enter' && !event.shiftKey)) { event.preventDefault(); finishText(); }
         }}
-        onBlur=${finishText}></textarea>`}
+        onBlur=${leaveText}></textarea>`}
       ${menu && (() => {
         const rect = svgRef.current?.getBoundingClientRect?.();
         const fit = (value, room, size) => Math.max(4, room ? Math.min(value, room - size - 4) : value);

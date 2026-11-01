@@ -91,6 +91,11 @@ body.slop, body.vegas {
 .board-tool.on .board-tool-digit { color: #fff; }
 .board-tool:hover { background: var(--board-bar); border-color: var(--board-line); }
 .board-tool.on { background: #1f6feb; border-color: #388bfd; color: #fff; }
+.board-text-controls { display: inline-flex; align-items: center; gap: 3px; }
+.board-text-select {
+  height: 26px; border-radius: 6px; border: 1px solid var(--board-line); background: var(--board-bar);
+  color: var(--board-text); font-size: 12px;
+}
 .board-sep { width: 1px; height: 20px; background: var(--board-line); margin: 0 6px; }
 .board-swatch {
   width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--board-line); cursor: pointer;
@@ -132,7 +137,7 @@ body.slop, body.vegas {
 .board-text-input {
   position: absolute; z-index: 2; min-width: 120px; min-height: 1.4em; padding: 0; margin: 0; resize: none; overflow: hidden;
   border: 1px dashed #1971c2; background: transparent; outline: none; line-height: 1.25;
-  font-family: 'Segoe Print', 'Comic Sans MS', 'Chalkboard SE', cursive; field-sizing: content;
+  field-sizing: content;
 }
 .board-text-input.centred { transform: translateX(-50%); text-align: center; }
 /* The quick menu (js/board-quick-menu.js): the next shape of a connector. */
