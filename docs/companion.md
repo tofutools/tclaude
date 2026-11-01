@@ -157,7 +157,8 @@ dictation, that dictation falls back to Google's service and tells you.
 - **Wake phrases.** The focused phrase, "hey agent" by default, starts dictating with
   no click; words after it start the draft. The Steward phrase, "hey stewie" by
   default, always switches to the Steward, opening or focusing its window, and
-  dictates there. It never starts a Steward: with none running you get a short notice.
+  dictates there. A Steward in a window of its own gets focus instead, and you dictate
+  there. It never starts a Steward: with none running you get a short notice.
   One listener hears both. A phrase needs two settings on: its own checkbox and the
   wake phrase listener. Neither changes the other, and Config says so when only one
   is on. A phrase of common words may fire by mistake. Dictation goes to the terminal or chat window with

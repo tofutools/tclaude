@@ -381,8 +381,19 @@ export function CompanionApp({
   const stewardWake = useRef(null);
   const wakeDoor = useRef(null);
   wakeDoor.current = {
-    refusal: () => (steward?.online && steward.agentId !== shutDown?.agentId ? '' : `${customName || 'The Steward'} isn’t running. Start it from the companion.`),
+    refusal() {
+      const name = customName || 'The Steward';
+      if (!steward?.online || steward.agentId === shutDown?.agentId) return `${name} isn’t running. Start it from the companion.`;
+      // Only Bring it back here takes a detached agent from its window.
+      if (detachedRef.current.has(steward.agentId)) {
+        detachedWindows.current.get(steward.agentId)?.focus?.();
+        return `${name} is in its own window. Dictate there, or bring it back here.`;
+      }
+      return '';
+    },
+    reserve: () => dictation.reserve(),
     open(words, carry) {
+      dictation.reserve();
       if (activeId === steward.agentId && composerShown.current) {
         dictation.handover(words, carry);
         return;
@@ -394,12 +405,12 @@ export function CompanionApp({
         notify(`Could not open ${stewardLabel}, so nothing is listening.`, true);
       }, STEWARD_WAKE_MS);
       stewardWake.current = { agentId: steward.agentId, words, carry, timer };
-      dictation.reserve();
-      showAgent(steward.agentId, { reclaim: true });
+      showAgent(steward.agentId);
     },
   };
   useEffect(() => registerStewardDoor({
     refusal: () => wakeDoor.current.refusal(),
+    reserve: () => wakeDoor.current.reserve(),
     open: (words, carry) => wakeDoor.current.open(words, carry),
   }), []);
   useEffect(() => {

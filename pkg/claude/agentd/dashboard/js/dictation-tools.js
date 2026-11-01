@@ -8,11 +8,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { COMPANION_MESSAGE_MAX, companionMessageFits, composeCompanionMessage, markDictated } from './companion-model.js';
-import { createDictation, phraseLeadRest, saysStop } from './companion-voice.js';
+import { createDictation, phraseLeadRest, saysStop, sendPhraseRest } from './companion-voice.js';
 import { dictationBlock } from './insecure-origin.js';
 import { SILENCE_SEND_DEFAULT, voicePhrase } from './voice-config.js';
 import { localSpeechState, speechRouteLabel } from './voice-local.js';
-import { openStewardDoor, registerWakeTarget, stewardRefusal } from './voice-wake.js';
+import { openStewardDoor, registerWakeTarget, reserveStewardDoor, stewardRefusal } from './voice-wake.js';
 
 const html = htm.bind(h);
 
@@ -101,14 +101,14 @@ export function useDictation({
         if (!text.trim()) return;
         // The recognizer hasn't finished the stop phrase yet, and it never sends.
         if (saysStop(lastHeard.current.interim, latest.current.continuous?.stopPhrase, latest.current.sendPhrase)) {
-          latest.current.setDraft(owner.current, joinDraft(base.current, lastHeard.current.settled || ''));
+          placeDraft(joinDraft(base.current, lastHeard.current.settled || ''));
           stopListening();
           return;
         }
         // Nor do the words of a switch to the Steward go to this agent.
         const switching = phraseLeadRest(lastHeard.current.interim, loop.current ? latest.current.continuous?.stewardPhrase : '');
         if (switching !== null) {
-          latest.current.setDraft(owner.current, joinDraft(base.current, lastHeard.current.settled || ''));
+          placeDraft(joinDraft(base.current, lastHeard.current.settled || ''));
           dictationRef.current.abort?.();
           switchToSteward(switching);
           return;
@@ -121,7 +121,7 @@ export function useDictation({
   }
   // The one way out of a loop that keeps listening: the operator named the
   // Steward. It ends here, and starts there if the phrase was said in a loop.
-  function switchToSteward(words) {
+  function switchToSteward(heard) {
     const refused = stewardRefusal();
     if (refused) {
       latest.current.notify(refused, true);
@@ -129,10 +129,16 @@ export function useDictation({
     }
     const carry = !!loop.current;
     clearSilence();
-    endLoop();
+    reserveStewardDoor();
+    endLoop(undefined, true);
     dictationRef.current.abort?.();
-    openStewardDoor(words, carry);
+    openStewardDoor(sendPhraseRest(heard, latest.current.sendPhrase) ?? heard, carry);
     return true;
+  }
+  // The draft a caller needs next, ahead of the render that brings it.
+  function placeDraft(text) {
+    latest.current.setDraft(owner.current, text);
+    latest.current.draft = text;
   }
   function armIdle() {
     const live = loop.current;
@@ -150,7 +156,7 @@ export function useDictation({
     }
     return loop.current;
   }
-  function endLoop(message) {
+  function endLoop(message, keepMic = false) {
     const live = loop.current;
     if (!live) return;
     loop.current = null;
@@ -158,7 +164,7 @@ export function useDictation({
     clearTimeout(live.reopen);
     clearSilence();
     setContinuing(false);
-    dictationRef.current?.keep?.(false);
+    if (!keepMic) dictationRef.current?.keep?.(false);
     dictationRef.current?.abort?.();
     listeningRef.current = false;
     setListening(false);
@@ -249,7 +255,7 @@ export function useDictation({
       if (!own()) return;
       lastHeard.current = parts;
       if (heard.trim()) dictatedDrafts.current.add(owner.current);
-      latest.current.setDraft(owner.current, joinDraft(base.current, heard));
+      placeDraft(joinDraft(base.current, heard));
       if (!heard.trim()) return;
       armSilence();
       if (loop.current) {
@@ -353,9 +359,10 @@ export function useDictation({
     reserve: () => dictation.keep?.(true),
     release: () => dictation.keep?.(false),
     handover(words, carry) {
-      if (carry && latest.current.continuous) beginLoop();
-      else dictation.keep?.(false);
+      const looping = carry && latest.current.continuous && !block && target.current;
+      if (looping) beginLoop();
       opener.current(words);
+      if (!looping) dictation.keep?.(false);
     },
     outgoing: (text) => (mark && dictatedDrafts.current.has(target.current) ? markDictated(text) : text),
     // Cancelling is final: words still arriving must not start it again.

@@ -409,10 +409,11 @@ export function createDictation(win = globalThis.window, {
         openDictation = dictation;
       }
       keeping = on;
-      if (!on) micChanged();
+      micChanged();
     },
     takeOver() {
       onTaken?.();
+      keeping = false;
       dictation.abort();
     },
     abort() {

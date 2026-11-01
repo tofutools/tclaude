@@ -52,8 +52,9 @@ export function pickWakeTarget(doc) {
 }
 
 // The Steward's window, where this page has one: refusal() says why it can't
-// be switched to, '' when it can, and open(words, carry) switches and dictates
-// there, carrying continuous mode along when carry is set.
+// be switched to, '' when it can, reserve() holds the mic for it, and
+// open(words, carry) switches and dictates there, carrying continuous mode
+// along when carry is set.
 let stewardDoor = null;
 
 export function registerStewardDoor(door) {
@@ -63,6 +64,10 @@ export function registerStewardDoor(door) {
 
 export function stewardRefusal() {
   return stewardDoor ? stewardDoor.refusal() : 'There’s no Steward window on this page.';
+}
+
+export function reserveStewardDoor() {
+  stewardDoor?.reserve();
 }
 
 export function openStewardDoor(words, carry = false) {

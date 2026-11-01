@@ -681,7 +681,7 @@ async function setupStewardLoop(t, { refusal = '', voice = STEWARD_VOICE } = {})
   const s = await continuous(t, { voice: { ...voice, phrases: STEWARD_PHRASES } });
   const { registerStewardDoor } = await s.harness.importDashboardModule('js/voice-wake.js');
   s.opened = [];
-  t.after(registerStewardDoor({ refusal: () => refusal, open: (...args) => s.opened.push(args) }));
+  t.after(registerStewardDoor({ refusal: () => refusal, reserve() {}, open: (...args) => s.opened.push(args) }));
   await s.mic();
   await says(s, 'one send now');
   await reopened(s);
@@ -718,6 +718,24 @@ test('with no Steward running the phrase says so and continuous stays where it i
   assert.ok(s.$('.companion-continuous'), 'nothing moved');
   assert.equal(s.$('.companion-draft').value, '', 'the phrase stays out of the draft');
   assert.deepEqual(bodies(s), ['[dictated] one']);
+});
+
+test('a refused Steward phrase on silence stays out of what is sent next', async (t) => {
+  const s = await setupStewardLoop(t, { refusal: 'The Steward isn’t running.' });
+  await says(s, 'hey stewie check the logs', false);
+  await s.harness.act(() => wait(3300));
+  await reopened(s);
+  assert.equal(s.notices.at(-1), 'The Steward isn’t running.');
+  await says(s, 'next sentence');
+  assert.equal(s.$('.companion-draft').value, 'next sentence');
+  await s.harness.act(() => wait(3300));
+  assert.deepEqual(bodies(s), ['[dictated] one', '[dictated] next sentence']);
+});
+
+test('a switch ending in the send phrase leaves it behind', async (t) => {
+  const s = await setupStewardLoop(t);
+  await says(s, 'hey stewie check the logs send now');
+  assert.deepEqual(s.opened, [['check the logs', true]]);
 });
 
 test('inside a sentence the Steward phrase is plain text', async (t) => {

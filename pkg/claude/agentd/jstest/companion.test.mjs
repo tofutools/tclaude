@@ -1737,3 +1737,63 @@ test('with no Steward running its phrase summons nothing', async (t) => {
   assert.deepEqual(requests.filter((r) => String(r.url).includes('scribe')), []);
   assert.equal(dictated.starts.length, 0);
 });
+
+const CONTINUOUS_SNAPSHOT = () => ({
+  ...snapshotWith({ steward: true }),
+  harnesses: [{ name: 'claude', can_mail_mid_turn: true }],
+  voice: { wake_enabled: true, continuous_enabled: true, phrases: [{ action: 'send', phrase: 'send now' }, { action: 'steward', phrase: 'hey stewie' }, { action: 'stop', phrase: 'stop listening' }] },
+});
+
+test('the Steward phrase said on the Steward starts a clean draft', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = micCounting();
+  const { view, harness, controller } = await setup(t, { prefs, snapshot: CONTINUOUS_SNAPSHOT(), dictationImpl: dictated.impl });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.companion-mic').click());
+  await harness.act(async () => { dictated.callbacks.onSend('first'); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 260)));
+  await harness.act(() => dictated.callbacks.onText('hey stewie check the'));
+  await harness.act(() => {
+    dictated.callbacks.onText('', { interim: '', settled: '' });
+    dictated.callbacks.onSteward('check the logs');
+  });
+  assert.equal(view.container.querySelector('input.companion-draft').value, 'check the logs');
+});
+
+test('the mic stays held through the switch out of a loop on another tab', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = micCounting();
+  const { view, harness, controller } = await setup(t, { prefs, snapshot: CONTINUOUS_SNAPSHOT(), dictationImpl: dictated.impl });
+  await harness.act(() => controller().open(A));
+  await harness.act(() => view.container.querySelector('.companion-mic').click());
+  await harness.act(async () => { dictated.callbacks.onSend('first'); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 260)));
+  dictated.reservations.length = 0;
+  await harness.act(async () => { dictated.callbacks.onSteward('take over'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(dictated.reservations.filter((on) => on === false).length, 0, 'never let go on the way across');
+  const field = view.container.querySelector('input.companion-draft');
+  assert.equal(field.getAttribute('aria-label'), 'Message steward-k3x');
+  assert.equal(field.value, 'take over');
+  assert.ok(view.container.querySelector('.companion-continuous'), 'continuous came along');
+});
+
+test('a Steward in its own window gets focus and keeps its terminal', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const dictated = micCounting();
+  const opened = { closed: false, focused: 0, close() { this.closed = true; }, focus() { this.focused += 1; } };
+  const { view, harness, controller, closed } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }), dictationImpl: dictated.impl, detachWindow: () => opened });
+  await harness.act(() => controller().open(S));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => {
+    view.container.querySelector('.companion-detach').click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await harness.act(() => controller().open(A));
+  const wake = await harness.importDashboardModule('js/voice-wake.js');
+  const before = (closed || []).length;
+  assert.match(wake.stewardRefusal(), /own window/);
+  assert.equal(opened.focused, 1);
+  assert.equal(opened.closed, false);
+  assert.equal((closed || []).length, before, 'nothing took its terminal');
+  assert.equal(dictated.starts.length, 0);
+});

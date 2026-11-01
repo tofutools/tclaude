@@ -17,7 +17,7 @@ export const VOICE_ACTIONS = Object.freeze([
   Object.freeze({
     action: 'steward', phrase: 'hey stewie', on: false, title: 'Steward phrase',
     summary: 'say this to switch to the Steward, whatever has focus, and dictate there',
-    more: "It opens or focuses the Steward's window, and words after the phrase start the draft. It never starts a Steward: with none running you get a short notice. It is also the one way to move continuous mode, which ends on the old agent and starts on the Steward. It only does anything with the wake phrase listener on, below.",
+    more: "It opens the Steward's window in the companion, and words after the phrase start the draft. A Steward in a window of its own gets focus instead, and you dictate there. It never starts a Steward: with none running you get a short notice. It is also the one way to move continuous mode, which ends on the old agent and starts on the Steward. It only does anything with the wake phrase listener on, below.",
   }),
   Object.freeze({
     action: 'stop', phrase: 'stop listening', on: true, title: 'Stop phrase',
