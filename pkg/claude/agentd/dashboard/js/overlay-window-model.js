@@ -8,10 +8,15 @@
 
 export const OVERLAY_MIN_W = 360;
 export const OVERLAY_MIN_H = 220;
-// Distance from a viewport edge at which a drag offers to snap.
-export const OVERLAY_SNAP_EDGE = 28;
+// Distance from a viewport edge at which a drag offers to snap: a share of the
+// viewport's width, so it suits every screen, within these limits.
+export const OVERLAY_SNAP_EDGE_SHARE = 0.03;
+export const OVERLAY_SNAP_EDGE_MIN = 40;
+export const OVERLAY_SNAP_EDGE_MAX = 80;
 // How far along an edge, from its end, a drag counts as the corner.
-export const OVERLAY_CORNER_REACH = 72;
+export const OVERLAY_CORNER_SHARE = 0.11;
+export const OVERLAY_CORNER_MIN = 120;
+export const OVERLAY_CORNER_MAX = 240;
 // The share of the viewport a snapped window takes.
 export const OVERLAY_SNAP_SHARE = 0.42;
 // Room kept for the fixed footer bar below a placement.
@@ -78,21 +83,34 @@ export function fitPlacement(p, viewport) {
   return { x, y, w, h, snap };
 }
 
+const clamped = (min, value, max) => Math.min(max, Math.max(min, value));
+
+// snapReach is how near an edge and a corner a drag must come in this viewport.
+export function snapReach(viewport) {
+  return {
+    edge: clamped(OVERLAY_SNAP_EDGE_MIN, viewport.width * OVERLAY_SNAP_EDGE_SHARE, OVERLAY_SNAP_EDGE_MAX),
+    corner: clamped(OVERLAY_CORNER_MIN, viewport.width * OVERLAY_CORNER_SHARE, OVERLAY_CORNER_MAX),
+  };
+}
+
 // snapZone names the zone a dragged window would snap to for a pointer position,
 // or '' to keep floating. Along a side, top is where the room starts, so the top
 // corners sit just under the nav bar.
 export function snapZone(pointer, viewport, top = 0) {
   const bottom = viewport.height - OVERLAY_FOOTER_ROOM;
-  const right = pointer.x >= viewport.width - OVERLAY_SNAP_EDGE;
-  const left = pointer.x <= OVERLAY_SNAP_EDGE;
+  const { edge, corner } = snapReach(viewport);
+  const right = pointer.x >= viewport.width - edge;
+  const left = pointer.x <= edge;
+  // A corner stops at a third of a short side, whose middle stays the edge's.
   if (left || right) {
     const side = right ? 'right' : 'left';
-    if (pointer.y <= top + OVERLAY_CORNER_REACH) return `top-${side}`;
-    return pointer.y >= bottom - OVERLAY_CORNER_REACH ? `bottom-${side}` : side;
+    const reach = Math.min(corner, (bottom - top) / 3);
+    if (pointer.y <= top + reach) return `top-${side}`;
+    return pointer.y >= bottom - reach ? `bottom-${side}` : side;
   }
-  if (pointer.y < bottom - OVERLAY_SNAP_EDGE) return '';
-  if (pointer.x <= OVERLAY_CORNER_REACH) return 'bottom-left';
-  return pointer.x >= viewport.width - OVERLAY_CORNER_REACH ? 'bottom-right' : 'bottom';
+  if (pointer.y < bottom - edge) return '';
+  if (pointer.x <= corner) return 'bottom-left';
+  return pointer.x >= viewport.width - corner ? 'bottom-right' : 'bottom';
 }
 
 // viewportOf is the area a fixed window can use. innerWidth and innerHeight

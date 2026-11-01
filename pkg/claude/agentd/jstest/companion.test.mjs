@@ -1594,6 +1594,20 @@ test('snap model: corners, saved panel sizes and free edges', async (t) => {
   assert.equal(o.snapZone({ x: 3, y: 760 }, vp, 60), 'bottom-left');
   assert.equal(o.snapZone({ x: 1100 + 60, y: 790 }, vp, 60), 'bottom-right', 'along the bottom edge too');
   assert.equal(o.snapZone({ x: 3, y: 400 }, vp, 60), 'left');
+  // The reach follows the viewport, between its limits.
+  assert.deepEqual(Object.values(o.snapReach({ width: 1920 })).map(Math.round), [58, 211]);
+  assert.deepEqual(o.snapReach({ width: 800 }), { edge: 40, corner: 120 });
+  assert.deepEqual(o.snapReach({ width: 3840 }), { edge: 80, corner: 240 });
+  const wide = { width: 1920, height: 1080 };
+  assert.equal(o.snapZone({ x: 50, y: 500 }, wide, 60), 'left');
+  assert.equal(o.snapZone({ x: 60, y: 500 }, wide, 60), '');
+  assert.equal(o.snapZone({ x: 3, y: 265 }, wide, 60), 'top-left');
+  assert.equal(o.snapZone({ x: 3, y: 280 }, wide, 60), 'left');
+  assert.equal(o.snapZone({ x: 200, y: 1040 }, wide, 60), 'bottom-left');
+  assert.equal(o.snapZone({ x: 220, y: 1040 }, wide, 60), 'bottom');
+  const short = { width: 900, height: 400 };
+  assert.equal(o.snapZone({ x: 3, y: 200 }, short, 60), 'left', 'a short side keeps its middle third');
+  assert.equal(o.snapZone({ x: 3, y: 100 }, short, 60), 'top-left');
   const quarter = o.zoneRect('top-right', vp, 60);
   assert.deepEqual(quarter, { x: 1200 - 504, y: 60, w: 504, h: Math.round((bottom - 60) / 2), snap: 'top-right' });
   const low = o.zoneRect('bottom-left', vp, 60);
