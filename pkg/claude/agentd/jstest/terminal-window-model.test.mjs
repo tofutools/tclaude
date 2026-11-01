@@ -29,6 +29,27 @@ test('a window keeps what brings the same tab back', async (t) => {
   assert.deepEqual(paneSeedOf(terminalWindowOf(groupShell)), { ws: '/api/group-term-ws/g', key: 'groupterm:g', label: 'g' });
 });
 
+test('a terminal with no key of its own is found by its route', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { openTerminalPane, setFloatingTerminals } = await harness.importDashboardModule('js/terminals-tab.js');
+  const asked = [];
+  setFloatingTerminals((key) => { asked.push(key); return true; });
+  assert.deepEqual(await openTerminalPane({ ws: '/api/term-ws/a?which=current', label: 'x' }), { key: '/api/term-ws/a?which=current', floating: true });
+  assert.deepEqual(asked, ['/api/term-ws/a?which=current']);
+  setFloatingTerminals(() => false);
+});
+
+test('a saved window nothing shows gives up its place, so the terminal can open', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { openTerminalPane } = await harness.importDashboardModule('js/terminals-tab.js');
+  const { overlayWindows } = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.importDashboardModule('js/terminal-window.js');
+  const { terminalWindowOf } = await harness.importDashboardModule('js/terminal-window-model.js');
+  overlayWindows.value = [terminalWindowOf(groupShell)];
+  assert.equal(await openTerminalPane(groupShell.seed), null, 'it falls through to the Terminals tab, which is not mounted here');
+  assert.deepEqual(overlayWindows.value, []);
+});
+
 test('a saved window only connects to a shell route', async (t) => {
   const { terminalWindowId, validTerminalWindow } = await model(t);
   const saved = (ws, paneKey = 'p') => ({ id: terminalWindowId(paneKey), kind: 'terminal', paneKey, ws });
@@ -37,4 +58,7 @@ test('a saved window only connects to a shell route', async (t) => {
   assert.equal(validTerminalWindow(saved('https://example.com/api/term-ws/x')), false);
   assert.equal(validTerminalWindow(saved('/api/term-ws/x/../../shutdown')), false);
   assert.equal(validTerminalWindow({ ...saved('/api/group-term-ws/g'), id: 'terminal:other' }), false);
+  for (const sneaky of ['/api/term-ws/..\\..\\api\\open-window-ws\\x', '/api/term-ws/..', '/api/term-ws/%2e%2e', '/api/term-ws/%2E./x', '/api/term-ws/a%2fb', '/api/term-ws/a%5Cb']) {
+    assert.equal(validTerminalWindow(saved(sneaky)), false, sneaky);
+  }
 });

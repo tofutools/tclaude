@@ -38,7 +38,8 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     const normalized = normalizeSeed(rawSeed);
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
-    if (floatingTerminals(seed.key)) return { floating: true };
+    const key = seed.key || seed.ws;
+    if (floatingTerminals(key)) return { key, floating: true };
     const current = controller;
     if (!current) return null;
     // A board pane has no xterm to load.

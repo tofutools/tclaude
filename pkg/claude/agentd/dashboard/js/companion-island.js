@@ -79,7 +79,7 @@ function StatusDot({ status }) {
 // CompanionTerminal mounts the opaque xterm widget for one agent. It owns the
 // widget's whole lifecycle: a new agent id or a reconnect generation disposes
 // the old widget before attaching a fresh one.
-function CompanionTerminal({ agent, wsPath = '', generation, widgetFactory, loadRuntime, focusToken, onStatus, onReconnectChange, widgetRef, fontSize, onFontChange }) {
+function CompanionTerminal({ agent, wsPath = '', generation, widgetFactory, loadRuntime, focusToken, onStatus, onReconnectChange, onDisconnect, widgetRef, fontSize, onFontChange }) {
   const hostRef = useRef(null);
   useEffect(() => {
     let cancelled = false;
@@ -96,6 +96,7 @@ function CompanionTerminal({ agent, wsPath = '', generation, widgetFactory, load
         applicationClipboardShortcuts: agent.harness === 'copilot',
         onStatus: (status) => { if (!cancelled) onStatus(status); },
         onReconnectChange: (available) => { if (!cancelled) onReconnectChange(!!available); },
+        ...(onDisconnect && { onDisconnect: (info) => { if (!cancelled) onDisconnect(info); } }),
         initialFontSize: fontSize(),
         onFontChange: (font) => { if (!cancelled) onFontChange(font); },
       });

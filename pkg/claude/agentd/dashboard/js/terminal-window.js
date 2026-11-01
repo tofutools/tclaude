@@ -4,7 +4,7 @@
 
 import { h } from 'preact';
 import { computed } from '@preact/signals';
-import { useRef, useState } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { defaultPlacement } from './companion-model.js';
 import { closeOverlayWindow, minimizeOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
@@ -21,11 +21,21 @@ export const TERMINAL_WINDOW_PREF = 'tclaude.dash.terminal-window.placement';
 
 export const terminalOverlays = computed(() => overlayWindows.value.filter((window) => window.kind === TERMINAL_WINDOW_KIND));
 
+// The windows really in the page. With Collab off the saved set is still there
+// but nothing shows it, so it must not answer for a terminal.
+const showing = new Set();
+
+// terminalWindowsShowing reports whether any terminal floats where it can be seen.
+export const terminalWindowsShowing = () => showing.size > 0;
+
 // A terminal opens in one place at a time: one floating comes forward instead.
+// One that cannot show gives up its place, and the terminal opens as a tab.
 setFloatingTerminals((key) => {
   const floating = terminalOverlays.peek().find((window) => window.paneKey === key);
-  if (floating) openOverlayWindow(floating);
-  return !!floating;
+  if (!floating) return false;
+  if (showing.has(floating.id)) openOverlayWindow(floating);
+  else closeOverlayWindow(floating.id);
+  return showing.has(floating.id);
 });
 
 export function TerminalWindow({ instance, snapshot, prefs, win, notify, widgetFactory, loadRuntime, Terminal }) {
@@ -36,6 +46,10 @@ export function TerminalWindow({ instance, snapshot, prefs, win, notify, widgetF
     id: instance.id, win, prefs, prefKey: `${TERMINAL_WINDOW_PREF}.${instance.paneKey}`, defaultPlacement, snaps: true, open,
     onRefocus: () => setFocusToken((n) => n + 1),
   });
+  useLayoutEffect(() => {
+    showing.add(instance.id);
+    return () => showing.delete(instance.id);
+  }, [instance.id]);
   const [status, setStatus] = useState('');
   const [canReconnect, setCanReconnect] = useState(false);
   const [generation, setGeneration] = useState(0);
@@ -66,7 +80,7 @@ export function TerminalWindow({ instance, snapshot, prefs, win, notify, widgetF
         <${Terminal} key=${instance.paneKey} agent=${{ agentId: instance.paneKey, harness: '' }} wsPath=${instance.ws} generation=${generation}
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken} widgetRef=${widgetRef}
           fontSize=${() => readTerminalFont('companion', instance.paneKey, prefs)} onFontChange=${onFontChange}
-          onStatus=${setStatus} onReconnectChange=${setCanReconnect} />`}
+          onStatus=${setStatus} onReconnectChange=${setCanReconnect} onDisconnect=${(info) => { if (info?.closeTab) close(); }} />`}
     </div>
   <//>`;
 }

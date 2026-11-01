@@ -7,7 +7,8 @@
 export const TERMINAL_WINDOW_KIND = 'terminal';
 export const terminalWindowId = (paneKey) => `terminal:${paneKey}`;
 
-const SHELL_ROUTE = /^\/api\/(?:term-ws|group-term-ws)\/[^/?#]+(?:\?[^#]*)?$/;
+// One path segment, which a URL parser cannot turn into another route.
+const SHELL_ROUTE = /^\/api\/(?:term-ws|group-term-ws)\/(?!\.|%2e)(?![^?#]*%(?:2f|5c))[^/?#\\]+(?:\?[^#]*)?$/i;
 
 // overlayablePane reports whether a Terminals pane can float.
 export function overlayablePane(pane) {

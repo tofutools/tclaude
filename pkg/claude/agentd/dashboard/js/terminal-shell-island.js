@@ -31,7 +31,7 @@ import { openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
 import { boardOverlays, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
-import { terminalOverlays } from './terminal-window.js';
+import { terminalWindowsShowing } from './terminal-window.js';
 import { overlayablePane } from './terminal-window-model.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
@@ -1743,7 +1743,7 @@ function TerminalTabs({
     if (solo || !had || hasPanes) return undefined;
     const timer = setTimeout(() => {
       // A board or a shell that moved to the overlay leaves the operator working here.
-      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: boardOverlays.peek().length + terminalOverlays.peek().length > 0 });
+      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: boardOverlays.peek().length > 0 || terminalWindowsShowing() });
     }, 0);
     return () => clearTimeout(timer);
   }, [hasPanes, solo]);
