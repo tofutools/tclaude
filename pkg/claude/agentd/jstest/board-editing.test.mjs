@@ -195,8 +195,9 @@ test('every way of opening the text editor gives it the keyboard', async (t) => 
   await key('t');
   await fire('pointerdown', 300, 400);
   assert.equal(doc.activeElement, input());
-  const press = new harness.window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
-  await harness.act(() => root.querySelector('svg.board-canvas').dispatchEvent(press));
+  const canvas = root.querySelector('svg.board-canvas');
+  let press;
+  await harness.act(() => { press = harness.fireEvent(canvas, 'onmousedown' in canvas ? 'mousedown' : 'MouseDown'); });
   assert.ok(press.defaultPrevented, 'the press that opened it leaves the focus there');
   await close();
   assert.deepEqual(await saved(), []);
