@@ -506,25 +506,29 @@ test('deleting an unmerged branch takes a separate confirmation that names what 
   const { harness, host } = opened;
   await flush(harness);
   const force = () => host.querySelector('#worktree-cleanup-force');
+  const toggle = async (control, checked) => {
+    control.checked = checked;
+    await harness.act(() => harness.fireEvent(control, 'change'));
+  };
   const forced = () => force().checked === true || (force().checked === undefined && force().hasAttribute('checked'));
   assert.equal(forced(), false, 'force-deleting starts off');
   assert.match(host.querySelector('#worktree-cleanup-force-row').textContent, /topic-a \(3 commits\)/);
   assert.doesNotMatch(host.querySelector('#worktree-cleanup-force-row').textContent, /safe|topic-b/);
 
-  force().click();
+  await toggle(force(), true);
   await flush(harness);
   assert.equal(forced(), true);
-  checkbox(host, '/repo-b').click();
+  await toggle(checkbox(host, '/repo-b'), true);
   await flush(harness);
   assert.match(host.querySelector('#worktree-cleanup-force-row').textContent, /topic-b \(1 commit\)/);
   assert.equal(forced(), false, 'a changed branch list clears the confirmation');
 
-  host.querySelector('#worktree-cleanup-branches').click();
+  await toggle(host.querySelector('#worktree-cleanup-branches'), false);
   await flush(harness);
   assertAbsent(force());
-  host.querySelector('#worktree-cleanup-branches').click();
+  await toggle(host.querySelector('#worktree-cleanup-branches'), true);
   await flush(harness);
-  force().click();
+  await toggle(force(), true);
   await flush(harness);
   host.querySelector('#worktree-cleanup-submit').click();
   await flush(harness);
