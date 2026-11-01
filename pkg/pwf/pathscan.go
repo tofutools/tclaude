@@ -21,7 +21,8 @@ const (
 	// PathMachine is a path that will likely not exist on another node.
 	PathMachine = "machine"
 
-	// maxPathFindings bounds what a file can make a review list.
+	// maxPathFindings bounds what a file can make a review list, and what one
+	// string can cost to scan.
 	maxPathFindings = 200
 	maxPathShown    = 160
 )
@@ -34,7 +35,7 @@ type PathFinding struct {
 	Kind  string `json:"kind"`
 }
 
-const pathSegment = `[A-Za-z0-9._+@%~-]`
+const pathSegment = `[\p{L}\p{N}._+@%~-]`
 
 var (
 	// A path starts at the text's start or after a separator, so the path of a
@@ -42,10 +43,12 @@ var (
 	// optional ~ prefix takes ~/x and ~name/x.
 	unixPathRE = regexp.MustCompile("(?:^|[\\s\"'`=:,;(\\[<>|])((?:~" + pathSegment + `*)?/` + pathSegment + `+(?:/` + pathSegment + `*)*)`)
 	winPathRE  = regexp.MustCompile(`\b[A-Za-z]:\\+[^\s"'<>|*?:]+`)
-	// Anywhere in a path, so WSL's /mnt/c/Users/name counts too.
-	unixHomeRE = regexp.MustCompile(`/(?:home|Users)/` + pathSegment + `+`)
+	// A home path counts wherever it starts, as in -I/home/name/include or
+	// WSL's /mnt/c/Users/name.
+	unixHomeRE = regexp.MustCompile(`/(?:home|Users)/` + pathSegment + `+(?:/` + pathSegment + `*)*`)
 	winHomeRE  = regexp.MustCompile(`(?i)^[a-z]:\\+Users\\+[^\\]+`)
-	tildeRE    = regexp.MustCompile(`^~[^/]+/`)
+	tildeRE    = regexp.MustCompile(`^~\pL[^/]*/`)
+	urlRE      = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]*`)
 )
 
 var (
@@ -64,8 +67,8 @@ func pathKind(path string, value bool) string {
 	if unixHomeRE.MatchString(path) || tildeRE.MatchString(path) {
 		return PathHome
 	}
-	if strings.HasPrefix(path, "~/") {
-		if value {
+	if strings.HasPrefix(path, "~") {
+		if value && strings.HasPrefix(path, "~/") {
 			return PathMachine
 		}
 		return ""
@@ -90,12 +93,18 @@ func pathKind(path string, value bool) string {
 func findPaths(text string, value bool) []PathFinding {
 	var found []PathFinding
 	// A file: URL names a local path; other URLs do not.
-	for _, m := range unixPathRE.FindAllStringSubmatch(strings.ReplaceAll(text, "file://", " "), -1) {
+	local := urlRE.ReplaceAllString(strings.ReplaceAll(text, "file://", " "), " ")
+	for _, m := range unixPathRE.FindAllStringSubmatch(local, maxPathFindings) {
 		if kind := pathKind(m[1], value); kind != "" {
 			found = append(found, PathFinding{Path: m[1], Kind: kind})
 		}
 	}
-	for _, p := range winPathRE.FindAllString(text, -1) {
+	for _, p := range unixHomeRE.FindAllString(local, maxPathFindings) {
+		if !slices.ContainsFunc(found, func(f PathFinding) bool { return strings.Contains(f.Path, p) }) {
+			found = append(found, PathFinding{Path: p, Kind: PathHome})
+		}
+	}
+	for _, p := range winPathRE.FindAllString(text, maxPathFindings) {
 		if winHomeRE.MatchString(p) {
 			found = append(found, PathFinding{Path: p, Kind: PathHome})
 		} else if value {
@@ -110,6 +119,8 @@ type pathScan struct {
 	found []PathFinding
 	seen  map[PathFinding]bool
 }
+
+func (s *pathScan) full() bool { return len(s.found) >= maxPathFindings }
 
 func (s *pathScan) add(where string, findings []PathFinding) {
 	for _, f := range findings {
@@ -169,12 +180,18 @@ func (s *pathScan) scanTemplate(t *Template) error {
 	}
 	shown := map[string]bool{}
 	walkStrings(doc, "", func(field, value string) {
+		if s.full() {
+			return
+		}
 		found := findPaths(value, valueField(field))
 		s.add(t.Parsed.ID+": "+field, found)
 		for _, f := range found {
 			shown[f.Path] = true
 		}
 	})
+	if s.full() {
+		return nil
+	}
 	var rest []PathFinding
 	for _, f := range findPaths(string(t.Source), false) {
 		if f.Kind == PathHome && !shown[f.Path] {

@@ -494,7 +494,7 @@ func TestFilesWrittenBeforeRoleSelectorsWereListedStillOpen(t *testing.T) {
 const pathsSource = `apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: paths
-description: Reads /opt/acme/conf and the /v1/process/templates route, and/or /usr/share/doc.
+description: Reads /opt/acme/conf and the /v1/process/templates route, and/or /usr/share/doc, ~5/10 of the time.
 # copied from /home/carol/old.yaml
 start: s
 params:
@@ -512,7 +512,7 @@ nodes:
       kind: program
       profile: git
       run: /home/alice/bin/deploy
-      args: ["--config=/etc/acme/x", "/usr/bin/env", "https://example.com/home/nobody/x", "{{ params.dir }}/rel", "s/a/b/", "/tmp/x", "~/x", "/var/tmp/y"]
+      args: ["--config=/etc/acme/x", "/usr/bin/env", "https://example.com/home/nobody/x", "{{ params.dir }}/rel", "s/a/b/", "/tmp/x", "~/x", "/var/tmp/y", "-L/home/alice/lib", "/home/Åsa/bin"]
     next:
       pass: ask
   ask:
@@ -547,6 +547,8 @@ func TestScanPaths(t *testing.T) {
 		{"paths: nodes.run.performer.run", "/home/alice/bin/deploy", pwf.PathHome},
 		{"paths: nodes.run.performer.args[0]", "/etc/acme/x", pwf.PathMachine},
 		{"paths: nodes.run.performer.args[6]", "~/x", pwf.PathMachine},
+		{"paths: nodes.run.performer.args[8]", "/home/alice/lib", pwf.PathHome},
+		{"paths: nodes.run.performer.args[9]", "/home/Åsa/bin", pwf.PathHome},
 		{"paths: nodes.ask.performer.ask", "/Users/bob/report.txt", pwf.PathHome},
 		{"paths: nodes.ask.performer.ask", "/mnt/c/Users/dan/x", pwf.PathHome},
 		{"paths: nodes.ask.performer.ask", `C:\Users\erin\x`, pwf.PathHome},

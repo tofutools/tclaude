@@ -76,6 +76,7 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 		_, _ = stdout.Write(data)
 		if archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits()); err == nil {
 			warnWorkflowProblems(stderr, archive)
+			warnWorkflowPaths(stderr, archive.Paths)
 		}
 		return rcOK
 	}
