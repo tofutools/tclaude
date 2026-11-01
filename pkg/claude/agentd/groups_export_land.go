@@ -67,6 +67,8 @@ type groupMemberLanding struct {
 	Title  string `json:"title"`
 	*historyLanding
 	Warnings []string `json:"warnings,omitempty"`
+	// Posture is how the member launches here.
+	Posture *landingPosture `json:"posture,omitempty"`
 
 	// fileLanding is the Claude Code file path of the group import.
 	fileLanding bool
@@ -257,11 +259,10 @@ func memberNeutralContext(a *paf.Archive, key string) func(paf.ReadOptions) (*tr
 // installGroupLanding installs a planned non-file landing through the
 // landing harness's history import, returning the minted conversation id.
 //
-// An OpenCode member installs into the ambient store, not per-agent state. An
-// import carries no launch posture, so the member resumes at the baseline one
-// (recordOpenCodeLandings): no tclaude sandbox and a managed server on the
-// ambient XDG directories. That is the store this conversation has to be in.
-// Private state only exists for a launch under tclaude's sandbox.
+// An OpenCode member installs into the store its landing posture's server
+// reads: per-agent private state under tclaude's sandbox, the ambient store
+// otherwise, where a server with no sandbox spec runs on the ambient XDG
+// directories and private state would strand the conversation.
 func installGroupLanding(l *groupMemberLanding, cwd string) (string, func(), error) {
 	if l.dst.Name == harness.OpenCodeName {
 		// The opencode CLI runs in the landing directory, which --into may
@@ -274,6 +275,9 @@ func installGroupLanding(l *groupMemberLanding, cwd string) (string, func(), err
 			return "", nil, err
 		}
 		cwd = resolved
+		if l.Posture.usesPrivateOpenCodeState() {
+			return installPrivateOpenCodeLanding(l, cwd)
+		}
 	}
 	return importBundleHistory(l.dst, l.history, cwd)
 }

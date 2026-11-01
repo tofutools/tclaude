@@ -1085,12 +1085,20 @@ type dbExecQuerier interface {
 // the actor already exists in practice; this is the defensive allocate for
 // the window before the conv-layer is fully populated.
 func ensureAgentForConvTx(tx dbExecQuerier, convID, via string) (string, error) {
+	return ensureAgentWithIDForConvTx(tx, convID, via, "")
+}
+
+// ensureAgentWithIDForConvTx is ensureAgentForConvTx for a caller that already
+// chose the identity a new actor takes. An empty agentID mints one.
+func ensureAgentWithIDForConvTx(tx dbExecQuerier, convID, via, agentID string) (string, error) {
 	if existing, err := agentIDForConvTx(tx, convID); err != nil {
 		return "", err
 	} else if existing != "" {
 		return existing, nil
 	}
-	agentID := newAgentID()
+	if agentID == "" {
+		agentID = newAgentID()
+	}
 	if err := insertAgentTx(tx, agentID, convID, via, time.Now()); err != nil {
 		return "", err
 	}

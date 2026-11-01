@@ -181,6 +181,16 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
   </${Overlay}>`;
 }
 
+// LandingPosture says how a landed agent launches. A refused posture blocks the
+// import, so it reads as the warning it is.
+function LandingPosture({ posture }) {
+  if (!posture) return null;
+  if (posture.refused) return html`<div class="gi-warn">⚠ ${posture.refused}</div>`;
+  const profiles = posture.sandbox_profiles?.length ? ` · ${posture.sandbox_profiles.join(', ')}` : '';
+  return html`<span title=${posture.resolved_by || ''}>${posture.sandbox_implementation}${profiles}</span>
+    ${posture.opencode_state && html`<div class="paf-hint">OpenCode state: ${posture.opencode_state}</div>`}`;
+}
+
 // LandingSelects picks a landing harness and model. A new harness clears the
 // model in the same update (onChange gets both), so neither is lost.
 function LandingSelects({ harness, model, onChange, idPrefix, sameLabel = '(own harness)' }) {
@@ -240,6 +250,7 @@ export function AgentImportPreview({ preview, choices, setChoices }) {
       <${LandingSelects} idPrefix="agent-import" harness=${choices.harness} model=${choices.model}
         onChange=${(patch) => setChoices({ ...choices, ...patch })} sameLabel=${`${agent.harness || 'own harness'} (as exported)`} /></div>
     <${HistoryLanding} landing=${preview.history_landing} />
+    ${preview.posture && html`<div class="paf-box" id="paf-landing-posture"><b>Sandbox</b> <${LandingPosture} posture=${preview.posture} /></div>`}
     ${historyCutNeedsConfirm(preview) && html`<${Check} id="agent-import-confirm-loss" checked=${!!choices.confirmHistoryLoss} onChange=${set('confirmHistoryLoss')}
       hint="The full history stays in the file and is saved beside the agent, which is told where. A model with a larger window keeps more.">Accept cutting about ${preview.history_landing.losses.dropped_percent}% of the conversation to fit the landing model</${Check}>`}
     ${(preview.findings || []).length > 0 && html`<${FindingsPanel} findings=${preview.findings} title="This node's scan" />`}
@@ -297,7 +308,7 @@ export function MemberLandings({ landings, landing, setLanding, confirmCut, setC
     <div class="cron-create-row"><span class="cron-create-label">All members</span>
       <${LandingSelects} idPrefix="group-import-all" harness=${landing.harness} model=${landing.model}
         onChange=${(patch) => setLanding({ ...landing, ...patch })} sameLabel="keep own harness" /></div>
-    <table class="paf-member-table"><thead><tr><th>Member</th><th>From</th><th>Land on</th><th>History</th></tr></thead><tbody>
+    <table class="paf-member-table"><thead><tr><th>Member</th><th>From</th><th>Land on</th><th>History</th><th>Sandbox</th></tr></thead><tbody>
       ${landings.map((row) => {
         // Keyed by conv id: always unique, and safe in a member=value binding.
         const key = row.conv_id;
@@ -311,6 +322,7 @@ export function MemberLandings({ landings, landing, setLanding, confirmCut, setC
           <td><span class=${`paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span>
             ${row.losses && html`<div class="paf-hint">${lossSummary(row.losses)}</div>`}
             ${(row.warnings || []).map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</td>
+          <td><${LandingPosture} posture=${row.posture} /></td>
         </tr>`;
       })}
     </tbody></table>

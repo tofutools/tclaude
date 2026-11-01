@@ -280,6 +280,36 @@ type groupLanding struct {
 	Model         string   `json:"model,omitempty"`
 	Rung          string   `json:"rung"`
 	Warnings      []string `json:"warnings,omitempty"`
+	Posture       *landingPosture `json:"posture,omitempty"`
+}
+
+// landingPosture is how a landed member launches, as the daemon reports it.
+type landingPosture struct {
+	SandboxImplementation string   `json:"sandbox_implementation"`
+	SandboxProfiles       []string `json:"sandbox_profiles,omitempty"`
+	ResolvedBy            string   `json:"resolved_by,omitempty"`
+	OpenCodeState         string   `json:"opencode_state,omitempty"`
+	Refused               string   `json:"refused,omitempty"`
+}
+
+func (p *landingPosture) summary() string {
+	if p == nil {
+		return ""
+	}
+	if p.Refused != "" {
+		return ", sandbox REFUSED: " + p.Refused
+	}
+	out := ", sandbox " + p.SandboxImplementation
+	if len(p.SandboxProfiles) > 0 {
+		out += " with " + strings.Join(p.SandboxProfiles, ", ")
+	}
+	if p.ResolvedBy != "" {
+		out += " (" + p.ResolvedBy + ")"
+	}
+	if p.OpenCodeState != "" {
+		out += ", " + p.OpenCodeState + " state"
+	}
+	return out
 }
 
 func (l groupLanding) summary() string {
@@ -290,7 +320,7 @@ func (l groupLanding) summary() string {
 	if l.Model != "" {
 		where += " (" + l.Model + ")"
 	}
-	return where + ", history " + l.Rung
+	return where + ", history " + l.Rung + l.Posture.summary()
 }
 
 // runGroupsImportDryRun drives `groups import --dry-run`: it POSTs the

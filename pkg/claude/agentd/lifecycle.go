@@ -2084,26 +2084,7 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 // recordBaselineResumeProfile persists the launch baseline of a conversation
 // with no recorded posture, on the conversation and on its agent if it has one.
 func recordBaselineResumeProfile(convID, harnessName, physicalCwd string) (*db.ConversationResumeProfile, error) {
-	empty := ""
-	// Recovery has no recorded approval input to reproduce, so it records none:
-	// a blank posture re-resolves under current config at every relaunch (see
-	// harness.ReconstructApprovalPolicy). Writing a value here would be
-	// reconstruction inventing an input — and the value it used to write for
-	// Codex (`untrusted`) is exactly the one the rule forbids, since it both
-	// prompts on a detached pane and is denied the in-sandbox lineage bit the
-	// agent needs to delegate. TCL-990.
-	approval := ""
-	no := false
-	sshWorkaround := harnessName == harness.CodexName
-	zero := int64(0)
-	legacy := db.AgentRelaunchProfile{
-		Version:            db.RelaunchProfileVersion,
-		HarnessBuiltinMode: &empty, ApprovalPolicy: &approval,
-		ApprovalAutoReview: &no, ModelID: &empty, Effort: &empty,
-		ContextWindowSize: &zero, AskUserQuestionTimeout: &empty,
-		RemoteControl: &no, AutoMemory: &no, PeerMessaging: &no, AutoCompactWindow: &empty,
-		SSHWorkaround: &sshWorkaround,
-	}
+	legacy := baselineRelaunchProfile(harnessName)
 	profile := db.ConversationResumeProfile{
 		Version: db.RelaunchProfileVersion, Harness: harnessName, Cwd: physicalCwd,
 		FallbackRelaunch: &legacy,
@@ -2129,6 +2110,31 @@ func recordBaselineResumeProfile(convID, harnessName, physicalCwd string) (*db.C
 		}
 	}
 	return &profile, nil
+}
+
+// baselineRelaunchProfile is the launch baseline of a conversation with no
+// recorded posture.
+func baselineRelaunchProfile(harnessName string) db.AgentRelaunchProfile {
+	empty := ""
+	// Recovery has no recorded approval input to reproduce, so it records none:
+	// a blank posture re-resolves under current config at every relaunch (see
+	// harness.ReconstructApprovalPolicy). Writing a value here would be
+	// reconstruction inventing an input — and the value it used to write for
+	// Codex (`untrusted`) is exactly the one the rule forbids, since it both
+	// prompts on a detached pane and is denied the in-sandbox lineage bit the
+	// agent needs to delegate. TCL-990.
+	approval := ""
+	no := false
+	sshWorkaround := harnessName == harness.CodexName
+	zero := int64(0)
+	return db.AgentRelaunchProfile{
+		Version:            db.RelaunchProfileVersion,
+		HarnessBuiltinMode: &empty, ApprovalPolicy: &approval,
+		ApprovalAutoReview: &no, ModelID: &empty, Effort: &empty,
+		ContextWindowSize: &zero, AskUserQuestionTimeout: &empty,
+		RemoteControl: &no, AutoMemory: &no, PeerMessaging: &no, AutoCompactWindow: &empty,
+		SSHWorkaround: &sshWorkaround,
+	}
 }
 
 // resolveMissingSessionResumeTarget first honors the harness tag and cwd cached

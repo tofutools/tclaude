@@ -31,6 +31,8 @@ type launchDefaults struct {
 	// provenance vocabulary (`group default profile "x"`, `harness default`, …),
 	// deduplicated across the three fields.
 	resolvedBy string
+	// sandboxSource and implementationSource are the tiers behind each field.
+	sandboxSource, implementationSource string
 }
 
 // resolveLaunchDefaults walks the same tiers a real spawn walks — the named
@@ -154,6 +156,8 @@ func resolveLaunchDefaults(
 		sandbox:        harnessBuiltinMode,
 		implementation: implementation,
 		resolvedBy:     joinProvenanceSources(harnessSource, sandboxSource, implementationSource),
+
+		sandboxSource: sandboxSource, implementationSource: implementationSource,
 	}, nil, nil
 }
 

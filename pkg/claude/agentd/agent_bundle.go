@@ -21,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
@@ -480,6 +481,7 @@ type agentBundlePreview struct {
 	Security                      string                      `json:"security"`
 	Findings                      []agentbundle.Finding       `json:"findings,omitempty"`
 	Landing                       *historyLanding             `json:"history_landing,omitempty"`
+	Posture                       *landingPosture             `json:"posture,omitempty"`
 	Applied                       bool                        `json:"applied"`
 	// Offline reports an applied import that landed without starting
 	// (start=false); resume starts it.
@@ -635,6 +637,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "profile", err.Error())
 			return
 		}
+		profile = receiverSandboxProfile(profile)
 		if _, fail := buildProfileFromJSON(profile); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
@@ -728,6 +731,27 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer landing.close()
 	preview.Landing, preview.History = landing, landing.history != nil
+	// The posture this import launches under: the receiver's, which a
+	// recorded posture can tighten but not widen.
+	var postureGroup *db.AgentGroup
+	if preview.Group != "" {
+		if postureGroup, err = db.GetAgentGroupByName(preview.Group); err != nil {
+			writeError(w, 500, "group", err.Error())
+			return
+		}
+	}
+	if pathError == "" && (postureGroup != nil || preview.Group == "") {
+		var environment []sandboxpolicy.EnvironmentEntry
+		if postureGroup != nil {
+			environment = postureGroup.Environment
+		}
+		preview.Posture, err = resolveLandingPosture(postureGroup, h.Name,
+			receiverSandboxProfile(profile).SandboxImplementation, landingModel, preview.Cwd, environment)
+		if err != nil {
+			writeError(w, 500, "posture", err.Error())
+			return
+		}
+	}
 	preview.Warnings = append(preview.Warnings, warnings...)
 	if direct {
 		// A direct import already tried to land the neutral context; the
@@ -915,6 +939,21 @@ func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview 
 	wire["task_ref_url"] = d.TaskURL
 	wire["task_ref_label"] = d.TaskLabel
 	return json.Marshal(wire)
+}
+
+// receiverSandboxProfile drops the sandbox posture an agent bundle recorded.
+// These fields would land on the spawn's explicit tier, above every receiver
+// default, so a file could widen the receiving group's posture. An imported
+// agent takes the receiver's instead. Only tclaude's sandbox stays, so that a
+// move does not take an agent's wall away with it; it is as tight as the
+// implementation gets, and the normal launch gates refuse it where this node
+// cannot run it.
+func receiverSandboxProfile(p spawnProfileJSON) spawnProfileJSON {
+	p.Sandbox = ""
+	if !isTclaudeLayer(p.SandboxImplementation) {
+		p.SandboxImplementation = ""
+	}
+	return p
 }
 
 // bundleNoLaunchContextKey marks an agent import that lands offline
