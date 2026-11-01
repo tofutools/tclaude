@@ -46,6 +46,8 @@ func registerDashboardLists(mux *http.ServeMux) {
 	mux.HandleFunc("/api/retired", withPerfTiming("/api/retired", handleDashboardRetired))
 	mux.HandleFunc("/api/conversations", withPerfTiming("/api/conversations", handleDashboardConversations))
 	mux.HandleFunc("/api/replaced", withPerfTiming("/api/replaced", handleDashboardReplaced))
+	// Never on the poll: the search panel asks for it, debounced, per query.
+	mux.HandleFunc("GET /api/conversations/search", withPerfTiming("/api/conversations/search", handleDashboardConversationSearch))
 	// The Jobs tab's unified export+cron listing shares this family's
 	// offset/limit/q contract + envelope (handler in dashboard_jobs.go).
 	mux.HandleFunc("/api/jobs", withPerfTiming("/api/jobs", handleDashboardJobs))

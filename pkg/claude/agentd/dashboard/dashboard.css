@@ -22123,3 +22123,14 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
 .steward-handover-then legend { padding: 0 4px; font-size: 12px; font-weight: 600; }
 .steward-handover-then label { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; font-size: 12px; cursor: pointer; }
 .steward-handover-then small { display: block; color: #7d8590; font-size: 11px; }
+
+/* Groups tab: conversation content search. */
+.conv-search { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--border, #30363d); border-radius: 8px; }
+.conv-search-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.conv-search-bar input { flex: 1; min-width: 0; max-width: none; }
+.conv-search-results { list-style: none; margin: 8px 0 0; padding: 0; max-height: 50vh; overflow-y: auto; }
+.conv-search-row { padding: 6px 0; border-top: 1px solid var(--border, #30363d); }
+.conv-search-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.conv-search-head .rowname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-search-head .row-actions { margin-left: auto; flex: none; }
+.conv-search-match { margin: 2px 0 0 18px; font-size: 12px; color: #7d8590; overflow-wrap: anywhere; }

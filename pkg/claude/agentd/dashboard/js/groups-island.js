@@ -5,6 +5,7 @@ import { GROUP_VIEW_OPTIONS } from './groups-state.js';
 import { GroupsNativeList } from './groups-list.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
+import { ConversationSearchPanel } from './conversation-search.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
 import {
@@ -142,6 +143,13 @@ export function GroupsControls({ state, actions }) {
         >×</button>
       `}
     </span>
+    ${conversationSearchAvailable() && html`
+      <button id="conversation-search-toggle" class="view-btn" type="button"
+        aria-expanded=${state.contentSearchOpen.value ? 'true' : 'false'}
+        title=${wizard ? 'Search the words inside past scrolls' : 'Search the text of past conversations'}
+        onClick=${() => { state.contentSearchOpen.value = !state.contentSearchOpen.value; }}
+      >${wizard ? '📜 search scrolls' : '📜 search conversations'}</button>
+    `}
     <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
     <div class="view-popover-wrap">
       <button
@@ -202,6 +210,13 @@ export function GroupsControls({ state, actions }) {
       </div>
     </div>
   `;
+}
+
+// The search reads this node's own transcripts, so a page showing another node
+// or the fused view has nothing to offer: the daemon keeps the route local.
+function conversationSearchAvailable() {
+  const root = document.documentElement.classList;
+  return !root.contains('remote-node') && !root.contains('scope-fused');
 }
 
 // useGroupsTableControls wires the member tables' sort headers and the
@@ -349,6 +364,9 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
   // opens where it is seen.
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
+    ${state.contentSearchOpen.value && conversationSearchAvailable() && html`
+      <${ConversationSearchPanel} wizard=${wizard} onClose=${() => { state.contentSearchOpen.value = false; }} />
+    `}
     <${GroupsLensList} state=${state} groups=${current.groups} rosters=${state.snapshot.value?.groups} snapshot=${state.snapshot.value}
       actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard}
       focus=${state.listed.value ? 'agents' : focus} />

@@ -135,6 +135,14 @@ function gotoGroupsTab() {
 
 // openGroupsFocus switches the Groups lens. From another tab the focus is set
 // first so the Groups nav click records /groups/<focus> as one entry.
+function openConversationSearch() {
+  const groups = featureState('groups');
+  if (!groups?.contentSearchOpen) return;
+  groups.contentSearchOpen.value = true;
+  const btn = $('nav [data-tab="groups"]');
+  if (btn && !btn.classList.contains('active')) btn.click();
+}
+
 function openGroupsFocus(focus) {
   const groups = featureState('groups');
   if (!groups?.setFocus) return;
@@ -670,6 +678,12 @@ export function buildCommands(snapshot) {
       run: () => processesTab.click(),
     });
   }
+  if (!document.documentElement.classList.contains('remote-node') && !document.documentElement.classList.contains('scope-fused')) cmds.push({
+    icon: wiz('📜', '📜'), label: wiz('Search conversation content', 'Search the scrolls'),
+    hint: wiz('find past conversations by the text inside them', 'find a scroll by the words within it'),
+    keywords: 'search find grep conversation conversations transcript content text history scrolls',
+    run: openConversationSearch,
+  });
   // The Groups Both | Agents | Processes focus switch (features.processes only).
   if (processesTab && !document.body.classList.contains('hide-processes') && featureState('groups')?.setFocus) {
     for (const [focus, plain, arcane, words] of [
