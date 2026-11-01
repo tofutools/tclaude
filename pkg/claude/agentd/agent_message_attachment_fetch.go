@@ -30,8 +30,14 @@ func messageForAttachments(w http.ResponseWriter, r *http.Request, idStr string)
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return nil, false
 	}
-	caller, _, ok := requireInboxAccess(w, r)
+	caller, viewingAnother, ok := requireInboxAccess(w, r)
 	if !ok {
+		return nil, false
+	}
+	// Watching another agent's inbox shows its mail, not the files: those can
+	// be images of the operator's screen.
+	if viewingAnother {
+		writeError(w, http.StatusForbidden, "auth", "only a message's recipient or sender can fetch its attachments")
 		return nil, false
 	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -139,14 +145,21 @@ func migrateLegacyMessageAttachments() {
 }
 
 func migrateMessageAttachment(a db.AgentMessageAttachment, rel string) error {
+	dst := filepath.Join(operatorMessageAttachmentsBase, rel)
 	info, err := os.Lstat(a.StoragePath)
-	if err != nil || !info.Mode().IsRegular() || info.Size() != a.SizeBytes {
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
+	if errors.Is(err, fs.ErrNotExist) {
+		// A move that crashed before its row caught up is finished here.
+		if moved, statErr := os.Lstat(dst); statErr == nil && moved.Mode().IsRegular() && moved.Size() == a.SizeBytes {
+			return db.UpdateAgentMessageAttachmentPath(a.ID, dst)
 		}
 		return db.DeleteAgentMessageAttachment(a.ID)
 	}
-	dst := filepath.Join(operatorMessageAttachmentsBase, rel)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() != a.SizeBytes || !legacyParentIsReal(rel) {
+		return db.DeleteAgentMessageAttachment(a.ID)
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
@@ -157,4 +170,16 @@ func migrateMessageAttachment(a db.AgentMessageAttachment, rel string) error {
 		return errors.Join(err, os.Rename(dst, a.StoragePath))
 	}
 	return nil
+}
+
+// legacyParentIsReal refuses a directory an agent swapped for a link, which
+// would move a file from elsewhere into daemon storage.
+func legacyParentIsReal(rel string) bool {
+	parent := filepath.Dir(rel)
+	base, err := filepath.EvalSymlinks(legacyMessageAttachmentsBase)
+	if err != nil {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(legacyMessageAttachmentsBase, parent))
+	return err == nil && resolved == filepath.Join(base, parent)
 }

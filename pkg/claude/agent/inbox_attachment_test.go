@@ -43,7 +43,7 @@ func TestInboxAttachmentSavesTheNamedFile(t *testing.T) {
 	assert.Equal(t, "/v1/messages/7/attachments/2", string(got))
 }
 
-func TestInboxAttachmentSavesAllToAPrivateDirectory(t *testing.T) {
+func TestInboxAttachmentSavesAllToANewDirectory(t *testing.T) {
 	stubAttachments(t)
 	t.Setenv("TMPDIR", testutil.CanonicalTempDir(t))
 	var stdout, stderr bytes.Buffer

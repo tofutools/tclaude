@@ -17,7 +17,7 @@ import (
 type inboxAttachmentParams struct {
 	ID     string `pos:"true" help:"Message ID from inbox ls"`
 	Name   string `pos:"true" optional:"true" help:"The attachment's file name (default: all of them)"`
-	Output string `long:"output" short:"o" optional:"true" help:"Where to save one attachment (default: a private directory under the temp dir)"`
+	Output string `long:"output" short:"o" optional:"true" help:"Where to save one attachment (default: a new directory under the temp dir)"`
 }
 
 func inboxAttachmentCmd() *cobra.Command {
@@ -67,14 +67,17 @@ func runInboxAttachment(p *inboxAttachmentParams, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "Error: --output saves one attachment; name it")
 		return rcInvalidArg
 	}
+	// A new directory with an unguessable name: nothing can be planted in it.
+	dir := ""
+	if p.Output == "" {
+		if dir, err = os.MkdirTemp("", "tclaude-attachment-*"); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcIOFailure
+		}
+	}
 	for _, a := range wanted {
 		dest := p.Output
 		if dest == "" {
-			dir := filepath.Join(os.TempDir(), "tclaude-message-files", strconv.FormatInt(id, 10))
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				fmt.Fprintf(stderr, "Error: %v\n", err)
-				return rcIOFailure
-			}
 			dest = filepath.Join(dir, filepath.Base(a.Name))
 		}
 		if err := saveMessageAttachment(id, a.ID, dest); err != nil {

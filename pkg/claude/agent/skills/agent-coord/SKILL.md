@@ -90,7 +90,7 @@ A message with attachments says so. The files are out of a sandbox's reach, so
 fetch them through the daemon; it prints where each one landed:
 
 ```bash
-tclaude agent inbox attachment 42              # all of them, to a private temp dir
+tclaude agent inbox attachment 42              # all of them, to a new temp dir
 tclaude agent inbox attachment 42 mock.png -o mock.png
 ```
 

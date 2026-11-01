@@ -103,6 +103,12 @@ func TestLocalAgentMessageCarriesAttachmentToItsReader(t *testing.T) {
 		testharness.JSONRequest(t, http.MethodGet, fmt.Sprintf("/v1/messages/%d/attachments", sent.ID), nil), attachCopied))
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 
+	// Inbox-watch rights show a message, not its files.
+	require.NoError(t, db.GrantAgentPermission(attachCopied, agentd.PermAgentInboxWatch, "test"))
+	watch := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, fmt.Sprintf("/v1/messages/%d/attachments/%d", sent.ID, got[0].ID), nil), attachCopied)
+	watch.Header.Set("X-Tclaude-Target-Conv", attachReceiver)
+	assert.Equal(t, http.StatusForbidden, testharness.Serve(agentd.BuildHandlerForTest(), watch).Code)
+
 	// An attachment id of another message gets nothing through this one.
 	code, _ = fetchAttachment(t, attachReceiver, sent.ID, got[0].ID+1000)
 	assert.Equal(t, http.StatusNotFound, code)
@@ -213,6 +219,19 @@ func TestLegacyAttachmentsMoveOutOfTheAgentVisibleTree(t *testing.T) {
 	require.NoError(t, os.Remove(swappedPath))
 	require.NoError(t, os.Symlink(secret, swappedPath))
 
+	// The directory swapped instead, over a same-named, same-sized file.
+	elsewhere := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(elsewhere, "a.png"), []byte("key"), 0o600))
+	linked, linkedPath := insert("linked", "png")
+	require.NoError(t, os.RemoveAll(filepath.Dir(linkedPath)))
+	require.NoError(t, os.Symlink(elsewhere, filepath.Dir(linkedPath)))
+
+	// A move that crashed before its row was repointed.
+	crashed, crashedPath := insert("crashed", "png")
+	crashedDst := filepath.Join(agentd.MessageAttachmentsBaseForTest(), "crashed", "a.png")
+	require.NoError(t, os.MkdirAll(filepath.Dir(crashedDst), 0o700))
+	require.NoError(t, os.Rename(crashedPath, crashedDst))
+
 	agentd.MigrateLegacyMessageAttachmentsForTest()
 
 	assert.NoFileExists(t, keptPath)
@@ -226,4 +245,11 @@ func TestLegacyAttachmentsMoveOutOfTheAgentVisibleTree(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, rows, "a file an agent swapped for a link is dropped, not served")
 	assert.FileExists(t, secret)
+
+	rows, err = db.ListAgentMessageAttachments(linked)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "a linked directory brings no outside file into storage")
+	assert.FileExists(t, filepath.Join(elsewhere, "a.png"))
+
+	assert.Equal(t, crashedDst, storedAttachment(t, crashed).StoragePath, "the crashed move is finished, not lost")
 }
