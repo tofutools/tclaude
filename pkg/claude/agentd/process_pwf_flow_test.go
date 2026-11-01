@@ -50,6 +50,8 @@ func pwfRaw(t *testing.T, f *testharness.Flow, method, path string, body []byte)
 
 type pwfImportResponse struct {
 	Title     string
+	Author    string
+	Licence   string
 	Root      string
 	Roles     []pwf.Use
 	Programs  []pwf.Program
@@ -73,13 +75,15 @@ func TestProcessWorkflowExportImportRoundTrip(t *testing.T) {
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	}
 
-	exp := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-ship/export?title=Ship%20a%20feature", nil)
+	exp := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-ship/export?title=Ship%20a%20feature&author=Acme&licence=MIT", nil)
 	require.Equal(t, http.StatusOK, exp.Code, exp.Body.String())
 	assert.Equal(t, pwf.MediaType, exp.Header().Get("Content-Type"))
 	file := exp.Body.Bytes()
 	archive, err := pwf.Open(bytes.NewReader(file), int64(len(file)), paf.Limits{})
 	require.NoError(t, err)
 	assert.Equal(t, "Ship a feature", archive.Workflow.Title)
+	assert.Equal(t, "Acme", archive.Workflow.Author)
+	assert.Equal(t, "MIT", archive.Workflow.Licence)
 	require.Len(t, archive.Order, 2, "the referenced subprocess template travels with the root")
 	assert.NotNil(t, archive.Head("pwf-review"))
 
@@ -88,6 +92,8 @@ func TestProcessWorkflowExportImportRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusOK, prev.Code, prev.Body.String())
 	var view pwfImportResponse
 	testharness.DecodeJSON(t, prev, &view)
+	assert.Equal(t, "Acme", view.Author)
+	assert.Equal(t, "MIT", view.Licence)
 	assert.False(t, view.Applied)
 	assert.Equal(t, []pwf.Program{{Step: "pwf-ship:merge", Profile: "git", Run: "gh", Args: []string{"pr", "merge"}}}, view.Programs,
 		"the review lists every command the workflow would run")

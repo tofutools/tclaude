@@ -120,3 +120,16 @@ func TestRenderPaths(t *testing.T) {
 	assert.Contains(t, out.String(), `"/opt/\x1b[2Kx" (may not exist elsewhere)`)
 	assert.NotContains(t, out.String(), "\x1b")
 }
+
+// A review credits the author as a claim, not a fact.
+func TestRenderWorkflowShowsAuthorAndLicence(t *testing.T) {
+	var out bytes.Buffer
+	renderWorkflow(&out, pwf.Workflow{Title: "t", Root: "r", Author: "Acme", Licence: "MIT"})
+	assert.Contains(t, out.String(), "Author: Acme (as the file says)\n")
+	assert.Contains(t, out.String(), "Licence: MIT\n")
+
+	out.Reset()
+	renderWorkflow(&out, pwf.Workflow{Title: "t", Root: "r"})
+	assert.NotContains(t, out.String(), "Author")
+	assert.NotContains(t, out.String(), "Licence")
+}

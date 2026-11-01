@@ -156,6 +156,7 @@ export function importReview(preview) {
   return {
     title: preview.title || preview.rootId || 'Workflow',
     summary: preview.summary || '',
+    credit: [preview.author && `By ${preview.author} (as the file says)`, preview.licence && `Licence: ${preview.licence}`].filter(Boolean).join(' · '),
     signer,
     trusted: valid.some((s) => s.trust === 'this node' || (s.trust || '').startsWith('known peer')),
     params: preview.params || [],
@@ -260,6 +261,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
     <h3 id="pwf-import-title">Import workflow: ${review.title}</h3>
     <p class="muted pwf-file">${file}</p>
     ${review.summary && html`<p class="pwf-summary">${review.summary}</p>`}
+    ${review.credit && html`<p class="muted" data-pwf-credit>${review.credit}</p>`}
     <p class=${`pwf-signer ${review.trusted ? 'is-trusted' : 'is-untrusted'}`} data-pwf-signer>${review.signer}</p>
     ${review.refused && html`<div class="island-error" role="alert" data-pwf-refused>Import refused: ${review.refused}. Change this in Config › Experimental.</div>`}
     <div class="pwf-section"><h4>Commands it would run</h4>

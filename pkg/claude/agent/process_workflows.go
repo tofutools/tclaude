@@ -29,6 +29,8 @@ type processTemplatesExportParams struct {
 	Output           string   `long:"output" short:"o" optional:"true" help:"Write the .pwf here ('-' for stdout). Default: <id>.pwf in the current directory."`
 	Title            string   `long:"title" optional:"true" help:"Workflow title (default: the template's name)."`
 	Summary          string   `long:"summary" optional:"true" help:"One-paragraph summary (default: the template's description)."`
+	Author           string   `long:"author" optional:"true" help:"Who the workflow is from, shown to whoever reviews it (only a signature proves it)."`
+	Licence          string   `long:"licence" optional:"true" help:"The licence it is shared under, for example MIT."`
 	Strict           bool     `long:"strict" optional:"true" help:"Refuse to export a workflow that is not portable: paths from this machine, steps naming a specific agent, or failing validation."`
 	AssigneesToRoles bool     `long:"assignees-to-roles" optional:"true" help:"Stop naming a specific agent in exported steps: they ask for the role it holds here (when it has exactly one), or for the profile they already have."`
 	AssigneeRole     []string `long:"assignee-role" optional:"true" help:"Export steps naming an agent with a role instead, as <agent>=<role> (repeatable). Wins over --assignees-to-roles."`
@@ -61,7 +63,7 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 		return rc
 	}
 	q := url.Values{}
-	for k, v := range map[string]string{"version": p.Version, "title": p.Title, "summary": p.Summary} {
+	for k, v := range map[string]string{"version": p.Version, "title": p.Title, "summary": p.Summary, "author": p.Author, "licence": p.Licence} {
 		if v = strings.TrimSpace(v); v != "" {
 			q.Set(k, v)
 		}
@@ -490,6 +492,12 @@ func renderWorkflow(out io.Writer, wf pwf.Workflow) {
 	fmt.Fprintf(out, "Workflow: %s\n", shown(wf.Title))
 	if wf.Summary != "" {
 		fmt.Fprintf(out, "  %s\n", shown(wf.Summary))
+	}
+	if wf.Author != "" {
+		fmt.Fprintf(out, "Author: %s (as the file says)\n", shown(wf.Author))
+	}
+	if wf.Licence != "" {
+		fmt.Fprintf(out, "Licence: %s\n", shown(wf.Licence))
 	}
 	fmt.Fprintf(out, "Root: %s (%d template(s))\n", shown(wf.Root), len(wf.Templates))
 	if len(wf.Params) > 0 {

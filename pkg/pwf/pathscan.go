@@ -202,7 +202,7 @@ func (s *pathScan) scanTemplate(t *Template) error {
 	return nil
 }
 
-func scanPaths(title, summary string, readme []byte, templates []*Template) ([]PathFinding, error) {
+func scanPaths(w Workflow, readme []byte, templates []*Template) ([]PathFinding, error) {
 	s := &pathScan{seen: map[PathFinding]bool{}}
 	for _, t := range templates {
 		if err := s.scanTemplate(t); err != nil {
@@ -211,8 +211,10 @@ func scanPaths(title, summary string, readme []byte, templates []*Template) ([]P
 	}
 	// The title and summary usually repeat the root template's name and
 	// description, so only what the templates did not show counts.
-	s.addNew("title", findPaths(title, false))
-	s.addNew("summary", findPaths(summary, false))
+	s.addNew("title", findPaths(w.Title, false))
+	s.addNew("summary", findPaths(w.Summary, false))
+	s.addNew("author", findPaths(w.Author, false))
+	s.addNew("licence", findPaths(w.Licence, false))
 	s.addNew(ReadmePath, findPaths(string(readme), false))
 	return s.found, nil
 }
@@ -225,7 +227,7 @@ func ScanPaths(b Bundle) ([]PathFinding, error) {
 		return nil, err
 	}
 	title, summary := workflowText(b, byRef[b.Root].Parsed)
-	return scanPaths(title, summary, b.Readme, inOrder(byRef, order))
+	return scanPaths(Workflow{Title: title, Summary: summary, Author: b.Author, Licence: b.Licence}, b.Readme, inOrder(byRef, order))
 }
 
 func inOrder(byRef map[string]*Template, order []string) []*Template {

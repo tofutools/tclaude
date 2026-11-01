@@ -48,6 +48,8 @@ const (
 
 	maxTitle   = 200
 	maxSummary = 2000
+	// maxCredit bounds Author and Licence.
+	maxCredit = 200
 )
 
 var (
@@ -79,11 +81,16 @@ type Manifest struct {
 
 // Workflow is workflow.json: what the workflow is and what it needs, derived
 // from the templates so a reader can review it without walking the graph.
-// A reader recomputes everything but Title and Summary and refuses a file
+// A reader recomputes everything but the exporter's text (Title, Summary,
+// Author and Licence) and refuses a file
 // whose workflow.json disagrees with its templates.
 type Workflow struct {
 	Title   string `json:"title"`
 	Summary string `json:"summary,omitempty"`
+	// Author and Licence are what the exporter says about the workflow. Only a
+	// signature ties a file to anyone, so neither is proof of who wrote it.
+	Author  string `json:"author,omitempty"`
+	Licence string `json:"licence,omitempty"`
 	Root    string `json:"root"`
 	// Templates lists every template in the file, root first. Head marks the
 	// version an unpinned subprocess reference to that id resolves to.
@@ -161,6 +168,8 @@ type Bundle struct {
 	Root      string
 	Title     string
 	Summary   string
+	Author    string
+	Licence   string
 	Readme    []byte
 	Templates []Template
 }
@@ -474,7 +483,8 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 	}
 	wf := Summarize(b.Root, byRef, order)
 	wf.Title, wf.Summary = workflowText(b, byRef[b.Root].Parsed)
-	if err := checkText(wf.Title, wf.Summary); err != nil {
+	wf.Author, wf.Licence = strings.TrimSpace(b.Author), strings.TrimSpace(b.Licence)
+	if err := wf.checkText(); err != nil {
 		return err
 	}
 	workflow, err := marshal(wf)
@@ -692,7 +702,7 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 	if err := paf.DecodeStrict(raw, &a.Workflow); err != nil {
 		return nil, fmt.Errorf("pwf: workflow.json: %w", err)
 	}
-	if err := checkText(a.Workflow.Title, a.Workflow.Summary); err != nil {
+	if err := a.Workflow.checkText(); err != nil {
 		return nil, err
 	}
 	a.Readme = contents[ReadmePath]
@@ -732,20 +742,20 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 		return nil, fmt.Errorf("pwf: %w", err)
 	}
 	derived := Summarize(m.Root, a.Templates, a.Order)
-	derived.Title, derived.Summary = a.Workflow.Title, a.Workflow.Summary
+	derived.Title, derived.Summary, derived.Author, derived.Licence = a.Workflow.Title, a.Workflow.Summary, a.Workflow.Author, a.Workflow.Licence
 	got, _ := marshal(a.Workflow)
 	want, _ := marshal(derived)
 	if !bytes.Equal(got, want) {
 		// A file written before role selectors were listed still opens, and
 		// reads as listing them, so its review matches a newer file's.
 		legacy := summarize(m.Root, a.Templates, a.Order, false)
-		legacy.Title, legacy.Summary = a.Workflow.Title, a.Workflow.Summary
+		legacy.Title, legacy.Summary, legacy.Author, legacy.Licence = a.Workflow.Title, a.Workflow.Summary, a.Workflow.Author, a.Workflow.Licence
 		if want, _ = marshal(legacy); !bytes.Equal(got, want) {
 			return nil, errors.New("pwf: workflow.json does not match its templates")
 		}
 		a.Workflow.Roles = derived.Roles
 	}
-	if a.Paths, err = scanPaths(a.Workflow.Title, a.Workflow.Summary, a.Readme, inOrder(a.Templates, a.Order)); err != nil {
+	if a.Paths, err = scanPaths(a.Workflow, a.Readme, inOrder(a.Templates, a.Order)); err != nil {
 		return nil, err
 	}
 	if err := a.readSignatures(files, read); err != nil {
@@ -786,21 +796,26 @@ func (a *Archive) readSignatures(files map[string]*zip.File, read func(string) (
 // SignedBy reports whether a valid signature carries pub.
 func (a *Archive) SignedBy(pub ed25519.PublicKey) bool { return paf.SignedBy(a.Signatures, pub) }
 
-func checkText(title, summary string) error {
-	if title == "" || len(title) > maxTitle {
+func (w Workflow) checkText() error {
+	if w.Title == "" || len(w.Title) > maxTitle {
 		return fmt.Errorf("pwf: title must be 1..%d bytes", maxTitle)
 	}
-	if len(summary) > maxSummary {
+	if len(w.Summary) > maxSummary {
 		return fmt.Errorf("pwf: summary exceeds %d bytes", maxSummary)
 	}
-	for _, r := range summary {
+	for _, r := range w.Summary {
 		if (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f || (r >= 0x80 && r < 0xa0) {
 			return errors.New("pwf: summary has control characters")
 		}
 	}
-	for _, r := range title {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
-			return errors.New("pwf: title has control characters")
+	for name, text := range map[string]string{"title": w.Title, "author": w.Author, "licence": w.Licence} {
+		if name != "title" && len(text) > maxCredit {
+			return fmt.Errorf("pwf: %s exceeds %d bytes", name, maxCredit)
+		}
+		for _, r := range text {
+			if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+				return fmt.Errorf("pwf: %s has control characters", name)
+			}
 		}
 	}
 	return nil

@@ -35,7 +35,7 @@ import (
 // many templates still fits comfortably.
 const maxPWFUpload = 32 << 20
 
-// GET /v1/process/templates/{id}/export?version=&title=&summary=[&check=1]
+// GET /v1/process/templates/{id}/export?version=&title=&summary=&author=&licence=[&check=1]
 // [&assignee=<agent>=<role>...][&assignees=roles][&strict=1]
 //
 // A template that fails validation exports as it is, as the store saves it:
@@ -68,7 +68,7 @@ func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
 		return
 	}
-	bundle.Title, bundle.Summary = q.Get("title"), q.Get("summary")
+	bundle.Title, bundle.Summary, bundle.Author, bundle.Licence = q.Get("title"), q.Get("summary"), q.Get("author"), q.Get("licence")
 	if q.Get("check") == "1" {
 		problems, err := pwf.Problems(bundle)
 		if err != nil {
@@ -223,6 +223,8 @@ func isPWFNotFound(err error) bool {
 type pwfImportView struct {
 	Title      string             `json:"title"`
 	Summary    string             `json:"summary,omitempty"`
+	Author     string             `json:"author,omitempty"`
+	Licence    string             `json:"licence,omitempty"`
 	Root       string             `json:"root"`
 	RootID     string             `json:"rootId"`
 	Readme     string             `json:"readme,omitempty"`
@@ -457,7 +459,7 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 	opts pwfImportOptions, uses map[string][]string, local []string) (pwfImportView, error) {
 	wf := a.Workflow
 	view := pwfImportView{
-		Title: wf.Title, Summary: wf.Summary, Root: wf.Root, RootID: planned[wf.Root].ID, Readme: string(a.Readme),
+		Title: wf.Title, Summary: wf.Summary, Author: wf.Author, Licence: wf.Licence, Root: wf.Root, RootID: planned[wf.Root].ID, Readme: string(a.Readme),
 		Params: wf.Params, Roles: wf.Roles, Programs: wf.Programs, Assignees: wf.Assignees, Humans: wf.Humans,
 		Problems:   append([]string{}, a.Problems...),
 		Paths:      append([]pwf.PathFinding{}, a.Paths...),

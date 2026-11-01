@@ -2,13 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/pwf/schema/v0.1/workflow.schema.json",
   "title": "PWF workflow.json",
-  "description": "Everything but title and summary is derived from the templates; readers recompute it and refuse a mismatch.",
+  "description": "Everything but title, summary, author and licence is derived from the templates; readers recompute it and refuse a mismatch.",
   "type": "object",
   "required": ["title", "root", "templates", "params", "roles", "programs", "assignees", "humans"],
   "additionalProperties": false,
   "properties": {
     "title": {"type": "string", "minLength": 1, "maxLength": 200},
     "summary": {"type": "string", "maxLength": 2000},
+    "author": {"type": "string", "maxLength": 200},
+    "licence": {"type": "string", "maxLength": 200},
     "root": {"$ref": "manifest.schema.json#/$defs/ref"},
     "templates": {
       "type": "array",

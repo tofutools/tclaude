@@ -34,6 +34,8 @@ test('importReview: signer, commands and what changes', async (t) => {
   assert.equal(review.nothingToDo, false);
 
   assert.match(importReview({ ...PREVIEW, signatures: [] }).signer, /^Unsigned/);
+  assert.equal(review.credit, '');
+  assert.equal(importReview({ ...PREVIEW, author: 'Acme', licence: 'MIT' }).credit, 'By Acme (as the file says) · Licence: MIT');
   assert.equal(importReview({ ...PREVIEW, signatures: [{ status: 'valid', trust: 'known peer laptop' }] }).trusted, true);
   assert.match(importReview({ ...PREVIEW, signatures: [{ status: 'invalid' }] }).signer, /does not verify/);
   assert.equal(importReview({ ...PREVIEW, templates: [{ ref: 'x', id: 'x', status: 'identical' }] }).nothingToDo, true);
