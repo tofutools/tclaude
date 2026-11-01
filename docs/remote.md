@@ -107,7 +107,7 @@ on a message, can be refused by the browser there, and says so. A board's Ctrl+V
 its right-click Paste can't read the system clipboard, and says so. Browser notifications cannot work there: browsers allow them
 only over HTTPS or on localhost, and the dashboard says so where you would turn
 them on. [Dictation](companion.md#voice-and-dictation) is the same: browsers
-refuse the microphone there, and the mic is disabled with a note saying so. To
+refuse the microphone there, and the mic is disabled and its tooltip says why. To
 dictate, use `localhost` on the host, or on a tailnet put `tailscale serve` in
 front of the bind and open the HTTPS address it gives you.
 
