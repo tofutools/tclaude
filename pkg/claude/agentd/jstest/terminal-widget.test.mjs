@@ -659,7 +659,7 @@ function manualTimers() {
   };
 }
 
-test('Ctrl+wheel zooms the terminal at once and resizes the pty once it settles', async (t) => {
+test('Ctrl+wheel previews at once, and sets the font and resizes the pty once it settles', async (t) => {
   const harness = await createPreactHarness(t);
   const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
   const fakes = widgetFakes(harness.document);
@@ -692,26 +692,77 @@ test('Ctrl+wheel zooms the terminal at once and resizes the pty once it settles'
   const fits = fit.fitCount;
   const sent = resizes();
   for (let i = 0; i < 4; i += 1) assert.ok(wheel({ deltaY: -120, ctrlKey: true }).defaultPrevented, 'the browser leaves the page alone');
-  assert.equal(term.options.fontSize, 17, 'a mouse notch is one step');
+  assert.equal(fonts.at(-1).size, 17, 'a mouse notch is one step, and the controls show it at once');
+  assert.equal(term.options.fontSize, 13, 'the repaint waits for the gesture to settle');
   assert.equal(fit.fitCount, fits, 'the grid waits for the gesture to settle');
   timers.flush();
+  assert.equal(term.options.fontSize, 17);
   assert.equal(fit.fitCount, fits + 1);
   assert.equal(resizes(), sent + 1, 'a whole gesture is one pty resize');
   assert.deepEqual(fonts.at(-1), { size: 17, zoomed: true });
 
   for (let i = 0; i < 10; i += 1) wheel({ deltaY: -1.5, ctrlKey: true });
+  timers.flush();
   assert.equal(term.options.fontSize, 17.5, 'a pinch moves by small amounts');
 
   widget.zoomBy(-100);
+  timers.flush();
   assert.equal(term.options.fontSize, 8, 'zoom stops at the floor');
   widget.resetZoom();
+  timers.flush();
   assert.equal(term.options.fontSize, 13);
   assert.deepEqual(fonts.at(-1), { size: 13, zoomed: false });
 
   widget.zoomBy(1);
+  timers.flush();
   widget.dispose();
   wheel({ deltaY: -120, ctrlKey: true });
-  assert.equal(term.options.fontSize, 14, 'a disposed terminal hears no more');
+  assert.equal(fonts.at(-1).size, 14, 'a disposed terminal hears no more');
+  assert.equal(term.options.fontSize, 14);
+});
+
+test('a zoom scales the rendered screen until it settles, and then paints once', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const screen = host.appendChild(harness.document.createElement('div'));
+  screen.className = 'xterm-screen';
+  const timers = manualTimers();
+  const delays = [];
+  const widget = mountTerminalWidget({
+    host, wsPath: '/api/term-ws/agt_one', authenticate: false,
+    initialResizeDelayMs: 0, attachResizeMode: 'initial-only',
+    TerminalCtor: fakes.FakeTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory,
+    requestAnimationFrameImpl: () => 1, cancelAnimationFrameImpl: () => {},
+    ...timers,
+    setTimeoutImpl: (callback, delay) => { delays.push(delay); return timers.setTimeoutImpl(callback, delay); },
+  });
+  await widget.connect();
+  fakes.sockets[0].open();
+  timers.flush();
+  const term = fakes.terminal();
+  const fit = term.addons[0];
+  const fits = fit.fitCount;
+
+  widget.zoomBy(13);
+  assert.equal(screen.style.transform, 'scale(2)');
+  assert.equal(term.options.fontSize, 13);
+  const click = delays.at(-1);
+  // The font must be in place when the grid is measured from it.
+  fit.onFit = () => assert.equal(term.options.fontSize, 26);
+  timers.flush();
+  assert.equal(screen.style.transform, '', 'the real font takes over');
+  assert.equal(term.options.fontSize, 26);
+  assert.equal(fit.fitCount, fits + 1);
+  fit.onFit = null;
+
+  harness.fireEvent(host, 'wheel', { deltaY: -120, deltaMode: 0, ctrlKey: true });
+  assert.ok(delays.at(-1) > click, 'a wheel waits for its next event, a click does not');
+  assert.ok(delays.at(-1) < 150, 'and settles sooner than the old fixed delay');
+  widget.dispose();
 });
 
 test('a remembered size opens the terminal at it', async (t) => {
