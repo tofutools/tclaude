@@ -207,7 +207,13 @@ func TestUsageFleet_HolderSumsMembersAndEnforces(t *testing.T) {
 		"name": "x", "period": "lifetime", "budget": 1, "steps": []any{map[string]any{"at": 100, "action": "block_spawn"}}}})
 	require.Equal(t, http.StatusBadRequest, rec.Code, "no lifetime period for a fleet: %s", rec.Body.String())
 
-	agentd.PollUsageFleetForTest(time.Now())
+	// The polls step forward from one instant; keep them all inside this month,
+	// or a run in its last minutes loses this node's spend to the next period.
+	pollBase := time.Now()
+	if pollBase.Add(3*time.Minute).Format("2006-01") != month {
+		pollBase = pollBase.Add(-3 * time.Minute)
+	}
+	agentd.PollUsageFleetForTest(pollBase)
 	status := fleetStatus(t, f)
 	assert.InDelta(t, 70, status.Value, 0.001, "this node 30 + ann 40; ben shares nothing")
 	assert.Equal(t, 2, status.Counted)
@@ -223,7 +229,7 @@ func TestUsageFleet_HolderSumsMembersAndEnforces(t *testing.T) {
 	annSpend = 80
 	mu.Unlock()
 
-	agentd.PollUsageFleetForTest(time.Now().Add(time.Minute))
+	agentd.PollUsageFleetForTest(pollBase.Add(time.Minute))
 	status = fleetStatus(t, f)
 	assert.InDelta(t, 110, status.Value, 0.001)
 	resp = f.AsHuman().SpawnWith("alpha", map[string]any{"alias": "w2"})
@@ -238,7 +244,7 @@ func TestUsageFleet_HolderSumsMembersAndEnforces(t *testing.T) {
 
 	rec = usageCall(t, f, "", http.MethodPut, "/v1/usage/fleet-limits/"+jsonID(limit.ID), map[string]any{"enabled": false})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	agentd.PollUsageFleetForTest(time.Now().Add(2 * time.Minute))
+	agentd.PollUsageFleetForTest(pollBase.Add(2 * time.Minute))
 	resp = f.AsHuman().SpawnWith("alpha", map[string]any{"alias": "w3"})
 	require.Equal(t, http.StatusOK, resp.Code, "a disabled fleet limit never blocks; body=%s", resp.Raw)
 	mu.Lock()

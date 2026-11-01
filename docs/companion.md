@@ -99,6 +99,8 @@ Decisions from every agent also wait in one queue: a **◆ N to decide** pill, a
 tab of the same name in the window. The same buttons are in the
 [Messages](dashboard-messages.md) reader, without the note.
 
+![A decision at the top of the Steward's tab, with one button per option, a star on the recommended option, and a field for a note](assets/companion-decision.png)
+
 ## Voice and dictation
 
 **Voice.** **🔈** turns voice on for that agent's tab (**🔊**). When its turn ends,

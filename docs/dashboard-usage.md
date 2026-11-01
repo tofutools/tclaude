@@ -50,9 +50,9 @@ to 30d, persisted per series. Copilot cards can switch the headline, chart,
 tooltips, and forecast pace between percentage and native AIC credits; the
 choice is remembered per series.
 
-![Per-provider quota windows with least-squares forecasts — here predicting the Claude five-hour window goes dark 1h38m before reset](assets/dashboard-usage.png)
+![Per-provider quota windows with least-squares forecasts — here predicting the Claude five-hour window goes dark 34m before reset](assets/dashboard-usage.png)
 
-*Per-provider quota windows with least-squares forecasts — here predicting the Claude five-hour window goes dark 1h38m before reset*
+*Per-provider quota windows with least-squares forecasts — here predicting the Claude five-hour window goes dark 34m before reset*
 
 The forecast detects resets (a declared boundary, or a downward step of at
 least 2 points), then estimates a pace on the post-reset segment, yielding

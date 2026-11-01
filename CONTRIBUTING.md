@@ -149,6 +149,34 @@ conversions should keep total suite time flat or make it faster.
 
 ## Dashboard frontend
 
+### Documentation screenshots
+
+Every dashboard image in `docs/assets/` comes from one command:
+
+```bash
+scripts/docs/screenshots.sh                  # capture and install changed images
+scripts/docs/screenshots.sh --dry-run        # capture and report only
+scripts/docs/screenshots.sh --only 'learn-'  # capture matching shots
+```
+
+The manifest `scripts/docs/shots.json` lists each shot's name, fixture, page,
+tab, target and setup steps. To add an image, add a shot; to add data, extend
+the seeds in `pkg/claude/agentd/docshots_test.go`. `TestDocShotsManifest` fails
+in CI if a docs image is missing from the manifest. Terminal images
+(`term-*.png`) are drawn by hand.
+
+- Data is invented. The server runs from the flow-test harness under an isolated
+  `HOME`, and a shot fails if the page shows the host's user, hostname or home.
+- Time is frozen. A build overlay stops the server's wall clock at the manifest's
+  `frozenTime` and gives agents a fixed id sequence, and the browser clock stops
+  at the same instant. No shipped code changes.
+- A missing page, tab or element fails the run, and nothing is installed.
+- An image is replaced only when over 0.05% of its pixels changed, so rendering
+  noise causes no diff. Review `docshots-out/contact-sheet.png` before committing.
+- It needs Chrome or Chromium, plus the Noto Sans, DejaVu Sans Mono and Noto Color
+  Emoji fonts. The first run takes a few minutes because the overlay rebuilds
+  everything above package `time`.
+
 ### Vendored dependencies
 
 The dashboard uses browser-native ES modules. Preact islands use HTM for

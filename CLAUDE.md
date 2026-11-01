@@ -118,15 +118,17 @@ Keep new tests focused on user-visible surfaces such as CLI/API results,
 conversation listings, and dashboard snapshots. Avoid asserting on simulator
 internals when a production read path can be exercised instead.
 
-The dashboard visual smoke harness (`pkg/claude/agentd/dashsnap`, its
-`TCLAUDE_DASHSNAP` browser tests, and the `TCLAUDE_DOCSHOTS` docs/Learn
-screenshot generators) has been removed. CI never ran its browser
+The dashboard visual smoke harness (`pkg/claude/agentd/dashsnap` and its
+`TCLAUDE_DASHSNAP` browser tests) has been removed. CI never ran its browser
 tests (all env-gated), yet its go-rod browser driver pinned old, API-incompatible
 `ysmood/*` modules into `go.mod` and broke `go get -u`. To bring it back, find
 the removal commit with
 `git log --diff-filter=D --oneline -- pkg/claude/agentd/dashsnap` and
 restore from its parent. `scripts/e2e/drive` still uses go-rod, but as its own
 nested module (`scripts/e2e/drive/go.mod`), so it stays out of the main module.
+
+Dashboard images in the README and `docs/` come from
+`scripts/docs/screenshots.sh`; see `CONTRIBUTING.md`. Do not hand-edit them.
 
 ## UI design proposals: mock, render, notify
 
