@@ -15,6 +15,61 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
+// The Messages reader reads the mailbox route, not the snapshot, so a decision
+// must come through it whole: unanswered, then with the pick. With Collab off a
+// stored decision reads as a plain notification there too.
+func TestHumanDecision_MailboxCarriesIt(t *testing.T) {
+	f := newFlow(t)
+	enableCollab(t)
+	const sender = "hdec-aaaa-bbbb-cccc-000000000002"
+	f.HaveGroup("design")
+	f.HaveMember("design", sender)
+	f.HaveAliveSession(sender, "hdec", "tclaude-hdec", f.TestCwd("work"))
+	require.NoError(t, db.GrantAgentPermission(sender, agentd.PermHumanNotify, "test"))
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human", map[string]any{
+		"subject": "Layout?", "body": "Pick one.", "options": []string{"Tabs", "Sidebar"}, "recommended": 2,
+	}), sender))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+
+	type row struct {
+		ID          int64    `json:"id"`
+		Options     []string `json:"options"`
+		Recommended int      `json:"recommended"`
+		Decision    string   `json:"decision"`
+	}
+	mux := dashMessageMux(t)
+	read := func() row {
+		t.Helper()
+		page := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/mailbox?id=human", nil))
+		require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+		var p struct {
+			Messages []row `json:"messages"`
+		}
+		require.NoError(t, json.Unmarshal(page.Body.Bytes(), &p))
+		require.Len(t, p.Messages, 1)
+		return p.Messages[0]
+	}
+	got := read()
+	assert.Equal(t, created.ID, got.ID)
+	assert.Equal(t, []string{"Tabs", "Sidebar"}, got.Options)
+	assert.Equal(t, 2, got.Recommended)
+	assert.Empty(t, got.Decision)
+
+	reply := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/human-messages/reply", map[string]any{"id": created.ID, "choice": 1}))
+	require.Equal(t, http.StatusOK, reply.Code, reply.Body.String())
+	assert.Equal(t, "Tabs", read().Decision)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Features.Collab = false
+	require.NoError(t, config.Save(cfg))
+	assert.Empty(t, read().Options, "with Collab off it is a plain notification")
+}
+
 // An agent puts a decision to the operator; the operator picks an option
 // (even after the agent went offline) and the pick comes back as mail.
 func TestHumanDecision_PickComesBackAsMail(t *testing.T) {
