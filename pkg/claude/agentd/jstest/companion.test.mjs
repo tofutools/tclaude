@@ -178,6 +178,38 @@ test('⏻ after a cancelled ✕ still keeps the window on the way back', async (
   assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
 });
 
+test('a floated Steward: its window ✕ asks too, and Cancel keeps it running', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.companion-float').click());
+  const floated = () => view.container.querySelector('.chat-window');
+  const stops = () => calls.filter(([, url]) => url.endsWith('/stop'));
+  assert.match(floated().querySelector('.overlay-wc-close').title, /shut it down/);
+  await harness.act(() => floated().querySelector('.overlay-wc-close').click());
+  assert.ok(floated(), 'still open while it asks');
+  await harness.act(() => floated().querySelector('.steward-shutdown-actions button:not(.danger)').click());
+  assert.ok(floated(), 'Cancel leaves it');
+  assert.deepEqual(stops(), []);
+
+  await harness.act(() => floated().querySelector('.overlay-wc-close').click());
+  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(stops(), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]]);
+  assert.equal(floated(), null, 'the window closed');
+});
+
+test('a floated agent that is no Steward still closes at once', async (t) => {
+  const { view, harness, controller } = await setup(t);
+  await harness.act(() => controller().open(A));
+  await harness.act(() => view.container.querySelector('.companion-float').click());
+  const floated = () => view.container.querySelector('.chat-window');
+  assert.match(floated().querySelector('.overlay-wc-close').title, /keeps running/);
+  assert.equal(floated().querySelector('.steward-shutdown-open'), null);
+  await harness.act(() => floated().querySelector('.overlay-wc-close').click());
+  assert.equal(floated(), null);
+});
+
 test('a refused shut-down stays on the Steward and says why', async (t) => {
   const fetchImpl = async () => ({ ok: false, status: 409, text: async () => '{"message":"nothing to retire"}', json: async () => ({}) });
   const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });

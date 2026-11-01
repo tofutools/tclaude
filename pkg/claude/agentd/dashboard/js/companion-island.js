@@ -1391,7 +1391,7 @@ export function CompanionApp({
   return html`
     ${overlayWindows.value.filter((window) => window.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} fetchImpl=${fetchImpl} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
-      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
+      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onStewardDown=${(agent) => stewardShutDown(agent, { closing: true })} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
     ${windowView}
     ${chipSlots}
     ${chips}

@@ -7,7 +7,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { actionsFor, approvalsFor, companionAgents, companionStatus, companionStatusLabel, decisionsFor, defaultPlacement } from './companion-model.js';
-import { ApprovalCard } from './companion-approval.js';
+import { ApprovalCard, StewardShutdown } from './companion-approval.js';
 import { parsePlacement, viewportOf } from './overlay-window-model.js';
 import { closeOverlayWindow, minimizeOverlayWindow, placedOverlayWindow } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
@@ -22,7 +22,7 @@ const html = htm.bind(h);
 export const CHAT_PLACEMENT_PREF = 'tclaude.dash.chat-window.placement';
 
 export function ChatWindow({
-  instance, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, Terminal, DecisionCard, StatusDot,
+  instance, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onStewardDown, Terminal, DecisionCard, StatusDot,
 }) {
   const agentId = instance.agent;
   const agent = companionAgents(snapshot.value).get(agentId) || null;
@@ -52,7 +52,18 @@ export function ChatWindow({
   }, [open, agentId]);
 
   const look = windowControlsLook(snapshot.value?.window_controls);
-  const close = () => closeOverlayWindow(instance.id);
+  // A running Steward isn't closed in passing: its ✕ asks what ⏻ asks.
+  const closeShutsDown = !!(agent?.steward && agent.online);
+  const closeTitle = closeShutsDown ? 'Close: shut it down, after asking' : 'Close (the agent keeps running)';
+  const askShutDown = useRef(null);
+  const close = () => {
+    if (closeShutsDown) askShutDown.current?.();
+    else closeOverlayWindow(instance.id);
+  };
+  const stewardDown = (down) => {
+    closeOverlayWindow(instance.id);
+    onStewardDown?.(down);
+  };
   const label = agent ? companionStatusLabel(companionStatus(agent)) : 'not on this node any more';
   const approvals = approvalsFor(snapshot.value, agent);
   const decisions = decisionsFor(snapshot.value, agent);
@@ -61,10 +72,11 @@ export function ChatWindow({
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const title = html`<span class="chat-window-title" title=${`${name}: ${label}`}><${StatusDot} status=${agent ? companionStatus(agent) : 'offline'} /> ${name}</span>
     <button type="button" class="board-overlay-action" title="Move this agent back to a tab of the companion" onClick=${() => onBackToTab(instance)}>Back to a tab</button>
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Close (the agent keeps running)" aria-label=${`Close ${name}`} onClick=${close}>×</button>`}`;
+    ${closeShutsDown && html`<div class="companion-controls"><${StewardShutdown} agent=${agent} fetchImpl=${fetchImpl} onDown=${stewardDown} askRef=${askShutDown} /></div>`}
+    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${closeTitle} aria-label=${`Close ${name}`} onClick=${close}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.id} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: 'Close (the agent keeps running)', onClose: close, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
+    controls=${{ look, closeLabel: `Close ${name}`, closeTitle, onClose: close, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
     <div class="companion-body" id=${instance.id}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}

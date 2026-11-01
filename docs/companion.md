@@ -93,6 +93,8 @@ close.
 
 The small × on a tab, next to the name, unpins that agent and leaves it running.
 On a Steward's tab it only minimizes the window, and the tab stays.
+A Steward floated into an overlay window of its own has ⏻ too, and that window's
+close button asks in the same way.
 
 Dragging a maximized window by its title bar also restores it.
 
