@@ -45,7 +45,10 @@ and with three or more, space them evenly.
 - **Select:** Shift-click or drag a rectangle. Ctrl+A selects everything, Ctrl+D
   duplicates, Del deletes.
 - **Undo:** Ctrl/Cmd+Z, and Ctrl+Shift+Z or Ctrl+Y to redo.
-- **Move around:** the wheel pans and Ctrl+wheel zooms from 20% to 400%. Middle-drag
+- **Zoom:** Ctrl+wheel or a trackpad pinch zooms from 20% to 400%. The controls by
+  the zoom level in the toolbar zoom out, zoom in, reset to 100% and fit everything
+  in view; their keys are `-`, `+`, Shift+0 and Shift+1.
+- **Move around:** the wheel pans. Middle-drag
   pans too.
 - **Copy and paste:** Ctrl+C, X and V use Excalidraw's clipboard format, so they work
   with excalidraw.com. Plain text pastes as a text element.
