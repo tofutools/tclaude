@@ -65,7 +65,9 @@ export function useChipDrag({ win, spot, onDrop, onStart, reducedMotion }) {
       const dx = Math.min(vp.width - start.right, Math.max(-start.left, m.clientX - sx));
       const dy = Math.min(vp.height - start.bottom, Math.max(-start.top, m.clientY - sy));
       node.style.translate = `${dx}px ${dy}px`;
-      const next = nearestChipSpot({ x: start.left + start.width / 2 + dx, y: start.top + start.height / 2 + dy }, slotsOnScreen());
+      // Unclamped: a row held on screen could never reach a spot nearer the edge
+      // than half its own width.
+      const next = nearestChipSpot({ x: start.left + start.width / 2 + m.clientX - sx, y: start.top + start.height / 2 + m.clientY - sy }, slotsOnScreen());
       if (next && next !== near) {
         near = next;
         setDrag((current) => current && { ...current, near });

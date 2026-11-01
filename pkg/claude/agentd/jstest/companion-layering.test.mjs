@@ -50,6 +50,6 @@ test('the docs offer stays above a window or board, but not above a dialog', asy
 test('the chips step clear of the dock instead of covering its menus', async () => {
   const css = await readFile(new URL('../dashboard/companion.css', import.meta.url), 'utf8');
   assert.match(css, /body\.dock-open \{ --chip-right: calc\(var\(--dock-w\) \+ 16px\); \}/);
-  assert.match(css, /\.companion-spot-bottom-right \{ right: var\(--chip-right\);/);
+  assert.match(css, /\.companion-spot-bottom-right \{ right: var\(--chip-right\); \}/);
   assert.match(css, /@media \(max-width: 620px\) \{\s*body\.dock-open \{ --chip-right: 16px; \}\s*body\.dock-open \.companion-chips:not\(\.dragging\) \{ z-index: 45; \}/, 'a narrow window keeps them on screen');
 });

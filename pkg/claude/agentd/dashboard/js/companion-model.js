@@ -217,9 +217,16 @@ export function defaultPlacement(viewport) {
   return { x: viewport.width - w - 24, y: viewport.height - h - OVERLAY_FOOTER_ROOM - 56, w, h, snap: '' };
 }
 
-// The chips' snap spots. Corners and mid-bottom only: a mid-side spot would sit
-// on the dock's edge tab.
-export const CHIP_SPOTS = Object.freeze(['top-left', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right']);
+// The chips' snap spots: where each sits along the room, as shares across and
+// down. companion.css lays out the same shares, and its right side stands clear
+// of the dock's edge tab.
+const CHIP_SPOT_SHARES = Object.freeze({
+  'top-left': [0, 0], 'top-q1': [0.25, 0], 'top-center': [0.5, 0], 'top-q3': [0.75, 0], 'top-right': [1, 0],
+  'left-q1': [0, 0.25], 'left-center': [0, 0.5], 'left-q3': [0, 0.75],
+  'right-q1': [1, 0.25], 'right-center': [1, 0.5], 'right-q3': [1, 0.75],
+  'bottom-left': [0, 1], 'bottom-q1': [0.25, 1], 'bottom-center': [0.5, 1], 'bottom-q3': [0.75, 1], 'bottom-right': [1, 1],
+});
+export const CHIP_SPOTS = Object.freeze(Object.keys(CHIP_SPOT_SHARES));
 export const DEFAULT_CHIP_SPOT = 'bottom-right';
 // The chips' own distance from the viewport edges; companion.css has the same.
 const CHIP_INSET_X = 16;
@@ -244,22 +251,22 @@ export function nearestChipSpot(point, slots) {
   return best;
 }
 
-// spotPlacement puts a floating window in the chip's corner, so it grows from
+// spotPlacement puts a floating window around the chip's spot, so it grows from
 // there. It keeps p's size and, through fitPlacement, stays on screen.
 export function spotPlacement(spot, p, viewport, top = 0) {
-  let x = CHIP_INSET_X;
-  if (spot.endsWith('right')) x = viewport.width - p.w - CHIP_INSET_X;
-  if (spot.endsWith('center')) x = (viewport.width - p.w) / 2;
-  const y = spot.startsWith('top') ? top + CHIP_INSET_Y : viewport.height - OVERLAY_FOOTER_ROOM - p.h - CHIP_INSET_Y;
+  const [across, down] = CHIP_SPOT_SHARES[spot];
+  const [left, low] = [CHIP_INSET_X, top + CHIP_INSET_Y];
+  const x = left + across * (viewport.width - p.w - CHIP_INSET_X - left);
+  const y = low + down * (viewport.height - OVERLAY_FOOTER_ROOM - p.h - CHIP_INSET_Y - low);
   return fitPlacement({ ...p, x, y, snap: '' }, viewport);
 }
 
 // peekAnchor places the hover peek on the open side of a chip at this spot.
 export function peekAnchor(spot, rect, viewport) {
   const gap = 8;
-  const anchor = spot.startsWith('top') ? { top: rect.bottom + gap } : { bottom: viewport.height - rect.top + gap };
-  if (spot.endsWith('left')) return { ...anchor, left: rect.left };
-  return { ...anchor, right: viewport.width - rect.right };
+  const [across, down] = CHIP_SPOT_SHARES[spot];
+  const anchor = down < 0.5 ? { top: rect.bottom + gap } : { bottom: viewport.height - rect.top + gap };
+  return across < 0.5 ? { ...anchor, left: rect.left } : { ...anchor, right: viewport.width - rect.right };
 }
 
 const TAB_NAMES = Object.freeze({
