@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -635,6 +635,7 @@ func TestOpenCodeCLIEnvironmentLoadsNothingAnAgentWrote(t *testing.T) {
 	for _, isolated := range [][]string{env, ambient} {
 		assert.Equal(t, "1", value(isolated, "OPENCODE_DISABLE_PROJECT_CONFIG"))
 		assert.Equal(t, "1", value(isolated, "OPENCODE_PURE"))
+		assert.Equal(t, "{}", value(isolated, "OPENCODE_AUTH_CONTENT"))
 	}
 }
 

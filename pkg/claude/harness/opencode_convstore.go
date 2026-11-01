@@ -161,7 +161,9 @@ func existingDirs(dirs []string) []string {
 }
 
 // openCodeIsolation shuts a CLI run off from every config source, on top of
-// --pure. It matches what the filtered server gets in agentd.
+// --pure. It matches what the filtered server gets in agentd. The auth content
+// matters as much as the rest: a data directory holds auth.json, and a wellknown
+// entry there is remote config OpenCode fetches and acts on.
 var openCodeIsolation = []string{
 	"OPENCODE_PURE=1",
 	"OPENCODE_DISABLE_PROJECT_CONFIG=1",
@@ -169,6 +171,7 @@ var openCodeIsolation = []string{
 	"OPENCODE_CONFIG_DIR=",
 	"OPENCODE_DISABLE_AUTOUPDATE=1",
 	"OPENCODE_DISABLE_MODELS_FETCH=1",
+	"OPENCODE_AUTH_CONTENT={}",
 }
 
 // openCodeCLIEnvironment is the environment of a CLI run tclaude starts itself.

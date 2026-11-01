@@ -329,6 +329,37 @@ else
 fi
 jq -n --arg entry "file://$ROOT/entry-project.js" '{plugin: [$entry]}' >"$DST_CWD/opencode.json"
 
+# A wellknown auth entry in the data directory is remote config OpenCode fetches,
+# so a listener counts those fetches.
+python3 -u - "$ROOT/wellknown-hits" "$ROOT/wellknown-port" <<'PY' &
+import http.server, sys
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        with open(sys.argv[1], "a") as hits:
+            hits.write(self.path + "\n")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"config":{}}')
+
+    def log_message(self, *args):
+        pass
+
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+with open(sys.argv[2], "w") as port:
+    port.write(str(server.server_port))
+server.serve_forever()
+PY
+LISTENER=$!
+PIDS+=("$LISTENER")
+wait_for 10 "the wellknown listener" test -s "$ROOT/wellknown-port"
+AGENT_AUTH=$STATE_ROOT/data/opencode/auth.json
+[[ ! -e $AGENT_AUTH ]] || cp "$AGENT_AUTH" "$ROOT/agent-auth.json"
+jq -n --arg url "http://127.0.0.1:$(cat "$ROOT/wellknown-port")" '{($url): {type: "wellknown", key: "K", token: "t"}}' >"$AGENT_AUTH"
+
 # Without the hardening every one of these runs, or the check below proves nothing.
 (cd "$DST_CWD" && node dst env XDG_DATA_HOME="$STATE_ROOT/data" XDG_CACHE_HOME="$STATE_ROOT/cache" \
 	XDG_CONFIG_HOME="$STATE_ROOT/config" XDG_STATE_HOME="$STATE_ROOT/state" \
@@ -336,7 +367,10 @@ jq -n --arg entry "file://$ROOT/entry-project.js" '{plugin: [$entry]}' >"$DST_CW
 for marker in config-dir project-dir config-entry project-entry; do
 	[[ -e $MARKERS/$marker ]] || die "the planted $marker plugin did not run without the hardening"
 done
-rm -f "$MARKERS"/*
+# --pure stops the plugins and not this, so its control is a run with --pure.
+private_opencode session list --format json >/dev/null
+[[ -s $ROOT/wellknown-hits ]] || die "the planted auth entry was not fetched without the hardening"
+rm -f "$MARKERS"/* "$ROOT/wellknown-hits"
 
 # The private lookup, with no index row left to answer it; the ambient listing
 # from the project; and a history export of the private conversation.
@@ -359,7 +393,14 @@ PY
 node dst tclaude paf export "$WALLED" --history --file "$ROOT/hardened.paf"
 test -s "$ROOT/hardened.paf" || die "the history export wrote nothing"
 [[ -z $(ls -A "$MARKERS") ]] || die "a planted plugin ran in tclaude's own run: $(ls "$MARKERS")"
+[[ ! -e $ROOT/wellknown-hits ]] || die "a planted auth entry was fetched in tclaude's own run"
 
+kill "$LISTENER" 2>/dev/null || true
+if [[ -e $ROOT/agent-auth.json ]]; then
+	cp "$ROOT/agent-auth.json" "$AGENT_AUTH"
+else
+	rm -f "$AGENT_AUTH"
+fi
 rm -rf "$AGENT_CONFIG/plugin" "$DST_CWD/.opencode" "$DST_CWD/opencode.json"
 if [[ -e $ROOT/agent-opencode.json ]]; then
 	cp "$ROOT/agent-opencode.json" "$AGENT_CONFIG/opencode.json"
