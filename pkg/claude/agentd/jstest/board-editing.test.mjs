@@ -166,73 +166,6 @@ test('double-clicking anywhere inside a shape of any kind opens its text', async
   }
 });
 
-test('the text controls style the selection, the open editor and the next text', async (t) => {
-  const { harness, fire, root, svg, click, key, saved } = await setup(t, (m) => [
-    m.newElement('rectangle', { id: 'box', x: 100, y: 100, width: 100, height: 60 }),
-    m.newLabel({ id: 'box', x: 100, y: 100, width: 100, height: 60 }, 'label'),
-    m.newElement('text', { id: 'note', x: 400, y: 100, text: 'words', fontSize: 17 }),
-  ]);
-  const control = (name) => root.querySelector(`[aria-label="${name}"]`);
-  const choose = async (name, value) => {
-    Object.defineProperty(control(name), 'value', { value: String(value), configurable: true }); // the test DOM's is read-only
-    await harness.act(() => harness.fireEvent(control(name), 'change'));
-  };
-  const drawn = (id) => svg.querySelector(`[data-element="${id}"]`);
-  assert.equal(control('Text size'), null, 'the controls show only for text');
-
-  await click(410, 100); // the text: an agent's size is offered as itself
-  assert.ok([...control('Text size').querySelectorAll('option')].some((o) => o.textContent === '17'));
-  await choose('Text size', 32);
-  await harness.act(() => control('Bold').click());
-  const sized = await saved();
-  assert.equal(sized.at(-1).fontSize, 32);
-  assert.equal(sized.at(-1).fontWeight, 'bold');
-  assert.equal(sized.at(-1).width, 0, 'the old measurement goes');
-  assert.equal(drawn('note').getAttribute('font-size'), '32');
-  assert.equal(drawn('note').getAttribute('font-weight'), 'bold');
-  await harness.act(() => control('Bold').click());
-  assert.equal((await saved()).at(-1).fontWeight, undefined, 'bold comes off again');
-
-  await click(110, 100); // a shape: the text on it
-  await choose('Font', 3);
-  const [label] = await saved();
-  assert.equal(label.id, 'box-label');
-  assert.equal(label.fontFamily, 3);
-  assert.match(drawn('box-label').getAttribute('font-family'), /monospace/);
-
-  await key('Escape');
-  await fire('dblclick', 410, 110); // an open editor keeps the keyboard
-  const input = root.querySelector('.board-text-input');
-  await harness.act(() => control('Italic').click());
-  assert.equal(harness.window.document.activeElement, input);
-  assert.match(input.getAttribute('style'), /font-style:\s*italic/);
-  assert.deepEqual(await saved(), [], 'nothing is sent while it is open');
-  await harness.act(() => harness.fireEvent(input, 'blur', { relatedTarget: control('Font') }));
-  assert.ok(root.querySelector('.board-text-input'), 'moving to the controls does not close it');
-  await harness.act(() => harness.fireEvent(input, 'blur', { relatedTarget: null }));
-  assert.equal(root.querySelector('.board-text-input'), null);
-  assert.equal((await saved()).at(-1).fontStyle, 'italic', 'a style alone is a change');
-
-  // Everything chosen holds for the next text.
-  await key('Escape');
-  await fire('dblclick', 300, 400);
-  const next = root.querySelector('.board-text-input');
-  await harness.input(next, 'fresh');
-  await harness.act(() => harness.fireEvent(next, 'keydown', { key: 'Enter' }));
-  const made = (await saved()).at(-1);
-  assert.deepEqual([made.text, made.fontSize, made.fontFamily, made.fontStyle], ['fresh', 32, 3, 'italic']);
-});
-
-test('pasted text keeps a style the board has and drops one it lacks', async (t) => {
-  const { m } = await setup(t, () => []);
-  const [kept, foreign] = m.parseClipboard(JSON.stringify({ type: 'excalidraw/clipboard', elements: [
-    { id: 'a', type: 'text', x: 0, y: 0, text: 'a', fontFamily: 3, fontWeight: 'bold', fontStyle: 'italic' },
-    { id: 'b', type: 'text', x: 0, y: 0, text: 'b', fontFamily: 8, fontWeight: '900' },
-  ] }));
-  assert.deepEqual([kept.fontFamily, kept.fontWeight, kept.fontStyle], [3, 'bold', 'italic']);
-  assert.deepEqual([foreign.fontFamily, foreign.fontWeight], [undefined, undefined]);
-});
-
 test('double-clicking a connection point labels the shape rather than adding one', async (t) => {
   const { root, svg, fire, click, saved } = await setup(t, twoShapes);
   await fire('pointermove', 200, 130);
@@ -319,6 +252,73 @@ test('a connector dropped on blank board with the border key stays a free line',
   const [line] = await saved();
   assert.equal(line.endBinding, undefined);
   assert.equal(line.startBinding.elementId, 'a');
+});
+
+test('the text controls style the selection, the open editor and the next text', async (t) => {
+  const { harness, fire, root, svg, click, key, saved } = await setup(t, (m) => [
+    m.newElement('rectangle', { id: 'box', x: 100, y: 100, width: 100, height: 60 }),
+    m.newLabel({ id: 'box', x: 100, y: 100, width: 100, height: 60 }, 'label'),
+    m.newElement('text', { id: 'note', x: 400, y: 100, text: 'words', fontSize: 17 }),
+  ]);
+  const control = (name) => root.querySelector(`[aria-label="${name}"]`);
+  const choose = async (name, value) => {
+    Object.defineProperty(control(name), 'value', { value: String(value), configurable: true }); // the test DOM's is read-only
+    await harness.act(() => harness.fireEvent(control(name), 'change'));
+  };
+  const drawn = (id) => svg.querySelector(`[data-element="${id}"]`);
+  assert.equal(control('Text size'), null, 'the controls show only for text');
+
+  await click(410, 100); // the text: an agent's size is offered as itself
+  assert.ok([...control('Text size').querySelectorAll('option')].some((o) => o.textContent === '17'));
+  await choose('Text size', 32);
+  await harness.act(() => control('Bold').click());
+  const sized = await saved();
+  assert.equal(sized.at(-1).fontSize, 32);
+  assert.equal(sized.at(-1).fontWeight, 'bold');
+  assert.equal(sized.at(-1).width, 0, 'the old measurement goes');
+  assert.equal(drawn('note').getAttribute('font-size'), '32');
+  assert.equal(drawn('note').getAttribute('font-weight'), 'bold');
+  await harness.act(() => control('Bold').click());
+  assert.equal((await saved()).at(-1).fontWeight, undefined, 'bold comes off again');
+
+  await click(110, 100); // a shape: the text on it
+  await choose('Font', 3);
+  const [label] = await saved();
+  assert.equal(label.id, 'box-label');
+  assert.equal(label.fontFamily, 3);
+  assert.match(drawn('box-label').getAttribute('font-family'), /monospace/);
+
+  await key('Escape');
+  await fire('dblclick', 410, 110); // an open editor keeps the keyboard
+  const input = root.querySelector('.board-text-input');
+  await harness.act(() => control('Italic').click());
+  assert.equal(harness.window.document.activeElement, input);
+  assert.match(input.getAttribute('style'), /font-style:\s*italic/);
+  assert.deepEqual(await saved(), [], 'nothing is sent while it is open');
+  await harness.act(() => harness.fireEvent(input, 'blur', { relatedTarget: control('Font') }));
+  assert.ok(root.querySelector('.board-text-input'), 'moving to the controls does not close it');
+  await harness.act(() => harness.fireEvent(input, 'blur', { relatedTarget: null }));
+  assert.equal(root.querySelector('.board-text-input'), null);
+  assert.equal((await saved()).at(-1).fontStyle, 'italic', 'a style alone is a change');
+
+  // Everything chosen holds for the next text.
+  await key('Escape');
+  await fire('dblclick', 300, 400);
+  const next = root.querySelector('.board-text-input');
+  await harness.input(next, 'fresh');
+  await harness.act(() => harness.fireEvent(next, 'keydown', { key: 'Enter' }));
+  const made = (await saved()).at(-1);
+  assert.deepEqual([made.text, made.fontSize, made.fontFamily, made.fontStyle], ['fresh', 32, 3, 'italic']);
+});
+
+test('pasted text keeps a style the board has and drops one it lacks', async (t) => {
+  const { m } = await setup(t, () => []);
+  const [kept, foreign] = m.parseClipboard(JSON.stringify({ type: 'excalidraw/clipboard', elements: [
+    { id: 'a', type: 'text', x: 0, y: 0, text: 'a', fontFamily: 3, fontWeight: 'bold', fontStyle: 'italic' },
+    { id: 'b', type: 'text', x: 0, y: 0, text: 'b', fontFamily: 8, fontWeight: '900' },
+  ] }));
+  assert.deepEqual([kept.fontFamily, kept.fontWeight, kept.fontStyle], [3, 'bold', 'italic']);
+  assert.deepEqual([foreign.fontFamily, foreign.fontWeight], [undefined, undefined]);
 });
 
 test('the keyboard builds a graph from the selected shape', async (t) => {
