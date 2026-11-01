@@ -4,7 +4,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureContext, cloneVisible, cssUrls, describeElement, rewriteCss, startCapturePresence } from '../dashboard/js/dashboard-capture.js';
+import { snapshotPage } from '../dashboard/js/capture-snapshot.js';
+import { buildNode, captureContext, cssUrls, describeElement, rewriteCss, startCapturePresence } from '../dashboard/js/dashboard-capture.js';
 import { parseHTML } from './third_party/linkedom.mjs';
 
 function element(tag, { attrs = {}, text = '', parent = null, classes = [] } = {}) {
@@ -28,7 +29,7 @@ function maskedPage(body) {
 }
 
 function capturedHtml(win) {
-  const clone = cloneVisible(win.document.body, { win, inline: async () => null, tasks: [] });
+  const clone = buildNode(snapshotPage(win).root, { doc: win.document, inline: async () => null, tasks: [] });
   return clone.outerHTML;
 }
 
@@ -143,6 +144,7 @@ function presenceHarness(responses) {
   return { win, doc, calls, timers, listeners, fetchImpl };
 }
 
+const EMPTY_PAGE = { root: { attrs: [], children: [] }, form: null, formTitle: '' };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 test('a tab asks rarely while the presence route is absent, and resumes when it answers', async () => {
@@ -162,12 +164,27 @@ test('a tab asks rarely while the presence route is absent, and resumes when it 
   stop();
 });
 
+test('asked for form text, a tab renders it from the snapshot it drew the image from', async () => {
+  const h = presenceHarness([{ capture: { id: 'c3', form: true } }]);
+  const drawn = [];
+  const page = { root: { tag: 'body', attrs: [], children: [{ text: 'hello' }], seen: true, scroll: { x: 0, y: 0 } }, form: null, formTitle: '' };
+  const stop = startCapturePresence({
+    win: h.win, fetchImpl: h.fetchImpl, tab: () => 'groups', randomId: () => 'tab-3',
+    render: async ({ snapshot }) => { drawn.push(snapshot); return new Blob(['png']); }, snapshot: () => page,
+    setTimeoutImpl: (fn, ms) => { if (ms < 100) fn(); return 1; }, clearTimeoutImpl: () => {},
+  });
+  await settle();
+  assert.deepEqual(drawn, [page]);
+  assert.match(h.calls[1].body.form_text, /hello/);
+  stop();
+});
+
 test('a tab reports presence, then shows the cue and hands in its render', async () => {
   const h = presenceHarness([{ capture: { id: 'c1', agent_name: 'steward' } }]);
   const notices = [];
   const stop = startCapturePresence({
     win: h.win, fetchImpl: h.fetchImpl, tab: () => 'groups', onCapture: (r) => notices.push(r.agent_name), randomId: () => 'tab-1',
-    render: async () => new Blob(['png']),
+    render: async () => new Blob(['png']), snapshot: () => EMPTY_PAGE,
     setTimeoutImpl: (fn, ms) => { if (ms < 100) fn(); else h.timers.push(ms); return 1; }, clearTimeoutImpl: () => {},
   });
   await settle();
@@ -176,6 +193,7 @@ test('a tab reports presence, then shows the cue and hands in its render', async
   assert.equal(h.calls[1].url, '/api/companion/capture/c1');
   assert.equal(h.calls[1].body.png, globalThis.btoa('png'));
   assert.equal(h.calls[1].body.context.tab, 'groups');
+  assert.equal(h.calls[1].body.form_text, undefined, 'no text unless it was asked for');
   assert.equal(h.timers.at(-1), 1500, 'and goes back to pinging');
   stop();
   assert.equal(h.listeners.size, 0, 'stopping removes every listener');
@@ -185,7 +203,7 @@ test('a failed render is reported, not left to time out', async () => {
   const h = presenceHarness([{ capture: { id: 'c2' } }]);
   const stop = startCapturePresence({
     win: h.win, fetchImpl: h.fetchImpl, tab: () => '', randomId: () => 'tab-2',
-    render: async () => { throw new Error('no canvas'); },
+    render: async () => { throw new Error('no canvas'); }, snapshot: () => EMPTY_PAGE,
     setTimeoutImpl: (fn, ms) => { if (ms < 100) fn(); return 1; }, clearTimeoutImpl: () => {},
   });
   await settle();

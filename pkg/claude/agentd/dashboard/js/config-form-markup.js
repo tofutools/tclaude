@@ -266,7 +266,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
   };
   return html`
     <${ConfigEventContext.Provider} value=${onFormEvent}>
-    <div class="config-form">
+    <div class="config-form" data-capture-form="Config">
 
     <h2 class="cfg-wizard-title" aria-hidden="true">📜 The Wizard's Almanac</h2>
     <div class="cfg-layout" id="cfg-layout">

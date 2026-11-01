@@ -543,6 +543,40 @@ and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
 in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
 command fails there. It needs Collab, like the rest of the Steward.
 
+#### Form values as text
+
+`tclaude agent guide capture --form` also prints the open form as text, so an
+agent can help you fill it in. It needs `dashboard.forms.capture` on top of
+`dashboard.capture`. That slug is not given to anyone by default, the Steward
+included: you assign it to the agents you want reading forms, and it works the
+same for any agent. The notice says when values were read.
+
+The image and the text come from one snapshot, taken at one moment and filtered
+once, so what is masked in one is masked in the other. A password is never
+delivered to an agent in either, even when a show button has made it readable.
+
+- The image stays your viewport, exactly.
+- The open form is the topmost dialog, or the Config tab. Its text covers the
+  whole form, including fields scrolled off screen, every option of a dropdown,
+  and collapsed sections and inactive tabs, which are labelled `collapsed`.
+  A collapsed part with no field in it is left out, and a section the page has
+  not built yet only shows as a `[collapsed]` control.
+- With no form open, the text covers what is on screen.
+- A list showing one page of its rows says so, for example `showing 30 of 200
+  rows`.
+- Terminals appear as `[terminal]`. Their output has no secret marker, so it
+  stays out of the text, although the image shows it.
+- `--save` keeps the image and context, never this text.
+
+Each field line gives its label, type, id and value:
+
+```text
+Form: Spawn a new agent (the whole form, including what is off screen or collapsed)
+Name [text, #agent-spawn-name]: "reviewer"
+Harness [select, #agent-spawn-harness]: "Claude Code" (options: Claude Code, Codex)
+API key [password, #api-key]: [masked]
+```
+
 A tab showing a peer's dashboard (`?node=`) counts as open, and `guide view`,
 capture and marks work on it: they belong to this node's agents and to you at
 this browser, not to the peer. So a capture can show this node's Steward what a

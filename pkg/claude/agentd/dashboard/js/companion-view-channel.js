@@ -90,7 +90,7 @@ export function CompanionViewChannel({ activeTab, notify, fetchImpl = globalThis
     if (!win?.document) return undefined;
     return startCapturePresence({
       win, fetchImpl, tab: () => activeTab.value,
-      onCapture: (request) => setCaptureNotice(request.agent_name || 'An agent'),
+      onCapture: (request) => setCaptureNotice(`${request.agent_name || 'An agent'} captured this view${request.form ? ' and read its form values' : ''}`),
       onMarks: receiveMarks, marks: () => markReport.current,
     });
   }, [win, fetchImpl]);
@@ -103,5 +103,5 @@ export function CompanionViewChannel({ activeTab, notify, fetchImpl = globalThis
   return html`
     ${marks.length > 0 && win && html`<${MarksLayer} marks=${marks} win=${win} onEnd=${endMark} onDismissAll=${dismissAllMarks}
       onReply=${replyToMark} onReport=${(report) => { markReport.current = report; }} />`}
-    ${captureNotice && html`<div class="companion-capture-notice" role="status" data-capture-skip>${captureNotice} captured this view</div>`}`;
+    ${captureNotice && html`<div class="companion-capture-notice" role="status" data-capture-skip>${captureNotice}</div>`}`;
 }

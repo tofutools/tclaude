@@ -49,7 +49,7 @@ var countableSudoSlugs = []string{
 	PermGroupsSettingsMaxMembers, PermGroupsSettingsNotifications, PermGroupsSettingsRemoteControlPolicy,
 	PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes,
 
-	PermMessageDirect, PermHumanNotify, PermHumanClipboard,
+	PermMessageDirect, PermHumanNotify, PermHumanClipboard, PermDashboardFormsCapture,
 
 	PermTemplatesManage, PermTemplatesUse, PermProfilesManage, PermRolesManage, PermPromptsManage,
 	PermProcessTemplatesManage, PermProcessRunsStart, PermProcessRunsManage, PermProcessAdvance,
