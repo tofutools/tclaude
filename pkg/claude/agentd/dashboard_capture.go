@@ -90,12 +90,16 @@ type captureRequest struct {
 	ID        string `json:"id"`
 	AgentName string `json:"agent_name,omitempty"`
 	Form      bool   `json:"form,omitempty"`
+	// Fill makes this a fill rather than a capture (dashboard_fill.go). The tab
+	// answers both the same way, so a fill keeps the rules about which tab counts.
+	Fill *fillRequest `json:"fill,omitempty"`
 }
 
 type captureResult struct {
 	image    []byte
 	context  *captureContext
 	formText string
+	fill     []fillOutcome
 	err      string
 }
 
@@ -380,14 +384,15 @@ func handleDashboardCompanionCapture(w http.ResponseWriter, r *http.Request) {
 		PNG      string          `json:"png"`
 		Context  *captureContext `json:"context"`
 		FormText string          `json:"form_text"`
+		Fill     []fillOutcome   `json:"fill"`
 		Error    string          `json:"error"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid capture: "+err.Error())
 		return
 	}
-	result := captureResult{context: req.Context, formText: cleanFormText(req.FormText), err: guideText(req.Error, guideMaxNote)}
-	if result.err == "" {
+	result := captureResult{context: req.Context, formText: cleanFormText(req.FormText), fill: cleanFillOutcomes(req.Fill), err: guideText(req.Error, guideMaxNote)}
+	if result.err == "" && req.Fill == nil {
 		image, err := base64.StdEncoding.DecodeString(req.PNG)
 		if err != nil || !bytes.HasPrefix(image, pngMagic) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "capture must be a PNG image")
@@ -407,6 +412,17 @@ func handleDashboardCompanionCapture(w http.ResponseWriter, r *http.Request) {
 	}
 	captureState.pending = nil
 	captureState.Unlock()
+	switch {
+	case result.err != "":
+	case p.Fill == nil && result.image == nil:
+		result.err = "the page sent no image"
+	case p.Fill != nil && result.fill == nil:
+		// A page from before fills answers with a picture.
+		result.err = "the page did not fill; it may need reloading"
+	}
+	if p.Fill == nil {
+		result.fill = nil
+	}
 	p.done <- result
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -446,6 +462,36 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pending := &pendingCapture{captureRequest: captureRequest{ID: id, Form: req.Form}, done: make(chan captureResult, 1)}
+	result, ok := awaitTab(w, r, convID, pending)
+	if !ok {
+		return
+	}
+	if result.err != "" {
+		writeError(w, http.StatusBadGateway, "capture_failed", "the dashboard could not render the capture: "+result.err)
+		return
+	}
+	resp := map[string]any{"png": base64.StdEncoding.EncodeToString(result.image)}
+	if result.context != nil {
+		resp["context"] = result.context
+	}
+	if req.Form {
+		resp["form_text"] = result.formText
+	}
+	if req.Save {
+		saved, err := saveCapture(convID, guideText(req.Label, guideMaxTitle), result.image, result.context)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "save capture: "+err.Error())
+			return
+		}
+		resp["saved_id"] = saved.ID
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// awaitTab aims a request at the tab the operator is looking at and waits for
+// its answer. It names the calling agent on the request, and writes the error
+// response itself when it returns false.
+func awaitTab(w http.ResponseWriter, r *http.Request, convID string, pending *pendingCapture) (captureResult, bool) {
 	if convID != "" {
 		if res, _, err := agent.ResolveSelector(convID); err == nil && res.Row != nil {
 			pending.AgentName = guideText(res.Row.CustomTitle, 80)
@@ -456,7 +502,7 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 	if captureState.pending != nil {
 		captureState.Unlock()
 		writeError(w, http.StatusConflict, "capture_busy", "another capture is in progress; try again in a moment")
-		return
+		return captureResult{}, false
 	}
 	now := guideNow()
 	client, open := captureTarget(now)
@@ -465,52 +511,31 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 		captureState.Unlock()
 		if open {
 			writeError(w, http.StatusConflict, "dashboard_hidden", "the operator's dashboard is open but not on screen, so it cannot be captured; ask them to bring it up")
-			return
+			return captureResult{}, false
 		}
 		status, code, message := captureUnavailable(now, heard, polled)
 		writeError(w, status, code, message)
-		return
+		return captureResult{}, false
 	}
 	pending.client = client
 	captureState.pending = pending
 	captureState.Unlock()
-	slog.Info("dashboard capture requested", "conv", convID, "agent", pending.AgentName, "form", req.Form)
+	slog.Info("dashboard tab request", "conv", convID, "agent", pending.AgentName, "form", pending.Form, "fill", pending.Fill != nil)
 
-	abandon := func() {
+	ctx, cancel := context.WithTimeout(r.Context(), captureTimeout)
+	defer cancel()
+	select {
+	case result := <-pending.done:
+		return result, true
+	case <-ctx.Done():
 		captureState.Lock()
 		if captureState.pending == pending {
 			captureState.pending = nil
 		}
 		captureState.Unlock()
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), captureTimeout)
-	defer cancel()
-	select {
-	case result := <-pending.done:
-		if result.err != "" {
-			writeError(w, http.StatusBadGateway, "capture_failed", "the dashboard could not render the capture: "+result.err)
-			return
-		}
-		resp := map[string]any{"png": base64.StdEncoding.EncodeToString(result.image)}
-		if result.context != nil {
-			resp["context"] = result.context
-		}
-		if req.Form {
-			resp["form_text"] = result.formText
-		}
-		if req.Save {
-			saved, err := saveCapture(convID, guideText(req.Label, guideMaxTitle), result.image, result.context)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "io", "save capture: "+err.Error())
-				return
-			}
-			resp["saved_id"] = saved.ID
-		}
-		writeJSON(w, http.StatusOK, resp)
-	case <-ctx.Done():
-		abandon()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			writeError(w, http.StatusGatewayTimeout, "capture_timeout", "the dashboard did not answer in time; it may have closed or be busy")
 		}
+		return captureResult{}, false
 	}
 }

@@ -112,7 +112,7 @@ export function HelpField({
       <div class="spawn-field-with-help">
         <select id=${id} value=${value} title=${help} aria-describedby=${help ? descriptionID : null} disabled=${busy}
           onChange=${onChange}>
-          ${options.map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
+          ${options.map((option) => html`<option key=${option.value} value=${option.value} data-no-fill=${option.noFill}>${option.label}</option>`)}
         </select>
         <${HelpDisclosure} id=${id} descriptionID=${descriptionID} label=${label} help=${help}
           open=${open} setOpen=${setOpen} />

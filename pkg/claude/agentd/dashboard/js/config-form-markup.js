@@ -5,6 +5,7 @@ import htm from 'htm';
 import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
+import { FormFillBar } from './form-fill-bar.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
@@ -256,7 +257,7 @@ function ConfigRail({ active, select, dirtyPanels }) {
 // Static form structure. State, conditional enablement, lists, validation,
 // and actions are owned by the Config island and adapter; every control keeps
 // its historical id so the adapter's load/save round-trip is unchanged.
-export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEvent = () => {}, dirtyPanels = null }) {
+export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEvent = () => {}, dirtyPanels = null, loads = null }) {
   // The open section lives in configPanel so the history router can read and
   // restore it; picking one on the rail is a navigation (a history entry).
   const active = configPanel.value;
@@ -1106,6 +1107,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <option value="exited"></option>
     </datalist>
 
+    <${FormFillBar} form="config" generation=${loads} />
     <div class="cfg-footer">
       <${SaveSummary} dirtyPanels=${dirtyPanels} />
       <span class="cfg-status" id="cfg-status">loading…</span>

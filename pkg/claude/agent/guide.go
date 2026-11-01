@@ -25,11 +25,12 @@ func guideCmd() *cobra.Command {
 		Long: "Dashboard guidance for companion agents such as the Steward.\n\n" +
 			"`guide view` reports which dashboard view the operator is looking at (needs dashboard.view.read). " +
 			"`guide capture` saves an image of what their dashboard shows right now, with cursor, focus and board context (needs dashboard.capture); `--form` adds the open form's values as text (needs dashboard.forms.capture). " +
+			"`guide fill` proposes values in their open spawn or Config form without submitting it (needs dashboard.forms.fill). " +
 			"`guide mark` draws on their view to get their attention, `guide marks` lists marks and how they ended, and `guide unmark` takes one down (needs dashboard.mark). " +
 			"`guide show` moves the operator's dashboard to a view and/or highlights a control there with a short note " +
 			"(needs dashboard.guide). A cue never presses anything or changes state: the operator acts.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds:     []*cobra.Command{guideViewCmd(), guideCaptureCmd(), guideCapturesCmd(), guideShowCmd(), guideMarkCmd(), guideMarksCmd(), guideUnmarkCmd()},
+		SubCmds:     []*cobra.Command{guideViewCmd(), guideCaptureCmd(), guideCapturesCmd(), guideFillCmd(), guideShowCmd(), guideMarkCmd(), guideMarksCmd(), guideUnmarkCmd()},
 	}.ToCobra()
 }
 

@@ -701,6 +701,49 @@ needs no new filesystem access, whatever the sandbox. It holds what ships with
 tclaude and nothing of your setup: no config, startup prompts, messages or
 credentials. Screenshots and the preliminary v2 designs are left out.
 
+### Filling in forms
+
+`tclaude agent guide fill --form spawn --set agent-spawn-name=reviewer` puts
+values into your open form, so an agent can propose them while you stay in charge.
+It needs `dashboard.forms.fill`, which isn't given to anyone by default, the
+Steward included. Any agent you assign it to can fill, and everything it shows
+names that agent. The spawn form and Config take fills. Field ids come from
+[`guide capture --form`](#form-values-as-text).
+
+- A fill never submits and presses nothing. You read what landed, then act.
+- Values go through each field's own handling, so a harness change updates its
+  dependent fields and the normal validation runs. A field reports `filled`,
+  `filled_changed` if the form altered the value, or why it was refused.
+- Filled fields stay highlighted, and a bar next to submit lists them. **Undo all**
+  puts back what was there. Config also flags the changed sections on its rail,
+  because a fill can reach a section that isn't open.
+- Undo puts values back, but the form still treats those fields as set by hand. A
+  group or profile picked afterwards won't replace them, so check them first. Config
+  also keeps showing unsaved changes, though saving then finds nothing to save.
+- A field you edited stays yours: a fill won't touch it, before or after, and
+  **Undo all** keeps your edit. That includes anything your own change moved, such
+  as the fields a profile pick set, and a directory you browsed to. A queued spawn's
+  stored values count as yours. If undoing a harness removes a value you picked for
+  it, the field stays listed in the bar. A fill of the harness is refused while the
+  form holds context trims, because changing harness would clear them.
+- Some fields reset others: a harness resets its sandbox, approval and model
+  fields, for example. A fill of one is refused while you own what it would reset.
+  Otherwise everything it moved is listed, warned about and undone with it.
+- A password or a field marked secret can't be filled, so environment values
+  can't either. The spawn form's disabled and hidden fields are refused too. So is
+  the spawn form's profile, because clearing one resets most of the form, and
+  Config's list fields, such as permissions. A spawn that launches itself from the
+  queue takes no fill, and Config takes one only while its tab is open and loaded.
+- A change that can widen access shows an orange highlight and a warning, such as
+  `Stewie widened: sandbox, approval`, even when a fill only moved that field by
+  cascade. On the spawn form that covers harness, group, directories, sandbox,
+  approval, tools, owner, trust and similar fields. In Config it covers everything
+  except the Appearance section. Whether a value is actually wider
+  depends on the harness, so any change warns.
+
+Fills apply in order, one at a time, so set a harness before its model. A hidden
+tab is left alone, as with a capture.
+
 ### Saved captures
 
 `guide capture --save` keeps a capture on this machine
