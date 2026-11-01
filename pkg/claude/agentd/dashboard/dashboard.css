@@ -1026,6 +1026,17 @@ button.tool:hover { border-color: #58a6ff; }
 .mail-decision button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 .mail-decision button:hover:not(:disabled) { border-color: #58a6ff; }
 .mail-decision button:disabled { opacity: .5; cursor: default; }
+/* The button an agent put on a message (notify-human --action). */
+.message-action { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.message-action button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #d4d4d4;
+  cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
+}
+.message-action button.primary, .message-action button.companion-primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.message-action button:hover:not(:disabled) { border-color: #58a6ff; }
+.message-action button:disabled { opacity: .5; cursor: default; }
+.message-action-detail { color: #d4d4d4; font-size: 12px; overflow-wrap: anywhere; }
+.message-action-note { flex-basis: 100%; color: #8b949e; font-size: 12px; }
 /* JOH-364: base chrome for the reading-pane action bar (reply / focus /
    mark read|unread / delete). These are plain <button>s with no .tool class, so
    nothing reached them in plain mode and they rendered white UA chrome. The

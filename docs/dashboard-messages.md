@@ -31,6 +31,9 @@ Human notifications.
 
 A notification with [options](companion.md#decisions) shows a button per option.
 
+A notification can also carry one [action link](companion.md#action-links): a button
+that says what it does and, for a terminal, shows the directory.
+
 ## Writing to agents
 
 - **A group:** `✉ message` in the group's ⚙ menu, to the whole group or a ticked

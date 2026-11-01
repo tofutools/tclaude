@@ -140,6 +140,32 @@ tab of the same name in the window. The same buttons are in the
 
 ![A decision at the top of the Steward's tab, with one button per option, a star on the recommended option, and a field for a note](assets/companion-decision.png)
 
+## Action links
+
+An agent can put one button on a message (`tclaude agent notify-human --action`),
+in Messages and, while the message is unread, in its chat. **×** dismisses it from
+chat by marking the message read.
+
+| Action | What the button does |
+|---|---|
+| `terminal` | Opens a shell in the agent's own directory |
+| `board:<id>` | Opens that board |
+| `pr:<url>` | Opens a PR the agent presented with `present-pr` |
+| `tab:<name>` | Goes to a dashboard tab: `groups`, `terminals`, `automations`, `processes`, `plugins`, `access`, `messages`, `usage`, `diagnostics` or `config` |
+
+The list is fixed, so an agent can't offer a free URL or command. It names an action
+and the daemon works out the target and writes the button's text. A terminal link
+can only be the agent's own tracked directory, and nothing happens until you click.
+The click is in the audit log and marks the message read.
+
+A terminal runs as you, outside the agent's sandbox, and the agent can write to its
+directory, so check the path on the button first. The agent never gets the shell's
+input or output. If the agent has retired, the board was deleted or the PR is no
+longer presented, the button is off and says why.
+
+Action links need [Collab](#turning-collab-on) and only work on the node that holds
+the message: a peer looking at this node's messages sees no button.
+
 ## Voice and dictation
 
 **Voice.** **🔈** turns voice on for that agent's tab (**🔊**). When its turn ends,

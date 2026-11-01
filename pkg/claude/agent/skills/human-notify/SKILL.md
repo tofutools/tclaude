@@ -149,6 +149,30 @@ Use decisions for taste and direction calls, where the human's judgement is
 the point. Do not use them for things you can decide yourself, and do not
 ask the same question twice.
 
+### Putting an action on a message
+
+`--action` puts one button on the message, chosen from a fixed list:
+
+```bash
+tclaude agent notify-human "The build is broken here; have a look." --action terminal
+tclaude agent notify-human "The layout is on the board." --action board:<id>
+tclaude agent notify-human "Ready for review." --action pr:<url>
+tclaude agent notify-human "Usage is close to the limit." --action tab:usage
+```
+
+- `terminal` opens a shell in your own tracked directory. It takes no path.
+- `board:<id>` opens a board.
+- `pr:<url>` opens a PR you presented with `tclaude agent present-pr` first.
+- `tab:<name>` goes to `groups`, `terminals`, `automations`, `processes`,
+  `plugins`, `access`, `messages`, `usage`, `diagnostics` or `config`.
+
+The daemon resolves the target and writes the button's text, including the
+directory and, for a terminal, that it runs outside your sandbox. Nothing
+happens until the human clicks. You get no output back, and no word that they
+clicked. A message takes one action, and a message is a decision or an action,
+not both. Actions need Collab, like decisions: on `collab_disabled`, send the
+message without `--action`.
+
 ## Permission
 
 Sending is gated on the **`human.notify`** permission slug. It is

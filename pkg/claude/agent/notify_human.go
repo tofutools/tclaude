@@ -36,6 +36,8 @@ type notifyHumanParams struct {
 
 	Option    []string `long:"option" short:"o" optional:"true" help:"Put a decision to the human: one choice per flag, 2 to 6 of them. They answer with a button and the pick comes back to you as mail."`
 	Recommend int      `long:"recommend" optional:"true" help:"The --option you recommend, counting from 1."`
+
+	Action string `long:"action" optional:"true" help:"Put a button on the message from a fixed list: terminal (your own directory), board:<id>, pr:<url> (a PR you presented), tab:<name>. Nothing happens until the human clicks it."`
 }
 
 func notifyHumanCmd() *cobra.Command {
@@ -46,7 +48,8 @@ func notifyHumanCmd() *cobra.Command {
 			"Sending is gated: it passes for the human, for holders of the `human.notify` permission (which the human grants to a trusted coordinating agent such as the PO), and for any group owner (owning a group is a trusted coordinating role, so an owner may send slug or not). Agents with none of these are refused.\n\n" +
 			"Give the body inline or with --file (--file - reads stdin). Add --attach to publish a file or directory through agentd; the human gets a download button on the message. Repeat --attach for several files: up to 20 arrive as separate downloads (so an image stays viewable), while a directory or a larger set is packaged as one zip. --zip / --separate force either shape.\n\n" +
 			"The body may be omitted when the message is the attachment: --subject plus at least one --attach is a complete notification on its own. Either alone is not — a subject with nothing published, or a file with nothing naming it, is refused.\n\n" +
-			"Repeat --option to put a decision to the human instead of only informing them: the message shows the choices as buttons (in the companion window and in Messages), with --recommend marking the one you suggest. Their pick comes back to your inbox as a message starting \"Decision: <option>\", even if you are offline by then. Use it for taste and direction calls — which design, which trade-off — and attach a rendered mock with --attach when the choice is visual. Do not wait idle for the answer when there is other work.",
+			"Repeat --option to put a decision to the human instead of only informing them: the message shows the choices as buttons (in the companion window and in Messages), with --recommend marking the one you suggest. Their pick comes back to your inbox as a message starting \"Decision: <option>\", even if you are offline by then. Use it for taste and direction calls — which design, which trade-off — and attach a rendered mock with --attach when the choice is visual. Do not wait idle for the answer when there is other work.\n\n" +
+			"Add --action to put one button on the message, chosen from a fixed list, never a free URL or command: terminal opens a shell in your own tracked directory, board:<id> opens a board, pr:<url> opens a PR you presented with present-pr, and tab:<name> goes to a dashboard tab (groups, terminals, automations, processes, plugins, access, messages, usage, diagnostics, config). The daemon resolves the target and writes the button's text, including the directory and that the shell runs outside your sandbox. Nothing happens until the human clicks, and you get no output back. A message is a decision or an action, not both.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *notifyHumanParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -89,6 +92,9 @@ func runNotifyHuman(p *notifyHumanParams, stdin io.Reader, stdout, stderr io.Wri
 	payload := map[string]any{"body": body}
 	if s := strings.TrimSpace(p.Subject); s != "" {
 		payload["subject"] = s
+	}
+	if action := strings.TrimSpace(p.Action); action != "" {
+		payload["action"] = action
 	}
 	if len(p.Option) > 0 {
 		payload["options"] = p.Option

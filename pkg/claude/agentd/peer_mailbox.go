@@ -5,6 +5,10 @@ import (
 	"net/http"
 )
 
+// peerMailboxReadKey marks a mailbox read made for a peer. An action link names
+// a directory and opens things on this machine, so a peer's copy leaves it out.
+type peerMailboxReadKey struct{}
+
 // Message history is instance-wide and opt-in: a group mail grant permits
 // delivery, not inspection of private mail across the node. Mutations are
 // separately gated and do not expand human-inbox approval authority.
@@ -29,7 +33,7 @@ func servePeerMailbox(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 	// Reuse the production dashboard handler after independent peer authority
 	// validation, as other peer read projections do. Only these exact routes
 	// can reach it; delete/wipe and human decisions remain classified local-only.
-	r = r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
+	r = r.Clone(context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerMailboxReadKey{}, true))
 	switch r.URL.Path {
 	case "/api/mailboxes":
 		handleDashboardMailboxes(w, r)

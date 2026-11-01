@@ -6,13 +6,14 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { approvalsFor, companionAgents, companionStatus, companionStatusLabel, decisionsFor, defaultPlacement } from './companion-model.js';
+import { actionsFor, approvalsFor, companionAgents, companionStatus, companionStatusLabel, decisionsFor, defaultPlacement } from './companion-model.js';
 import { ApprovalCard } from './companion-approval.js';
 import { parsePlacement, viewportOf } from './overlay-window-model.js';
 import { closeOverlayWindow, minimizeOverlayWindow, placedOverlayWindow } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, readPref, useOverlayWindow, writePref } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
+import { ActionCard } from './message-action.js';
 import { ShellHere } from './terminal-here.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 
@@ -55,6 +56,7 @@ export function ChatWindow({
   const label = agent ? companionStatusLabel(companionStatus(agent)) : 'not on this node any more';
   const approvals = approvalsFor(snapshot.value, agent);
   const decisions = decisionsFor(snapshot.value, agent);
+  const actionMessages = actionsFor(snapshot.value, agent);
   const pane = { key: instance.id, id: instance.id, label: name, seed: { agent: agentId, harness: agent?.harness || '' } };
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const title = html`<span class="chat-window-title" title=${`${name}: ${label}`}><${StatusDot} status=${agent ? companionStatus(agent) : 'offline'} /> ${name}</span>
@@ -66,6 +68,7 @@ export function ChatWindow({
     <div class="companion-body" id=${instance.id}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
+      ${actionMessages.map((message) => html`<${ActionCard} key=${message.id} message=${message} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${!agent?.online && html`<div class="companion-empty"><p><b>${name}</b> is ${agent ? 'offline' : 'gone'}.</p>
         ${agent && html`<button type="button" class="companion-primary" onClick=${() => onBackToTab(instance)}>Back to a tab, to resume it</button>`}</div>`}
       ${agent?.online && open && html`

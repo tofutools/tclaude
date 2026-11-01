@@ -5,6 +5,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -110,4 +111,11 @@ var ClaimPrivateOpenCodeStateForTest = claimPrivateOpenCodeState
 func MarkDeferredSpawnRunningForTest(label string) func() {
 	deferredSpawnsRunning.Store(label, struct{}{})
 	return func() { deferredSpawnsRunning.Delete(label) }
+}
+
+// ServePeerMailboxForTest serves a mailbox read as a peer gets it.
+func ServePeerMailboxForTest(r *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	servePeerMailbox(rec, r, nil, peerViewRule{})
+	return rec
 }
