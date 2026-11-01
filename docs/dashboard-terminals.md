@@ -41,6 +41,15 @@ pending permission request, a **🔑** opens the
   separately from the one in Groups. Green is API spend, and muted italic `≈$…` is
   a subscription what-if estimate. A tab's tooltip always has its cost.
 
+**Zoom** a terminal by pinching or Ctrl+scrolling over it, or with **−**, **+** and
+**⟲** (reset) in the floating tools in its upper right corner, which show the current
+size. The page stays as it is. Each terminal keeps its size, separately in a Terminals
+tab and in the companion, across reloads. A zoom changes the rows and columns once the
+gesture ends, so the harness redraws to the new size, and a session shared with other
+viewers fits the smallest of them. A remote terminal normally fits its font to the
+peer's grid; a zoom replaces that fit, scrolling if the grid no longer fits, and reset
+returns to it.
+
 A browser attach takes the session over from any other web view. Opening an agent
 in the companion closes its pane here, and moving it here parks the companion's
 tab until you bring it back.

@@ -648,6 +648,170 @@ test('a remote terminal shrinks its font to fit the peer grid, down to a floor, 
   assert.deepEqual(socket.sent.filter((m) => typeof m === 'string' && m.includes('resize')), [], 'nothing resizes the peer');
 });
 
+// Runs delayed work by hand, so a test can see what a gesture does before it settles.
+function manualTimers() {
+  const timers = new Map();
+  let id = 0;
+  return {
+    setTimeoutImpl: (run) => { timers.set(++id, run); return id; },
+    clearTimeoutImpl: (timer) => timers.delete(timer),
+    flush() { for (const [timer, run] of [...timers]) { timers.delete(timer); run(); } },
+  };
+}
+
+test('Ctrl+wheel zooms the terminal at once and resizes the pty once it settles', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const timers = manualTimers();
+  const fonts = [];
+  const widget = mountTerminalWidget({
+    host, wsPath: '/api/term-ws/agt_one', authenticate: false,
+    initialResizeDelayMs: 0, attachResizeMode: 'initial-only',
+    TerminalCtor: fakes.FakeTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory,
+    requestAnimationFrameImpl: () => 1, cancelAnimationFrameImpl: () => {},
+    ...timers, onFontChange: (font) => fonts.push(font),
+  });
+  await widget.connect();
+  fakes.sockets[0].open();
+  timers.flush();
+  const term = fakes.terminal();
+  const fit = term.addons[0];
+  fit.onFit = () => { term.cols = 300 - term.options.fontSize * 10; term.rows = 40; term.resizeHandler({ cols: term.cols, rows: term.rows }); };
+  const resizes = () => fakes.sockets[0].sent.filter((m) => typeof m === 'string' && m.includes('resize')).length;
+  const wheel = (init) => harness.fireEvent(host, 'wheel', { deltaY: 0, deltaMode: 0, ...init });
+  assert.deepEqual(fonts.at(-1), { size: 13, zoomed: false }, 'the controls know the size from the start');
+
+  const plain = wheel({ deltaY: -120 });
+  assert.equal(plain.defaultPrevented, false, 'a plain wheel stays the application\'s');
+  assert.equal(term.options.fontSize, 13);
+
+  const fits = fit.fitCount;
+  const sent = resizes();
+  for (let i = 0; i < 4; i += 1) assert.ok(wheel({ deltaY: -120, ctrlKey: true }).defaultPrevented, 'the browser leaves the page alone');
+  assert.equal(term.options.fontSize, 17, 'a mouse notch is one step');
+  assert.equal(fit.fitCount, fits, 'the grid waits for the gesture to settle');
+  timers.flush();
+  assert.equal(fit.fitCount, fits + 1);
+  assert.equal(resizes(), sent + 1, 'a whole gesture is one pty resize');
+  assert.deepEqual(fonts.at(-1), { size: 17, zoomed: true });
+
+  for (let i = 0; i < 10; i += 1) wheel({ deltaY: -1.5, ctrlKey: true });
+  assert.equal(term.options.fontSize, 17.5, 'a pinch moves by small amounts');
+
+  widget.zoomBy(-100);
+  assert.equal(term.options.fontSize, 8, 'zoom stops at the floor');
+  widget.resetZoom();
+  assert.equal(term.options.fontSize, 13);
+  assert.deepEqual(fonts.at(-1), { size: 13, zoomed: false });
+
+  widget.zoomBy(1);
+  widget.dispose();
+  wheel({ deltaY: -120, ctrlKey: true });
+  assert.equal(term.options.fontSize, 14, 'a disposed terminal hears no more');
+});
+
+test('a remembered size opens the terminal at it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const fonts = [];
+  const widget = mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')), wsPath: '/api/term-ws/agt_one', authenticate: false,
+    TerminalCtor: fakes.FakeTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory,
+    initialFontSize: 999, onFontChange: (font) => fonts.push(font),
+  });
+  assert.equal(fakes.terminal().options.fontSize, 32, 'a stored size is still bounded');
+  assert.deepEqual(fonts, [{ size: 32, zoomed: true }]);
+  widget.dispose();
+});
+
+test('a remote terminal\'s zoom wins over its fit, and reset hands it back', async (t) => {
+  const harness = await createPreactHarness(t);
+  const core = await harness.importDashboardModule('js/terminals-core.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  Object.defineProperty(host, 'clientWidth', { get: () => 1400 });
+  Object.defineProperty(host, 'clientHeight', { get: () => 900 });
+  const fakes = widgetFakes(harness.document);
+  class SizedTerminal extends fakes.FakeTerminal {
+    open(h) {
+      super.open(h);
+      const screen = harness.document.createElement('div');
+      screen.className = 'xterm-screen';
+      screen.getBoundingClientRect = () => ({ width: this.cols * 0.6 * this.options.fontSize, height: this.rows * 1.2 * this.options.fontSize });
+      h.append(screen);
+    }
+    resize(cols, rows) { this.cols = cols; this.rows = rows; this.resizeHandler?.({ cols, rows }); }
+  }
+  const timers = manualTimers();
+  const fonts = [];
+  const widget = core.mountTerminalWidget({
+    host, wsPath: core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'watch' }), authenticate: false,
+    TerminalCtor: SizedTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'https:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, requestAnimationFrameImpl: (f) => { f(); return 1; },
+    ...timers, onFontChange: (font) => fonts.push(font),
+  });
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  socket.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 200, rows: 50 }) });
+  const term = fakes.terminal();
+  assert.equal(term.options.fontSize, 11.5);
+  assert.deepEqual(fonts.at(-1), { size: 11.5, zoomed: false }, 'the controls show what the fit chose');
+
+  widget.zoomBy(3);
+  timers.flush();
+  assert.equal(term.options.fontSize, 14.5, 'zoom steps from what the fit chose, past what fits');
+  socket.onmessage({ data: JSON.stringify({ type: 'size', cols: 210, rows: 50 }) });
+  widget.setActive(true);
+  assert.equal(term.options.fontSize, 14.5, 'a later fit leaves it alone');
+  assert.deepEqual(fonts.at(-1), { size: 14.5, zoomed: true });
+
+  widget.resetZoom();
+  timers.flush();
+  assert.equal(term.options.fontSize, 11, 'reset is the fit again');
+  assert.deepEqual(fonts.at(-1), { size: 11, zoomed: false });
+  assert.deepEqual(socket.sent.filter((m) => typeof m === 'string' && m.includes('resize')), [], 'nothing resizes the peer');
+  widget.dispose();
+});
+
+test('a shared remote terminal keeps its zoom and reports the panel at that size', async (t) => {
+  const harness = await createPreactHarness(t);
+  const core = await harness.importDashboardModule('js/terminals-core.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const fakes = widgetFakes(harness.document);
+  const timers = manualTimers();
+  class SizedFit extends fakes.FakeFitAddon {
+    proposeDimensions() { return { cols: Math.floor(1300 / fakes.terminal().options.fontSize), rows: 40 }; }
+  }
+  const widget = core.mountTerminalWidget({
+    host, wsPath: core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'interactive' }), authenticate: false,
+    TerminalCtor: fakes.FakeTerminal, FitAddonCtor: SizedFit, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'https:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, requestAnimationFrameImpl: (f) => { f(); return 1; },
+    ...timers, initialFontSize: 20,
+  });
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  socket.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'interactive', cols: 80, rows: 24, shared: true }) });
+  assert.equal(fakes.terminal().options.fontSize, 20, 'the hello does not undo a remembered size');
+  const desired = () => socket.sent.filter((m) => typeof m === 'string' && m.includes('resize')).map((m) => JSON.parse(m).cols);
+  assert.deepEqual(desired(), [65]);
+
+  widget.zoomBy(6);
+  assert.deepEqual(desired(), [65], 'the peer hears nothing until the gesture settles');
+  timers.flush();
+  assert.deepEqual(desired(), [65, 50]);
+  widget.dispose();
+});
+
 test('a shared remote terminal reports its panel, renders the shared size, and takes over only when allowed', async (t) => {
   const harness = await createPreactHarness(t);
   const core = await harness.importDashboardModule('js/terminals-core.js');

@@ -53,7 +53,7 @@ export function terminalDraftText(text) {
 }
 
 export function PaneDictation({
-  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast,
+  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null,
 }) {
   const [draft, setDraftText] = useState('');
   const [sending, setSending] = useState(false);
@@ -137,8 +137,13 @@ export function PaneDictation({
     return true;
   }
 
-  // A drawing in progress outlives a blip, and keeps its Cancel.
-  if (!shown) return annotation.overlay || null;
+  // A drawing in progress outlives a blip, and keeps its Cancel. The terminal's
+  // own tools stay for a pane that takes no drafts, such as a watch-only view.
+  if (!shown) {
+    return html`${children && html`<div class="companion-floating-anchor">
+      <div class="companion-floating" role="group" aria-label="Terminal tools">${children}</div>
+    </div>`}${annotation.overlay || null}`;
+  }
   const showField = draft || dictation.listening || fieldFocused;
   return html`
     <div class="companion-floating-anchor">
@@ -148,7 +153,7 @@ export function PaneDictation({
           : 'Dictate a draft. Nothing reaches the terminal until you press Enter here or Paste, and it lands at the prompt unrun. Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
         withContext=${talks ? withContext : null} onContext=${setWithContext}
         annotateLabel=${`Mark up this page for ${name}`}
-        onAnnotate=${talks ? () => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch() }) : null} />
+        onAnnotate=${talks ? () => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch() }) : null}>${children}<//>
       ${notice && html`<button type="button" class="companion-pane-notice" role="alert" title="Dismiss" onClick=${() => setNotice('')}>${notice}</button>`}
     </div>
     ${showField && html`<${DraftField} dictation=${dictation} draft=${draft} sending=${sending} fieldRef=${fieldRef}

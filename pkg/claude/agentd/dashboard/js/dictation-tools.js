@@ -384,7 +384,7 @@ export function useAnnotation({ win, notify, viewNow }) {
 // before the terminal in the DOM, because Tab typed into a terminal stays
 // there. view and ✎ are for agents, so a plain shell leaves them out.
 export function FloatingTools({
-  dictation, micLabel, micTitle, withContext = null, onContext = () => {}, annotateLabel = '', onAnnotate = null,
+  dictation, micLabel, micTitle, withContext = null, onContext = () => {}, annotateLabel = '', onAnnotate = null, children = null,
 }) {
   const { listening, block, toggle, continuing } = dictation;
   return html`<div class=${`companion-floating${listening ? ' listening' : ''}`} role="group" aria-label="Message tools">
@@ -397,6 +397,7 @@ export function FloatingTools({
       ${block && html`<span class="companion-mic-note" title=${block.why}>${block.note}</span>`}
       ${onAnnotate && html`<button type="button" class="companion-tool companion-annotate" aria-label=${annotateLabel}
         title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${onAnnotate}>✎</button>`}
+      ${children}
   </div>`;
 }
 
