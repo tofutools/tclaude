@@ -53,10 +53,12 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
 .companion-chips[class*="companion-spot-top-"] { align-items: flex-start; flex-wrap: wrap; }
 .companion-chips:is(.companion-spot-top-left, .companion-spot-bottom-left, [class*="companion-spot-left-"]) { justify-content: flex-start; }
 .companion-chips:is(.companion-spot-top-center, .companion-spot-bottom-center) { width: max-content; justify-content: center; }
-/* A row on a quarter point has half the room, so it wraps before it runs off. */
+/* A row on a quarter point has half the room, so it wraps before it runs off,
+   and its outline stays that wide. */
 .companion-chips:is(.companion-spot-top-q1, .companion-spot-top-q3, .companion-spot-bottom-q1, .companion-spot-bottom-q3) {
   width: max-content; justify-content: center; max-width: calc(var(--chip-room-w) / 2);
 }
+.companion-chip-slot:is(.companion-spot-top-q1, .companion-spot-top-q3, .companion-spot-bottom-q1, .companion-spot-bottom-q3) { max-width: calc(var(--chip-room-w) / 2); }
 /* A drag lifts the row and its outlines over everything it crosses. */
 .companion-chips.dragging { z-index: 961; }
 .companion-chips.dragging .companion-chip { cursor: grabbing; scale: 1.04; box-shadow: 0 12px 28px rgba(0, 0, 0, .55); }

@@ -82,6 +82,22 @@ test('Esc during a drag cancels', async (t) => {
   assert.equal(prefs.store.has(CHIP_SPOT), false, 'nothing saved');
 });
 
+test('a row wider than half the room still reaches a quarter point', async (t) => {
+  const { view, row, chip, pointer, layOutSlots, prefs } = await setup(t);
+  row().getBoundingClientRect = () => ({ left: 300, top: 560, width: 700, height: 40, right: 1000, bottom: 600 });
+  await pointer('pointerdown', 950, 580, chip());
+  await pointer('pointermove', 940, 580);
+  layOutSlots();
+  for (const slot of view.container.querySelectorAll('[data-chip-spot]')) {
+    if (slot.dataset.chipSpot === 'bottom-q1') slot.getBoundingClientRect = () => ({ left: 76, top: 560, width: 348, height: 40, right: 424, bottom: 600 });
+    if (slot.dataset.chipSpot === 'bottom-left') slot.getBoundingClientRect = () => ({ left: 16, top: 560, width: 700, height: 40, right: 716, bottom: 600 });
+  }
+  // The row is held at x 0 here, its centre at 350, nearer bottom-left's 366.
+  await pointer('pointermove', 500, 580);
+  await pointer('pointerup', 500, 580);
+  assert.equal(prefs.getItem(CHIP_SPOT), 'bottom-q1');
+});
+
 test('the spot survives a reload', async (t) => {
   const { row } = await setup(t, memoryPrefs({ [CHIP_SPOT]: 'bottom-center' }));
   assert.match(row().className, /companion-spot-bottom-center/);
