@@ -111,7 +111,7 @@ func TestDashboardTerminals_SoloRequiresExactValue(t *testing.T) {
 // /terminals?solo=1 serves the standalone Preact terminal popout page — no-store,
 // and referencing the assets it needs (the page JS, its stylesheet, and the
 // vendored xterm scripts) so the browser can render a popped-out terminal. The
-// ?solo=1 query is what the "⧉ tab" pop-out opens (js/terminals.js).
+// ?solo=1 query is what "Open in separate window" opens (js/terminals.js).
 func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 	cookie, _ := withDashboardAuthForTest(t)
 

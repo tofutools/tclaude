@@ -40,6 +40,12 @@ function revealAgentPlace(selector) {
   return !controller?.hasAgentPane?.([selector]) && revealInCompanion(selector);
 }
 
+// revealHeldSeed shows a terminal somewhere other than a tab here, and reports
+// whether it was: a floating window, or a place that holds the agent.
+export function revealHeldSeed(seed) {
+  return floatingTerminals(seed.key || seed.ws) || (agentSessionSeed(seed) && revealAgentPlace(seed.agent));
+}
+
 export function openTerminalPane(seedOrPromise, { reveal = true, activate = true } = {}) {
   // activate rides along only when a caller opts out, so every ordinary open
   // keeps the plain { reveal } contract.
@@ -49,8 +55,7 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
     const key = seed.key || seed.ws;
-    if (floatingTerminals(key)) return { key, floating: true };
-    if (agentSessionSeed(seed) && revealAgentPlace(seed.agent)) return { key, floating: true };
+    if (revealHeldSeed(seed)) return { key, floating: true };
     const current = controller;
     if (!current) return null;
     // A board pane has no xterm to load.
@@ -80,20 +85,24 @@ export function openWebWindowPane(agent, label, options) {
   }, paneOptions);
 }
 
-// detachWebWindow opens an agent's terminal in a browser window of its own,
-// the page a detached Terminals tab lands on. It returns the window, or null
-// when pop-ups are blocked.
-export function detachWebWindow(agent, label, { harness = '', size = null, at = null } = {}) {
+// detachSeedWindow opens a seed in a browser window of its own, the page a
+// detached Terminals tab lands on. It returns the window, or null when pop-ups
+// are blocked.
+export function detachSeedWindow(seed, { size = null, at = null } = {}) {
   const features = size ? detachWindowFeatures({ size, at, screen: globalThis.screen }) : '';
   let target = null;
   try { target = globalThis.open('about:blank', '_blank', features || undefined); } catch { target = null; }
   if (!target) return null;
-  const seed = {
-    ws: `/api/open-window-ws/${encodeURIComponent(agent)}`, label, key: `window:${agent}`, hideConv: agent, agent, harness,
-    initialRetry: true, wizard: isWizardActive(), terminalAttach: terminalAttachConfig(),
-  };
-  try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); } catch { return null; }
+  const solo = { ...seed, initialRetry: true, wizard: isWizardActive(), terminalAttach: terminalAttachConfig() };
+  try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(solo)}`); } catch { return null; }
   return target;
+}
+
+// detachWebWindow opens an agent's terminal in a browser window of its own.
+export function detachWebWindow(agent, label, { harness = '', size = null, at = null } = {}) {
+  return detachSeedWindow({
+    ws: `/api/open-window-ws/${encodeURIComponent(agent)}`, label, key: `window:${agent}`, hideConv: agent, agent, harness, floats: true,
+  }, { size, at });
 }
 
 export function openWebTermPane(agent, label, whichOrPromise, { group = '', ...paneOptions } = {}) {

@@ -50,8 +50,8 @@ export function agentCogSections({
   const running = agent.online;
   const thisAgent = [
     onCollab && collabItem(onCollab),
-    running && onFloat && { key: 'float', glyph: '▣', label: 'Float in an overlay window', className: 'companion-float', ariaLabel: `Float ${agent.name} in an overlay window of its own`, run: onFloat },
-    running && onDetach && !parked && { key: 'detach', glyph: '⧉', label: 'Detach into its own window', className: 'companion-detach', ariaLabel: `Detach ${agent.name} into its own window`, run: onDetach },
+    running && onFloat && { key: 'float', glyph: '▣', label: 'Open in overlay', className: 'companion-float', ariaLabel: `Open ${agent.name} in an overlay window`, run: onFloat },
+    running && onDetach && !parked && { key: 'detach', glyph: '⧉', label: 'Open in separate window', className: 'companion-detach', ariaLabel: `Open ${agent.name} in a separate window`, run: onDetach },
     running && onMorph && { key: 'morph', glyph: '⇄', label: 'Morph', hint: 'harness, model, profile', className: 'companion-morph', ariaLabel: `Morph ${agent.name}`, run: onMorph },
     running && agent.harness !== 'shell' && { key: 'clear', glyph: '⟲', label: 'Clear context', className: 'companion-clear-open', ariaLabel: `Clear ${agent.name}'s context`, run: onClearContext },
   ];

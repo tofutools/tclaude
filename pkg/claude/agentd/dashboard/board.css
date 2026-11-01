@@ -283,7 +283,8 @@ body.slop, body.vegas {
 .board-overlay-titlebar.overlay-look-windows { min-height: 34px; padding-block: 0; }
 .board-overlay-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .board-overlay-action {
-  flex: none; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--board-line);
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 3px 8px; border-radius: 5px; border: 1px solid var(--board-line);
   background: #21262d; color: var(--board-text); font: inherit; font-size: 12px; cursor: pointer;
 }
 .board-overlay-close {

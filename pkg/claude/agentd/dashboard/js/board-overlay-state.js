@@ -18,15 +18,18 @@ export const boardOverlays = computed(() => overlayWindows.value.filter((window)
 
 const windowOf = (board) => boardOverlays.peek().find((window) => window.board === board);
 
+// revealBoardWindow brings a floating board forward, and reports whether it was.
+export function revealBoardWindow(id) {
+  const floating = windowOf(id);
+  if (floating) openOverlayWindow(floating);
+  return !!floating;
+}
+
 // openBoardPane opens a collab board as a tab beside the terminals, or brings
 // its tab forward. A board floating in a window stays there and comes forward
 // instead.
 export function openBoardPane(id, label, options) {
-  const floating = windowOf(id);
-  if (floating) {
-    openOverlayWindow(floating);
-    return Promise.resolve(null);
-  }
+  if (revealBoardWindow(id)) return Promise.resolve(null);
   return openTerminalPane(boardPaneSeed(id, label), options);
 }
 
@@ -42,8 +45,8 @@ export async function openLinkedBoard(id, fetchImpl = (...args) => globalThis.fe
 }
 
 // openBoardOverlay floats a board in a window of its own.
-export function openBoardOverlay(id, label) {
-  openOverlayWindow({ id: boardWindowId(id), kind: BOARD_WINDOW_KIND, board: id, label: label || id });
+export function openBoardOverlay(id, label, at = null) {
+  openOverlayWindow({ id: boardWindowId(id), kind: BOARD_WINDOW_KIND, board: id, label: label || id, at });
 }
 
 // returnBoardToTab moves a floating board back to a tab and shows it.

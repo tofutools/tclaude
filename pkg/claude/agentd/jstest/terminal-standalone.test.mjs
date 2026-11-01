@@ -505,7 +505,7 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   });
   assertAbsent(host.querySelector('[role="tablist"]'));
   assertAbsent(host.querySelector('[title="Move this terminal to its own browser tab"]'));
-  assert.ok(host.querySelector('[title="Move this terminal back to its dashboard tab"]'));
+  assert.ok(host.querySelector('[title="Move this terminal back to a tab of the dashboard"]'));
   assertAbsent(host.querySelector('#mux-empty'));
   assert.equal(fake.widgets.length, 1);
   assert.equal(fake.widgets[0].child.parentElement.classList.contains('mux-pane-xterm-fit'), true);
@@ -621,7 +621,7 @@ test('dragging the solo header title off the header sends the terminal back to t
     await Promise.resolve();
   });
   assert.deepEqual(reattached, ['solo'],
-    'the drag runs the same reattach path as the ↩ dashboard button');
+    'the drag runs the same reattach path as the Back to a tab button');
 
   await harness.act(() => harness.fireEvent(title, 'dragstart', { dataTransfer: transfer }));
   await harness.act(async () => {

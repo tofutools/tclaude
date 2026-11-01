@@ -467,7 +467,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   // ungrouped case offers: start a group from this tab (no stacks exist yet, so
   // no join items and no leave item).
   assert.deepEqual([...pointerMenu.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent),
-    ['New group from this tab', 'Detach tab', 'Close tab', 'Close other tabs', 'Close all tabs']);
+    ['New group from this tab', 'Open in separate window', 'Close tab', 'Close other tabs', 'Close all tabs']);
   assert.equal(pointerMenu.querySelectorAll('[role="separator"]').length, 2);
   assert.equal(harness.document.activeElement.textContent, 'New group from this tab',
     'opening focuses the first action');
@@ -503,7 +503,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   await harness.act(() => harness.fireEvent(tab('detached'), 'contextmenu', { clientX: 24, clientY: 32 }));
   const detachMenu = getByRole(host, 'menu', { name: 'Actions for detached' });
   await harness.act(async () => {
-    harness.fireEvent(getByRole(detachMenu, 'menuitem', { name: 'Detach tab' }), 'click');
+    harness.fireEvent(getByRole(detachMenu, 'menuitem', { name: 'Open in separate window' }), 'click');
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -523,7 +523,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   assert.equal(keyboardOpen.defaultPrevented, true, 'Shift+F10 is the keyboard context-menu gesture');
   const keyboardMenu = getByRole(host, 'menu', { name: 'Actions for three' });
   harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
-  assert.equal(harness.document.activeElement.textContent, 'Detach tab');
+  assert.equal(harness.document.activeElement.textContent, 'Open in separate window');
   harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
   assert.equal(harness.document.activeElement.textContent, 'Close tab');
   harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });

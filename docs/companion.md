@@ -64,7 +64,7 @@ page without blocking it, and comes back when you reload the tab.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free
   edges to resize it; each spot keeps the size you gave it, across reloads too.
-- **Give a chat its own window** by dragging its tab off the title bar, or with **⚙ > Float in an overlay window**.
+- **Give a chat its own window** by dragging its tab off the title bar, or with **⚙ > Open in overlay**.
   It is the same terminal, and it moves, snaps, splits, minimizes and closes on its
   own. **Back to a tab** returns it. Open windows come back after a reload. The
   agent keeps running when its window closes.
@@ -100,8 +100,8 @@ Under **⚙**, each shown when it applies:
 | Item | What it does |
 |---|---|
 | Open in the Collab tab | Move it to the Collab tab |
-| Float in an overlay window | Give it an overlay window of its own |
-| Detach into its own window | Detach it into its own browser window |
+| Open in overlay | Give it an overlay window of its own |
+| Open in separate window | Move it to a browser window of its own |
 | Morph | Move, Teleport, Clone, Recall home, or relaunch it on another harness, model or profile |
 | Clear context | Clear the agent's context, after asking (not for shell agents) |
 | Permissions | Edit permissions (Steward only) |

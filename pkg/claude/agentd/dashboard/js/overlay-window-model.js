@@ -6,6 +6,9 @@
 //
 // Everything here is DOM-free so it can be tested directly.
 
+// droppedAt is where a window dragged out lands: under the pointer, by its title.
+export const droppedAt = ({ clientX, clientY }) => ({ x: clientX - 120, y: clientY - 14 });
+
 export const OVERLAY_MIN_W = 360;
 export const OVERLAY_MIN_H = 220;
 // Distance from a viewport edge at which a drag offers to snap: a share of the
