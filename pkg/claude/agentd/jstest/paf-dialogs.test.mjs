@@ -213,14 +213,18 @@ test('a dropped .paf opens the import dialog unless a drop zone took it or a dia
   drop('notes.txt');
   drop('logs.zip', { prevented: true });
   assert.deepEqual(opened, [], 'other files and handled drops are left alone');
+  // The page always holds hidden dialogs; they must not stop a drop.
+  const hidden = document.body.appendChild(document.createElement('div'));
+  hidden.setAttribute('role', 'dialog');
+  hidden.setAttribute('aria-modal', 'true');
   drop('reviewer.paf');
   assert.deepEqual(opened, ['reviewer.paf']);
-  const dialog = document.body.appendChild(document.createElement('div'));
-  dialog.setAttribute('role', 'dialog');
-  dialog.setAttribute('aria-modal', 'true');
+  hidden.remove();
+  const overlay = document.body.appendChild(document.createElement('div'));
+  overlay.className = 'modal-overlay show';
   drop('other.paf');
   assert.deepEqual(opened, ['reviewer.paf'], 'an open dialog is not replaced');
-  dialog.remove();
+  overlay.remove();
 });
 
 test('a library manager is in the URL (?manage=): opening announces it, Back closes it', async (t) => {
