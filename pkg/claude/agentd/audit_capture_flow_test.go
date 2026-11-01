@@ -335,6 +335,39 @@ func TestAudit_SelfReincarnateWithoutSlugIsRecorded(t *testing.T) {
 // Scenario: an agent deletes a message from its inbox (DELETE
 // /v1/messages/{id}). We audit sends, so we audit deletions too — verb
 // "message.delete", actor the deleter.
+// Scenario: the operator grants, denies and revokes a permission. Each row must
+// say whose permission changed, and a change to the defaults must name no agent.
+func TestAudit_PermissionChangesNameTheirTarget(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	worker := f.AsHuman().Spawn("crew", "worker")
+	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 10*time.Second)
+
+	change := func(path, target string) {
+		t.Helper()
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, path,
+			map[string]any{"target": target, "slug": agentd.PermUsageRead})))
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	}
+	for verb, path := range map[string]string{
+		"permissions.grant":  "/v1/permissions/grant",
+		"permissions.deny":   "/v1/permissions/deny",
+		"permissions.revoke": "/v1/permissions/revoke",
+	} {
+		change(path, worker.ConvID)
+		row := auditRowByVerb(t, verb)
+		assert.Equal(t, worker.ConvID, row.TargetConv, verb)
+		assert.Equal(t, "worker", row.TargetLabel, verb)
+		assert.Equal(t, agentd.PermUsageRead, row.Detail, verb)
+	}
+
+	change("/v1/permissions/revoke", "default")
+	row := auditRowByVerb(t, "permissions.revoke")
+	assert.Empty(t, row.TargetConv)
+	assert.Equal(t, "default", row.TargetLabel)
+}
+
 func TestAudit_MessageDeleteRecorded(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")

@@ -1415,14 +1415,19 @@ func describeCron(c *auditCtx) {
 
 func describePerm(c *auditCtx) {
 	var b struct {
-		Slug string `json:"slug"`
-		Conv string `json:"conv"`
+		Slug   string `json:"slug"`
+		Target string `json:"target"`
 	}
 	_ = json.Unmarshal(c.body, &b)
 	if slug := strings.TrimSpace(b.Slug); slug != "" {
 		c.fields.Detail = slug
 	}
-	if sel := strings.TrimSpace(b.Conv); sel != "" {
+	switch sel := strings.TrimSpace(b.Target); sel {
+	case "":
+	case targetSentinelDefault:
+		// The default-permissions list is no agent, whatever one may be called.
+		c.fields.TargetLabel = sel
+	default:
 		c.fields.TargetConv, c.fields.TargetLabel = resolveAuditTarget(sel)
 	}
 }
