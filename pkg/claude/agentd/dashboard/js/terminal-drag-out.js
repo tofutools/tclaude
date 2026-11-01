@@ -1,7 +1,7 @@
 // Geometry for the "drag a terminal out of its home region" gesture.
 //
 // HTML5 drag and drop never tells a page that a drag ended over some other
-// browser window, so detach (dashboard tab strip -> own browser tab) and
+// browser window, so detach (dashboard tab strip -> overlay or own browser window) and
 // reattach (solo pop-out -> dashboard) have to be inferred from where the drag
 // ended: released outside the region that owns the terminal, far enough out
 // that a sloppy reorder cannot trigger it, and with no drop target inside that

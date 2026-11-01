@@ -18,15 +18,18 @@ export const boardOverlays = computed(() => overlayWindows.value.filter((window)
 
 const windowOf = (board) => boardOverlays.peek().find((window) => window.board === board);
 
+// revealBoardWindow brings a floating board forward, and reports whether it was.
+export function revealBoardWindow(id) {
+  const floating = windowOf(id);
+  if (floating) openOverlayWindow(floating);
+  return !!floating;
+}
+
 // openBoardPane opens a collab board as a tab beside the terminals, or brings
 // its tab forward. A board floating in a window stays there and comes forward
 // instead.
 export function openBoardPane(id, label, options) {
-  const floating = windowOf(id);
-  if (floating) {
-    openOverlayWindow(floating);
-    return Promise.resolve(null);
-  }
+  if (revealBoardWindow(id)) return Promise.resolve(null);
   return openTerminalPane(boardPaneSeed(id, label), options);
 }
 

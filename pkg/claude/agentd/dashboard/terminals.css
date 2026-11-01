@@ -1,6 +1,6 @@
 /* terminals.css — the standalone /terminals page shell (terminals.html +
    js/terminals.js). Since terminal panes moved into the dashboard's own
-   "Terminals" tab, this page exists only for the "⧉ tab" pop-out (?solo=1: one
+   "Terminals" tab, this page exists only for "Open in separate window" (?solo=1: one
    terminal in its own window).
 
    This page is NOT the dashboard SPA, but it reuses dashboard.css for the

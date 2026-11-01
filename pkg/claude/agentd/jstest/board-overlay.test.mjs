@@ -209,11 +209,15 @@ scenario('a tab\'s separate window asks for a real window and may come back to a
   };
   t.after(() => { harness.window.open = previous; });
   await harness.act(async () => { await overlayState.openBoardPane('plan', 'Release plan'); await wait(); await wait(); });
+  host.querySelector('.mux-panes').getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 500 });
+  const screen = harness.window.screen;
+  harness.window.screen = { availWidth: 1920, availHeight: 1080 };
+  t.after(() => { harness.window.screen = screen; });
   await click(button(host, 'Open in separate window'));
   await harness.act(() => wait(5));
   assert.equal(seedOf(urls[0]).board, 'plan');
   assert.equal(seedOf(urls[0]).floats, true);
-  assert.equal(features.length, 1);
+  assert.match(features[0], /popup=yes,width=800/, 'no features would be a plain browser tab');
 });
 
 scenario('a floating board moves to a separate window, and stays if pop-ups are blocked', async ({ t, harness, overlayHost, overlayState, windows, click, button }) => {
@@ -242,6 +246,24 @@ scenario('a separate window that can no longer float lands in a tab', { ...COLLA
   assert.ok(await handOff(harness, { board: 'plan', label: 'Release plan', overlay: true }));
   assert.deepEqual(windows.overlayWindows.value, []);
   assert.equal(state.panes.value.length, 1, 'a handoff never loses it');
+});
+
+scenario('Back to a tab leaves a board that has since floated where it is', async ({ harness, overlayState, windows, state }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  assert.ok(await handOff(harness, { board: 'plan', label: 'Release plan' }));
+  assert.equal(windows.overlayWindows.value.length, 1);
+  assert.deepEqual(state.panes.value, [], 'one place at a time');
+});
+
+scenario('Back to a tab leaves an agent that has since found a place there', AGENT_ON, async ({ harness, state }) => {
+  const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
+  const shown = [];
+  const stop = registerCompanionController({ open: () => true, float: () => true, reclaim: () => false, reveal: (agent) => { shown.push(agent); return true; } });
+  try {
+    assert.ok(await handOff(harness, { ws: `/api/open-window-ws/${AGENT}`, key: `window:${AGENT}`, agent: AGENT, hideConv: AGENT, label: 'builder' }));
+    assert.deepEqual(shown, [AGENT]);
+    assert.deepEqual(state.panes.value, []);
+  } finally { stop(); }
 });
 
 scenario('Back to a tab from a separate window goes to the companion tab waiting on it', AGENT_ON, async ({ harness, state }) => {

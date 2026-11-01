@@ -40,6 +40,12 @@ function revealAgentPlace(selector) {
   return !controller?.hasAgentPane?.([selector]) && revealInCompanion(selector);
 }
 
+// revealHeldSeed shows a terminal somewhere other than a tab here, and reports
+// whether it was: a floating window, or a place that holds the agent.
+export function revealHeldSeed(seed) {
+  return floatingTerminals(seed.key || seed.ws) || (agentSessionSeed(seed) && revealAgentPlace(seed.agent));
+}
+
 export function openTerminalPane(seedOrPromise, { reveal = true, activate = true } = {}) {
   // activate rides along only when a caller opts out, so every ordinary open
   // keeps the plain { reveal } contract.
@@ -49,8 +55,7 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
     const key = seed.key || seed.ws;
-    if (floatingTerminals(key)) return { key, floating: true };
-    if (agentSessionSeed(seed) && revealAgentPlace(seed.agent)) return { key, floating: true };
+    if (revealHeldSeed(seed)) return { key, floating: true };
     const current = controller;
     if (!current) return null;
     // A board pane has no xterm to load.

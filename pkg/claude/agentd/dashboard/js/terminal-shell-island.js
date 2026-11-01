@@ -5,7 +5,7 @@ import { effect } from '@preact/signals';
 import { mountTerminalWidget } from './terminals-core.js';
 import { arcanePaletteEnabled } from './terminal-theme.js';
 import { terminalComposeShortcutAction } from './terminal-compose-route.js';
-import { openWebWindowPane, registerTerminalShellController } from './terminals-tab.js';
+import { openWebWindowPane, registerTerminalShellController, revealHeldSeed } from './terminals-tab.js';
 import { bindTerminalNavRouting } from './terminal-nav-route.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
@@ -30,7 +30,7 @@ import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
-import { boardOverlays, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
+import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
 import { droppedAt } from './overlay-window-model.js';
@@ -1811,7 +1811,7 @@ function TerminalTabs({
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
-          Drag a tab off the strip to detach it into its own window, or use the tab's context menu to detach it into a browser tab.
+          Drag a tab off the strip to float it in an overlay window, or a separate window if it cannot float, or use the tab's context menu to open it in either.
           Tabs can be collected into named groups: drop one tab onto the middle of another to group them, use a tab's context menu to start
           or join a group, drop a tab on a group to join it, and press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow at the edge of a group
           to move the tab out of it.
@@ -1976,11 +1976,13 @@ function hasRemotePane(state) {
 }
 
 // receiveSeparateWindow takes a terminal back from its separate window: to the
-// overlay if it asked and can float, to the companion tab waiting on it, or else
-// to a tab here.
+// overlay if it asked and can float, to the companion tab waiting on it, to where
+// it already is, or else to a tab here.
 export async function receiveSeparateWindow(seed, { actions, snapshot = null, runtimeLoader = null }) {
   const overlay = !!seed.overlay && paneFloats({ seed }, snapshot?.value);
   if (!overlay && agentSessionSeed(seed) && reclaimInCompanion(seed.agent)) return true;
+  // It went somewhere else while this window was open, and it stays there.
+  if (!overlay && (seed.board ? revealBoardWindow(seed.board) : revealHeldSeed(seed))) return true;
   if (runtimeLoader && !seed.board) await runtimeLoader();
   return actions.receiveHandoffPane(seed, { overlay });
 }
