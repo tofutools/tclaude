@@ -2,6 +2,8 @@
 // (tcl-jkmitn). Only file drags are taken: agent and group drag-and-drop are
 // left alone, a drop zone that already handled the drop (an attachment
 // field) wins, and an open dialog is never replaced by a stray drop.
+import { hasShownOverlay } from './overlay-stack.js';
+
 export function bindPAFDrop({ open, refuse = () => false, doc = document }) {
   const isFileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
   const onDragOver = (event) => {
@@ -9,7 +11,8 @@ export function bindPAFDrop({ open, refuse = () => false, doc = document }) {
   };
   const onDrop = (event) => {
     if (!isFileDrag(event) || event.defaultPrevented) return;
-    if (doc.querySelector('[role="dialog"][aria-modal="true"]')) return;
+    // Not any role=dialog: the page always holds hidden ones.
+    if (hasShownOverlay()) return;
     const file = [...(event.dataTransfer?.files || [])].find((f) => /\.(paf|zip)$/i.test(f.name));
     if (!file) return;
     event.preventDefault();
