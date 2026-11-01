@@ -302,7 +302,7 @@ export function MiniGraphEditor({
       ${menu && html`<${StructureMenu} view=${draft} menu=${menu} onRun=${run} onClose=${() => setMenu(null)}
         onWrap=${() => { setMenu(null); void fullEditor(); }} />`}`;
   };
-  const projection = draftProjection(draft, { whoOf: (id, node) => whoLine(node, fallbackInfo), name });
+  const projection = draftProjection(draft, { whoOf: (id, node) => whoLine(node, fallbackInfo), noteOf: (id, node) => fallbackNote({ node }, fallbackInfo), name });
   return html`<section class="gm-card" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
     onKeyDown=${(event) => {
       if (event.key === 'Escape' && (menu || picker)) { event.stopPropagation(); setMenu(null); setPicker(null); }

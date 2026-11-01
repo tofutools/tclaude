@@ -130,4 +130,5 @@ test('a node carries its fallback unless it simply waits', () => {
   assert.equal(fallbackNote(step({ kind: 'agent', role: 'dev' }), { fallback: { action: 'spawn' }, defaultSpawnProfile: 'sonnet' }), '↯ spawn sonnet');
   assert.equal(fallbackNote(step({ kind: 'agent', role: 'dev', fallback: { action: 'fail' } }), { fallback: { action: 'spawn' } }), '↯ fail');
   assert.equal(fallbackNote(step({ kind: 'human' }), { fallback: { action: 'spawn' } }), '');
+  assert.equal(fallbackNote(step({ kind: 'agent', role: 'dev' }), { fallback: { action: 'spawn' } }), '', 'with no default profile a bare spawn waits');
 });

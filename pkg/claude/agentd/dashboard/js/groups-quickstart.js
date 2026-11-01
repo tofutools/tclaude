@@ -252,7 +252,10 @@ export function FallbackPicker({ value, inherit = '', defaultSpawnProfile = '', 
 // inheritLabel names what a step gets by following the process's fallback.
 export function inheritLabel(fallback, defaultSpawnProfile = '') {
   const action = fallback?.action || 'wait';
-  if (action === 'spawn') return `as the process: spawn ${fallback.profile || defaultSpawnProfile || 'the default'}`;
+  if (action === 'spawn') {
+    const profile = fallback.profile || defaultSpawnProfile;
+    return profile ? `as the process: spawn ${profile}` : 'as the process: wait (no default spawn profile)';
+  }
   return action === 'fail' ? 'as the process: fail' : 'as the process: wait';
 }
 

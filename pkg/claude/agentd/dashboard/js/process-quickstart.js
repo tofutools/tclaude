@@ -298,7 +298,8 @@ export function fallbackNote(step, { fallback = null, defaultSpawnProfile = '' }
   if (step?.node?.performer?.kind !== 'agent') return '';
   const { action, profile } = stepFallback(step, fallback);
   if (action === 'fail') return '↯ fail';
-  if (action === 'spawn') return `↯ spawn ${profile || defaultSpawnProfile || 'default'}`;
+  // A bare spawn in a group with no default spawn profile waits at runtime.
+  if (action === 'spawn' && (profile || defaultSpawnProfile)) return `↯ spawn ${profile || defaultSpawnProfile}`;
   return '';
 }
 
