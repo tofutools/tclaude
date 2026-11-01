@@ -37,7 +37,7 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
 .companion-spot-bottom-right { right: var(--chip-right); bottom: calc(var(--footer-h, 29px) + 12px); }
 .companion-chips:is(.companion-spot-top-left, .companion-spot-top-right) { align-items: flex-start; flex-wrap: wrap; }
 .companion-chips:is(.companion-spot-top-left, .companion-spot-bottom-left) { justify-content: flex-start; }
-.companion-chips.companion-spot-bottom-center { justify-content: center; }
+.companion-chips.companion-spot-bottom-center { width: max-content; justify-content: center; }
 /* A drag lifts the row and its outlines over everything it crosses. */
 .companion-chips.dragging { z-index: 961; }
 .companion-chips.dragging .companion-chip { cursor: grabbing; scale: 1.04; box-shadow: 0 12px 28px rgba(0, 0, 0, .55); }

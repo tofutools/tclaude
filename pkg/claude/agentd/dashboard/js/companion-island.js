@@ -572,7 +572,9 @@ export function CompanionApp({
     openFrom.current = null;
     const node = windowRef.current;
     if (!from || !node || reducedMotion(win) || typeof node.animate !== 'function') return;
-    const to = node.getBoundingClientRect();
+    // The effect above only queued the move, so the node isn't there yet.
+    const target = placement.snap ? placement : floatingPlacement();
+    const to = { left: target.x, top: target.y, width: target.w, height: target.h };
     if (!to.width || !to.height) return;
     node.animate([
       { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`, opacity: 0.5, borderRadius: '20px' },
@@ -610,6 +612,11 @@ export function CompanionApp({
 
   function savePlacement(p) {
     writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
+  }
+
+  // The operator placed the window themselves: that now beats the chips' spot.
+  function saveMovedWindow(p) {
+    savePlacement(p);
     writePref(prefs, COMPANION_WINDOW_SPOT_PREF, '');
   }
 
@@ -700,10 +707,10 @@ export function CompanionApp({
       setGuide(null);
       if (zone) {
         setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
-        savePlacement({ ...withSavedSize(last), snap: zone });
+        saveMovedWindow({ ...withSavedSize(last), snap: zone });
       } else if (moved) {
         // A click shows the fitted placement, which is not the operator's to keep.
-        savePlacement(withSavedSize(last));
+        saveMovedWindow(withSavedSize(last));
       }
     };
     handle.addEventListener('pointermove', move);
@@ -751,7 +758,7 @@ export function CompanionApp({
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
       handle.removeEventListener('pointercancel', up);
-      if (!start.snap && moved) savePlacement(savedAfterResize(last, zone, parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF))));
+      if (!start.snap && moved) saveMovedWindow(savedAfterResize(last, zone, parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF))));
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
