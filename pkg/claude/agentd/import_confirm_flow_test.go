@@ -393,16 +393,44 @@ func fedMoveOffer(t *testing.T, p *fedPeer) bundletransfer.Descriptor {
 	return d
 }
 
+func fedPreviewConfirm(t *testing.T, body []byte) confirmView {
+	t.Helper()
+	var preview struct {
+		Preview struct {
+			Confirm confirmView `json:"confirm"`
+		} `json:"preview"`
+		Confirm confirmView `json:"confirm"`
+	}
+	require.NoError(t, json.Unmarshal(body, &preview))
+	if preview.Confirm.Digest != "" {
+		return preview.Confirm
+	}
+	return preview.Preview.Confirm
+}
+
+func fedGrantTeleportReceive(t *testing.T, f *testharness.Flow) {
+	t.Helper()
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermAgentsTeleportReceive, "scope": "group=receiver"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+}
+
 func TestImportConfirm_HandAcceptedOfferUsesTheList(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		unrestricted bool
-	}{{"a restricted peer's items start unticked", false}, {"an unrestricted peer's items start ticked", true}} {
+		name                string
+		unrestricted, grant bool
+	}{
+		{"a restricted peer's items start unticked", false, false},
+		{"a restricted peer's items stay unticked under the grant", false, true},
+		{"an unrestricted peer's items start ticked", true, false},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fh := newFedHarness(t)
 			f, p := fh.f, fh.peer
 			f.HaveGroup("receiver")
 			fedReceiveAgents(t, fh, "receiver")
+			if tc.grant {
+				fedGrantTeleportReceive(t, f)
+			}
 			if tc.unrestricted {
 				setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
 			}
@@ -413,17 +441,7 @@ func TestImportConfirm_HandAcceptedOfferUsesTheList(t *testing.T) {
 
 			rec := fedHuman(t, f, http.MethodPost, path, map[string]any{"cwd": cwd})
 			require.Equal(t, 200, rec.Code, rec.Body.String())
-			var preview struct {
-				Preview struct {
-					Confirm confirmView `json:"confirm"`
-				} `json:"preview"`
-				Confirm confirmView `json:"confirm"`
-			}
-			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
-			confirm := preview.Confirm
-			if confirm.Digest == "" {
-				confirm = preview.Preview.Confirm
-			}
+			confirm := fedPreviewConfirm(t, rec.Body.Bytes())
 			require.ElementsMatch(t, []string{"trust_dir", "remote_control"}, confirm.ids())
 			assert.Equal(t, d.SHA256, confirm.Digest)
 			for _, item := range confirm.Items {
@@ -438,6 +456,34 @@ func TestImportConfirm_HandAcceptedOfferUsesTheList(t *testing.T) {
 			require.Equal(t, 200, rec.Code, rec.Body.String())
 			assert.Contains(t, rec.Body.String(), `"kept":["trusted working directory"]`)
 			assert.Contains(t, rec.Body.String(), `"dropped":["remote control"]`)
+		})
+	}
+}
+
+// A human who names nothing gets the list's ticks, and a grant ticks nothing
+// for a peer the operator has not trusted fully.
+func TestImportConfirm_OfferWithNoSelectionTakesTheTicks(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		unrestricted bool
+		want         string
+	}{
+		{"restricted drops", false, `"dropped":["trusted working directory","remote control"]`},
+		{"unrestricted keeps", true, `"kept":["trusted working directory","remote control"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fh := newFedHarness(t)
+			fh.f.HaveGroup("receiver")
+			fedReceiveAgents(t, fh, "receiver")
+			fedGrantTeleportReceive(t, fh.f)
+			if tc.unrestricted {
+				setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+			}
+			d := fedMoveOffer(t, fh.peer)
+			require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+			rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"cwd": testutil.CanonicalTempDir(t), "apply": true})
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tc.want)
 		})
 	}
 }

@@ -649,8 +649,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if !apply {
 		selection = keep.preview()
 	}
-	if offerList != nil && accepted && !keep.named {
-		// A caller that shows no list, such as the CLI, keeps what a move keeps.
+	if offerList != nil && offerList.unrestricted && !keep.named {
+		// A request with no selection takes the list's ticks: all, from the
+		// operator's own nodes, and none from anyone else, whatever they hold.
 		selection = importKeep{human: true, named: true, all: true}
 	}
 	var fileDrops []fileDrop

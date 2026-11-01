@@ -114,9 +114,10 @@ receiving side.
   or when its peer holds `agents.teleport.receive` for the receiving group, and
   no human accepts it by hand. A human accepting a teleport or move by hand gets
   the [same list](#keeping-what-a-file-asks-for), with every item ticked when the
-  sending peer has unrestricted trust and unticked otherwise. Without that grant,
-  and with no human, the offer's teleport or move label counts for nothing and it
-  lands as a file. A received
+  sending peer has unrestricted trust and unticked otherwise; a request with no
+  selection, such as `tclaude federation offers import` without `--keep`, takes
+  those ticks. Without that grant, and with no human, the offer's teleport or
+  move label counts for nothing and it lands as a file. A received
   history is
   untrusted input: it may contain instructions written by anyone whose text
   reached the original agent.
