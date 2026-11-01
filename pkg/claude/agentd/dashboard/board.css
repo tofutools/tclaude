@@ -134,6 +134,9 @@ body.slop, body.vegas {
   0%, 30% { filter: drop-shadow(0 0 6px #a371f7) drop-shadow(0 0 2px #a371f7); }
   100% { filter: none; }
 }
+/* The open editor shows the text. Only the page's styles hide it, so the PNG
+   made for agents still has text the operator is part way through editing. */
+.board-el.board-editing { visibility: hidden; }
 .board-text-input {
   position: absolute; z-index: 2; min-width: 120px; min-height: 1.4em; padding: 0; margin: 0; resize: none; overflow: hidden;
   border: 1px dashed #1971c2; background: transparent; outline: none; line-height: 1.25;
