@@ -166,6 +166,17 @@ test('double-clicking anywhere inside a shape of any kind opens its text', async
   }
 });
 
+test('double-clicking a connection point labels the shape rather than adding one', async (t) => {
+  const { root, svg, fire, click, saved } = await setup(t, twoShapes);
+  await fire('pointermove', 200, 130);
+  await click(200, 130);
+  await click(200, 130);
+  await fire('dblclick', 200, 130);
+  assert.equal(svg.querySelector('.board-suggestion'), null);
+  assert.ok(root.querySelector('textarea.board-text-input'));
+  assert.deepEqual(await saved(), []);
+});
+
 test('every way of opening the text editor gives it the keyboard', async (t) => {
   const { harness, fire, root, key, click, saved } = await setup(t, (m) => [
     m.newElement('rectangle', { id: 'box', x: 100, y: 100, width: 100, height: 60 }),
@@ -200,17 +211,6 @@ test('every way of opening the text editor gives it the keyboard', async (t) => 
   await harness.act(() => { press = harness.fireEvent(canvas, 'onmousedown' in canvas ? 'mousedown' : 'MouseDown'); });
   assert.ok(press.defaultPrevented, 'the press that opened it leaves the focus there');
   await close();
-  assert.deepEqual(await saved(), []);
-});
-
-test('double-clicking a connection point labels the shape rather than adding one', async (t) => {
-  const { root, svg, fire, click, saved } = await setup(t, twoShapes);
-  await fire('pointermove', 200, 130);
-  await click(200, 130);
-  await click(200, 130);
-  await fire('dblclick', 200, 130);
-  assert.equal(svg.querySelector('.board-suggestion'), null);
-  assert.ok(root.querySelector('textarea.board-text-input'));
   assert.deepEqual(await saved(), []);
 });
 
