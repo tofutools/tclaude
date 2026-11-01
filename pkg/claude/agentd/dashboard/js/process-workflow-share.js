@@ -51,31 +51,40 @@ export function pathLine(finding) {
 }
 
 // exportConfirmation is the confirm() request before sharing a workflow that
-// fails validation or carries paths from this machine. Both export as they
-// are, the way a draft saves; the importer sees the same lists in their
-// review.
-export function exportConfirmation(id, problems, paths) {
+// fails validation, carries paths from this machine or names specific agents.
+// Problems and paths export as they are, the way a draft saves, and the
+// importer sees the same lists in their review. A step naming an agent that
+// has a role here is shared with that role instead; the rest stay named.
+export function exportConfirmation(id, problems, paths, assignees = []) {
   const parts = [];
+  const converted = assignees.filter((a) => a.role);
+  const kept = assignees.filter((a) => !a.role);
   if (problems.length > 0) parts.push(`${id} cannot run until these are fixed. You can still share it; whoever imports it sees the same list.\n\n${listed(problems)}`);
   if (paths.length > 0) parts.push(`${id} carries paths from this machine. A param or a relative path travels better; whoever imports it sees the same list.\n\n${listed(paths.map(pathLine))}`);
+  if (converted.length > 0) parts.push(`These steps name an agent the importing node will not have, so they are shared without the name. They ask for the agent's role, or for the profile they already have.\n\n${listed(converted.map((a) => `${a.name} (role ${a.role}), in ${a.steps.join(', ')}`))}`);
+  if (kept.length > 0) parts.push(`These agents have no single role here, so their steps stay named. On the importing node they fall to their profile, or wait until reassigned.\n\n${listed(kept.map((a) => `${a.name}, in ${a.steps.join(', ')}`))}`);
+  let title = 'Share a workflow that names specific agents?';
+  if (problems.length > 0) title = 'Share a workflow that fails validation?';
+  else if (paths.length > 0) title = 'Share a workflow with paths from this machine?';
   return {
-    title: problems.length > 0 ? 'Share a workflow that fails validation?' : 'Share a workflow with paths from this machine?',
+    title,
     body: parts.join('\n\n'),
     preformatted: true,
-    okLabel: 'Share anyway',
+    okLabel: converted.length > 0 ? 'Use roles and share' : 'Share anyway',
   };
 }
 
-// exportWorkflow downloads <id>.pwf, asking first when it fails validation or
-// carries paths from this machine. It resolves to '' (also when the operator
+// exportWorkflow downloads <id>.pwf, asking first when exportConfirmation has
+// anything to say. It resolves to '' (also when the operator
 // declines) or an error message.
 export async function exportWorkflow(id, { fetchImpl = fetch, download = downloadBlob, confirm = shellConfirm } = {}) {
   const url = `/v1/process/templates/${encodeURIComponent(id)}/export`;
   const check = await fetchImpl(`${url}?check=1`, { credentials: 'same-origin' });
   if (!check.ok) return errorText(check);
-  const { problems = [], paths = [] } = await check.json().catch(() => ({}));
-  if ((problems.length > 0 || paths.length > 0) && !(await confirm(exportConfirmation(id, problems, paths)))) return '';
-  const response = await fetchImpl(url, { credentials: 'same-origin' });
+  const { problems = [], paths = [], assignees = [] } = await check.json().catch(() => ({}));
+  if ((problems.length > 0 || paths.length > 0 || assignees.length > 0)
+    && !(await confirm(exportConfirmation(id, problems, paths, assignees)))) return '';
+  const response = await fetchImpl(assignees.some((a) => a.role) ? `${url}?assignees=roles` : url, { credentials: 'same-origin' });
   if (!response.ok) return errorText(response);
   download(await response.blob(), `${String(id).replace(/[^A-Za-z0-9._-]+/g, '-')}.pwf`);
   return '';
@@ -269,7 +278,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
     ${review.humans.length > 0 && html`<div class="pwf-section"><h4>Asks you</h4><p class="muted">${review.humans.join(', ')}</p></div>`}
     ${review.params.length > 0 && html`<div class="pwf-section"><h4>Start inputs</h4><p>${review.params.map((p) => html`<span key=${p.name} class="pwf-param">${p.name}${p.required ? ' *' : ''}</span>`)}</p></div>`}
     ${review.problems.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-problems><h4>Fails validation</h4><p class="muted">It imports as it is, but cannot run until these are fixed here.</p><ul>${review.problems.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul></div>`}
-    ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4>Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps wait until reassigned.</li>`)}</ul></div>`}
+    ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4>Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps fall to their profile, or wait until reassigned.</li>`)}</ul></div>`}
     ${review.paths.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-paths><h4>Paths from another machine</h4><p class="muted">Steps using these may need changing here.</p><ul>${review.paths.map((p, i) => html`<li key=${i}><code>${p.path}</code> <span class="muted">· ${p.where}</span></li>`)}</ul></div>`}
     <div class="pwf-section"><h4>What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
       ${(review.updates > 0 || choices.rename) && html`<label class="pwf-replace"><input type="checkbox" data-pwf-rename checked=${choices.rename} disabled=${busy} onChange=${(e) => { setReplace(false); choose({ rename: e.currentTarget.checked }); }} /> Import under new ids (${'<id>-2'}, …) instead of replacing mine</label>`}

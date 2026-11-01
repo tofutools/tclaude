@@ -261,3 +261,31 @@ test('exportWorkflow: paths from this machine are shared only after the operator
   assert.match(asked[0].body, /\/home\/alice\/bin\/gh \(reveals a username\), in ship: nodes\.merge\.performer\.run/);
   assert.match(asked[0].body, /\/opt\/acme\/x \(may not exist elsewhere\)/);
 });
+
+test('exportWorkflow: confirming shares named agents with their roles, and the rest stay named', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { exportWorkflow } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const run = async (assignees, answer) => {
+    const urls = [];
+    const asked = [];
+    const fetchImpl = async (url) => {
+      urls.push(String(url));
+      return String(url).endsWith('check=1') ? { ok: true, json: async () => ({ problems: [], paths: [], assignees }) } : { ok: true, blob: async () => 'file' };
+    };
+    await exportWorkflow('ship', { fetchImpl, download: () => {}, confirm: async (request) => { asked.push(request); return answer; } });
+    return { urls, asked };
+  };
+
+  const both = await run([{ name: 'checkout', role: 'dev', steps: ['ship:build'] }, { name: 'solo', steps: ['ship:fix'] }], true);
+  assert.equal(both.urls.at(-1), '/v1/process/templates/ship/export?assignees=roles');
+  assert.equal(both.asked[0].okLabel, 'Use roles and share');
+  assert.match(both.asked[0].body, /checkout \(role dev\), in ship:build/);
+  assert.match(both.asked[0].body, /solo, in ship:fix/);
+
+  const none = await run([{ name: 'solo', steps: ['ship:fix'] }], true);
+  assert.equal(none.urls.at(-1), '/v1/process/templates/ship/export');
+  assert.equal(none.asked[0].okLabel, 'Share anyway');
+
+  const declined = await run([{ name: 'checkout', role: 'dev', steps: ['ship:build'] }], false);
+  assert.equal(declined.urls.length, 1, 'declining downloads nothing');
+});

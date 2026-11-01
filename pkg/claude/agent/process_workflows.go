@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -23,12 +24,15 @@ import (
 // starts a run.
 
 type processTemplatesExportParams struct {
-	ID       string `pos:"true" help:"Process-template id to export."`
-	Version  string `long:"version" optional:"true" help:"Export this version (sha256:<hex> or a full ref) instead of the current one."`
-	Output   string `long:"output" short:"o" optional:"true" help:"Write the .pwf here ('-' for stdout). Default: <id>.pwf in the current directory."`
-	Title    string `long:"title" optional:"true" help:"Workflow title (default: the template's name)."`
-	Summary  string `long:"summary" optional:"true" help:"One-paragraph summary (default: the template's description)."`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
+	ID               string   `pos:"true" help:"Process-template id to export."`
+	Version          string   `long:"version" optional:"true" help:"Export this version (sha256:<hex> or a full ref) instead of the current one."`
+	Output           string   `long:"output" short:"o" optional:"true" help:"Write the .pwf here ('-' for stdout). Default: <id>.pwf in the current directory."`
+	Title            string   `long:"title" optional:"true" help:"Workflow title (default: the template's name)."`
+	Summary          string   `long:"summary" optional:"true" help:"One-paragraph summary (default: the template's description)."`
+	Strict           bool     `long:"strict" optional:"true" help:"Refuse to export a workflow that is not portable: paths from this machine, steps naming a specific agent, or failing validation."`
+	AssigneesToRoles bool     `long:"assignees-to-roles" optional:"true" help:"Stop naming a specific agent in exported steps: they ask for the role it holds here (when it has exactly one), or for the profile they already have."`
+	AssigneeRole     []string `long:"assignee-role" optional:"true" help:"Export steps naming an agent with a role instead, as <agent>=<role> (repeatable). Wins over --assignees-to-roles."`
+	AskHuman         string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
 func processTemplatesExportCmd() *cobra.Command {
@@ -63,6 +67,21 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 		}
 	}
 	path := "/v1/process/templates/" + url.PathEscape(id) + "/export"
+	for _, m := range p.AssigneeRole {
+		from, to, ok := strings.Cut(m, "=")
+		if !ok || strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+			fmt.Fprintf(stderr, "Error: --assignee-role %q: want <agent>=<role>\n", m)
+			return rcInvalidArg
+		}
+		q.Add("assignee", strings.TrimSpace(from)+"="+strings.TrimSpace(to))
+	}
+	if p.AssigneesToRoles {
+		reportAssigneeRoles(path, q, stderr)
+		q.Set("assignees", "roles")
+	}
+	if p.Strict {
+		q.Set("strict", "1")
+	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
@@ -94,11 +113,40 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 	}
 	fmt.Fprintf(stdout, "Wrote %s (%d bytes, %d template(s)%s).\n", out, len(data), len(archive.Order), signedNote(archive))
 	if n := len(archive.Workflow.Assignees); n > 0 {
-		fmt.Fprintf(stdout, "Note: %d step(s) name a specific agent, which the importing node will not have; they wait until reassigned there.\n", n)
+		fmt.Fprintf(stdout, "Note: %d step(s) name a specific agent, which the importing node will not have; they fall to their profile there, or wait until reassigned.\n", n)
 	}
 	warnWorkflowProblems(stderr, archive)
 	warnWorkflowPaths(stderr, archive.Paths)
 	return rcOK
+}
+
+// reportAssigneeRoles says which role --assignees-to-roles picks for each
+// agent: the role comes from this node's groups, so the author should see it.
+func reportAssigneeRoles(path string, q url.Values, stderr io.Writer) {
+	check := url.Values{"check": {"1"}}
+	for _, k := range []string{"version", "title", "summary"} {
+		if v := q.Get(k); v != "" {
+			check.Set(k, v)
+		}
+	}
+	data, _, err := DaemonGetRaw(path + "?" + check.Encode())
+	if err != nil {
+		return
+	}
+	var view struct {
+		Assignees []struct {
+			Name string `json:"name"`
+			Role string `json:"role"`
+		} `json:"assignees"`
+	}
+	if json.Unmarshal(data, &view) != nil {
+		return
+	}
+	for _, a := range view.Assignees {
+		if a.Role != "" && !slices.ContainsFunc(q["assignee"], func(m string) bool { return strings.HasPrefix(m, a.Name+"=") }) {
+			fmt.Fprintf(stderr, "Agent %s is no longer named: its steps ask for role %s, or for the profile they already have.\n", shown(a.Name), shown(a.Role))
+		}
+	}
 }
 
 // warnWorkflowProblems warns that an export fails validation. The export

@@ -454,6 +454,15 @@ func Problems(b Bundle) ([]string, error) {
 	return problems, err
 }
 
+// Assignees lists the steps of a bundle that name one specific agent.
+func Assignees(b Bundle) ([]Use, error) {
+	byRef, order, _, err := prepare(b)
+	if err != nil {
+		return nil, err
+	}
+	return Summarize(b.Root, byRef, order).Assignees, nil
+}
+
 // Write packs a bundle into a PWF file. The bundle should be complete (the
 // root and every template its subprocess steps reference), but templates
 // with validation errors and references it does not carry are written as
