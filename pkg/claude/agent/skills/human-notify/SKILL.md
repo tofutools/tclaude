@@ -162,7 +162,8 @@ tclaude agent notify-human "Usage is close to the limit." --action tab:usage
 
 - `terminal` opens a shell in your own tracked directory. It takes no path.
 - `board:<id>` opens a board.
-- `pr:<url>` opens a PR you presented with `tclaude agent present-pr` first.
+- `pr:<url>` opens a GitHub PR (`https://github.com/<owner>/<repo>/pull/<n>`)
+  you presented with `tclaude agent present-pr` first.
 - `tab:<name>` goes to `groups`, `terminals`, `automations`, `processes`,
   `plugins`, `access`, `messages`, `usage`, `diagnostics` or `config`.
 

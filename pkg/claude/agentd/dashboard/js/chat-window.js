@@ -13,7 +13,7 @@ import { closeOverlayWindow, minimizeOverlayWindow, placedOverlayWindow } from '
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, readPref, useOverlayWindow, writePref } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
-import { ActionCard } from './message-action.js';
+import { ActionCards } from './message-action.js';
 import { ShellHere } from './terminal-here.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 
@@ -68,7 +68,7 @@ export function ChatWindow({
     <div class="companion-body" id=${instance.id}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
-      ${actionMessages.map((message) => html`<${ActionCard} key=${message.id} message=${message} fetchImpl=${fetchImpl} notify=${notify} />`)}
+      <${ActionCards} messages=${actionMessages} fetchImpl=${fetchImpl} notify=${notify} />
       ${!agent?.online && html`<div class="companion-empty"><p><b>${name}</b> is ${agent ? 'offline' : 'gone'}.</p>
         ${agent && html`<button type="button" class="companion-primary" onClick=${() => onBackToTab(instance)}>Back to a tab, to resume it</button>`}</div>`}
       ${agent?.online && open && html`

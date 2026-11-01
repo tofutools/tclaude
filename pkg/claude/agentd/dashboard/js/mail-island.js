@@ -650,7 +650,7 @@ function MessageReader({ current, controller, model }) {
     <${MessageBody} message=${message} agentMail=${!human} />
     ${human ? html`<${MessageAttachments} message=${message} />` : html`<${AgentMailAttachments} message=${message} />`}
     ${human && html`<${DecisionChoices} message=${message} toast=${shellToast} onDone=${controller.reloadMail} remote=${!!remote} />`}
-    ${human && html`<${MessageAction} message=${message} toast=${shellToast} onDone=${controller.reloadMail} remote=${!!remote} />`}
+    ${human && html`<${MessageAction} message=${message} toast=${shellToast} onDone=${controller.reloadMail} onRefused=${controller.reloadMail} remote=${!!remote} />`}
     ${actions}
   </div>`;
 }

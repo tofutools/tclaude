@@ -40,6 +40,11 @@ test('what the daemon resolved is what runs, and nothing else', async (t) => {
   assert.deepEqual(calls, []);
 });
 
+test('a tab that is not available here is reported', async (t) => {
+  const { runMessageAction } = await load(t);
+  assert.equal(await runMessageAction({ kind: 'tab', path: '/plugins' }, { path: () => false }), false);
+});
+
 test('a terminal that does not open is reported', async (t) => {
   const { runMessageAction } = await load(t);
   assert.equal(await runMessageAction({ kind: 'terminal' }, { terminal: () => null }), false);
@@ -62,7 +67,7 @@ test('the button says what it does and where, and only a click asks the daemon',
   assert.deepEqual(fetches, []);
 
   await click(harness, host);
-  assert.deepEqual(fetches, [['/api/human-messages/action', { id: 7 }]]);
+  assert.deepEqual(fetches, [['/api/human-messages/action', { id: 7, dir: '/repo/wt' }]]);
   assert.equal(calls.length, 1);
   assert.equal(done, 1);
 });
@@ -72,11 +77,13 @@ test('a refused click says why and runs nothing', async (t) => {
   const { h } = harness.preact;
   const { calls, openers } = recorder();
   const toasts = [];
+  let refused = 0;
   const fetchImpl = async () => ({ ok: false, status: 409, json: async () => ({ error: 'That board is gone.' }) });
-  const { container: host } = await harness.mount(h(MessageAction, { message: terminal, fetchImpl, openers, toast: (text, error) => toasts.push([text, error]) }));
+  const { container: host } = await harness.mount(h(MessageAction, { message: terminal, fetchImpl, openers, onRefused: () => { refused += 1; }, toast: (text, error) => toasts.push([text, error]) }));
   await click(harness, host);
   assert.deepEqual(calls, []);
   assert.deepEqual(toasts, [['That action did not run: That board is gone.', true]]);
+  assert.equal(refused, 1);
 });
 
 test('an unavailable action is off and says why; a peer page shows none', async (t) => {

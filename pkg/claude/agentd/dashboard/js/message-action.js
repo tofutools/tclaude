@@ -28,7 +28,7 @@ export async function runMessageAction(target, openers = defaultOpeners) {
   if (target?.kind === 'terminal') return !!(await openers.terminal(target));
   if (target?.kind === 'board') await openers.board(target);
   else if (target?.kind === 'pr' && /^https?:\/\//.test(target.url || '')) await openers.url(target);
-  else if (target?.kind === 'tab' && String(target.path || '').startsWith('/')) await openers.path(target);
+  else if (target?.kind === 'tab' && String(target.path || '').startsWith('/')) return (await openers.path(target)) !== false;
   else return false;
   return true;
 }
@@ -39,7 +39,7 @@ async function refusal(response) {
 
 // MessageAction is the button, what it does, and where. A peer's page never
 // shows one: the click would open things on the machine the page runs on.
-export function MessageAction({ message, remote = false, buttonClass = 'primary', toast = shellToast, onDone, openers, fetchImpl = (...args) => globalThis.fetch(...args) }) {
+export function MessageAction({ message, remote = false, buttonClass = 'primary', toast = shellToast, onDone, onRefused, openers, fetchImpl = (...args) => globalThis.fetch(...args) }) {
   const [busy, setBusy] = useState(false);
   const action = message?.action;
   if (!action || remote) return null;
@@ -48,9 +48,12 @@ export function MessageAction({ message, remote = false, buttonClass = 'primary'
     try {
       const response = await fetchImpl('/api/human-messages/action', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: message.id }),
+        body: JSON.stringify({ id: message.id, dir: action.detail || '' }),
       });
-      if (!response.ok) throw new Error(await refusal(response));
+      if (!response.ok) {
+        onRefused?.();
+        throw new Error(await refusal(response));
+      }
       if (!(await runMessageAction(await response.json(), openers))) throw new Error('it could not open here');
       onDone?.();
     } catch (error) {
@@ -64,6 +67,15 @@ export function MessageAction({ message, remote = false, buttonClass = 'primary'
     <button type="button" class=${buttonClass} disabled=${busy || !!off} title=${off || 'Runs only when you click it'} onClick=${run}>${action.label}</button>
     ${action.detail && html`<code class="message-action-detail">${action.detail}</code>`}
     ${(off || action.note) && html`<span class="message-action-note">${off || action.note}</span>`}
+  </div>`;
+}
+
+// ActionCards are an agent's unread actions in chat, in a strip that scrolls so
+// every button stays in reach and the terminal keeps its room.
+export function ActionCards({ messages, notify, fetchImpl }) {
+  if (!messages.length) return null;
+  return html`<div class="companion-actions">
+    ${messages.map((message) => html`<${ActionCard} key=${message.id} message=${message} fetchImpl=${fetchImpl} notify=${notify} />`)}
   </div>`;
 }
 

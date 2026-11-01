@@ -368,7 +368,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
         ${headers}
         <${MessageAttachments} message=${item} />
         <${DecisionChoices} message=${item} toast=${toast} onDone=${onDone} remote=${!!peer} />
-        <${MessageAction} message=${item} toast=${toast} onDone=${onDone} remote=${!!peer} />
+        <${MessageAction} message=${item} toast=${toast} onDone=${onDone} onRefused=${onDone} remote=${!!peer} />
         <${HumanActions} message=${item} senderLive=${peer ? undefined : senderOnline(item.from_agent, item.from_conv, snapshot.value)}
           harness=${peer ? '' : senderHarness(item, snapshot)} toast=${toast} peer=${peer} onDone=${onDone}>${open}</${HumanActions}>
       </div>`;

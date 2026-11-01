@@ -37,6 +37,8 @@ const humanActionShellWhich = "worktree"
 // wrapper, and the agent can write the files it runs among.
 const humanActionShellNote = "Runs as you, outside the agent's sandbox. The agent can write to this directory."
 
+const humanActionTitleRunes = 40
+
 // humanActionTabs are the dashboard tabs an action can go to.
 var humanActionTabs = map[string]struct{ label, path string }{
 	"groups":      {"Groups", "/"},
@@ -88,7 +90,7 @@ func validateHumanAction(callerConv, action string) error {
 			return err
 		}
 		if !allowed {
-			return errors.New("a pr action names a PR you presented: run `tclaude agent present-pr <url>` first")
+			return errors.New("a pr action names a GitHub PR you presented: run `tclaude agent present-pr <url>` first")
 		}
 		return nil
 	case humanActionTab:
@@ -100,25 +102,23 @@ func validateHumanAction(callerConv, action string) error {
 	return errors.New(`action must be "terminal", "board:<id>", "pr:<url>" or "tab:<name>"`)
 }
 
-// humanActionPRAllowed reports whether agentID presented prURL. Under the Git
-// proxy a PR counts once its repository was validated, as it does on the PR
-// badge.
+// humanActionPRAllowed reports whether prURL is a PR agentID still presents.
+// Presenting alone accepts any http(s) URL when the Git proxy is off, so a pr
+// action takes only the canonical GitHub form: that is what keeps it from being
+// a free URL. As on the PR badge, a handled PR is gone, and under the Git proxy
+// a PR counts once its repository was validated.
 func humanActionPRAllowed(agentID, prURL string) (bool, error) {
-	if strings.TrimSpace(prURL) == "" {
+	if validateAgentPRURL(prURL, true) != nil {
 		return false, nil
 	}
 	row, err := db.GetAgentPR(agentID, prURL)
 	if err != nil {
 		return false, err
 	}
-	if row.ID == 0 {
+	if row.ID == 0 || row.State == "handled" {
 		return false, nil
 	}
-	proxied, err := gitProxyActivated()
-	if err != nil {
-		return false, err
-	}
-	return !proxied || row.ValidatedRepoRoot != "", nil
+	return !gitProxyHardeningActive() || row.ValidatedRepoRoot != "", nil
 }
 
 // humanActionDir is the directory the shell of conv's agent opens in, the same
@@ -194,7 +194,7 @@ func humanActionView(m *db.HumanMessage, dirs map[string]string) *dashboardHuman
 			view.Unavailable = "That board is gone."
 			return view
 		}
-		view.Label = "Open board " + boardActionTitle(board)
+		view.Label = "Open board “" + clipHumanActionText(boardActionTitle(board)) + "”"
 	case humanActionPR:
 		view.Label, view.Detail = "Open PR", arg
 		if number := deriveGitHubPRNumber(arg); number > 0 {
@@ -213,6 +213,15 @@ func humanActionView(m *db.HumanMessage, dirs map[string]string) *dashboardHuman
 		return nil
 	}
 	return view
+}
+
+// A board title is free text on the daemon's button, so it stays short and in
+// quotes, and cannot read as more of what the button does.
+func clipHumanActionText(text string) string {
+	if runes := []rune(text); len(runes) > humanActionTitleRunes {
+		return string(runes[:humanActionTitleRunes-1]) + "…"
+	}
+	return text
 }
 
 func boardActionTitle(board *db.CollabBoard) string {
@@ -295,8 +304,11 @@ func humanActionShellGroup(m *db.HumanMessage) string {
 }
 
 // handleDashboardHumanMessageAction serves POST /api/human-messages/action, the
-// operator's click on a message's button. The body names only the message. The
-// audit row says which action ran, and the message counts as read.
+// operator's click on a message's button. The body names the message and, for a
+// terminal, the directory the button showed: the operator checked that path, so
+// if the agent has moved on since, the click is refused and the button refreshed
+// rather than opening somewhere they never saw. The audit row says which action
+// ran, and the message counts as read.
 func handleDashboardHumanMessageAction(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -311,7 +323,8 @@ func handleDashboardHumanMessageAction(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4*1024)
 	var body struct {
-		ID int64 `json:"id"`
+		ID  int64  `json:"id"`
+		Dir string `json:"dir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "id is required")
@@ -330,6 +343,12 @@ func handleDashboardHumanMessageAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusConflict, "action_unavailable", err.Error())
 		return
+	}
+	if target.Kind == humanActionTerminal {
+		if dir := humanActionDir(humanActionLiveConv(m.FromAgent)); dir != body.Dir {
+			writeError(w, http.StatusConflict, "action_moved", "The agent has moved to "+dir+". Check the new directory and click again.")
+			return
+		}
 	}
 	setAuditDetail(r, m.Action)
 	if _, err := db.MarkHumanMessageRead(m.ID); err != nil {

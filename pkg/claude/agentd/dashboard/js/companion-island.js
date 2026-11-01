@@ -47,7 +47,7 @@ import { registerStewardDoor } from './voice-wake.js';
 import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
-import { ActionCard } from './message-action.js';
+import { ActionCards } from './message-action.js';
 import { ShellHere } from './terminal-here.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { useDismissablePopover } from './hover-popover.js';
@@ -1327,7 +1327,7 @@ export function CompanionApp({
       </div>`}
       ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${!showQueue && activeDecisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
-      ${!showQueue && activeActions.map((message) => html`<${ActionCard} key=${message.id} message=${message} fetchImpl=${fetchImpl} notify=${notify} />`)}
+      ${!showQueue && html`<${ActionCards} messages=${activeActions} fetchImpl=${fetchImpl} notify=${notify} />`}
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>

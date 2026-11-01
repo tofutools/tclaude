@@ -150,7 +150,7 @@ chat by marking the message read.
 |---|---|
 | `terminal` | Opens a shell in the agent's own directory |
 | `board:<id>` | Opens that board |
-| `pr:<url>` | Opens a PR the agent presented with `present-pr` |
+| `pr:<url>` | Opens a GitHub PR the agent presented with `present-pr` |
 | `tab:<name>` | Goes to a dashboard tab: `groups`, `terminals`, `automations`, `processes`, `plugins`, `access`, `messages`, `usage`, `diagnostics` or `config` |
 
 The list is fixed, so an agent can't offer a free URL or command. It names an action
@@ -159,7 +159,9 @@ can only be the agent's own tracked directory, and nothing happens until you cli
 The click is in the audit log and marks the message read.
 
 A terminal runs as you, outside the agent's sandbox, and the agent can write to its
-directory, so check the path on the button first. The agent never gets the shell's
+directory, so check the path on the button first. If the agent moves before you
+click, the click is refused and the button shows the new path. A shell already open
+for that agent is reused, wherever it is now. The agent never gets the shell's
 input or output. If the agent has retired, the board was deleted or the PR is no
 longer presented, the button is off and says why.
 

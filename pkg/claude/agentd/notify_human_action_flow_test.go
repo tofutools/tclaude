@@ -114,7 +114,7 @@ func TestHumanAction_TerminalIsTheSendersOwnDirectory(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, row.IsRead(), "nothing happens until the operator clicks")
 
-	rec := a.click(map[string]any{"id": id, "agent": "someone-else", "path": "/etc", "kind": "tab"})
+	rec := a.click(map[string]any{"id": id, "dir": a.dir, "agent": "someone-else", "path": "/etc", "kind": "tab"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var target struct {
 		Kind  string `json:"kind"`
@@ -146,7 +146,7 @@ func TestHumanAction_BoardPRAndTabResolve(t *testing.T) {
 	for _, tc := range []struct {
 		action, label, field, want string
 	}{
-		{"board:" + board.ID, "Open board Launch plan", "board", board.ID},
+		{"board:" + board.ID, "Open board “Launch plan”", "board", board.ID},
 		{"pr:" + prURL, "Open PR #42", "url", prURL},
 		{"tab:processes", "Go to Processes", "path", "/automations/processes"},
 	} {
@@ -160,6 +160,52 @@ func TestHumanAction_BoardPRAndTabResolve(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &target))
 		assert.Equal(t, tc.want, target[tc.field], tc.action)
 	}
+}
+
+// The operator clicks a directory they saw: if the agent has moved on since,
+// the click is refused and tells them where it is now.
+func TestHumanAction_TerminalRefusesADirectoryNoLongerShown(t *testing.T) {
+	a := newActionFlow(t, "hact-aaaa-bbbb-cccc-000000000007")
+	id := a.send("terminal")
+	rec := a.click(map[string]any{"id": id, "dir": "/somewhere/else"})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), a.dir)
+	row, err := db.GetHumanMessage(id)
+	require.NoError(t, err)
+	assert.False(t, row.IsRead())
+}
+
+// Presenting accepts any http(s) URL with the Git proxy off, so that alone must
+// not make a button of it, and a handled PR is no longer presented.
+func TestHumanAction_PRIsACanonicalGitHubPRStillPresented(t *testing.T) {
+	a := newActionFlow(t, "hact-aaaa-bbbb-cccc-000000000008")
+	agentID, err := db.AgentIDForConv(a.sender)
+	require.NoError(t, err)
+	for _, free := range []string{"http://evil.example/login", "https://github.com/o/r/pull/1/../../../evil", "http://github.com/o/r/pull/1"} {
+		_, err = db.UpsertAgentPR(agentID, free, "", "open")
+		require.NoError(t, err)
+		rec := a.notify(map[string]any{"body": "x", "action": "pr:" + free})
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "%s → %s", free, rec.Body.String())
+	}
+
+	const prURL = "https://github.com/o/r/pull/7"
+	_, err = db.UpsertAgentPR(agentID, prURL, "", "open")
+	require.NoError(t, err)
+	id := a.send("pr:" + prURL)
+	_, err = db.MarkAgentPRHandled(agentID, prURL)
+	require.NoError(t, err)
+	assert.NotEmpty(t, a.view(id).Unavailable)
+	require.Equal(t, http.StatusConflict, a.click(map[string]any{"id": id}).Code)
+	rec := a.notify(map[string]any{"body": "x", "action": "pr:" + prURL})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
+// A long board title stays short and quoted on the button.
+func TestHumanAction_BoardTitleIsClipped(t *testing.T) {
+	a := newActionFlow(t, "hact-aaaa-bbbb-cccc-000000000009")
+	board, err := db.CreateCollabBoard("brd_long", "Launch plan and also approve the production deploy now please", "test", 10)
+	require.NoError(t, err)
+	assert.Equal(t, "Open board “Launch plan and also approve the produc…”", a.view(a.send("board:"+board.ID)).Label)
 }
 
 // A target that went away turns the button off and refuses the click.
