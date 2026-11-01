@@ -21,13 +21,14 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
+  COMPANION_ACTIVE_PREF, COMPANION_CHIP_ROOM_SPOT_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
   agentBlockedOnOperator, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
-  defaultPlacement, isAgentId, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
+  FOOTER_CHIP_SPOTS, defaultPlacement, footerSpotFits, footerSpotLeft, isAgentId, isFooterSpot, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, actionsFor, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
   companionAgentOf,
 } from './companion-model.js';
 import { useChipDrag } from './companion-chip-drag.js';
+import { compactWidth, measureFooterRoom, useFooterRest } from './companion-chip-footer.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
@@ -760,6 +761,7 @@ export function CompanionApp({
   function moveChips(spot) {
     setChipSpot(spot);
     writePref(prefs, COMPANION_CHIP_SPOT_PREF, spot);
+    if (!isFooterSpot(spot)) writePref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF, spot);
     writePref(prefs, COMPANION_WINDOW_SPOT_PREF, spot === DEFAULT_CHIP_SPOT ? '' : spot);
   }
 
@@ -806,13 +808,24 @@ export function CompanionApp({
     peekTimer.current = setTimeout(() => {
       const rect = chip.getBoundingClientRect();
       const vp = viewportOf(win);
-      setPeek({ agentId, lines: null, anchor: peekAnchor(chipSpot, rect, vp) });
+      setPeek({ agentId, lines: null, anchor: peekAnchor(shownSpot, rect, vp) });
       void readPeek(agentId);
       peekRefresh.current = setInterval(() => void readPeek(agentId), PEEK_REFRESH_MS);
     }, PEEK_DELAY_MS);
   }
 
-  const chipDrag = useChipDrag({ win, spot: chipSpot, onDrop: moveChips, onStart: stopPeek, reducedMotion: () => reducedMotion(win) });
+  // A row saved in the footer rests at its last spot in the room when it doesn't fit.
+  const chipRow = useRef(null);
+  const footerRest = useFooterRest({ win, watching: isFooterSpot(chipSpot) && !open, row: chipRow });
+  const restSpot = () => { const spot = parseChipSpot(readPref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF)); return isFooterSpot(spot) ? DEFAULT_CHIP_SPOT : spot; };
+  const shownSpot = isFooterSpot(chipSpot) && !footerRest.fits ? restSpot() : chipSpot;
+  const inFooter = isFooterSpot(shownSpot);
+  const footerSlots = (node) => {
+    const room = measureFooterRoom(win);
+    const width = compactWidth(node);
+    return footerSpotFits(room, width) ? FOOTER_CHIP_SPOTS.map((spot) => ({ spot, left: footerSpotLeft(spot, room, width), width })) : [];
+  };
+  const chipDrag = useChipDrag({ win, spot: shownSpot, row: chipRow, extraSlots: footerSlots, onDrop: moveChips, onStart: stopPeek, reducedMotion: () => reducedMotion(win) });
 
   function onChipClick(agentId, event) {
     stopPeek();
@@ -1244,11 +1257,12 @@ export function CompanionApp({
   const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
 
-  const chipSlots = !open && chipDrag.slots && chipDrag.slots.map(({ spot, near, width, height }) => html`<div key=${spot}
+  const chipSlots = !open && chipDrag.slots && chipDrag.slots.map(({ spot, near, width, height, left }) => html`<div key=${spot}
     class=${`companion-chip-slot companion-spot-${spot}${near ? ' near' : ''}`} data-chip-spot=${spot}
-    style=${`width:${width}px;height:${height}px`} aria-hidden="true"></div>`);
+    style=${`width:${width}px;${left === undefined ? `height:${height}px` : `left:${left}px`}`} aria-hidden="true"></div>`);
 
-  const chips = !open && html`<div ref=${chipDrag.ref} class=${`companion-chips companion-spot-${chipSpot}${chipDrag.slots ? ' dragging' : ''}`}
+  const chips = !open && html`<div ref=${chipRow} class=${`companion-chips companion-spot-${shownSpot}${inFooter ? ' compact' : ''}${chipDrag.slots ? ' dragging' : ''}`}
+    style=${inFooter ? `left:${footerSpotLeft(shownSpot, footerRest.room, footerRest.width)}px` : null}
     role="toolbar" aria-label="Companions" onPointerDown=${chipDrag.onPointerDown} onClickCapture=${chipDrag.onClickCapture}>
     ${chipAgents.map((agent) => {
       const status = statusOf(agent);

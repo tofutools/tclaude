@@ -111,6 +111,37 @@ test('every spot saved before there were sixteen still means the same place', as
   assert.equal(m.DEFAULT_CHIP_SPOT, 'bottom-right');
 });
 
+test('model: a footer spot needs the row to fit in the widest free stretch', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  const box = (left, right) => ({ left, right, width: right - left });
+  assert.deepEqual(m.freeStretch([], 24, 1000), { left: 24, right: 1000 });
+  assert.deepEqual(m.freeStretch([box(24, 500)], 24, 1000), { left: 500, right: 1000 });
+  assert.deepEqual(m.freeStretch([box(600, 700), box(24, 300)], 24, 1000), { left: 300, right: 600 }, 'in any order');
+  assert.deepEqual(m.freeStretch([box(24, 700), box(100, 200)], 24, 1000), { left: 700, right: 1000 }, 'an inner rect leaves no room behind it');
+  assert.equal(m.freeStretch([box(0, 1000)], 24, 1000), null);
+  const room = { left: 500, right: 1000 };
+  assert.equal(m.footerSpotFits(room, 476), true);
+  assert.equal(m.footerSpotFits(room, 477), false, 'it keeps a margin on both sides');
+  assert.equal(m.footerSpotFits(null, 100), false);
+  assert.equal(m.footerSpotFits(room, 0), false);
+  assert.equal(m.footerSpotLeft('footer-left', room, 100), 512);
+  assert.equal(m.footerSpotLeft('footer-center', room, 100), 700);
+  assert.equal(m.footerSpotLeft('footer-right', room, 100), 888);
+  for (const spot of m.FOOTER_CHIP_SPOTS) {
+    assert.equal(m.parseChipSpot(spot), spot, 'a saved one is read back');
+    assert.ok(m.isFooterSpot(spot) && !m.CHIP_SPOTS.includes(spot));
+    assert.equal(m.spotPlacement(spot, { x: 0, y: 0, w: 640, h: 420 }, { width: 1000, height: 600 }, 90).y, 139, 'the window opens above it');
+  }
+  assert.deepEqual(m.peekAnchor('footer-left', { left: 16, right: 150, top: 100, bottom: 134 }, { width: 1000, height: 600 }), { bottom: 508, left: 16 });
+});
+
+test('a row saved in the footer rests at its last spot in the room with no footer to measure', async (t) => {
+  const { row } = await setup(t, memoryPrefs({ [CHIP_SPOT]: 'footer-center', 'tclaude.dash.companion.chip-room-spot': 'left-q1' }));
+  assert.match(row().className, /companion-spot-left-q1/);
+  assert.doesNotMatch(row().className, /compact/);
+});
+
 test('a nonsense saved spot falls back', async (t) => {
   const { row } = await setup(t, memoryPrefs({ [CHIP_SPOT]: 'ceiling' }));
   assert.match(row().className, /companion-spot-bottom-right/);

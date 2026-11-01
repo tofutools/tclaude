@@ -28,7 +28,9 @@ The companion isn't available in a peer's per-node view or in pop-out windows.
 Each pinned agent shows as a pill at the bottom right, with its status. With
 nothing pinned, you'll see a **✦ Steward** pill. Drag a pill to move the row to
 any of 16 spots around the edges: the corners and quarter points of the top and
-bottom, and the quarter points of each side. Outlines show the spots, Esc
+bottom, and the quarter points of each side. While the row fits in the footer's free
+room, three more spots there show it smaller, covering no work. A row that stops
+fitting rests at its last spot on the page until it fits again. Outlines show the spots, Esc
 cancels, and the window then opens from there until you move it yourself. A pill
 can show:
 
