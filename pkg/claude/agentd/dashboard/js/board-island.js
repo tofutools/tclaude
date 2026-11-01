@@ -725,7 +725,7 @@ export function BoardEditor({
     forgetEdits(created);
     commit(step.filter(({ before }) => before).map(({ id, before }) => {
       const cur = elements.current.get(id);
-      return bump(cur || before, { ...before, version: cur?.version || before.version });
+      return bump(cur || before, { fontFamily: undefined, fontWeight: undefined, fontStyle: undefined, ...before, version: cur?.version || before.version });
     }), { record: false });
     if (!pending.current.size) refused.current = false;
     setSelected([]);
@@ -1424,10 +1424,11 @@ export function BoardEditor({
 
   // styledText is the text the style controls act on: the selection's own, and
   // what its shapes and lines carry.
-  function styledText(chosen) {
+  function styledText(chosen, owners) {
+    if (!chosen.length) return [];
     const ids = new Set(chosen.map((el) => el.id));
     const found = new Set(chosen.filter((el) => el.type === 'text').map((el) => el.id));
-    for (const [textId, ownerId] of labelOwners(elements.current)) if (ids.has(ownerId)) found.add(textId);
+    for (const [textId, ownerId] of owners) if (ids.has(ownerId)) found.add(textId);
     return [...found].map((id) => elements.current.get(id)).filter(Boolean);
   }
 
@@ -1622,13 +1623,13 @@ export function BoardEditor({
   const aimed = gesture.current?.target || null;
   const aimedShape = aimed && drawnById.get(aimed.elementId);
   const band = gesture.current?.kind === 'band' ? normalizeBox(gesture.current.start.x, gesture.current.start.y, gesture.current.now.x, gesture.current.now.y) : null;
+  const owners = sels.length ? labelOwners(elements.current) : new Map();
   const arrangeable = (() => {
-    const owners = labelOwners(elements.current);
     const chosen = new Set(selected);
     return sels.filter((el) => el.type !== 'arrow' && !chosen.has(owners.get(el.id))).length;
   })();
   const aiming = !!gesture.current?.at;
-  const texts = styledText(sels);
+  const texts = styledText(sels, owners);
   const showTextControls = !!editingText || tool === 'text' || texts.length > 0;
   const shownText = textStyleOf(editingText ? editingText.style : texts[0] || textStyle);
   const pad = 6 / view.zoom;

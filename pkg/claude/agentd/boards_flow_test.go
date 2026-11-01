@@ -206,7 +206,8 @@ func TestBoardsKeepTextStyleAndDropWhatTheyCannotDraw(t *testing.T) {
 	}
 	kept := text("kept", map[string]any{"fontSize": 32, "fontFamily": 3, "fontWeight": "bold", "fontStyle": "italic"})
 	foreign := text("foreign", map[string]any{"fontFamily": 8, "fontWeight": "900", "fontStyle": "oblique"})
-	patch := serve(http.MethodPatch, "/api/boards/styled", map[string]any{"elements": []any{kept, foreign}})
+	wrongType := text("wrong-type", map[string]any{"fontFamily": "Virgil", "fontWeight": 700, "fontStyle": true})
+	patch := serve(http.MethodPatch, "/api/boards/styled", map[string]any{"elements": []any{kept, foreign, wrongType}})
 	require.Equal(t, http.StatusOK, patch.Code, "a font Excalidraw has and the board lacks refuses nothing: %s", patch.Body.String())
 
 	rec := serve(http.MethodGet, "/api/boards/styled", nil)
@@ -225,6 +226,7 @@ func TestBoardsKeepTextStyleAndDropWhatTheyCannotDraw(t *testing.T) {
 	assert.Equal(t, "italic", byID["kept"]["fontStyle"])
 	for _, key := range []string{"fontFamily", "fontWeight", "fontStyle"} {
 		assert.NotContains(t, byID["foreign"], key)
+		assert.NotContains(t, byID["wrong-type"], key)
 	}
 }
 
