@@ -21,6 +21,7 @@ export function normalizeWorktreeCandidate(worktree) {
     path: String(worktree?.path || ''),
     name: String(worktree?.name || ''),
     branch: String(worktree?.branch || ''),
+    commit: String(worktree?.commit || ''),
     repo_root: String(worktree?.repo_root || ''),
     category: String(worktree?.category || ''),
     is_main: isMain,
@@ -157,23 +158,27 @@ export function visibleWorktrees(candidates, query, danglingOnly = false) {
 
 // Selected rows whose branch would take commits with it: they exist nowhere
 // else, or the scan could not tell. The daemon keeps these branches unless
-// their paths ride along as force_branch_paths.
+// exact path, branch and tip ride along as force_branches.
 export function unpublishedBranches(candidates) {
   return selectedWorktrees(candidates)
     .filter((candidate) => candidate.branch && (candidate.unpushed_commits > 0 || candidate.unpushed_unknown));
 }
 
 export function unpublishedBranchesKey(rows) {
-  return rows.map((row) => `${row.path}\0${row.branch}\0${row.unpushed_commits}`).join('\n');
+  return rows.map((row) => `${row.path}\0${row.branch}\0${row.commit}\0${row.unpushed_commits}`).join('\n');
 }
 
-export function freezeWorktreeCleanupRequest(candidates, prunableRepos, deleteBranches, forceBranches = false) {
+export function freezeWorktreeCleanupRequest(candidates, prunableRepos, deleteBranches, confirmForce = false) {
   return Object.freeze({
     paths: Object.freeze(selectedWorktrees(candidates).map((candidate) => candidate.path)),
     pruneRoots: Object.freeze(selectedPrunableRepos(prunableRepos).map((repo) => repo.repo_root)),
     deleteBranches: deleteBranches === true,
-    ...(deleteBranches === true && forceBranches === true
-      ? { forceBranchPaths: Object.freeze(unpublishedBranches(candidates).map((row) => row.path)) }
+    ...(deleteBranches === true && confirmForce === true
+      ? {
+        forceBranches: Object.freeze(unpublishedBranches(candidates).map((row) => Object.freeze({
+          path: row.path, branch: row.branch, tip: row.commit,
+        }))),
+      }
       : {}),
   });
 }

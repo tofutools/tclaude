@@ -51,7 +51,7 @@ export function createWorktreeCleanupActions({
           paths: request.paths,
           prune_roots: request.pruneRoots || [],
           delete_branches: request.deleteBranches === true,
-          force_branch_paths: request.forceBranchPaths || [],
+          force_branches: request.forceBranches || [],
         }),
       });
       const payload = await responsePayload(response);

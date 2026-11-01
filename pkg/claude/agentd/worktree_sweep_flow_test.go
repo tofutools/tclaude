@@ -880,7 +880,8 @@ func TestWorktreeSweep_CleanupKeepsBranchWhenOff(t *testing.T) {
 
 // Scenario: the default-on branch option deletes a branch whose commits survive
 // elsewhere, keeps one holding the only copy of its commits, and force-deletes
-// that one only for a path the human named. Real git, real worktrees.
+// that one only while it is the branch and tip the human confirmed. Real git,
+// real worktrees.
 func TestWorktreeSweep_UnpublishedBranchNeedsNamedConfirmation(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
@@ -900,7 +901,7 @@ func TestWorktreeSweep_UnpublishedBranchNeedsNamedConfirmation(t *testing.T) {
 	git(repo, "config", "user.email", "test@example.com")
 	git(repo, "commit", "--allow-empty", "-m", "base")
 	paths := map[string]string{}
-	for _, branch := range []string{"merged", "precious", "doomed"} {
+	for _, branch := range []string{"merged", "precious", "doomed", "moved", "switched"} {
 		paths[branch] = filepath.Join(root, branch)
 		git(repo, "worktree", "add", "-b", branch, paths[branch])
 		if branch != "merged" {
@@ -910,10 +911,19 @@ func TestWorktreeSweep_UnpublishedBranchNeedsNamedConfirmation(t *testing.T) {
 	f.HaveGroup("sweep")
 	_, err := db.SetAgentGroupDefaultCwd("sweep", repo)
 	require.NoError(t, err)
+	confirm := func(branch string) map[string]string {
+		return map[string]string{"path": paths[branch], "branch": branch, "tip": git(repo, "rev-parse", branch)}
+	}
+	confirmed := []map[string]string{confirm("doomed"), confirm("moved"), confirm("switched")}
+	// Both drift after the confirmation: new work lands on one worktree, and
+	// the other moves to a branch the human never saw.
+	git(paths["moved"], "commit", "--allow-empty", "-m", "after the confirmation")
+	git(paths["switched"], "switch", "-c", "unseen")
+	git(paths["switched"], "commit", "--allow-empty", "-m", "unseen work")
 	body, err := json.Marshal(map[string]any{
-		"paths":              []string{paths["merged"], paths["precious"], paths["doomed"]},
-		"delete_branches":    true,
-		"force_branch_paths": []string{paths["doomed"]},
+		"paths":           []string{paths["merged"], paths["precious"], paths["doomed"], paths["moved"], paths["switched"]},
+		"delete_branches": true,
+		"force_branches":  confirmed,
 	})
 	require.NoError(t, err)
 	r, err := http.NewRequest(http.MethodPost, "/api/worktrees/cleanup", bytes.NewReader(body))
@@ -927,16 +937,17 @@ func TestWorktreeSweep_UnpublishedBranchNeedsNamedConfirmation(t *testing.T) {
 		BranchesKept int `json:"branches_kept"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
-	assert.Equal(t, 3, out.Removed, "every selected worktree directory goes")
+	assert.Equal(t, 5, out.Removed, "every selected worktree directory goes")
 	assert.Equal(t, 2, out.Branches)
-	assert.Equal(t, 1, out.BranchesKept)
+	assert.Equal(t, 3, out.BranchesKept)
 	details := map[string]string{}
 	for _, o := range out.Outcomes {
 		details[o.Path] = o.Detail
 	}
 	assert.Contains(t, details[paths["precious"]], "branch precious kept: 1 unpublished commits")
-	assert.Equal(t, "precious", git(repo, "branch", "--list", "--format=%(refname:short)", "precious"))
-	assert.Empty(t, git(repo, "branch", "--list", "merged", "doomed"))
+	assert.Contains(t, details[paths["moved"]], "branch moved kept: it changed")
+	assert.Contains(t, details[paths["switched"]], "branch unseen kept: 2 unpublished commits")
+	assert.Equal(t, "main\nmoved\nprecious\nswitched\nunseen", git(repo, "branch", "--format=%(refname:short)"))
 }
 
 // Regression: Git remains the authority after a worktree directory is deleted

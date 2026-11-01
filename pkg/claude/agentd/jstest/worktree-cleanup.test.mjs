@@ -492,8 +492,8 @@ test('deleting an unmerged branch takes a separate confirmation that names what 
       repoRoots: ['/repo'],
       worktrees: [
         worktree('/repo-safe', { branch: 'safe', checked: true, unpushed_commits: 0 }),
-        worktree('/repo-a', { branch: 'topic-a', checked: true, unpushed_commits: 3 }),
-        worktree('/repo-b', { branch: 'topic-b', checked: false, unpushed_commits: 1 }),
+        worktree('/repo-a', { branch: 'topic-a', commit: 'aaa', checked: true, unpushed_commits: 3 }),
+        worktree('/repo-b', { branch: 'topic-b', commit: 'bbb', checked: false, unpushed_commits: 1 }),
       ],
       prunableRepos: [],
       pruneScanErrors: [],
@@ -522,6 +522,11 @@ test('deleting an unmerged branch takes a separate confirmation that names what 
   await flush(harness);
   assert.match(host.querySelector('#worktree-cleanup-force-row').textContent, /topic-b \(1 commit\)/);
   assert.equal(forced(), false, 'a changed branch list clears the confirmation');
+  await toggle(checkbox(host, '/repo-b'), false);
+  await flush(harness);
+  assert.equal(forced(), false, 'restoring the old list does not restore the confirmation');
+  await toggle(checkbox(host, '/repo-b'), true);
+  await flush(harness);
 
   await toggle(host.querySelector('#worktree-cleanup-branches'), false);
   await flush(harness);
@@ -532,6 +537,9 @@ test('deleting an unmerged branch takes a separate confirmation that names what 
   await flush(harness);
   host.querySelector('#worktree-cleanup-submit').click();
   await flush(harness);
-  assert.deepEqual(requests[0].forceBranchPaths, ['/repo-a', '/repo-b']);
+  assert.deepEqual(requests[0].forceBranches, [
+    { path: '/repo-a', branch: 'topic-a', tip: 'aaa' },
+    { path: '/repo-b', branch: 'topic-b', tip: 'bbb' },
+  ]);
   assert.deepEqual(requests[0].paths, ['/repo-safe', '/repo-a', '/repo-b']);
 });

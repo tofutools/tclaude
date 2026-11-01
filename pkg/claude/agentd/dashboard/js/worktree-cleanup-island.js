@@ -206,8 +206,9 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const atRiskBranches = unpublishedBranches(candidates);
   const atRiskKey = unpublishedBranchesKey(atRiskBranches);
   // The confirmation covers exactly the listed branches: changing the
-  // selection or rescanning clears it.
+  // selection or rescanning clears it, and it never comes back on its own.
   const forceBranches = atRiskKey !== '' && forceBranchesKey === atRiskKey;
+  if (forceBranchesKey && forceBranchesKey !== atRiskKey) setForceBranchesKey('');
   const selectedPruneRepos = selectedPrunableRepos(prunableRepos);
   const removable = removableWorktrees(candidates);
   const visible = visibleWorktrees(candidates, query, danglingOnly);
