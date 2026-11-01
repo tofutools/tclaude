@@ -13,6 +13,7 @@ import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import {
@@ -175,6 +176,8 @@ function OpaqueTerminalHost({
   onComposeMessage,
   onDisconnect,
   onRemoteChange,
+  initialFontSize = null,
+  onFontChange,
   disconnectNotice = null,
 }) {
   const hostRef = useRef(null);
@@ -194,6 +197,8 @@ function OpaqueTerminalHost({
       applicationClipboardShortcuts: descriptor.seed.harness === 'copilot',
       onDisconnect,
       onRemoteChange,
+      initialFontSize,
+      onFontChange,
       initialRetry: descriptor.seed.initialRetry === true,
     });
     widgetRef.current = widget;
@@ -296,6 +301,7 @@ function TerminalPane({
   const filesOK = !!(pane.seed.remote && remote?.files && remote?.viewer && !remote?.closed);
   const [dragging, setDragging] = useState(false);
   const [stewardDown, setStewardDown] = useState(false);
+  const [font, onFontChange] = useTerminalFont('tab', pane.key);
   // Dashboard panes get their status from PaneTab. Only the solo title needs
   // to subscribe to the standalone snapshot signal; keeping this null in the
   // dashboard avoids an extra signal subscriber per opaque xterm host.
@@ -396,7 +402,9 @@ function TerminalPane({
         peer=${pane.seed.remote.peerLabel || pane.seed.remote.peer} onClose=${() => setFiles(false)} />` : null}
       <${PaneDictation} pane=${pane} active=${active} solo=${solo} status=${status} actions=${actions}
         canType=${!pane.seed.remote || remote?.mode === 'interactive'} snapshot=${processSnapshot}
-        target=${composeAgent(pane) ? composeTarget(pane, actions) : null} />
+        target=${composeAgent(pane) ? composeTarget(pane, actions) : null}>
+        <${TerminalZoom} font=${font} widget=${() => actions.widgetFor(pane.id)} />
+      <//>
       <${OpaqueTerminalHost}
         descriptor=${pane}
         runtimeID=${pane.id}
@@ -411,6 +419,8 @@ function TerminalPane({
         onReconnectChange=${setReconnect}
         onSelectionChange=${setHasSelection}
         onRemoteChange=${setRemote}
+        initialFontSize=${readTerminalFont('tab', pane.key)}
+        onFontChange=${onFontChange}
         onDisconnect=${(info) => { actions.paneDisconnected?.(pane.key); if (info?.closeTab) void actions.closePane(pane.key, { skipDetach: true }); }}
         onComposeMessage=${composeMessage}
         disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} onReconnect=${reconnectPane} />` : null}

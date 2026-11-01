@@ -40,6 +40,7 @@ import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorM
 import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
@@ -97,9 +98,8 @@ function StatusDot({ status }) {
 // CompanionTerminal mounts the opaque xterm widget for one agent. It owns the
 // widget's whole lifecycle: a new agent id or a reconnect generation disposes
 // the old widget before attaching a fresh one.
-function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focusToken, onStatus, onReconnectChange }) {
+function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focusToken, onStatus, onReconnectChange, widgetRef, fontSize, onFontChange }) {
   const hostRef = useRef(null);
-  const widgetRef = useRef(null);
   useEffect(() => {
     let cancelled = false;
     let widget = null;
@@ -115,6 +115,8 @@ function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focu
         applicationClipboardShortcuts: agent.harness === 'copilot',
         onStatus: (status) => { if (!cancelled) onStatus(status); },
         onReconnectChange: (available) => { if (!cancelled) onReconnectChange(!!available); },
+        initialFontSize: fontSize(),
+        onFontChange: (font) => { if (!cancelled) onFontChange(font); },
       });
       widgetRef.current = widget;
       widget.setActive(true);
@@ -300,6 +302,7 @@ export function CompanionApp({
   const [parked, setParked] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF))));
   const [statuses, setStatuses] = useState({});
   const [reconnectable, setReconnectable] = useState({});
+  const terminalWidgetRef = useRef(null);
   const [generation, setGeneration] = useState(0);
   const [focusToken, setFocusToken] = useState(0);
   const [warmId, setWarmId] = useState('');
@@ -353,6 +356,7 @@ export function CompanionApp({
 
   const activeId = tabs.includes(active) ? active : (tabs[0] || '');
   const activeAgent = activeId ? agents.get(activeId) || null : null;
+  const [terminalFont, onTerminalFontChange] = useTerminalFont('companion', activeId, prefs);
   const draft = drafts[activeId] || '';
   draftRef.current = draft;
   // Voice input (tcl-sqxkb0): dictation fills the draft; ending with "send"
@@ -1258,11 +1262,12 @@ export function CompanionApp({
   composerShown.current = !!(open && showComposer);
   // A mic with no window showing would have no countdown and no Cancel.
   useEffect(() => { if (!composerShown.current) dictation.abort?.(); }, [composerShown.current]);
-  const floatingTools = showComposer && html`<${FloatingTools} dictation=${dictation}
+  const messageTools = (children = null) => html`<${FloatingTools} dictation=${dictation}
     micLabel=${`Dictate a message to ${activeAgent.name}`}
     micTitle=${micTitle(sendPhrase)}
     withContext=${withContext} onContext=${setWithContext}
-    annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${startAnnotating} />`;
+    annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${startAnnotating}>${children}<//>`;
+  const terminalZoom = html`<${TerminalZoom} font=${terminalFont} widget=${() => terminalWidgetRef.current} />`;
 
   const look = windowControlsLook(snapshot.value?.window_controls);
   // Close takes the tab being shown off the window, as its own × does. With
@@ -1345,7 +1350,7 @@ export function CompanionApp({
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
       ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
-      ${activeAgent && parked.has(activeAgent.agentId) && html`<div class="companion-floating-anchor">${floatingTools}</div>`}
+      ${activeAgent && parked.has(activeAgent.agentId) && showComposer && html`<div class="companion-floating-anchor">${messageTools()}</div>`}
       ${activeAgent && !activeAgent.online && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is offline.</p>
         <button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>
@@ -1357,13 +1362,14 @@ export function CompanionApp({
       ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
         ${status === 'needs' && !activeApprovals.length && !activeDecisions.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
         <div class="companion-floating-anchor">
-          ${floatingTools}
+          ${showComposer ? messageTools(terminalZoom) : html`<div class="companion-floating" role="group" aria-label="Terminal tools">${terminalZoom}</div>`}
           ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
           ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
           : termStatus}</div>`}
         </div>
         <${CompanionTerminal} key=${activeAgent.agentId} agent=${activeAgent} generation=${generation}
-          widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken}
+          widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken} widgetRef=${terminalWidgetRef}
+          fontSize=${() => readTerminalFont('companion', activeAgent.agentId, prefs)} onFontChange=${onTerminalFontChange}
           onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
     </div>
     ${showComposer && showField && html`<${DraftField} dictation=${dictation} draft=${draft} sending=${sending}
