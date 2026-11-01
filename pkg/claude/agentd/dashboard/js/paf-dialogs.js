@@ -279,13 +279,11 @@ export function historyCutNeedsConfirm(preview) {
 }
 
 // offlineImportBlocker says why an agent cannot land offline, or '' when it
-// can: offline needs a conversation that lands (resume starts it), and
-// OpenCode cannot take one yet. The route refuses the same cases (no_start).
-export function offlineImportBlocker(preview, choices) {
+// can: offline needs a conversation that lands (resume starts it). The route
+// refuses the same case (no_start).
+export function offlineImportBlocker(preview) {
   if (!preview) return '';
   if (!preview.history) return 'No conversation lands, so there is nothing to resume: import and start it instead';
-  const harness = choices?.harness || preview.history_landing?.harness || preview.agent?.harness;
-  if (harness === 'opencode') return 'An OpenCode agent cannot land offline yet: import and start it instead';
   return '';
 }
 

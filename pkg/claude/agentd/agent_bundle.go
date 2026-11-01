@@ -736,6 +736,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer landing.close()
 	preview.Landing, preview.History = landing, landing.history != nil
+	if noStart && h.UsesAuthoritativeServer() && landing.Rung == landingNative && landingModel != "" &&
+		(d.Origin == nil || d.Origin.Model != landingModel) {
+		// Only the launch prompt names a model to this harness, and an offline
+		// landing sends none, so the imported conversation's model carries on.
+		preview.Warnings = append(preview.Warnings, fmt.Sprintf(
+			"This offline landing records %s, but its conversation continues on the model it last used until you change it there. Start the import instead to apply the model now.",
+			landingModel))
+	}
 	// The posture this import launches under: the receiver's, which a
 	// recorded posture can tighten but not widen.
 	var postureGroup *db.AgentGroup
@@ -807,8 +815,8 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "group", "--apply requires --group naming an existing receiving group, as with agent spawn")
 		return
 	}
-	if noStart && (!preview.History || h.UsesAuthoritativeServer()) {
-		writeError(w, 400, "no_start", "only an agent whose conversation lands can be imported without starting, and not yet on OpenCode; import and start it instead")
+	if noStart && !preview.History {
+		writeError(w, 400, "no_start", "only an agent whose conversation lands can be imported without starting; import and start it instead")
 		return
 	}
 	var group *db.AgentGroup
@@ -1044,10 +1052,27 @@ func receiverCapsTheWall(h *harness.Harness, group, profile string) bool {
 // (start=false). Only handleAgentBundleImport sets it.
 type bundleNoLaunchContextKey struct{}
 
+// recordOfflineResumeProfile records where a server-authoritative conversation
+// landed. Resume cannot rebuild this from the harness's store as it does
+// elsewhere: a conversation in private state is in no listing the daemon can
+// read. The fallback is the posture bound at enrollment, not a baseline.
+func recordOfflineResumeProfile(convID, harnessName, cwd string) error {
+	relaunch, err := db.AgentRelaunchProfileForConv(convID)
+	if err != nil {
+		return fmt.Errorf("read the landed agent's relaunch profile: %w", err)
+	}
+	if relaunch == nil {
+		return fmt.Errorf("landed agent %s has no relaunch profile", short8(convID))
+	}
+	return db.SetConversationResumeProfile(convID, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: harnessName, Cwd: cwd, FallbackRelaunch: relaunch,
+	})
+}
+
 // landSpawnOffline finishes an enrolled, history-installed spawn without
-// starting a session. The conversation has no resume profile until resume
-// rebuilds it from the harness's own store, as for a group import member;
-// the agent's relaunch profile was bound at enrollment.
+// starting a session. A conversation with no resume profile gets one when
+// resume rebuilds it from the harness's own store, as for a group import
+// member; the agent's relaunch profile was bound at enrollment.
 func landSpawnOffline(p spawnParams, h *harness.Harness, convID string) (*spawnOutcome, *spawnFailure) {
 	// Resume never pre-trusts, so keep the launch's trust_dir promise now:
 	// otherwise the resumed pane stops on the trust dialog, and a Copilot API

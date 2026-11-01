@@ -7155,11 +7155,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// Uses* predicate degrades gracefully.
 	spawnHarness, _ := harness.Resolve(p.Harness)
 
-	// An import that lands offline needs history it can resume and a harness
-	// whose conversation exists without a running server.
-	if p.NoLaunch && (p.BundleHistory == nil || spawnHarness.UsesAuthoritativeServer()) {
+	// An import that lands offline needs history it can resume.
+	if p.NoLaunch && p.BundleHistory == nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "no_start",
-			"only an import whose conversation lands, on a harness other than OpenCode, can land offline"}
+			"only an import whose conversation lands can land offline"}
 	}
 
 	// Async spawn of a server-authoritative harness (OpenCode): the managed
@@ -7172,7 +7171,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// instantly) still returns its conv-id inline; past the grace the caller
 	// gets the same Pending row the dashboard already renders for Codex, and
 	// the reservation is claimed once the conv binds (or removed on failure).
-	if p.Async && spawnHarness.UsesAuthoritativeServer() && p.pendingSpawnLabel == "" {
+	if p.Async && !p.NoLaunch && spawnHarness.UsesAuthoritativeServer() && p.pendingSpawnLabel == "" {
 		return executeServerSpawnDeferred(g, p, &cleanupProofOnReturn)
 	}
 
@@ -7418,38 +7417,44 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				return nil, fail
 			}
 		}
-		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-			label, p.Cwd, p.Name, importedID, permissionJSON,
-			p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
-		if err != nil && resourceCgroupDir != "" &&
-			errors.Is(err, errOpenCodeResourceCgroup) &&
-			degradeManagedServerResourceCgroup(
-				p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false, err) {
+		// An offline landing's conversation is in its store now; its server
+		// starts at resume.
+		if p.NoLaunch {
 			resourceCleanup()
-			resourceCgroupDir = ""
+		} else {
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 				label, p.Cwd, p.Name, importedID, permissionJSON,
-				p.SandboxImplementation, sandboxSpec, "")
+				p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
+			if err != nil && resourceCgroupDir != "" &&
+				errors.Is(err, errOpenCodeResourceCgroup) &&
+				degradeManagedServerResourceCgroup(
+					p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false, err) {
+				resourceCleanup()
+				resourceCgroupDir = ""
+				openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+					label, p.Cwd, p.Name, importedID, permissionJSON,
+					p.SandboxImplementation, sandboxSpec, "")
+			}
+			if err != nil {
+				resourceCleanup()
+				return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
+					"failed to start managed OpenCode server: " + err.Error()}
+			}
+			spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
+			spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
+			spawnArgs.OpenCodeTransport = openCodeLaunch.Transport
+			spawnArgs.OpenCodeControlSocketPath = openCodeLaunch.ControlSocketPath
+			spawnArgs.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
+			spawnArgs.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
+			spawnArgs.OpenCodeServerPID = openCodeLaunch.PID
+			spawnArgs.ResourceCgroupDir = resourceCgroupDir
+			if sandboxSpec != nil {
+				spawnArgs.OpenCodeEnvironment = append(
+					[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
+				spawnArgs.OpenCodeStateIsolation = db.OpenCodeStatePrivate
+			}
+			spawnArgs.SessionID = openCodeLaunch.ConvID
 		}
-		if err != nil {
-			resourceCleanup()
-			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
-				"failed to start managed OpenCode server: " + err.Error()}
-		}
-		spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
-		spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
-		spawnArgs.OpenCodeTransport = openCodeLaunch.Transport
-		spawnArgs.OpenCodeControlSocketPath = openCodeLaunch.ControlSocketPath
-		spawnArgs.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
-		spawnArgs.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
-		spawnArgs.OpenCodeServerPID = openCodeLaunch.PID
-		spawnArgs.ResourceCgroupDir = resourceCgroupDir
-		if sandboxSpec != nil {
-			spawnArgs.OpenCodeEnvironment = append(
-				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
-			spawnArgs.OpenCodeStateIsolation = db.OpenCodeStatePrivate
-		}
-		spawnArgs.SessionID = openCodeLaunch.ConvID
 	}
 
 	// Launch-enrollment path (Claude Code, unless reverted via config): the
@@ -7636,6 +7641,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			if err := mark(); err != nil {
 				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", err.Error()}
+			}
+		}
+		if spawnHarness.UsesAuthoritativeServer() {
+			if err := recordOfflineResumeProfile(preConvID, spawnHarness.Name, p.Cwd); err != nil {
+				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
 			}
 		}
 		return landSpawnOffline(p, spawnHarness, preConvID)

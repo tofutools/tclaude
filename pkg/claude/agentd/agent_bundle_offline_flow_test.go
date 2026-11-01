@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -101,4 +103,95 @@ func TestAgentImportWithoutStartLandsOffline(t *testing.T) {
 	f.Mux.ServeHTTP(out, r)
 	assert.Equal(t, http.StatusBadRequest, out.Code, out.Body.String())
 	assert.Contains(t, out.Body.String(), "no_start")
+}
+
+// An OpenCode agent lands offline with no server started. Its conversation goes
+// in the store its posture's server reads, and resume finds it there.
+// OpenCode takes a model only from the launch prompt, so an offline landing says
+// that the model it records is not yet the one the conversation runs on.
+func TestAgentImportWithoutStartWarnsOfOpenCodeModel(t *testing.T) {
+	f := newFlow(t)
+	store := fakeOpenCodeStore(t)
+	const source = "ses_0123456789abcdefghijklmnoq"
+	seedOpenCodeSession(t, store, source, "scout", testutil.CanonicalTempDir(t))
+	f.HaveGroup("source")
+	f.HaveMember("source", source)
+	f.HaveGroup("receiver")
+	rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	query := url.Values{"apply": {"true"}, "start": {"false"}, "cwd": {testutil.CanonicalTempDir(t)},
+		"group": {"receiver"}, "model": {"openai/gpt-landing"}}
+
+	res := importAgentArchive(t, f, rec.Body.Bytes(), query)
+
+	require.True(t, res.Applied)
+	assert.Contains(t, strings.Join(res.Warnings, " "), "continues on the model it last used")
+}
+
+func TestAgentImportWithoutStartLandsOnOpenCode(t *testing.T) {
+	for _, tc := range []struct {
+		name, implementation string
+		private              bool
+	}{
+		{name: "shared store at the baseline"},
+		{name: "private state under the sandbox", implementation: "tclaude-layer", private: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			store := fakeOpenCodeStore(t)
+			const source = "ses_0123456789abcdefghijklmnoq"
+			seedOpenCodeSession(t, store, source, "scout", testutil.CanonicalTempDir(t))
+			f.HaveGroup("source")
+			f.HaveMember("source", source)
+			f.HaveGroup("receiver")
+			rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf", nil)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			if tc.implementation != "" {
+				setSandboxImplDefault(t, f, tc.implementation)
+			}
+			before := storedOpenCodeSessions(t, store)
+			spawner := &countingSpawner{inner: agentd.Spawn}
+			agentd.Spawn = spawner
+			t.Cleanup(func() { agentd.Spawn = spawner.inner })
+			var served []string
+			t.Cleanup(agentd.SetOpenCodeRuntimeForTest(func(sessionID, _, _, resumeID string) (agentd.OpenCodeRuntimeFixture, error) {
+				served = append(served, resumeID)
+				return agentd.OpenCodeRuntimeFixture{ConvID: resumeID, ServerURL: "http://127.0.0.1:1", Password: "pw", PID: 1}, nil
+			}))
+
+			dest := testutil.CanonicalTempDir(t)
+			res := importAgentArchive(t, f, rec.Body.Bytes(), url.Values{
+				"apply": {"true"}, "start": {"false"}, "cwd": {dest}, "group": {"receiver"}})
+			require.True(t, res.Applied)
+			conv := res.Spawn.ConvID
+			assert.Empty(t, served, "landing offline starts no server")
+			assert.Zero(t, spawner.news)
+			profile, err := db.ConversationResumeProfileForConv(conv)
+			require.NoError(t, err)
+			require.NotNil(t, profile)
+			assert.Equal(t, harness.OpenCodeName, profile.Harness)
+			assert.Equal(t, dest, profile.Cwd)
+
+			agentID, err := db.AgentIDForConv(conv)
+			require.NoError(t, err)
+			allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+			require.NoError(t, err)
+			if tc.private {
+				require.NotNil(t, allocation)
+				assert.Contains(t, storedOpenCodeSessions(t, filepath.Join(allocation.StateRoot, "data", "fake-store")), conv)
+				assert.Equal(t, before, storedOpenCodeSessions(t, store), "the shared store takes nothing")
+			} else {
+				assert.Nil(t, allocation)
+				assert.Contains(t, storedOpenCodeSessions(t, store), conv)
+			}
+
+			f.AssertResumeSpawned(f.Resume(conv))
+			require.Len(t, spawner.resumes, 1)
+			assert.Equal(t, harness.OpenCodeName, spawner.resumes[0].Harness)
+			assert.Equal(t, dest, spawner.resumes[0].Cwd)
+			if tc.private {
+				assert.Equal(t, tc.implementation, spawner.resumes[0].SandboxImplementation)
+			}
+		})
+	}
 }
