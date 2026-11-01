@@ -136,6 +136,24 @@ test('model: a footer spot needs the row to fit in the widest free stretch', asy
   assert.deepEqual(m.peekAnchor('footer-left', { left: 16, right: 150, top: 100, bottom: 134 }, { width: 1000, height: 600 }), { bottom: 508, left: 16 });
 });
 
+test('model: a row moving into the footer keeps the spot it left to fall back to', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  assert.equal(m.lastRoomSpot('top-q1', 'left-q1'), 'top-q1');
+  assert.equal(m.lastRoomSpot('footer-left', 'left-q1'), 'left-q1');
+  assert.equal(m.lastRoomSpot('footer-left', 'footer-right'), undefined);
+});
+
+test('a popover opening above the footer takes no room in it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { measureFooterRoom } = await harness.importDashboardModule('js/companion-chip-footer.js');
+  const rect = (left, right, top, bottom) => ({ left, right, top, bottom, width: right - left });
+  const shown = (r) => ({ getBoundingClientRect: () => r });
+  const bar = { ...shown(rect(0, 1000, 700, 729)), querySelectorAll: () => [shown(rect(0, 300, 703, 726)), shown(rect(500, 990, 200, 680))] };
+  const document = { querySelector: () => bar, createTreeWalker: () => ({ nextNode: () => null }) };
+  assert.deepEqual(measureFooterRoom({ document }), { left: 300, right: 1000 });
+});
+
 test('a row saved in the footer rests at its last spot in the room with no footer to measure', async (t) => {
   const { row } = await setup(t, memoryPrefs({ [CHIP_SPOT]: 'footer-center', 'tclaude.dash.companion.chip-room-spot': 'left-q1' }));
   assert.match(row().className, /companion-spot-left-q1/);

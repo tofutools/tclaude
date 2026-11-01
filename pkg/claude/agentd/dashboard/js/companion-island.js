@@ -23,7 +23,7 @@ import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CHIP_ROOM_SPOT_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
   agentBlockedOnOperator, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
-  FOOTER_CHIP_SPOTS, defaultPlacement, footerSpotFits, footerSpotLeft, isAgentId, isFooterSpot, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
+  FOOTER_CHIP_SPOTS, defaultPlacement, footerSpotFits, footerSpotLeft, isAgentId, isFooterSpot, lastRoomSpot, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, actionsFor, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
   companionAgentOf,
 } from './companion-model.js';
@@ -761,7 +761,9 @@ export function CompanionApp({
   function moveChips(spot) {
     setChipSpot(spot);
     writePref(prefs, COMPANION_CHIP_SPOT_PREF, spot);
-    if (!isFooterSpot(spot)) writePref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF, spot);
+    if (isFooterSpot(spot)) footerRest.measure();
+    const roomSpot = lastRoomSpot(spot, shownSpot);
+    if (roomSpot) writePref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF, roomSpot);
     writePref(prefs, COMPANION_WINDOW_SPOT_PREF, spot === DEFAULT_CHIP_SPOT ? '' : spot);
   }
 

@@ -242,6 +242,9 @@ export function parseChipSpot(raw) {
 }
 
 export const isFooterSpot = (spot) => FOOTER_CHIP_SPOTS.includes(spot);
+// lastRoomSpot is the spot to fall back to after a move: where the row lands,
+// or where it came from when it lands in the footer.
+export const lastRoomSpot = (next, shown) => [next, shown].find((spot) => !isFooterSpot(spot));
 
 // The space a row keeps from what else is in the footer.
 const FOOTER_CHIP_MARGIN = 12;

@@ -8,8 +8,9 @@ import { footerSpotFits, freeStretch } from './companion-model.js';
 const COMPACT = 'compact';
 
 // What the bar shows, as text and as the controls and pictures it holds. A
-// span the bar stretches for layout says nothing about where its text ends.
-function occupied(bar, doc) {
+// span the bar stretches for layout says nothing about where its text ends, and
+// a popover opening above the bar lives in it without taking room on it.
+function occupied(bar, doc, box) {
   const rects = [...bar.querySelectorAll('button, a, img, svg')].map((node) => node.getBoundingClientRect());
   const walker = doc.createTreeWalker(bar, 4);
   for (let text = walker.nextNode(); text; text = walker.nextNode()) {
@@ -18,7 +19,7 @@ function occupied(bar, doc) {
     range.selectNodeContents(text);
     rects.push(...range.getClientRects());
   }
-  return rects.filter((rect) => rect.width > 0);
+  return rects.filter((rect) => rect.width > 0 && rect.bottom > box.top && rect.top < box.bottom);
 }
 
 // measureFooterRoom is the footer's widest free stretch, { left, right }, or null
@@ -28,7 +29,7 @@ export function measureFooterRoom(win) {
   const bar = doc?.querySelector?.('footer .footer-inner');
   const box = bar?.getBoundingClientRect?.();
   if (!box?.width) return null;
-  return freeStretch(occupied(bar, doc), box.left, box.right);
+  return freeStretch(occupied(bar, doc, box), box.left, box.right);
 }
 
 // compactWidth is how wide the row is in the bar, wherever it is now. It takes
@@ -43,7 +44,8 @@ export function compactWidth(node) {
 
 // useFooterRest says whether a row saved in the footer fits there now, and
 // watches the bar and the row for as long as one is. It returns { room, fits,
-// width }, measured before the row paints.
+// width }, measured before the row paints, and measure, for a row about to land
+// there.
 export function useFooterRest({ win, watching, row }) {
   const [rest, setRest] = useState({ room: null, width: 0 });
   const measure = useRef(() => {});
@@ -67,5 +69,5 @@ export function useFooterRest({ win, watching, row }) {
       win?.removeEventListener?.('resize', again);
     };
   }, [win, watching]);
-  return { ...rest, fits: watching && footerSpotFits(rest.room, rest.width) };
+  return { ...rest, fits: watching && footerSpotFits(rest.room, rest.width), measure: () => measure.current() };
 }
