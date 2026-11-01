@@ -198,6 +198,33 @@ test('a group preview offers per-member harness and model and re-inspects with t
   assert.deepEqual(imported[0][3].members, { c2: { harness: 'codex', model: '' } });
 });
 
+test('a group import shows its warnings on the preview and stays open on them after landing', async (t) => {
+  const inspection = {
+    source: 'paf', source_group: 'crew', format_version: 5, agent_count: 0, message_count: 0, conv_count: 0, missing_convs: 0,
+    target_name: 'crew', target_name_valid: true, group_name_taken: false, conv_collisions: [], findings: [],
+    file_warnings: ['Scheduled jobs nightly land disabled.'],
+  };
+  const actions = {
+    async inspectGroupImport() { return inspection; },
+    async importGroup() { return { summary: 'Imported group "crew"', warnings: inspection.file_warnings }; },
+    async importAgentPAF() { throw new Error('should not be tried for a group'); },
+  };
+  const { host, settle } = await mountManagement(t, actions, { kind: 'group-import', file: { name: 'crew.paf' } });
+  await settle();
+  assert.match(host.querySelector('#group-import-warnings .gi-warn').textContent, /nightly land disabled/);
+  const into = host.querySelector('#group-import-into');
+  into.value = '/tmp/app';
+  into.dispatchEvent(new host.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  await settle();
+  host.querySelector('#group-import-submit').click();
+  await settle();
+  assert.match(host.querySelector('#group-import-result-summary').textContent, /Imported group "crew"/);
+  assert.match(host.querySelector('#group-import-result .gi-warn').textContent, /nightly land disabled/);
+  host.querySelector('#group-import-done').click();
+  await settle();
+  assertAbsent(host.querySelector('#group-import-result'), 'Done closes the result');
+});
+
 test('a dropped .paf opens the import dialog unless a drop zone took it or a dialog is open', async (t) => {
   const harness = await createPreactHarness(t);
   const { bindPAFDrop } = await harness.importDashboardModule('js/paf-drop.js');

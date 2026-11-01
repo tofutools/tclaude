@@ -656,19 +656,17 @@ export function createManagementActions(deps) {
   }
   async function importGroup(file, into, as, landing) {
     const result = await groups.importGroup(file, into, as, landing);
-    state.closeDialog();
     let summary = `Imported group "${result.group}" — ${result.agent_count} agent(s), ${result.message_count} message(s)`;
     const remaps = Object.keys(result.conv_remaps || {}).length;
     if (remaps) summary += ` (${remaps} conv-id(s) remapped to fresh copies)`;
-    notify(
-      result.file_warnings?.length
-        ? `${summary} — ${result.file_warnings.join(' ')}`
-        : summary,
-      !!result.file_warnings?.length,
-    );
+    const warnings = [...(result.file_warnings || []), ...(result.prompt_warnings || [])];
+    if (!warnings.length) {
+      state.closeDialog();
+      notify(summary);
+    }
     onGroupImported(result.group);
     await refresh();
-    return result;
+    return warnings.length ? { summary, warnings } : null;
   }
   // PAF export / redact / agent import (tcl-jkmitn). Each goes through the
   // dashboard's /api twin of the human-only /v1 route.
@@ -702,7 +700,8 @@ export function createManagementActions(deps) {
     return preview ? response.json() : response.blob();
   }
   // importAgentPAF previews (apply false) or lands the agent, started or
-  // offline (start=false).
+  // offline (start=false). A landing with warnings resolves to them for the
+  // dialog to show, as importGroup does: too much to read in a passing toast.
   async function importAgentPAF(file, params) {
     const response = await fetch(`/api/agent-bundle/import${queryString(params)}`, {
       method: 'POST', credentials: 'same-origin', body: file,
@@ -710,9 +709,14 @@ export function createManagementActions(deps) {
     if (!response.ok) throw await pafError(response);
     const result = await response.json();
     if (params.apply) {
-      state.closeDialog();
-      notify(`Imported agent "${result.agent?.name || params.name || 'agent'}" into ${params.group}${result.offline ? ' offline; wake it to start' : ' and started it'}`);
+      const summary = `Imported agent "${result.agent?.name || params.name || 'agent'}" into ${params.group}${result.offline ? ' offline; wake it to start' : ' and started it'}`;
+      const warnings = result.warnings || [];
+      if (!warnings.length) {
+        state.closeDialog();
+        notify(summary);
+      }
       await refresh();
+      return warnings.length ? { summary, warnings } : null;
     }
     return result;
   }
