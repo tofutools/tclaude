@@ -474,6 +474,8 @@ type importInspection struct {
 	// Landings says where each conversation lands: its harness and model
 	// and the rung its history takes.
 	Landings []*groupMemberLanding `json:"landings"`
+	// FileWarnings says what the file asks for and will not get.
+	FileWarnings []string `json:"file_warnings,omitempty"`
 	// Findings are this node's own credential scan of the archive.
 	Findings []paf.Finding `json:"findings"`
 }
@@ -533,6 +535,7 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if into != "" {
 		cwd, _ = filepath.Abs(expandTilde(into))
 	}
+	insp.FileWarnings = dropFileGroupEnvironment(exp)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
@@ -854,6 +857,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	// Members landing through a harness's own history import get the
 	// conversation id that import mints; the rest take the file path below.
+	fileWarnings := dropFileGroupEnvironment(exp)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, targetCwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
@@ -954,7 +958,6 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	// Any early return from here on must wipe the staging dir.
 	staged := make(map[string]string) // final conv-id -> staged file path
-	fileWarnings := []string{}
 	for i := range exp.Convs {
 		c := &exp.Convs[i]
 		finalID := convRemap[c.ConvID]

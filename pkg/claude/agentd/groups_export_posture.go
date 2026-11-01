@@ -188,6 +188,21 @@ func isTclaudeLayer(implementation string) bool {
 	return err == nil && normalized == sandboxpolicy.ImplementationTclaudeLayer
 }
 
+// dropFileGroupEnvironment takes a group's environment out of its file: it would
+// reach every spawn into the new group. The warning names the variables, never
+// their values.
+func dropFileGroupEnvironment(exp *groupexport.Export) []string {
+	if len(exp.Group.Environment) == 0 {
+		return nil
+	}
+	names := make([]string, len(exp.Group.Environment))
+	for i, entry := range exp.Group.Environment {
+		names[i] = entry.Name
+	}
+	exp.Group.Environment = nil
+	return []string{fileFieldDropped("environment variables " + strings.Join(names, ", "))}
+}
+
 // planGroupPostures resolves every member's landing posture.
 func planGroupPostures(ls []*groupMemberLanding, exp *groupexport.Export, cwd string) error {
 	for _, l := range ls {

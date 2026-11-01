@@ -148,6 +148,33 @@ func TestReceiverLaunchFieldsProfile(t *testing.T) {
 			want:     spawnProfileJSON{TrustDir: &no, RemoteControl: &no},
 		},
 		{
+			name:        "peer messaging and a model proxy are dropped",
+			recorded:    spawnProfileJSON{PeerMessaging: &yes, ModelProxy: "relay@peer"},
+			wantDropped: []string{"peer messaging", "model proxy relay@peer"},
+		},
+		{
+			name:     "the receiver's own proxy needs no warning",
+			landing:  db.SpawnProfile{ModelProxy: "relay@peer"},
+			recorded: spawnProfileJSON{ModelProxy: "relay@peer"},
+		},
+		{
+			name:        "off steps around the receiver's proxy",
+			landing:     db.SpawnProfile{ModelProxy: "relay@peer"},
+			recorded:    spawnProfileJSON{ModelProxy: "off"},
+			wantDropped: []string{"model proxy off"},
+		},
+		{
+			name:     "off with no proxy here says nothing",
+			recorded: spawnProfileJSON{ModelProxy: "off"},
+		},
+		{
+			name:        "a feature on against a trim here is dropped, a trim stays",
+			landing:     db.SpawnProfile{ContextFeatures: map[string]string{"workflows": "off"}},
+			recorded:    spawnProfileJSON{ContextFeatures: map[string]string{"workflows": "on", "artifact": "off"}},
+			want:        spawnProfileJSON{ContextFeatures: map[string]string{"artifact": "off"}},
+			wantDropped: []string{"context features workflows"},
+		},
+		{
 			name:        "environment is dropped, named and not quoted",
 			landing:     db.SpawnProfile{Environment: []sandboxpolicy.EnvironmentEntry{shared}},
 			recorded:    spawnProfileJSON{Environment: []sandboxpolicy.EnvironmentEntry{secret, shared}},
@@ -166,6 +193,13 @@ func TestReceiverLaunchFieldsProfile(t *testing.T) {
 
 			assert.Equal(t, tc.want.TrustDir, got.TrustDir)
 			assert.Equal(t, tc.want.RemoteControl, got.RemoteControl)
+			assert.Nil(t, got.PeerMessaging)
+			assert.Empty(t, got.ModelProxy)
+			if len(tc.want.ContextFeatures) > 0 {
+				assert.Equal(t, tc.want.ContextFeatures, got.ContextFeatures)
+			} else {
+				assert.Empty(t, got.ContextFeatures)
+			}
 			assert.Empty(t, got.Environment)
 			require.Len(t, dropped, len(tc.wantDropped))
 			for i, want := range tc.wantDropped {

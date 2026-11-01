@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -346,6 +347,27 @@ func TestAgentImport_RecordedApprovalDoesNotWiden(t *testing.T) {
 	require.NotNil(t, landed)
 	require.NotNil(t, landed.ApprovalPolicy)
 	assert.Equal(t, bypass, *landed.ApprovalPolicy)
+}
+
+// A group file's environment would reach every spawn into the new group, so it
+// is dropped too, on the preview and on the import, naming variables only.
+func TestGroupImport_FileEnvironmentDoesNotLand(t *testing.T) {
+	f := newFlow(t)
+	seedClaudeConversation(t, f, postureMember, "scout", f.TestCwd("src"))
+	f.HaveGroup("crew")
+	f.HaveMember("crew", postureMember)
+	_, err := db.SetAgentGroupEnvironment("crew", []sandboxpolicy.EnvironmentEntry{{Name: "OPENCODE_CONFIG_CONTENT", Value: "hunter2"}})
+	require.NoError(t, err)
+	archive := exportGroupAs(t, f, "crew", "paf")
+
+	rec, _ := importGroupWith(t, f, archive, url.Values{"into": {testutil.CanonicalTempDir(t)}, "as": {"crew-landed"}})
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "OPENCODE_CONFIG_CONTENT")
+	assert.NotContains(t, rec.Body.String(), "hunter2")
+	landed, err := db.GetAgentGroupByName("crew-landed")
+	require.NoError(t, err)
+	assert.Empty(t, landed.Environment)
 }
 
 // A file's environment never lands, so a placeholder only it uses cannot hold the

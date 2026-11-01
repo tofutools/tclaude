@@ -26,7 +26,7 @@ import (
 // --- groups export ---
 
 type groupsExportParams struct {
-	Name string `pos:"true" help:"Group to export"`
+	Name   string `pos:"true" help:"Group to export"`
 	Out    string `long:"out" short:"o" optional:"true" help:"Write the archive here. Default: group-<name>-<timestamp>.paf (or .zip) in the current directory. Pass '-' to stream the archive to stdout."`
 	Format string `long:"format" optional:"true" alts:"paf,zip" help:"Archive format: paf (the default; a group Portable Agent Format file) or zip (the legacy group export archive, for importing into an older tclaude)"`
 
@@ -274,12 +274,12 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 
 // groupLanding is one member's landing, as the daemon reports it.
 type groupLanding struct {
-	Title         string   `json:"title"`
-	SourceHarness string   `json:"source_harness"`
-	Harness       string   `json:"harness"`
-	Model         string   `json:"model,omitempty"`
-	Rung          string   `json:"rung"`
-	Warnings      []string `json:"warnings,omitempty"`
+	Title         string          `json:"title"`
+	SourceHarness string          `json:"source_harness"`
+	Harness       string          `json:"harness"`
+	Model         string          `json:"model,omitempty"`
+	Rung          string          `json:"rung"`
+	Warnings      []string        `json:"warnings,omitempty"`
 	Posture       *landingPosture `json:"posture,omitempty"`
 }
 
@@ -360,7 +360,8 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			Count     int      `json:"count"`
 			Locations []string `json:"locations"`
 		} `json:"findings"`
-		Landings []groupLanding `json:"landings"`
+		Landings     []groupLanding `json:"landings"`
+		FileWarnings []string       `json:"file_warnings"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -402,6 +403,9 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 		for _, f := range insp.Findings {
 			fmt.Fprintf(stdout, "  %s: %d occurrence(s); first locations: %s\n", f.Kind, f.Count, strings.Join(f.Locations, ", "))
 		}
+	}
+	for _, w := range insp.FileWarnings {
+		fmt.Fprintf(stdout, "\nWarning: %s\n", w)
 	}
 	if len(insp.Landings) > 0 {
 		fmt.Fprintf(stdout, "\nMembers land:\n")

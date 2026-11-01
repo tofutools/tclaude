@@ -1079,18 +1079,22 @@ func receiverCapsTheWall(h *harness.Harness, group, profile string) bool {
 // explicit tier, so what is not proven no wider than a spawn here would resolve
 // is dropped and the receiver's value applies. Tightening stays. A value the
 // guard cannot judge is dropped. It returns a warning for each one dropped.
+// fileFieldDropped is the warning for what a file asks for and does not get.
+func fileFieldDropped(what string) string {
+	return fmt.Sprintf("This file asks for %s, which a spawn here would not give, so it is not applied.", what)
+}
+
 // receiverLaunchFieldsProfile takes out of a file's profile the launch fields
 // that widen an agent without being a posture: pre-trusting its directory, opening
-// it to remote control, and setting its environment.
+// it to remote control or peer messaging, choosing its model route, keeping
+// features a tier here trims, and setting its environment.
 func receiverLaunchFieldsProfile(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []string) {
 	var tiers []launchProfileTier
 	if landing, fail, err := resolveLaunchDefaults(group, profile, h.Name); fail == nil && err == nil {
 		tiers = landing.tiers
 	}
 	var dropped []string
-	drop := func(what string) {
-		dropped = append(dropped, fmt.Sprintf("This file asks for %s, which a spawn here would not give, so it is not applied.", what))
-	}
+	drop := func(what string) { dropped = append(dropped, fileFieldDropped(what)) }
 	gives := func(field string, value func(*db.SpawnProfile) *bool) bool {
 		given, _, _, _, fail := resolveBoolLaunchField(field, false, false, h.Name, tiers, value,
 			func(v bool) (bool, error) { return v, nil })
@@ -1108,6 +1112,42 @@ func receiverLaunchFieldsProfile(p spawnProfileJSON, h *harness.Harness, group, 
 		p.RemoteControl = nil
 		if !gives("remote_control", func(tier *db.SpawnProfile) *bool { return tier.RemoteControl }) {
 			drop("remote control")
+		}
+	}
+	if p.PeerMessaging != nil && *p.PeerMessaging {
+		p.PeerMessaging = nil
+		if !gives("peer_messaging", func(tier *db.SpawnProfile) *bool { return tier.PeerMessaging }) {
+			drop("peer messaging")
+		}
+	}
+	// A proxy carries the whole conversation, and "off" steps around the one a
+	// spawn here would use. Left blank, this resolves to the receiver's own.
+	if recorded := strings.TrimSpace(p.ModelProxy); recorded != "" {
+		p.ModelProxy = ""
+		given, _, _, fail := resolveStringLaunchField("model_proxy", "", h.Name, tiers,
+			func(tier *db.SpawnProfile) string { return tier.ModelProxy },
+			func(v string) (string, error) { return v, nil })
+		if fail != nil || (given != recorded && (recorded != "off" || given != "")) {
+			drop("model proxy " + recorded)
+		}
+	}
+	// "off" trims a feature, which only takes something away. "on" keeps one a
+	// tier here trims, so it stays with the receiver.
+	if len(p.ContextFeatures) > 0 {
+		landing, _, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
+		kept := map[string]string{}
+		var names []string
+		for feature, state := range p.ContextFeatures {
+			if state != harness.ContextFeatureOn {
+				kept[feature] = state
+			} else if fail != nil || landing[feature] == harness.ContextFeatureOff {
+				names = append(names, feature)
+			}
+		}
+		p.ContextFeatures = kept
+		if len(names) > 0 {
+			slices.Sort(names)
+			drop("context features " + strings.Join(names, ", "))
 		}
 	}
 	// A variable can change what the harness loads or how it decides, so none is
