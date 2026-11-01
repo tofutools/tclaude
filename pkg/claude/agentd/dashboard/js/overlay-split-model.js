@@ -120,7 +120,8 @@ function quadAreas(node, area) {
 // rectangle; lines are the shared split lines, each { path, area, axis, x, y, w,
 // h } with axis as the node's; crossings are the quads', { path, area, x, y };
 // gaps are the empty cells, { path, rect }. edges maps a window to the compass
-// edges an unlocked line left it to resize, each { path, area, axis, side }, side 'end' or 'start' of its line.
+// edges an unlocked line left it to resize, each { path, area, axis, side, partner },
+// side 'end' or 'start' of its line and partner where the other side's edge stands.
 export function splitLayout(tree, area) {
   const rects = {};
   const lines = [];
@@ -137,7 +138,7 @@ export function splitLayout(tree, area) {
       gaps.push({ path, rect: here });
       return;
     }
-    const edge = (axis, side, unlocked) => (unlocked ? { path, area: here, axis, side } : undefined);
+    const edge = (axis, side, unlocked, partner) => (unlocked ? { path, area: here, axis, side, partner } : undefined);
     if (isQuad(node)) {
       const { cross, areas } = quadAreas(node, here);
       const [openX, openY] = [node.freeX !== undefined, node.freeY !== undefined];
@@ -147,10 +148,10 @@ export function splitLayout(tree, area) {
       node.cells.forEach((cell, index) => {
         const [right, lower] = [index % 2 === 1, index > 1];
         walk(cell, areas[index], [...path, index], {
-          e: right ? free.e : edge('x', 'end', openX),
-          w: right ? edge('x', 'start', openX) : free.w,
-          s: lower ? free.s : edge('y', 'end', openY),
-          n: lower ? edge('y', 'start', openY) : free.n,
+          e: right ? free.e : edge('x', 'end', openX, areas[1].x),
+          w: right ? edge('x', 'start', openX, cross.x) : free.w,
+          s: lower ? free.s : edge('y', 'end', openY, areas[2].y),
+          n: lower ? edge('y', 'start', openY, cross.y) : free.n,
         });
       });
       return;
@@ -162,8 +163,9 @@ export function splitLayout(tree, area) {
         ? { path, area: here, axis: 'x', x: line, y: here.y, w: 0, h: here.h }
         : { path, area: here, axis: 'y', x: here.x, y: line, w: here.w, h: 0 });
     }
-    walk(node.a, areas[0], [...path, 0], { ...free, [node.axis === 'x' ? 'e' : 's']: edge(node.axis, 'end', open) });
-    walk(node.b, areas[1], [...path, 1], { ...free, [node.axis === 'x' ? 'w' : 'n']: edge(node.axis, 'start', open) });
+    const partnerOfEnd = node.axis === 'x' ? areas[1].x : areas[1].y;
+    walk(node.a, areas[0], [...path, 0], { ...free, [node.axis === 'x' ? 'e' : 's']: edge(node.axis, 'end', open, partnerOfEnd) });
+    walk(node.b, areas[1], [...path, 1], { ...free, [node.axis === 'x' ? 'w' : 'n']: edge(node.axis, 'start', open, line) });
   }(tree, area, [], {}));
   return { rects, lines, crossings, gaps, edges };
 }
@@ -203,6 +205,26 @@ export function movedEdge(tree, path, { axis, side, area }, pointer) {
   return atPath(tree, path, (node) => {
     if (isQuad(node)) return { ...node, [side === 'end' ? axis : axis === 'x' ? 'freeX' : 'freeY']: share };
     return { ...node, [side === 'end' ? 'at' : 'free']: share };
+  });
+}
+
+// edgeMeets reports whether a pointer dragging an unlocked edge is within reach
+// of the edge across its line, from either side.
+export function edgeMeets({ axis, partner }, pointer, reach) {
+  return Math.abs((axis === 'x' ? pointer.x : pointer.y) - partner) <= reach;
+}
+
+// lockedEdge is the tree with an unlocked edge's line shared again, where the
+// edge across it stands. The other line of a quad stays as it is.
+export function lockedEdge(tree, path, { axis, area, partner }) {
+  const share = clampShare(axis === 'x' ? (partner - area.x) / area.w : (partner - area.y) / area.h);
+  return atPath(tree, path, (node) => {
+    if (isQuad(node)) {
+      const { [axis === 'x' ? 'freeX' : 'freeY']: _, ...rest } = node;
+      return { ...rest, [axis]: share };
+    }
+    const { free: _, ...rest } = node;
+    return { ...rest, at: share };
   });
 }
 
