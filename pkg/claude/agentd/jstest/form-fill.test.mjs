@@ -295,7 +295,7 @@ test('a browse result during a fill stays', async () => {
 
 test('undo leaves a synced worktree for the form to work out again', async () => {
   const p = page();
-  await fill(p, { 'agent-spawn-wt-sync': 'true' });
+  p.document.getElementById('agent-spawn-wt-sync').click();
   const harness = p.document.getElementById('agent-spawn-harness');
   const once = () => { p.document.getElementById('agent-spawn-wt-branch').value = 'moved'; harness.removeEventListener('change', once); };
   harness.addEventListener('change', once);
