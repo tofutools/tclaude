@@ -20,7 +20,7 @@ function fakeRecognition() {
 
 async function setup(t, {
   seed = { agent: 'agt_0123456789abcdef0123456789abcdef', harness: 'claude' }, collab = true, status = 'connected',
-  canType = true, secure = true, phrase, agents = [], fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
+  canType = true, secure = true, phrase, agents = [], solo = false, fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
 } = {}) {
   const harness = await createPreactHarness(t);
   const { h } = harness.preact;
@@ -45,7 +45,7 @@ async function setup(t, {
   t.after(() => { globalThis.fetch = realFetch; });
   const pane = { key: 'p', id: 'pane-p', label: 'alpha', seed };
   const view = (active = true, key = 'k') => h(PaneDictation, {
-    key, pane, active, solo: false, status, canType, target: seed.agent ? { agent: seed.agent } : null,
+    key, pane, active, solo, status, canType, target: seed.agent ? { agent: seed.agent } : null,
     snapshot, actions, win, notify: (text) => notices.push(text),
   });
   const mounted = await harness.mount(view());
@@ -178,6 +178,25 @@ test('on a non-secure page the mic is disabled and says why', async (t) => {
   const s = await setup(t, { secure: false });
   assert.equal(s.$('.companion-mic').disabled, true);
   assert.match(s.$('.companion-mic-note').textContent, /HTTPS or localhost/);
+});
+
+test('a detached window shows failures on the terminal, and the mic clears them', async (t) => {
+  const s = await setup(t, { solo: true, fetchImpl: async () => ({ ok: false, status: 500, statusText: 'no', json: async () => ({}) }) });
+  await s.mic();
+  await s.harness.act(async () => { s.speech.last().hear('keep me send now'); await tick(); });
+  assert.match(s.$('.companion-pane-notice').textContent, /failed/);
+  assert.deepEqual(s.notices, [], 'no toast host to reach');
+  await s.mic();
+  assert.ok(!s.$('.companion-pane-notice'));
+});
+
+test('a drawing in progress survives the terminal dropping', async (t) => {
+  const s = await setup(t);
+  await s.harness.act(() => s.$('.companion-annotate').click());
+  assert.ok(s.harness.document.body.classList.contains('companion-annotating'));
+  await s.rerender(false);
+  assert.ok(!s.$('.companion-floating'));
+  assert.ok(s.$('.annotate-send'), 'the overlay and its controls stay');
 });
 
 test('a refused paste keeps the draft', async (t) => {

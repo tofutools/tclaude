@@ -90,6 +90,7 @@ export async function openRemoteTerminal({ instance, agent, peerLabel = '', labe
   const opened = await open({
     wsPath: remoteTerminalPath({ peer: instance, agent, mode }),
     label: name,
+    ...(row.harness ? { harness: row.harness } : {}),
     remote: { peer: instance, peerLabel: peer, agent },
     ...(background ? { reveal: false } : {}),
   });
@@ -141,7 +142,7 @@ export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellTo
     const mode = remoteTerminalMode(row);
     if (!mode || !SAFE_ID.test(row.agent || '')) return;
     onClose();
-    open({ wsPath: remoteTerminalPath({ peer: node.id, agent: row.agent, mode }), label: row.name || row.agent, remote: { peer: node.id, peerLabel: node.name, agent: row.agent } });
+    open({ wsPath: remoteTerminalPath({ peer: node.id, agent: row.agent, mode }), label: row.name || row.agent, ...(row.harness ? { harness: row.harness } : {}), remote: { peer: node.id, peerLabel: node.name, agent: row.agent } });
   };
   const copyCmd = (cmd) => Promise.resolve().then(() => copy(cmd)).then(() => toast('Command copied', false)).catch(() => toast(`Run in a terminal: ${cmd}`, false));
   return html`<${Overlay} id="remote-sessions-modal" labelledby="remote-sessions-title" onClose=${onClose}>

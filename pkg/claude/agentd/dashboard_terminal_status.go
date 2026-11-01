@@ -15,6 +15,7 @@ import (
 // terminal-tab classifier. Keeping a separate wire type prevents standalone
 // terminal polls from growing when the full dashboard roster gains fields.
 type dashboardTerminalStatusState struct {
+	Harness        string `json:"harness,omitempty"`
 	Status         string `json:"status,omitempty"`
 	StatusDetail   string `json:"status_detail,omitempty"`
 	SubagentCount  int    `json:"subagent_count,omitempty"`
@@ -65,6 +66,7 @@ func terminalStatusForSessions(
 	}
 
 	out := dashboardTerminalStatusState{
+		Harness:      pick.Harness,
 		Status:       pick.Status,
 		StatusDetail: pick.StatusDetail,
 	}

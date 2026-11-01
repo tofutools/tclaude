@@ -198,7 +198,7 @@ export const DEFAULT_SEND_PHRASE = 'send now';
 // recognizer adds don't count. An empty send phrase never matches.
 export function sendPhraseRest(phrase, sendPhrase) {
   const words = String(sendPhrase || '').split(/\s+/)
-    .map((word) => word.replace(/^\p{P}+|\p{P}+$/gu, '').replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&'))
+    .map((word) => word.replace(/^\p{P}+|\p{P}+$/gu, '').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'))
     .filter(Boolean);
   if (!words.length) return null;
   const match = new RegExp(`(?:^|[\\s\\p{P}])${words.join('[\\s\\p{P}]+')}[\\s\\p{P}]*$`, 'iu').exec(String(phrase || ''));

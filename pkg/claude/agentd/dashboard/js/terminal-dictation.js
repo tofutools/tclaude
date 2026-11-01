@@ -44,6 +44,9 @@ export function PaneDictation({
   const [fieldFocused, setFieldFocused] = useState(false);
   const fieldRef = useCallback((element) => { if (!element) setFieldFocused(false); }, []);
   const [withContext, setWithContext] = useState(true);
+  // A detached window has no toast host, so it says it on the terminal.
+  const [notice, setNotice] = useState('');
+  const report = solo ? setNotice : notify;
   const talks = paneTalksToAgent(pane, target, snapshot?.value);
   const connected = String(status || '').startsWith('connected');
   const usable = connected && (talks || canType);
@@ -58,13 +61,17 @@ export function PaneDictation({
     if (shownRef.current) actions.activatePane(pane.key);
   };
   const dictation = useDictation({
-    win, targetId: shown ? pane.key : '', draft, notify,
+    win, targetId: shown ? pane.key : '', draft, notify: report,
     sendPhrase: talks ? dictationSendPhrase(snapshot?.value) : '',
     setDraft: (_, text) => setDraftText(text),
     send: (text) => send(null, text),
+    onStart: () => {
+      setNotice('');
+      win?.speechSynthesis?.cancel?.();
+    },
     onRelease: toTerminal,
   });
-  const annotation = useAnnotation({ win, notify, viewNow });
+  const annotation = useAnnotation({ win, notify: report, viewNow });
 
   // Whatever was typed while this went out stays.
   function settle(text) {
@@ -76,7 +83,7 @@ export function PaneDictation({
   async function mailAgent(text) {
     const context = withContext ? viewNow() : '';
     if (!companionMessageFits(text, context)) {
-      notify('That message is too long to send. Shorten it and try again.', true);
+      report('That message is too long to send. Shorten it and try again.', true);
       return;
     }
     setSending(true);
@@ -84,7 +91,7 @@ export function PaneDictation({
       await postOperatorMessage(agentFetch(), { to: target.agent, body: composeCompanionMessage(text, context) });
       settle(text);
     } catch (error) {
-      notify(`Message to ${name} failed: ${error?.message || error}`, true);
+      report(`Message to ${name} failed: ${error?.message || error}`, true);
     } finally {
       setSending(false);
     }
@@ -92,7 +99,7 @@ export function PaneDictation({
 
   function pasteToTerminal(text) {
     if (actions.widgetFor(pane.id)?.paste(terminalDraftText(text))) settle(text);
-    else notify('This terminal is not taking input, so the draft stays here.', true);
+    else report('This terminal is not taking input, so the draft stays here.', true);
   }
 
   async function send(event, text = draft) {
@@ -105,7 +112,8 @@ export function PaneDictation({
     else pasteToTerminal(text);
   }
 
-  if (!shown) return null;
+  // A drawing in progress outlives a blip, and keeps its Cancel.
+  if (!shown) return annotation.overlay || null;
   const showField = draft || dictation.listening || fieldFocused;
   return html`
     <div class="companion-floating-anchor">
@@ -116,6 +124,7 @@ export function PaneDictation({
         withContext=${talks ? withContext : null} onContext=${setWithContext}
         annotateLabel=${`Mark up this page for ${name}`}
         onAnnotate=${talks ? () => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch() }) : null} />
+      ${notice && html`<button type="button" class="companion-pane-notice" role="alert" title="Dismiss" onClick=${() => setNotice('')}>${notice}</button>`}
     </div>
     ${showField && html`<${DraftField} dictation=${dictation} draft=${draft} sending=${sending} fieldRef=${fieldRef}
       label=${talks ? `Message ${name}` : 'Draft for this terminal'}

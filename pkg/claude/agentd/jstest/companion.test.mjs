@@ -1118,6 +1118,7 @@ test('dictation fills the draft and sends when the operator ends with "send"', a
   assert.equal(voice.sendPhraseRest('resend now', 'send now'), null, 'whole words only');
   assert.equal(voice.sendPhraseRest('skicka nu', ' Skicka  nu! '), '');
   assert.equal(voice.sendPhraseRest('a.b', 'a+b'), null, 'the phrase is text, not a pattern');
+  assert.equal(voice.sendPhraseRest('done over-and-out', 'over-and-out'), 'done');
   assert.equal(voice.sendPhraseRest('send now', ''), null, 'an empty phrase is off');
   // A failed send keeps the dictated draft.
   failNext = true;
