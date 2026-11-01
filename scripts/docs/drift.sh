@@ -30,9 +30,9 @@ frozen="$(jq -r .frozenTime scripts/docs/shots.json)"
 
 # Nothing below may see the operator's machine, because captures go on tickets.
 # Config shows PATH lookups and data paths, so the tour runs on a bare environment
-# and under /tmp, whose path names nobody. A stop that still shows the user, the
-# host or the home directory is refused by the driver.
-chrome="${TCLAUDE_DOCSHOTS_CHROME:-$(command -v google-chrome chromium chromium-browser | head -1)}"
+# and under /tmp, whose path names nobody. The driver refuses a stop that still
+# shows the user, the host or the home directory.
+chrome="${TCLAUDE_DOCSHOTS_CHROME:-$(command -v google-chrome chromium chromium-browser | head -1 || true)}"
 sandbox="$(TMPDIR=/tmp mktemp -d -t docdrift.XXXXXX)"
 trap 'rm -rf "$work" "$sandbox"' EXIT
 mkdir -p "$sandbox/home" "$sandbox/tmp"
@@ -41,7 +41,7 @@ env -i HOME="$sandbox/home" TMPDIR="$sandbox/tmp" PATH=/usr/bin:/bin TZ=UTC LC_A
   TCLAUDE_DOCSHOTS_CHROME="$chrome" \
   "$work/docdrift" -tour scripts/docs/tour.json -server "$work/agentd.test" \
   -server-dir pkg/claude/agentd -out "$root/docs-drift-out/tour" -frozen-time "$frozen" \
-  -host-words "${USER:-},${LOGNAME:-},$(hostname),$HOME"
+  -host-words "$HOME"
 
 if (( ${#images[@]} )); then
   scripts/docs/screenshots.sh --dry-run | tee docs-drift-out/images.txt

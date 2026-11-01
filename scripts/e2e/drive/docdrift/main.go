@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -88,9 +89,14 @@ func main() {
 	serverDir := flag.String("server-dir", "pkg/claude/agentd", "directory to run the server binary in")
 	out := flag.String("out", "docs-drift-out/tour", "output directory")
 	frozenTime := flag.String("frozen-time", "", "RFC 3339 instant the server's clock is frozen at")
-	hostWords := flag.String("host-words", "", "comma-separated words that mark real host data; a stop showing one is refused")
+	hostWords := flag.String("host-words", "", "comma-separated words that mark real host data, besides this user and host")
 	flag.Parse()
-	if err := run(*tourPath, *serverBin, *serverDir, *out, *frozenTime, strings.Split(*hostWords, ",")); err != nil {
+	words, err := bannedWords(strings.Split(*hostWords, ","))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "docdrift:", err)
+		os.Exit(1)
+	}
+	if err := run(*tourPath, *serverBin, *serverDir, *out, *frozenTime, words); err != nil {
 		fmt.Fprintln(os.Stderr, "docdrift:", err)
 		os.Exit(1)
 	}
@@ -151,8 +157,27 @@ func run(tourPath, serverBin, serverDir, out, frozenTime string, hostWords []str
 	if err := os.WriteFile(filepath.Join(out, "index.json"), index, 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("%d stops, %d unreachable\n", len(t.Stops), failed)
+	fmt.Printf("%d stops, %d failed\n", len(t.Stops), failed)
+	// A few lost stops are findings. Most of them means the tour itself broke, and
+	// comparing the docs with it would report nothing or nonsense.
+	if failed*2 > len(t.Stops) {
+		return fmt.Errorf("%d of %d stops failed", failed, len(t.Stops))
+	}
 	return nil
+}
+
+// bannedWords adds this user and host, read as the server reads them: from the
+// system, because the bare environment the tour runs in names neither.
+func bannedWords(extra []string) ([]string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return nil, err
+	}
+	return append(extra, u.Username, host), nil
 }
 
 func launchChrome(t tour) (*rod.Browser, func(), error) {

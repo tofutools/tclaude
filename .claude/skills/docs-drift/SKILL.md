@@ -22,9 +22,15 @@ scripts/docs/drift.sh            # add --images to also list stale docs images
 Run it from a checkout of the commit under test. It writes
 `docs-drift-out/tour/<stop>.txt` and `.png`, and `index.json`. A `.txt` holds the
 visible text, then `--- controls ---`: every control label, marked `shown:` or
-`hidden:` (in a closed menu or dialog). An `error` in `index.json` means a stop was
-not reachable. That is a finding only if a doc promises that page or control; a
-renamed selector in `tour.json` is a tour bug, so fix the tour.
+`hidden:` (in a closed menu or dialog). A stop that failed has an `error` in
+`index.json`. If most stops fail, the script exits non-zero: stop and report it.
+An error saying `from the host` means the page showed real machine data and was
+refused; always report that. Any other error is a finding only if a doc promises
+that page or control; a renamed selector in `tour.json` is a tour bug, so fix the
+tour.
+
+Before comparing, list what is already decided, so you do not raise it again:
+`awb list -l docs-drift --include-closed`.
 
 ## 2. Compare, one doc page at a time
 
@@ -56,7 +62,7 @@ Write `docs-drift-out/findings.json`, an array of:
   "title": "docs: dashboard-config says X, the UI shows Y",
   "doc": "docs/dashboard-config.md",
   "line": 12,
-  "quote": "the doc's exact words, one sentence at most",
+  "quote": "the doc's exact words, within one sentence",
   "ui_shows": "what the tour shows, with the source file that settles it",
   "capture": "tour/config-agents.png",
   "fix": "the wording you propose, for a human to accept"
@@ -70,10 +76,11 @@ scripts/docs/drift-file.sh docs-drift-out/findings.json             # new or kno
 scripts/docs/drift-file.sh --file -w <workspace> docs-drift-out/findings.json
 ```
 
-The fingerprint is the doc path and the quote, so moved lines stay the same finding.
-A finding with a fingerprint on any ticket, open or closed, is skipped: closing a
-ticket as "not drift" silences it, and a fix to the doc retires it because the
-quote is gone. Every ticket carries `docs-drift` and `needs-review`.
+A quote that is not in the doc stops the filing. The fingerprint is the doc path and
+the whole sentence around the quote, so a moved line or a shorter quote stays the
+same finding. A finding with a fingerprint on any ticket, open or closed, is skipped:
+closing a ticket as "not drift" silences it, and a fix to the doc retires it because
+the sentence is gone. Every ticket carries `docs-drift` and `needs-review`.
 
 Report what was filed, what was known, what stayed unsettled and which stops failed.
 
