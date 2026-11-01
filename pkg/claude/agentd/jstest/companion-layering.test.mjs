@@ -10,9 +10,10 @@ const sheets = ['dashboard.css', 'companion.css', 'board.css', 'mux.css', 'termi
 
 // Popovers that sit inside something else's stacking context, so their own
 // number says nothing about the page: the window hides the chips, the others
-// are clipped to or carried by their host. A dialog's resize grip is part of it.
+// are clipped to or carried by their host. A dialog's resize grip is part of it,
+// and so are an overlay window's own controls and snapped edges.
 // The scan reads the numbers only: it can't see a stacking context.
-const nested = /dialog-resizer|companion-(menu|decide-queue)|fleet-link-pop|dock-card-menu|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
+const nested = /dialog-resizer|overlay-window-(edge|controls)|companion-(menu|decide-queue)|fleet-link-pop|dock-card-menu|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
 const opened = /menu|pop|modal|overlay|drawer|panel|dialog/i;
 
 async function zRules() {

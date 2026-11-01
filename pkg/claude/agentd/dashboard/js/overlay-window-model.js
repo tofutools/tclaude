@@ -1,7 +1,8 @@
 // overlay-window-model.js -- the pure half of the shared overlay window
 // (overlay-window.js): where a floating or snapped window sits, and how a drag
 // changes that. A placement is { x, y, w, h, snap }, where snap is '' for a
-// floating window, or the edge it is snapped to, or 'max'.
+// floating window, or the zone it is snapped to, or 'max'. A saved placement may
+// also carry panels, the size the operator gave each zone: { [zone]: { w, h } }.
 //
 // Everything here is DOM-free so it can be tested directly.
 
@@ -9,10 +10,32 @@ export const OVERLAY_MIN_W = 360;
 export const OVERLAY_MIN_H = 220;
 // Distance from a viewport edge at which a drag offers to snap.
 export const OVERLAY_SNAP_EDGE = 28;
+// How far along an edge, from its end, a drag counts as the corner.
+export const OVERLAY_CORNER_REACH = 72;
 // The share of the viewport a snapped window takes.
 export const OVERLAY_SNAP_SHARE = 0.42;
 // Room kept for the fixed footer bar below a placement.
 export const OVERLAY_FOOTER_ROOM = 29;
+
+// Each snap zone and the edges and corner of it that are free to resize.
+const SNAP_ZONES = Object.freeze({
+  left: ['e'], right: ['w'], bottom: ['n'],
+  'top-left': ['e', 's', 'se'], 'top-right': ['w', 's', 'sw'],
+  'bottom-left': ['e', 'n', 'ne'], 'bottom-right': ['w', 'n', 'nw'],
+});
+const isSnapZone = (zone) => Object.hasOwn(SNAP_ZONES, zone);
+
+// freeEdges names the handles a window snapped to zone has.
+export function freeEdges(zone) {
+  return SNAP_ZONES[zone] || [];
+}
+
+function parsePanels(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const panels = Object.entries(raw).filter(([zone, size]) => isSnapZone(zone) && Number.isFinite(size?.w) && Number.isFinite(size?.h))
+    .map(([zone, { w, h }]) => [zone, { w, h }]);
+  return panels.length ? Object.fromEntries(panels) : null;
+}
 
 export function parsePlacement(raw) {
   try {
@@ -20,9 +43,10 @@ export function parsePlacement(raw) {
     if (!p || typeof p !== 'object') return null;
     const nums = ['x', 'y', 'w', 'h'].every((k) => Number.isFinite(p[k]));
     if (!nums) return null;
-    const snap = ['left', 'right', 'bottom', 'max'].includes(p.snap) ? p.snap : '';
-    const placement = { x: p.x, y: p.y, w: p.w, h: p.h, snap };
-    return snap === 'max' && ['left', 'right', 'bottom'].includes(p.restoreSnap) ? { ...placement, restoreSnap: p.restoreSnap } : placement;
+    const snap = isSnapZone(p.snap) || p.snap === 'max' ? p.snap : '';
+    const panels = parsePanels(p.panels);
+    const placement = { x: p.x, y: p.y, w: p.w, h: p.h, snap, ...(panels && { panels }) };
+    return snap === 'max' && isSnapZone(p.restoreSnap) ? { ...placement, restoreSnap: p.restoreSnap } : placement;
   } catch {
     return null;
   }
@@ -54,13 +78,21 @@ export function fitPlacement(p, viewport) {
   return { x, y, w, h, snap };
 }
 
-// snapZone names the edge a dragged window would snap to for a pointer
-// position, or '' to keep floating.
-export function snapZone(pointer, viewport) {
-  if (pointer.x >= viewport.width - OVERLAY_SNAP_EDGE) return 'right';
-  if (pointer.x <= OVERLAY_SNAP_EDGE) return 'left';
-  if (pointer.y >= viewport.height - OVERLAY_FOOTER_ROOM - OVERLAY_SNAP_EDGE) return 'bottom';
-  return '';
+// snapZone names the zone a dragged window would snap to for a pointer position,
+// or '' to keep floating. Along a side, top is where the room starts, so the top
+// corners sit just under the nav bar.
+export function snapZone(pointer, viewport, top = 0) {
+  const bottom = viewport.height - OVERLAY_FOOTER_ROOM;
+  const right = pointer.x >= viewport.width - OVERLAY_SNAP_EDGE;
+  const left = pointer.x <= OVERLAY_SNAP_EDGE;
+  if (left || right) {
+    const side = right ? 'right' : 'left';
+    if (pointer.y <= top + OVERLAY_CORNER_REACH) return `top-${side}`;
+    return pointer.y >= bottom - OVERLAY_CORNER_REACH ? `bottom-${side}` : side;
+  }
+  if (pointer.y < bottom - OVERLAY_SNAP_EDGE) return '';
+  if (pointer.x <= OVERLAY_CORNER_REACH) return 'bottom-left';
+  return pointer.x >= viewport.width - OVERLAY_CORNER_REACH ? 'bottom-right' : 'bottom';
 }
 
 // viewportOf is the area a fixed window can use. innerWidth and innerHeight
@@ -73,21 +105,26 @@ export function viewportOf(win) {
   };
 }
 
-// zoneRect is the rectangle a snapped window occupies: a full-height side
-// panel below the top bar, a full-width bottom drawer above the footer, or for
-// a maximized window all the room between the two.
-export function zoneRect(zone, viewport, top = 0) {
+// zoneRect is the rectangle a snapped window occupies: a full-height side panel
+// below the top bar, a full-width bottom drawer above the footer, a quarter in a
+// corner, or for a maximized window all the room between the top bar and footer.
+// size is what the operator resized this zone to; it stays within the viewport.
+export function zoneRect(zone, viewport, top = 0, size = null) {
   const bottom = viewport.height - OVERLAY_FOOTER_ROOM;
-  if (zone === 'max') return { x: 0, y: top, w: viewport.width, h: Math.max(OVERLAY_MIN_H, bottom - top), snap: zone };
-  if (zone === 'right' || zone === 'left') {
-    const w = Math.min(viewport.width, Math.max(OVERLAY_MIN_W, Math.round(viewport.width * OVERLAY_SNAP_SHARE)));
-    return { x: zone === 'right' ? viewport.width - w : 0, y: top, w, h: Math.max(OVERLAY_MIN_H, bottom - top), snap: zone };
-  }
+  const room = Math.max(OVERLAY_MIN_H, bottom - top);
+  if (zone === 'max') return { x: 0, y: top, w: viewport.width, h: room, snap: zone };
+  if (!isSnapZone(zone)) return null;
+  const width = () => Math.min(viewport.width, Math.max(OVERLAY_MIN_W, Math.round(size?.w ?? viewport.width * OVERLAY_SNAP_SHARE)));
+  const height = (share) => Math.min(room, Math.max(OVERLAY_MIN_H, Math.round(size?.h ?? (bottom - top) * share)));
   if (zone === 'bottom') {
-    const h = Math.max(OVERLAY_MIN_H, Math.round((bottom - top) * OVERLAY_SNAP_SHARE));
+    const h = height(OVERLAY_SNAP_SHARE);
     return { x: 0, y: bottom - h, w: viewport.width, h, snap: zone };
   }
-  return null;
+  const w = width();
+  const x = zone.endsWith('right') ? viewport.width - w : 0;
+  if (zone === 'left' || zone === 'right') return { x, y: top, w, h: room, snap: zone };
+  const h = height(0.5);
+  return { x, y: zone.startsWith('top') ? top : bottom - h, w, h, snap: zone };
 }
 
 // resizedPlacement is a drag of one edge or corner, named by its compass
@@ -131,17 +168,16 @@ export function savedAfterResize(last, zone, saved) {
   };
 }
 
-// snappedResize is a drag of a snapped panel's free edge. The panel stays glued
-// to its edge however far the drag overshoots.
-export function snappedResize(start, dx, dy, viewport) {
-  let next = start;
-  if (start.snap === 'right') next = { ...start, x: start.x + dx, w: start.w - dx };
-  else if (start.snap === 'left') next = { ...start, w: start.w + dx };
-  else if (start.snap === 'bottom') next = { ...start, y: start.y + dy, h: start.h - dy };
-  const w = Math.min(viewport.width, Math.max(OVERLAY_MIN_W, next.w));
-  const h = Math.max(OVERLAY_MIN_H, next.h);
-  next = { ...next, w, h };
-  if (start.snap === 'right') next.x = viewport.width - w;
-  if (start.snap === 'bottom') next.y = start.y + start.h - h;
-  return next;
+// snappedResize is a drag of one of a snapped window's free edges, or the corner
+// between two, named by its compass letters. The opposite side stays glued to
+// its place however far the drag overshoots.
+export function snappedResize(start, zone, dx, dy, viewport, top = 0) {
+  const west = zone.includes('w');
+  const north = zone.includes('n');
+  const dw = west ? -dx : zone.includes('e') ? dx : 0;
+  const dh = north ? -dy : zone.includes('s') ? dy : 0;
+  const room = Math.max(OVERLAY_MIN_H, viewport.height - OVERLAY_FOOTER_ROOM - top);
+  const w = Math.min(viewport.width, Math.max(OVERLAY_MIN_W, start.w + dw));
+  const h = Math.min(room, Math.max(OVERLAY_MIN_H, start.h + dh));
+  return { ...start, x: west ? start.x + start.w - w : start.x, y: north ? start.y + start.h - h : start.y, w, h };
 }

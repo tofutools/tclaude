@@ -1344,7 +1344,7 @@ test('each look puts the window controls in native order, and keyboard order fol
   for (const [look, order] of [['macos', [names[2], names[0], names[1]]], ['windows', names], ['linux', names]]) {
     const { view } = await openLook(t, look);
     const bar = view.container.querySelector('.companion-titlebar');
-    const group = bar.querySelector('.companion-window-controls');
+    const group = bar.querySelector('.overlay-window-controls');
     assert.deepEqual(buttonNames(group), order, look);
     assert.ok(group.querySelectorAll('svg').length === 3, `${look} draws its symbols`);
     const all = [...bar.querySelectorAll('button')];
@@ -1359,7 +1359,7 @@ test('each look puts the window controls in native order, and keyboard order fol
 test('the classic look is the bar as it always was, with its one minimize', async (t) => {
   const { view, harness } = await openLook(t, 'classic');
   const bar = view.container.querySelector('.companion-titlebar');
-  assert.equal(bar.querySelector('.companion-window-controls'), null);
+  assert.equal(bar.querySelector('.overlay-window-controls'), null);
   const minimize = bar.querySelector('.companion-controls [aria-label="Minimize (Ctrl+.)"]');
   assert.equal(minimize.textContent, '–');
   assert.equal(bar.querySelector('[aria-label="Maximize"]'), null);
@@ -1380,11 +1380,11 @@ test('an unknown or missing look follows the browser OS', async (t) => {
 test('minimize and close are their own actions, and close leaves the agent running', async (t) => {
   const { view, harness, requests } = await openLook(t, 'windows');
   const bar = () => view.container.querySelector('.companion-titlebar');
-  await harness.act(() => bar().querySelector('.companion-wc-close').click());
+  await harness.act(() => bar().querySelector('.overlay-wc-close').click());
   assert.deepEqual([...bar().querySelectorAll('[role="tab"]')].map((tab) => tab.title.split(':')[0]), ['bravo'], 'the tab is gone');
   assert.equal(view.container.querySelector('.companion-window-warm'), null, 'the window stays for the other tab');
   assert.deepEqual(requests.filter((request) => request.url.includes(A)), [], 'nothing was asked of the agent');
-  await harness.act(async () => { bar().querySelector('.companion-wc-minimize').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { bar().querySelector('.overlay-wc-minimize').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(view.container.querySelector('.companion-window-warm'), 'minimized');
   assert.equal(view.container.querySelectorAll('[role="tab"]').length, 1, 'and minimize closed no tab');
 });
@@ -1394,7 +1394,7 @@ test('maximize fills the room, survives a reload, and restores what it replaced'
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: JSON.stringify(FLOATING) });
   const { view, harness } = await openLook(t, 'linux', { prefs });
   const frame = () => view.container.querySelector('.companion-window');
-  const size = () => view.container.querySelector('.companion-wc-maximize');
+  const size = () => view.container.querySelector('.overlay-wc-maximize');
   await harness.act(() => size().click());
   assert.ok(frame().classList.contains('snapped-max'));
   assert.equal(size().getAttribute('aria-label'), 'Restore');
@@ -1409,7 +1409,7 @@ test('maximize fills the room, survives a reload, and restores what it replaced'
   view.unmount?.();
   const again = await openLook(t, 'linux', { prefs });
   const frame2 = () => again.view.container.querySelector('.companion-window');
-  const size2 = () => frame2().querySelector('.companion-wc-maximize');
+  const size2 = () => frame2().querySelector('.overlay-wc-maximize');
   assert.ok(frame2().classList.contains('snapped-left'));
   await again.harness.act(() => size2().click());
   await again.harness.act(() => size2().click());
@@ -1421,7 +1421,7 @@ test('restore brings back the panel it replaced, across a reload and at its resi
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]), [pref]: JSON.stringify({ ...FLOATING, snap: 'left' }) });
   const first = await openLook(t, 'linux', { prefs });
   const frame = () => first.view.container.querySelector('.companion-window');
-  const size = () => frame().querySelector('.companion-wc-maximize');
+  const size = () => frame().querySelector('.overlay-wc-maximize');
   const pull = (dx) => first.harness.act(async () => {
     const handle = first.view.container.querySelector('.overlay-window-edge');
     const event = (type, x) => Object.assign(new first.harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 200 });
@@ -1441,23 +1441,58 @@ test('restore brings back the panel it replaced, across a reload and at its resi
   const reloaded = await openLook(t, 'linux', { prefs });
   const frame2 = () => reloaded.view.container.querySelectorAll('.companion-window')[0];
   assert.ok(frame2().classList.contains('snapped-max'));
-  await reloaded.harness.act(() => frame2().querySelector('.companion-wc-maximize').click());
+  await reloaded.harness.act(() => frame2().querySelector('.overlay-wc-maximize').click());
   assert.ok(frame2().classList.contains('snapped-left'), 'the edge survives a reload');
+  assert.equal(frame2().style.width, pulled, 'and so does the width');
   assert.equal(JSON.parse(prefs.getItem(pref)).restoreSnap, undefined);
+});
+
+test('snap model: corners, saved panel sizes and free edges', async (t) => {
+  const harness = await createPreactHarness(t);
+  const o = await harness.importDashboardModule('js/overlay-window-model.js');
+  const vp = { width: 1200, height: 800 };
+  const bottom = vp.height - o.OVERLAY_FOOTER_ROOM;
+  assert.equal(o.snapZone({ x: 3, y: 70 }, vp, 60), 'top-left');
+  assert.equal(o.snapZone({ x: 1195, y: 70 }, vp, 60), 'top-right');
+  assert.equal(o.snapZone({ x: 3, y: 760 }, vp, 60), 'bottom-left');
+  assert.equal(o.snapZone({ x: 1100 + 60, y: 790 }, vp, 60), 'bottom-right', 'along the bottom edge too');
+  assert.equal(o.snapZone({ x: 3, y: 400 }, vp, 60), 'left');
+  const quarter = o.zoneRect('top-right', vp, 60);
+  assert.deepEqual(quarter, { x: 1200 - 504, y: 60, w: 504, h: Math.round((bottom - 60) / 2), snap: 'top-right' });
+  const low = o.zoneRect('bottom-left', vp, 60);
+  assert.equal(low.y + low.h, bottom, 'a bottom corner sits on the footer');
+  assert.equal(o.zoneRect('left', vp, 60, { w: 700, h: 300 }).w, 700, 'a saved width');
+  assert.equal(o.zoneRect('left', vp, 60, { w: 700, h: 300 }).h, bottom - 60, 'a side panel stays full height');
+  assert.equal(o.zoneRect('right', { width: 500, height: 800 }, 0, { w: 700, h: 300 }).w, 500, 'a saved size stays within the viewport');
+  assert.equal(o.parsePlacement(JSON.stringify({ x: 1, y: 2, w: 3, h: 4, snap: 'top-left' })).snap, 'top-left');
+  assert.equal(o.parsePlacement(JSON.stringify({ x: 1, y: 2, w: 3, h: 4, snap: 'max', restoreSnap: 'bottom-right' })).restoreSnap, 'bottom-right');
+  const panels = { left: { w: 700, h: 300 }, junk: { w: 1, h: 2 }, right: { w: 'x', h: 2 } };
+  assert.deepEqual(o.parsePlacement(JSON.stringify({ x: 1, y: 2, w: 3, h: 4, panels })).panels, { left: { w: 700, h: 300 } });
+  assert.equal(o.parsePlacement(JSON.stringify({ x: 1, y: 2, w: 3, h: 4, panels: 'nope' })).panels, undefined);
+  assert.deepEqual(o.freeEdges('bottom-right'), ['w', 'n', 'nw']);
+  assert.deepEqual(o.freeEdges('max'), []);
+  assert.deepEqual(o.freeEdges(''), []);
+  const start = o.zoneRect('bottom-right', vp, 60);
+  const pulled = o.snappedResize(start, 'nw', -40, -30, vp, 60);
+  assert.deepEqual([pulled.x + pulled.w, pulled.y + pulled.h], [1200, bottom], 'the far corner stays put');
+  assert.deepEqual([pulled.w, pulled.h], [start.w + 40, start.h + 30]);
+  const huge = o.snappedResize(o.zoneRect('top-left', vp, 60), 's', 0, 5000, vp, 60);
+  assert.equal(huge.y + huge.h, bottom, 'a drag cannot run past the footer');
+  assert.equal(o.snappedResize(o.zoneRect('right', vp, 60), 'w', 5000, 0, vp, 60).x, 1200 - o.OVERLAY_MIN_W, 'nor under the minimum width');
 });
 
 test('a mouse press hands focus back to the terminal, and the keyboard stays on the control', async (t) => {
   const { view, harness, mounted } = await openLook(t, 'windows');
-  const size = () => view.container.querySelector('.companion-wc-maximize');
+  const size = () => view.container.querySelector('.overlay-wc-maximize');
   const before = mounted.at(-1).focused;
   await harness.act(() => size().click());
   assert.equal(mounted.at(-1).focused, before, 'Enter on the control keeps focus for the next key');
   const press = (node) => harness.act(() => node.dispatchEvent(Object.assign(new harness.window.Event('click', { bubbles: true, cancelable: true }), { detail: 1 })));
   await press(size());
   assert.equal(mounted.at(-1).focused, before + 1, 'after maximize or restore');
-  await press(view.container.querySelector('.companion-wc-close'));
+  await press(view.container.querySelector('.overlay-wc-close'));
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  assert.notEqual(view.container.ownerDocument.activeElement?.className, 'companion-wc-close', 'the next key cannot close the next tab');
+  assert.notEqual(view.container.ownerDocument.activeElement?.className, 'overlay-wc-close', 'the next key cannot close the next tab');
 });
 
 test('a click on the bar leaves a snapped window alone, and only a real move tears it off', async (t) => {
@@ -1494,7 +1529,7 @@ test('dragging by the bar works around the controls, and pressing a control star
     node.dispatchEvent(event('pointerup', 420));
     await new Promise((r) => setTimeout(r, 0));
   });
-  const group = () => view.container.querySelector('.companion-window-controls');
+  const group = () => view.container.querySelector('.overlay-window-controls');
   await press(group().querySelector('button'));
   await press(group().querySelector('svg'));
   assert.ok(frame().classList.contains('snapped-max'), 'still maximized: a control is no handle');

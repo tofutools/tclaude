@@ -20,7 +20,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
 import {
-  clampPlacement, fitPlacement, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapZone, viewportOf, zoneRect,
+  clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapZone, viewportOf, zoneRect,
 } from './overlay-window-model.js';
 import { WindowControls } from './overlay-window-controls.js';
 
@@ -84,9 +84,10 @@ export function useOverlayWindow({ win, prefs, prefKey, defaultPlacement, snaps 
   const openFrom = useRef(null);
   // The cleanup of an in-flight drag or resize, run if the window unmounts.
   const gesture = useRef(null);
-  const panelBeforeMaximize = useRef(null);
   const saved = () => parsePlacement(readPref(prefs, prefKey));
   const snapTop = () => snapTopOf(win);
+  // A snapped window takes the size the operator last gave that zone.
+  const snappedPlacement = (zone) => zoneRect(zone, viewportOf(win), snapTop(), saved()?.panels?.[zone]);
 
   function floatingPlacement() {
     const viewport = viewportOf(win);
@@ -96,7 +97,7 @@ export function useOverlayWindow({ win, prefs, prefKey, defaultPlacement, snaps 
 
   const [placement, setPlacement] = useState(() => {
     const zone = snaps ? saved()?.snap : '';
-    return zone ? zoneRect(zone, viewportOf(win), snapTop()) : floatingPlacement();
+    return zone ? snappedPlacement(zone) : floatingPlacement();
   });
   const [guide, setGuide] = useState(null);
   useEffect(() => () => gesture.current?.(), []);
@@ -126,10 +127,7 @@ export function useOverlayWindow({ win, prefs, prefKey, defaultPlacement, snaps 
   // Keep a floating window on screen when the browser resizes, working from the
   // saved placement so a larger browser restores what a smaller one shrank.
   useEffect(() => {
-    const onResize = () => {
-      panelBeforeMaximize.current = null;
-      setPlacement((p) => (p.snap ? zoneRect(p.snap, viewportOf(win), snapTop()) : floatingPlacement()));
-    };
+    const onResize = () => setPlacement((p) => (p.snap ? snappedPlacement(p.snap) : floatingPlacement()));
     win?.addEventListener?.('resize', onResize);
     return () => win?.removeEventListener?.('resize', onResize);
   }, [win]);
@@ -140,8 +138,10 @@ export function useOverlayWindow({ win, prefs, prefKey, defaultPlacement, snaps 
     return size ? { ...p, w: size.w, h: size.h } : p;
   }
 
+  // Only a resize of a snapped window changes panels; every other save keeps them.
   function savePlacement(p) {
-    writePref(prefs, prefKey, JSON.stringify(p));
+    const panels = p.panels || saved()?.panels;
+    writePref(prefs, prefKey, JSON.stringify(panels ? { ...p, panels } : p));
   }
 
   function saveMovedWindow(p) {
@@ -191,12 +191,12 @@ export function useOverlayWindow({ win, prefs, prefKey, defaultPlacement, snaps 
       last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
       setPlacement(last);
       if (!snaps) return;
-      zone = snapZone({ x: m.clientX, y: m.clientY }, viewportOf(win));
-      setGuide(zone ? zoneRect(zone, viewportOf(win), snapTop()) : null);
+      zone = snapZone({ x: m.clientX, y: m.clientY }, viewportOf(win), snapTop());
+      setGuide(zone ? snappedPlacement(zone) : null);
     }, () => {
       setGuide(null);
       if (zone) {
-        setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
+        setPlacement(snappedPlacement(zone));
         saveMovedWindow({ ...withSavedSize(last), snap: zone });
       } else if (moved) {
         // A click shows the fitted placement, which is not the operator's to keep.
@@ -218,11 +218,17 @@ export function useOverlayWindow({ win, prefs, prefKey, defaultPlacement, snaps 
       moved = true;
       const dx = m.clientX - sx;
       const dy = m.clientY - sy;
-      // A snapped panel resizes along its free edge only.
-      last = start.snap ? snappedResize(start, dx, dy, viewportOf(win)) : resizedPlacement(start, zone, dx, dy, viewportOf(win));
+      // A snapped window resizes along its free edges only.
+      last = start.snap ? snappedResize(start, zone, dx, dy, viewportOf(win), snapTop()) : resizedPlacement(start, zone, dx, dy, viewportOf(win));
       setPlacement(last);
     }, () => {
-      if (!start.snap && moved) saveMovedWindow(savedAfterResize(last, zone, saved()));
+      if (!moved) return;
+      if (!start.snap) {
+        saveMovedWindow(savedAfterResize(last, zone, saved()));
+        return;
+      }
+      const current = saved();
+      if (current) savePlacement({ ...current, panels: { ...current.panels, [start.snap]: { w: last.w, h: last.h } } });
     });
   }
 
@@ -247,18 +253,13 @@ export function useOverlayWindow({ win, prefs, prefKey, defaultPlacement, snaps 
   }
 
   // Restore goes back to the panel the window was maximized from, or floating.
-  // The pref keeps which edge that was; a resized panel's size lives only here.
   function toggleMaximize(event) {
     const { restoreSnap = '', ...rest } = saved() || placement;
     if (placement.snap === 'max') {
-      const panel = panelBeforeMaximize.current;
-      const next = !restoreSnap ? floatingPlacement()
-        : panel?.snap === restoreSnap ? panel : zoneRect(restoreSnap, viewportOf(win), snapTop());
-      setPlacement(next);
+      setPlacement(restoreSnap ? snappedPlacement(restoreSnap) : floatingPlacement());
       savePlacement({ ...rest, snap: restoreSnap });
     } else {
-      panelBeforeMaximize.current = placement.snap ? placement : null;
-      setPlacement(zoneRect('max', viewportOf(win), snapTop()));
+      setPlacement(snappedPlacement('max'));
       savePlacement({ ...rest, snap: 'max', ...(placement.snap && { restoreSnap: placement.snap }) });
     }
     releaseFocus(event);
@@ -296,8 +297,9 @@ export function ResizeFrame({ placement, className, onResizeStart, onPointerDown
 // on top of its layer and whatever shares that layer keeps its place. mounted keeps a hidden window in the page, for content that
 // must stay alive while minimized. lead and title are the title bar's content,
 // and controls, { look, closeLabel, closeTitle, onMinimize, onClose }, adds the
-// native buttons, which the classic look leaves to the content.
-export function OverlayWindow({ id, window: overlay, lifts = true, open = true, mounted = open, className, frameClass, titlebarClass, label, lead = null, title, controls = null, children }) {
+// native buttons, which the classic look leaves to the content. A window with
+// nowhere to minimize to leaves out onMinimize.
+export function OverlayWindow({ id, window: overlay, lifts = true, open = true, mounted = open, className, frameClass, titlebarClass, label, lead = null, title, controls = null, onTitleWheel = null, children }) {
   const { placement, guide } = overlay;
   const front = lifts && frontOverlayWindow.value === id ? ' overlay-window-front' : '';
   const raise = () => raiseOverlayWindow(id);
@@ -311,13 +313,14 @@ export function OverlayWindow({ id, window: overlay, lifts = true, open = true, 
       style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px`}
       role="dialog" aria-label=${label} aria-modal="false" aria-hidden=${open ? undefined : 'true'}
       onClick=${overlay.onWindowClick} onPointerDownCapture=${raise}>
-      <header class=${titlebarClass} onPointerDown=${overlay.onTitlePointerDown}>
+      <header class=${titlebarClass} onPointerDown=${overlay.onTitlePointerDown} onWheel=${onTitleWheel}>
         ${look === 'macos' ? windowControls : lead}
         ${title}
         ${look !== 'macos' && windowControls}
       </header>
       ${children}
-      ${placement.snap && placement.snap !== 'max' && html`<div class="overlay-window-edge" aria-hidden="true" onPointerDown=${(event) => overlay.onResizePointerDown(event)}></div>`}
+      ${freeEdges(placement.snap).map((edge) => html`<div key=${edge} class=${`overlay-window-edge ${edge}`} aria-hidden="true"
+        onPointerDown=${(event) => overlay.onResizePointerDown(event, edge)}></div>`)}
     </section>`}
     ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} className=${`${frameClass}${front}`}
       onResizeStart=${overlay.onResizePointerDown} onPointerDownCapture=${raise} />`}`;

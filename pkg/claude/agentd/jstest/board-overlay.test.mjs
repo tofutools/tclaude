@@ -328,3 +328,74 @@ scenario('with features.collab off the overlay does not show, and comes back wit
   await harness.act(async () => { dashboardState.publishLocalEdit(COLLAB_ON); await wait(); });
   assert.ok(overlayHost.querySelector('.board-overlay'));
 });
+
+const dragTo = (harness, node, from, to) => harness.act(async () => {
+  const event = (type, [clientX, clientY]) => Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX, clientY });
+  node.dispatchEvent(event('pointerdown', from));
+  node.dispatchEvent(event('pointermove', to));
+  node.dispatchEvent(event('pointerup', to));
+  await wait();
+});
+
+scenario('the overlay snaps to edges and corners, keeps a resized panel, and maximizes', async ({ harness, overlayHost, overlayState, island, dashPrefs, dashboardState }) => {
+  dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'windows' });
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  const board = () => overlayHost.querySelector('.board-overlay');
+  const bar = () => overlayHost.querySelector('.board-overlay-titlebar');
+  const saved = () => JSON.parse(dashPrefs.getItem(island.BOARD_OVERLAY_PLACEMENT_PREF));
+  const width = harness.document.documentElement.clientWidth || harness.window.innerWidth || 1280;
+  await dragTo(harness, bar(), [300, 400], [width - 2, 400]);
+  assert.ok(board().classList.contains('snapped-right'));
+  assert.equal(saved().snap, 'right');
+  assert.equal(overlayHost.querySelector('.board-overlay-resize-frame'), null, 'a snapped window resizes along its free edge');
+  await dragTo(harness, overlayHost.querySelector('.overlay-window-edge.w'), [800, 300], [760, 300]);
+  const panel = board().style.width;
+  assert.equal(saved().panels.right.w, parseInt(panel, 10), 'the panel width is saved');
+  await harness.act(async () => { overlayHost.querySelector('.overlay-wc-maximize').click(); await wait(); });
+  assert.ok(board().classList.contains('snapped-max'));
+  await harness.act(async () => { overlayHost.querySelector('.overlay-wc-maximize').click(); await wait(); });
+  assert.ok(board().classList.contains('snapped-right'));
+  assert.equal(board().style.width, panel, 'restore brings the panel back at its size');
+  await dragTo(harness, bar(), [900, 100], [2, 2]);
+  assert.ok(board().classList.contains('snapped-top-left'), 'a corner');
+  assert.deepEqual([...overlayHost.querySelectorAll('.overlay-window-edge')].map((node) => node.className.split(' ').pop()), ['e', 's', 'se']);
+});
+
+scenario('the overlay has the native controls, without a minimize, and classic keeps its ×', async ({ harness, overlayHost, overlayState, dashboardState }) => {
+  dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'linux' });
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  assert.equal(overlayHost.querySelector('.overlay-wc-minimize'), null, 'a board has no chip to minimize to');
+  assert.ok(overlayHost.querySelector('.overlay-wc-maximize'));
+  assert.equal(overlayHost.querySelector('.board-overlay-close'), null);
+  await harness.act(async () => { dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'classic' }); await wait(); });
+  assert.equal(overlayHost.querySelector('.overlay-window-controls'), null);
+  assert.ok(overlayHost.querySelector('.board-overlay-close'));
+  await harness.act(async () => { dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'linux' }); await wait(); });
+  await harness.act(async () => { overlayHost.querySelector('.overlay-wc-close').click(); await wait(); });
+  assert.equal(overlayState.boardOverlay.value, null);
+});
+
+scenario('Ctrl+wheel over the title bar goes to the board, not the page', async ({ harness, overlayHost, overlayState }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  const bar = overlayHost.querySelector('.board-overlay-titlebar');
+  const editor = overlayHost.querySelector('.board-editor');
+  const heard = [];
+  editor.addEventListener('wheel', (event) => heard.push(event.deltaY));
+  // This DOM has no WheelEvent, and no onwheel, so Preact listens for 'Wheel'.
+  harness.window.WheelEvent ??= class extends harness.window.Event {
+    constructor(type, { deltaY, ctrlKey, metaKey, ...init }) {
+      super(type, init);
+      Object.assign(this, { deltaY, ctrlKey, metaKey });
+    }
+  };
+  const type = 'onwheel' in bar ? 'wheel' : 'Wheel';
+  const wheel = (init) => Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { deltaY: -120, ...init });
+  const plain = wheel({});
+  bar.dispatchEvent(plain);
+  assert.equal(plain.defaultPrevented, false, 'a plain wheel is not the board\'s');
+  assert.deepEqual(heard, []);
+  const zoom = wheel({ ctrlKey: true });
+  bar.dispatchEvent(zoom);
+  assert.equal(zoom.defaultPrevented, true, 'the page does not zoom');
+  assert.deepEqual(heard, [-120]);
+});

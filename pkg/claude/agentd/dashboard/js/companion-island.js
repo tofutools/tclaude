@@ -1160,7 +1160,7 @@ export function CompanionApp({
 
   const windowView = html`<${OverlayWindow} id="companion" window=${overlay} lifts=${false} open=${open} mounted=${open || warm}
     className=${`companion-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
-    titlebarClass=${`companion-titlebar companion-look-${look}`} label="Companion" controls=${controls}
+    titlebarClass=${`companion-titlebar overlay-look-${look}`} label="Companion" controls=${controls}
     lead=${html`<span class="companion-grip" aria-hidden="true">⋮⋮</span>`} title=${titlebarContent}>
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       stewardLabel=${stewardLabel} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} trigger=${addRef} />`}
