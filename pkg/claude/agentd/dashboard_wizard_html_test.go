@@ -785,8 +785,8 @@ func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
 	}
 
 	// Title copy: a pure-CSS span swap, "Edit permanent permissions" → "📕 The Grimoire".
-	must(`<span class="perm-edit-title-regular">${sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
-	must(`<span class="perm-edit-title-wizard">${sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
+	must(`<span class="perm-edit-title-regular">${futureStewards ? 'Permissions for future Stewards' : sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
+	must(`<span class="perm-edit-title-wizard">${futureStewards ? '📕 The Stewards’ Grimoire' : sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
 	must("body.wizard #perm-edit-title .perm-edit-title-regular", "wizard hides the default title")
 	must("body.wizard #perm-edit-title .perm-edit-title-wizard", "wizard shows the Grimoire title")
 
