@@ -45,6 +45,19 @@ type snapshotSpawnResult struct {
 	Warnings []string              `json:"warnings,omitempty"`
 }
 
+// snapshotHistoryLossFacts is what confirming a snapshot landing's history cut
+// accepts. How much is cut is known only as each agent lands.
+const snapshotHistoryLossFacts = "This accepts a landing that cuts 25% or more of the conversation, if the new " +
+	"agent's model needs it. The full history stays in the snapshot and is saved beside the agent."
+
+func snapshotHistoryLossApprovalFacts(body []byte) string {
+	var req snapshotSpawnRequest
+	if !decodeLikeHandler(body, &req) || !req.ConfirmHistoryLoss {
+		return ""
+	}
+	return snapshotHistoryLossFacts
+}
+
 // handleSnapshotSpawn instantiates new agents from a snapshot.
 //
 //	POST /v1/snapshots/{name}/spawn {group, name?, count?, cwd?, worktree?, keep_paths?, harness?, model?, set?, skip_history?}
@@ -62,6 +75,7 @@ func handleSnapshotSpawn(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r = withApprovalFacts(r, snapshotHistoryLossApprovalFacts)
 	if !requireSnapshotAccess(w, r, meta, "spawn from a snapshot") {
 		return
 	}
@@ -162,6 +176,13 @@ func spawnOneFromSnapshot(r *http.Request, path string, req snapshotSpawnRequest
 	arrival := &arrivalContext{Operation: "snapshot spawn", Source: source, Reason: "--cwd or recorded path",
 		Note: fmt.Sprintf("Instantiated from snapshot %q taken %s. You are a new agent forked from that point; the original agent continues separately.", snapshot, takenAt.UTC().Format(time.RFC3339))}
 	inner := r.Clone(context.WithValue(r.Context(), arrivalContextKey{}, arrival))
+	// The import's own gate sees the archive, not this request's body.
+	inner = withApprovalFacts(inner, func([]byte) string {
+		if req.ConfirmHistoryLoss {
+			return snapshotHistoryLossFacts
+		}
+		return ""
+	})
 	inner.Method = http.MethodPost
 	inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: q.Encode()}
 	inner.Body = f

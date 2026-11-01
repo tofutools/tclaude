@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -775,6 +776,46 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 // snapshotApprovalRequestBody builds the human-facing preview for a permission
 // request. The preview is bounded and the request body is restored for the
 // downstream handler.
+// approvalFactsKey carries a request's approvalFactsFunc on its context.
+type approvalFactsKey struct{}
+
+// approvalFactsFunc states, from the request body, what approving does that the
+// body does not say: a confirmation flag shows as true, not as what it accepts.
+// "" adds nothing.
+type approvalFactsFunc func(body []byte) string
+
+// decodeLikeHandler reads a request body's first JSON value, as the handlers do,
+// so nothing after it can hide a confirmation from the facts.
+func decodeLikeHandler(body []byte, v any) bool {
+	return json.NewDecoder(bytes.NewReader(body)).Decode(v) == nil
+}
+
+// withApprovalFacts makes a handler's facts part of any popup a gate raises for
+// r, so the human sees what a client asking for the same thing is shown.
+func withApprovalFacts(r *http.Request, facts approvalFactsFunc) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), approvalFactsKey{}, facts))
+}
+
+// approvalPreviewFacts puts the request's facts ahead of its body in a popup.
+// Call it after the body is snapshotted. Facts read the body the handler will,
+// not the preview, which is capped.
+func approvalPreviewFacts(r *http.Request, bodyPreview, bodyLabel string) (string, string) {
+	facts, _ := r.Context().Value(approvalFactsKey{}).(approvalFactsFunc)
+	if facts == nil {
+		return bodyPreview, bodyLabel
+	}
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	stated := facts(body)
+	if stated == "" {
+		return bodyPreview, bodyLabel
+	}
+	return stated + "\n\nRequest:\n" + bodyPreview, "What approving does"
+}
+
 func snapshotApprovalRequestBody(r *http.Request, _ string) string {
 	return snapshotRequestBody(r)
 }

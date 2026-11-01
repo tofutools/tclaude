@@ -2432,3 +2432,18 @@ func SetLegacyMessageAttachmentsBaseForTest(dir string) func() {
 func MigrateLegacyMessageAttachmentsForTest() { migrateLegacyMessageAttachments() }
 
 func MessageAttachmentsBaseForTest() string { return operatorMessageAttachmentsBase }
+
+// CapturedApproval is what a stubbed popup showed the human.
+type CapturedApproval struct{ Label, Body string }
+
+// StubCapturingApprovalForTest answers popups with decision and records what
+// each one showed. Returns the records and a restore function.
+func StubCapturingApprovalForTest(decision bool) (*[]CapturedApproval, func()) {
+	prev := RequestHumanApprovalImpl
+	captured := &[]CapturedApproval{}
+	RequestHumanApprovalImpl = func(req *approvalRequest, _ string) bool {
+		*captured = append(*captured, CapturedApproval{Label: req.bodyLabel, Body: req.bodyPreview})
+		return decision
+	}
+	return captured, func() { RequestHumanApprovalImpl = prev }
+}

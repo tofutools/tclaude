@@ -1412,6 +1412,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 				bodyPreview = raw
 				bodyLabel = "Clipboard content"
 			}
+			bodyPreview, bodyLabel = approvalPreviewFacts(r, bodyPreview, bodyLabel)
 			// The scope the popup's scoped "always allow" may persist is
 			// derived from the SAME context this gate evaluates grants
 			// against — never re-parsed from the URL or body — so a scope the
