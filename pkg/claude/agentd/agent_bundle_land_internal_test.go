@@ -46,3 +46,75 @@ func TestReceiverSandboxProfile_OpenCodeKeepsATighterModeFromARelaunchProfile(t 
 	assert.Equal(t, harness.OpenCodeSandboxAccessControl, got.Sandbox)
 	assert.Empty(t, got.SandboxImplementation)
 }
+
+// A file may tighten approval, tools and auto-review, never widen them, against
+// what a spawn into the landing would resolve. A wider value is reported.
+func TestReceiverApprovalProfile(t *testing.T) {
+	yes, no := true, false
+	codex, err := harness.Resolve(harness.CodexName)
+	require.NoError(t, err)
+	opencode, err := harness.Resolve(harness.OpenCodeName)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name         string
+		h            *harness.Harness
+		landing      db.SpawnProfile
+		recorded     spawnProfileJSON
+		wantApproval string
+		wantTools    string
+		wantReview   *bool
+		wantDropped  []string
+	}{
+		{
+			name: "codex on-request over untrusted is wider", h: codex,
+			landing:     db.SpawnProfile{Approval: "untrusted"},
+			recorded:    spawnProfileJSON{Approval: "on-request"},
+			wantDropped: []string{"approval on-request"},
+		},
+		{
+			name: "codex untrusted under never stays", h: codex,
+			landing:      db.SpawnProfile{Approval: "never"},
+			recorded:     spawnProfileJSON{Approval: "untrusted"},
+			wantApproval: "untrusted",
+		},
+		{
+			name: "auto-review on is wider than a human reviewing", h: codex,
+			landing:     db.SpawnProfile{Approval: "on-request"},
+			recorded:    spawnProfileJSON{AutoReview: &yes},
+			wantDropped: []string{"auto-review on"},
+		},
+		{
+			name: "a recorded false matching the landing says nothing", h: codex,
+			landing:  db.SpawnProfile{Approval: "on-request"},
+			recorded: spawnProfileJSON{AutoReview: &no},
+		},
+		{
+			name: "opencode tools allow over ask is wider", h: opencode,
+			landing:     db.SpawnProfile{ToolGovernance: harness.OpenCodeToolsAsk},
+			recorded:    spawnProfileJSON{ToolGovernance: harness.OpenCodeToolsAllow},
+			wantDropped: []string{"tools allow"},
+		},
+		{
+			name: "opencode tools deny under allow stays", h: opencode,
+			recorded:  spawnProfileJSON{ToolGovernance: harness.OpenCodeToolsDeny},
+			wantTools: harness.OpenCodeToolsDeny,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			tc.landing.Name, tc.landing.Harness = "landing", tc.h.Name
+			_, err := db.CreateSpawnProfile(&tc.landing)
+			require.NoError(t, err)
+
+			got, dropped := receiverApprovalProfile(tc.recorded, tc.h, "", "landing")
+
+			assert.Equal(t, tc.wantApproval, got.Approval)
+			assert.Equal(t, tc.wantTools, got.ToolGovernance)
+			assert.Equal(t, tc.wantReview, got.AutoReview)
+			require.Len(t, dropped, len(tc.wantDropped))
+			for i, want := range tc.wantDropped {
+				assert.Contains(t, dropped[i], want)
+			}
+		})
+	}
+}

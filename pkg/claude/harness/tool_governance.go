@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -12,6 +13,7 @@ import (
 type ToolGovernanceCatalog interface {
 	DefaultPolicy() string
 	ValidatePolicy(policy string) (string, error)
+	// Modes lists the policies from the widest to the narrowest.
 	Modes() []string
 	ModeHelp(policy string) string
 }
@@ -25,6 +27,17 @@ func ResolveToolGovernance(h *Harness, requested string) (string, error) {
 		requested = h.ToolGovernance.DefaultPolicy()
 	}
 	return ValidateToolGovernance(h, requested)
+}
+
+// ToolGovernanceNotWider reports whether policy allows no more than limit. A
+// policy the harness does not know is not judged to be narrower.
+func ToolGovernanceNotWider(h *Harness, limit, policy string) bool {
+	if !h.SupportsToolGovernance() {
+		return false
+	}
+	modes := h.ToolGovernance.Modes()
+	at, bound := slices.Index(modes, strings.TrimSpace(policy)), slices.Index(modes, strings.TrimSpace(limit))
+	return at >= 0 && bound >= 0 && at >= bound
 }
 
 // ValidateToolGovernance validates without applying a default. Direct

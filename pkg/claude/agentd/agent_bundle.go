@@ -643,6 +643,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		profile = receiverSandboxProfile(profile, h, q.Get("group"), landingProfile)
+		// A teleport or direct move carries landing authority the receiver owns,
+		// and dropping its posture could stall the agent on prompts nobody
+		// answers. Everything else is a file.
+		if authority == nil {
+			var dropped []string
+			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
+			landingWarnings = append(landingWarnings, dropped...)
+		}
 		if _, fail := buildProfileFromJSON(profile); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
@@ -1038,6 +1046,87 @@ func receiverCapsTheWall(h *harness.Harness, group, profile string) bool {
 	return !spawnSandboxLineageAllowed(parent, spawnLineageSandbox{
 		Harness: h.Name, HarnessBuiltinMode: wallMode, Implementation: sandboxpolicy.ImplementationTclaudeLayer,
 	})
+}
+
+// receiverApprovalProfile applies receiverSandboxProfile's rule to the approval
+// policy, tool policy and auto-review a file recorded: they too land on the
+// explicit tier, so what is not proven no wider than a spawn here would resolve
+// is dropped and the receiver's value applies. Tightening stays. A value the
+// guard cannot judge is dropped. It returns a warning for each one dropped.
+func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []string) {
+	recorded := p
+	p.Approval, p.ToolGovernance, p.AutoReview = "", "", nil
+	var dropped []string
+	drop := func(field, value, kept string) {
+		dropped = append(dropped, fmt.Sprintf("This file asks for %s %s, which is wider than this node would give, or cannot be compared: %s applies.", field, value, kept))
+	}
+	recordedReview := recorded.AutoReview != nil && *recorded.AutoReview
+	unjudged := func() (spawnProfileJSON, []string) {
+		const kept = "the receiver's default"
+		if recorded.Approval != "" {
+			drop("approval", recorded.Approval, kept)
+		}
+		if recorded.ToolGovernance != "" {
+			drop("tools", recorded.ToolGovernance, kept)
+		}
+		if recordedReview {
+			drop("auto-review", "on", kept)
+		}
+		return p, dropped
+	}
+	landing, fail, err := resolveLaunchDefaults(group, profile, h.Name)
+	if fail != nil || err != nil {
+		return unjudged()
+	}
+	landingApproval, _, _, fail := resolveStringLaunchField("approval", "", h.Name, landing.tiers,
+		func(tier *db.SpawnProfile) string { return tier.Approval },
+		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
+	if fail != nil {
+		return unjudged()
+	}
+	if landingApproval, err = harness.ResolveApprovalPolicy(h, landingApproval); err != nil {
+		return unjudged()
+	}
+	landingReview, _, _, _, fail := resolveBoolLaunchField("auto_review", false, false, h.Name, landing.tiers,
+		func(tier *db.SpawnProfile) *bool { return tier.AutoReview },
+		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
+	if fail != nil {
+		return unjudged()
+	}
+	landingTools, _, _, fail := resolveStringLaunchField("tools", "", h.Name, landing.tiers,
+		func(tier *db.SpawnProfile) string { return tier.ToolGovernance },
+		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
+	if fail != nil {
+		return unjudged()
+	}
+	if landingTools, err = harness.ResolveToolGovernance(h, landingTools); err != nil {
+		return unjudged()
+	}
+
+	// A value equal to the landing's says nothing, and needs no judging.
+	approval := landingApproval
+	if recorded.Approval != "" && recorded.Approval != landingApproval {
+		if harness.ApprovalLineageAllowed(h.Name, landingApproval, landingReview, h.Name, recorded.Approval, landingReview) {
+			p.Approval, approval = recorded.Approval, recorded.Approval
+		} else {
+			drop("approval", recorded.Approval, "approval "+landingApproval)
+		}
+	}
+	if recorded.AutoReview != nil && recordedReview != landingReview {
+		if harness.ApprovalLineageAllowed(h.Name, landingApproval, landingReview, h.Name, approval, recordedReview) {
+			p.AutoReview = recorded.AutoReview
+		} else if recordedReview {
+			drop("auto-review", "on", "auto-review off")
+		}
+	}
+	if recorded.ToolGovernance != "" && recorded.ToolGovernance != landingTools {
+		if harness.ToolGovernanceNotWider(h, landingTools, recorded.ToolGovernance) {
+			p.ToolGovernance = recorded.ToolGovernance
+		} else {
+			drop("tools", recorded.ToolGovernance, "tools "+landingTools)
+		}
+	}
+	return p, dropped
 }
 
 // bundleNoLaunchContextKey marks an agent import that lands offline
