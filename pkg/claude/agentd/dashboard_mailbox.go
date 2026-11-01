@@ -548,6 +548,9 @@ type mailboxMessage struct {
 	// in the aggregate "all" folder. Sourced from operator_agent_messages
 	// (see db.OperatorAuthoredMessages), not from the sender columns.
 	OperatorAuthored bool `json:"operator_authored,omitempty"`
+	// Action is a notification's action link. A peer reading this mailbox never
+	// gets it: see peerMailboxReadKey.
+	Action *dashboardHumanMessageAction `json:"action,omitempty"`
 }
 
 // Mailbox pagination bounds. defaultMailboxPageSize is what the
@@ -646,6 +649,11 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		focus, _ := strconv.ParseInt(r.URL.Query().Get("focus"), 10, 64)
 		unread := r.URL.Query().Get("unread") == "1"
 		p := humanMailboxPage(db.HumanMessageFilter{Sender: sender, Query: q, Unread: unread}, win, focus)
+		if r.Context().Value(peerMailboxReadKey{}) != nil {
+			for i := range p.Messages {
+				p.Messages[i].Action = nil
+			}
+		}
 		writeMailboxPage(w, map[string]any{
 			"id":    humanMailboxID,
 			"kind":  "human",
@@ -760,6 +768,7 @@ func humanMailboxMessages(page []*db.HumanMessage) []mailboxMessage {
 			Read:        m.Read,
 			Attachment:  m.Attachment,
 			Attachments: m.Attachments,
+			Action:      m.Action,
 		})
 	}
 	return out

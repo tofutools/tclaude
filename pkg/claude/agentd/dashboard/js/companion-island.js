@@ -24,7 +24,7 @@ import {
   COMPANION_ACTIVE_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
   agentBlockedOnOperator, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
-  parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
+  parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, actionsFor, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
 import { useChipDrag } from './companion-chip-drag.js';
 import { registerCompanionController } from './companion-facade.js';
@@ -47,6 +47,7 @@ import { registerStewardDoor } from './voice-wake.js';
 import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+import { ActionCards } from './message-action.js';
 import { ShellHere } from './terminal-here.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { useDismissablePopover } from './hover-popover.js';
@@ -1219,6 +1220,7 @@ export function CompanionApp({
   const activeApprovals = activeAgent ? approvals(activeAgent) : [];
   const activeElevated = elevatedAccess(snapshot.value, activeAgent);
   const activeDecisions = activeAgent ? decisions(activeAgent) : [];
+  const activeActions = activeAgent ? actionsFor(snapshot.value, activeAgent) : [];
   const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
   const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
   const starting = !activeAgent && activeId && pending.current.has(activeId);
@@ -1316,7 +1318,7 @@ export function CompanionApp({
     lead=${html`<span class="companion-grip" aria-hidden="true">⋮⋮</span>`} title=${titlebarContent}>
     ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
       stewardLabel=${stewardLabel} returning=${returning} onResumeSteward=${resumeSteward} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} trigger=${addRef} />`}
-    <div class=${`companion-body${showComposer && showField && activeApprovals.length + activeDecisions.length ? ' clear-strip' : ''}`}>
+    <div class=${`companion-body${showComposer && showField && activeApprovals.length + activeDecisions.length + activeActions.length ? ' clear-strip' : ''}`}>
       ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
         ${activeApprovals.length > 0 && html`<p class="companion-decide-note" role="status">${activeAgent.name} also has
           ${activeApprovals.length === 1 ? ' an approval' : ` ${activeApprovals.length} approvals`} waiting:
@@ -1325,6 +1327,7 @@ export function CompanionApp({
       </div>`}
       ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${!showQueue && activeDecisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
+      ${!showQueue && html`<${ActionCards} messages=${activeActions} fetchImpl=${fetchImpl} notify=${notify} />`}
       ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
       ${!activeAgent && !starting && html`<div class="companion-empty">
         <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>

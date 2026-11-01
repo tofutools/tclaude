@@ -329,6 +329,8 @@ var peerViewLocalRoutes = []string{
 	// have their own peer routes (/api/human-inbox/*), deleting has no grant.
 	"/api/human-messages/clear",
 	"/api/human-messages/delete",
+	// An action link opens things on this machine, so a click stays local.
+	"/api/human-messages/action",
 	"POST /api/mailbox/mark-read",
 	"POST /api/mailbox/wipe",
 	"POST /api/message",

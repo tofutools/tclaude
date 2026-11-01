@@ -43,6 +43,7 @@ var humanMsgNotify = notify.SendHumanMessage
 type notifyHumanRequest struct {
 	Body    string `json:"body"`
 	Subject string `json:"subject"`
+	Action  string `json:"action,omitempty"`
 	notifyHumanDecision
 }
 
@@ -50,6 +51,7 @@ type notifyHumanAttachmentMetadata struct {
 	Body    string `json:"body"`
 	Subject string `json:"subject"`
 	Name    string `json:"name"`
+	Action  string `json:"action,omitempty"`
 	notifyHumanDecision
 }
 
@@ -222,8 +224,11 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a decision needs an agent to send the pick back to; options are for agents")
 		return
 	}
+	if !checkNotifyHumanAction(w, callerConv, body.Action, len(body.Options) > 0) {
+		return
+	}
 	m, fromTitle, groupName := newHumanMessageRow(callerConv, body.Subject, body.Body, "", "", "")
-	m.Options, m.Recommended = body.Options, body.Recommended
+	m.Options, m.Recommended, m.Action = body.Options, body.Recommended, body.Action
 	id, err := db.InsertHumanMessage(m)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
@@ -277,6 +282,9 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(meta.Options) > 0 && callerConv == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a decision needs an agent to send the pick back to; options are for agents")
+		return
+	}
+	if !checkNotifyHumanAction(w, callerConv, meta.Action, len(meta.Options) > 0) {
 		return
 	}
 	// The body may be empty here — and only here. This route always carries at
@@ -369,7 +377,7 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	message, fromTitle, groupName := newHumanMessageRow(callerConv, meta.Subject, meta.Body, "", "", "")
-	message.Options, message.Recommended = meta.Options, meta.Recommended
+	message.Options, message.Recommended, message.Action = meta.Options, meta.Recommended, meta.Action
 	id, err := db.InsertHumanMessageWithAttachments(message, attachments)
 	if err != nil {
 		removeStoredAttachmentFiles(attachments)
@@ -830,6 +838,9 @@ type dashboardHumanMessage struct {
 	Recommended int      `json:"recommended,omitempty"`
 	Decision    string   `json:"decision,omitempty"`
 	DecidedAt   string   `json:"decided_at,omitempty"`
+	// Action is the message's one action link, a Collab surface like a
+	// decision. Not offered on a peer's view of this node.
+	Action *dashboardHumanMessageAction `json:"action,omitempty"`
 }
 
 // dashboardHumanMessageAttachment is one downloadable file on a notification.
@@ -1266,6 +1277,7 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 	// Decisions are a Collab surface: with it off a stored one reads as a
 	// plain notification, with no options to answer.
 	decisions := collabRoutesEnabled()
+	actionDirs := map[string]string{}
 	out := make([]dashboardHumanMessage, 0, len(rows))
 	unread := 0
 	for _, m := range rows {
@@ -1294,6 +1306,9 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 		}
 		if decisions && len(m.Options) > 0 {
 			view.Options, view.Recommended = m.Options, m.Recommended
+		}
+		if decisions {
+			view.Action = humanActionView(m, actionDirs)
 		}
 		if !m.DecidedAt.IsZero() {
 			view.DecidedAt = m.DecidedAt.Format(time.RFC3339)

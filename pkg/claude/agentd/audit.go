@@ -293,6 +293,9 @@ var auditRoutes = []auditRoute{
 	// message metadata is persisted on the resulting human_messages row.
 	{method: http.MethodPost, segs: []string{"notify-human", "attachment"}, verb: "notify-human.attach"},
 
+	// The operator clicking a notification's action link.
+	{method: http.MethodPost, segs: []string{"human-messages", "action"}, verb: "human-message.action"},
+
 	// Human clipboard write. The detail records only the byte count, never
 	// the copied text — clipboard content is often sensitive (a secret, a
 	// password) and must not land in the audit log.

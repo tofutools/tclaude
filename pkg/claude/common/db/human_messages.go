@@ -46,6 +46,10 @@ type HumanMessage struct {
 	Recommended int
 	Decision    string
 	DecidedAt   time.Time
+	// Action is the one action link the message carries: a name from a fixed
+	// list ("terminal", "board:<id>", "pr:<url>", "tab:<name>"), which the
+	// daemon resolves when the operator clicks. "" for none.
+	Action string
 }
 
 // HumanMessageAttachment is one daemon-owned downloadable artifact published
@@ -106,11 +110,11 @@ func insertHumanMessage(exec humanMessageExecer, m *HumanMessage) (int64, error)
 	res, err := exec.Exec(`
 		INSERT INTO human_messages
 			(from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
-			 process_run_id, process_node_id, process_command_id, options, recommended)
-		VALUES (?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 process_run_id, process_node_id, process_command_id, options, recommended, action)
+		VALUES (?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.FromConv, m.FromConv, m.FromTitle, m.GroupName, m.Subject, m.Body,
 		dbTime(created), readAt, m.ProcessRunID, m.ProcessNodeID, m.ProcessCommandID,
-		encodeHumanMessageOptions(m.Options), m.Recommended)
+		encodeHumanMessageOptions(m.Options), m.Recommended, m.Action)
 	if err != nil {
 		return 0, fmt.Errorf("insert human message: %w", err)
 	}
@@ -451,7 +455,7 @@ func HumanMessageStats() (total, unread int, lastAt time.Time, err error) {
 
 // humanMessageCols is the column list scanHumanMessage reads, in order.
 const humanMessageCols = `id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
-		       process_run_id, process_node_id, process_command_id, options, recommended, decision, decided_at`
+		       process_run_id, process_node_id, process_command_id, options, recommended, decision, decided_at, action`
 
 func scanHumanMessage(row interface{ Scan(...any) error }) (*HumanMessage, error) {
 	var m HumanMessage
@@ -459,7 +463,7 @@ func scanHumanMessage(row interface{ Scan(...any) error }) (*HumanMessage, error
 	var options string
 	if err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
 		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID,
-		&options, &m.Recommended, &m.Decision, &decidedAt); err != nil {
+		&options, &m.Recommended, &m.Decision, &decidedAt, &m.Action); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = created.Time()

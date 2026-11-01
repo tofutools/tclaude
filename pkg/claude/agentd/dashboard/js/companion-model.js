@@ -335,6 +335,15 @@ export function decisionsFor(snapshot, agent) {
     .sort((a, b) => a.id - b.id);
 }
 
+// actionsFor lists the unread messages from this agent that carry an action
+// link, oldest first. Reading one takes it out of chat; it stays in Messages.
+export function actionsFor(snapshot, agent) {
+  if (!agent) return [];
+  return (snapshot?.messages || [])
+    .filter((m) => m?.action && !m.read && (m.from_agent ? m.from_agent === agent.agentId : m.from_conv === agent.convId))
+    .sort((a, b) => a.id - b.id);
+}
+
 // pendingDecisions lists every unanswered decision in the fleet, oldest
 // first: the companion's "to decide" queue, so the operator can answer them
 // all in one place whichever agent asked.
