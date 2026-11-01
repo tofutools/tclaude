@@ -63,8 +63,9 @@ export function rosterCandidates(agents, roster, filter = '') {
     .slice(0, 8);
 }
 
-export function StewardRoster({ roster, agents, fetchImpl, notify, openHandover, showAgent }) {
+export function StewardRoster({ roster, agents, fetchImpl, notify, openHandover, showAgent, openRef = null, trigger = true }) {
   const [open, setOpen] = useState(false);
+  if (openRef) openRef.current = () => setOpen(true);
   const [busy, setBusy] = useState('');
   const [filter, setFilter] = useState('');
   const rootRef = useRef(null);
@@ -103,8 +104,8 @@ export function StewardRoster({ roster, agents, fetchImpl, notify, openHandover,
   });
 
   return html`<span ref=${rootRef} class="steward-roster">
-    <button type="button" class="companion-steward-roster" aria-label="Steward roster" aria-expanded=${open ? 'true' : 'false'}
-      title="Steward roster: switch or make another agent the Steward" onClick=${() => setOpen((value) => !value)}>✦ ${roster.length || ''}</button>
+    ${trigger && html`<button type="button" class="companion-steward-roster" aria-label="Steward roster" aria-expanded=${open ? 'true' : 'false'}
+      title="Steward roster: switch or make another agent the Steward" onClick=${() => setOpen((value) => !value)}>✦ ${roster.length || ''}</button>`}
     ${open && html`<div class="steward-roster-menu" role="dialog" aria-label="Steward roster">
       ${roster.length === 0 && html`<p class="steward-roster-note">No Steward yet.</p>`}
       ${roster.map((entry) => html`<div key=${entry.agent_id} class=${`steward-roster-row ${entry.seat}`}>

@@ -134,6 +134,19 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
 .companion-controls .steward-roster-menu button.steward-roster-remove { padding: 2px 6px; }
 .companion-controls .steward-roster-menu button.steward-roster-candidate { justify-content: flex-start; text-align: left; overflow: hidden; text-overflow: ellipsis; border-color: transparent; background: none; }
 .companion-controls .steward-roster-menu button.steward-roster-candidate:hover { background: #21262d; }
+.companion-cog { position: relative; display: inline-flex; }
+.companion-controls .companion-state-sudo, .companion-controls .companion-state-roster { width: auto; padding: 0 5px; font-size: 11px; white-space: nowrap; color: #e3b341; }
+.companion-controls .companion-state-sudo:disabled { opacity: 1; cursor: default; color: #e3b341; }
+.companion-cog-menu { right: 0; width: 280px; overflow-y: auto; gap: 1px; z-index: 60; }
+.companion-cog-menu { cursor: default; }
+.companion-cog-head { padding: 6px 8px 2px; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--cmp-muted); }
+.companion-controls .companion-cog-menu button.companion-cog-item { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; width: 100%; height: auto; min-width: 0; padding: 5px 8px; border: 0; border-radius: 4px; background: none; color: var(--cmp-text); font-size: 12px; text-align: left; white-space: nowrap; }
+.companion-controls .companion-cog-menu button.companion-cog-item:hover:not(:disabled), .companion-controls .companion-cog-menu button.companion-cog-item[data-menu-active] { background: #1f6feb33; }
+.companion-controls .companion-cog-menu button.companion-cog-item.danger { color: #f85149; }
+.companion-controls .companion-cog-menu button.companion-cog-item[data-menu-filtered-out] { display: none; }
+.companion-cog-glyph { width: 16px; text-align: center; flex: 0 0 auto; }
+.companion-cog-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.companion-cog-hint { color: var(--cmp-muted); font-size: 11px; }
 .companion-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
 .companion-controls button:disabled:hover { background: none; color: var(--cmp-muted); }
 

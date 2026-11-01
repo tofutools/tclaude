@@ -54,7 +54,24 @@ const (
 )
 
 func resetCopilotAPIStateForTest() {
+	copilotAPIStateConsumers.Lock()
+	running := make([]*copilotAPIStateConsumer, 0, len(copilotAPIStateConsumers.running))
+	for _, consumer := range copilotAPIStateConsumers.running {
+		running = append(running, consumer)
+	}
+	copilotAPIStateConsumers.Unlock()
 	stopCopilotAPIStateConsumers()
+	// A refresh in flight writes to the DB under the test's HOME. Left running, it
+	// recreates files there while the TempDir is removed.
+	for _, consumer := range running {
+		if consumer.done == nil { // A fixture that never ran.
+			continue
+		}
+		select {
+		case <-consumer.done:
+		case <-time.After(5 * time.Second):
+		}
+	}
 	copilotAPIStateConsumers.Lock()
 	copilotAPIStateConsumers.running = nil
 	copilotAPIStateConsumers.stopping = false

@@ -59,7 +59,7 @@ page without blocking it, and comes back when you reload the tab.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free
   edges to resize it; each spot keeps the size you gave it, across reloads too.
-- **Give a chat its own window** by dragging its tab off the title bar, or with **▣**.
+- **Give a chat its own window** by dragging its tab off the title bar, or with **⚙ > Float in an overlay window**.
   It is the same terminal, and it moves, snaps, splits, minimizes and closes on its
   own. **Back to a tab** returns it. Open windows come back after a reload. The
   agent keeps running when its window closes.
@@ -75,19 +75,29 @@ back here**.
 
 | Button | What it does |
 |---|---|
+| 🛡 sudo | Shows while the agent has elevated access. On a Steward, opens the [sudo editor](dashboard-access.md) |
+| ✦ N | Shows while agents wait on the Steward roster, and opens the roster |
+| 🔑 N | Shows while permission requests wait, and opens the [approval panel](#answering-permission-requests) |
 | 🔈 / 🔊 | Turn [voice](#voice-and-dictation) on or off for this agent |
-| ⤢ | Move it to the Collab tab |
-| 🔑 N | Open the [approval panel](#answering-permission-requests) |
-| 🛡 | Edit permissions (Steward only) |
-| sudo | Open the [sudo editor](dashboard-access.md) (Steward only) |
-| ⏻ | Shut the Steward down, after asking (Steward only) |
-| ⟲ | Clear the agent's context, after asking (not for shell agents) |
 | ✉ | Send a queued message (Ctrl/Cmd+M) |
-| ⧉ | Detach it into its own browser window |
-| ⇄ | Morph it, with Move, Teleport, Clone and Recall home a pick away |
+| ⚙ | Everything else, listed below. Type to filter it |
 | – | Minimize (Ctrl+.) |
 | □ | Maximize, or restore the size it had |
-| × | Close the tab you're on. The agent keeps running. With no agent showing, this minimizes the window. On a running Steward it asks, then shuts the Steward down and closes its tab, like ⏻ |
+| × | Close the tab you're on. The agent keeps running. With no agent showing, this minimizes the window. On a running Steward it asks, then shuts the Steward down and closes its tab, like **Shut down…** |
+
+Under **⚙**, each shown when it applies:
+
+| Item | What it does |
+|---|---|
+| Open in the Collab tab | Move it to the Collab tab |
+| Float in an overlay window | Give it an overlay window of its own |
+| Detach into its own window | Detach it into its own browser window |
+| Morph | Move, Teleport, Clone, Recall home, or relaunch it on another harness, model or profile |
+| Clear context | Clear the agent's context, after asking (not for shell agents) |
+| Permissions | Edit permissions (Steward only) |
+| Sudo | Open the [sudo editor](dashboard-access.md) (Steward only) |
+| Stewards | Open the Steward roster |
+| Shut down… | Shut the Steward down, after asking (Steward only) |
 
 The last three are shaped like your OS's own window buttons: traffic lights at
 the top left on macOS, flush in the top right corner on Windows, and round
@@ -97,8 +107,8 @@ close.
 
 The small × on a tab, next to the name, unpins that agent and leaves it running.
 On a Steward's tab it only minimizes the window, and the tab stays.
-A Steward floated into an overlay window of its own has ⏻ too, and that window's
-close button asks in the same way.
+A chat floated into an overlay window of its own has a ⚙ too. On a Steward that holds
+its access, roster and **Shut down…**, and the window's close button asks in the same way.
 
 Dragging a maximized window by its title bar also restores it.
 
@@ -334,8 +344,8 @@ it asks for with `--ask-human`, and you approve it in the dashboard. **Message
 agents** also reaches agents on linked instances that accept mail, so use **Boards
 and notifying you only** to rule that out.
 
-To change a running Steward's access, use **🛡** (permissions) and **sudo** in its
-title bar. They need it to be running.
+To change a running Steward's access, use **⚙ > Permissions** and **⚙ > Sudo** in
+its title bar. They need it to be running.
 
 In both, each grant on a live Steward is for **This Steward only**, the default,
 or **All future Stewards**, which stores it and gives it to every new Steward,
@@ -431,7 +441,7 @@ as **also running**. Only one is active, and **Switch** makes one of them active
 
 ### Shutting it down
 
-⏻, or the window's ×, shuts the Steward down, after asking: it stops, and keeps its seat, its
+**⚙ > Shut down…**, or the window's ×, shuts the Steward down, after asking: it stops, and keeps its seat, its
 conversation and what it holds. After that, and whenever no Steward is running,
 the window and **✦ Steward** offer two ways on:
 
@@ -447,7 +457,7 @@ an agent for good, retire it.
 
 ### Clearing context
 
-⟲ gives the agent on the active tab a fresh conversation, after asking: the same
+**⚙ > Clear context** gives the agent on the active tab a fresh conversation, after asking: the same
 agent, identity and permissions, and it remembers nothing from before. The old
 conversation stays in history. It is a reincarnation with no handoff, so it works
 on every harness except a shell, and it is also a mode of the **Reincarnate agent**

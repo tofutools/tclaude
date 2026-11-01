@@ -35,22 +35,6 @@ export async function endSudoAccess(fetchImpl, agent) {
   if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
 }
 
-// StewardAccessControls open the dashboard's own permissions editor and sudo
-// dialog for a Steward. They are operator actions in the browser: both save
-// through the cookie-authed /api routes, which no agent reaches. Offline there
-// is no one to change, so they stay in place and say why.
-export function StewardAccessControls({ agent, openPermissions, openSudo }) {
-  const offline = `${agent.name} is not running. Resume it to change its access.`;
-  return html`
-    ${openPermissions && html`<button type="button" class="companion-steward-perms" disabled=${!agent.online}
-      aria-label=${`Edit ${agent.name}'s permissions`} title=${agent.online ? 'Permissions: edit its standing grants and denies' : offline}
-      onClick=${() => openPermissions(agent.convId, agent.name)}>🛡</button>`}
-    ${openSudo && html`<button type="button" class="companion-steward-sudo" disabled=${!agent.online}
-      aria-label=${`Grant ${agent.name} sudo`} title=${agent.online ? 'Sudo: grant a time-bounded elevation' : offline}
-      onClick=${() => openSudo(agent.agentId, agent.name)}>sudo</button>`}
-  `;
-}
-
 async function refusal(response) {
   const text = (await response.text?.()) || '';
   try {
@@ -102,11 +86,12 @@ export async function requestStewardSummon(fetchImpl) {
   return result;
 }
 
-// ConfirmedAction is a title-bar control that asks first, in a small popover.
-// askRef lets another control open the same question; act hears who asked.
-function ConfirmedAction({ className = '', openClass = 'steward-shutdown-open', glyph, label, title, question, confirm, busyLabel, failure, act, askRef = null }) {
+// ConfirmedAction is a control that asks first, in a small popover. askRef lets
+// another control open the same question, and act hears who asked. With no
+// trigger it has no button of its own: a cog's item asks through askRef.
+function ConfirmedAction({ className = '', openClass = 'steward-shutdown-open', glyph, label, title, question, confirm, busyLabel, failure, act, askRef = null, trigger = true }) {
   const [asking, setAsking] = useState(false);
-  if (askRef) askRef.current = () => { setError(''); setAsking('elsewhere'); };
+  if (askRef) askRef.current = (from = 'elsewhere') => { setError(''); setAsking(from); };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const rootRef = useRef(null);
@@ -124,8 +109,8 @@ function ConfirmedAction({ className = '', openClass = 'steward-shutdown-open', 
     }
   }
   return html`<span ref=${rootRef} class=${`steward-shutdown ${className}`}>
-    <button type="button" class=${openClass} aria-label=${label} aria-expanded=${asking ? 'true' : 'false'}
-      title=${title} onClick=${() => { setError(''); setAsking((value) => (value ? false : 'here')); }}>${glyph}</button>
+    ${trigger && html`<button type="button" class=${openClass} aria-label=${label} aria-expanded=${asking ? 'true' : 'false'}
+      title=${title} onClick=${() => { setError(''); setAsking((value) => (value ? false : 'here')); }}>${glyph}</button>`}
     ${asking && html`<div class="steward-shutdown-confirm" role="alertdialog" aria-label=${label}>
       <p>${question}</p>
       ${error && html`<p class="steward-shutdown-error" role="alert">${error}</p>`}
@@ -140,19 +125,19 @@ function ConfirmedAction({ className = '', openClass = 'steward-shutdown-open', 
 // StewardShutdown is the shut-down control of a Steward's title bar and of its
 // detached window. Asked through askRef, it was the window's close button, so
 // onDown is told to take the tab off the window as a close does.
-export function StewardShutdown({ agent, fetchImpl, onDown, askRef = null }) {
+export function StewardShutdown({ agent, fetchImpl, onDown, askRef = null, trigger = true }) {
   return html`<${ConfirmedAction} glyph="⏻" label=${`Shut down ${agent.name}`} title="Shut down: stop it, keeping its conversation"
     question=${html`<b>Shut down ${agent.name}?</b> It stops and keeps its conversation and what it holds. Afterwards you can resume it or start fresh.`}
     confirm="Shut down" busyLabel="Shutting down…" failure="Could not shut down"
-    askRef=${askRef}
+    askRef=${askRef} trigger=${trigger}
     act=${async (asked) => { await shutDownAgent(fetchImpl, agent); onDown(agent, { closing: asked === 'elsewhere' }); }} />`;
 }
 
 // ClearContext gives an agent a fresh conversation and nothing else: same agent,
 // identity and permissions, with its startup context sent again. A shell has no
 // context to clear, so the caller leaves this out for one.
-export function ClearContext({ agent, fetchImpl, notify }) {
-  return html`<${ConfirmedAction} className="companion-clear-context" openClass="companion-clear-open" glyph="⟲" label=${`Clear ${agent.name}'s context`} title="Clear context: same agent, fresh conversation"
+export function ClearContext({ agent, fetchImpl, notify, askRef = null, trigger = true }) {
+  return html`<${ConfirmedAction} askRef=${askRef} trigger=${trigger} className="companion-clear-context" openClass="companion-clear-open" glyph="⟲" label=${`Clear ${agent.name}'s context`} title="Clear context: same agent, fresh conversation"
     question=${html`<b>Clear ${agent.name}'s context?</b> It restarts on a new conversation as the same agent, with the same identity and permissions. It remembers nothing from this one, which stays in history.`}
     confirm="Clear context" busyLabel="Clearing…" failure="Could not clear context"
     act=${async () => { await clearAgentContext(fetchImpl, agent); notify(`Cleared ${agent.name}'s context.`); }} />`;
