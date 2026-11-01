@@ -345,6 +345,30 @@ func TestDashboardFill_SaysWhyAFormCouldNotBeFilled(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "the spawn form is not open")
 }
 
+func TestDashboardFill_ReportsWhatACascadeMoved(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("tab", true, true)
+	waiting := c.fillRequest(agentd.AsHumanPeer(fillBody(t)))
+	id := c.await(func() string { return c.ping("tab", true, true) })
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"fill": []map[string]any{
+		{"field": "agent-spawn-harness", "status": "filled", "widens": "harness, sandbox", "moved": []string{"agent-spawn-sandbox"}},
+	}}))
+	rec := <-waiting
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{"fields":[{"field":"agent-spawn-harness","status":"filled","widens":"harness, sandbox","moved":["agent-spawn-sandbox"]}]}`, rec.Body.String())
+}
+
+func TestDashboardFill_APageThatDrewAPictureDidNotFill(t *testing.T) {
+	c := newCaptureFlow(t)
+	c.ping("tab", true, true)
+	waiting := c.fillRequest(agentd.AsHumanPeer(fillBody(t)))
+	id := c.await(func() string { return c.ping("tab", true, true) })
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"png": capturePNG}))
+	rec := <-waiting
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "reloading")
+}
+
 func TestDashboardFill_OnlyTheOptedInFormsAndBoundedFields(t *testing.T) {
 	c := newCaptureFlow(t)
 	c.ping("tab", true, true)

@@ -1,3 +1,4 @@
+import { claimField } from './form-fill.js';
 import { FormFillBar } from './form-fill-bar.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
@@ -986,6 +987,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         else setDraft((before) => setSpawnWorktreeRepo(before, result.path));
         touched.current.add(kind === 'cwd' ? 'cwd' : 'wtRepo');
         if (kind === 'cwd') operatorSet.current.add('cwd');
+        claimField('spawn', kind === 'cwd' ? 'agent-spawn-cwd' : 'agent-spawn-wt-repo');
         queueMicrotask(() => document.querySelector(
           kind === 'cwd' ? '#agent-spawn-cwd' : '#agent-spawn-wt-repo',
         )?.focus());
@@ -1703,7 +1705,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       options=${[
         { value: '', label: '— inherited (spawn profile + group / global) —' },
         ...liveUsageProfiles(context.usageProfiles).map((name) => ({ value: name, label: name })),
-        { value: NEW_USAGE_PROFILE, label: '＋ new usage profile…' },
+        { value: NEW_USAGE_PROFILE, label: '＋ new usage profile…', noFill: true },
       ]}
       onChange=${(event) => {
         // The new profile is made in the usage manager; the pick stays.
@@ -1926,7 +1928,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       Use SSH compatibility workaround
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
-    <${FormFillBar} form="spawn" keepValues=${!!queued} />
+    <${FormFillBar} form="spawn" keepValues=${!!queued} fillable=${!current.options.autoSpawn} />
     <div class="modal-buttons">
       ${queued && html`<button id="agent-spawn-queued-discard" class="confirm-danger" type="button" disabled=${busy}
         title="Remove this prepared spawn from the queue without launching it"

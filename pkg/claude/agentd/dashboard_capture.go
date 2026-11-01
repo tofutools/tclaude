@@ -412,6 +412,14 @@ func handleDashboardCompanionCapture(w http.ResponseWriter, r *http.Request) {
 	}
 	captureState.pending = nil
 	captureState.Unlock()
+	switch {
+	case result.err != "":
+	case p.Fill == nil && result.image == nil:
+		result.err = "the page sent no image"
+	case p.Fill != nil && result.fill == nil:
+		// A page from before fills answers with a picture.
+		result.err = "the page did not fill; it may need reloading"
+	}
 	if p.Fill == nil {
 		result.fill = nil
 	}

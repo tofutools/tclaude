@@ -40,6 +40,8 @@ type fillOutcome struct {
 	Field  string `json:"field"`
 	Status string `json:"status"`
 	Widens string `json:"widens,omitempty"`
+	// Moved names the other fields this change moved, as a form's cascades do.
+	Moved []string `json:"moved,omitempty"`
 }
 
 func cleanFillOutcomes(outcomes []fillOutcome) []fillOutcome {
@@ -49,7 +51,13 @@ func cleanFillOutcomes(outcomes []fillOutcome) []fillOutcome {
 	for i := range outcomes {
 		outcomes[i].Field = guideText(outcomes[i].Field, fillMaxField)
 		outcomes[i].Status = guideText(outcomes[i].Status, 32)
-		outcomes[i].Widens = guideText(outcomes[i].Widens, 80)
+		outcomes[i].Widens = guideText(outcomes[i].Widens, 240)
+		if len(outcomes[i].Moved) > fillMaxFields {
+			outcomes[i].Moved = outcomes[i].Moved[:fillMaxFields]
+		}
+		for j := range outcomes[i].Moved {
+			outcomes[i].Moved[j] = guideText(outcomes[i].Moved[j], fillMaxField)
+		}
 	}
 	return outcomes
 }

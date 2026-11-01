@@ -15,14 +15,15 @@ import (
 
 type guideFillParams struct {
 	Form string   `long:"form" help:"The open form to fill: spawn or config"`
-	Set  []string `long:"set" help:"A field and its value, as id=value, using the ids guide capture --form prints; repeat it, in order"`
+	Set  []string `long:"set" collection:"array" help:"A field and its value, as id=value, using the ids guide capture --form prints; repeat it, in order"`
 	JSON bool     `long:"json" help:"Output JSON"`
 }
 
 type guideFillField struct {
-	Field  string `json:"field"`
-	Status string `json:"status"`
-	Widens string `json:"widens,omitempty"`
+	Field  string   `json:"field"`
+	Status string   `json:"status"`
+	Widens string   `json:"widens,omitempty"`
+	Moved  []string `json:"moved,omitempty"`
 }
 
 func guideFillCmd() *cobra.Command {
@@ -82,6 +83,9 @@ func runGuideFill(p *guideFillParams, stdout, stderr io.Writer) int {
 			line += " (the operator sees a warning: " + field.Widens + ")"
 		}
 		fmt.Fprintln(stdout, line)
+		if len(field.Moved) > 0 {
+			fmt.Fprintln(stdout, "           which also moved: "+strings.Join(field.Moved, ", "))
+		}
 	}
 	return rcOK
 }

@@ -22,15 +22,18 @@ function markFields(root, fields) {
 
 // FormFillBar sits beside a form's submit. It also owns the watch, so a form has
 // one for as long as it is open. generation is a signal that restarts it when the
-// form reloads, read here so that no larger part of a form subscribes to it.
-export function FormFillBar({ form, generation, keepValues = false, win = globalThis.window }) {
+// form reloads, read here so that no larger part of a form subscribes to it, and
+// a form with one takes no fill until it has loaded. A form that is not fillable
+// has no watch, so a fill finds it closed.
+export function FormFillBar({ form, generation, keepValues = false, fillable = true, win = globalThis.window }) {
   const ref = useRef(null);
   const rootOf = () => ref.current?.closest(FILL_FORMS[form].root) || null;
   const loaded = generation?.value;
   useEffect(() => {
     const root = rootOf();
-    return root ? watchForm(form, root, { win, keepValues }) : undefined;
-  }, [form, loaded]);
+    const waiting = generation && !loaded;
+    return root && fillable && !waiting ? watchForm(form, root, { win, keepValues }) : undefined;
+  }, [form, loaded, fillable]);
   const [, redraw] = useState(0);
   useEffect(() => onFillsChange(() => redraw((count) => count + 1)), []);
   const fields = filledIn(form);

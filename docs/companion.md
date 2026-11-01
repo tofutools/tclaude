@@ -701,15 +701,22 @@ names that agent. The spawn form and Config take fills. Field ids come from
   because a fill can reach a section that isn't open.
 - A field you edited stays yours: a fill won't touch it, before or after, and
   **Undo all** keeps your edit. That includes anything your own change moved, such
-  as the fields a profile pick set. A queued spawn's stored values count as yours.
+  as the fields a profile pick set, and a directory you browsed to. A queued spawn's
+  stored values count as yours.
+- Some fields reset others: a harness resets its sandbox, approval and model
+  fields, for example. A fill of one is refused while you own what it would reset.
+  Otherwise everything it moved is listed, warned about and undone with it.
 - A password or a field marked secret can't be filled, so environment values
-  can't either. The spawn form's disabled and hidden fields are refused too.
-- Any change to a field that can widen access shows an orange highlight and a
-  warning, such as `Stewie widened: sandbox, approval`. That covers sandbox,
-  approval, tools, owner, directory trust and similar spawn fields, and
-  permissions, remote access, daemon access, proxies and the notification command
-  in Config. Whether a value is actually wider depends on the harness, so any
-  change warns.
+  can't either. The spawn form's disabled and hidden fields are refused too. So is
+  the spawn form's profile, because clearing one resets most of the form, and
+  Config's list fields, such as permissions. A spawn that launches itself from the
+  queue takes no fill, and Config takes one only while its tab is open and loaded.
+- A change that can widen access shows an orange highlight and a warning, such as
+  `Stewie widened: sandbox, approval`, even when a fill only moved that field by
+  cascade. On the spawn form that covers harness, group, directories, sandbox,
+  approval, tools, owner, trust and similar fields. In Config it covers everything
+  except the Appearance and Voice sections. Whether a value is actually wider
+  depends on the harness, so any change warns.
 
 Fills apply in order, one at a time, so set a harness before its model. A hidden
 tab is left alone, as with a capture.
