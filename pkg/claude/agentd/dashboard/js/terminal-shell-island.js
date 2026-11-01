@@ -29,7 +29,7 @@ import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } f
 import { pendingApprovals } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
-import { boardOverlay, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
+import { boardOverlays, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch } from './node-api.js';
@@ -1729,7 +1729,7 @@ function TerminalTabs({
     if (solo || !had || hasPanes) return undefined;
     const timer = setTimeout(() => {
       // A board that moved to the overlay leaves the operator working here.
-      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: !!boardOverlay.peek() });
+      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: boardOverlays.peek().length > 0 });
     }, 0);
     return () => clearTimeout(timer);
   }, [hasPanes, solo]);

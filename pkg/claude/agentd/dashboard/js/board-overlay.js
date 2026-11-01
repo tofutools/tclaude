@@ -1,27 +1,30 @@
-// board-overlay.js -- a board in a floating window of its own (tcl-h4y60w),
-// apart from the companion window, so the operator can work in both at once.
-// It floats over every dashboard view, and moves like the companion: drag by
-// the title bar, resize from any edge or corner, snap to an edge or a corner,
-// maximize, stay reachable when the browser shrinks, and keep its place.
-// overlay-window.js is the window; this file is the board in it.
+// board-overlay.js -- boards in floating windows of their own (tcl-h4y60w), so
+// the operator can work in several beside a chat. A board window floats over
+// every dashboard view, and moves like every overlay window: drag by the title
+// bar, resize from any edge or corner, snap to an edge or a corner, split the
+// room, maximize, minimize to the dock, stay reachable when the browser shrinks,
+// and keep its place. overlay-window.js is the window; this file is the board in
+// it, and the host for the windows' dock.
 
 import { h, render } from 'preact';
 import htm from 'htm';
 import { BoardEditor, BoardsGate } from './board-island.js';
-import { boardOverlay, boardOverlayRaise, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
-import { OVERLAY_FOOTER_ROOM, clampPlacement } from './overlay-window-model.js';
+import { BOARD_WINDOW_KIND, boardOverlays, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
+import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
+import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { isBoardId } from './board-model.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { OverlayWindow, frontOverlayWindow, raiseOverlayWindow, useOverlayWindow } from './overlay-window.js';
+import { closeOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { CHAT_WINDOW_KIND } from './chat-window-model.js';
+import { OverlayWindow, overlayStackReset, readPref, useOverlayWindow } from './overlay-window.js';
 
 const html = htm.bind(h);
 
+// Where the one board window stood before there were several: what a window for
+// a board not yet moved starts from.
 export const BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.board-overlay.placement';
-// In session storage, as the companion's open state is: a reload brings the
-// window back, another browser tab does not get a second one.
-export const BOARD_OVERLAY_OPEN_KEY = 'tclaude.dash.board-overlay.open';
-const OVERLAY_ID = 'board';
+const CASCADE_PX = 28;
 const DEFAULT_W = 760;
 const DEFAULT_H = 540;
 
@@ -32,23 +35,17 @@ export function defaultOverlayPlacement(viewport) {
   return clampPlacement({ x: 24, y: viewport.height - h - OVERLAY_FOOTER_ROOM - 56, w, h, snap: '' }, viewport);
 }
 
-function sessionStore(win) {
-  try { return win?.sessionStorage ?? null; } catch { return null; }
-}
-
-function readOpen(win) {
-  try {
-    const saved = JSON.parse(sessionStore(win)?.getItem?.(BOARD_OVERLAY_OPEN_KEY) || 'null');
-    return isBoardId(saved?.id) ? { id: saved.id, label: typeof saved.label === 'string' ? saved.label : saved.id } : null;
-  } catch {
-    return null;
-  }
-}
-
-function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) {
-  const overlay = useOverlayWindow({ id: OVERLAY_ID, win, prefs, prefKey: BOARD_OVERLAY_PLACEMENT_PREF, defaultPlacement: defaultOverlayPlacement, snaps: true });
+function BoardOverlayWindow({ instance, index, snapshot, fetchImpl, notify, prefs, win }) {
+  const board = { id: instance.board, label: instance.label };
+  const open = !instance.minimized;
+  // Stepped clear of the windows already open.
+  const startPlacement = (viewport) => {
+    const base = parsePlacement(readPref(prefs, BOARD_OVERLAY_PLACEMENT_PREF)) || defaultOverlayPlacement(viewport);
+    return clampPlacement({ ...base, x: base.x + index * CASCADE_PX, y: base.y + index * CASCADE_PX, snap: '' }, viewport);
+  };
+  const overlay = useOverlayWindow({ id: instance.id, win, prefs, prefKey: `${BOARD_OVERLAY_PLACEMENT_PREF}.${instance.board}`, defaultPlacement: startPlacement, snaps: true, open });
   const look = windowControlsLook(snapshot.value?.window_controls);
-  const close = () => { boardOverlay.value = null; };
+  const close = () => closeOverlayWindow(instance.id);
   // The title bar is outside the editor, whose Ctrl+wheel zooms the board.
   // Anywhere else in the window that gesture would zoom the whole page.
   function onTitleWheel(event) {
@@ -59,42 +56,56 @@ function BoardOverlayWindow({ board, snapshot, fetchImpl, notify, prefs, win }) 
   }
   const title = html`<span class="board-overlay-title">✎ ${board.label}</span>
     <button type="button" class="board-overlay-action" title="Move this board back to a tab of the Collab view"
-      onClick=${() => void returnBoardToTab()}>Back to a tab</button>
+      onClick=${() => void returnBoardToTab(board.id)}>Back to a tab</button>
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Close this window" aria-label=${`Close ${board.label}`}
       onClick=${close}>×</button>`}`;
-  return html`<${OverlayWindow} id=${OVERLAY_ID} window=${overlay} className="board-overlay" frameClass="board-overlay-resize-frame"
+  return html`<${OverlayWindow} id=${instance.id} window=${overlay} open=${open} className="board-overlay" frameClass="board-overlay-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Board ${board.label}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${board.label}`, closeTitle: 'Close this window', onClose: close }} onTitleWheel=${onTitleWheel}>
+    controls=${{ look, closeLabel: `Close ${board.label}`, closeTitle: 'Close this window', onClose: close, onMinimize: () => minimizeOverlayWindow(instance.id) }} onTitleWheel=${onTitleWheel}>
     <${BoardEditor} key=${board.id} boardId=${board.id} snapshot=${snapshot} win=${win} fetchImpl=${fetchImpl}
       notify=${notify} onTitle=${(title) => setBoardOverlayLabel(board.id, title)} onOpenAgent=${(agent) => openInCompanion(agent)} />
   <//>`;
 }
 
+// OverlayDock holds the minimized windows of every kind. A chat that needs the
+// operator says so here, as a chip does, so it never looks silently busy.
+function OverlayDock({ snapshot }) {
+  const minimized = overlayWindows.value.filter((window) => window.minimized);
+  if (!minimized.length) return null;
+  const agents = companionAgents(snapshot.value);
+  const needs = ({ kind, agent }) => {
+    const row = kind === CHAT_WINDOW_KIND ? agents.get(agent) : null;
+    return !!row && (companionStatus(row) === 'needs' || approvalsFor(snapshot.value, row).length + decisionsFor(snapshot.value, row).length > 0);
+  };
+  return html`<div class="overlay-dock" role="group" aria-label="Minimized windows">
+    ${minimized.map((window) => html`<button type="button" key=${window.id} class=${`overlay-dock-item${needs(window) ? ' needs' : ''}`}
+      title=${`Bring back ${window.label}`} onClick=${() => minimizeOverlayWindow(window.id, false)}>${window.kind === BOARD_WINDOW_KIND ? '✎' : '▣'} ${window.label}</button>`)}
+  </div>`;
+}
+
 export function BoardOverlay({ snapshot, ...props }) {
-  const board = boardOverlay.value;
-  if (!board) return null;
+  const boards = boardOverlays.value;
+  if (!boards.length && !overlayWindows.value.length) return null;
   return html`<${BoardsGate} snapshot=${snapshot}>
-    <${BoardOverlayWindow} board=${board} snapshot=${snapshot} ...${props} />
+    ${boards.map((instance, index) => html`<${BoardOverlayWindow} key=${instance.id} instance=${instance} index=${index} snapshot=${snapshot} ...${props} />`)}
+    <${OverlayDock} snapshot=${snapshot} />
   <//>`;
+}
+
+function validWindow(window) {
+  if (window.kind === BOARD_WINDOW_KIND) return isBoardId(window.board);
+  return window.kind === CHAT_WINDOW_KIND && isAgentId(window.agent);
 }
 
 export function mountBoardOverlayIsland({
   host, registerCleanup, snapshot, notify = () => {}, prefs = null,
   fetchImpl = (...args) => globalThis.fetch(...args), win = globalThis.window,
 }) {
-  if (!boardOverlay.peek()) boardOverlay.value = readOpen(win);
-  const stopRaise = boardOverlayRaise.subscribe((request) => { if (request) raiseOverlayWindow(OVERLAY_ID); });
-  const stopSave = boardOverlay.subscribe((board) => {
-    try {
-      if (board) sessionStore(win)?.setItem?.(BOARD_OVERLAY_OPEN_KEY, JSON.stringify(board));
-      else sessionStore(win)?.removeItem?.(BOARD_OVERLAY_OPEN_KEY);
-    } catch { /* it just does not come back after a reload */ }
-  });
+  const stopKeeping = keepOverlayWindows(win, validWindow);
   render(html`<${BoardOverlay} snapshot=${snapshot} fetchImpl=${fetchImpl} notify=${notify} prefs=${prefs} win=${win} />`, host);
   registerCleanup(() => {
     render(null, host);
-    stopSave();
-    stopRaise();
-    if (frontOverlayWindow.peek() === OVERLAY_ID) raiseOverlayWindow('');
+    stopKeeping();
+    overlayStackReset();
   });
 }

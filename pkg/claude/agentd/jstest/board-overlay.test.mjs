@@ -42,17 +42,18 @@ async function setup(t, snapshotValue = COLLAB_ON) {
   };
   t.after(() => { globalThis.fetch = previous; });
 
-  const [loader, overlayState, island, { dashboardState }, { dashPrefs }, { terminalShellState }] = await Promise.all([
+  const [loader, overlayState, windows, island, { dashboardState }, { dashPrefs }, { terminalShellState }] = await Promise.all([
     harness.importDashboardModule('js/preact-loader.js'),
     harness.importDashboardModule('js/board-overlay-state.js'),
+    harness.importDashboardModule('js/overlay-instances.js'),
     harness.importDashboardModule('js/board-overlay.js'),
     harness.importDashboardModule('js/snapshot-store.js'),
     harness.importDashboardModule('js/prefs.js'),
     harness.importDashboardModule('js/terminal-shell-state.js'),
   ]);
   dashboardState.publishLocalEdit(snapshotValue);
-  dashPrefs.removeItem(island.BOARD_OVERLAY_PLACEMENT_PREF);
-  overlayState.boardOverlay.value = null;
+  for (const suffix of ['', '.plan', '.map']) dashPrefs.removeItem(`${island.BOARD_OVERLAY_PLACEMENT_PREF}${suffix}`);
+  windows.overlayWindows.value = [];
   const cleanups = [
     await loader.mountTerminalsFeature({ fetchImpl: async () => ({ ok: true }), widgetFactory: () => { throw new Error('no terminals here'); } }),
     await loader.mountBoardOverlayFeature({ notify: () => {} }),
@@ -60,7 +61,7 @@ async function setup(t, snapshotValue = COLLAB_ON) {
   await harness.act(() => wait());
   return {
     dispose() {
-      overlayState.boardOverlay.value = null;
+      windows.overlayWindows.value = [];
       for (const cleanup of cleanups) cleanup?.();
     },
     harness, host, overlayHost, overlayState, island, dashboardState, dashPrefs, state: terminalShellState,
@@ -105,7 +106,7 @@ scenario('a board moves from its tab into the overlay and back', async ({ harnes
 
   await click(button(overlayHost, 'Back to a tab'));
   assertAbsent(overlayHost.querySelector('.board-overlay'));
-  assert.equal(overlayState.boardOverlay.value, null);
+  assert.equal(overlayState.boardOverlays.value.length, 0);
   assert.deepEqual(tabLabels(host), ['Release plan']);
   assert.equal(state.activeKey.value, 'board:plan');
   assert.ok(harness.document.getElementById('tab-terminals').classList.contains('active'), 'the tab is shown');
@@ -131,12 +132,26 @@ scenario('the tab context menu offers the overlay for a board', async ({ harness
   assert.ok(overlayHost.querySelector('.board-overlay'));
 });
 
-scenario('one board floats at a time: the one displaced goes back to a tab', async ({ harness, host, overlayHost, overlayState }) => {
+scenario('several boards float at once, each in its own window', async ({ harness, host, overlayHost, overlayState }) => {
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
   await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });
-  assert.equal(overlayHost.querySelectorAll('.board-overlay').length, 1);
-  assert.match(overlayHost.querySelector('.board-overlay-title').textContent, /Team map/);
-  assert.deepEqual(tabLabels(host), ['Release plan']);
+  const [first, second] = overlayHost.querySelectorAll('.board-overlay');
+  assert.deepEqual([...overlayHost.querySelectorAll('.board-overlay-title')].map((title) => title.textContent.trim()), ['✎ Release plan', '✎ Team map']);
+  assert.notEqual(first.style.left, second.style.left, 'stepped clear of each other');
+  assert.deepEqual(tabLabels(host), []);
+  assert.ok(second.classList.contains('overlay-window-front'));
+  assert.ok(Number(first.style.getPropertyValue('--overlay-level')) < Number(second.style.getPropertyValue('--overlay-level')));
+});
+
+scenario('a board minimizes to the dock and comes back', async ({ harness, overlayHost, overlayState }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await harness.act(async () => { overlayHost.querySelector('.overlay-wc-minimize').click(); await wait(); });
+  assertAbsent(overlayHost.querySelector('.board-overlay'));
+  const item = overlayHost.querySelector('.overlay-dock-item');
+  assert.match(item.textContent, /Release plan/);
+  await harness.act(async () => { item.click(); await wait(); });
+  assert.ok(overlayHost.querySelector('.board-overlay'));
+  assertAbsent(overlayHost.querySelector('.overlay-dock'));
 });
 
 scenario('opening the board the overlay shows brings the window forward, not a second editor', async ({ harness, host, overlayHost, overlayState }) => {
@@ -153,7 +168,7 @@ scenario('clicking the overlay or the companion brings that one forward', async 
   const { OverlayWindow, useOverlayWindow } = await harness.importDashboardModule('js/overlay-window.js');
   const Other = () => {
     const overlay = useOverlayWindow({ win: harness.window, defaultPlacement: () => ({ x: 0, y: 0, w: 400, h: 300, snap: '' }) });
-    return harness.html`<${OverlayWindow} id="companion" window=${overlay} lifts=${false} className="companion-window"
+    return harness.html`<${OverlayWindow} id="companion" window=${overlay} className="companion-window"
       frameClass="companion-resize-frame" titlebarClass="companion-titlebar" label="Companion" />`;
   };
   const other = await harness.mount(harness.html`<${Other} />`);
@@ -245,7 +260,7 @@ test('an edge resizes one side only and holds the opposite edge', async (t) => {
 });
 
 scenario('a smaller browser fits the window without losing its saved size', async ({ harness, overlayHost, overlayState, dashPrefs }) => {
-  const key = 'tclaude.dash.board-overlay.placement';
+  const key = 'tclaude.dash.board-overlay.placement.plan';
   harness.window.innerWidth = 1600;
   harness.window.innerHeight = 900;
   dashPrefs.setItem(key, JSON.stringify({ x: 800, y: 300, w: 760, h: 500, snap: '' }));
@@ -316,7 +331,7 @@ scenario('dragging the title bar moves the window and saves its place', async ({
     fire('pointerup', 180, 60);
     await wait();
   });
-  const saved = JSON.parse(dashPrefs.getItem(island.BOARD_OVERLAY_PLACEMENT_PREF));
+  const saved = JSON.parse(dashPrefs.getItem(`${island.BOARD_OVERLAY_PLACEMENT_PREF}.plan`));
   assert.ok(saved, 'the place is saved');
   assert.notEqual(overlayHost.querySelector('.board-overlay').getAttribute('style'), before);
   assert.equal(overlayHost.querySelector('.board-overlay').style.left, `${saved.x}px`);
@@ -342,7 +357,7 @@ scenario('the overlay snaps to edges and corners, keeps a resized panel, and max
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
   const board = () => overlayHost.querySelector('.board-overlay');
   const bar = () => overlayHost.querySelector('.board-overlay-titlebar');
-  const saved = () => JSON.parse(dashPrefs.getItem(island.BOARD_OVERLAY_PLACEMENT_PREF));
+  const saved = () => JSON.parse(dashPrefs.getItem(`${island.BOARD_OVERLAY_PLACEMENT_PREF}.plan`));
   const width = harness.document.documentElement.clientWidth || harness.window.innerWidth || 1280;
   await dragTo(harness, bar(), [300, 400], [width - 2, 400]);
   assert.ok(board().classList.contains('snapped-right'));
@@ -361,10 +376,10 @@ scenario('the overlay snaps to edges and corners, keeps a resized panel, and max
   assert.deepEqual([...overlayHost.querySelectorAll('.overlay-window-edge')].map((node) => node.className.split(' ').pop()), ['e', 's', 'se']);
 });
 
-scenario('the overlay has the native controls, without a minimize, and classic keeps its ×', async ({ harness, overlayHost, overlayState, dashboardState }) => {
+scenario('the overlay has the native controls, and classic keeps its ×', async ({ harness, overlayHost, overlayState, dashboardState }) => {
   dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'linux' });
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
-  assert.equal(overlayHost.querySelector('.overlay-wc-minimize'), null, 'a board has no chip to minimize to');
+  assert.ok(overlayHost.querySelector('.overlay-wc-minimize'), 'it minimizes to the dock');
   assert.ok(overlayHost.querySelector('.overlay-wc-maximize'));
   assert.equal(overlayHost.querySelector('.board-overlay-close'), null);
   await harness.act(async () => { dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'classic' }); await wait(); });
@@ -372,7 +387,7 @@ scenario('the overlay has the native controls, without a minimize, and classic k
   assert.ok(overlayHost.querySelector('.board-overlay-close'));
   await harness.act(async () => { dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'linux' }); await wait(); });
   await harness.act(async () => { overlayHost.querySelector('.overlay-wc-close').click(); await wait(); });
-  assert.equal(overlayState.boardOverlay.value, null);
+  assert.equal(overlayState.boardOverlays.value.length, 0);
 });
 
 scenario('Ctrl+wheel over the title bar goes to the board, not the page', async ({ harness, overlayHost, overlayState }) => {
