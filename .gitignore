@@ -86,6 +86,9 @@ excalidraw.log
 # by sandboxed sessions; empty today but never a project file).
 /.claude/.cc-writes/
 
+# Output of scripts/docs/drift.sh.
+/docs-drift-out/
+
 # GoReleaser output. Untracked here, it marks every release build as modified.
 /dist/
 
