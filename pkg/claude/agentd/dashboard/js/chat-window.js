@@ -7,7 +7,8 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { actionsFor, approvalsFor, companionAgents, companionStatus, companionStatusLabel, decisionsFor, defaultPlacement } from './companion-model.js';
-import { ApprovalCard, StewardShutdown } from './companion-approval.js';
+import { ApprovalCard } from './companion-approval.js';
+import { AgentCog } from './companion-cog.js';
 import { parsePlacement, viewportOf } from './overlay-window-model.js';
 import { closeOverlayWindow, minimizeOverlayWindow, placedOverlayWindow } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
@@ -22,7 +23,7 @@ const html = htm.bind(h);
 export const CHAT_PLACEMENT_PREF = 'tclaude.dash.chat-window.placement';
 
 export function ChatWindow({
-  instance, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onStewardDown, Terminal, DecisionCard, StatusDot,
+  instance, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, showAgent = null, Terminal, DecisionCard, StatusDot,
 }) {
   const agentId = instance.agent;
   const agent = companionAgents(snapshot.value).get(agentId) || null;
@@ -52,6 +53,7 @@ export function ChatWindow({
   }, [open, agentId]);
 
   const look = windowControlsLook(snapshot.value?.window_controls);
+  const showRoster = !!(openStewardHandover && agent && (agent.steward || stewardRoster.some((entry) => entry.agent_id === agentId)));
   // A running Steward isn't closed in passing: its ✕ asks what ⏻ asks.
   const closeShutsDown = !!(agent?.steward && agent.online);
   const closeTitle = closeShutsDown ? 'Close: shut it down, after asking' : 'Close (the agent keeps running)';
@@ -72,7 +74,9 @@ export function ChatWindow({
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const title = html`<span class="chat-window-title" title=${`${name}: ${label}`}><${StatusDot} status=${agent ? companionStatus(agent) : 'offline'} /> ${name}</span>
     <button type="button" class="board-overlay-action" title="Move this agent back to a tab of the companion" onClick=${() => onBackToTab(instance)}>Back to a tab</button>
-    ${closeShutsDown && html`<div class="companion-controls"><${StewardShutdown} agent=${agent} fetchImpl=${fetchImpl} onDown=${stewardDown} askRef=${askShutDown} /></div>`}
+    <div class="companion-controls"><${AgentCog} agent=${agent} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
+      openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${companionAgents(snapshot.value)} showAgent=${showAgent}
+      fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardDown} askShutDownRef=${askShutDown} /></div>
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${closeTitle} aria-label=${`Close ${name}`} onClick=${close}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.id} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}

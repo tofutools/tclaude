@@ -39,9 +39,9 @@ import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
-import { ApprovalCard, ClearContext, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
+import { ApprovalCard, ElevatedBand, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { relativeAge } from './pr-review-model.js';
-import { StewardRoster } from './steward-roster.js';
+import { AgentCog } from './companion-cog.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
@@ -314,6 +314,7 @@ export function CompanionApp({
   // on: the snapshot can still show it online for a poll.
   const [shutDown, setShutDown] = useState(null);
   const askShutDown = useRef(null);
+  const rosterRef = useRef(null);
   const [detached, setDetached] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF))));
   const detachedRef = useRef(detached);
   detachedRef.current = detached;
@@ -1244,6 +1245,8 @@ export function CompanionApp({
   const activeElevated = elevatedAccess(snapshot.value, activeAgent);
   const activeDecisions = activeAgent ? decisions(activeAgent) : [];
   const activeActions = activeAgent ? actionsFor(snapshot.value, activeAgent) : [];
+  const showRoster = !!(openStewardHandover && activeAgent && !showQueue && (activeAgent.steward || stewardRoster.some((entry) => entry.agent_id === activeAgent.agentId)));
+  const standby = showRoster ? stewardRoster.filter((entry) => entry.seat === 'standby').length : 0;
   const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
   const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
   const starting = !activeAgent && activeId && pending.current.has(activeId);
@@ -1315,28 +1318,25 @@ export function CompanionApp({
           title=${`Summon ${stewardLabel} or pin a live agent`} onClick=${() => setMenu((v) => !v)}>＋</button>
       </div>
       <div class="companion-controls">
-        ${activeAgent && speaker.supported && html`<button type="button" class=${`companion-voice${voiceAgents.has(activeAgent.agentId) ? ' on' : ''}`}
-          aria-pressed=${voiceAgents.has(activeAgent.agentId) ? 'true' : 'false'} aria-label=${`Speak ${activeAgent.name}'s replies aloud`}
-          title=${voiceAgents.has(activeAgent.agentId) ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
-          onClick=${() => toggleVoice(activeAgent)}>${voiceAgents.has(activeAgent.agentId) ? '🔊' : '🔈'}</button>`}
-        ${activeAgent && openTerminalsPane && html`<button type="button" aria-label="Open in the Collab tab" title="Open in the Collab tab"
-          onClick=${() => moveToTerminals(activeAgent)}>⤢</button>`}
+        ${activeElevated && html`<button type="button" class="companion-state-sudo" aria-label=${`${activeAgent.name} has elevated access`}
+          title="Elevated access. The band in the window can end it." disabled=${!(activeAgent.steward && activeAgent.online && openSudo)}
+          onClick=${() => openSudo(activeAgent.agentId, activeAgent.name)}>🛡 sudo</button>`}
+        ${standby > 0 && html`<button type="button" class="companion-state-roster" aria-label=${`${standby} on the Steward roster`}
+          title="On the Steward roster" onClick=${() => rosterRef.current?.()}>✦ ${standby}</button>`}
         ${toApprove.length > 0 && html`<button type="button" class="companion-access"
           aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
           title="Agents are asking for permission"
           onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
-        ${activeAgent?.steward && !showQueue && html`<${StewardAccessControls} agent=${activeAgent} openPermissions=${openPermissions} openSudo=${openSudo} />
-          <${StewardShutdown} agent=${activeAgent} fetchImpl=${fetchImpl} onDown=${stewardShutDown} askRef=${askShutDown} />`}
-        ${activeAgent?.online && activeAgent.harness !== 'shell' && !showQueue && html`<${ClearContext} agent=${activeAgent} fetchImpl=${fetchImpl} notify=${notify} />`}
-        ${openStewardHandover && activeAgent && !showQueue && (activeAgent.steward || stewardRoster.some((entry) => entry.agent_id === activeAgent.agentId)) && html`<${StewardRoster}
-          roster=${stewardRoster} agents=${agents} fetchImpl=${fetchImpl} notify=${notify} openHandover=${openStewardHandover} showAgent=${showAgent} />`}
-        ${activeAgent?.online && !showQueue && html`
-          ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${() => composeToActive()}>✉</button>`}
-          <button type="button" class="companion-float" aria-label=${`Float ${activeAgent.name} in an overlay window of its own`} title="Float in an overlay window of its own" onClick=${() => floatTab(activeAgent)}>▣</button>
-          ${detachWindow && !parked.has(activeAgent.agentId) && html`<button type="button" class="companion-detach" aria-label=${`Detach ${activeAgent.name} into its own window`} title="Detach into its own browser window" onClick=${() => detachToWindow(activeAgent)}>⧉</button>`}
-          ${openMorph && html`<button type="button" class="companion-morph" aria-label=${`Morph ${activeAgent.name}`} title="Morph: relaunch on another harness, model or profile"
-            onClick=${() => openMorph(activeAgent)}>⇄</button>`}
-        `}
+        ${activeAgent && speaker.supported && html`<button type="button" class=${`companion-voice${voiceAgents.has(activeAgent.agentId) ? ' on' : ''}`}
+          aria-pressed=${voiceAgents.has(activeAgent.agentId) ? 'true' : 'false'} aria-label=${`Speak ${activeAgent.name}'s replies aloud`}
+          title=${voiceAgents.has(activeAgent.agentId) ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
+          onClick=${() => toggleVoice(activeAgent)}>${voiceAgents.has(activeAgent.agentId) ? '🔊' : '🔈'}</button>`}
+        ${activeAgent?.online && !showQueue && onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${() => composeToActive()}>✉</button>`}
+        <${AgentCog} agent=${activeAgent} deciding=${showQueue} parked=${activeAgent ? parked.has(activeAgent.agentId) : false} roster=${stewardRoster} showRoster=${showRoster}
+          onCollab=${openTerminalsPane && activeAgent ? () => moveToTerminals(activeAgent) : null} onFloat=${() => floatTab(activeAgent)}
+          onDetach=${detachWindow ? () => detachToWindow(activeAgent) : null} onMorph=${openMorph ? () => openMorph(activeAgent) : null}
+          openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${agents} showAgent=${showAgent}
+          fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardShutDown} askShutDownRef=${askShutDown} rosterRef=${rosterRef} />
         ${look === 'classic' && html`<button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>`}
       </div>
 `;
@@ -1363,7 +1363,7 @@ export function CompanionApp({
         ${shutDown && html`<p class="companion-shutdown-note" role="status"><b>${shutDown.name}</b> is shut down. You can pick its conversation back up.</p>`}
         <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
           groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
-        <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, 🛡 and sudo in the title bar change its access.</p>
+        <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, ⚙ in the title bar changes its access.</p>
         ${returning ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>${busy ? 'Working…' : `Resume ${returning.name}`}</button>
           <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
           <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>
@@ -1407,7 +1407,7 @@ export function CompanionApp({
   return html`
     ${overlayWindows.value.filter((window) => window.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} fetchImpl=${fetchImpl} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
-      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onStewardDown=${stewardShutDown} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
+      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onStewardDown=${stewardShutDown} stewardRoster=${stewardRoster} openPermissions=${openPermissions} openSudo=${openSudo} openStewardHandover=${openStewardHandover} showAgent=${showAgent} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
     ${overlayWindows.value.filter((window) => window.kind === TERMINAL_WINDOW_KIND).map((instance) => html`<${TerminalWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} Terminal=${CompanionTerminal} />`)}
     ${windowView}

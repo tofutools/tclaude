@@ -56,7 +56,7 @@ function fakeDictation() {
 
 const SHOWN_WINDOW = '.companion-window:not(.companion-window-warm)';
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, openPermissions = null, openSudo = null, detachWindow = null, openTerminalsPane = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {}, locks = null } = {}) {
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, openPermissions = null, openSudo = null, detachWindow = null, openTerminalsPane = null, openStewardHandover = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {}, locks = null } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -73,7 +73,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sess
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} sessionPrefs=${sessionPrefs} fetchImpl=${fetchFn} notify=${notify}
-    locks=${locks} onComposeMessage=${onComposeMessage} openMorph=${openMorph} openPermissions=${openPermissions} openSudo=${openSudo} detachWindow=${detachWindow} openTerminalsPane=${openTerminalsPane} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    locks=${locks} onComposeMessage=${onComposeMessage} openMorph=${openMorph} openPermissions=${openPermissions} openSudo=${openSudo} detachWindow=${detachWindow} openTerminalsPane=${openTerminalsPane} openStewardHandover=${openStewardHandover} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -272,7 +272,7 @@ test('with no Steward running the empty window says where its access controls wi
   const { view, harness } = await setup(t, { openPermissions: () => {}, openSudo: () => {} });
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /Open the companion/ }).click());
   assert.equal(view.container.querySelector('.companion-steward-perms'), null);
-  assert.match(view.container.textContent, /Once it is running, 🛡 and sudo in the title bar change its access/);
+  assert.match(view.container.textContent, /Once it is running, ⚙ in the title bar changes its access/);
 });
 
 test('summoning the Steward posts a scoped scribe summon and attaches its terminal', async (t) => {
@@ -2106,6 +2106,90 @@ test('a Steward in its own window gets focus and keeps its terminal', async (t) 
   assert.equal(dictated.starts.length, 0);
 });
 
+test('the title bar keeps voice, Message and ⚙; the rest is under the cog', async (t) => {
+  const { view, harness, controller } = await setup(t, { onComposeMessage: () => {}, detachWindow: () => null, openMorph: () => {}, openTerminalsPane: () => {} });
+  await harness.act(() => controller().open(A));
+  const bar = view.container.querySelector('.companion-controls');
+  const outside = (selector) => [...bar.querySelectorAll(selector)].filter((node) => !node.closest('.companion-cog-menu'));
+  assert.equal(outside('.companion-compose').length, 1);
+  assert.equal(outside('.companion-cog-button').length, 1);
+  for (const moved of ['.companion-float', '.companion-detach', '.companion-morph', '.companion-clear-open']) {
+    assert.equal(outside(moved).length, 0, moved);
+    assert.ok(bar.querySelector(`.companion-cog-menu ${moved}`), moved);
+  }
+  const menu = bar.querySelector('.companion-cog-menu');
+  assert.equal(menu.classList.contains('open'), false);
+  await harness.act(() => bar.querySelector('.companion-cog-button').click());
+  assert.equal(menu.classList.contains('open'), true);
+  await harness.act(() => { const filter = menu.querySelector('.action-menu-filter'); filter.value = 'morph'; filter.dispatchEvent(new harness.window.Event('input', { bubbles: true })); });
+  const shown = [...menu.querySelectorAll('[role="menuitem"]')].filter((item) => !item.hasAttribute('data-menu-filtered-out')).map((item) => item.querySelector('.companion-cog-label').textContent);
+  assert.deepEqual(shown, ['Morph']);
+});
+
+test('a Steward\'s cog has access and the shut-down, which asks first; a plain agent\'s does not', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const opened = [];
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }), openSudo: (...args) => opened.push(args), openPermissions: () => {} });
+  await harness.act(() => controller().open(S));
+  const bar = () => view.container.querySelector('.companion-controls');
+  assert.ok(bar().querySelector('.companion-cog-menu .companion-steward-perms'));
+  await harness.act(() => bar().querySelector('.companion-cog-button').click());
+  await harness.act(() => bar().querySelector('.companion-steward-sudo').click());
+  assert.equal(opened.length, 1);
+  assert.equal(bar().querySelector('.companion-cog-menu').classList.contains('open'), false, 'choosing closes the menu');
+  await harness.act(() => bar().querySelector('.companion-cog-menu .steward-shutdown-open').click());
+  assert.ok(bar().querySelector('.steward-shutdown-confirm'), 'it asks');
+  assert.deepEqual(calls.filter(([, url]) => url.endsWith('/stop')), []);
+  await harness.act(() => controller().open(A));
+  assert.equal(bar().querySelector('.companion-steward-sudo'), null);
+  assert.equal(bar().querySelector('.steward-shutdown-open'), null);
+});
+
+test('what needs the operator shows in the bar only while true', async (t) => {
+  const snapshot = { ...snapshotWith({ steward: true }), steward_roster: [{ agent_id: S, name: 's', seat: 'active', online: true }] };
+  const { view, harness, controller, snap } = await setup(t, { snapshot, openStewardHandover: () => {} });
+  await harness.act(() => controller().open(S));
+  assert.equal(view.container.querySelector('.companion-state-roster'), null);
+  await harness.act(() => { snap.value = { ...snapshot, steward_roster: [...snapshot.steward_roster, { agent_id: B, name: 'b', seat: 'standby', online: true }] }; });
+  assert.match(view.container.querySelector('.companion-state-roster').textContent, /✦ 1/);
+});
+
+test('the second click of a double-click on a cog item stops there', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { dropDoubleClick } = await harness.importDashboardModule('js/companion-cog.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let listener = null;
+  const doc = { addEventListener: (_, next) => { listener = next; }, removeEventListener: () => { listener = null; } };
+  dropDoubleClick(doc);
+  let stopped = 0;
+  const click = (detail) => listener({ detail, preventDefault() {}, stopPropagation() { stopped += 1; } });
+  click(1);
+  assert.equal(stopped, 0, 'an ordinary click goes through');
+  click(2);
+  assert.equal(stopped, 1);
+  t.mock.timers.tick(501);
+  assert.equal(listener, null, 'it stops listening');
+});
+
+test('with no agent showing the companion has no cog', async (t) => {
+  const { view, harness } = await setup(t);
+  await harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  assert.ok(view.container.querySelector(SHOWN_WINDOW));
+  assert.equal(view.container.querySelector('.companion-cog-button'), null);
+});
+
+test('a floated Steward keeps its tools under the cog', async (t) => {
+  const { view, harness, controller } = await setup(t, { snapshot: snapshotWith({ steward: true }), openPermissions: () => {}, openSudo: () => {} });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.companion-float').click());
+  const win = () => view.container.querySelector('.chat-window');
+  assert.ok(win().querySelector('.companion-cog-menu .companion-steward-sudo'));
+  await harness.act(() => win().querySelector('.companion-cog-button').click());
+  await harness.act(() => win().querySelector('.companion-cog-menu .steward-shutdown-open').click());
+  assert.ok(win().querySelector('.steward-shutdown-confirm'));
+});
+
 test('Clear context asks first, for any agent that is not a shell', async (t) => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => { calls.push([url, options.body]); return { ok: true, text: async () => '', json: async () => ({}) }; };
@@ -2114,7 +2198,7 @@ test('Clear context asks first, for any agent that is not a shell', async (t) =>
   await harness.act(() => controller().open(A));
   const clear = () => view.container.querySelector('.companion-clear-context');
   assert.ok(clear());
-  await harness.act(() => clear().querySelector('.companion-clear-open').click());
+  await harness.act(() => view.container.querySelector('.companion-clear-open').click());
   assert.match(clear().querySelector('.steward-shutdown-confirm').textContent, /same identity and permissions/);
   assert.deepEqual(calls.filter(([url]) => url.endsWith('/reincarnate')), [], 'nothing happens before the confirmation');
   await harness.act(async () => { clear().querySelector('.danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
