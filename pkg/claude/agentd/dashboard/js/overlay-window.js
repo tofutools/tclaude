@@ -25,7 +25,7 @@ import {
   clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapZone, viewportOf, zoneRect,
 } from './overlay-window-model.js';
 import {
-  detachSpot, dropZone, fits, keepingWindows, leavesOf, movedLine, nodeAt, parseSplit, roomPair, splitLayout, withWindow, withoutWindow,
+  coveringPath, detachSpot, dropZone, fits, keepingWindows, leavesOf, movedLine, nodeAt, parseSplit, roomPair, splitLayout, withWindow, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
 
@@ -147,8 +147,9 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     return { x: 0, y, w: viewport.width, h: zoneRect('max', viewport, y).h };
   };
   const layoutOf = (tree) => {
+    if (!tree) return null;
     const area = splitArea();
-    return tree && fits(tree, area) ? splitLayout(tree, area) : null;
+    return fits(tree, area) ? splitLayout(tree, area) : null;
   };
   const layout = layoutOf(liveSplit.value);
   const cell = layout?.rects[id];
@@ -231,15 +232,13 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       const next = tree && layoutOf(keepingWindows(tree, here));
       return next?.rects[id] ? { zone: zone === 'top' ? 'top-left' : zone, tree, guide: next.rects[id] } : null;
     };
-    const into = (other) => (leavesOf(savedTree).includes(other) ? savedTree : { id: other });
     for (const [other, { rect, zone: otherZone }] of others) {
+      // A window outside the split cannot start a tree of its own: there is one.
+      if (savedTree && !leavesOf(savedTree).includes(other)) continue;
       const zone = dropZone(pointer, rect());
-      if (zone && liveSplit.peek()) return planned(withWindow(into(other), other, zone, id), zone) || plain;
-      if (room && !liveSplit.peek()) {
-        const pair = savedTree ? null : roomPair(other, room, id, otherZone);
-        if (pair) return planned(pair, room) || plain;
-      }
-      if (zone && !room) return planned(withWindow(into(other), other, zone, id), zone) || plain;
+      if (zone && (!room || liveSplit.peek())) return planned(withWindow(savedTree || { id: other }, other, zone, id), zone) || plain;
+      const pair = room && !savedTree ? roomPair(other, room, id, otherZone) : null;
+      if (pair) return planned(pair, room) || plain;
     }
     return plain;
   }
@@ -329,24 +328,24 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     });
   }
 
-  // A line moves live and is saved when it lands. Lines name the showing tree,
-  // so a window away while one moves does not get its place back.
+  // A line moves live and is saved when it lands. It names a node of the showing
+  // tree, and moves that split in the saved one, which keeps windows that are away.
   function onLinePointerDown(event, axes, path, area) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    const savedPath = coveringPath(splitTree.peek(), leavesOf(nodeAt(liveSplit.peek(), path)));
     track(event, (m) => {
       const pointer = { x: m.clientX, y: m.clientY };
-      splitTree.value = axes.reduce((tree, axis) => movedLine(tree, path, axis, pointer, area), liveSplit.peek());
+      splitTree.value = axes.reduce((tree, axis) => movedLine(tree, savedPath, axis, pointer, area), splitTree.peek());
     }, () => saveSplit(prefs, splitTree.peek()));
   }
 
   // Detach ends the split at a line, and every window under it floats.
   function detachLine(path) {
     const windows = snappedWindows.peek();
-    const live = liveSplit.peek();
-    const ids = leavesOf(nodeAt(live, path));
-    saveSplit(prefs, ids.reduce(withoutWindow, live));
+    const ids = leavesOf(nodeAt(liveSplit.peek(), path));
+    saveSplit(prefs, ids.reduce(withoutWindow, splitTree.peek()));
     for (const member of ids) windows.get(member)?.release();
   }
 

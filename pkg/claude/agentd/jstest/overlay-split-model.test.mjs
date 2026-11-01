@@ -120,6 +120,25 @@ test('a drop on a half splits that window, and the fourth corner makes a quad', 
   assert.deepEqual(withWindow(pair('y', 'a', 'b'), 'a', 'left', 'c').a, pair('x', 'c', 'a'));
 });
 
+test('a quad keeps the line that was already there', async (t) => {
+  const { withWindow } = await model(t);
+  const dragged = { axis: 'x', at: 0.5, a: { id: 'a' }, b: pair('y', 'b', 'c', 0.3) };
+  assert.equal(withWindow(dragged, 'a', 'bottom-left', 'd').y, 0.3);
+});
+
+test('a line of the showing tree finds its split in the saved one', async (t) => {
+  const { coveringPath, keepingWindows, movedLine, leavesOf, nodeAt, splitLayout } = await model(t);
+  const saved = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { axis: 'y', at: 0.5, a: { id: 'b' }, b: pair('x', 'c', 'd') } };
+  const live = keepingWindows(saved, new Set(['a', 'b', 'c']));
+  const [, inner] = splitLayout(live, AREA).lines;
+  const path = coveringPath(saved, leavesOf(nodeAt(live, inner.path)));
+  const moved = movedLine(saved, path, inner.axis, { x: 1200, y: 240 }, inner.area);
+  assert.equal(moved.b.at, 0.25);
+  assert.deepEqual(leavesOf(moved), ['a', 'b', 'c', 'd'], 'the window that is away keeps its place');
+  const crossing = { x: 0.5, y: 0.5, cells: ['a', 'b', 'c', 'd'].map((id) => ({ id })) };
+  assert.deepEqual(coveringPath(crossing, ['a', 'b']), [], 'a collapsed quad line is the quad');
+});
+
 test('a drop counts near an edge or corner of a window, not in its middle', async (t) => {
   const { dropZone } = await model(t);
   const rect = { x: 100, y: 100, w: 100, h: 100 };

@@ -139,6 +139,13 @@ export function splitLayout(tree, area) {
   return { rects, lines, crossings };
 }
 
+// coveringPath is the path of the smallest node holding every window of ids: in
+// a saved tree, the split a line of the showing tree belongs to.
+export function coveringPath(tree, ids, path = []) {
+  const holder = childrenOf(tree).findIndex((child) => ids.every((id) => leavesOf(child).includes(id)));
+  return holder < 0 ? path : coveringPath(childrenOf(tree)[holder], ids, [...path, holder]);
+}
+
 // movedLine is the tree with one line of the node at path at a new position.
 // A quad's axis 'x' moves its vertical line, and 'y' its horizontal one.
 export function movedLine(tree, path, axis, pointer, area) {
@@ -206,14 +213,16 @@ export function roomPair(placed, zone, id, placedZone) {
 }
 
 // promoted makes a quad of a binary whose two children split across it: a corner
-// drop that completes four windows shares one crossing.
-function promoted(node) {
+// drop that completes four windows shares one crossing. It lies on the line that
+// was there, not the one the drop just made in child fresh.
+function promoted(node, fresh) {
   if (isLeaf(node) || isQuad(node)) return node;
   const { a, b } = node;
   const across = (child) => !isLeaf(child) && !isQuad(child) && child.axis !== node.axis;
   if (!across(a) || !across(b)) return node;
-  if (node.axis === 'x') return { x: node.at, y: a.at, cells: [a.a, b.a, a.b, b.b] };
-  return { x: a.at, y: node.at, cells: [a.a, a.b, b.a, b.b] };
+  const line = (fresh === 0 ? b : a).at;
+  if (node.axis === 'x') return { x: node.at, y: line, cells: [a.a, b.a, a.b, b.b] };
+  return { x: line, y: node.at, cells: [a.a, a.b, b.a, b.b] };
 }
 
 // withWindow splits the window target to bring id in beside it, on target's zone.
@@ -231,7 +240,7 @@ export function withWindow(tree, target, zone, id) {
   const first = axis === 'x' ? side === 'left' : end === 'top';
   const split = (leaf) => (first ? pairOf(axis, { id }, leaf) : pairOf(axis, leaf, { id }));
   const next = atPath(tree, path, split);
-  return corner && path.length ? atPath(next, parentPath, promoted) : next;
+  return corner && path.length ? atPath(next, parentPath, (node) => promoted(node, path[path.length - 1])) : next;
 }
 
 // dropZone is the edge or corner of rect a pointer is on, or '' in the middle of it.
