@@ -339,8 +339,10 @@ permissions and ownership are advisory only.
 instead: it joins the group with its conversation installed and its
 briefing queued, and `tclaude agent resume` starts it later on its landing
 harness. Landing offline needs a conversation that lands (not
-`--skip-history` or a configuration-only import) and is not yet available
-on OpenCode.
+`--skip-history` or a configuration-only import). On OpenCode the
+conversation goes in the store its landing posture reads, so a
+tclaude-sandboxed agent lands in private state, and its server starts at
+resume.
 
 The agent lands on its own harness unless `--harness` names another. When
 the source harness is not available here, the import says so and asks for
