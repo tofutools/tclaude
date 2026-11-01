@@ -173,15 +173,10 @@ func importBundleHistory(h *harness.Harness, history *bundleHistoryLaunch, cwd s
 
 // Native history uses the same daemon-proven per-agent XDG allocation as the
 // executor. Neither bundle metadata nor the sender can name this location.
-func openCodeHistoryForAgent(h *harness.Harness, agentID string) (*harness.Harness, error) {
-	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
-	if err != nil {
-		return nil, err
-	}
-	if allocation == nil || allocation.Mode == db.OpenCodeStateLegacyShared {
-		return h, nil
-	}
-	if err = requireOpenCodeAllocatedStateRoot(allocation.StateRoot, "OpenCode history", "state root"); err != nil {
+// openCodeAllocationEnvironment is the XDG environment that selects an agent's
+// private state, for a CLI run outside its sandbox.
+func openCodeAllocationEnvironment(allocation *db.OpenCodeAgentStateAllocation) ([]string, error) {
+	if err := requireOpenCodeAllocatedStateRoot(allocation.StateRoot, "OpenCode history", "state root"); err != nil {
 		return nil, err
 	}
 	layout, err := openCodeStateLayoutForAllocation(*allocation)
@@ -193,6 +188,25 @@ func openCodeHistoryForAgent(h *harness.Harness, agentID string) (*harness.Harne
 		if strings.HasPrefix(entry.Name, "XDG_") {
 			env = append(env, entry.Name+"="+entry.Value)
 		}
+	}
+	return env, nil
+}
+
+func init() {
+	harness.OpenCodePrivateEnvironment = openCodeAllocationEnvironment
+}
+
+func openCodeHistoryForAgent(h *harness.Harness, agentID string) (*harness.Harness, error) {
+	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	if err != nil {
+		return nil, err
+	}
+	if allocation == nil || allocation.Mode == db.OpenCodeStateLegacyShared {
+		return h, nil
+	}
+	env, err := openCodeAllocationEnvironment(allocation)
+	if err != nil {
+		return nil, err
 	}
 	scoped, ok := h.History.(interface {
 		WithEnvironment([]string) harness.HistoryTransfer

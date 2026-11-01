@@ -9,7 +9,8 @@
 # it, and the attached TUI draws it. The node then makes tclaude's sandbox its
 # install default and imports the same archive again: that member's conversation
 # goes in its private state, never the shared store, and resumes in a sandboxed
-# server.
+# server, and resume recovery still finds that conversation with its resume
+# profile gone.
 #
 # It needs `opencode`, `tmux`, `jq` and a working `bwrap` on PATH. Anything missing
 # is a failure:
@@ -269,5 +270,19 @@ grep -qE 'resumed|already_online' "$ROOT/walled-resume.txt" || die "the sandboxe
 wait_for 90 "the sandboxed conversation in the OpenCode TUI" pane_shows_history
 cat "$ROOT/pane.txt"
 managed_server_holds "$WALLED" tclaude-layer
+
+log "resume recovery finds a conversation in private state"
+node dst tclaude agent stop "$WALLED" --force
+python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$WALLED" <<'PY'
+import sqlite3, sys
+
+with sqlite3.connect(sys.argv[1]) as db:
+    n = db.execute("DELETE FROM conversation_resume_profiles WHERE conv_id = ?", (sys.argv[2],)).rowcount
+assert n == 1, n
+PY
+node dst tclaude agent resume "$WALLED" | tee "$ROOT/recovered-resume.txt"
+wait_for 90 "the recovered conversation's server" managed_server_holds "$WALLED" tclaude-layer
+private_opencode session list --format json | jq -e --arg id "$WALLED" 'any(.[]; .id == $id)' >/dev/null \
+	|| die "the recovered conversation left private state"
 
 log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed"

@@ -420,9 +420,15 @@ func TestOpenCodeConvStoreKeepsPrivateStateConversation(t *testing.T) {
 		AgentID: agentID, Mode: db.OpenCodeStatePrivate, StateRoot: t.TempDir(),
 	})
 	require.NoError(t, err)
-	store := openCodeConvStore{listSessions: func(string) ([]openCodeSession, error) {
-		return []openCodeSession{{ID: "ses_ambient", Directory: repo}}, nil
-	}}
+	previous := OpenCodePrivateEnvironment
+	t.Cleanup(func() { OpenCodePrivateEnvironment = previous })
+	OpenCodePrivateEnvironment = func(*db.OpenCodeAgentStateAllocation) ([]string, error) { return nil, nil }
+	store := openCodeConvStore{
+		listSessions: func(string) ([]openCodeSession, error) {
+			return []openCodeSession{{ID: "ses_ambient", Directory: repo}}, nil
+		},
+		listPrivate: func(string, []string) ([]openCodeSession, error) { return nil, nil },
+	}
 
 	require.NoError(t, store.SetTitle(conv, "Private name"))
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: conv, ProjectDir: repo, ProjectPath: repo, CustomTitle: "Private name", Harness: OpenCodeName}))
@@ -521,12 +527,73 @@ func TestOpenCodeSyncKeepsRowWrittenDuringTheListing(t *testing.T) {
 	assert.NotNil(t, row)
 }
 
+// A conversation in private state is found through that state, and its listing
+// does not evict what the shared store holds in the same directory.
+func TestOpenCodeConvStoreSeesPrivateState(t *testing.T) {
+	withTestDB(t)
+	repo := testutil.CanonicalTempDir(t)
+	const conv, shared = "ses_private1", "ses_shared1"
+	require.NoError(t, db.SetConversationResumeProfile(conv, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: OpenCodeName, Cwd: repo,
+	}))
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: shared, ProjectDir: repo, ProjectPath: repo, Harness: OpenCodeName}))
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	_, err = db.InsertOpenCodeAgentStateAllocation(db.OpenCodeAgentStateAllocation{
+		AgentID: agentID, Mode: db.OpenCodeStatePrivate, StateRoot: t.TempDir(),
+	})
+	require.NoError(t, err)
+	previous := OpenCodePrivateEnvironment
+	t.Cleanup(func() { OpenCodePrivateEnvironment = previous })
+	OpenCodePrivateEnvironment = func(*db.OpenCodeAgentStateAllocation) ([]string, error) {
+		return []string{"XDG_DATA_HOME=/private"}, nil
+	}
+	found := true
+	failure := error(nil)
+	store := openCodeConvStore{
+		listSessions: func(string) ([]openCodeSession, error) {
+			t.Error("a private conversation needs no ambient listing")
+			return nil, nil
+		},
+		listPrivate: func(dir string, environment []string) ([]openCodeSession, error) {
+			assert.Equal(t, repo, dir)
+			assert.Equal(t, []string{"XDG_DATA_HOME=/private"}, environment)
+			if !found {
+				return []openCodeSession{{ID: "ses_other", Directory: repo}}, failure
+			}
+			return []openCodeSession{{ID: conv, Title: "Private", Directory: repo}}, failure
+		},
+	}
+
+	exists, err := store.Exists(conv, "")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	ref, err := store.Resolve(conv, "", true)
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	assert.Equal(t, repo, ref.ProjectPath)
+	row, err := db.GetConvIndex(shared)
+	require.NoError(t, err)
+	assert.NotNil(t, row, "the private listing evicts nothing")
+
+	found = false
+	exists, err = store.Exists(conv, "")
+	require.NoError(t, err)
+	assert.False(t, exists, "a conversation gone from its own store is gone")
+
+	failure = errors.New("cannot read")
+	_, err = store.Exists(conv, "")
+	require.Error(t, err, "a store that cannot be read says so, not that it is gone")
+	_, err = store.Resolve(conv, "", true)
+	require.Error(t, err)
+}
+
 func TestListOpenCodeSessionsRunsFromTheProject(t *testing.T) {
 	dir := testutil.CanonicalTempDir(t)
 	executable := filepath.Join(testutil.CanonicalTempDir(t), "opencode")
 	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nprintf '[{\"id\":\"ses_here\",\"directory\":\"%s\"}]' \"$PWD\"\n"), 0o755))
 
-	sessions, err := listOpenCodeSessions(executable, dir)
+	sessions, err := listOpenCodeSessions(executable, dir, nil)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, dir, sessions[0].Directory)
