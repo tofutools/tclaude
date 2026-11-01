@@ -92,10 +92,12 @@ and **Send** float at the bottom while you dictate.
 **✎** (Ctrl+Shift+.) lets you draw over the page and send it to the agent. Circle,
 underline, point or write freely. The agent gets a picture of the view with your ink
 on it, as a file attached to the message, plus a numbered line for each mark. Sending
-is your decision, so the agent doesn't need permission to capture your dashboard,
-and it gets only this one picture. Marked secrets are masked in it, as in a
-[capture](#capture). An agent on another node gets the
-lines only, and the notice says so.
+is your decision, so the agent doesn't need permission to capture your dashboard.
+Marked secrets are masked in the picture, as in a [capture](#capture). Like every
+message attachment it's stored under `~/.tclaude/api/message-files`, which other
+agents on this machine can read too, so treat it as you would any attachment. An
+agent on another node, or a picture it refuses, gets the lines only, and the notice
+says so.
 
 ## Answering permission requests
 

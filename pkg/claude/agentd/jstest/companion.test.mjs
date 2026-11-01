@@ -1035,12 +1035,13 @@ test('the ink goes onto the image as the overlay shows it', async (t) => {
 test('a markup sends the view as an image, and says so when it cannot', async (t) => {
   const harness = await createPreactHarness(t);
   const tools = await harness.importDashboardModule('js/dictation-tools.js');
-  const run = async ({ render, target = {}, uploadOk = true, strokes = [{ color: '#fff', kind: 'drawing', line: 'drew by hand over “x”', points: [[1, 1], [9, 9]] }] }) => {
+  const run = async ({ render, target = {}, uploadOk = true, imageOk = true, strokes = [{ color: '#fff', kind: 'drawing', line: 'drew by hand over “x”', points: [[1, 1], [9, 9]] }] }) => {
     const calls = [];
     const notes = [];
     const fetchImpl = async (url, init) => {
       calls.push({ url, init });
       if (url === '/api/spawn-attachments') return { ok: uploadOk, status: uploadOk ? 200 : 500, statusText: 'x', json: async () => (uploadOk ? { token: 'tok' } : {}) };
+      if (!imageOk && JSON.parse(init.body).attachment_token) return { ok: false, status: 500, statusText: 'x', json: async () => ({ error: 'attachments total too large' }) };
       return { ok: true, status: 202, json: async () => ({}) };
     };
     let hook;
@@ -1049,7 +1050,7 @@ test('a markup sends the view as an image, and says so when it cannot', async (t
     await harness.act(() => hook.start({ agentId: 'a1', name: 'alpha', fetchImpl, ...target }));
     await harness.act(() => hook.overlay.props.onSend({ note: '', lines: strokes.map((s) => s.line), strokes }));
     await view.unmount();
-    const mail = calls.find((c) => c.url === '/api/operator-message');
+    const mail = calls.findLast((c) => c.url === '/api/operator-message');
     return { calls, notes, mail: mail && JSON.parse(mail.init.body) };
   };
   const blob = new Blob(['png']);
@@ -1069,6 +1070,11 @@ test('a markup sends the view as an image, and says so when it cannot', async (t
   const refused = await run({ render: async () => blob, uploadOk: false });
   assert.equal(refused.mail.attachment_token, undefined);
   assert.doesNotMatch(refused.mail.body, /attached image/);
+
+  const tooBig = await run({ render: async () => blob, imageOk: false });
+  assert.equal(tooBig.mail.attachment_token, undefined, 'a refused image does not cost the operator the lines');
+  assert.doesNotMatch(tooBig.mail.body, /attached image/);
+  assert.match(tooBig.notes[0].text, /as text: the image failed: attachments total too large/);
 
   let rendered = 0;
   const remote = await run({ render: async () => { rendered += 1; return blob; }, target: { remote: true } });

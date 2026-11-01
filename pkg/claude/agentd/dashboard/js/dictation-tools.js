@@ -443,7 +443,15 @@ export function useAnnotation({ win, notify, viewNow, render = renderPage }) {
           body = composeCompanionMessage(composeAnnotation({ note, lines }), view);
         }
       }
-      await postOperatorMessage(target.fetchImpl, { to: target.agentId, subject: '[annotation]', body, attachmentToken });
+      const post = (message, token) => postOperatorMessage(target.fetchImpl, { to: target.agentId, subject: '[annotation]', body: message, attachmentToken: token });
+      try {
+        await post(body, attachmentToken);
+      } catch (error) {
+        // An agent away from its home node takes less than the upload did.
+        if (!attachmentToken) throw error;
+        imageRefused = `the image failed: ${error?.message || error}`;
+        await post(composeCompanionMessage(composeAnnotation({ note, lines }), view), '');
+      }
       setAnnotating(null);
       notify(imageRefused ? `Sent your markup to ${target.name} as text: ${imageRefused}.` : `Sent your markup to ${target.name}.`, !!imageRefused);
     } catch (error) {

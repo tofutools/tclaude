@@ -399,7 +399,7 @@ tclaude agent notify-human "PR is ready for review" \
 and `agent reply` take `--attach` too, for files you can read: at most 4 files and
 512 KiB in all, images, text, data and PDF, to a local agent or a remote `member@peer`,
 not to a group. The recipient gets a copy under `~/.tclaude/api/message-files` and its
-path in the message. On notify-human, up to 20 files arrive as separate
+path in the message. That directory is shared, so other local agents can read the file too. On notify-human, up to 20 files arrive as separate
 downloads; more than 20, or a directory, become a single zip (`--zip`,
 `--separate`, and `--name` control the shape). The body may be omitted
 when `--subject` and `--attach` are both present.
