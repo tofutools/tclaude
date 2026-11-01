@@ -83,13 +83,18 @@ back here**.
 | ⇄ | Morph it, with Move, Teleport, Clone and Recall home a pick away |
 | – | Minimize (Ctrl+.) |
 | □ | Maximize, or restore the size it had |
-| × | Close the tab you're on. The agent keeps running. With no agent showing, this minimizes the window |
+| × | Close the tab you're on. The agent keeps running. With no agent showing, this minimizes the window. On a running Steward it asks, then shuts the Steward down and closes its tab, like ⏻ |
 
 The last three are shaped like your OS's own window buttons: traffic lights at
 the top left on macOS, flush in the top right corner on Windows, and round
 GNOME-style buttons on Linux. **Config > Appearance > Window controls** picks a
 look by hand. **Classic** keeps a plain minimize button and has no maximize or
 close.
+
+The small × on a tab, next to the name, unpins that agent and leaves it running.
+On a Steward's tab it only minimizes the window, and the tab stays.
+A Steward floated into an overlay window of its own has ⏻ too, and that window's
+close button asks in the same way.
 
 Dragging a maximized window by its title bar also restores it.
 
@@ -422,7 +427,7 @@ as **also running**. Only one is active, and **Switch** makes one of them active
 
 ### Shutting it down
 
-⏻ shuts the Steward down, after asking: it stops, and keeps its seat, its
+⏻, or the window's ×, shuts the Steward down, after asking: it stops, and keeps its seat, its
 conversation and what it holds. After that, and whenever no Steward is running,
 the window and **✦ Steward** offer two ways on:
 

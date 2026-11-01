@@ -309,6 +309,7 @@ export function CompanionApp({
   // The Steward just shut down, { agentId, name }. It reads as gone from here
   // on: the snapshot can still show it online for a poll.
   const [shutDown, setShutDown] = useState(null);
+  const askShutDown = useRef(null);
   const [detached, setDetached] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF))));
   const detachedRef = useRef(detached);
   detachedRef.current = detached;
@@ -630,12 +631,14 @@ export function CompanionApp({
 
   // The window stays open on the shut-down state, with the way to start again.
   // A detached window of it goes too: it has nothing left to show.
-  function stewardShutDown(agent) {
+  // Closing is the window's ✕ asking: then the window goes as a close does, and
+  // Resume waits in ✦ Steward.
+  function stewardShutDown(agent, { closing = false } = {}) {
     detachedWindows.current.get(agent.agentId)?.close?.();
     detachedWindows.current.delete(agent.agentId);
     setParked((current) => without(current, agent.agentId));
     setDetached((current) => without(current, agent.agentId));
-    closeTab(agent.agentId, { keepOpen: true });
+    closeTab(agent.agentId, { keepOpen: !closing });
     setShutDown({ agentId: agent.agentId, name: agent.name });
     notify(`${agent.name} is shut down.`);
   }
@@ -705,6 +708,10 @@ export function CompanionApp({
   function closeActive(event) {
     if (!closesTab) {
       minimize();
+      return;
+    }
+    if (closeShutsDown) {
+      askShutDown.current?.();
       return;
     }
     closeTab(activeAgent.agentId);
@@ -1257,8 +1264,11 @@ export function CompanionApp({
   // Close takes the tab being shown off the window, as its own × does. With
   // no such tab there is nothing to close, so the window just goes away.
   const closesTab = activeAgent && !showQueue;
+  // A running Steward isn't closed in passing: its ✕ asks what ⏻ asks.
+  const closeShutsDown = closesTab && activeAgent.steward && activeAgent.online;
+  const closeTitle = closeShutsDown ? 'Close: shut it down, after asking' : closesTab ? 'Close (the agent keeps running)' : 'Close';
   const controls = {
-    look, closeLabel: closesTab ? `Close ${activeAgent.name}` : 'Close', closeTitle: closesTab ? 'Close (the agent keeps running)' : 'Close',
+    look, closeLabel: closesTab ? `Close ${activeAgent.name}` : 'Close', closeTitle,
     onMinimize: minimize, onClose: closeActive,
   };
 
@@ -1274,8 +1284,11 @@ export function CompanionApp({
               onClick=${() => showAgent(agent.agentId)}>
               <${Avatar} agent=${agent} /><span>${agent.name}</span>${elevatedAccess(snapshot.value, agent) && html`<span class="companion-tab-elevated" title="Elevated access">🔓</span>`}<${StatusDot} status=${tabStatus} />
             </button>
-            <button type="button" class="companion-tab-close" aria-label=${`Unpin ${agent.name}`} title="Unpin (the agent keeps running)"
-              onClick=${() => closeTab(agent.agentId)}>×</button>
+            ${agent.steward
+              ? html`<button type="button" class="companion-tab-close" aria-label=${`Minimize ${agent.name}`} title="Minimize"
+                onClick=${minimize}>×</button>`
+              : html`<button type="button" class="companion-tab-close" aria-label=${`Unpin ${agent.name}`} title="Unpin (the agent keeps running)"
+                onClick=${() => closeTab(agent.agentId)}>×</button>`}
           </div>`;
         })}
         ${queue.length > 0 && html`<div class=${`companion-tab companion-decide-tab${showQueue ? ' selected' : ''}`}>
@@ -1297,7 +1310,7 @@ export function CompanionApp({
           title="Agents are asking for permission"
           onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
         ${activeAgent?.steward && !showQueue && html`<${StewardAccessControls} agent=${activeAgent} openPermissions=${openPermissions} openSudo=${openSudo} />
-          <${StewardShutdown} agent=${activeAgent} fetchImpl=${fetchImpl} onDown=${stewardShutDown} />`}
+          <${StewardShutdown} agent=${activeAgent} fetchImpl=${fetchImpl} onDown=${stewardShutDown} askRef=${askShutDown} />`}
         ${activeAgent?.online && activeAgent.harness !== 'shell' && !showQueue && html`<${ClearContext} agent=${activeAgent} fetchImpl=${fetchImpl} notify=${notify} />`}
         ${openStewardHandover && activeAgent && !showQueue && (activeAgent.steward || stewardRoster.some((entry) => entry.agent_id === activeAgent.agentId)) && html`<${StewardRoster}
           roster=${stewardRoster} agents=${agents} fetchImpl=${fetchImpl} notify=${notify} openHandover=${openStewardHandover} showAgent=${showAgent} />`}
@@ -1378,7 +1391,7 @@ export function CompanionApp({
   return html`
     ${overlayWindows.value.filter((window) => window.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} fetchImpl=${fetchImpl} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
-      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
+      closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onStewardDown=${stewardShutDown} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
     ${windowView}
     ${chipSlots}
     ${chips}
