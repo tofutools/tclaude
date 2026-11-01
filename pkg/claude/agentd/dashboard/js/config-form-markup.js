@@ -31,11 +31,8 @@ function ConfigButton(props) { return routedControl('button', props); }
 
 // KnowledgeSourceSetting shows what is stored and offers to fetch or remove it.
 function KnowledgeSourceSetting() {
-  const route = useContext(ConfigEventContext);
-  // Remove also sets the choice above to Never, on disk.
-  const reload = () => route({ type: 'click', target: { id: 'cfg-reload' } });
   return html`<${Setting} title="Stored source" summary="What this machine holds now.">
-    <${KnowledgeSourceRow} snapshot=${dashboardState.snapshot} onRemoved=${reload} />
+    <${KnowledgeSourceRow} snapshot=${dashboardState.snapshot} />
   </${Setting}>`;
 }
 

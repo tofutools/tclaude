@@ -52,6 +52,32 @@ test('a running download follows its own poll and a failure stays until dismisse
   assert.deepEqual(posts, [{ action: 'once' }]);
 });
 
+test('a dismissed failure stays dismissed, and a No hides it', async (t) => {
+  const stored = new Map();
+  globalThis.localStorage = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => stored.set(k, v) };
+  t.after(() => { delete globalThis.localStorage; });
+  const failed = { ...VIEW, ask: false, state: 'failed', detail: 'abc is not on GitHub' };
+  const first = await setup(t, failed);
+  await first.harness.act(async () => { first.harness.getByRole(first.host, 'button', { name: 'Dismiss' }).click(); });
+  assert.equal(first.host.querySelector('.knowledge-source-card'), null);
+  await first.harness.act(async () => { first.snap.value = { collab_enabled: true, knowledge_source: { ...failed, detail: 'another failure' } }; });
+  assert.ok(first.host.querySelector('.knowledge-source-card'), 'a different failure shows');
+  await first.harness.act(async () => { first.snap.value = { collab_enabled: true, knowledge_source: { ...failed, detail: 'another failure', policy: 'never' } }; });
+  assert.equal(first.host.querySelector('.knowledge-source-card'), null, 'not after a No');
+  assert.equal([...stored.values()][0], 'abc is not on GitHub', 'kept across reloads');
+});
+
+test('the Config row shows a failed action', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { KnowledgeSourceRow } = await harness.importDashboardModule('js/knowledge-source-island.js');
+  const snap = harness.signals.signal({ knowledge_source: { ...VIEW, ask: false, state: 'ready', files: 3, bytes: 28 << 20 } });
+  const fetchImpl = async () => ({ ok: false, status: 500, text: async () => 'disk full' });
+  const { container } = await harness.mount(harness.html`<${KnowledgeSourceRow} snapshot=${snap} fetchImpl=${fetchImpl} />`);
+  assert.match(container.textContent, /3 files, 28 MiB on disk for v1\.2\.3/);
+  await harness.act(async () => { harness.getByRole(container, 'button', { name: 'Remove' }).click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.match(harness.getByRole(container, 'alert').textContent, /disk full/);
+});
+
 test('nothing shows once answered', async (t) => {
   const { host } = await setup(t, { ...VIEW, ask: false });
   assert.equal(host.querySelector('.knowledge-source-card'), null);

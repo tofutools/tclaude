@@ -375,6 +375,7 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .knowledge-source-actions .companion-primary { margin: 0; background: var(--cmp-blue); border-color: var(--cmp-blue); color: #0d1117; }
 .knowledge-source-note { color: var(--cmp-muted); }
 .knowledge-source-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.knowledge-source-error { color: var(--cmp-red); overflow-wrap: anywhere; }
 
 .companion-decision {
   flex: none; margin: 8px 8px 0; padding: 8px 10px; border-radius: 8px;

@@ -1389,6 +1389,23 @@ function applyConfigFilter() {
   }
 }
 
+// followSourceChoice takes up a source choice made on the dashboard's card or
+// row: the one control and the new base, so other unsaved edits stay and the next
+// Save isn't refused as drift.
+async function followSourceChoice() {
+  if (!configLoaded) return;
+  const bindingEpoch = configBindingEpoch;
+  try {
+    const r = await configDependencies.fetchImpl('/api/config', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (bindingEpoch !== configBindingEpoch || !data.raw) return;
+    configBaseRaw = data.raw;
+    configObj = JSON.parse(configBaseRaw);
+    setSelectValue($('#cfg-steward-source-download'), (configObj.steward || {}).source_download || 'ask');
+  } catch { /* Save reports the drift, and Reload recovers. */ }
+}
+
 async function loadConfigTab() {
   const bindingEpoch = configBindingEpoch;
   // Refresh the slug / group datalists from the latest snapshot.
@@ -1609,5 +1626,5 @@ function bindConfigActivation() {
   };
 }
 
-export { assembleConfig, bindConfigActivation, configLineDiff, handleConfigEvent, loadConfigTab, populateConfigForm, saveConfig };
+export { assembleConfig, bindConfigActivation, configLineDiff, followSourceChoice, handleConfigEvent, loadConfigTab, populateConfigForm, saveConfig };
 // dashboard-imperative-boundary: config-adapter

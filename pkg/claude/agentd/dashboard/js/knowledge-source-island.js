@@ -8,6 +8,19 @@ import htm from 'htm';
 
 const html = htm.bind(h);
 const POLL_MS = 500;
+const DISMISSED_PREF = 'tclaude.knowledgeSourceDismissed';
+
+// SOURCE_CHOICE_EVENT says the choice changed on disk, so an open Config form can
+// follow it without losing the operator's other edits.
+export const SOURCE_CHOICE_EVENT = 'tclaude:knowledge-source-choice';
+
+// A dismissed failure stays dismissed across reloads until a different one comes.
+function readDismissed() {
+  try { return globalThis.localStorage?.getItem(DISMISSED_PREF) || ''; } catch { return ''; }
+}
+function writeDismissed(detail) {
+  try { globalThis.localStorage?.setItem(DISMISSED_PREF, detail); } catch { /* Lasts until reload, then. */ }
+}
 
 export const mib = (bytes) => `${Math.round((bytes || 0) / (1 << 20))} MiB`;
 
@@ -16,6 +29,8 @@ export async function answerSource(action, fetchImpl = globalThis.fetch) {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action }),
   });
+  // Even a failed Remove has saved its choice.
+  globalThis.document?.dispatchEvent(new CustomEvent(SOURCE_CHOICE_EVENT));
   if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
   return response.json();
 }
@@ -44,7 +59,7 @@ function useLiveSource(fromSnapshot, fetchImpl, setTimer = globalThis.setInterva
 export function KnowledgeSourceCard({ snapshot, fetchImpl = globalThis.fetch, notify = () => {}, setTimer, clearTimer }) {
   const [view, setLive] = useLiveSource(snapshot.value?.knowledge_source, fetchImpl, setTimer, clearTimer);
   const [busy, setBusy] = useState(false);
-  const [dismissed, setDismissed] = useState('');
+  const [dismissed, setDismissed] = useState(readDismissed);
   if (!view) return null;
 
   async function answer(action) {
@@ -66,13 +81,14 @@ export function KnowledgeSourceCard({ snapshot, fetchImpl = globalThis.fetch, no
       <p>${mib(received)} of about ${mib(view.download_bytes)} from ${view.origin}. Docs work meanwhile.</p>
     </div>`;
   }
-  if (view.state === 'failed' && dismissed !== view.detail) {
+  // After a No, the Config row is where a failure shows.
+  if (view.state === 'failed' && view.policy !== 'never' && dismissed !== view.detail) {
     return html`<div class="knowledge-source-card failed" role="alert">
       <b>The source download failed</b>
       <p>${view.detail}</p>
       <div class="knowledge-source-actions">
         <button type="button" class="companion-primary" disabled=${busy} onClick=${() => answer('once')}>Try again</button>
-        <button type="button" disabled=${busy} onClick=${() => setDismissed(view.detail)}>Dismiss</button>
+        <button type="button" disabled=${busy} onClick=${() => { writeDismissed(view.detail); setDismissed(view.detail); }}>Dismiss</button>
       </div>
     </div>`;
   }
@@ -91,17 +107,18 @@ export function KnowledgeSourceCard({ snapshot, fetchImpl = globalThis.fetch, no
 }
 
 // KnowledgeSourceRow is the Config tab's view of the same state.
-export function KnowledgeSourceRow({ snapshot, fetchImpl = globalThis.fetch, notify = () => {}, onRemoved = () => {} }) {
+export function KnowledgeSourceRow({ snapshot, fetchImpl = globalThis.fetch }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const view = snapshot.value?.knowledge_source;
   if (!view) return null;
   async function act(action) {
     setBusy(true);
+    setError('');
     try {
       await answerSource(action, fetchImpl);
-      if (action === 'remove') onRemoved();
-    } catch (error) {
-      notify(`That did not work: ${error?.message || error}`, true);
+    } catch (failure) {
+      setError(`That did not work: ${failure?.message || failure}`);
     } finally {
       setBusy(false);
     }
@@ -117,6 +134,7 @@ export function KnowledgeSourceRow({ snapshot, fetchImpl = globalThis.fetch, not
       onClick=${() => act('remove')}>Remove</button>`}
     ${!ready && view.state !== 'fetching' && !/no commit/.test(view.detail || '') && html`<button type="button" class="btn-sm" disabled=${busy}
       onClick=${() => act('once')}>Download now</button>`}
+    ${error && html`<span class="knowledge-source-error" role="alert">${error}</span>`}
   </div>`;
 }
 

@@ -386,15 +386,17 @@ var stewardSlugsBeforeRecords = []string{PermDashboardCapture, PermDashboardMark
 // daemon starts, which is also when an upgrade leaves an old source behind and
 // the operator's each-version choice takes effect. See reconcileSteward.
 func reconcileStewardAccess(cfg *config.Config) {
-	if !collabRoutesEnabled() {
-		return
-	}
-	convs := stewardConvs()
-	for _, conv := range convs {
-		reconcileSteward(conv, cfg)
+	var convs []string
+	if collabRoutesEnabled() {
+		convs = stewardConvs()
+		for _, conv := range convs {
+			reconcileSteward(conv, cfg)
+		}
 	}
 	base := knowledgeBase()
+	knowledgeStartup.Add(1)
 	go func() {
+		defer knowledgeStartup.Done()
 		base.PruneOthers()
 		if len(convs) > 0 {
 			autoFetchKnowledgeSource(cfg)

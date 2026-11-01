@@ -32,6 +32,10 @@ var knowledgeBase = sync.OnceValue(func() *knowledge.Base {
 	return knowledge.New(knowledge.CurrentBuild(buildversion.AppVersion()), docs.FS, filepath.Join(config.DataDir(), "knowledge"))
 })
 
+// knowledgeStartup is the store's tidying at daemon start, which goes on behind
+// it so a start never waits on the disk or a download.
+var knowledgeStartup sync.WaitGroup
+
 // SetKnowledgeBaseForTest swaps the base and returns the restore.
 func SetKnowledgeBaseForTest(base *knowledge.Base) func() {
 	previous := knowledgeBase
