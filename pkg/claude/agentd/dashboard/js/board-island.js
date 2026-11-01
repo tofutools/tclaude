@@ -1537,6 +1537,8 @@ export function BoardEditor({
       // takes keys in a textarea), a select's type-ahead, another editor.
       if (editingText || target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), .companion-window')) return false;
       if (!shown()) return false;
+      // A floating board's window holds focus after a press on the board.
+      if (target === rootRef.current?.closest?.('.overlay-window')) return true;
       return !!rootRef.current?.contains?.(target) || (target === win?.document?.body && lastEditor === editorToken);
     };
     // Holding or letting go of the border key mid-drag shows at once.

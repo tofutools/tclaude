@@ -25,7 +25,7 @@ import {
   clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapReach, snapZone, viewportOf, zoneRect,
 } from './overlay-window-model.js';
 import {
-  coveringPath, detachSpot, dropZone, edgeMeets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, parseSplit, rectZone, roomPair, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
+  detachSpot, dropZone, edgeMeets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, parseSplit, rectZone, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
 
@@ -64,11 +64,14 @@ export const OVERLAY_SPLIT_PREF = 'tclaude.dash.overlay-split';
 // How near a line's detach spot the pointer brings its button out.
 const DETACH_REACH = { along: 72, across: 40 };
 
-// The saved tree of splits. It keeps the place of a window that is away.
+// The saved tree of splits. A window that is away keeps its cell.
 const splitTree = signal(null);
 // Every snapped window showing now: id -> { zone, rect(), release() }.
 const snappedWindows = signal(new Map());
-// The part of the tree showing now, or null.
+// Every window that can come back to a cell, as it is open or minimized. A cell
+// held for any other is one this tab can't fill, such as after a closed browser.
+const aliveWindows = new Set();
+// The tree as it shows now, or null.
 const liveSplit = computed(() => keepingWindows(splitTree.value, new Set(snappedWindows.value.keys())));
 let splitLoadedFrom = null;
 
@@ -197,6 +200,11 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   // In the page for a split: a window maximized or away gives up its place.
   const joins = id && snaps && open && placement.snap && placement.snap !== 'max' ? placement.snap : '';
   useLayoutEffect(() => {
+    if (!id || !snaps) return undefined;
+    aliveWindows.add(id);
+    return () => aliveWindows.delete(id);
+  }, [id, snaps]);
+  useLayoutEffect(() => {
     if (!joins) return undefined;
     showWindow(id, { zone: joins, rect: () => shownRef.current, pin: () => pinPanelSize() });
     return () => hideWindow(id);
@@ -280,12 +288,9 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       return rect ? { zone: zone === 'top' ? 'top-left' : zone || rectZone(rect, bounds), tree, guide: rect } : null;
     };
     const live = liveSplit.peek();
-    // A gap is a path in the showing tree, which is the saved one with nobody away.
-    if (live && live === savedTree) {
-      const inside = ({ rect }) => pointer.x >= rect.x && pointer.x < rect.x + rect.w && pointer.y >= rect.y && pointer.y < rect.y + rect.h;
-      const gap = layoutOf(live)?.gaps.find(inside);
-      if (gap) return planned(withinGap(savedTree, gap, pointer, id, room)) || plain;
-    }
+    const inside = ({ rect }) => pointer.x >= rect.x && pointer.x < rect.x + rect.w && pointer.y >= rect.y && pointer.y < rect.y + rect.h;
+    const gap = layoutOf(live)?.gaps.find((cell) => inside(cell) && !(cell.held && cell.held !== id && aliveWindows.has(cell.held)));
+    if (gap) return planned(withinGap(savedTree, gap, pointer, id, room)) || plain;
     const inTree = (other) => leavesOf(savedTree).includes(other);
     // A window outside the split cannot start a tree of its own: there is one.
     const targets = others.filter(([other]) => !live || inTree(other));
@@ -296,9 +301,6 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       }
     }
     if (live || !room) return plain;
-    for (const [other, { zone }] of targets.filter(([other]) => inTree(other))) {
-      if (roomPair(other, room, id, zone)) return planned(withWindow(savedTree, other, room, id), room) || plain;
-    }
     const alone = targets.filter(([other]) => !inTree(other)).map(([other, { zone }]) => [other, zone]);
     return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
   }
@@ -407,23 +409,14 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     });
   }
 
-  // The saved node a path of the showing tree names. With nobody away they are
-  // one tree, and the path says it exactly.
-  function savedPathOf(path) {
-    const live = liveSplit.peek();
-    return live === splitTree.peek() ? path : coveringPath(splitTree.peek(), leavesOf(nodeAt(live, path)));
-  }
-
-  // A line moves live and is saved when it lands. It names a node of the showing
-  // tree, and moves that split in the saved one, which keeps windows that are away.
+  // A line moves live and is saved when it lands.
   function onLinePointerDown(event, axes, path, area) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    const savedPath = savedPathOf(path);
     track(event, (m) => {
       const pointer = { x: m.clientX, y: m.clientY };
-      splitTree.value = axes.reduce((tree, axis) => movedLine(tree, savedPath, axis, pointer, area), splitTree.peek());
+      splitTree.value = axes.reduce((tree, axis) => movedLine(tree, path, axis, pointer, area), splitTree.peek());
     }, () => saveSplit(prefs, splitTree.peek()));
   }
 
@@ -433,7 +426,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   function resizeSplitEdges(event, zone) {
     const before = splitTree.peek();
     const moves = [...zone].map((side) => layout.edges[id]?.[side]).filter(Boolean)
-      .map((edge) => ({ edge, path: savedPathOf(edge.path) }));
+      .map((edge) => ({ edge, path: edge.path }));
     let locking = [];
     const relocked = () => locking.reduce((tree, { edge, path }) => lockedEdge(tree, path, edge), splitTree.peek());
     track(event, (m) => {
@@ -456,9 +449,8 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   // Detach unlocks one line. The windows stay snapped where they are, and each
   // side then resizes on its own: a space or an overlap can open, with no line.
   function detachLine({ path, axis, area }) {
-    const savedPath = savedPathOf(path);
     for (const member of leavesOf(nodeAt(liveSplit.peek(), path))) snappedWindows.peek().get(member)?.pin();
-    saveSplit(prefs, unlockedLine(splitTree.peek(), savedPath, axis, area));
+    saveSplit(prefs, unlockedLine(splitTree.peek(), path, axis, area));
   }
 
   // A mouse press leaves focus on the control, where the next key meant for the
@@ -469,16 +461,21 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     onRefocus?.();
   }
 
-  // A click on the title bar or other empty space leaves focus on the page.
-  // Give it back to the content, so typing works and the border returns.
-  // Controls keep their click, which may have opened a dialog, and a text
-  // selection survives so it can be copied.
+  // A click on the title bar or other empty space leaves focus where it was,
+  // maybe in another window. Bring it here, so the border shows on this one, and
+  // to the content when it wants it, so typing works. Controls keep their click,
+  // which may have opened a dialog, and a text selection survives so it can be copied.
   function onWindowClick(event) {
-    if (!onRefocus) return;
     if (event.target.closest?.('button, a, input, textarea, select, label')) return;
-    if (win?.getSelection?.()?.isCollapsed === false) return;
+    const node = windowRef.current;
+    const selection = win?.getSelection?.();
+    if (selection?.isCollapsed === false && node?.contains?.(selection.anchorNode)) return;
+    // The window itself holds focus after a press on its content: that is not
+    // the content having it.
     const active = win?.document?.activeElement;
-    if (!active || active === win.document.body) onRefocus();
+    if (active !== node && node?.contains?.(active)) return;
+    if (active !== node) node?.focus?.({ preventScroll: true });
+    onRefocus?.();
   }
 
   // Restore goes back to the panel the window was maximized from, or floating.
@@ -576,7 +573,7 @@ export function OverlayWindow({ id, window: overlay, open = true, mounted = open
     ${mounted && html`<section ref=${overlay.windowRef}
       class=${`overlay-window ${className}${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${front}`}
       style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px;${level}`}
-      role="dialog" aria-label=${label} aria-modal="false" aria-hidden=${open ? undefined : 'true'}
+      role="dialog" tabindex="-1" aria-label=${label} aria-modal="false" aria-hidden=${open ? undefined : 'true'}
       onClick=${overlay.onWindowClick} onPointerDownCapture=${raise}>
       <header class=${titlebarClass} onPointerDown=${overlay.onTitlePointerDown} onWheel=${onTitleWheel}>
         ${look === 'macos' ? windowControls : lead}

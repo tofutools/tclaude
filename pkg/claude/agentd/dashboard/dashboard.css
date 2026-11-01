@@ -1989,6 +1989,8 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
    beat this rule, whose specificity they exceed. */
 /* A snapped panel's free edge. */
 .overlay-window.snapped { border-radius: 0; box-shadow: 0 0 24px rgba(0, 0, 0, .5); }
+/* Focused from a click on its chrome, for its border. */
+.overlay-window:focus { outline: none; }
 .overlay-window-edge { position: absolute; z-index: 2; touch-action: none; }
 .overlay-window-edge:is(.e, .w) { top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
 .overlay-window-edge:is(.n, .s) { left: 0; right: 0; height: 6px; cursor: ns-resize; }
@@ -2042,7 +2044,7 @@ header.overlay-look-windows { padding-right: 0; }
    them go, as they would cut across either and take its clicks. */
 body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach) { display: none; }
 /* The minimized windows (board-overlay.js), clear of the chips in a corner. */
-.overlay-dock { position: fixed; z-index: 949; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); display: flex; gap: 6px; max-width: 70vw; overflow: hidden; }
+.overlay-dock { position: fixed; z-index: 950; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); display: flex; gap: 6px; max-width: 70vw; overflow: hidden; }
 .overlay-dock-item { padding: 5px 12px; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); color: var(--cmp-text); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .overlay-dock-item:hover { border-color: #58a6ff; }
 .overlay-dock-item.needs { border-color: var(--cmp-amber); }
