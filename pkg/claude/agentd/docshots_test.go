@@ -1,3 +1,5 @@
+//ci:reads docs/assets/
+
 package agentd_test
 
 // docshots_test.go is the seeded server behind scripts/docs/screenshots.sh,
