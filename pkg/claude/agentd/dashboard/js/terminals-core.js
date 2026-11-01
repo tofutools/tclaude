@@ -855,6 +855,7 @@ export function mountTerminalWidget({
       setStatus(mode === 'interactive' ? 'connected · interactive' : 'connected · watch-only');
       if (shared) {
         term.options.fontSize = zoomFont ?? REMOTE_FONT_MAX;
+        reportFont();
         initialResizeReady = true;
         lastDesired = '';
         fit();

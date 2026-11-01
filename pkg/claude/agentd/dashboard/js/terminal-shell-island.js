@@ -301,8 +301,7 @@ function TerminalPane({
   const filesOK = !!(pane.seed.remote && remote?.files && remote?.viewer && !remote?.closed);
   const [dragging, setDragging] = useState(false);
   const [stewardDown, setStewardDown] = useState(false);
-  const terminalID = pane.seed.agent || pane.seed.ws;
-  const [font, onFontChange] = useTerminalFont('tab', terminalID);
+  const [font, onFontChange] = useTerminalFont('tab', pane.key);
   // Dashboard panes get their status from PaneTab. Only the solo title needs
   // to subscribe to the standalone snapshot signal; keeping this null in the
   // dashboard avoids an extra signal subscriber per opaque xterm host.
@@ -420,7 +419,7 @@ function TerminalPane({
         onReconnectChange=${setReconnect}
         onSelectionChange=${setHasSelection}
         onRemoteChange=${setRemote}
-        initialFontSize=${readTerminalFont('tab', terminalID)}
+        initialFontSize=${readTerminalFont('tab', pane.key)}
         onFontChange=${onFontChange}
         onDisconnect=${(info) => { actions.paneDisconnected?.(pane.key); if (info?.closeTab) void actions.closePane(pane.key, { skipDetach: true }); }}
         onComposeMessage=${composeMessage}

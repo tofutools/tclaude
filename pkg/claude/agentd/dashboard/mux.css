@@ -328,6 +328,7 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-btn:hover { background: #2d333b; border-color: #3d4451; }
 /* A terminal's zoom, in its floating tools. */
 .term-zoom { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.term-zoom .companion-tool { color: #e6edf3; }
 .term-zoom-size { min-width: 26px; text-align: center; font-size: 11px; color: #8b949e; font-variant-numeric: tabular-nums; }
 .mux-btn[data-has-selection="false"] { opacity: 0.65; }
 

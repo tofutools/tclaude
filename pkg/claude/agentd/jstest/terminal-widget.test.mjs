@@ -787,6 +787,7 @@ test('a shared remote terminal keeps its zoom and reports the panel at that size
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const fakes = widgetFakes(harness.document);
   const timers = manualTimers();
+  const fonts = [];
   class SizedFit extends fakes.FakeFitAddon {
     proposeDimensions() { return { cols: Math.floor(1300 / fakes.terminal().options.fontSize), rows: 40 }; }
   }
@@ -795,13 +796,14 @@ test('a shared remote terminal keeps its zoom and reports the panel at that size
     TerminalCtor: fakes.FakeTerminal, FitAddonCtor: SizedFit, WebSocketCtor: fakes.FakeWebSocket,
     ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'https:', host: 'dashboard.test' },
     documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, requestAnimationFrameImpl: (f) => { f(); return 1; },
-    ...timers, initialFontSize: 20,
+    ...timers, initialFontSize: 20, onFontChange: (font) => fonts.push(font),
   });
   await widget.connect();
   const socket = fakes.sockets[0];
   socket.open();
   socket.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'interactive', cols: 80, rows: 24, shared: true }) });
   assert.equal(fakes.terminal().options.fontSize, 20, 'the hello does not undo a remembered size');
+  assert.deepEqual(fonts.at(-1), { size: 20, zoomed: true }, 'the controls hear what the hello set');
   const desired = () => socket.sent.filter((m) => typeof m === 'string' && m.includes('resize')).map((m) => JSON.parse(m).cols);
   assert.deepEqual(desired(), [65]);
 
