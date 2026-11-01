@@ -535,7 +535,7 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if into != "" {
 		cwd, _ = filepath.Abs(expandTilde(into))
 	}
-	insp.FileWarnings = dropFileGroupEnvironment(exp)
+	insp.FileWarnings = append(dropFileGroupEnvironment(exp), dropFileAuthority(exp)...)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
@@ -857,7 +857,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	// Members landing through a harness's own history import get the
 	// conversation id that import mints; the rest take the file path below.
-	fileWarnings := dropFileGroupEnvironment(exp)
+	fileWarnings := append(dropFileGroupEnvironment(exp), dropFileAuthority(exp)...)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, targetCwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)

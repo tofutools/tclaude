@@ -46,10 +46,10 @@ type landingPosture struct {
 	// The dry run reports it; the import refuses.
 	Refused string `json:"refused,omitempty"`
 
-	refusal      *spawnFailure
-	mode         string
-	modeSource   string
-	snapshot     sandboxpolicy.Snapshot
+	refusal        *spawnFailure
+	mode           string
+	modeSource     string
+	snapshot       sandboxpolicy.Snapshot
 	privateAgentID string // the pre-minted agent owning private OpenCode state
 }
 
@@ -201,6 +201,57 @@ func dropFileGroupEnvironment(exp *groupexport.Export) []string {
 	}
 	exp.Group.Environment = nil
 	return []string{fileFieldDropped("environment variables " + strings.Join(names, ", "))}
+}
+
+// dropFileAuthority takes out of a group's file what would become a live grant.
+// Nothing here is a move the receiver owns: only a file reaches this path. A deny
+// only takes away, so it stays. Scheduled jobs stay for a human to review, with
+// none enabled and none speaking as the operator: an owner this file named could
+// otherwise enable one.
+func dropFileAuthority(exp *groupexport.Export) []string {
+	var granted []string
+	for _, p := range exp.Group.Permissions {
+		granted = append(granted, "group permission "+p.Slug)
+	}
+	exp.Group.Permissions = nil
+	kept := exp.Permissions[:0:0]
+	for _, p := range exp.Permissions {
+		if p.Effect == db.PermEffectDeny {
+			kept = append(kept, p)
+			continue
+		}
+		granted = append(granted, "permission "+p.Slug+" for "+short8(p.ConvID))
+	}
+	exp.Permissions = kept
+	for _, s := range exp.SudoGrants {
+		granted = append(granted, "sudo grant "+s.Slug+" for "+short8(s.ConvID))
+	}
+	exp.SudoGrants = nil
+	var warnings []string
+	if len(granted) > 0 {
+		warnings = append(warnings, "This file grants "+strings.Join(granted, ", ")+
+			", which authority in a file does not carry, so none of it is applied. Grant what you want here yourself.")
+	}
+	var disabled, unowned []string
+	for i := range exp.CronJobs {
+		job := &exp.CronJobs[i]
+		if job.Enabled != 0 {
+			disabled = append(disabled, job.Name)
+		}
+		if job.OperatorAuthored {
+			unowned = append(unowned, job.Name)
+		}
+		job.Enabled, job.RunImmediately, job.OperatorAuthored = 0, 0, false
+	}
+	if len(disabled) > 0 {
+		warnings = append(warnings, "Scheduled jobs "+strings.Join(disabled, ", ")+
+			" land disabled. Review them and enable the ones you want.")
+	}
+	if len(unowned) > 0 {
+		warnings = append(warnings, "Scheduled jobs "+strings.Join(unowned, ", ")+
+			" no longer run as the operator. Set their owner before enabling them.")
+	}
+	return warnings
 }
 
 // planGroupPostures resolves every member's landing posture.

@@ -89,7 +89,11 @@ receiving side.
   as a second copy.
 - **Authority is advisory.** Groups, roles, permissions and ownerships in a PAF
   are provenance. They never become grants on the receiver unless that
-  receiver's own policy approves them explicitly. Ownership never travels.
+  receiver's own policy approves them explicitly. A group import drops a
+  file's permission grants and sudo grants, and lists them in its preview and
+  result; a deny stays, since it only takes away. Scheduled jobs land disabled
+  for a human to review. Members and their roles stay. Agent ownership never
+  travels; a group's owners are part of its member structure.
 - **Posture is decided by the receiver.** The recorded sandbox and approval
   posture is shown at import, but the landing profile and the receiver's
   policy decide how the new agent actually runs. A file can make its sandbox,
