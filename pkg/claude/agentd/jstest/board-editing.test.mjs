@@ -166,6 +166,23 @@ test('double-clicking anywhere inside a shape of any kind opens its text', async
   }
 });
 
+test('text being edited is not also drawn under its editor', async (t) => {
+  const { fire, root, svg } = await setup(t, (m) => [
+    m.newElement('text', { id: 'note', x: 100, y: 100, text: 'old words', fontSize: 20 }),
+    m.newElement('text', { id: 'other', x: 100, y: 200, text: 'other words', fontSize: 20 }),
+  ]);
+  const drawn = (id) => svg.querySelector(`[data-element="${id}"]`);
+
+  await fire('dblclick', 110, 110);
+  assert.equal(root.querySelector('.board-text-input').value, 'old words');
+  assert.ok(drawn('note').classList.contains('board-editing'));
+  assert.ok(!drawn('other').classList.contains('board-editing'), 'only the text in the editor is hidden');
+
+  await fire('pointerdown', 500, 500);
+  assert.equal(root.querySelector('.board-text-input'), null);
+  assert.ok(!drawn('note').classList.contains('board-editing'), 'it comes back when the editor closes');
+});
+
 test('double-clicking a connection point labels the shape rather than adding one', async (t) => {
   const { root, svg, fire, click, saved } = await setup(t, twoShapes);
   await fire('pointermove', 200, 130);

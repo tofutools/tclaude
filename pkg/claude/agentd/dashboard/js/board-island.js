@@ -145,14 +145,14 @@ function dash(el) {
 
 const TEXT_ANCHOR = { center: 'middle', right: 'end' };
 
-export function BoardElement({ el, flash = false, onLine = false }) {
+export function BoardElement({ el, flash = false, onLine = false, editing = false }) {
   const stroke = safeColor(el.strokeColor, '#1e1e1e');
   const background = safeColor(el.backgroundColor, 'transparent');
   const fill = background !== 'transparent' ? background : 'none';
   const common = {
     stroke, 'stroke-width': el.strokeWidth || 2, 'stroke-dasharray': dash(el), 'stroke-linecap': 'round',
     'stroke-linejoin': 'round', opacity: (el.opacity ?? 100) / 100, 'data-element': el.id,
-    class: flash ? 'board-el board-flash' : 'board-el',
+    class: `board-el${flash ? ' board-flash' : ''}${editing ? ' board-editing' : ''}`,
   };
   const { x, y, width: w, height: hgt } = el;
   switch (el.type) {
@@ -1603,7 +1603,8 @@ export function BoardEditor({
   void tick;
   // A pan or a zoom renders the editor without changing an element: the same
   // list lets Preact skip every shape, which a board of thousands needs.
-  const drawn = useMemo(() => live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} onLine=${!!drawnById.get(el.containerId)?.points} />`), [tick, flash]);
+  const editingId = editingText?.id || '';
+  const drawn = useMemo(() => live.map((el) => html`<${BoardElement} key=${el.id} el=${el} flash=${flash.has(el.id)} onLine=${!!drawnById.get(el.containerId)?.points} editing=${el.id === editingId} />`), [tick, flash, editingId]);
 
   return html`<div ref=${rootRef} class="board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }}>
     <header class="board-head">
