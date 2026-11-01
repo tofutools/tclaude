@@ -372,6 +372,24 @@ func TestAgentImport_RecordedCodexModeTightensButNeverWidens(t *testing.T) {
 	}
 }
 
+// tclaude's sandbox stays unless the landing mode is one it would allow more than.
+func TestAgentImport_RecordedSandboxYieldsOnlyToAStricterMode(t *testing.T) {
+	for _, tc := range []struct {
+		name, landingMode, wantMode, wantImplementation string
+	}{
+		{"harness default keeps it", "", "danger-full-access", "tclaude-layer"},
+		{"full access keeps it", "danger-full-access", "danger-full-access", "tclaude-layer"},
+		{"read-only replaces it", "read-only", "read-only", "harness-builtin"},
+		{"workspace-write replaces it", "workspace-write", "workspace-write", "harness-builtin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := landCodexFile(t, "danger-full-access", "tclaude-layer", tc.landingMode, "")
+			assert.Equal(t, tc.wantMode, got.Sandbox)
+			assert.Equal(t, tc.wantImplementation, got.Implementation)
+		})
+	}
+}
+
 // A landing under tclaude's sandbox keeps it: a native mode, however strict,
 // does not replace the wall.
 func TestAgentImport_NativeModeDoesNotReplaceTheLandingSandbox(t *testing.T) {

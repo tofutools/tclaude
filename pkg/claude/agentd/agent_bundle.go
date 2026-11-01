@@ -955,9 +955,10 @@ func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview 
 // "Not looser" is the sandbox lineage guard's question, asked with the landing
 // posture as the parent, around three cases it does not answer:
 //
-//   - tclaude's sandbox always stays: a move must not take an agent's wall away,
-//     and the normal launch gates refuse it where this node cannot run it. The
-//     guard would refuse it from a parent whose harness has no proven posture.
+//   - tclaude's sandbox stays: a move must not take an agent's wall away, and
+//     the normal launch gates refuse it where this node cannot run it. The guard
+//     would refuse it from a parent whose harness has no proven posture. The
+//     exception is receiverCapsTheWall.
 //   - a landing under tclaude's sandbox keeps it: the guard would let a native
 //     mode replace the wall, which also stops enforcing the sandbox profiles.
 //   - an implementation with no OS confinement never stays: it cannot tighten,
@@ -968,13 +969,23 @@ func receiverSandboxProfile(p spawnProfileJSON, h *harness.Harness, group, profi
 	recorded := p
 	p.Sandbox, p.SandboxImplementation = "", ""
 	if isTclaudeLayer(recorded.SandboxImplementation) {
-		p.SandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+		if !receiverCapsTheWall(h, group, profile) {
+			p.SandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+		}
 		return p
 	}
 	if recorded.Sandbox == "" && recorded.SandboxImplementation == "" {
 		return p
 	}
-	implementation, err := validateSandboxImplementationForHarness(h, recorded.SandboxImplementation)
+	// A relaunch profile spells a blank implementation as harness-builtin, which
+	// spawn refuses for a harness with no OS sandbox. Blank is what that launch had.
+	recordedImplementation := recorded.SandboxImplementation
+	if implementation, err := sandboxpolicy.NormalizeImplementation(recordedImplementation); err == nil &&
+		implementation == sandboxpolicy.ImplementationHarnessBuiltin &&
+		harness.ValidateHarnessBuiltinOSSandbox(h) != nil {
+		recordedImplementation = ""
+	}
+	implementation, err := validateSandboxImplementationForHarness(h, recordedImplementation)
 	if err != nil {
 		return p
 	}
@@ -1001,6 +1012,32 @@ func receiverSandboxProfile(p spawnProfileJSON, h *harness.Harness, group, profi
 	}
 	p.Sandbox, p.SandboxImplementation = recorded.Sandbox, implementation
 	return p
+}
+
+// receiverCapsTheWall reports whether the landing posture is a native mode the
+// guard holds tclaude's sandbox to be looser than: Codex read-only or
+// workspace-write, where the wall would launch danger-full-access writing its cwd
+// subtree with the network open. A landing the guard cannot judge keeps the wall.
+func receiverCapsTheWall(h *harness.Harness, group, profile string) bool {
+	landing, fail, err := resolveLaunchDefaults(group, profile, h.Name)
+	if fail != nil || err != nil || isTclaudeLayer(string(landing.implementation)) {
+		return false
+	}
+	landingMode, fail := resolveLaunchHarnessBuiltinMode(h, landing.sandbox, string(landing.implementation))
+	if fail != nil {
+		return false
+	}
+	parent := spawnLineageSandbox{Harness: h.Name, HarnessBuiltinMode: landingMode, Implementation: landing.implementation}
+	if _, judged := normalizeSpawnLineageSandbox(parent); !judged {
+		return false
+	}
+	wallMode, fail := resolveLaunchHarnessBuiltinMode(h, "", string(sandboxpolicy.ImplementationTclaudeLayer))
+	if fail != nil {
+		return false
+	}
+	return !spawnSandboxLineageAllowed(parent, spawnLineageSandbox{
+		Harness: h.Name, HarnessBuiltinMode: wallMode, Implementation: sandboxpolicy.ImplementationTclaudeLayer,
+	})
 }
 
 // bundleNoLaunchContextKey marks an agent import that lands offline

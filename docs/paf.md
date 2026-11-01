@@ -367,15 +367,18 @@ the conversation takes:
 
 The receiving group's sandbox posture applies, and a file may tighten it but
 never widen it. An agent that ran under tclaude's sandbox keeps it, and the import
-is refused where this node cannot run it. A harness's own mode stays only when it
-is stricter than the landing posture, such as Codex `read-only` landing on
-`workspace-write`; anything looser is dropped, as is `off`. A landing under
-tclaude's sandbox keeps tclaude's sandbox. This holds for moves and teleports too,
+is refused where this node cannot run it. The exception is a landing on Codex `read-only`
+or `workspace-write`, which replaces tclaude's sandbox because that sandbox would
+allow more. A harness's own mode stays only when it is
+stricter than the landing posture, such as Codex `read-only` landing on
+`workspace-write`; anything looser is dropped, as is `off`. A kept mode is refused
+like any other launch if it cannot enforce the receiver's sandbox profiles. A
+landing under tclaude's sandbox keeps tclaude's sandbox. This holds for moves and teleports too,
 so an agent does not land with wider access than it had. The preview states the
 result. Without `--group` it shows the posture with no group's settings.
 
-On another harness the rest of the source's launch posture (approval and the
-other profile settings) is not applied either; the receiver's defaults and normal
+On another harness none of the source's launch posture applies, tclaude's sandbox
+included; the receiver's defaults and normal
 spawn checks apply, and the preview says so. Imports through federation
 offers, moves and teleports keep landing on the source harness.
 

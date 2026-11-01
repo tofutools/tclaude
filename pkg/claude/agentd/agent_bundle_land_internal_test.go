@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -27,4 +28,21 @@ func TestLandsOnSmallerWindow(t *testing.T) {
 	assert.False(t, landsOnSmallerWindow(claude, origin(std), std), "an equal window keeps native fidelity")
 	assert.False(t, landsOnSmallerWindow(claude, origin("claude-unlisted"), "claude-unlisted"), "the same model with an unknown window keeps native fidelity")
 	assert.True(t, landsOnSmallerWindow(claude, origin("claude-unlisted"), std), "a different model from an unknown window is budgeted")
+}
+
+// A relaunch profile records a blank implementation as harness-builtin, which
+// OpenCode refuses. That must not cost the agent its stricter recorded mode.
+func TestReceiverSandboxProfile_OpenCodeKeepsATighterModeFromARelaunchProfile(t *testing.T) {
+	setupTestDB(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "landing", Harness: harness.OpenCodeName, Sandbox: harness.OpenCodeSandboxOff})
+	require.NoError(t, err)
+	opencode, err := harness.Resolve(harness.OpenCodeName)
+	require.NoError(t, err)
+
+	got := receiverSandboxProfile(spawnProfileJSON{
+		Sandbox: harness.OpenCodeSandboxAccessControl, SandboxImplementation: "harness-builtin",
+	}, opencode, "", "landing")
+
+	assert.Equal(t, harness.OpenCodeSandboxAccessControl, got.Sandbox)
+	assert.Empty(t, got.SandboxImplementation)
 }
