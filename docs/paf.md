@@ -99,9 +99,11 @@ receiving side.
   for are dropped the same way, unless a spawn here gives them; the warning
   names the variables, not their values. A teleport or direct move keeps all of
   this, so a moved agent does not stall on prompts, when it lands automatically
-  or when its peer holds `agents.teleport.receive` for the receiving group. Without
-  that grant the offer's teleport or move label counts for nothing and it lands
-  as a file. A received history is
+  or when its peer holds `agents.teleport.receive` for the receiving group, and
+  the preview lists what an accepted move keeps. Without that grant the offer's
+  teleport or move label counts for nothing and it lands as a file. All of this
+  is about an agent's own profile: a group import still takes the group's
+  environment from its file. A received history is
   untrusted input: it may contain instructions written by anyone whose text
   reached the original agent.
 

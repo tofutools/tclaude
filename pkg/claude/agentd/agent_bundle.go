@@ -592,6 +592,13 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	profile.InitialMessage = ""
 	profile.AgentName = ""
 	profile.Aliases = nil
+	// A file's environment never lands, so nothing in it can demand a binding.
+	accepted, _ := r.Context().Value(acceptedMoveContextKey{}).(bool)
+	movedHere := authority != nil || accepted
+	fileEnvironment := profile.Environment
+	if !movedHere {
+		profile.Environment = nil
+	}
 	rawProfile, _ := json.Marshal(profile)
 	safe := configbundle.Bundle{Sections: map[string][]configbundle.Item{"profiles": {{Name: "agent", Value: rawProfile}}}, Placeholders: b.Manifest.Placeholders}
 	values := map[string]string{}
@@ -646,12 +653,21 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		// The receiver owns a teleport or direct move, by landing authority or by
 		// accepting the offer, and dropping its posture could stall the agent on
 		// prompts nobody answers. Everything else is a file.
-		if accepted, _ := r.Context().Value(acceptedMoveContextKey{}).(bool); authority == nil && !accepted {
+		if !movedHere {
 			var dropped []string
 			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
 			landingWarnings = append(landingWarnings, dropped...)
+			profile.Environment = fileEnvironment
 			profile, dropped = receiverLaunchFieldsProfile(profile, h, q.Get("group"), landingProfile)
 			landingWarnings = append(landingWarnings, dropped...)
+		} else if accepted {
+			// The grant trusts this peer with moves, and it says nothing about what
+			// the operator is accepting, so show what a file would have lost.
+			_, kept := receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
+			_, fields := receiverLaunchFieldsProfile(profile, h, q.Get("group"), landingProfile)
+			if kept = append(kept, fields...); len(kept) > 0 {
+				landingWarnings = append(landingWarnings, "This offer lands as a move from a peer holding agents.teleport.receive, so it keeps what a file would lose. As a file: "+strings.Join(kept, " "))
+			}
 		}
 		if _, fail := buildProfileFromJSON(profile); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
