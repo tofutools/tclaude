@@ -3,7 +3,8 @@ import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
-import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, handleConfigEvent } from './config-form-adapter.js';
+import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, followSourceChoice, handleConfigEvent } from './config-form-adapter.js';
+import { SOURCE_CHOICE_EVENT } from './knowledge-source-island.js';
 
 const html = htm.bind(h);
 
@@ -50,6 +51,7 @@ export function ConfigApp({ state, dependencies = {} }) {
     });
     configureConfigLifecycle(state.lifecycle);
     const unbind = bindConfigActivation();
+    document.addEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
     // The remote-access certificate panel is static dashboard HTML wired by
     // remote-admin.js; move it (listeners intact) into the Daemon & network
     // panel, and back to its original host on unmount.
@@ -59,6 +61,7 @@ export function ConfigApp({ state, dependencies = {} }) {
     const remoteAdminSlot = root.current?.querySelector('#cfg-remote-admin-slot');
     if (remoteAdmin && remoteAdminSlot) remoteAdminSlot.appendChild(remoteAdmin);
     return () => {
+      document.removeEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
       if (remoteAdmin && remoteAdminHome) remoteAdminHome.insertBefore(remoteAdmin, remoteAdminNext?.parentNode === remoteAdminHome ? remoteAdminNext : null);
       unbind?.();
       state.cancelDiff(false);

@@ -2388,6 +2388,7 @@ func SweepCopilotUsageForTest() { sweepCopilotUsage(context.Background()) }
 func ReconcileStewardAccessForTest() {
 	cfg, _ := clconfig.Load()
 	reconcileStewardAccess(cfg)
+	knowledgeStartup.Wait()
 }
 
 // AddStewardBaseSlugForTest stands in for a release adding a slug to the base set.

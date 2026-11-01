@@ -628,6 +628,7 @@ function populateConfigForm(cfg) {
   setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
   setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
   renderCfgStringList('cfg-steward-permissions', (cfg.steward || {}).default_permissions || [], 'cfg-slug-list', 'permission slug');
+  setSelectValue($('#cfg-steward-source-download'), (cfg.steward || {}).source_download || 'ask');
   $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
   $('#cfg-steward-startup-prompt').value = (cfg.steward || {}).startup_prompt || '';
 
@@ -1013,6 +1014,8 @@ function assembleConfig() {
   if (stewardWrites && stewardWrites !== 'messaging') steward.writes = stewardWrites; else delete steward.writes;
   const stewardPerms = readCfgStringList('cfg-steward-permissions');
   if (stewardPerms.length) steward.default_permissions = stewardPerms; else delete steward.default_permissions;
+  const stewardSource = controlValue($('#cfg-steward-source-download'));
+  if (stewardSource && stewardSource !== 'ask') steward.source_download = stewardSource; else delete steward.source_download;
   const stewardProfile = controlValue($('#cfg-steward-profile')).trim();
   if (stewardProfile) steward.profile = stewardProfile; else delete steward.profile;
   const stewardName = controlValue($('#cfg-steward-name')).trim();
@@ -1386,6 +1389,23 @@ function applyConfigFilter() {
   }
 }
 
+// followSourceChoice takes up a source choice made on the dashboard's card or
+// row: the one control and the new base, so other unsaved edits stay and the next
+// Save isn't refused as drift.
+async function followSourceChoice() {
+  if (!configLoaded) return;
+  const bindingEpoch = configBindingEpoch;
+  try {
+    const r = await configDependencies.fetchImpl('/api/config', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (bindingEpoch !== configBindingEpoch || !data.raw) return;
+    configBaseRaw = data.raw;
+    configObj = JSON.parse(configBaseRaw);
+    setSelectValue($('#cfg-steward-source-download'), (configObj.steward || {}).source_download || 'ask');
+  } catch { /* Save reports the drift, and Reload recovers. */ }
+}
+
 async function loadConfigTab() {
   const bindingEpoch = configBindingEpoch;
   // Refresh the slug / group datalists from the latest snapshot.
@@ -1606,5 +1626,5 @@ function bindConfigActivation() {
   };
 }
 
-export { assembleConfig, bindConfigActivation, configLineDiff, handleConfigEvent, loadConfigTab, populateConfigForm, saveConfig };
+export { assembleConfig, bindConfigActivation, configLineDiff, followSourceChoice, handleConfigEvent, loadConfigTab, populateConfigForm, saveConfig };
 // dashboard-imperative-boundary: config-adapter

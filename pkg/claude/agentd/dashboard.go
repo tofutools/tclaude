@@ -1088,6 +1088,8 @@ type snapshotPayload struct {
 	StewardElevated map[string]stewardElevation `json:"steward_elevated,omitempty"`
 	// StewardAccess is where a live Steward's access comes from, for its editors.
 	StewardAccess *stewardAccess `json:"steward_access,omitempty"`
+	// KnowledgeSource is the source download's question and progress.
+	KnowledgeSource *knowledgeSourceView `json:"knowledge_source,omitempty"`
 	// TriggersEnabled gates the experimental Automations subview and compact
 	// Groups projection. Re-read on every snapshot so Config changes take
 	// effect without restarting agentd, matching triggerRoute.
@@ -4002,6 +4004,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Overrides: out.Permissions.Overrides,
 		})
 		out.StewardAccess = stewardAccessView(cfg)
+		source := newKnowledgeSourceView(cfg)
+		out.KnowledgeSource = &source
 		out.CompanionCues = activeCompanionCues()
 	}
 	out.Templates = templates

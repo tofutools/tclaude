@@ -352,6 +352,29 @@ const accessPanelDescriptor = createIslandDescriptor({
   },
 });
 
+// The question and progress for the knowledge base's source download.
+const knowledgeSourceDescriptor = createIslandDescriptor({
+  name: 'knowledge-source',
+  label: 'Source download',
+  hosts: { host: '#knowledge-source-root' },
+  failureClass: 'knowledge-source-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./knowledge-source-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [{ mountKnowledgeSourceIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
+    return {
+      mount: (registerCleanup) => mountKnowledgeSourceIsland({
+        host, registerCleanup, snapshot: dashboardState.snapshot,
+        fetchImpl: (...args) => globalThis.fetch(...args), notify: dependencies.notify,
+      }),
+    };
+  },
+});
+
+export function mountKnowledgeSourceFeature(dependencies = {}) {
+  return mountIslandDescriptor(knowledgeSourceDescriptor, dependencies);
+}
+
 export function mountAccessPanelFeature(dependencies = {}) {
   return mountIslandDescriptor(accessPanelDescriptor, dependencies);
 }

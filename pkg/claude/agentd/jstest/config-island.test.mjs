@@ -682,6 +682,37 @@ test('Config edits the default Steward permissions with the slug list and drops 
   const steward = adapter.assembleConfig().steward;
   assert.equal(steward.name, 'Jeeves');
   assert.equal('default_permissions' in steward, false, 'an empty list is not written out');
+  assert.equal('source_download' in steward, false, 'asking is the default, so it is not written out');
+  await selectValue(harness, mounted.container.querySelector('#cfg-steward-source-download'), 'each_version');
+  assert.equal(adapter.assembleConfig().steward.source_download, 'each_version');
+  await mounted.unmount();
+});
+
+test('Config follows a source choice made outside the form and keeps other edits', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter, { SOURCE_CHOICE_EVENT }] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+    harness.importDashboardModule('js/knowledge-source-island.js'),
+  ]);
+  let onDisk = { steward: { name: 'Jeeves' } };
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify(onDisk) }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  await harness.act(() => {});
+  const name = mounted.container.querySelector('#cfg-steward-name');
+  name.value = 'Unsaved';
+  onDisk = { steward: { name: 'Jeeves', source_download: 'never' } };
+  await harness.act(async () => {
+    document.dispatchEvent(new CustomEvent(SOURCE_CHOICE_EVENT));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const steward = adapter.assembleConfig().steward;
+  assert.equal(steward.source_download, 'never');
+  assert.equal(steward.name, 'Unsaved', 'the rest of the form keeps its edits');
   await mounted.unmount();
 });
 

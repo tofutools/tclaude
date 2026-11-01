@@ -69,6 +69,8 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/companion/{agent}/speech", collabRoute(handleDashboardCompanionSpeech))
 	mux.HandleFunc("POST /api/companion/view", collabRoute(handleDashboardCompanionView))
 	mux.HandleFunc("POST /api/companion/presence", collabRoute(handleDashboardCompanionPresence))
+	mux.HandleFunc("GET /api/knowledge/source", collabRoute(handleDashboardKnowledgeSourceGet))
+	mux.HandleFunc("POST /api/knowledge/source", collabRoute(handleDashboardKnowledgeSourcePost))
 	mux.HandleFunc("POST /api/companion/capture/{id}", collabRoute(handleDashboardCompanionCapture))
 	mux.HandleFunc("POST /api/companion/marks/dismiss", collabRoute(handleDashboardMarksDismissAll))
 	mux.HandleFunc("POST /api/companion/marks/{id}/dismiss", collabRoute(handleDashboardMarkEnd(db.MarkStateDismissed)))

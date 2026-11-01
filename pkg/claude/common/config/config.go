@@ -1352,6 +1352,10 @@ type StewardConfig struct {
 	// The steward block is deliberately not a portable config bundle key, so
 	// only the operator can set this.
 	DefaultPermissions []string `json:"default_permissions,omitempty"`
+	// SourceDownload is "ask", "each_version" or "never"; see the
+	// StewardSource constants. It is consent to a download, which is why it
+	// lives here, where only the operator can set it.
+	SourceDownload string `json:"source_download,omitempty"`
 }
 
 const (
@@ -1359,6 +1363,13 @@ const (
 	StewardReadsOperator = "operator"
 	// StewardReadsFleet reads the fleet, the boards and the dashboard view.
 	StewardReadsFleet = "fleet"
+
+	// StewardSourceAsk asks the operator for each version with no source.
+	StewardSourceAsk = "ask"
+	// StewardSourceEachVersion downloads each new version's source by itself.
+	StewardSourceEachVersion = "each_version"
+	// StewardSourceNever downloads nothing and does not ask.
+	StewardSourceNever = "never"
 
 	// StewardWritesNone keeps only what talking to the operator needs.
 	StewardWritesNone = "none"
@@ -1433,6 +1444,15 @@ func (c *Config) StewardWrites() string {
 		return c.Steward.Writes
 	}
 	return StewardWritesMessaging
+}
+
+// StewardSourceDownload returns the operator's choice on downloading tclaude's
+// source for the knowledge base, defaulted. Nil-safe.
+func (c *Config) StewardSourceDownload() string {
+	if c != nil && c.Steward != nil && c.Steward.SourceDownload != "" {
+		return c.Steward.SourceDownload
+	}
+	return StewardSourceAsk
 }
 
 // StewardDefaultPermissions returns the configured extra slugs, trimmed.
@@ -4383,6 +4403,12 @@ func Validate(c *Config) []string {
 	default:
 		errs = append(errs, fmt.Sprintf("steward.writes %q is not one of %s, %s, %s",
 			c.StewardWrites(), StewardWritesNone, StewardWritesMessaging, StewardWritesWorkers))
+	}
+	switch c.StewardSourceDownload() {
+	case StewardSourceAsk, StewardSourceEachVersion, StewardSourceNever:
+	default:
+		errs = append(errs, fmt.Sprintf("steward.source_download %q is not one of %s, %s, %s",
+			c.StewardSourceDownload(), StewardSourceAsk, StewardSourceEachVersion, StewardSourceNever))
 	}
 	if name := c.stewardNameSetting(); name != "" && !validStewardName(name) {
 		errs = append(errs, fmt.Sprintf("steward.name: must be at most %d characters: letters and digits, with single spaces, - or _ between them", MaxStewardNameLen))
