@@ -586,6 +586,18 @@ func TestOpenCodeConvStoreSeesPrivateState(t *testing.T) {
 	require.Error(t, err, "a store that cannot be read says so, not that it is gone")
 	_, err = store.Resolve(conv, "", true)
 	require.Error(t, err)
+
+	// A recorded name survives a store that cannot be read.
+	require.NoError(t, db.SetConvIndexCustomTitle(conv, "Recorded", OpenCodeName))
+	title, err := store.Title(conv)
+	require.NoError(t, err)
+	assert.Equal(t, "Recorded", title)
+
+	// With its directory gone nothing was looked at, so nothing is known.
+	failure = nil
+	require.NoError(t, os.RemoveAll(repo))
+	_, err = store.Exists(conv, "")
+	require.Error(t, err, "no directory to look in is not a conversation that is gone")
 }
 
 func TestListOpenCodeSessionsRunsFromTheProject(t *testing.T) {

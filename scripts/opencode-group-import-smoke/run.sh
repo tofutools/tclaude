@@ -273,6 +273,8 @@ managed_server_holds "$WALLED" tclaude-layer
 
 log "resume recovery finds a conversation in private state"
 node dst tclaude agent stop "$WALLED" --force
+# The managed server outlives the pane; a new one has to prove the resume.
+node dst tmux -L tclaude kill-server 2>/dev/null || true
 python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$WALLED" <<'PY'
 import sqlite3, sys
 
@@ -281,6 +283,7 @@ with sqlite3.connect(sys.argv[1]) as db:
 assert n == 1, n
 PY
 node dst tclaude agent resume "$WALLED" | tee "$ROOT/recovered-resume.txt"
+grep -q 'resumed' "$ROOT/recovered-resume.txt" || die "the recovered conversation did not resume"
 wait_for 90 "the recovered conversation's server" managed_server_holds "$WALLED" tclaude-layer
 private_opencode session list --format json | jq -e --arg id "$WALLED" 'any(.[]; .id == $id)' >/dev/null \
 	|| die "the recovered conversation left private state"

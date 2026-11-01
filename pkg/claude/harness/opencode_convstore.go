@@ -376,8 +376,19 @@ func (s openCodeConvStore) findPrivate(convID string, allocation *db.OpenCodeAge
 			return listOpenCodeSessions(executable, dir, environment)
 		}
 	}
+	dirs := openCodeConvDirs(convID)
+	if rows, err := db.FindSessionsByConvID(convID); err == nil {
+		var known []string
+		for _, row := range rows {
+			known = append(known, row.Cwd)
+		}
+		dirs = existingDirs(append(dirs, known...))
+	}
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("opencode private state: no directory to look for conversation %s in", convID)
+	}
 	var failure error
-	for _, dir := range openCodeConvDirs(convID) {
+	for _, dir := range dirs {
 		sessions, err := list(dir, environment)
 		if err != nil {
 			failure = err
@@ -512,17 +523,14 @@ func (s openCodeConvStore) Title(convID string) (string, error) {
 		return "", nil
 	}
 	entry, err := s.find(convID)
-	if err != nil {
-		return "", err
-	}
 	if entry != nil {
 		return entry.DisplayTitle(), nil
 	}
 	// A rename the CLI cannot see the conversation for is still a rename.
-	if row, err := db.GetConvIndex(convID); err == nil && row != nil {
+	if row, rowErr := db.GetConvIndex(convID); rowErr == nil && row != nil && row.CustomTitle != "" {
 		return row.CustomTitle, nil
 	}
-	return "", nil
+	return "", err
 }
 
 // findNearby looks convID up where tclaude last knew it to be, which takes
