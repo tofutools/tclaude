@@ -1683,7 +1683,7 @@ own state that other systems are not expected to share:
 | `environment.json` placeholders | `item`, `field` | The configuration item and field a placeholder stands in. |
 | `environment.json` | `harness.<name>` | Settings only one harness has, such as `harness.claude.auto_compact_window`. |
 | `group.json` | `group` | Group settings: description, standing orders, environment, group permissions, member limit and similar. |
-| `group.json` members | `owner` | The member owned the group (advisory; ownership never travels). |
+| `group.json` members | `owner` | The member owned the group. A group import keeps it as member structure; elsewhere it is advisory. |
 | `ext/tclaude/mail-deliveries.json` | entry | The mail delivery ledger a continuation carries. |
 | `ext/tclaude/group-state.json` | entry | A group's tclaude state in the group export's shape: members, owners, permissions, enrollment, cron jobs, messages, audit trail and per-conversation metadata. Each conversation's harness and history live in its agent. |
 | `manifest.json` | `converted_from` | The legacy carrier a PAF was converted from: `format`, `format_version`, `tclaude_version`, `created_at`. |

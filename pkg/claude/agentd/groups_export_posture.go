@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -207,11 +208,19 @@ func dropFileGroupEnvironment(exp *groupexport.Export) []string {
 // Nothing here is a move the receiver owns: only a file reaches this path. A deny
 // only takes away, so it stays. Scheduled jobs stay for a human to review, with
 // none enabled and none speaking as the operator: an owner this file named could
-// otherwise enable one.
+// otherwise enable one. It runs before the import validates permission scopes, so
+// a row that never lands cannot refuse the import.
 func dropFileAuthority(exp *groupexport.Export) []string {
 	var granted []string
+	seen := map[string]bool{}
+	grant := func(what string) {
+		if !seen[what] {
+			seen[what] = true
+			granted = append(granted, what)
+		}
+	}
 	for _, p := range exp.Group.Permissions {
-		granted = append(granted, "group permission "+p.Slug)
+		grant("group permission " + db.CanonicalPermissionSlug(p.Slug))
 	}
 	exp.Group.Permissions = nil
 	kept := exp.Permissions[:0:0]
@@ -220,11 +229,13 @@ func dropFileAuthority(exp *groupexport.Export) []string {
 			kept = append(kept, p)
 			continue
 		}
-		granted = append(granted, "permission "+p.Slug+" for "+short8(p.ConvID))
+		grant("permission " + db.CanonicalPermissionSlug(p.Slug) + " for " + short8(p.ConvID))
 	}
 	exp.Permissions = kept
 	for _, s := range exp.SudoGrants {
-		granted = append(granted, "sudo grant "+s.Slug+" for "+short8(s.ConvID))
+		if fileSudoGrantLive(s) {
+			grant("sudo grant " + db.CanonicalPermissionSlug(s.Slug) + " for " + short8(s.ConvID))
+		}
 	}
 	exp.SudoGrants = nil
 	var warnings []string
@@ -252,6 +263,16 @@ func dropFileAuthority(exp *groupexport.Export) []string {
 			" no longer run as the operator. Set their owner before enabling them.")
 	}
 	return warnings
+}
+
+// fileSudoGrantLive reports whether a file's sudo row was still in force. An
+// export carries ended rows too, and those are history rather than a grant lost.
+func fileSudoGrantLive(s groupexport.SudoGrant) bool {
+	if s.RevokedAt != "" || (s.UsesLimit > 0 && s.UsesLeft <= 0) {
+		return false
+	}
+	expires, err := time.Parse(time.RFC3339, s.ExpiresAt)
+	return err != nil || expires.After(time.Now())
 }
 
 // planGroupPostures resolves every member's landing posture.

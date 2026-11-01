@@ -157,8 +157,9 @@ func groupsImportCmd() *cobra.Command {
 		Use:   "import",
 		Short: "Import a group from a .zip or .paf archive produced by `groups export`",
 		Long: "Recreate a group from an export archive: the group, its agents, " +
-			"permissions, ownership, enrollment, cron jobs, messages and every " +
-			"conversation .jsonl. A group .paf is verified first; one written by " +
+			"owners, enrollment, messages and every conversation .jsonl. " +
+			"Permission and sudo grants in a file are dropped and listed, a deny " +
+			"stays, and cron jobs land disabled for you to review. A group .paf is verified first; one written by " +
 			"another tool imports its group, members and their Claude Code " +
 			"histories, and its members may use any harness: each lands on its " +
 			"own harness, or the one --harness / --member-harness names, its " +

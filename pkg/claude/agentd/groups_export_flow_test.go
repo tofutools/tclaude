@@ -474,9 +474,10 @@ func TestGroupImport_RejectsInvalidPermissionScopeBeforeFilesystem(t *testing.T)
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   "invalid-scope",
-		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
-			Slug: agentd.PermGroupsMembersSpawn, ScopeJSON: `{"remote":["origin"]}`,
-		}}},
+		Permissions: []groupexport.Permission{{
+			ConvID: "11111111-1111-2222-3333-444444444444", Slug: agentd.PermGroupsMembersSpawn,
+			Effect: db.PermEffectDeny, ScopeJSON: `{"remote":["origin"]}`,
+		}},
 	}
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
@@ -497,9 +498,10 @@ func TestGroupImport_RejectsExactTargetAgentScopeWithoutActorMapping(t *testing.
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   "exact-target-scope",
-		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
-			Slug: agentd.PermAgentRetire, ScopeJSON: `{"target_agent":["agt_original_actor"]}`,
-		}}},
+		Permissions: []groupexport.Permission{{
+			ConvID: "11111111-1111-2222-3333-444444444444", Slug: agentd.PermAgentRetire,
+			Effect: db.PermEffectDeny, ScopeJSON: `{"target_agent":["agt_original_actor"]}`,
+		}},
 	}
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
