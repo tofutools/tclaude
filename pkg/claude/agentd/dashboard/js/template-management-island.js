@@ -1057,7 +1057,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         </div>
       </div>`}${kind === 'group' && inspection &&
       html`<${GroupImportPreview} inspection=${inspection} into=${into} />
-        ${(inspection.file_warnings || []).map((warning) => html`<div class="paf-warning" key=${warning}>${warning}</div>`)}
+        ${(inspection.file_warnings || []).map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}
         <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} confirmCut=${confirmCut} setConfirmCut=${setConfirmCut} />`}${kind === 'agent' && agentPreview &&
       html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} />`}
       <div class="cron-create-error" id="group-import-error" role="alert">
