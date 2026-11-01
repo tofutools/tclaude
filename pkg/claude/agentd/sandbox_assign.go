@@ -252,8 +252,13 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 			return fail
 		}
 		note = moveNote
-		err := db.AssignAgentSandboxImplementation(
-			agentID, implementation, mode, db.AssignedSandboxImplementationSource)
+		// Only a move out that finished returns this note, and the posture and
+		// the allocation it gives up must change together.
+		assign := db.AssignAgentSandboxImplementation
+		if moveNote == openCodeMoveOutNote {
+			assign = db.AssignAgentSandboxImplementationLeavingOpenCodeState
+		}
+		err := assign(agentID, implementation, mode, db.AssignedSandboxImplementationSource)
 		if err != nil {
 			undo()
 		}
@@ -469,7 +474,8 @@ func stopOpenCodeServerForMove(convID string) error {
 // goes: tclaude reads an agent's conversations from its allocation while it has
 // one. The agent must be stopped. The copies are complete and verified when this
 // returns and the private state is still there, so commit removes it once the
-// posture is recorded and undo leaves everything as it was.
+// posture is recorded and its allocation forgotten, and undo leaves everything as
+// it was.
 func moveOpenCodeStateOut(
 	h *harness.Harness, agentID, convID, cwd string,
 ) (commit, undo func(), note string, fail *spawnFailure) {
@@ -532,12 +538,8 @@ func moveOpenCodeStateOut(
 		}
 	}
 	return func() {
-		// The record goes first: a directory nothing points at is only unused,
-		// and a record pointing at no directory stops the agent resuming.
-		if err := db.DeleteOpenCodeAgentStateAllocation(agentID); err != nil {
-			slog.Warn("sandbox assignment: forget private OpenCode state", "agent", agentID, "error", err)
-			return
-		}
+		// The assignment has forgotten the allocation: a directory nothing
+		// points at is only unused.
 		if err := os.RemoveAll(allocation.StateRoot); err != nil {
 			slog.Warn("sandbox assignment: private OpenCode state left behind", "agent", agentID, "error", err)
 		}
