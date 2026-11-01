@@ -916,8 +916,9 @@ type auditSpawnEnvelope struct {
 }
 
 // auditSpawnInputSnapshot preserves the request's parameter values without
-// putting the spawn briefing or the one-shot directory proof token into the
-// audit database. Audit detail is intentionally not a prompt/content store.
+// putting the spawn briefing, the one-shot directory proof token or environment
+// values into the audit database; environment names stay, so an operator can see
+// what was set. Audit detail is intentionally not a prompt/content store.
 func auditSpawnInputSnapshot(request []byte) (any, string) {
 	if len(request) == 0 {
 		return map[string]any{}, ""
@@ -927,6 +928,7 @@ func auditSpawnInputSnapshot(request []byte) (any, string) {
 	if err := json.Unmarshal(request, &input); err != nil {
 		return nil, "request body was not valid JSON"
 	}
+	db.RedactAuditEnvironment(input)
 	object, ok := input.(map[string]any)
 	if !ok {
 		return input, ""
@@ -960,6 +962,7 @@ func encodeSpawnAuditDetail(summary string, request, response []byte, resolved a
 	if len(response) > 0 {
 		var output any
 		if err := json.Unmarshal(response, &output); err == nil {
+			db.RedactAuditEnvironment(output)
 			envelope.Response = output
 		} else {
 			envelope.ResponseRaw = string(response)
