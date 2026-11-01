@@ -1479,7 +1479,7 @@ export function BoardEditor({
   useLayoutEffect(() => {
     const input = textInputRef.current;
     if (!input) return;
-    input.focus();
+    input.focus({ preventScroll: true });
     input.setSelectionRange?.(input.value.length, input.value.length);
   }, [editing]);
 
