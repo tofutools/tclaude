@@ -319,7 +319,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     // Close on success so the operator sees the agent (and, from Terminals,
     // its new terminal); the toast keeps the result.
     toast(`${done?.result === 'pending'
-      ? `${agent.name} morphs to ${profile} when it next goes idle (within 30 minutes, or the request lapses). Its row shows the pending morph.`
+      ? `${agent.name} morphs to ${profile} when it next goes idle (within 30 minutes, or the request lapses).${agent.node ? '' : ' Its row shows the pending morph.'}`
       : `${agent.name} is now ${profile}. It got a short inbox note saying what changed.`}${done?.detail ? ` ${done.detail}` : ''}`);
     onClose();
   };

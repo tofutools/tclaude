@@ -47,7 +47,7 @@ test('worktree actions preserve scan scopes, explicit cleanup wire fields, and p
   });
   const result = await actions.cleanup(request);
   assert.deepEqual(JSON.parse(calls[2][1].body), {
-    paths: ['/removed', '/main', '/failed'], prune_roots: ['/repo'], delete_branches: true,
+    paths: ['/removed', '/main', '/failed'], prune_roots: ['/repo'], delete_branches: true, force_branch_paths: [],
   });
   assert.equal(result.outcomes[1].result, 'skipped');
   assert.equal(result.outcomes[2].detail, 'git refused');

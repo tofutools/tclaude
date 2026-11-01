@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -45,7 +47,9 @@ import (
 // label the snapshot rendered) and refuses the main repo and any worktree
 // a still-LIVE agent occupies. Removal is force (the human confirmed),
 // but the dirty/agent badges + un-ticked defaults keep the destructive
-// cases off by default.
+// cases off by default. A branch is force-deleted only when its commits
+// survive elsewhere, or when the human named that path in
+// force_branch_paths; sweepBranchRisk re-checks this at execute time.
 
 // The repo-scan git seam — production shells out via the worktree
 // package; flow tests swap fakes (the package-level inspectWorktreeFn /
@@ -57,6 +61,7 @@ var (
 	worktreeDirtyFn     = worktree.IsDirtyIn
 	prunableWorktreesFn = worktree.PrunableWorktreesIn
 	pruneWorktreesFn    = worktree.PruneWorktreesIn
+	sweepBranchRiskFn   = sweepBranchRisk
 )
 
 // sweepAgent is an agent bound to a worktree — either its immutable startup
@@ -695,6 +700,7 @@ type worktreeCleanupResponse struct {
 	PruneOutcomes  []worktreePruneOutcome   `json:"prune_outcomes"`
 	Removed        int                      `json:"removed"`
 	Branches       int                      `json:"branches"`
+	BranchesKept   int                      `json:"branches_kept"`
 	Skipped        int                      `json:"skipped"`
 	Failed         int                      `json:"failed"`
 	Pruned         int                      `json:"pruned"`
@@ -734,6 +740,9 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		Paths          []string `json:"paths"`
 		PruneRoots     []string `json:"prune_roots"`
 		DeleteBranches bool     `json:"delete_branches"`
+		// ForceBranchPaths names the selected worktrees whose branches the
+		// human confirmed deleting even though their commits exist nowhere else.
+		ForceBranchPaths []string `json:"force_branch_paths"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -755,6 +764,24 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 	resp := worktreeCleanupResponse{
 		Outcomes:      []worktreeCleanupOutcome{},
 		PruneOutcomes: []worktreePruneOutcome{},
+	}
+	forced := make(map[string]bool, len(body.ForceBranchPaths))
+	for _, raw := range body.ForceBranchPaths {
+		forced[strings.TrimSpace(raw)] = true
+	}
+	// keepNote decides the branch half for one worktree. It returns the
+	// note for a branch that must stay, or "" when deleting it is safe.
+	keepNote := func(path, root, branch, commit string) string {
+		if !body.DeleteBranches || branch == "" || branch == "HEAD" || forced[path] {
+			return ""
+		}
+		return sweepBranchRiskFn(root, path, branch, commit)
+	}
+	keptBranch := func(out *worktreeCleanupOutcome, note string) {
+		if note != "" && out.Result == "removed" {
+			out.Detail = note
+			resp.BranchesKept++
+		}
 	}
 	seen := map[string]bool{}
 	for _, raw := range body.Paths {
@@ -781,9 +808,11 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 				out.Result, out.Detail = "skipped", "in use by a running agent — stop it first"
 				resp.Skipped++
 			default:
+				note := keepNote(path, reg.RepoRoot, reg.Info.Branch, reg.Info.Commit)
 				out = removeOneRegisteredWorktree(
-					reg, path, body.DeleteBranches,
+					reg, path, body.DeleteBranches && note == "",
 				)
+				keptBranch(&out, note)
 				switch out.Result {
 				case "removed":
 					resp.Removed++
@@ -805,7 +834,9 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 			out.Result, out.Detail = "skipped", "in use by a running agent — stop it first"
 			resp.Skipped++
 		default:
-			out = removeOneWorktree(path, st.Branch, body.DeleteBranches)
+			note := keepNote(path, st.Root, st.Branch, "")
+			out = removeOneWorktree(path, st.Branch, body.DeleteBranches && note == "")
+			keptBranch(&out, note)
 			switch out.Result {
 			case "removed":
 				resp.Removed++
@@ -858,6 +889,23 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// sweepBranchRisk re-reads the scan's signals at the destructive boundary. It
+// returns "" when the branch's commits survive on its upstream or the base,
+// and otherwise the note for keeping it. An unknown answer keeps the branch.
+func sweepBranchRisk(root, path, branch, commit string) string {
+	rows := []sweepWorktree{{Path: path, Branch: branch, RepoRoot: root, commit: commit}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	scanSweepSignals(ctx, root, rows)
+	switch unpublished := rows[0].Unpushed; {
+	case unpublished == nil:
+		return "worktree removed (branch " + branch + " kept: could not confirm its commits exist elsewhere)"
+	case *unpublished > 0:
+		return fmt.Sprintf("worktree removed (branch %s kept: %d unpublished commits)", branch, *unpublished)
+	}
+	return ""
 }
 
 func pruneOneRepo(root string) worktreePruneOutcome {

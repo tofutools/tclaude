@@ -7,6 +7,8 @@ import {
   WORKTREE_CATEGORIES,
   categoryWorktrees,
   dirtyWorktrees,
+  unpublishedBranches,
+  unpublishedBranchesKey,
   freezeWorktreeCleanupRequest,
   normalizePrunableRepos,
   normalizeWorktreeCandidates,
@@ -143,6 +145,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const [repoRoots, setRepoRoots] = useState([]);
   const [query, setQuery] = useState('');
   const [deleteBranches, setDeleteBranches] = useState(true);
+  const [forceBranchesKey, setForceBranchesKey] = useState('');
   const [busyAction, setBusyAction] = useState('scan');
   const [error, setError] = useState('');
   const [submittedRequest, setSubmittedRequest] = useState(null);
@@ -200,6 +203,11 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   }, [result]);
 
   const selected = selectedWorktrees(candidates);
+  const atRiskBranches = unpublishedBranches(candidates);
+  const atRiskKey = unpublishedBranchesKey(atRiskBranches);
+  // The confirmation covers exactly the listed branches: changing the
+  // selection or rescanning clears it.
+  const forceBranches = atRiskKey !== '' && forceBranchesKey === atRiskKey;
   const selectedPruneRepos = selectedPrunableRepos(prunableRepos);
   const removable = removableWorktrees(candidates);
   const visible = visibleWorktrees(candidates, query, danglingOnly);
@@ -255,7 +263,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
     if (busy || result || (selected.length === 0 && selectedPruneRepos.length === 0) || submitLock.current) return;
     submitLock.current = true;
     const request = submittedRequest || freezeWorktreeCleanupRequest(
-      candidates, prunableRepos, deleteBranches,
+      candidates, prunableRepos, deleteBranches, forceBranches,
     );
     if (!request.paths.length && !request.pruneRoots.length) {
       submitLock.current = false;
@@ -406,9 +414,17 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           disabled=${busy || locked}
           onChange=${(event) => setDeleteBranches(event.currentTarget.checked)} />
         <span>Also delete the feature branch
-          <span class="wt-note">force-deletes each removed worktree's local branch — <code>main</code>/<code>master</code> are always kept; stale-record pruning never deletes branches</span>
+          <span class="wt-note">deletes each removed worktree's local branch when its commits are merged or pushed; other branches are kept — <code>main</code>/<code>master</code> are always kept; stale-record pruning never deletes branches</span>
         </span>
       </label>
+      ${deleteBranches && atRiskBranches.length ? html`<label class="delete-agent-wt" id="worktree-cleanup-force-row">
+        <input type="checkbox" id="worktree-cleanup-force" checked=${forceBranches}
+          disabled=${busy || locked}
+          onChange=${(event) => setForceBranchesKey(event.currentTarget.checked ? atRiskKey : '')} />
+        <span>Also delete ${atRiskBranches.length === 1 ? 'this unmerged branch' : `these ${atRiskBranches.length} unmerged branches`}
+          <span class="wt-note">permanently loses commits that exist nowhere else: ${atRiskBranches.map((row) => `${row.branch} (${row.unpushed_unknown ? 'unknown number of commits' : `${row.unpushed_commits} commit${row.unpushed_commits === 1 ? '' : 's'}`})`).join(', ')}</span>
+        </span>
+      </label>` : null}
       <div class="cleanup-error" id="worktree-cleanup-error"
         role=${error || pruneScanErrors.length ? 'alert' : undefined}>${error || (pruneScanErrors.length
           ? `Stale-record scan incomplete: ${pruneScanErrors.map((entry) => `${entry.repo_root}: ${entry.detail}`).join('; ')}`
