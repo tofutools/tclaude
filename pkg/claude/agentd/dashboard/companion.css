@@ -368,6 +368,7 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-floating .companion-tool:enabled:not(.on):hover { border-color: var(--cmp-amber); }
 .companion-floating .companion-tool:disabled { opacity: .5; cursor: not-allowed; }
 .companion-floating .companion-annotate { color: var(--cmp-amber-text); font-size: 14px; }
+.companion-floating .companion-shell { color: #e6edf3; }
 
 /* One-click starters for the Steward (guided setup, tcl-bifqbb). */
 

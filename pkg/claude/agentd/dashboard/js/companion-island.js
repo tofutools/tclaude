@@ -43,6 +43,7 @@ import { registerStewardDoor } from './voice-wake.js';
 import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+import { ShellHere } from './terminal-here.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { useDismissablePopover } from './hover-popover.js';
 
@@ -1100,7 +1101,8 @@ export function CompanionApp({
     micTitle=${micTitle(sendPhrase)}
     withContext=${withContext} onContext=${setWithContext}
     annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${startAnnotating}>${children}<//>`;
-  const terminalZoom = html`<${TerminalZoom} font=${terminalFont} widget=${() => terminalWidgetRef.current} />`;
+  const terminalZoom = html`<${ShellHere} agent=${activeAgent?.agentId} name=${activeAgent?.name} snapshot=${snapshot.value} notify=${notify} />
+    <${TerminalZoom} font=${terminalFont} widget=${() => terminalWidgetRef.current} />`;
 
   const look = windowControlsLook(snapshot.value?.window_controls);
   // Close takes the tab being shown off the window, as its own × does. With

@@ -41,6 +41,16 @@ pending permission request, a **🔑** opens the
   separately from the one in Groups. Green is API spend, and muted italic `≈$…` is
   a subscription what-if estimate. A tab's tooltip always has its cost.
 
+**⌨** in an agent terminal's floating tools, in this tab and in the companion, opens a
+shell tab where the agent is working now: its worktree root, the directory its row shows.
+Its tooltip names the directory. This is the same shell a click on that directory opens,
+with the same group environment. It runs as you, outside the agent's sandbox, and the
+agent can write to that directory, so look before running something it left there. On a
+peer's agent the button needs `sessions.shell` on one of the agent's groups, and that peer
+showing you the group's members, and is hidden otherwise; a restricted peer does not share
+the directory, so the tooltip says where in words. A plain shell has no ⌨, and neither does a pop-out, which has no tabs to open
+one in.
+
 **Zoom** a terminal by pinching or Ctrl+scrolling over it or its floating tools, or with **−**, **+** and
 **⟲** (reset) in the floating tools in its upper right corner, which show the current
 size. The page stays as it is. Each terminal keeps its size, separately in a Terminals
