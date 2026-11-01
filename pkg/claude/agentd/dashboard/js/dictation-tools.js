@@ -6,9 +6,10 @@
 import { h } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
+import { AnnotateOverlay, composeAnnotation, drawInk } from './companion-annotate.js';
 import { COMPANION_MESSAGE_MAX, companionMessageFits, composeCompanionMessage, markDictated } from './companion-model.js';
 import { createDictation, phraseLeadRest, saysStop, sendPhraseRest } from './companion-voice.js';
+import { renderPage } from './dashboard-capture.js';
 import { dictationBlock } from './insecure-origin.js';
 import { SILENCE_SEND_DEFAULT, voicePhrase } from './voice-config.js';
 import { localSpeechState, speechRouteLabel } from './voice-local.js';
@@ -24,10 +25,10 @@ const joinDraft = (base, heard) => [base.trim(), heard.trim()].filter(Boolean).j
 
 // postOperatorMessage sends operator mail to an agent and throws what the
 // daemon said when it refused.
-export async function postOperatorMessage(fetchImpl, { to, subject = '', body }) {
+export async function postOperatorMessage(fetchImpl, { to, subject = '', body, attachmentToken = '' }) {
   const response = await fetchImpl('/api/operator-message', {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to, subject, body }),
+    body: JSON.stringify({ to, subject, body, ...(attachmentToken ? { attachment_token: attachmentToken } : {}) }),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
@@ -388,19 +389,43 @@ export function useDictation({
   };
 }
 
+// uploadMarkupImage stages the image as a message attachment and returns its
+// token.
+async function uploadMarkupImage(fetchImpl, image) {
+  const form = new FormData();
+  form.append('file', image, 'markup.png');
+  const response = await fetchImpl('/api/spawn-attachments', { method: 'POST', credentials: 'same-origin', body: form });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.token) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+  return result.token;
+}
+
 // useAnnotation runs the page mark-up for one agent at a time: start(target)
-// opens the drawing layer for {agentId, name, fetchImpl}, and overlay renders it.
-export function useAnnotation({ win, notify, viewNow }) {
+// opens the drawing layer for {agentId, name, fetchImpl, remote}, and overlay
+// renders it. The operator's Send is what lets this one image of the view go,
+// so it takes no capture grant, and it is rendered as a capture is, secrets
+// masked. Strokes go as an image only to this node's agents: a peer's operator
+// mail is text. Without an image, the lines still go and the notice says so.
+export function useAnnotation({ win, notify, viewNow, render = renderPage }) {
   const [annotating, setAnnotating] = useState(null);
   useEffect(() => {
     win?.document?.body?.classList?.toggle?.('companion-annotating', !!annotating);
     return () => win?.document?.body?.classList?.remove?.('companion-annotating');
   }, [annotating, win]);
-  async function sendAnnotation({ note, lines }) {
+  async function sendAnnotation({ note, lines, strokes = [] }) {
     const target = annotating;
     if (!target) return;
     const view = viewNow();
-    const text = composeAnnotation({ note, lines });
+    let image = null;
+    let imageRefused = target.remote && strokes.length ? 'an agent on another node gets no image' : '';
+    if (strokes.length && !target.remote) {
+      try {
+        image = await render({ win, fetchImpl: globalThis.fetch.bind(globalThis), draw: (ctx, scale) => drawInk(ctx, strokes, scale) });
+      } catch (error) {
+        imageRefused = `the image failed: ${error?.message || error}`;
+      }
+    }
+    const text = composeAnnotation({ note, lines, image: !!image });
     // Clipped, the agent would miss marks while the operator is told it all
     // went out. The overlay stays open with the strokes intact.
     if (!companionMessageFits(text, view)) {
@@ -408,9 +433,27 @@ export function useAnnotation({ win, notify, viewNow }) {
       return;
     }
     try {
-      await postOperatorMessage(target.fetchImpl, { to: target.agentId, subject: '[annotation]', body: composeCompanionMessage(text, view) });
+      let attachmentToken = '';
+      let body = composeCompanionMessage(text, view);
+      if (image) {
+        try {
+          attachmentToken = await uploadMarkupImage(target.fetchImpl, image);
+        } catch (error) {
+          imageRefused = `the image failed: ${error?.message || error}`;
+          body = composeCompanionMessage(composeAnnotation({ note, lines }), view);
+        }
+      }
+      const post = (message, token) => postOperatorMessage(target.fetchImpl, { to: target.agentId, subject: '[annotation]', body: message, attachmentToken: token });
+      try {
+        await post(body, attachmentToken);
+      } catch (error) {
+        // An agent away from its home node takes less than the upload did.
+        if (!attachmentToken) throw error;
+        imageRefused = `the image failed: ${error?.message || error}`;
+        await post(composeCompanionMessage(composeAnnotation({ note, lines }), view), '');
+      }
       setAnnotating(null);
-      notify(`Sent your markup to ${target.name}.`);
+      notify(imageRefused ? `Sent your markup to ${target.name} as text: ${imageRefused}.` : `Sent your markup to ${target.name}.`, !!imageRefused);
     } catch (error) {
       notify(`Markup to ${target.name} failed: ${error?.message || error}`, true);
     }

@@ -9,12 +9,12 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
-// ReadRemoteAttachments reads files for a remote (federated) message. The
+// ReadAttachments reads the files for a message. The
 // CLI reads them as the caller, so an agent can only attach what it can
 // read itself; the daemon never opens a caller-supplied path.
-func ReadRemoteAttachments(paths []string) ([]proto.AttachmentPayload, error) {
+func ReadAttachments(paths []string) ([]proto.AttachmentPayload, error) {
 	if len(paths) > proto.MaxAttachments {
-		return nil, fmt.Errorf("at most %d attachments per remote message", proto.MaxAttachments)
+		return nil, fmt.Errorf("at most %d attachments per message", proto.MaxAttachments)
 	}
 	var out []proto.AttachmentPayload
 	total := 0

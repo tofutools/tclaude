@@ -562,9 +562,8 @@ type sendReq struct {
 	// gates the sender on group membership/ownership, and Members can
 	// only shrink reach, so an agent gains no authority it lacked.
 	Members []string `json:"members,omitempty"`
-	// Attachments are files the CLI read on the sender's behalf. Only
-	// remote (federated) recipients accept them; local agents share a
-	// filesystem and are sent paths instead.
+	// Attachments are files the CLI read on the sender's behalf, so a
+	// sender can attach only what it can read. Group mail takes none.
 	Attachments []proto.AttachmentPayload `json:"attachments,omitempty"`
 }
 
@@ -739,10 +738,6 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		handleSendWithRemoteCC(w, r, fromID, &req, localCC, remoteCC)
 		return
 	}
-	if len(req.Attachments) > 0 {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are only supported for remote (member@peer) recipients; send local agents a file path instead")
-		return
-	}
 	dispatchSend(w, r, fromID, &req)
 }
 
@@ -757,6 +752,15 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 func dispatchSend(w http.ResponseWriter, r *http.Request, fromID string, req *sendReq) {
 	if strings.TrimSpace(req.Body) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
+		return
+	}
+	if err := validateFedAttachments(req.Attachments); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	// Group mail is text only, here as over federation.
+	if len(req.Attachments) > 0 && strings.HasPrefix(req.To, multicastPrefix) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are not supported on group messages; message the agents directly")
 		return
 	}
 	// --role only filters a group: multicast's recipient set. On a 1:1
@@ -869,7 +873,7 @@ func dispatchSend(w http.ResponseWriter, r *http.Request, fromID string, req *se
 		return
 	}
 
-	id, pending, err := queueRegularAgentMessage(&db.AgentMessage{
+	id, pending, err := queueAgentMail(&db.AgentMessage{
 		GroupID:        groupID,
 		FromConv:       fromID,
 		ToConv:         finalConv,
@@ -881,7 +885,7 @@ func dispatchSend(w http.ResponseWriter, r *http.Request, fromID string, req *se
 		// "To: ..." header. CC stays empty.
 		ToRecipients: []string{finalConv},
 		PinGen:       pinGen,
-	})
+	}, req.Attachments)
 	if err != nil {
 		if full, ok := agentMessageQueueFull(err); ok {
 			writeQueueFull(w, finalConv, full)
@@ -1001,7 +1005,7 @@ func handleMultiRecipient(w http.ResponseWriter, r *http.Request, fromID, primar
 	// Insert + nudge primary first so the response order matches the
 	// "To:, CC: ..." header order in inbox read.
 	primaryTitle := agent.TitleFor(primaryConv)
-	primaryID, primaryPending, err := queueRegularAgentMessage(&db.AgentMessage{
+	primaryID, primaryPending, err := queueAgentMail(&db.AgentMessage{
 		GroupID:        primaryGroupID,
 		FromConv:       fromID,
 		ToConv:         primaryConv,
@@ -1010,7 +1014,7 @@ func handleMultiRecipient(w http.ResponseWriter, r *http.Request, fromID, primar
 		Body:           req.Body,
 		ToRecipients:   toRecipients,
 		CcRecipients:   ccRecipients,
-	})
+	}, req.Attachments)
 	if err != nil {
 		if full, ok := agentMessageQueueFull(err); ok {
 			out.Recipients = append(out.Recipients, recipient{
@@ -1038,7 +1042,7 @@ func handleMultiRecipient(w http.ResponseWriter, r *http.Request, fromID, primar
 	}
 
 	for _, r := range resolved {
-		id, pending, err := queueRegularAgentMessage(&db.AgentMessage{
+		id, pending, err := queueAgentMail(&db.AgentMessage{
 			GroupID:        r.GroupID,
 			FromConv:       fromID,
 			ToConv:         r.ConvID,
@@ -1047,7 +1051,7 @@ func handleMultiRecipient(w http.ResponseWriter, r *http.Request, fromID, primar
 			Body:           req.Body,
 			ToRecipients:   toRecipients,
 			CcRecipients:   ccRecipients,
-		})
+		}, req.Attachments)
 		if err != nil {
 			if full, ok := agentMessageQueueFull(err); ok {
 				out.Recipients = append(out.Recipients, recipient{
@@ -2972,8 +2976,9 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		return
 	}
 	var body struct {
-		Subject string `json:"subject,omitempty"`
-		Body    string `json:"body"`
+		Subject     string                    `json:"subject,omitempty"`
+		Body        string                    `json:"body"`
+		Attachments []proto.AttachmentPayload `json:"attachments,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -2981,6 +2986,10 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 	}
 	if strings.TrimSpace(body.Body) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
+		return
+	}
+	if err := validateFedAttachments(body.Attachments); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
 	subject := body.Subject
@@ -2993,6 +3002,10 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	} else if in != nil {
+		if len(body.Attachments) > 0 {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are not supported on a reply to a remote message; send it with `tclaude agent message` instead")
+			return
+		}
 		handleFederatedReply(w, r, myID, in, subject, body.Body)
 		return
 	}
@@ -3057,7 +3070,7 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 			"cannot reply: original sender has been superseded by you; the predecessor's chain points back to your own conv")
 		return
 	}
-	newID, pending, err := queueRegularAgentMessage(&db.AgentMessage{
+	newID, pending, err := queueAgentMail(&db.AgentMessage{
 		GroupID:        replyGroupID,
 		FromConv:       myID,
 		ToConv:         replyTarget,
@@ -3065,7 +3078,7 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		Subject:        subject,
 		Body:           body.Body,
 		ParentID:       orig.ID,
-	})
+	}, body.Attachments)
 	if err != nil {
 		if full, ok := agentMessageQueueFull(err); ok {
 			writeQueueFull(w, replyTarget, full)

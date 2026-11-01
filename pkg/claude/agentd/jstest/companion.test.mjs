@@ -993,6 +993,133 @@ test('marking up the page sends the agent a numbered description of the marks', 
   assert.ok(!doc.body.classList.contains('companion-annotating'));
 });
 
+test('free-hand strokes read as drawings, and a run of letters as handwriting', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-annotate.js');
+  const scribble = [[0, 0], [40, 30], [10, 50], [60, 70], [20, 90], [90, 100]];
+  assert.equal(m.classifyStroke(scribble), 'drawing', 'it wanders, so it is no arrow');
+  assert.equal(m.classifyStroke([[0, 0], [60, 40], [120, 90]]), 'arrow');
+  const at = () => ({ text: 'git status', role: '' });
+  assert.equal(m.describeStroke(scribble, at), 'drew by hand over “git status”');
+  const stroke = (x, startedAt, points) => ({ ...m.resolveStroke(points, at), points, startedAt, endedAt: startedAt + 100 });
+  const line = (x) => [[x, 0], [x, 40], [x, 90]];
+  const letters = [stroke(0, 0, line(0)), stroke(30, 300, line(30)), stroke(60, 600, line(60))];
+  assert.deepEqual(letters.map((s) => s.kind), ['arrow', 'arrow', 'arrow'], 'alone, a tall letter looks like an arrow');
+  assert.deepEqual(m.readStrokes(letters).map((s) => s.kind), ['drawing', 'drawing', 'drawing']);
+  const apart = [stroke(0, 0, line(0)), stroke(30, 5000, line(30)), stroke(60, 10000, line(60))];
+  assert.deepEqual(m.readStrokes(apart).map((s) => s.kind), ['arrow', 'arrow', 'arrow'], 'arrows drawn one at a time stay arrows');
+  const far = [stroke(0, 0, line(0)), stroke(500, 300, line(500)), stroke(1000, 600, line(1000))];
+  assert.deepEqual(m.readStrokes(far).map((s) => s.kind), ['arrow', 'arrow', 'arrow'], 'quick strokes far apart are no word');
+  assert.equal(m.composeAnnotation({ lines: ['a', 'a', 'a', 'b'], image: true }),
+    'The operator marked up the dashboard view they are on. The attached image shows the view with their ink on it, numbered as below:\n1–3. a\n4. b');
+});
+
+test('the ink goes onto the image as the overlay shows it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-annotate.js');
+  const calls = [];
+  const ctx = new Proxy({}, {
+    get: (_, name) => (...args) => calls.push([name, ...args]),
+    set: (_, name, value) => { calls.push([`set ${String(name)}`, value]); return true; },
+  });
+  m.drawInk(ctx, [
+    { color: '#ff4d4f', kind: 'drawing', points: [[10, 20], [30, 40]] },
+    { color: '#4dabf7', kind: 'arrow', points: [[50, 60], [150, 60]] },
+  ], 2);
+  assert.deepEqual(calls.find(([name]) => name === 'scale'), ['scale', 2, 2], 'stroke points are in CSS pixels');
+  assert.deepEqual(calls.filter(([name]) => name === 'set strokeStyle').map(([, c]) => c), ['#ff4d4f', '#4dabf7']);
+  assert.deepEqual(calls.filter(([name]) => name === 'fillText').map(([, text]) => text), ['1', '2'], 'numbered as the lines are');
+  assert.equal(calls.filter(([name]) => name === 'stroke').length, 3, 'only the arrow gets a head');
+});
+
+test('a markup sends the view as an image, and says so when it cannot', async (t) => {
+  const harness = await createPreactHarness(t);
+  const tools = await harness.importDashboardModule('js/dictation-tools.js');
+  const run = async ({ render, target = {}, uploadOk = true, imageOk = true, strokes = [{ color: '#fff', kind: 'drawing', line: 'drew by hand over “x”', points: [[1, 1], [9, 9]] }] }) => {
+    const calls = [];
+    const notes = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url, init });
+      if (url === '/api/spawn-attachments') return { ok: uploadOk, status: uploadOk ? 200 : 500, statusText: 'x', json: async () => (uploadOk ? { token: 'tok' } : {}) };
+      if (!imageOk && JSON.parse(init.body).attachment_token) return { ok: false, status: 500, statusText: 'x', json: async () => ({ error: 'attachments total too large' }) };
+      return { ok: true, status: 202, json: async () => ({}) };
+    };
+    let hook;
+    function Probe() { hook = tools.useAnnotation({ win: harness.window, notify: (text, error) => notes.push({ text, error }), viewNow: () => null, render }); return null; }
+    const view = await harness.mount(harness.html`<${Probe} />`);
+    await harness.act(() => hook.start({ agentId: 'a1', name: 'alpha', fetchImpl, ...target }));
+    await harness.act(() => hook.overlay.props.onSend({ note: '', lines: strokes.map((s) => s.line), strokes }));
+    await view.unmount();
+    const mail = calls.findLast((c) => c.url === '/api/operator-message');
+    return { calls, notes, mail: mail && JSON.parse(mail.init.body) };
+  };
+  const blob = new Blob(['png']);
+  const sent = await run({ render: async () => blob });
+  const upload = sent.calls.find((c) => c.url === '/api/spawn-attachments');
+  assert.equal(upload.init.body.get('file').name, 'markup.png');
+  assert.equal(sent.mail.attachment_token, 'tok');
+  assert.match(sent.mail.body, /attached image shows the view/);
+  assert.deepEqual(sent.notes, [{ text: 'Sent your markup to alpha.', error: false }]);
+
+  const failed = await run({ render: async () => { throw new Error('too big'); } });
+  assert.equal(failed.mail.attachment_token, undefined);
+  assert.doesNotMatch(failed.mail.body, /attached image/, 'the agent is not told of an image it did not get');
+  assert.match(failed.notes[0].text, /as text: the image failed: too big/);
+  assert.equal(failed.notes[0].error, true);
+
+  const refused = await run({ render: async () => blob, uploadOk: false });
+  assert.equal(refused.mail.attachment_token, undefined);
+  assert.doesNotMatch(refused.mail.body, /attached image/);
+
+  const tooBig = await run({ render: async () => blob, imageOk: false });
+  assert.equal(tooBig.mail.attachment_token, undefined, 'a refused image does not cost the operator the lines');
+  assert.doesNotMatch(tooBig.mail.body, /attached image/);
+  assert.match(tooBig.notes[0].text, /as text: the image failed: attachments total too large/);
+
+  let rendered = 0;
+  const remote = await run({ render: async () => { rendered += 1; return blob; }, target: { remote: true } });
+  assert.equal(rendered, 0, 'a peer gets no image of this page');
+  assert.equal(remote.mail.attachment_token, undefined);
+  assert.match(remote.notes[0].text, /another node gets no image/);
+
+  const noteOnly = await run({ render: async () => { rendered += 1; return blob; }, strokes: [] });
+  assert.equal(rendered, 0, 'with nothing drawn, no image of the view leaves');
+  void noteOnly;
+});
+
+test('a mark on a terminal is named by its line, and the overlay stays out of the image', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
+  const { view, harness, requests, controller } = await setup(t, { prefs });
+  await harness.act(() => controller().open(A));
+  const doc = harness.window.document;
+  const term = doc.createElement('div');
+  term.className = 'xterm';
+  term.innerHTML = '<div class="xterm-screen"></div><div class="xterm-rows"><div>first line</div><div>   </div></div>';
+  doc.body.appendChild(term);
+  const [first, blank] = term.querySelector('.xterm-rows').children;
+  first.getBoundingClientRect = () => ({ top: 0, bottom: 50 });
+  blank.getBoundingClientRect = () => ({ top: 50, bottom: 100 });
+  doc.elementsFromPoint = () => [term.querySelector('.xterm-screen')];
+  await harness.act(() => harness.getByRole(view.container, 'button', { name: /Mark up this page for alpha/ }).click());
+  assert.ok(view.container.querySelector('.annotate-root').hasAttribute('data-capture-skip'));
+  const svg = view.container.querySelector('svg.annotate-canvas');
+  const fire = (type, x, y) => {
+    const camel = { pointerdown: 'PointerDown', pointermove: 'PointerMove', pointerup: 'PointerUp' }[type];
+    harness.fireEvent(svg, `on${type}` in svg ? type : camel, { button: 0, pointerId: 1, clientX: x, clientY: y });
+  };
+  await harness.act(() => {
+    fire('pointerdown', 10, 10);
+    for (const [x, y] of [[30, 30], [10, 40], [30, 20], [14, 30]]) fire('pointermove', x, y);
+    fire('pointerup', 14, 30);
+  });
+  await harness.act(async () => {
+    view.container.querySelector('form.annotate-bar').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  const mail = requests.find((r) => r.url === '/api/operator-message' && r.body.subject === '[annotation]');
+  assert.match(mail.body.body, /1\. .*“first line”/);
+});
+
 test('markup too long to send whole stays open and tells the operator', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const notes = [];
@@ -1002,9 +1129,13 @@ test('markup too long to send whole stays open and tells the operator', async (t
   const m = await harness.importDashboardModule('js/companion-model.js');
   const doc = harness.window.document;
   const target = doc.createElement('button');
-  target.textContent = 'x'.repeat(70);
   doc.body.appendChild(target);
-  doc.elementsFromPoint = () => [target];
+  // Each its own line: alike ones share one.
+  let label = 0;
+  doc.elementsFromPoint = () => {
+    target.textContent = `${label += 1}`.padEnd(70, 'x');
+    return [target];
+  };
   const svg = view.container.querySelector('svg.annotate-canvas');
   const fire = (type, x, y) => {
     const camel = { pointerdown: 'PointerDown', pointermove: 'PointerMove', pointerup: 'PointerUp' }[type];

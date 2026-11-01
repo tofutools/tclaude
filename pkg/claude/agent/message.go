@@ -37,7 +37,7 @@ type messageParams struct {
 	Gen       string   `long:"gen" optional:"true" help:"Deliver to a SPECIFIC previous generation of the target agent: a conv-id that must belong to the agent the target resolves to. Normally a message follows the agent to its current generation; --gen pins it to that exact past conv. Direct (non-group, non-cc) sends only."`
 	To        string   `long:"to" optional:"true" help:"Target recipient as a flag instead of the first positional argument"`
 	Recipient string   `long:"recipient" optional:"true" help:"Target recipient as a flag instead of the first positional argument (alias of --to)"`
-	Attach    []string `long:"attach" short:"a" optional:"true" help:"Attach a file (repeatable). Remote member@peer recipients only, and only when the remote group accepts attachments; local agents should be sent a path instead."`
+	Attach    []string `long:"attach" short:"a" optional:"true" help:"Attach a file you can read (repeatable, 4 files and 512 KiB at most; images, text, data and PDF). Not on group messages. A remote member@peer must be in a group that accepts attachments."`
 
 	// Cobra's Changed state distinguishes an omitted recipient flag from an
 	// explicitly empty one. Boa binds values into the public fields above;
@@ -210,7 +210,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		payload["gen"] = p.Gen
 	}
 	if len(p.Attach) > 0 {
-		atts, err := ReadRemoteAttachments(p.Attach)
+		atts, err := ReadAttachments(p.Attach)
 		if err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return rcInvalidArg

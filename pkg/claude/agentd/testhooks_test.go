@@ -2412,3 +2412,11 @@ func AddStewardBaseSlugForTest(slug string) func() {
 	stewardBaseSlugs = append(slices.Clone(before), slug)
 	return func() { stewardBaseSlugs = before }
 }
+
+// SetOperatorMessageAttachmentsBaseForTest repoints durable message attachments
+// and returns the restore.
+func SetOperatorMessageAttachmentsBaseForTest(dir string) func() {
+	previous := operatorMessageAttachmentsBase
+	operatorMessageAttachmentsBase = dir
+	return func() { operatorMessageAttachmentsBase = previous }
+}

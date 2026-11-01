@@ -153,7 +153,7 @@ export function PaneDictation({
           : 'Dictate a draft. Nothing reaches the terminal until you press Enter here or Paste, and it lands at the prompt unrun. Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
         withContext=${talks ? withContext : null} onContext=${setWithContext}
         annotateLabel=${`Mark up this page for ${name}`}
-        onAnnotate=${talks ? () => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch() }) : null}>${children}<//>
+        onAnnotate=${talks ? () => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch(), remote: !!target.node }) : null}>${children}<//>
       ${notice && html`<button type="button" class="companion-pane-notice" role="alert" title="Dismiss" onClick=${() => setNotice('')}>${notice}</button>`}
     </div>
     ${showField && html`<${DraftField} dictation=${dictation} draft=${draft} sending=${sending} fieldRef=${fieldRef}

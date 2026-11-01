@@ -4,9 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 const regularAgentMessageQueueLimit = 10
@@ -111,6 +115,24 @@ func queueRegularAgentMessageWithAttachments(m *db.AgentMessage, attachments []d
 	id, pending, err = db.InsertAgentMessageWithAttachmentsBounded(m, attachments, regularAgentMessageQueueLimit)
 	if err == nil {
 		enqueueDeliveryForConv(m.ToConv)
+	}
+	return id, pending, err
+}
+
+// queueAgentMail queues one recipient's copy of an agent's mail, with its own
+// copy of the files the sender's CLI read (validateFedAttachments has passed
+// them). The daemon stores only those bytes and never opens a sender's path.
+func queueAgentMail(m *db.AgentMessage, files []proto.AttachmentPayload) (id int64, pending int, err error) {
+	if len(files) == 0 {
+		return queueRegularAgentMessage(m)
+	}
+	attachments, dir, err := storeMessageAttachments(filepath.Join(operatorMessageAttachmentsBase, convops.GenerateUUID()), files)
+	if err != nil {
+		return 0, 0, err
+	}
+	id, pending, err = queueRegularAgentMessageWithAttachments(m, attachments)
+	if err != nil {
+		_ = os.RemoveAll(dir)
 	}
 	return id, pending, err
 }
