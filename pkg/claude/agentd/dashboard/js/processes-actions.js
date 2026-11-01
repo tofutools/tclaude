@@ -349,14 +349,19 @@ export function createProcessesActions({
       return true;
     }
     try {
+      // With web terminals as the default (dashboard.default_terminal = "web"),
+      // skip the native window, as an agent row's open window does.
+      const web = dashboardState.snapshot.value?.default_terminal === 'web';
       const response = await fetchImpl(`/api/open-window/${encodeURIComponent(agentId)}`, {
         method: 'POST', credentials: 'same-origin',
+        ...(web ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ web: true }) } : {}),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
       if (result.mode === 'browser' && result.ws) {
         const { openTerminalPane } = await import('./terminals-tab.js');
-        openTerminalPane({ ws: result.ws, label, hideConv: agentId, agent: agentId });
+        // The key makes this the same tab an agent row's web window opens.
+        openTerminalPane({ ws: result.ws, label, key: `window:${agentId}`, hideConv: agentId, agent: agentId });
       }
       state.setNotice(`Opened ${label}.`);
       return true;
