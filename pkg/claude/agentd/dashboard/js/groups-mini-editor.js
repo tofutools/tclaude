@@ -313,7 +313,7 @@ export function MiniGraphEditor({
       <span class="gq-dim">${dirty ? 'draft' : 'saved'}</span>
       <span class="gm-toggle" role="group" aria-label="View">
         <button type="button" data-mini-steps disabled=${!stepsList.ok} title=${stepsList.ok ? 'Show the same draft as a step list' : `The step list cannot show it: ${stepsList.reason}`}
-          onClick=${() => onSteps({ list: stepsList.list, changed: dirty })}>☰ Steps</button>
+          onClick=${() => onSteps({ list: stepsList.list, changed: dirty, sourceHash: model.current.sourceHash, ref: model.current.currentRef })}>☰ Steps</button>
         <button type="button" aria-pressed="true" class="on">◈ Graph</button>
       </span>
       ${dirty && html`<span class="gm-changes" data-mini-changes=${summary.length}>● ${summary.length || 1} unsaved change${summary.length === 1 ? '' : 's'}${summary.length ? `: ${summary.slice(0, 3).join(', ')}${summary.length > 3 ? '…' : ''}` : ''}</span>`}

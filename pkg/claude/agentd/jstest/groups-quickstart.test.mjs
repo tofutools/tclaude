@@ -46,8 +46,11 @@ function fakeApi({ createError = null, createErrorBody = null, startErrors = [],
   };
 }
 
-async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = undefined } = {}) {
+async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = undefined, extraGroups = [], prefs = {} } = {}) {
   const harness = await createPreactHarness(t);
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  for (const [key, value] of Object.entries(prefs)) dashPrefs.setItem(key, value);
+  t.after(() => { for (const key of Object.keys(prefs)) dashPrefs.removeItem(key); });
   const [mod, list, interactions, handoff] = await Promise.all([
     harness.importDashboardModule('js/groups-processes.js'),
     harness.importDashboardModule('js/groups-list.js'),
@@ -59,7 +62,7 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = un
   const notes = [];
   const snapshot = { processes_enabled: true, groups: GROUPS };
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
-    <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${GROUPS} source=${source} filter="running" api=${api} confirm=${confirm}
+    <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${[...GROUPS, ...extraGroups]} source=${source} filter="running" api=${api} confirm=${confirm}
       notify=${(message, error) => notes.push({ message, error: !!error })}>
       <${list.GroupsNativeList} groups=${GROUPS} snapshot=${snapshot} actions=${{}} />
     <//>
@@ -117,6 +120,8 @@ function scribeApi({ chat, stored = null, summonError = null, sendError = null }
   api.summonScribe = async (body) => { api.calls.summon.push(body); if (summonError) throw new Error(summonError); return SCRIBE; };
   api.sendScribeMessage = async (conv, message) => { api.calls.send.push({ conv, ...message }); if (sendError) throw new Error(sendError); return {}; };
   api.stopAgent = async (id) => { api.calls.stop.push(id); return { action: 'soft_stopped' }; };
+  api.calls.remove = [];
+  api.deleteTemplate = async (id) => { api.calls.remove.push(id); return { deleted: id }; };
   api.scribeChat = async () => chat();
   api.getTemplate = async (id) => { api.calls.get.push(id); return stored?.() || { sourceHash: 'a'.repeat(64), template: { id, nodes: {} }, edges: [] }; };
   api.getTemplateHead = api.getTemplate;
@@ -230,13 +235,23 @@ test('a reply from before the last save is not the end of the turn', async (t) =
   assert.equal(scribeFinished({ messages: [human, closing], ready: {} }), false, 'an unknown save time is not finished');
 });
 
+test('a failed start still leaves the group when the draft cannot be deleted', async (t) => {
+  withOrigin(t);
+  const api = scribeApi({ chat: () => ({ messages: [] }), sendError: 'mail refused' });
+  api.deleteTemplate = async () => { throw new Error('store busy'); };
+  const view = await mount(t, { api, confirm: async () => true });
+  await describe(view);
+  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_1' }]);
+});
+
 test('a failed start takes the empty draft out of the group', async (t) => {
   const api = scribeApi({ chat: () => ({ messages: [] }), sendError: 'mail refused' });
   withOrigin(t);
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
   assert.deepEqual(api.calls.stop, [SCRIBE.agent_id], 'a scribe with no request does not stay up');
-  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_1' }]);
+  assert.deepEqual(api.calls.remove, ['tmpl_1'], 'the empty draft is deleted, not left unlisted');
+  assert.deepEqual(api.calls.unpin, []);
   assert.ok(view.notes.some((note) => note.error && /mail refused/.test(note.message)));
   assert.equal(view.root.querySelector('[data-scribe-draft]'), null);
 });
@@ -1025,4 +1040,152 @@ test('dropping a .pwf on a group reviews it for that group; other files fall thr
   assert.equal(dropped.defaultPrevented, true);
   assert.equal(imports().length, 1);
   assert.ok(imports()[0].includes('group=webshop'), imports()[0]);
+});
+
+// A reload: the group has the pinned draft, the snapshot has its live scribe,
+// and the panel's own state is gone.
+const DRAFT_CONTEXT = { ...EMPTY_CONTEXT, groups: [{ ...EMPTY_CONTEXT.groups[0], processes: [
+  { templateId: 'tmpl_1', name: 'Build it', listed: false, steps: 1 },
+] }] };
+
+function scribeGroup({ online = true, label = 'draft: tmpl_1' } = {}) {
+  return { name: 'process-scribe', scribe: true, members: [{
+    agent_id: SCRIBE.agent_id, conv_id: SCRIBE.conv_id, title: SCRIBE.name, online,
+    descr: 'Reusable scribe scope: process-template/tmpl_1',
+    task_ref_url: 'http://127.0.0.1:8080/automations/processes/templates', task_ref_label: label,
+  }] };
+}
+
+const REQUEST_BODY = 'Build it, then review\n\nThis process is for the agent group "webshop". Draft its steps.';
+
+test('after a reload the draft panel comes back from the snapshot, with the words and the saved draft', async (t) => {
+  const api = scribeApi({ stored: () => SAVED_DRAFT, chat: () => ({ messages: [
+    { id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 },
+    { id: 'm2', role: 'scribe', body: 'Saved it.', at: T2 },
+  ] }) });
+  const { root, click } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  const panel = root.querySelector('[data-scribe-draft="tmpl_1"]');
+  assert.ok(panel, 'the panel is back with no click');
+  assert.equal(panel.querySelector('[data-scribe-request]').textContent, 'Build it, then review');
+  assert.match(panel.querySelector('[data-scribe-ready]').textContent, /Draft saved: 1 step/);
+  assert.equal(panel.querySelector('[data-scribe-review]').disabled, false);
+  assert.equal(api.calls.summon.length, 0, 'it re-attaches to the running scribe and starts nothing');
+  await click(panel.querySelector('[data-scribe-review]'));
+  assert.ok(root.querySelector('[data-step-editor-saved="tmpl_1"]'), 'review opens the step list');
+});
+
+test('a re-attached panel does not take the empty draft for saved work', async (t) => {
+  const api = scribeApi({ chat: () => ({ messages: [{ id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 }] }) });
+  const { root } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  assert.equal(root.querySelector('[data-scribe-ready]'), null);
+  assert.ok(root.querySelector('[data-scribe-review]').disabled);
+});
+
+test('a re-attached panel sees saved work that has no performer steps', async (t) => {
+  const graphOnly = { ...SAVED_DRAFT, template: { ...SAVED_DRAFT.template, nodes: {
+    start: { type: 'start' }, nested: { type: 'subprocess' }, done: { type: 'end', result: 'success' },
+  } } };
+  const api = scribeApi({ stored: () => graphOnly, chat: () => ({ messages: [{ id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 }] }) });
+  const { root } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  assert.ok(root.querySelector('[data-scribe-ready]'));
+});
+
+test('hiding the panel leaves the scribe working and the panel gone', async (t) => {
+  const chat = () => ({ messages: [{ id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 }] });
+  const api = scribeApi({ chat });
+  const { root, click, settle } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  await click(root.querySelector('[data-scribe-hide]'));
+  await settle();
+  assert.equal(root.querySelector('[data-scribe-draft]'), null, 'it does not come straight back');
+  assert.equal(api.calls.stop.length, 0);
+  await click(root.querySelector('[data-saved-run="tmpl_1"]'));
+  await click(root.querySelector('[data-saved-scribe]'));
+  assert.ok(root.querySelector('[data-scribe-draft="tmpl_1"]'), 'the process brings it back');
+});
+
+test('a draft left before the reload does not come back by itself', async (t) => {
+  const chat = () => ({ messages: [] });
+  const { root } = await mount(t, { api: scribeApi({ chat }), context: DRAFT_CONTEXT, extraGroups: [scribeGroup()],
+    prefs: { 'tclaude.dash.groupsProcesses.leftScribeDrafts': '["tmpl_1"]' } });
+  assert.equal(root.querySelector('[data-scribe-draft]'), null);
+});
+
+for (const [name, group] of [['a stopped scribe', scribeGroup({ online: false })], ['a scribe from the graph editor', scribeGroup({ label: 'process: tmpl_1' })]]) {
+  test(`${name} does not re-attach`, async (t) => {
+    const { root, click } = await mount(t, { api: scribeApi({ chat: () => ({ messages: [] }) }), context: DRAFT_CONTEXT, extraGroups: [group] });
+    assert.equal(root.querySelector('[data-scribe-draft]'), null);
+    await click(root.querySelector('[data-saved-run="tmpl_1"]'));
+    assert.equal(root.querySelector('[data-saved-scribe]'), null);
+  });
+}
+
+const REF_A = `tmpl_ship@sha256:${'a'.repeat(64)}`;
+const REF_B = `tmpl_ship@sha256:${'b'.repeat(64)}`;
+
+async function openReviewed(t, moved = true) {
+  const api = fakeApi({ stored: { tmpl_ship: { ...SAVED_VIEW, currentRef: REF_A } } });
+  const start = api.startGroupRun;
+  api.startGroupRun = async (request) => {
+    if (moved && request.expectedRef === REF_A) {
+      api.calls.start.push(request);
+      throw Object.assign(new Error('process template has a newer version'), { body: { code: 'process_run_template_moved' } });
+    }
+    return start(request);
+  };
+  const mounted = await mount(t, { api, context: SAVED_CONTEXT });
+  await mounted.click(mounted.root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await mounted.click(mounted.root.querySelector('[data-saved-edit]'));
+  const inputs = () => mounted.setValue(mounted.root.querySelector('[data-start-param="issue"]'), 'A-1');
+  await inputs();
+  return { ...mounted, api, inputs };
+}
+
+test('Start names the version on screen, and starts as ever while that is the head', async (t) => {
+  const { root, api, click } = await openReviewed(t, false);
+  await click(root.querySelector('[data-step-start]'));
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].expectedRef, REF_A);
+  assert.equal(root.querySelector('[data-step-newer]'), null);
+});
+
+test('a newer version stops an unchanged Start, and the operator can still run what they reviewed', async (t) => {
+  const { root, api, click, notes } = await openReviewed(t);
+  await click(root.querySelector('[data-step-start]'));
+  assert.match(root.querySelector('[data-step-newer]').textContent, /newer version/);
+  assert.ok(root.querySelector('[data-step-start]').disabled, 'Start waits for the choice');
+  assert.equal(notes.length, 0, 'nothing started');
+  await click(root.querySelector('[data-step-newer-start]'));
+  assert.equal(api.calls.start.at(-1).templateRef, REF_A);
+  assert.equal(api.calls.start.at(-1).expectedRef, undefined);
+  assert.ok(notes.some((note) => /Started/.test(note.message)));
+});
+
+test('the operator can review the newer version instead, and Start then pins that one', async (t) => {
+  const { root, api, click, inputs } = await openReviewed(t);
+  await click(root.querySelector('[data-step-start]'));
+  const stored = await api.getTemplate('tmpl_ship');
+  api.getTemplate = async () => ({ ...stored, currentRef: REF_B });
+  await click(root.querySelector('[data-step-newer-review]'));
+  assert.equal(root.querySelector('[data-step-newer]'), null);
+  await inputs();
+  await click(root.querySelector('[data-step-start]'));
+  assert.equal(api.calls.start.at(-1).expectedRef, REF_B);
+});
+
+test('editing after the refusal leaves the choice: those steps are no longer the reviewed version', async (t) => {
+  const { root, click, setValue } = await openReviewed(t);
+  await click(root.querySelector('[data-step-start]'));
+  await setValue(root.querySelector('.gq-name'), 'renamed');
+  assert.equal(root.querySelector('[data-step-newer]'), null);
+});
+
+test('switching to the graph and back keeps the reviewed version', async (t) => {
+  const { root, api, click, inputs } = await openReviewed(t, false);
+  await click(root.querySelector('[data-mini-graph]'));
+  const card = root.querySelector('[data-mini-editor="tmpl_ship"]');
+  assert.ok(card, 'the graph view opens');
+  await click([...card.querySelectorAll('button')].find((el) => /Steps/.test(el.textContent)));
+  await inputs();
+  await click(root.querySelector('[data-step-start]'));
+  assert.equal(api.calls.start.at(-1).expectedRef, REF_A, 'switching without a save keeps the version it came from');
 });

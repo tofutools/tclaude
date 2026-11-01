@@ -15,6 +15,7 @@ import htm from 'htm';
 import { unauthorizedProfiles } from './process-context.js';
 import { viewToStepList } from './process-step-list.js';
 import { defaultNotify, markQuickStart } from './groups-quickstart.js';
+import { reopenScribeDraft, scribeDraftsOf } from './groups-scribe-draft.js';
 import { bindSavedProcessDnd, registerSavedProcessRemover } from './groups-saved-process-dnd.js';
 import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
@@ -34,7 +35,7 @@ function initialValues(process) {
 }
 
 // StartStrip is the start form of one saved process.
-function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, onRemoving, onEdit, onClose }) {
+function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, scribeDraft = null, onRemoving, onEdit, onClose }) {
   const [values, setValues] = useState(() => initialValues(process));
   const [authorized, setAuthorized] = useState(() => new Set());
   const [extraProfiles, setExtraProfiles] = useState([]);
@@ -84,7 +85,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
     }
     onEdit({
       list: converted.list, process, stored: view,
-      saved: { templateId: process.templateId, sourceHash: String(view.sourceHash || ''), listed: view.listed ?? process.listed },
+      saved: { templateId: process.templateId, sourceHash: String(view.sourceHash || ''), ref: String(view.currentRef || ''), listed: view.listed ?? process.listed },
     });
   });
   const publish = () => act('publish', async () => {
@@ -123,6 +124,8 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
     ${blockedWhy && html`<span class="gq-why" data-start-blocked>${blockedWhy}</span>`}
     <button type="button" class="gq-btn" data-saved-edit disabled=${!!busy || !!editing} onClick=${edit}
       title=${editing ? 'Save or cancel the open editor first' : 'Edit the steps; saving writes a new version'}>${busy === 'edit' ? 'opening…' : '✎ Edit steps'}</button>
+    ${scribeDraft && html`<button type="button" class="gq-btn" data-saved-scribe disabled=${!!busy || !!editing}
+      title=${editing ? 'Save or cancel the open editor first' : 'Show the scribe drafting this process'} onClick=${() => { reopenScribeDraft(process.templateId); onEdit({ mode: 'scribe', draft: scribeDraft }); }}>✎ Scribe</button>`}
     ${!process.listed && html`<button type="button" class="gq-link" data-saved-publish disabled=${!!busy} onClick=${publish}
       title="List it in the template library, for every group to reuse">publish as template</button>`}
     <${WorkflowExportButton} id=${process.templateId} className="gq-link" />
@@ -143,7 +146,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
 // SavedProcesses is the group's saved-process chips and the open strip.
 // `editing` is the template id open in the inline editor below; ✎ opens one
 // there as a graph.
-export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, editing = '', onEdit, confirm = shellConfirm }) {
+export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, editing = '', scribes = [], onEdit, confirm = shellConfirm }) {
   const [open, setOpen] = useState('');
   const [removing, setRemoving] = useState(false);
   const [loading, setLoading] = useState('');
@@ -203,7 +206,8 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
           onClick=${() => { setRemoving(true); setOpen(process.templateId); }}>×</button>
       </span>`)}
     </div>
-    ${current && html`<${StartStrip} key=${current.templateId} removing=${removing} onRemoving=${setRemoving} editing=${editing} group=${group} process=${current} api=${api} source=${source}
+    ${current && html`<${StartStrip} key=${current.templateId} removing=${removing} onRemoving=${setRemoving} editing=${editing}
+      scribeDraft=${scribeDraftsOf(scribes, [current])[0] || null} group=${group} process=${current} api=${api} source=${source}
       wizard=${wizard} notify=${notify} onClose=${() => setOpen('')}
       onEdit=${(edit) => { setOpen(''); onEdit({ ...edit, origin: '' }); }} />`}
   </div>`;

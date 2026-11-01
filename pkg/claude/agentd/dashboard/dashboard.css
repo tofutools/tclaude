@@ -21532,6 +21532,9 @@ body.wizard .gq-draft-ask, body.wizard .gq-draft-reply input { background: #120e
 .gq-flow-rails path.back { stroke-dasharray: 3 3; }
 .gq-flow-rails path.head { fill: #6e7681; stroke: none; }
 .gq-why { margin-top: 6px; font-size: 11.5px; color: #e3b341; }
+.gq-newer { margin: 8px 0; padding: 8px 10px; border: 1px solid #e3b341; border-radius: 6px; font-size: 12.5px; }
+.gq-newer p { margin: 0 0 8px; }
+.gq-newer-acts { display: flex; flex-wrap: wrap; gap: 6px; }
 .gq-start-head { display: flex; align-items: baseline; gap: 10px; }
 .gq-start-head h3 { flex: 1; }
 .gq-folded { margin-left: 18px; }
