@@ -314,6 +314,7 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 //	POST   /api/agents/{conv}/restart      → stop + resume the same conversation
 //	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
 //	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
+//	POST   /api/agents/{conv}/compact      → the harness's compact, as POST /v1/agent/{conv}/compact
 //	POST   /api/agents/{conv}/task         → set/clear task-reference link
 //	GET    /api/agents/{conv}/status       → compact standalone-terminal status
 //	GET    /api/agents/{conv}/debug-export → download recorded launch configuration
@@ -438,6 +439,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			dashboardReincarnateAgent(w, r, convSelector)
+			return
+		case "compact":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardCompactAgent(w, r, convSelector)
 			return
 		case "rename":
 			if r.Method != http.MethodPost {
@@ -1535,6 +1543,18 @@ func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convSelector s
 		return
 	}
 	handleAgentRename(w, asDashboardHumanPeer(r), res.ConvID)
+}
+
+// dashboardCompactAgent is the cookie-auth twin of POST
+// /v1/agent/{conv}/compact: the same handler, so the same harness gate and
+// dispatch, with the dashboard human as caller.
+func dashboardCompactAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	handleAgentCompact(w, asDashboardHumanPeer(r), res.ConvID)
 }
 
 // dashboardRemoteControlAgent is the cookie-auth twin of POST

@@ -45,13 +45,14 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	pattern := "PATCH /api/groups/{name}/members/{conv}"
 	rules[pattern] = withPeerInvoke(pattern, peerViewRule{feature: "members.manage", requires: PermGroupsMembersManage, group: true, invoke: &peerInvokeSpec{param: "name"}})
 	// An agent's remote access and fast mode, its sandbox implementation, its
-	// reincarnation, its removal from a group and its permanent delete reach
+	// compaction and reincarnation, its removal from a group and its permanent delete reach
 	// what no peer grant hands out, as does its debug export: only unrestricted trust holds these, through this node's own
 	// handlers. One feature names one slug, so the metadata is stable.
 	full := peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerFullAgent}
 	for _, pattern := range []string{
 		"POST /api/agents/{id}/remote-control",
 		"POST /api/agents/{id}/fast-mode/{direction}",
+		"POST /api/agents/{id}/compact",
 		"POST /api/agents/{id}/reincarnate",
 		"POST /api/agents/{id}/sandbox-impl",
 		"DELETE /api/agents/{id}",

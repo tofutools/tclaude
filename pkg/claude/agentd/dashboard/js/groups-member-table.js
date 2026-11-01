@@ -7,7 +7,7 @@ import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
 import { visibleMemberCols, memberColHidden } from './member-columns.js';
 import {
   shortAgentId, idTooltip, relTime, shortCwd, displayModel,
-  harnessCanRename, harnessCanRemoteControl,
+  harnessCanRename, harnessCanRemoteControl, harnessCanCompact,
   SLOP_SYMBOLS,
 } from './helpers.js';
 import { isWizardActive } from './slop.js';
@@ -794,6 +794,15 @@ function RemoteMenuItem({ member, canRemote }) {
   return html`<${MenuButton} member=${member} act="toggle-remote-control" attrs=${{ 'data-intent': on ? 'off' : 'on' }} regular=${`${glyph} remote: ${on ? 'on' : 'off'}`} wizard=${`${glyph} remote scrying: ${on ? 'on' : 'off'}`} title=${title} />`;
 }
 
+function CompactMenuItem({ member, snapshot }) {
+  if (!harnessCanCompact(snapshot, member.state?.harness)) return null;
+  const label = member.title || member.conv_id;
+  return html`<${MenuButton} member=${member} act="compact-agent" regular="compact" wizard="distill memory" disabled=${!member.online}
+    title=${member.online
+    ? wizardCopy(`Compact ${label}'s context window now`, `Distill ${label}'s memory now`)
+    : `Compact is unavailable while ${label} is offline`} />`;
+}
+
 function FastModeMenuItem({ member }) {
   if (member.state?.harness !== 'codex') return null;
   const label = member.title || member.conv_id;
@@ -966,6 +975,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     } }} regular="💰 usage budget…" wizard="💰 tithe…" title=${wizardCopy(`See ${label}'s usage budgets; set its own usage profiles, extend a budget, snooze or exempt it`, `Weigh ${label}'s tithes; set its own, extend, snooze or exempt it`)} />` : null}
     <${MenuSeparator} />
     ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror hero" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this hero into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
+    <${CompactMenuItem} member=${member} snapshot=${snapshot} />
     <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate hero" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this hero — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
     <${RestartMenuItem} member=${member} />
     <${SubscriptionMenuItems} member=${member} />

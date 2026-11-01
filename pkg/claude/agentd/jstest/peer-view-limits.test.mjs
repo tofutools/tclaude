@@ -274,7 +274,7 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.equal(mod.grantHeld(doc.getElementById('solo-notify'), agents), true);
   assert.ok(mod.grantSelectors(agents).includes('[data-act="toggle-agent-notify"][data-agent="agt_solo"]'));
   assert.ok(!mod.grantSelectors(agents).some((sel) => sel.includes('agt_shared')));
-  for (const act of ['toggle-remote-control', 'fast-mode-set', 'reincarnate', 'delete-agent']) {
+  for (const act of ['toggle-remote-control', 'fast-mode-set', 'compact-agent', 'reincarnate', 'delete-agent']) {
     assert.equal(mod.agentGrantHeld(act, 'agt_solo', agents), false, `${act} takes unrestricted trust whatever the agent's grants`);
     assert.equal(mod.agentGrantHeld(act, 'agt_solo', { level: 'unrestricted' }), true);
   }

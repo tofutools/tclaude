@@ -360,6 +360,15 @@ function harnessCanRemoteControl(snapshot, name) {
   return h ? !!h.can_remote_control : true;
 }
 
+// harnessCanCompact reports whether an agent on harness `name` can be
+// compacted, per the snapshot's harness catalog (dashboardHarness.can_compact).
+// Fail-OPEN like harnessCanRename; the server re-gates on the harness.
+function harnessCanCompact(snapshot, name) {
+  const list = (snapshot && snapshot.harnesses) || [];
+  const h = list.find(x => x.name === (name || 'claude'));
+  return h ? !!h.can_compact : true;
+}
+
 const SLOP_SYMBOLS = ['🍒', '🍋', '🍇', '🍊', '🔔', '⭐', '💎', '7️⃣'];
 // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
 // Mirrors the session ls UPDATED column. Empty input → "" (no chip).
@@ -602,7 +611,7 @@ export {
   syncWizardOrbit,
   $, $$, isModifiedClick, isMacChromeZeroReleaseLeave, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
   makeModalResizable, bindModalSubmitHotkey,
-  harnessCanRename, harnessCanRemoteControl,
+  harnessCanRename, harnessCanRemoteControl, harnessCanCompact,
   relTime, shortCwd, displayModel, offlineDefault, groupOfflineOverride, setGroupOfflineOverride, groupShowOffline,
   // slop-fx.js and the native member reels share one symbol sequence.
   SLOP_SYMBOLS,

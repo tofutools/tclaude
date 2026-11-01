@@ -1027,8 +1027,8 @@ test('native member rows preserve the legacy field, capability and selector matr
     ...snapshot([{ name: 'alpha', members: [rich, fixed, background] }]),
     recorded_sandbox_details_enabled: true,
     harnesses: [
-      { name: 'claude', can_rename: true, can_remote_control: true },
-      { name: 'codex', can_rename: false, can_remote_control: false },
+      { name: 'claude', can_rename: true, can_remote_control: true, can_compact: true },
+      { name: 'codex', can_rename: false, can_remote_control: false, can_compact: false },
     ],
     sudo: [{ conv_id: 'conv-rich', slug: 'groups.manage', remaining_seconds: 90 }],
   };
@@ -1147,6 +1147,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(menu.getAttribute('role'), 'menu');
   assert.equal(menu.querySelectorAll('button:not([role="menuitem"])').length, 0);
   assert.equal(menu.querySelector('[data-act="toggle-remote-control"]').dataset.intent, 'off');
+  assert.ok(menu.querySelector('[data-act="compact-agent"]'), 'a harness that can compact offers it');
   assert.equal(menu.querySelector('[data-act="retire-agent"]').hasAttribute('data-agent'), false,
     'retire remains deliberately conv-keyed for dangling-agent recovery');
   assert.equal(menu.querySelector('[data-act="perm-edit"]').hasAttribute('data-agent'), false);
@@ -1159,6 +1160,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(fixedRow.querySelector('.rowname-fixed').textContent, 'Fixed agent');
   assertAbsent(fixedRow.querySelector('[data-act="rename-name"]'));
   assertAbsent(fixedRow.querySelector('[data-act="toggle-remote-control"]'));
+  assertAbsent(fixedRow.querySelector('[data-act="compact-agent"]'));
   assert.equal(fixedRow.querySelector('.state-pill').classList.contains('state-crashed'), true);
   assert.match(fixedRow.querySelector('.state-pill-wrap').title, /process ended without a clean exit/);
   assert.equal(fixedRow.querySelector('.slop-machine').getAttribute('aria-hidden'), 'true');
