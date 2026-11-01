@@ -108,6 +108,12 @@ nav:
           - Ansible: server/ansible.md
       - Adding a harness: adding-a-harness.md
 
+extra_css:
+  - stylesheets/image-viewer.css
+
+extra_javascript:
+  - javascripts/image-viewer.js
+
 # The Go file that embeds these pages in the binary is not a page.
 exclude_docs: |
   /embed.go

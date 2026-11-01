@@ -1,0 +1,71 @@
+/* The link is an inline box around the image, so give it the image's shape for
+   the focus ring and keep the image from overflowing the column. */
+.md-typeset a.image-viewer-link {
+  display: inline-block;
+  max-width: 100%;
+  cursor: zoom-in;
+}
+
+.md-typeset a.image-viewer-link:focus-visible {
+  outline: 0.15rem solid var(--md-accent-fg-color);
+  outline-offset: 0.1rem;
+}
+
+.image-viewer {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  color: var(--md-default-fg-color);
+  background: color-mix(in srgb, var(--md-default-bg-color) 94%, transparent);
+}
+
+.image-viewer::backdrop {
+  background: transparent;
+}
+
+.image-viewer__scroller {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  outline: none;
+  cursor: zoom-out;
+}
+
+/* Full size, not fitted: margin auto centers an image smaller than the screen,
+   and unlike centering alignment leaves all of a larger one reachable. */
+.image-viewer__scroller img {
+  flex: none;
+  max-width: none;
+  max-height: none;
+  margin: auto;
+}
+
+.image-viewer__close {
+  position: absolute;
+  top: 0.6rem;
+  right: 1.2rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  color: var(--md-default-bg-color);
+  background: var(--md-default-fg-color);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.image-viewer__close:focus-visible {
+  outline: 0.15rem solid var(--md-accent-fg-color);
+  outline-offset: 0.1rem;
+}
+
+html:has(.image-viewer[open]) {
+  overflow: hidden;
+}
