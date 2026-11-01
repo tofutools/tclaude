@@ -84,9 +84,10 @@ locked, with the reason. The fused set is part of the address
 
 ## The map
 
-**Fleet** at the end of the node row opens the fleet views, and the tab
-strip turns into their switch: **Map** and **⚙ Fleet config** (**⚙ Fleet config**
-alone until a hub is connected). The right end stays the same, with Fleet lit.
+**Fleet** at the end of the node row opens the fleet views. Once a hub is
+connected, the tab strip turns into their switch: **Map** and **⚙ Fleet config**.
+Until then Fleet opens ⚙ Fleet config and the tabs stay as they are. The right
+end stays the same, with Fleet lit.
 `[` / `]` step back to the tab you came from.
 Each ⚙ Fleet config section has its own address (`/fleet-admin/peers`,
 `/fleet-admin/grants`, …) and its own history entry, so Back/Forward step
