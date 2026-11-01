@@ -400,6 +400,11 @@ and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
 in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
 command fails there. It needs Collab, like the rest of the Steward.
 
+A tab showing a peer's dashboard (`?node=`) counts as open, and capture and
+marks work on it: they belong to this node's agents and to you at this browser,
+not to the peer. So a capture can show this node's Steward what a peer shares
+with you. The companion window itself stays off a peer's page.
+
 ### Marks
 
 `tclaude agent guide mark <kind>` lets the Steward draw on your view

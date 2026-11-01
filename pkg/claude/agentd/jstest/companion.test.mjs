@@ -822,6 +822,24 @@ test('the companion stays out of the page until features.collab is on', async (t
   assert.equal(view.container.querySelector('.companion-chips'), null);
 });
 
+test("a peer's page has no companion window but stays reachable for capture and marks", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { CompanionGate } = await harness.importDashboardModule('js/companion-island.js');
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return { ok: true, status: 200, json: async () => ({ marks: [] }) };
+  };
+  const snap = harness.signals.signal({ ...snapshotWith(), collab_enabled: false, peer_view: { level: 'restricted' } });
+  const view = await harness.mount(harness.html`<${CompanionGate} snapshot=${snap} activeTab=${harness.signals.signal('groups')} prefs=${memoryPrefs()} sessionPrefs=${memoryPrefs()}
+    fetchImpl=${fetchImpl} widgetFactory=${fakeWidgetFactory([])} closeTerminalPanes=${() => {}} />`);
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+  assert.equal(view.container.querySelector('.companion-chips'), null, 'no window on a peer page');
+  assert.ok(urls.includes('/api/companion/presence'), 'the tab still reports itself');
+});
+
 test('a permission request opens in a right-hand panel from its pill, and the panel closes when answered', async (t) => {
   const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A]) });
   const deadline = new Date(Date.now() + 120000).toISOString();
