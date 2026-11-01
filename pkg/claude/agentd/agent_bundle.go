@@ -650,6 +650,8 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			var dropped []string
 			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
 			landingWarnings = append(landingWarnings, dropped...)
+			profile, dropped = receiverLaunchFieldsProfile(profile, h, q.Get("group"), landingProfile)
+			landingWarnings = append(landingWarnings, dropped...)
 		}
 		if _, fail := buildProfileFromJSON(profile); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
@@ -1061,6 +1063,56 @@ func receiverCapsTheWall(h *harness.Harness, group, profile string) bool {
 // explicit tier, so what is not proven no wider than a spawn here would resolve
 // is dropped and the receiver's value applies. Tightening stays. A value the
 // guard cannot judge is dropped. It returns a warning for each one dropped.
+// receiverLaunchFieldsProfile takes out of a file's profile the launch fields
+// that widen an agent without being a posture: pre-trusting its directory, opening
+// it to remote control, and setting its environment.
+func receiverLaunchFieldsProfile(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []string) {
+	var tiers []launchProfileTier
+	if landing, fail, err := resolveLaunchDefaults(group, profile, h.Name); fail == nil && err == nil {
+		tiers = landing.tiers
+	}
+	var dropped []string
+	drop := func(what string) {
+		dropped = append(dropped, fmt.Sprintf("This file asks for %s, which a spawn here would not give, so it is not applied.", what))
+	}
+	gives := func(field string, value func(*db.SpawnProfile) *bool) bool {
+		given, _, _, _, fail := resolveBoolLaunchField(field, false, false, h.Name, tiers, value,
+			func(v bool) (bool, error) { return v, nil })
+		return fail == nil && given
+	}
+	// Left blank, a true field resolves to what a spawn here gives. A false one
+	// only asks for less.
+	if p.TrustDir != nil && *p.TrustDir {
+		p.TrustDir = nil
+		if !gives("trust_dir", func(tier *db.SpawnProfile) *bool { return tier.TrustDir }) {
+			drop("a trusted working directory")
+		}
+	}
+	if p.RemoteControl != nil && *p.RemoteControl {
+		p.RemoteControl = nil
+		if !gives("remote_control", func(tier *db.SpawnProfile) *bool { return tier.RemoteControl }) {
+			drop("remote control")
+		}
+	}
+	// A variable can change what the harness loads or how it decides, so none is
+	// taken from a file. The warning names them; their values may be secrets.
+	var names []string
+	for _, entry := range p.Environment {
+		given := false
+		for _, tier := range tiers {
+			given = given || (tier.profile != nil && slices.Contains(tier.profile.Environment, entry))
+		}
+		if !given {
+			names = append(names, entry.Name)
+		}
+	}
+	p.Environment = nil
+	if len(names) > 0 {
+		drop("environment variables " + strings.Join(names, ", "))
+	}
+	return p, dropped
+}
+
 func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, profile string) (spawnProfileJSON, []string) {
 	recorded := p
 	p.Approval, p.ToolGovernance, p.AutoReview = "", "", nil

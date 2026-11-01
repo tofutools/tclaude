@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -114,6 +115,63 @@ func TestReceiverApprovalProfile(t *testing.T) {
 			require.Len(t, dropped, len(tc.wantDropped))
 			for i, want := range tc.wantDropped {
 				assert.Contains(t, dropped[i], want)
+			}
+		})
+	}
+}
+
+func TestReceiverLaunchFieldsProfile(t *testing.T) {
+	yes, no := true, false
+	secret := sandboxpolicy.EnvironmentEntry{Name: "OPENCODE_CONFIG_CONTENT", Value: "hunter2"}
+	shared := sandboxpolicy.EnvironmentEntry{Name: "SHARED", Value: "same"}
+	for _, tc := range []struct {
+		name        string
+		landing     db.SpawnProfile
+		recorded    spawnProfileJSON
+		want        spawnProfileJSON
+		wantDropped []string
+	}{
+		{
+			name:        "trust and remote control are dropped",
+			recorded:    spawnProfileJSON{TrustDir: &yes, RemoteControl: &yes},
+			wantDropped: []string{"trusted working directory", "remote control"},
+		},
+		{
+			name:     "what a spawn here gives needs no warning",
+			landing:  db.SpawnProfile{TrustDir: &yes, RemoteControl: &yes},
+			recorded: spawnProfileJSON{TrustDir: &yes, RemoteControl: &yes},
+		},
+		{
+			name:     "a false asks for less and stays",
+			landing:  db.SpawnProfile{TrustDir: &yes, RemoteControl: &yes},
+			recorded: spawnProfileJSON{TrustDir: &no, RemoteControl: &no},
+			want:     spawnProfileJSON{TrustDir: &no, RemoteControl: &no},
+		},
+		{
+			name:        "environment is dropped, named and not quoted",
+			landing:     db.SpawnProfile{Environment: []sandboxpolicy.EnvironmentEntry{shared}},
+			recorded:    spawnProfileJSON{Environment: []sandboxpolicy.EnvironmentEntry{secret, shared}},
+			wantDropped: []string{"OPENCODE_CONFIG_CONTENT"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			h, err := harness.Resolve(harness.DefaultName)
+			require.NoError(t, err)
+			tc.landing.Name, tc.landing.Harness = "landing", h.Name
+			_, err = db.CreateSpawnProfile(&tc.landing)
+			require.NoError(t, err)
+
+			got, dropped := receiverLaunchFieldsProfile(tc.recorded, h, "", "landing")
+
+			assert.Equal(t, tc.want.TrustDir, got.TrustDir)
+			assert.Equal(t, tc.want.RemoteControl, got.RemoteControl)
+			assert.Empty(t, got.Environment)
+			require.Len(t, dropped, len(tc.wantDropped))
+			for i, want := range tc.wantDropped {
+				assert.Contains(t, dropped[i], want)
+				assert.NotContains(t, dropped[i], secret.Value)
+				assert.NotContains(t, dropped[i], shared.Name)
 			}
 		})
 	}

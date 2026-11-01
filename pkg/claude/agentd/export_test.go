@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"net/http"
 	"strings"
@@ -89,4 +90,9 @@ func ResolveCurrentSandboxChainForConvForTest(convID string) (*sandboxpolicy.Sna
 // accepted.
 func AsAcceptedMove(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), acceptedMoveContextKey{}, true))
+}
+
+// OfferKeepsItsPostureForTest exposes offerKeepsItsPosture.
+func OfferKeepsItsPostureForTest(o *db.FederationBundleOffer, groupID int64) bool {
+	return offerKeepsItsPosture(o, groupID)
 }

@@ -95,8 +95,13 @@ receiving side.
   policy decide how the new agent actually runs. A file can make its sandbox,
   approval, tools and auto-review tighter than a spawn here would resolve,
   never wider: a wider value is dropped, and the preview and the import result
-  say so. A teleport or direct move the receiver accepted keeps its approval,
-  tools and auto-review, so a moved agent does not stall on prompts. A received history is
+  say so. A directory trust, remote control or environment variables it asks
+  for are dropped the same way, unless a spawn here gives them; the warning
+  names the variables, not their values. A teleport or direct move keeps all of
+  this, so a moved agent does not stall on prompts, when it lands automatically
+  or when its peer holds `agents.teleport.receive` for the receiving group. Without
+  that grant the offer's teleport or move label counts for nothing and it lands
+  as a file. A received history is
   untrusted input: it may contain instructions written by anyone whose text
   reached the original agent.
 
