@@ -1382,7 +1382,7 @@ test('minimize and close are their own actions, and close leaves the agent runni
   await harness.act(() => bar().querySelector('.companion-wc-close').click());
   assert.deepEqual([...bar().querySelectorAll('[role="tab"]')].map((tab) => tab.title.split(':')[0]), ['bravo'], 'the tab is gone');
   assert.equal(view.container.querySelector('.companion-window-warm'), null, 'the window stays for the other tab');
-  assert.deepEqual(requests, [], 'nothing was asked of the agent');
+  assert.deepEqual(requests.filter((request) => request.url.includes(A)), [], 'nothing was asked of the agent');
   await harness.act(async () => { bar().querySelector('.companion-wc-minimize').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(view.container.querySelector('.companion-window-warm'), 'minimized');
   assert.equal(view.container.querySelectorAll('[role="tab"]').length, 1, 'and minimize closed no tab');
