@@ -485,6 +485,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   // A stored version opens as any saved process does: the step list, or the
   // inline graph when the list cannot show it.
   const openStored = (process, view) => {
+    noteDraftOpened(scribes, process.templateId, view);
     const converted = viewToStepList(view);
     if (!converted.ok) {
       setQuick({ mode: 'graph', key: Date.now(), process, view, stored: view });
@@ -497,7 +498,6 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   };
   const reviewDraft = ({ draft }, view) => {
     leaveScribeDraft(draft.templateId);
-    noteDraftOpened(scribes, draft.templateId, view);
     openStored(savedProcesses.find((saved) => saved.templateId === draft.templateId)
       || { templateId: draft.templateId, name: draft.name, listed: false }, view);
   };

@@ -62,7 +62,7 @@ test('task references and active-session readback stay scoped and injection-safe
     }],
   };
   assert.deepEqual(processScribeSessions({ groups: [valid] })[0], {
-    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true,
+    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true, status: '',
     scope: { kind: 'process-template', id: 'release-flow' }, scopeLabel: 'template release-flow',
     taskURL: 'https://dash.example/processes/templates', taskLabel: 'process: release-flow',
   });
@@ -72,7 +72,7 @@ test('task references and active-session readback stay scoped and injection-safe
   assert.deepEqual(processScribeSessions({ groups: [{ ...valid, members: [{
     ...valid.members[0], task_ref_url: 'javascript:alert(document.cookie)', task_ref_label: 'click me',
   }] }] })[0], {
-    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true,
+    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true, status: '',
     scope: { kind: 'process-template', id: 'release-flow' }, scopeLabel: 'template release-flow',
     taskURL: '', taskLabel: '',
   }, 'untrusted task URLs and their labels are removed from lifecycle readback');

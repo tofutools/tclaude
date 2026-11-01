@@ -55,46 +55,42 @@ function reviewedDrafts() {
   } catch { return []; }
 }
 
-// noteDraftOpened remembers the version the operator has seen of a process a
-// live scribe is on, so Start does not ask about that version again.
+// noteDraftOpened remembers the version the operator has seen of a process
+// while any scribe is up, so Start does not ask about that version again.
 export function noteDraftOpened(scribes, templateId, view) {
   const ref = String(view?.currentRef || '');
-  if (!ref || !liveProcessScribe(scribes, templateId)) return;
+  if (!ref || !scribes.some((scribe) => scribe.online)) return;
   const kept = reviewedDrafts().filter(([id]) => id !== templateId);
   try {
     dashPrefs.setItem(REVIEWED_DRAFTS_PREF, JSON.stringify([...kept, [templateId, ref]].slice(-LEFT_DRAFTS_MAX)));
   } catch { /* best effort */ }
 }
 
-function liveProcessScribe(scribes, templateId) {
-  return scribes.find((scribe) => scribe.online && scribe.scope?.id === templateId) || null;
-}
-
 // scribeStartWarning decides whether a Start from the group's ▶ strip asks
-// first: only while a scribe is at work on the process, because it is mid-turn
-// or because the head is its own save and the operator has not opened that
-// version. An idle scribe with nothing new, or no scribe, answers null, so a
-// rerun stays one click. `ref` is the version asked about, for expectedRef. It
-// reads only when Start is pressed; a read that fails asks rather than assumes.
+// first: only while a scribe is at work on the process. That is the process's
+// own scribe in a turn, or a head saved by a live scribe (a scribe can save any
+// template, so scope alone does not find it) or by any agent while the
+// process's own scribe is up, at a version the operator has not opened. With no
+// scribe up, or an idle one and nothing new, it answers null and a rerun stays
+// one click. `ref` is the version asked about, for expectedRef. It reads only
+// when Start is pressed; a read that fails asks rather than assumes.
 export async function scribeStartWarning(api, scribes, templateId) {
-  const scribe = liveProcessScribe(scribes, templateId);
-  if (!scribe) return null;
-  let chat;
+  const online = scribes.filter((scribe) => scribe.online);
+  if (!online.length) return null;
   let head;
   try {
-    [chat, head] = await Promise.all([api.scribeChat(scribe.agentId), api.getTemplateHead(templateId)]);
+    head = await api.getTemplateHead(templateId);
   } catch {
-    return { ref: '', reason: 'Could not check on the scribe.' };
+    return { ref: '', reason: 'Could not check the current version.' };
   }
   const ref = String(head?.currentRef || '');
-  if (processScribeChatLive(chat) || processScribeChatTranscript(chat).at(-1)?.role === 'human') {
-    return { ref, reason: 'The scribe is still working.' };
-  }
+  const own = online.find((scribe) => scribe.scope?.id === templateId);
+  if (own?.status && own.status !== 'idle') return { ref, reason: 'The scribe is still working.' };
+  const actor = String(head?.actor || '');
+  const scribeSaved = online.some((scribe) => actor === `agent:${scribe.agentId}`) || (!!own && actor.startsWith('agent:'));
   const reviewed = reviewedDrafts().find(([id]) => id === templateId)?.[1];
-  if (head?.actor === `agent:${scribe.agentId}` && ref !== reviewed) {
-    return { ref, reason: 'The scribe saved a version you have not opened.' };
-  }
-  return null;
+  return scribeSaved && ref !== reviewed
+    ? { ref, reason: 'A scribe saved a version you have not opened here.' } : null;
 }
 
 // scribeDraftsOf are the drafts in `processes` with a live scribe still on

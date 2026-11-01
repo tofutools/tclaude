@@ -1048,10 +1048,10 @@ const DRAFT_CONTEXT = { ...EMPTY_CONTEXT, groups: [{ ...EMPTY_CONTEXT.groups[0],
   { templateId: 'tmpl_1', name: 'Build it', listed: false, steps: 1 },
 ] }] };
 
-function scribeGroup({ online = true, label = 'draft: tmpl_1' } = {}) {
+function scribeGroup({ online = true, label = 'draft: tmpl_1', status = 'idle', scope = 'tmpl_1' } = {}) {
   return { name: 'process-scribe', scribe: true, members: [{
-    agent_id: SCRIBE.agent_id, conv_id: SCRIBE.conv_id, title: SCRIBE.name, online,
-    descr: 'Reusable scribe scope: process-template/tmpl_1',
+    agent_id: SCRIBE.agent_id, conv_id: SCRIBE.conv_id, title: SCRIBE.name, online, state: { status },
+    descr: `Reusable scribe scope: process-template/${scope}`,
     task_ref_url: 'http://127.0.0.1:8080/automations/processes/templates', task_ref_label: label,
   }] };
 }
@@ -1194,10 +1194,10 @@ test('switching to the graph and back keeps the reviewed version', async (t) => 
 const DRAFT_REF = `tmpl_1@sha256:${'2'.repeat(64)}`;
 const REVIEWED_DRAFTS = 'tclaude.dash.groupsProcesses.reviewedScribeDrafts';
 
-function stripStart(t, { actor = `agent:${SCRIBE.agent_id}`, chat = { messages: [] }, reviewed = '[]', online = true } = {}) {
-  const api = scribeApi({ chat: () => chat, stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
+function stripStart(t, { actor = `agent:${SCRIBE.agent_id}`, reviewed = '[]', online = true, status = 'idle', scope = 'tmpl_1' } = {}) {
+  const api = scribeApi({ chat: () => ({ messages: [] }), stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
   return mount(t, {
-    api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online })], prefs: { [REVIEWED_DRAFTS]: reviewed },
+    api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online, status, scope })], prefs: { [REVIEWED_DRAFTS]: reviewed },
   }).then(async (view) => {
     await view.click(view.root.querySelector('[data-saved-run="tmpl_1"]'));
     await view.harness.act(() => view.harness.fireEvent(view.root.querySelector('[data-saved-strip="tmpl_1"]'), 'submit'));
@@ -1207,9 +1207,10 @@ function stripStart(t, { actor = `agent:${SCRIBE.agent_id}`, chat = { messages: 
 }
 
 for (const [name, options] of [
-  ['the operator\'s own save', { actor: 'operator' }],
+  ['the operator\'s own save', { actor: 'human:operator' }],
   ['a version the operator opened', { reviewed: JSON.stringify([['tmpl_1', DRAFT_REF]]) }],
   ['a stopped scribe', { online: false }],
+  ['an idle scribe on another process', { actor: 'human:operator', scope: 'tmpl_other' }],
 ]) {
   test(`the ▶ strip stays one click with ${name}`, async (t) => {
     const { root, api } = await stripStart(t, options);
@@ -1231,19 +1232,28 @@ test('the ▶ strip asks about a version the scribe saved, and starting anyway p
   assert.equal(api.calls.start[0].expectedRef, DRAFT_REF);
 });
 
-for (const [name, chat] of [
-  ['a live turn', { messages: [], live: { items: [] } }],
-  ['mail it has not answered', { messages: [{ id: 'm1', role: 'human', body: 'more', at: '2026-11-01T10:00:00Z' }] }],
-]) {
-  test(`the ▶ strip asks during ${name}, even with nothing saved`, async (t) => {
-    const { root, api } = await stripStart(t, { actor: 'operator', chat });
+for (const status of ['working', 'awaiting_permission']) {
+  test(`the ▶ strip asks while the scribe is ${status}, even with nothing saved`, async (t) => {
+    const { root, api } = await stripStart(t, { actor: 'human:operator', status });
     assert.match(root.querySelector('[data-start-draft-warning]').textContent, /still working/);
     assert.equal(api.calls.start.length, 0);
   });
 }
 
-test('the ▶ strip asks when it cannot check on the scribe', async (t) => {
-  const api = scribeApi({ chat: () => { throw new Error('no chat'); }, stored: () => SAVED_DRAFT });
+test('the ▶ strip asks about a save by a scribe scoped elsewhere', async (t) => {
+  const { root, api } = await stripStart(t, { scope: 'tmpl_other' });
+  assert.match(root.querySelector('[data-start-draft-warning]').textContent, /saved a version/);
+  assert.equal(api.calls.start.length, 0, 'a scribe can save any template, so scope does not clear it');
+});
+
+test('the ▶ strip asks about another agent\'s save while the process\'s scribe is up', async (t) => {
+  const { root } = await stripStart(t, { actor: 'agent:agt_replaced' });
+  assert.ok(root.querySelector('[data-start-draft-warning]'));
+});
+
+test('the ▶ strip asks when it cannot read the current version', async (t) => {
+  const api = scribeApi({ chat: () => ({ messages: [] }), stored: () => SAVED_DRAFT });
+  api.getTemplateHead = async () => { throw new Error('no head'); };
   const { root, click, harness, settle } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '' })] });
   await click(root.querySelector('[data-saved-run="tmpl_1"]'));
   await harness.act(() => harness.fireEvent(root.querySelector('[data-saved-strip="tmpl_1"]'), 'submit'));
@@ -1279,4 +1289,22 @@ test('a scribe save after the question asks again rather than running it', async
   assert.equal(api.calls.start.length, 0, 'the version nobody was asked about did not run');
   assert.ok(root.querySelector('[data-start-draft-warning]'), 'the question stands');
   assert.equal(root.querySelector('.gq-error'), null, 'being asked again is not a failure');
+});
+
+test('a version that moved to a clean head clears the question instead of wedging it', async (t) => {
+  const { root, api, click, settle } = await stripStart(t);
+  const start = api.startGroupRun;
+  api.startGroupRun = async () => {
+    api.getTemplateHead = async () => ({ ...SAVED_DRAFT, currentRef: `tmpl_1@sha256:${'3'.repeat(64)}`, actor: 'human:operator' });
+    api.startGroupRun = start;
+    const error = new Error('moved');
+    error.body = { code: 'process_run_template_moved' };
+    throw error;
+  };
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(root.querySelector('[data-start-draft-warning]'), null);
+  assert.equal(root.querySelector('[data-saved-start]').disabled, false, 'Start works again');
+  assert.match(root.querySelector('.gq-error').textContent, /changed since you were asked/);
+  assert.equal(api.calls.start.length, 0);
 });

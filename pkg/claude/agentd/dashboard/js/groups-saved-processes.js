@@ -91,8 +91,8 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
     } catch (cause) {
       if (cause.body?.code !== 'process_run_template_moved') throw cause;
       const warning = await scribeStartWarning(api, scribes, process.templateId);
-      if (!warning) throw cause;
       setDraftWarning(warning);
+      if (!warning) setError(`${process.name} changed since you were asked. Press Start to run the current version.`);
     }
   });
   // A process the step list cannot show opens as the inline graph.
