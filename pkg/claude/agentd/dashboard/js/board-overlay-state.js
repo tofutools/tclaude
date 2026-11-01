@@ -6,7 +6,7 @@
 
 import { computed } from '@preact/signals';
 import { boardPaneSeed } from './board-model.js';
-import { closeOverlayWindow, labelOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { closeOverlayWindow, labelOverlayWindow, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { openTerminalPane } from './terminals-tab.js';
 
 export const BOARD_WINDOW_KIND = 'board';
@@ -14,7 +14,7 @@ export const boardWindowId = (id) => `board:${id}`;
 
 // { id, label, minimized, ... } per board window, where id is the window's and
 // board the board's.
-export const boardOverlays = computed(() => overlayWindows.value.filter((window) => window.kind === BOARD_WINDOW_KIND));
+export const boardOverlays = computed(() => overlayTabs.value.filter((tab) => tab.kind === BOARD_WINDOW_KIND));
 
 const windowOf = (board) => boardOverlays.peek().find((window) => window.board === board);
 

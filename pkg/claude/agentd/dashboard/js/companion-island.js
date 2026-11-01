@@ -32,7 +32,7 @@ import { compactWidth, measureFooterRoom, useFooterRest } from './companion-chip
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
-import { closeOverlayWindow, focusOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { closeOverlayWindow, focusOverlayWindow, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
 import { ChatWindow } from './chat-window.js';
 import { TerminalWindow } from './terminal-window.js';
@@ -379,7 +379,7 @@ export function CompanionApp({
   // starting until it says online or PENDING_MS passes.
   const [resuming, setResuming] = useState(() => new Set());
   // A tab whose agent has a window of its own is not here: the session has one view.
-  const hasWindow = (agentId) => overlayWindows.value.some((window) => window.id === chatWindowId(agentId));
+  const hasWindow = (agentId) => overlayTabs.value.some((tab) => tab.id === chatWindowId(agentId));
   const docked = tabs.filter((id) => !hasWindow(id));
   const activeId = docked.includes(active) ? active : (docked[0] || '');
   const activeAgent = activeId ? agents.get(activeId) || null : null;
@@ -515,7 +515,7 @@ export function CompanionApp({
   const showAgent = useCallback((agentId, { focus = true, starting = false, reclaim = false } = {}) => {
     if (!isAgentId(agentId)) return false;
     // A chat opens in one place: its window, when it has one.
-    const chat = overlayWindows.peek().find((window) => window.id === chatWindowId(agentId));
+    const chat = overlayTabs.peek().find((tab) => tab.id === chatWindowId(agentId));
     if (chat && !reclaim) {
       openOverlayWindow(chat);
       if (focus) focusOverlayWindow(chat.id);
@@ -561,7 +561,7 @@ export function CompanionApp({
   const revealAgent = useRef(null);
   revealAgent.current = (selector, { tabs: orTab }) => {
     const agentId = companionAgentOf(snapshot.peek(), selector)?.agentId || selector;
-    const chat = overlayWindows.peek().find((window) => window.id === chatWindowId(agentId));
+    const chat = overlayTabs.peek().find((tab) => tab.id === chatWindowId(agentId));
     if (chat) {
       openOverlayWindow(chat);
       focusOverlayWindow(chat.id);
@@ -1483,10 +1483,10 @@ export function CompanionApp({
   <//>`;
 
   return html`
-    ${overlayWindows.value.filter((window) => window.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
+    ${overlayTabs.value.filter((tab) => tab.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} fetchImpl=${fetchImpl} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
       closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onSeparateWindow=${detachWindow ? chatToWindow : null} onStewardDown=${stewardShutDown} stewardRoster=${stewardRoster} openPermissions=${openPermissions} openSudo=${openSudo} openStewardHandover=${openStewardHandover} showAgent=${showAgent} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
-    ${overlayWindows.value.filter((window) => window.kind === TERMINAL_WINDOW_KIND).map((instance) => html`<${TerminalWindow} key=${instance.id} instance=${instance}
+    ${overlayTabs.value.filter((tab) => tab.kind === TERMINAL_WINDOW_KIND).map((instance) => html`<${TerminalWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} Terminal=${CompanionTerminal} />`)}
     ${windowView}
     ${chipSlots}

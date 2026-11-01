@@ -35,7 +35,7 @@ import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
 import { droppedAt } from './overlay-window-model.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
-import { overlayWindows } from './overlay-instances.js';
+import { overlayTabs } from './overlay-instances.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch } from './node-api.js';
@@ -97,7 +97,7 @@ function soloFloats(pane, win = globalThis.window) {
 }
 
 // A chat window in the page. With Collab off the saved set is still there.
-const chatWindowShowing = () => companionAvailable() && overlayWindows.peek().some((window) => window.kind === CHAT_WINDOW_KIND && !window.minimized);
+const chatWindowShowing = () => companionAvailable() && overlayTabs.peek().some((tab) => tab.kind === CHAT_WINDOW_KIND && !tab.minimized);
 
 function composeTarget(pane, actions) {
   const { initialRetry: _initialRetry, ...seed } = pane.seed;
