@@ -366,6 +366,8 @@ var peerViewLocalRoutes = []string{
 var peerViewOwnNodeRoutes = []string{
 	// The local operator's current dashboard view, read by this node's companion agents.
 	"POST /api/companion/view",
+	// Consent to this node downloading its own source is its local operator's.
+	"GET /api/knowledge/source", "POST /api/knowledge/source",
 	// Presence and captures belong to the local operator's own open tabs.
 	"POST /api/companion/presence", "POST /api/companion/capture/{id}",
 	"POST /api/companion/marks/dismiss", "POST /api/companion/marks/{id}/dismiss", "POST /api/companion/marks/{id}/acknowledge", "POST /api/companion/marks/{id}/reply",

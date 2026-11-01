@@ -37,6 +37,7 @@ type knowledgeHeader struct {
 		State  string `json:"state"`
 		Commit string `json:"commit"`
 		Files  int    `json:"files"`
+		Bytes  int64  `json:"bytes"`
 		Detail string `json:"detail"`
 	} `json:"source"`
 }
@@ -113,7 +114,7 @@ func runKnowledgeStatus(p *knowledgeStatusParams, stdout, stderr io.Writer) int 
 	fmt.Fprintf(stdout, "\nState:  %s\nDocs:   %d pages, in the binary\n", resp.Label, resp.Pages)
 	fmt.Fprintf(stdout, "Source: %s", resp.Source.State)
 	if resp.Source.Files > 0 {
-		fmt.Fprintf(stdout, ", %d files", resp.Source.Files)
+		fmt.Fprintf(stdout, ", %d files, %.0f MiB", resp.Source.Files, float64(resp.Source.Bytes)/(1<<20))
 	}
 	if resp.Source.Detail != "" {
 		fmt.Fprintf(stdout, " (%s)", resp.Source.Detail)

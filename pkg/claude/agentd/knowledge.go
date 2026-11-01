@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -19,6 +20,10 @@ import (
 // the store stays behind the wall around ~/.tclaude/data and these routes only
 // read, so a reader can change nothing, under any harness or sandbox, and no
 // launch needs a new path.
+//
+// The source is a download only the operator can agree to. The routes that do
+// it are on the dashboard, with no agent path, and steward.source_download in
+// Config holds the answer.
 
 const PermKnowledgeRead = "knowledge.read"
 
@@ -137,12 +142,110 @@ func handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
 	}{newKnowledgeReply(), result})
 }
 
+// knowledgeSourceView is what the operator's question, progress bar and Config
+// row are drawn from.
+type knowledgeSourceView struct {
+	knowledge.SourceStatus
+	// Ask says to put the question to the operator: a Steward could use the
+	// source, this version has none, and their choice leaves it open.
+	Ask           bool   `json:"ask"`
+	Policy        string `json:"policy"`
+	Version       string `json:"version"`
+	Origin        string `json:"origin"`
+	DownloadBytes int64  `json:"download_bytes"`
+	StoredBytes   int64  `json:"stored_bytes"`
+}
+
+func newKnowledgeSourceView(cfg *config.Config) knowledgeSourceView {
+	status := knowledgeBase().Status()
+	policy := cfg.StewardSourceDownload()
+	return knowledgeSourceView{
+		SourceStatus:  status.Source,
+		Ask:           policy == config.StewardSourceAsk && status.Source.Detail == knowledge.SourceNotDownloaded && len(stewardConvs()) > 0,
+		Policy:        policy,
+		Version:       status.Build.Version,
+		Origin:        knowledge.SourceOrigin,
+		DownloadBytes: knowledge.ApproxDownloadBytes,
+		StoredBytes:   knowledge.ApproxStoredBytes,
+	}
+}
+
+// autoFetchKnowledgeSource starts a download the operator has already agreed to
+// for every version. It never blocks: progress and failure show in the dashboard.
+func autoFetchKnowledgeSource(cfg *config.Config) {
+	if cfg.CollabEnabled() && cfg.StewardSourceDownload() == config.StewardSourceEachVersion {
+		knowledgeBase().StartFetch()
+	}
+}
+
+// GET /api/knowledge/source: the live progress the question's card polls.
+func handleDashboardKnowledgeSourceGet(w http.ResponseWriter, _ *http.Request) {
+	cfg, err := config.Load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "config", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, newKnowledgeSourceView(cfg))
+}
+
+// POST /api/knowledge/source: the operator's answer. "once" is also how a failed
+// download is tried again. "remove" drops the copy and stops downloads, so the
+// question doesn't come straight back.
+func handleDashboardKnowledgeSourcePost(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "request body is not valid JSON")
+		return
+	}
+	policy := ""
+	switch body.Action {
+	case "once":
+	case "each_version":
+		policy = config.StewardSourceEachVersion
+	case "never":
+		policy = config.StewardSourceNever
+	case "remove":
+		policy = config.StewardSourceNever
+		if err := knowledgeBase().Remove(); err != nil {
+			writeKnowledgeError(w, err)
+			return
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "action", "action must be once, each_version, never or remove")
+		return
+	}
+	cfg, err := config.Update(func(cfg *config.Config, loadErr error) error {
+		if loadErr != nil {
+			return loadErr
+		}
+		if policy != "" {
+			if cfg.Steward == nil {
+				cfg.Steward = &config.StewardConfig{}
+			}
+			cfg.Steward.SourceDownload = policy
+		}
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "config", err.Error())
+		return
+	}
+	if body.Action == "once" || body.Action == "each_version" {
+		knowledgeBase().StartFetch()
+	}
+	writeJSON(w, http.StatusOK, newKnowledgeSourceView(cfg))
+}
+
 func writeKnowledgeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, knowledge.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, knowledge.ErrBadRequest):
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+	case errors.Is(err, knowledge.ErrFetching):
+		writeError(w, http.StatusConflict, "fetching", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 	}

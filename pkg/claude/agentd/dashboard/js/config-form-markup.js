@@ -6,6 +6,8 @@ import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNo
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
+import { KnowledgeSourceRow } from './knowledge-source-island.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -26,6 +28,16 @@ function ConfigInput(props) { return routedControl('input', props); }
 function ConfigSelect(props) { return routedControl('select', props); }
 function ConfigTextarea(props) { return routedControl('textarea', props); }
 function ConfigButton(props) { return routedControl('button', props); }
+
+// KnowledgeSourceSetting shows what is stored and offers to fetch or remove it.
+function KnowledgeSourceSetting() {
+  const route = useContext(ConfigEventContext);
+  // Remove also sets the choice above to Never, on disk.
+  const reload = () => route({ type: 'click', target: { id: 'cfg-reload' } });
+  return html`<${Setting} title="Stored source" summary="What this machine holds now.">
+    <${KnowledgeSourceRow} snapshot=${dashboardState.snapshot} onRemoved=${reload} />
+  </${Setting}>`;
+}
 
 // BrowserNotifyPermissionButton is the one-per-browser permission grant for
 // browser delivery. It is a plain button, NOT a ConfigButton: the permission
@@ -923,6 +935,18 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary="The spawn profile a new Steward launches with. Unset, it uses the global default profile.">
           <${ConfigSelect} id="cfg-steward-profile" aria-label="Steward spawn profile" style="min-width:160px"></${ConfigSelect}>
         </${Setting}>
+      </${Group}>
+      <${Group} title="Knowledge base">
+        <${Setting} title="Source download" forId="cfg-steward-source-download" k="steward.source_download"
+          summary="Whether tclaude's source is downloaded for a Steward to read. The docs are always there, built in."
+          more="Comes from github.com/tofutools/tclaude, in the background with a progress bar, and never without your say. Only the running version is kept, and a version already held is not fetched again. Ask puts the question once for each new version. An agent can't change this or start a download.">
+          <${ConfigSelect} id="cfg-steward-source-download" aria-label="Source download">
+            <option value="ask">Ask for each new version</option>
+            <option value="each_version">Download each new version</option>
+            <option value="never">Never</option>
+          </${ConfigSelect}>
+        </${Setting}>
+        <${KnowledgeSourceSetting} />
       </${Group}>
       <${Group} title="Name and startup">
         <${Setting} title="Name" forId="cfg-steward-name" k="steward.name"

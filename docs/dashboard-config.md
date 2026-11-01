@@ -142,6 +142,7 @@ options, see [Ask sandbox policy](ask.md#sandbox-policy).
 | Access | Writes | `steward.writes` | `messaging` |
 | Access | Default permissions | `steward.default_permissions` | empty |
 | Launch | Spawn profile | `steward.profile` | global default profile |
+| Knowledge base | Source download | `steward.source_download` | `ask` |
 | Name and startup | Name | `steward.name` | Steward |
 | Name and startup | Startup prompt | `steward.startup_prompt` | empty |
 

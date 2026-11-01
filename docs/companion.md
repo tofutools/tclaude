@@ -157,10 +157,11 @@ words still go where you meant them.
 
 ### What it knows
 
-The Steward has a [knowledge base](#knowledge-base) of tclaude's docs and source,
-pinned to the build you are running, and uses it before guessing. Its answers match
-your version, not whatever it remembers. If your build has uncommitted changes or
-names no commit, the knowledge base says so.
+The Steward has a [knowledge base](#knowledge-base) of tclaude's docs, pinned to the
+build you are running, and uses it before guessing. Its answers match your version,
+not whatever it remembers. You can add the source as well, with a download the
+dashboard asks you about. If your build has uncommitted changes or names no commit,
+the knowledge base says so.
 
 ### What the Steward may do
 
@@ -342,12 +343,36 @@ Every answer starts with how far it can be trusted:
 | `unknown` | The build names no commit, such as `go build` from an extracted tree. Docs are as built, and there is no source. |
 
 The docs are built into the binary, so they work with no checkout and offline. The
-source is not: it is an optional download. Summoning a Steward, starting the daemon
-and reading the knowledge base never download anything, and an agent can't start a
+source is not: it is an optional download that only you can start. Reading the
+knowledge base never downloads anything, and an agent can't start or approve a
 download. Without the source, docs still work and `knowledge status` says it isn't
-there. A stored copy lives under `~/.tclaude/data/knowledge`, and only the running
-build's copy is kept. A download for a commit must name that commit; one for a
-release tag trusts the tag.
+there and how you can get it.
+
+When a Steward exists and the running version has no source, the dashboard asks
+once. The card says what it is, about 18 MiB from `github.com/tofutools/tclaude`,
+about 28 MiB on disk:
+
+| Answer | What happens |
+|---|---|
+| **Yes, this version** | Downloads now. The next version asks again. |
+| **Yes, every new version** | Downloads now, then by itself for each new version, when a Steward is summoned or the daemon starts with one. |
+| **No** | Downloads nothing and doesn't ask again. |
+
+The download runs in the background, so nothing waits for it, and a card shows its
+progress. GitHub doesn't send an archive's length, so the bar measures against the
+expected size. A failure stays on screen with **Try again**.
+
+Your answer is kept as `steward.source_download` (`ask`, `each_version` or `never`),
+under **Config > Steward > Knowledge base**, where you can change it. The same place
+shows what is stored and its size, with **Download now** and **Remove**. Remove
+deletes the copy and sets the choice to `never`, so the question doesn't come back.
+
+A version already held is never fetched again. The copy lives under
+`~/.tclaude/data/knowledge`, and only the running build's copy is kept: a new
+download replaces the old one, and the daemon clears other versions when it starts.
+Tests, vendored and minified files, source maps, lockfiles and binaries are left out
+of it, which is about half the tree. A download for a commit must name that commit;
+one for a release tag trusts the tag.
 
 The daemon holds the copy and only answers reads, so an agent can't change it. It
 needs no new filesystem access, whatever the sandbox. It holds what ships with

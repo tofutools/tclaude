@@ -196,7 +196,7 @@ func fetched(t *testing.T, base *Base) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	base.Prefetch()
+	base.StartFetch()
 	base.WaitForFetch(ctx)
 }
 
@@ -207,6 +207,13 @@ func TestSourceIsFetchedByCommitAndFiltered(t *testing.T) {
 		tarFile{name: ".claude/settings.json", data: "{}"},
 		tarFile{name: "pkg/blob.bin", data: "a\x00b"},
 		tarFile{name: "pkg/huge.txt", data: strings.Repeat("x", maxFileBytes+1)},
+		tarFile{name: "pkg/a_test.go", data: "package a // needle\n"},
+		tarFile{name: "pkg/agentd/jstest/a.test.mjs", data: "needle\n"},
+		tarFile{name: "pkg/agentd/dashboard/third_party/x/x.js", data: "needle\n"},
+		tarFile{name: "pkg/testharness/sim.go", data: "package testharness // needle\n"},
+		tarFile{name: "pkg/dash.min.js", data: "needle\n"},
+		tarFile{name: "pkg/dash.js.map", data: "needle\n"},
+		tarFile{name: "go.sum", data: "needle\n"},
 		tarFile{name: "escape", link: "/etc/passwd"},
 	)
 	url, requests := serveArchive(t, archive)
@@ -217,7 +224,9 @@ func TestSourceIsFetchedByCommitAndFiltered(t *testing.T) {
 	fetched(t, base)
 	status := base.Status()
 	require.Equal(t, SourceReady, status.Source.State, status.Source.Detail)
-	assert.Equal(t, 1, status.Source.Files, "only the text file outside docs/ and .claude/")
+	assert.Equal(t, 1, status.Source.Files, "only the source a Steward needs")
+	assert.Equal(t, int64(len("package a // needle\n")), status.Source.Bytes)
+	assert.Equal(t, int64(len(archive)), base.received.Load(), "the download was counted")
 	assert.Equal(t, testCommit, status.Source.Commit)
 	assert.NoDirExists(t, filepath.Join(base.root, "old-commit"), "an older build's tree goes")
 
@@ -235,7 +244,7 @@ func TestSourceIsFetchedByCommitAndFiltered(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []Entry{{Path: "docs", Dir: true}, {Path: "pkg", Dir: true}}, top)
 
-	base.Prefetch()
+	base.StartFetch()
 	assert.Equal(t, 1, *requests, "a stored tree is not fetched again")
 }
 
@@ -250,7 +259,7 @@ func TestSourceFromAnotherCommitIsRefused(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestAFailedFetchLeavesDocsAndWaitsToRetry(t *testing.T) {
+func TestAFailedFetchLeavesDocsAndCanBeRetried(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -264,14 +273,37 @@ func TestAFailedFetchLeavesDocsAndWaitsToRetry(t *testing.T) {
 	assert.Contains(t, source.Detail, "not on GitHub")
 	_, err := base.Read(ReadRequest{Path: "index.md"})
 	require.NoError(t, err, "docs need no network")
-	base.Prefetch()
-	assert.Equal(t, 1, requests, "a dead link is not retried on every call")
+	assert.Equal(t, 1, requests, "a read does not retry")
+	fetched(t, base)
+	assert.Equal(t, 2, requests, "the operator's retry does")
+}
+
+func TestRemoveDropsTheStoredSource(t *testing.T) {
+	url, requests := serveArchive(t, githubArchive(t, testCommit, tarFile{name: "a.go", data: "package a\n"}))
+	base := docsBase(t, Build{State: StateExact, Commit: testCommit, Ref: testCommit}).WithSourceURL(url)
+	fetched(t, base)
+	require.Equal(t, SourceReady, base.Status().Source.State)
+	require.NoError(t, base.Remove())
+	assert.Equal(t, SourceNotDownloaded, base.Status().Source.Detail)
+	assert.Equal(t, 1, *requests)
+}
+
+func TestPruneOthersKeepsOnlyThisBuild(t *testing.T) {
+	url, _ := serveArchive(t, githubArchive(t, testCommit, tarFile{name: "a.go", data: "package a\n"}))
+	base := docsBase(t, Build{State: StateExact, Commit: testCommit, Ref: testCommit}).WithSourceURL(url)
+	fetched(t, base)
+	require.NoError(t, os.MkdirAll(filepath.Join(base.root, "older"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(base.root, ".fetch-123"), 0o700))
+	base.PruneOthers()
+	assert.NoDirExists(t, filepath.Join(base.root, "older"))
+	assert.NoDirExists(t, filepath.Join(base.root, ".fetch-123"))
+	assert.Equal(t, SourceReady, base.Status().Source.State)
 }
 
 func TestAnUnknownBuildFetchesNothing(t *testing.T) {
 	url, requests := serveArchive(t, nil)
 	base := docsBase(t, Build{State: StateUnknown}).WithSourceURL(url)
-	base.Prefetch()
+	base.StartFetch()
 	base.WaitForFetch(t.Context())
 	assert.Zero(t, *requests)
 	assert.Equal(t, SourceUnavailable, base.Status().Source.State)

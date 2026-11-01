@@ -15,19 +15,25 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	// sourceURL serves GitHub's archive of a commit or tag.
 	sourceURL = "https://codeload.github.com/tofutools/tclaude/tar.gz/"
+	// SourceOrigin is where the source comes from, to tell the operator.
+	SourceOrigin = "github.com/tofutools/tclaude"
 	// fetchTimeout covers the whole download on a slow link.
 	fetchTimeout = 10 * time.Minute
-	// fetchRetryAfter stops a reader on a dead link from retrying on every call.
-	fetchRetryAfter = time.Minute
-	// A tree is 65 MiB today. The caps are far above it and only bound a bad
-	// response.
+	// ApproxDownloadBytes and ApproxStoredBytes are what to expect, measured on
+	// a real archive. GitHub sends no length for an archive, so the operator's
+	// question and the progress bar rest on these, and both say "about".
+	ApproxDownloadBytes = 18 << 20
+	ApproxStoredBytes   = 28 << 20
+	// The caps are far above a real tree and only bound a bad response.
 	maxArchiveBytes = 512 << 20
 	maxTreeBytes    = 2 << 30
 	maxFileBytes    = 2 << 20
@@ -43,6 +49,7 @@ var safeRef = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._+-]*$`)
 type sourceMeta struct {
 	Commit string `json:"commit"`
 	Files  int    `json:"files"`
+	Bytes  int64  `json:"bytes"`
 }
 
 // SourceState says where the source stands.
@@ -57,14 +64,18 @@ const (
 
 // SourceNotDownloaded explains a missing source to a reader. Only the operator
 // starts a download, so an agent is told to say so rather than to wait or retry.
-const SourceNotDownloaded = "not downloaded; docs are readable, and only the operator can choose to download the source"
+const SourceNotDownloaded = "not downloaded; docs are readable. Only the operator can download the source, in the dashboard under Config > Steward; an agent can't start it"
 
 // SourceStatus is the source half of a status report.
 type SourceStatus struct {
 	State  SourceState `json:"state"`
 	Commit string      `json:"commit,omitempty"`
 	Files  int         `json:"files,omitempty"`
-	Detail string      `json:"detail,omitempty"`
+	// Bytes is what the stored tree takes.
+	Bytes int64 `json:"bytes,omitempty"`
+	// Received is how much of a running download has arrived.
+	Received int64  `json:"received,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 func (b *Base) sourceDir() string {
@@ -95,12 +106,12 @@ func (b *Base) sourceStatus() SourceStatus {
 		return SourceStatus{State: SourceUnavailable, Detail: "this build names no commit to fetch"}
 	}
 	if meta, ok := b.readSourceMeta(); ok {
-		return SourceStatus{State: SourceReady, Commit: meta.Commit, Files: meta.Files}
+		return SourceStatus{State: SourceReady, Commit: meta.Commit, Files: meta.Files, Bytes: meta.Bytes}
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.fetching {
-		return SourceStatus{State: SourceFetching, Detail: "fetching " + shortRef(b.build.Ref) + "; docs are readable meanwhile"}
+		return SourceStatus{State: SourceFetching, Received: b.received.Load(), Detail: "downloading " + shortRef(b.build.Ref) + "; docs are readable meanwhile"}
 	}
 	if b.fetchErr != nil {
 		return SourceStatus{State: SourceFailed, Detail: b.fetchErr.Error() + "; docs are readable"}
@@ -108,11 +119,11 @@ func (b *Base) sourceStatus() SourceStatus {
 	return SourceStatus{State: SourceUnavailable, Detail: SourceNotDownloaded}
 }
 
-// Prefetch starts fetching the source if this build has one and it is not
-// stored. It returns at once. A recent failure is not retried until
-// fetchRetryAfter has passed. A download takes the operator's consent, so no read
-// path, summon or daemon start may call this.
-func (b *Base) Prefetch() {
+// StartFetch starts downloading the source if this build has one and it is not
+// stored, so a version already held is never fetched again. It returns at once.
+// A download takes the operator's consent, so only their answer or their
+// Config choice may lead here, never a read.
+func (b *Base) StartFetch() {
 	if !b.canFetch() {
 		return
 	}
@@ -121,10 +132,11 @@ func (b *Base) Prefetch() {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.fetching || (b.fetchErr != nil && time.Since(b.fetchedAt) < fetchRetryAfter) {
+	if b.fetching {
 		return
 	}
-	b.fetching = true
+	b.fetching, b.fetchErr = true, nil
+	b.received.Store(0)
 	b.done = make(chan struct{})
 	go b.runFetch(b.done)
 }
@@ -138,7 +150,7 @@ func (b *Base) runFetch(done chan struct{}) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.fetching, b.fetchErr, b.fetchedAt = false, err, time.Now()
+	b.fetching, b.fetchErr = false, err
 	close(done)
 }
 
@@ -182,7 +194,8 @@ func (b *Base) fetch(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
-	meta, err := extractSource(io.LimitReader(resp.Body, maxArchiveBytes), filepath.Join(staging, sourceTreeDir))
+	counted := &countingReader{from: resp.Body, count: &b.received}
+	meta, err := extractSource(io.LimitReader(counted, maxArchiveBytes), filepath.Join(staging, sourceTreeDir))
 	if err != nil {
 		return err
 	}
@@ -207,6 +220,18 @@ func (b *Base) fetch(ctx context.Context) error {
 	return nil
 }
 
+// countingReader tells a status read how far a download has come.
+type countingReader struct {
+	from  io.Reader
+	count *atomic.Int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.from.Read(p)
+	r.count.Add(int64(n))
+	return n, err
+}
+
 // checkCommit refuses an archive of anything but the commit this build names.
 func (b *Base) checkCommit(got string) error {
 	if got == "" {
@@ -216,6 +241,17 @@ func (b *Base) checkCommit(got string) error {
 		return fmt.Errorf("source archive is commit %s, not %s", shortRef(got), shortRef(want))
 	}
 	return nil
+}
+
+// PruneOthers drops every other build's tree and anything a stopped download
+// left, so the store holds one tree at most. A running download does this itself
+// when it lands, and its staging directory must stay.
+func (b *Base) PruneOthers() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.fetching {
+		b.pruneOthers()
+	}
 }
 
 func (b *Base) pruneOthers() {
@@ -230,11 +266,38 @@ func (b *Base) pruneOthers() {
 	}
 }
 
-// keepSourcePath says whether an archive path belongs in the tree. docs/ comes
-// from the binary, which is what the build shipped with. .claude/ is this
-// repository's own agent setup, not how tclaude works.
+// Remove drops the stored source. A running download finishes first.
+func (b *Base) Remove() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.fetching {
+		return ErrFetching
+	}
+	b.fetchErr = nil
+	if !safeRef.MatchString(b.build.Ref) {
+		return nil
+	}
+	return os.RemoveAll(b.sourceDir())
+}
+
+// droppedSourceDirs and droppedSourceSuffixes are what a Steward doesn't need to
+// answer how tclaude works, about half of the tree: tests, their helpers and
+// vendored or generated files. docs/ comes from the binary, which is what the
+// build shipped with. .claude/ is this repository's own agent setup.
+var (
+	droppedSourceDirs     = []string{"docs", ".claude", ".github", "jstest", "testdata", "testharness", "third_party"}
+	droppedSourceSuffixes = []string{"_test.go", ".test.mjs", ".min.js", ".min.mjs", ".map", ".lock", "go.sum", "package-lock.json"}
+)
+
+// keepSourcePath says whether an archive path belongs in the tree.
 func keepSourcePath(name string) bool {
-	return !strings.HasPrefix(name, "docs/") && !strings.HasPrefix(name, ".claude/")
+	dirs := strings.Split(path.Dir(name), "/")
+	for _, dropped := range droppedSourceDirs {
+		if slices.Contains(dirs, dropped) {
+			return false
+		}
+	}
+	return !slices.ContainsFunc(droppedSourceSuffixes, func(suffix string) bool { return strings.HasSuffix(name, suffix) })
 }
 
 // extractSource writes the readable files of a GitHub archive to dir and reads
@@ -287,6 +350,7 @@ func extractSource(archive io.Reader, dir string) (*sourceMeta, error) {
 			return nil, err
 		}
 		meta.Files++
+		meta.Bytes = total
 	}
 	if meta.Files == 0 {
 		return nil, errors.New("source archive holds no files")

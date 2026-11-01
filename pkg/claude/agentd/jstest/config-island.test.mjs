@@ -682,6 +682,9 @@ test('Config edits the default Steward permissions with the slug list and drops 
   const steward = adapter.assembleConfig().steward;
   assert.equal(steward.name, 'Jeeves');
   assert.equal('default_permissions' in steward, false, 'an empty list is not written out');
+  assert.equal('source_download' in steward, false, 'asking is the default, so it is not written out');
+  await selectValue(harness, mounted.container.querySelector('#cfg-steward-source-download'), 'each_version');
+  assert.equal(adapter.assembleConfig().steward.source_download, 'each_version');
   await mounted.unmount();
 });
 

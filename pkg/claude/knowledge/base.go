@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
 )
 
 const (
@@ -35,6 +35,9 @@ const (
 // ErrNotFound is a path the knowledge base does not hold.
 var ErrNotFound = errors.New("not in the knowledge base")
 
+// ErrFetching refuses to remove the source during a download.
+var ErrFetching = errors.New("the source is downloading")
+
 // ErrBadRequest wraps an argument a reader can correct.
 var ErrBadRequest = errors.New("bad request")
 
@@ -51,11 +54,11 @@ type Base struct {
 	pages     map[string]bool
 	backlinks map[string][]Link
 
-	mu        sync.Mutex
-	fetching  bool
-	fetchErr  error
-	fetchedAt time.Time
-	done      chan struct{}
+	mu       sync.Mutex
+	fetching bool
+	fetchErr error
+	done     chan struct{}
+	received atomic.Int64
 }
 
 // New returns a base for build, reading docs and keeping source under root.

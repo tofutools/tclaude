@@ -213,6 +213,9 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	if loadErr == nil {
 		tellStewardsNewName(current, cfg)
 	}
+	if len(stewardConvs()) > 0 {
+		autoFetchKnowledgeSource(cfg)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"raw":  string(raw),
