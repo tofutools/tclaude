@@ -42,7 +42,7 @@ const TEAR_OFF_PX = 4;
 // when an unlocked line lets two overlap, and its lines above that: anything over
 // the split covers them. Past the bottom level, windows share it and DOM order
 // decides.
-const OVERLAY_TOP_LEVEL = 948;
+const OVERLAY_TOP_LEVEL = 947;
 export const OVERLAY_BOTTOM_LEVEL = 930;
 const overlayStack = signal([]);
 export const frontOverlayWindow = computed(() => overlayStack.value[overlayStack.value.length - 1] || '');
