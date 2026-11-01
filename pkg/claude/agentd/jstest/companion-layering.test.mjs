@@ -12,7 +12,7 @@ const sheets = ['dashboard.css', 'companion.css', 'board.css', 'mux.css', 'termi
 // number says nothing about the page: the window hides the chips, the others
 // are clipped to or carried by their host. A dialog's resize grip is part of it.
 // The scan reads the numbers only: it can't see a stacking context.
-const nested = /dialog-resizer|companion-(menu|decide-queue)|fleet-link-pop|fleet-map|dock-card-menu|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
+const nested = /dialog-resizer|companion-(menu|decide-queue)|fleet-link-pop|dock-card-menu|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
 const opened = /menu|pop|modal|overlay|drawer|panel|dialog/i;
 
 async function zRules() {
@@ -42,6 +42,8 @@ test('the docs offer stays above a window or board, but not above a dialog', asy
   const rule = (await zRules()).find((r) => /companion-window:not/.test(r.selector) && r.selector.endsWith('.knowledge-source-card'));
   assert.ok(rule.z > 951, 'above the companion window and a front board');
   assert.match(rule.selector, /:not\(:has\(\.modal-overlay\.show, \.manage-overlay\.show\)\)/);
+  const css = await readFile(new URL('../dashboard/companion.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(max-width: 660px\) \{\s*body\.dock-open \.knowledge-source-card \{ z-index: 45; \}/, 'a narrow window keeps it off the dock\'s underside');
 });
 
 test('the chips step clear of the dock instead of covering its menus', async () => {

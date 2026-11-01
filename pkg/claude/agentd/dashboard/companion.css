@@ -449,6 +449,10 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
    or board must not hide its question, so it rises over them, unless a dialog
    is up. */
 body:has(.companion-window:not(.companion-window-warm), .board-overlay):not(:has(.modal-overlay.show, .manage-overlay.show)) .knowledge-source-card { z-index: 952; }
+/* Too narrow to fit beside the dock: rest on it, as the chips do. */
+@media (max-width: 660px) {
+  body.dock-open .knowledge-source-card { z-index: 45; }
+}
 .knowledge-source-card.failed { border-color: var(--cmp-red); }
 .knowledge-source-card p { margin: 0; overflow-wrap: anywhere; }
 .knowledge-source-card progress { width: 100%; height: 8px; accent-color: var(--cmp-blue); }
