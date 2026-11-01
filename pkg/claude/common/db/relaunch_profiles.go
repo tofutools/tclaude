@@ -248,6 +248,30 @@ func AgentRelaunchProfileForConv(convID string) (*AgentRelaunchProfile, error) {
 	return decodeAgentRelaunchProfile(raw)
 }
 
+// ConversationResumeCwds returns the distinct directories harnessName
+// conversations were recorded in.
+func ConversationResumeCwds(harnessName string) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT DISTINCT json_extract(profile_json, '$.cwd') FROM conversation_resume_profiles
+		WHERE json_extract(profile_json, '$.harness') = ? AND json_extract(profile_json, '$.cwd') != ''`, harnessName)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation resume directories: %w", err)
+	}
+	defer rows.Close()
+	var cwds []string
+	for rows.Next() {
+		var cwd string
+		if err := rows.Scan(&cwd); err != nil {
+			return nil, err
+		}
+		cwds = append(cwds, cwd)
+	}
+	return cwds, rows.Err()
+}
+
 // ConversationResumeProfileForConv loads conversation-owned resume facts. It
 // never consults sessions and works for conversations without an agent.
 func ConversationResumeProfileForConv(convID string) (*ConversationResumeProfile, error) {
