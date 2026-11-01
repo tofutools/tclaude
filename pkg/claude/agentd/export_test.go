@@ -86,6 +86,12 @@ func ResolveCurrentSandboxChainForConvForTest(convID string) (*sandboxpolicy.Sna
 	return resolveCurrentSandboxChainForConv(convID)
 }
 
+// AllocatePrivateOpenCodeStateForTest allocates an agent's private state, as a
+// move does before it copies anything.
+func AllocatePrivateOpenCodeStateForTest(agentID string) (*db.OpenCodeAgentStateAllocation, error) {
+	return allocatePrivateOpenCodeState(agentID)
+}
+
 // AsAcceptedMove marks r as the import of a teleport or move offer the receiver
 // accepted.
 func AsAcceptedMove(r *http.Request) *http.Request {

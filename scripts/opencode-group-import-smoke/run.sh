@@ -10,8 +10,10 @@
 # install default and imports the same archive again: that member's conversation
 # goes in its private state, never the shared store, and resumes in a sandboxed
 # server, and resume recovery still finds that conversation with its resume
-# profile gone. An agent PAF of the same conversation then lands offline both
-# ways (`paf import --no-start`), with no server until it resumes.
+# profile gone. Assigning tclaude's sandbox to the first member then moves its
+# conversation into private state with the same ids, and an agent PAF of the
+# same conversation lands offline both ways (`paf import --no-start`), with no
+# server until it resumes.
 #
 # It needs `opencode`, `tmux`, `jq` and a working `bwrap` on PATH. Anything missing
 # is a failure:
@@ -421,10 +423,50 @@ wait_for 90 "the recovered conversation's server" managed_server_holds "$WALLED"
 private_opencode session list --format json | jq -e --arg id "$WALLED" 'any(.[]; .id == $id)' >/dev/null \
 	|| die "the recovered conversation left private state"
 
-log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed"
+log "assigning tclaude's sandbox moves a shared-store agent into private state"
+CHILD_ID=ses_0123456789abfSmokeChild0001
+jq --arg id "$CHILD_ID" --arg parent "$LANDED" --arg cwd "$DST_CWD" '
+	.info.id = $id | .info.parentID = $parent | .info.directory = $cwd |
+	.messages[0].info.id = "msg_0123456789abfSmokeChildMsg" | .messages[0].info.sessionID = $id |
+	.messages[0].parts[0].id = "prt_0123456789abfSmokeChildPrt" | .messages[0].parts[0].sessionID = $id |
+	.messages[0].parts[0].messageID = "msg_0123456789abfSmokeChildMsg"' "$ROOT/fixture.json" >"$ROOT/child.json"
+(cd "$DST_CWD" && node dst opencode import "$ROOT/child.json" --pure --log-level ERROR)
+(cd "$DST_CWD" && node dst opencode export "$LANDED" --pure --log-level ERROR) >"$ROOT/before-move.json"
+node dst tclaude agent groups stop crew-walled --force
+node dst tmux -L tclaude kill-server 2>/dev/null || true
+node dst tclaude agent sandbox-impl set "$LANDED" tclaude-layer | tee "$ROOT/move.txt"
+grep -q 'todo list' "$ROOT/move.txt" || die "the assignment does not disclose the todo list"
+if node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin 2>"$ROOT/refused.txt"; then
+	die "an assignment stranded the moved conversation"
+fi
+grep -q 'private state' "$ROOT/refused.txt" || die "the refusal does not say why: $(cat "$ROOT/refused.txt")"
+sessions_on_dst | jq -es --arg id "$LANDED" 'add // [] | all(.[]; .id != $id)' >/dev/null || die "the shared copy is still there"
+if (cd "$DST_CWD" && node dst opencode export "$CHILD_ID" --pure --log-level ERROR >/dev/null 2>&1); then
+	die "the shared copy of the child session is still there"
+fi
+MOVED_ROOT=$(python3 - "$ROOT/dst/.tclaude/data/db.sqlite" "$STATE_ROOT" <<'PY'
+import sqlite3, sys
+
+rows = sqlite3.connect(sys.argv[1]).execute(
+    "SELECT state_root FROM opencode_agent_state_allocations WHERE mode = 'private' AND state_root != ?",
+    (sys.argv[2],),
+).fetchall()
+assert len(rows) == 1, rows
+print(rows[0][0])
+PY
+)
+STATE_ROOT=$MOVED_ROOT
+private_opencode export "$LANDED" >"$ROOT/after-move.json"
+cmp "$ROOT/before-move.json" "$ROOT/after-move.json" || die "the moved conversation changed"
+private_opencode export "$CHILD_ID" | grep -q "$SECRET" || die "the child session did not move"
+node dst tclaude agent resume "$LANDED" | tee "$ROOT/moved-resume.txt"
+grep -q 'resumed' "$ROOT/moved-resume.txt" || die "the moved agent did not resume"
+managed_server_holds "$LANDED" tclaude-layer
 
 log "landing an agent offline under tclaude's sandbox"
+# The move took the first member out of the shared store since the last snapshot.
+AMBIENT_BEFORE=$(sessions_on_dst | jq -cs 'add // [] | [.[].id] | sort')
 land_offline crew-walled parked-walled tclaude-layer
-[[ $(sessions_on_dst | jq -c '[.[].id] | sort') == "$AMBIENT_BEFORE" ]] || die "the offline sandboxed agent reached the shared store"
+[[ $(sessions_on_dst | jq -cs 'add // [] | [.[].id] | sort') == "$AMBIENT_BEFORE" ]] || die "the offline sandboxed agent reached the shared store"
 
 log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed, started and offline"

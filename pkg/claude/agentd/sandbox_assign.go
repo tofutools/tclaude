@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -57,7 +59,7 @@ func handleAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeSandboxImplementationResponse(w, convID, "", nil)
+		writeSandboxImplementationResponse(w, convID, "", nil, "")
 		return
 	}
 	assignAgentSandboxImplementation(w, r, convID)
@@ -78,7 +80,7 @@ func dashboardSandboxImplementationAgent(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeSandboxImplementationResponse(w, resolved.ConvID, "", nil)
+		writeSandboxImplementationResponse(w, resolved.ConvID, "", nil, "")
 		return
 	}
 	assignAgentSandboxImplementation(w, r, resolved.ConvID)
@@ -196,6 +198,10 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	if fail := openCodePrivateStateRefusal(h, agentID, convID, current.Cwd, implementation); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 
 	// Then every gate a relaunch applies to an already-resolved posture, against
 	// the chain that relaunch will actually resolve. Running them here is what
@@ -208,10 +214,6 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 	if fail := sandboxImplementationHostFailure(h.Name, implementation); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	if fail := openCodeStateAssignmentFailure(h, agentID, implementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -247,11 +249,23 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	}
 
 	previous := current.SandboxImplementation
+	var note string
 	persist := func() *spawnFailure {
+		commit, undo, moved, fail := moveOpenCodeStateForAssignment(h, agentID, convID, current.Cwd, implementation, planned)
+		if fail != nil {
+			return fail
+		}
+		if moved {
+			note = openCodeMoveNote
+		}
 		err := db.AssignAgentSandboxImplementation(
 			agentID, implementation, mode, db.AssignedSandboxImplementationSource)
+		if err != nil {
+			undo()
+		}
 		switch {
 		case err == nil:
+			commit()
 			return nil
 		case errors.Is(err, db.ErrTemporarySandboxOverrideActive):
 			return &spawnFailure{
@@ -267,7 +281,7 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
-		writeSandboxImplementationResponse(w, convID, previous, nil)
+		writeSandboxImplementationResponse(w, convID, previous, nil, note)
 		return
 	}
 
@@ -308,36 +322,139 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	resume := resumeOneConvUnderLaunchLock(convID, false, nil)
 	switchedClients := clientHandoff.finishForConv(convID)
 	if resume.Action != "resumed" {
-		writeError(w, http.StatusInternalServerError, "restart_failed",
-			"sandbox implementation "+implementation+" was recorded, but the agent could not be restarted: "+
-				resume.Detail+"; use the normal wake action to retry")
+		msg := "sandbox implementation " + implementation + " was recorded, but the agent could not be restarted: " +
+			resume.Detail + "; use the normal wake action to retry"
+		if note != "" {
+			msg += "; " + note
+		}
+		writeError(w, http.StatusInternalServerError, "restart_failed", msg)
 		return
 	}
 	writeSandboxImplementationResponse(w, convID, previous, &sandboxImplementationRestart{
 		Action: resume.Action, SwitchedClients: switchedClients,
-	})
+	}, note)
 }
 
-// openCodeStateAssignmentFailure refuses putting tclaude's sandbox on an
-// OpenCode agent with no state allocation. Its conversation is in the ambient
-// store, which the sandboxed server cannot read, so the assignment would only
-// leave an agent whose every resume is refused. Allocating now would not help:
-// the new state would not hold the conversation.
-func openCodeStateAssignmentFailure(h *harness.Harness, agentID, implementation string) *spawnFailure {
-	if h.Name != harness.OpenCodeName || !isTclaudeLayer(implementation) {
+const openCodeMoveNote = "the conversation moved into private state, and its todo list did not: " +
+	"OpenCode's export does not carry it, so it was deleted with the shared copy"
+
+// openCodePrivateStateRefusal refuses moving an OpenCode agent off tclaude's
+// sandbox while its conversation is in private state. Any other implementation
+// reads the shared store, where the conversation is not, so the agent could not
+// resume. An allocation that does not hold the conversation strands nothing.
+func openCodePrivateStateRefusal(h *harness.Harness, agentID, convID, cwd, implementation string) *spawnFailure {
+	if h.Name != harness.OpenCodeName || isTclaudeLayer(implementation) {
 		return nil
 	}
 	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
 	if err != nil {
 		return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
-	if allocation != nil {
+	if allocation == nil || allocation.Mode != db.OpenCodeStatePrivate {
 		return nil
 	}
-	return &spawnFailure{http.StatusConflict, "opencode_state_unallocated",
-		"this OpenCode agent keeps its conversation in the shared store, which tclaude's sandbox cannot read; " +
-			"export it and import it where tclaude's sandbox is the receiving group's spawn profile or the install default, " +
-			"which installs the conversation in private state"}
+	private, err := openCodeHistoryForAgent(h, agentID)
+	if err == nil {
+		var held bool
+		if held, err = harness.OpenCodeHoldsConversation(private.History, convID, cwd); err == nil && !held {
+			return nil
+		}
+	}
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "opencode_state_read", err.Error()}
+	}
+	return &spawnFailure{http.StatusConflict, "opencode_state_private",
+		"this OpenCode agent's conversation is in private state, which " + implementation +
+			" cannot read, so the agent could not resume under it; keep tclaude-layer, " +
+			"or export the agent and import it where the receiving posture is the one you want"}
+}
+
+// moveOpenCodeStateForAssignment gives an OpenCode agent with no state
+// allocation the private state tclaude's sandbox needs: its conversation is in
+// the shared store, which the sandboxed server cannot read. The agent must be
+// stopped. The copy is complete and verified when this returns and the shared
+// copy is still there, so commit removes it once the posture is recorded and
+// undo leaves everything as it was. An allocation that does not hold the
+// conversation is a move that never finished, or a conversation started under
+// another posture, and gets the same copy.
+func moveOpenCodeStateForAssignment(
+	h *harness.Harness, agentID, convID, cwd, implementation string, planned *sandboxpolicy.Snapshot,
+) (commit, undo func(), moved bool, fail *spawnFailure) {
+	commit, undo = func() {}, func() {}
+	if h.Name != harness.OpenCodeName || !isTclaudeLayer(implementation) {
+		return commit, undo, false, nil
+	}
+	refuse := func(err error) (func(), func(), bool, *spawnFailure) {
+		return func() {}, func() {}, false, &spawnFailure{http.StatusInternalServerError, "opencode_state_move",
+			"move the conversation into private state: " + err.Error()}
+	}
+	existing, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	if err != nil {
+		return commit, undo, false, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if existing != nil {
+		private, err := openCodeHistoryForAgent(h, agentID)
+		if err != nil {
+			return refuse(err)
+		}
+		inPrivate, err := harness.OpenCodeHoldsConversation(private.History, convID, cwd)
+		if err != nil {
+			return refuse(err)
+		}
+		inShared, err := harness.OpenCodeHoldsConversation(h.History, convID, cwd)
+		if err != nil {
+			return refuse(err)
+		}
+		if inPrivate || !inShared {
+			return commit, undo, false, nil
+		}
+	}
+	// The server holds the shared store until the reaper's next tick, and what
+	// it writes after the export would go with the shared copy.
+	if runtime, err := db.GetOpenCodeRuntimeByConvID(convID); err != nil {
+		return refuse(err)
+	} else if runtime != nil {
+		if err := stopOpenCodeRuntime(runtime.SessionID); err != nil {
+			return refuse(err)
+		}
+	}
+	allocation, err := allocatePrivateOpenCodeState(agentID)
+	if err != nil {
+		return refuse(err)
+	}
+	discard := func() {
+		if existing != nil {
+			return
+		}
+		if err := os.RemoveAll(allocation.StateRoot); err != nil {
+			slog.Warn("sandbox assignment: remove unused OpenCode state", "agent", agentID, "error", err)
+		}
+		if err := db.DeleteOpenCodeAgentStateAllocation(agentID); err != nil {
+			slog.Warn("sandbox assignment: forget unused OpenCode state", "agent", agentID, "error", err)
+		}
+	}
+	spec, err := openCodeTclaudeLayerLaunchSpec(implementation, cwd, nil, planned, agentID)
+	if err == nil {
+		err = prepareOpenCodeTclaudeLayerState(spec)
+	}
+	var private *harness.Harness
+	if err == nil {
+		private, err = openCodeHistoryForAgent(h, agentID)
+	}
+	if err == nil {
+		err = harness.CopyOpenCodeConversation(h.History, private.History, convID, cwd)
+	}
+	if err != nil {
+		discard()
+		return refuse(err)
+	}
+	return func() {
+		// The agent reads its private copy from here on, so what this leaves
+		// behind is a stale duplicate, not a broken agent.
+		if err := harness.DeleteOpenCodeConversation(h.History, convID, cwd); err != nil {
+			slog.Warn("sandbox assignment: shared OpenCode copy left behind", "conv", short8(convID), "error", err)
+		}
+	}, discard, true, nil
 }
 
 // assignedHarnessBuiltinMode decides which harness-builtin mode the new posture
@@ -462,6 +579,8 @@ type sandboxImplementationAssignmentWire struct {
 	// live agent. Absent on a read and on an offline assignment.
 	Restart         string `json:"restart,omitempty"`
 	SwitchedClients int    `json:"switched_clients,omitempty"`
+	// Note is what an operator should know about what the assignment did.
+	Note string `json:"note,omitempty"`
 }
 
 // sandboxImplementationRestart is what a restarting assignment adds to the
@@ -476,7 +595,7 @@ type sandboxImplementationRestart struct {
 // read — the difference is what lets a client report a change rather than a
 // state.
 func writeSandboxImplementationResponse(
-	w http.ResponseWriter, convID, previous string, restart *sandboxImplementationRestart,
+	w http.ResponseWriter, convID, previous string, restart *sandboxImplementationRestart, note string,
 ) {
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
@@ -516,5 +635,6 @@ func writeSandboxImplementationResponse(
 			sandboxpolicy.ResourceCgroupRequired(limits, implementation),
 		Restart:         restartAction,
 		SwitchedClients: switchedClients,
+		Note:            note,
 	})
 }

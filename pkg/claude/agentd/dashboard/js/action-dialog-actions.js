@@ -387,9 +387,10 @@ export function createActionDialogActions({
       // Name the wake explicitly for a stopped agent. That assignment changed
       // nothing about the agent as it stands — it is recorded intent, and an
       // operator who reads "assigned" as "applied" would believe it is bounded.
+      const note = payload.note ? `; ${payload.note}` : '';
       notify(payload.restart
-        ? `${name}: sandbox implementation → ${payload.sandbox_implementation} (restarted)`
-        : `${name}: sandbox implementation → ${payload.sandbox_implementation} (applied when you wake it)`);
+        ? `${name}: sandbox implementation → ${payload.sandbox_implementation} (restarted)${note}`
+        : `${name}: sandbox implementation → ${payload.sandbox_implementation} (applied when you wake it)${note}`);
       await refresh();
       return payload;
     },

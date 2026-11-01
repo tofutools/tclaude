@@ -170,13 +170,22 @@ running agent the same way. A harness mode that was
 merely derived from the old implementation is not carried forward; the harness
 default is recorded instead unless `--sandbox` pins one.
 
-An OpenCode agent with no private state allocation cannot be assigned
-tclaude's sandbox. Its conversation is in the shared store, which the sandboxed
-server cannot read, so the assignment refuses rather than leave an agent whose
-every resume fails. Export it, then import it with `paf import --group` into a
-group whose spawn profile uses tclaude's sandbox, or import it or its group while
-tclaude's sandbox is the install default or the global profile's choice: the
-import installs the conversation in private state.
+Assigning tclaude's sandbox to an OpenCode agent with no private state moves
+its conversation there, because the sandboxed server cannot read the shared
+store. The conversation keeps its id and its spend, along with any subagent
+sessions under it. tclaude checks that the copy reads back the same before it
+records the assignment, then deletes the shared copy. If the copy fails, the
+agent stays as it was and the assignment reports why. A running agent is
+stopped first, as for any assignment with a restart.
+
+The move carries what `opencode export` carries, so the agent's todo list is
+deleted with the shared copy, and the assignment's result says so. Older
+conversations from before a reincarnation stay in the shared store.
+
+There is no move back. Any other implementation reads the shared store, where
+the conversation no longer is, so assigning one to an agent with its conversation
+in private state is refused, as is the dashboard's restart without sandbox. To
+change that agent's posture, export it and import it under the posture you want.
 
 ### Imported agents
 
