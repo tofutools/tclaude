@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func openCodeTestSessions() []openCodeSession {
@@ -39,7 +41,7 @@ func openCodeTestSessions() []openCodeSession {
 }
 
 func openCodeTestStore(sessions []openCodeSession) openCodeConvStore {
-	return openCodeConvStore{listSessions: func() ([]openCodeSession, error) {
+	return openCodeConvStore{listSessions: func(string) ([]openCodeSession, error) {
 		return sessions, nil
 	}}
 }
@@ -228,7 +230,7 @@ func TestOpenCodeConvStore_LiveRenamePrefersAPI(t *testing.T) {
 		"ses_alpha111", "Stale cold rename", OpenCodeName))
 	called := false
 	store := openCodeConvStore{
-		listSessions: func() ([]openCodeSession, error) { return sessions, nil },
+		listSessions: func(string) ([]openCodeSession, error) { return sessions, nil },
 		writeTitle: func(runtime db.OpenCodeRuntime, convID, title string) error {
 			called = true
 			assert.Equal(t, "ses_alpha111", runtime.ConvID)
@@ -299,7 +301,7 @@ func TestWriteOpenCodeTitleUsesAuthenticatedManagedAPI(t *testing.T) {
 func TestOpenCodeConvStore_LiveRenameFallsBackToCache(t *testing.T) {
 	withTestDB(t)
 	store := openCodeConvStore{
-		listSessions: func() ([]openCodeSession, error) {
+		listSessions: func(string) ([]openCodeSession, error) {
 			return nil, errors.New("CLI should not be needed for known runtime")
 		},
 		writeTitle: func(db.OpenCodeRuntime, string, string) error {
@@ -330,7 +332,7 @@ func TestOpenCodeConvStoreRejectsMalformedCLIShape(t *testing.T) {
 }
 
 func TestOpenCodeConvStoreResolveSkipsImpossibleIDWithoutCLI(t *testing.T) {
-	store := openCodeConvStore{listSessions: func() ([]openCodeSession, error) {
+	store := openCodeConvStore{listSessions: func(string) ([]openCodeSession, error) {
 		return nil, errors.New("must not run for a non-OpenCode id")
 	}}
 	ref, err := store.Resolve("019ec004", "/work/a", true)
@@ -354,4 +356,108 @@ func TestOpenCodeSyncKeepsRowsOutsideTheSnapshot(t *testing.T) {
 	other, err := db.GetConvIndex("ses_other")
 	require.NoError(t, err)
 	assert.NotNil(t, other)
+}
+
+// `opencode session list` shows one project, so a member landed in a repository
+// the daemon does not run from is only found by listing from there.
+func TestOpenCodeConvStoreFindsConversationInAnotherProject(t *testing.T) {
+	withTestDB(t)
+	repo := testutil.CanonicalTempDir(t)
+	const conv = "ses_landed1"
+	require.NoError(t, db.SetConversationResumeProfile(conv, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: OpenCodeName, Cwd: repo,
+	}))
+	var asked []string
+	store := openCodeConvStore{listSessions: func(dir string) ([]openCodeSession, error) {
+		asked = append(asked, dir)
+		if dir == repo {
+			return []openCodeSession{{ID: conv, Title: "Landed", Directory: repo}}, nil
+		}
+		return nil, nil
+	}}
+
+	exists, err := store.Exists(conv, "")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, []string{repo}, asked, "a known conversation takes one listing")
+
+	ref, err := store.Resolve("ses_land", "", true)
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	assert.Equal(t, repo, ref.ProjectPath)
+
+	require.NoError(t, store.SetTitle(conv, "Renamed before resume"))
+	title, err := store.Title(conv)
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed before resume", title)
+}
+
+// A landed conversation in private state is in no listing. It can still be
+// renamed, and a listing of its directory does not read it as deleted.
+func TestOpenCodeConvStoreKeepsPrivateStateConversation(t *testing.T) {
+	withTestDB(t)
+	repo := testutil.CanonicalTempDir(t)
+	const conv = "ses_private1"
+	require.NoError(t, db.SetConversationResumeProfile(conv, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: OpenCodeName, Cwd: repo,
+	}))
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	_, err = db.InsertOpenCodeAgentStateAllocation(db.OpenCodeAgentStateAllocation{
+		AgentID: agentID, Mode: db.OpenCodeStatePrivate, StateRoot: t.TempDir(),
+	})
+	require.NoError(t, err)
+	store := openCodeConvStore{listSessions: func(string) ([]openCodeSession, error) {
+		return []openCodeSession{{ID: "ses_ambient", Directory: repo}}, nil
+	}}
+
+	require.NoError(t, store.SetTitle(conv, "Private name"))
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: conv, ProjectDir: repo, ProjectPath: repo, CustomTitle: "Private name", Harness: OpenCodeName}))
+	_, err = store.ListConvs(repo)
+	require.NoError(t, err)
+
+	title, err := store.Title(conv)
+	require.NoError(t, err)
+	assert.Equal(t, "Private name", title)
+}
+
+// One project's listing failing does not hide the others, and a project that
+// is gone is not asked at all.
+func TestOpenCodeConvStoreStoreWideListingSurvivesOneProject(t *testing.T) {
+	withTestDB(t)
+	good, bad := testutil.CanonicalTempDir(t), testutil.CanonicalTempDir(t)
+	for id, dir := range map[string]string{"ses_good": good, "ses_bad": bad, "ses_vanished": filepath.Join(bad, "gone")} {
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: dir, ProjectPath: dir, Harness: OpenCodeName}))
+	}
+	store := openCodeConvStore{listSessions: func(dir string) ([]openCodeSession, error) {
+		switch dir {
+		case good:
+			return []openCodeSession{{ID: "ses_good", Directory: good}}, nil
+		case bad:
+			return nil, errors.New("cannot list")
+		case "":
+			return nil, nil
+		}
+		t.Errorf("listed from %q", dir)
+		return nil, nil
+	}}
+
+	entries, err := store.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "ses_good", entries[0].SessionID)
+	row, err := db.GetConvIndex("ses_bad")
+	require.NoError(t, err)
+	assert.NotNil(t, row, "unseen is not gone")
+}
+
+func TestListOpenCodeSessionsRunsFromTheProject(t *testing.T) {
+	dir := testutil.CanonicalTempDir(t)
+	executable := filepath.Join(testutil.CanonicalTempDir(t), "opencode")
+	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nprintf '[{\"id\":\"ses_here\",\"directory\":\"%s\"}]' \"$PWD\"\n"), 0o755))
+
+	sessions, err := listOpenCodeSessions(executable, dir)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, dir, sessions[0].Directory)
 }
