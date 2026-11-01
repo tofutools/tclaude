@@ -22,6 +22,7 @@ import {
 } from './process-context.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
 import { GroupsRunFocus } from './groups-run-focus.js';
+import { WorkflowImportButton } from './process-workflow-share.js';
 import {
   ProcessGraphRow, agentRunIndex, enabled, groupProcessCounts,
 } from './groups-process-indicators.js';
@@ -406,6 +407,27 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const [, setDismissed] = useState(false);
   // "Start in <group>" from the dock's library opens this group's start form
   // on that template.
+  // The importer sits here rather than in Get started: importing pins a process
+  // to the group, which takes the panel away, and a stale review stays open.
+  const importerRef = useRef(null);
+  const [droppedPwf, setDroppedPwf] = useState(null);
+  const [pwfOver, setPwfOver] = useState(false);
+  const pickPwf = () => importerRef.current?.querySelector('[data-pwf-file]')?.click();
+  const fileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+  // Only a .pwf is taken: any other file falls through to the page's own drop
+  // (a .paf), and one dropped on the importer's own dialog changes nothing.
+  const pwfDrop = {
+    onDragOver: (event) => { if (!fileDrag(event)) return; event.preventDefault(); setPwfOver(true); },
+    onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPwfOver(false); },
+    onDrop: (event) => {
+      setPwfOver(false);
+      if (!fileDrag(event) || event.target.closest?.('.modal-overlay, [role="dialog"]')) return;
+      const file = [...(event.dataTransfer.files || [])].find((f) => /\.pwf$/i.test(f.name));
+      if (!file) return;
+      event.preventDefault();
+      setDroppedPwf(file);
+    },
+  };
   useEffect(() => {
     const take = () => {
       const request = takeProcessStart(group.name);
@@ -471,6 +493,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
           : handOffProcessDraft({ create: true }))}
         onDraft=${(text) => draftWithScribe(api, { group, text, roster: people })
           .catch((cause) => (notify || defaultNotify)(`Could not draft the process: ${cause.message}`, true))}
+        onImport=${pickPwf}
         onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
         onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
       : fresh && folded && !starting && html`<div class="gp-empty gq-folded" data-quickstart-folded=${group.name}>
@@ -479,6 +502,10 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
     agentIds=${members.map((member) => member.agent_id).filter(Boolean)} wizard=${wizard} runApi=${runApi}
     source=${source} notify=${notify} onStart=${startScope} inline=${inline} />`;
+  // Beside the body, not in it: Both's section unmounts its body when folded,
+  // which would lose an open review and replay a dropped file on unfolding.
+  const importer = html`<span ref=${importerRef}><${WorkflowImportButton} group=${group.name} id="" className="dock-process-import-hidden"
+    dropped=${droppedPwf} onImported=${() => void source.refresh()} /></span>`;
   const body = html`${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}
       editing=${editing ? quick.process?.templateId || quick.saved?.templateId || '' : ''}
@@ -508,11 +535,13 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         actions=${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
-        <div class="gp-group" data-process-group=${group.name}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}</div>
+        <div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}</div>
       <//>
-      ${fused.after}`;
+      ${fused.after}
+      ${importer}`;
   }
-  return html`<div class="gp-group" data-process-group=${group.name}>
+  return html`<div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}>
+    ${importer}
     ${controls(false)}
     <div class="gp-group-head">
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />

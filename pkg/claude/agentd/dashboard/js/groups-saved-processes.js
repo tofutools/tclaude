@@ -5,7 +5,7 @@
 // the process's start inputs and command consent, then starts it in the
 // group (a new one is built from the group's process buttons). The strip
 // also edits the steps, publishes the process to the
-// template library, or removes it from the group; the chip's × opens the
+// template library, shares it as a .pwf, or removes it from the group; the chip's × opens the
 // strip straight at that removal confirmation, and dragging a chip onto the
 // bin removes it too (groups-saved-process-dnd.js).
 
@@ -16,6 +16,7 @@ import { unauthorizedProfiles } from './process-context.js';
 import { viewToStepList } from './process-step-list.js';
 import { defaultNotify, markQuickStart } from './groups-quickstart.js';
 import { bindSavedProcessDnd, registerSavedProcessRemover } from './groups-saved-process-dnd.js';
+import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
 
 const html = htm.bind(h);
@@ -124,6 +125,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
       title=${editing ? 'Save or cancel the open editor first' : 'Edit the steps; saving writes a new version'}>${busy === 'edit' ? 'opening…' : '✎ Edit steps'}</button>
     ${!process.listed && html`<button type="button" class="gq-link" data-saved-publish disabled=${!!busy} onClick=${publish}
       title="List it in the template library, for every group to reuse">publish as template</button>`}
+    <${WorkflowExportButton} id=${process.templateId} className="gq-link" />
     ${removing
     ? html`<span class="gq-confirm" role="group" aria-label="Confirm removal">
         ${process.listed ? `Remove from ${group.name}? It stays in the template library.` : `Remove from ${group.name}? It is not in the template library, so publish it first to keep it.`}

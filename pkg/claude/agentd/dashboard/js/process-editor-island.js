@@ -13,6 +13,7 @@ import { ScribeDock } from './process-scribe-dock.js';
 import { DiffReviewBar } from './process-diff-review.js';
 import { ScopeBar, ScopeMinimap, ScopeOutline, ScopePorts } from './process-scope-ui.js';
 import { ParamsDialog } from './process-params-dialog.js';
+import { WorkflowExportButton } from './process-workflow-share.js';
 import { CHANGE_SUMMARY_MARKERS } from './process-external-change.js';
 import {
   PROCESS_SNIPPET_NAME_MAX_BYTES, PROCESS_SNIPPET_NAME_MAX_RUNES, validateProcessSnippetName,
@@ -171,6 +172,8 @@ function Header({ controller, view }) {
       onClick=${() => (view.scribeDock?.available ? controller.toggleScribeDock() : controller.requestScribe('template'))}>
       <span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span>
     </button>
+    <${WorkflowExportButton} id=${model.id} disabled=${externalPending || model.dirty || !model.semanticHash}
+      title=${model.dirty || !model.semanticHash ? 'Save first: a workflow file carries the saved version' : ''} />
     <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title="Save a new version (Ctrl/Cmd+S)" onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
   </div>`;
 }

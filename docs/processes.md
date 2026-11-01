@@ -73,6 +73,12 @@ Importing stores templates and never starts a run. The review lists every
 command the workflow would run, the roles it asks for and the signer. See
 [Portable Workflow Format](pwf.md).
 
+In the dashboard, **share** downloads a `.pwf` from a template's row, the full
+editor (saved versions only) or a group's process strip. Import one from the
+Processes toolbar, the dock, or a group: use *Import a .pwf* in *Get started*,
+or drop the file on the group in Groups › Processes. A group's import offers to
+pin the process to that group.
+
 ### Saved to a group, or to the library
 
 Every process is a stored template, one versioned artifact, however it was

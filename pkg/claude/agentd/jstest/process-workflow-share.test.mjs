@@ -231,3 +231,13 @@ test('exportWorkflow: a workflow that fails validation is shared only after the 
   const confirmed = await run(['template "ship": nodes.work: task has no performer'], true);
   assert.deepEqual(confirmed.downloads, ['ship.pwf']);
 });
+
+test('WorkflowExportButton takes a look, a reason and a disabled state from its surface', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { WorkflowExportButton } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const { container } = await harness.mount(harness.html`<${WorkflowExportButton} id="ship" className="gq-link" disabled title="Save first" />`);
+  const button = container.querySelector('[data-process-action="export"]');
+  assert.equal(button.className, 'gq-link');
+  assert.equal(button.disabled, true);
+  assert.equal(button.title, 'Save first');
+});

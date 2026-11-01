@@ -500,6 +500,7 @@ test('saved processes show as chips; ▶ asks for the inputs and consent, then s
 test('a saved process publishes to the library and is removed from the group after a confirm', async (t) => {
   const { root, api, click } = await mount(t, { context: SAVED_CONTEXT });
   await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  assert.equal(root.querySelector('[data-saved-strip] [data-process-action="export"], .gq-strip [data-process-action="export"]').dataset.id, 'tmpl_ship');
   await click(root.querySelector('[data-saved-publish]'));
   assert.deepEqual(api.calls.publish, ['tmpl_ship']);
   await click(root.querySelector('[data-saved-remove]'));
@@ -793,4 +794,63 @@ test('◈ Graph after the step list saved a version continues from that version'
   await click(card.querySelector('.gm-menu [data-mini-menu="duplicate"]'));
   await click(card.querySelector('[data-mini-save]'));
   assert.deepEqual(api.calls.save[1].options, { sourceHash: 'h2' }, 'saved against the version the step list wrote');
+});
+
+function stubImportFetch(t, { calls = [] } = {}) {
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return { ok: true, status: 200, json: async () => ({ title: 'Ship', root: 'ship@sha256:aa', rootId: 'ship', params: [], roles: [], programs: [], assignees: [], humans: [], signatures: [],
+      templates: [{ ref: 'ship@sha256:aa', id: 'ship', head: true, status: 'new' }], updates: 0, roleMap: [], reviewDigest: 'd1' }) };
+  };
+  t.after(() => { globalThis.fetch = previous; });
+  return calls;
+}
+
+const pwfFile = (name) => ({ name, size: 3, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer });
+
+async function dropFile(harness, target, file) {
+  const event = new globalThis.Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files: [file] } });
+  await harness.act(() => { target.dispatchEvent(event); });
+  return event;
+}
+
+test('Get started imports a .pwf into the group, through the shared review', async (t) => {
+  const fetched = stubImportFetch(t);
+  const imports = () => fetched.filter((url) => url.startsWith('/v1/process/import'));
+  const { root, click, settle, harness } = await mount(t);
+  let picked = 0;
+  const input = root.querySelector('[data-process-group="webshop"] [data-pwf-file]');
+  input.addEventListener('click', () => { picked += 1; });
+  await click(root.querySelector('[data-quickstart-import]'));
+  assert.equal(picked, 1, 'the panel opens the group\'s file picker');
+  Object.defineProperty(input, 'files', { configurable: true, value: [pwfFile('ship.pwf')] });
+  await harness.act(() => harness.fireEvent(input, 'change'));
+  await settle();
+  assert.equal(imports().length, 1);
+  assert.ok(imports()[0].includes('group=webshop'), imports()[0]);
+  assert.equal(imports().some((url) => url.includes('apply=1')), false, 'nothing is stored before the review');
+  assert.ok(harness.document.querySelector('[data-pwf-group]') || root.querySelector('[data-pwf-group]'), 'the review opens');
+});
+
+test('dropping a .pwf on a group reviews it for that group; other files fall through', async (t) => {
+  const fetched = stubImportFetch(t);
+  const imports = () => fetched.filter((url) => url.startsWith('/v1/process/import'));
+  const { root, settle, harness } = await mount(t);
+  // The page always holds hidden dialogs; they must not stop a drop.
+  const idle = harness.document.body.appendChild(harness.document.createElement('div'));
+  idle.setAttribute('role', 'dialog');
+  idle.setAttribute('aria-modal', 'true');
+  t.after(() => idle.remove());
+  const group = root.querySelector('[data-process-group="webshop"]');
+  const other = await dropFile(harness, group, pwfFile('agent.paf'));
+  await settle();
+  assert.equal(other.defaultPrevented, false, 'a .paf stays with the page drop');
+  assert.equal(imports().length, 0);
+  const dropped = await dropFile(harness, group, pwfFile('ship.pwf'));
+  await settle();
+  assert.equal(dropped.defaultPrevented, true);
+  assert.equal(imports().length, 1);
+  assert.ok(imports()[0].includes('group=webshop'), imports()[0]);
 });

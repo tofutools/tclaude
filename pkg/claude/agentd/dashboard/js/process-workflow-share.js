@@ -307,7 +307,7 @@ export function WorkflowImportButton({
 }
 
 // WorkflowExportButton downloads one template as a .pwf.
-export function WorkflowExportButton({ id }) {
+export function WorkflowExportButton({ id, className = 'process-action', disabled = false, title = '' }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const run = async () => {
@@ -321,7 +321,7 @@ export function WorkflowExportButton({ id }) {
       setBusy(false);
     }
   };
-  return html`<button class="process-action" data-process-action="export" data-id=${id} type="button" disabled=${busy}
-    title=${error || 'Download as a .pwf workflow file to share; it carries the templates this one uses'} aria-invalid=${error ? 'true' : undefined}
+  return html`<button class=${className} data-process-action="export" data-id=${id} type="button" disabled=${busy || disabled}
+    title=${error || title || 'Download as a .pwf workflow file to share; it carries the templates this one uses'} aria-invalid=${error ? 'true' : undefined}
     onClick=${run}>${busy ? 'exporting…' : error ? 'export failed' : 'share'}</button>`;
 }
