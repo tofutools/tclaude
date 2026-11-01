@@ -1145,7 +1145,7 @@ func resolveRemotePermissionVerdictFrom(src permSources, slug string) permVerdic
 	}
 	// Copy only the requested slug. Do not mutate shared source maps: discovery
 	// and audit readers may evaluate local and remote actions from one snapshot.
-	remote := permSources{resolvable: src.resolvable,
+	remote := permSources{resolvable: src.resolvable, externalSteward: src.externalSteward,
 		sudo: map[string]sudoPermSource{}, override: map[string]overridePermSource{}, group: map[string][]string{}}
 	if sudo, ok := src.sudo[slug]; ok && hasPeer(sudo.ScopeJSON) {
 		remote.sudo[slug] = sudo

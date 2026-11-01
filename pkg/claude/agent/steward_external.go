@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"time"
@@ -15,7 +16,9 @@ import (
 
 // `tclaude agent steward external` — the operator names an assistant running
 // outside tclaude and makes its credential. As with the rest of this command
-// group the daemon refuses an agent, with no permission or sudo path.
+// group the daemon refuses an agent, with no permission or sudo path. Issuing
+// calls never retry: the response holds the credential, so the daemon keeps no
+// copy to replay, and a retry would mint another one.
 
 const externalStewardNeeds = "Only the human operator can run this; agents are refused. Needs Collab and steward.external_enabled in the config."
 
@@ -142,7 +145,7 @@ func runExternalStewardAdd(p *externalStewardAddParams, stdout, stderr io.Writer
 	}
 	var resp externalStewardIssuedResp
 	body := map[string]any{"name": p.Name, "expires_days": p.Days}
-	if err := DaemonPost("/v1/external-stewards", body, &resp); err != nil {
+	if err := DaemonRequest(http.MethodPost, "/v1/external-stewards", body, &resp, DaemonOpts{NoRetry: true}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -174,7 +177,7 @@ func runExternalStewardRenew(p *externalStewardRenewParams, stdout, stderr io.Wr
 	}
 	var resp externalStewardIssuedResp
 	body := map[string]any{"expires_days": p.Days, "revoke_existing": p.RevokeOld}
-	if err := DaemonPost("/v1/external-stewards/"+url.PathEscape(p.Name)+"/renew", body, &resp); err != nil {
+	if err := DaemonRequest(http.MethodPost, "/v1/external-stewards/"+url.PathEscape(p.Name)+"/renew", body, &resp, DaemonOpts{NoRetry: true}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

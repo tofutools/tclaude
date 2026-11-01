@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // An external steward is an assistant the operator runs outside tclaude, acting
@@ -64,10 +65,12 @@ var externalStewardNever = []string{
 	PermNodeCredentialsReceive,
 }
 
-// externalStewardOptIn are level slugs a principal does not start with: a
-// capture can show anything the operator has open, and it would leave for the
-// assistant's own provider. The operator grants it deliberately.
-var externalStewardOptIn = []string{PermDashboardCapture}
+// externalStewardOptIn are level slugs a principal does not start with. A capture
+// can show anything the operator has open, and it would leave for the assistant's
+// own provider, so the operator grants it deliberately. Spawning needs a parent
+// with a recorded launch posture, which a principal does not have, so issuing it
+// would promise something the spawn guard refuses.
+var externalStewardOptIn = []string{PermDashboardCapture, PermAgentSpawn}
 
 func externalStewardRefuses(slug string) bool {
 	return slices.Contains(externalStewardNever, slug)
@@ -160,6 +163,29 @@ func verifyExternalStewardCredential(credential string, now time.Time) (auth *db
 	return row, ""
 }
 
+// externalCallerUnderPane reports whether any ancestor is a live tclaude pane.
+// The name of the process does not matter, so this also holds for a plain shell
+// session and for a process that double-forked inside a sandbox, which stays
+// under the pane because its PID namespace does. An unsandboxed daemon that
+// reparented to init escapes it; that is a same-uid process, which the threat
+// model already leaves out.
+func externalCallerUnderPane(pid int) bool {
+	const maxHops = 64
+	live := func(row *db.SessionRow) bool {
+		return row.TmuxSession != "" && session.IsTmuxSessionAlive(row.TmuxSession)
+	}
+	for range maxHops {
+		if pid <= 1 {
+			return false
+		}
+		if row := preferLiveRowAtPID(pid, live); row != nil && live(row) {
+			return true
+		}
+		pid = procParent(pid)
+	}
+	return true
+}
+
 // externalCallerManaged reports whether the socket peer is an agent tclaude
 // runs. Such a caller keeps its own identity: a credential it read must not make
 // it a larger one. An unmanaged harness is different from the operator token's
@@ -168,7 +194,7 @@ func verifyExternalStewardCredential(credential string, now time.Time) (auth *db
 // agent, and the assistant the operator chose may well be their own Claude Code.
 // Swapped by tests.
 var externalCallerManaged = func(pid int, claimedID string) bool {
-	if claimedID != "" {
+	if claimedID != "" || externalCallerUnderPane(pid) {
 		return true
 	}
 	convID, _, selectedLayer := legacyIdentityForPID(pid)

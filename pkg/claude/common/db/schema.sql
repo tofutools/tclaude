@@ -655,6 +655,12 @@ CREATE TRIGGER collab_board_sessions_agent_retired
  DELETE FROM collab_board_sessions WHERE agent_id = NEW.agent_id;
 END;
 
+CREATE TRIGGER external_steward_retired
+		AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
+			UPDATE external_steward_credentials SET revoked_at = NEW.retired_at
+			WHERE agent_id = NEW.agent_id AND revoked_at IS NULL;
+		END;
+
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
 			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,

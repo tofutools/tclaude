@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -40,6 +41,9 @@ func newExternalStewardFlow(t *testing.T, enabled bool) *externalStewardFlow {
 	enableCollab(t)
 	setExternalStewards(t, enabled)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	// The capture gate tests rely on no dashboard having been heard from.
+	agentd.ResetDashboardCaptureForTest()
+	t.Cleanup(agentd.ResetDashboardCaptureForTest)
 	return &externalStewardFlow{t: t, f: f, client: agentd.DaemonSocketClientForTest(t)}
 }
 
@@ -198,9 +202,9 @@ func TestExternalSteward_ExpiredAndRetiredAreRefused(t *testing.T) {
 	renewed := s.humanRenew("assistant")
 	code, _ = s.call(renewed.Credential, http.MethodGet, "/v1/fleet", nil)
 	require.Equal(t, http.StatusOK, code)
-	retired, err := db.RetireAgentByID(renewed.AgentID, "human", "test")
-	require.NoError(t, err)
-	require.True(t, retired)
+	// Through the operator's route, which is not the only writer of retired_at.
+	code, body = s.humanPost("/v1/agent/"+renewed.AgentID+"/retire", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
 	code, _ = s.call(renewed.Credential, http.MethodGet, "/v1/fleet", nil)
 	assert.Equal(t, http.StatusUnauthorized, code)
 	// Bringing the agent back does not bring the credential back.
@@ -208,8 +212,9 @@ func TestExternalSteward_ExpiredAndRetiredAreRefused(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.PromoteAgent(rows[0].ConvID, "test")
 	require.NoError(t, err)
-	code, _ = s.call(renewed.Credential, http.MethodGet, "/v1/fleet", nil)
+	code, body = s.call(renewed.Credential, http.MethodGet, "/v1/fleet", nil)
 	assert.Equal(t, http.StatusUnauthorized, code)
+	assert.Contains(t, body, "revoked")
 }
 
 func (s *externalStewardFlow) humanRenew(name string) externalStewardIssued {
@@ -248,11 +253,42 @@ func TestExternalSteward_ManagedAgentCannotWearIt(t *testing.T) {
 	assert.Contains(t, body, "managed agent")
 }
 
-func TestExternalSteward_StartsWithTheStewardLevelsLessCapture(t *testing.T) {
+// The real check goes by the live pane above the caller, not by process names:
+// a double-forked process in a sandbox has no harness ancestor left, but it is
+// still under its pane.
+func TestExternalSteward_ManagedCheckFindsThePane(t *testing.T) {
+	f := newFlow(t)
+	f.HaveConvWithTitle("pane-conv-1", "worker")
+	f.HaveAliveSession("pane-conv-1", "panes", "tclaude-panes", f.TestCwd("w"))
+	const pane, sandboxInit, forked, shell, assistant = 4100, 4101, 4102, 5100, 5101
+	row, err := db.FindSessionByConvID("pane-conv-1")
+	require.NoError(t, err)
+	row.PID = pane
+	require.NoError(t, db.SaveSession(row))
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{pane: "bash", sandboxInit: "bwrap", forked: "daemon", shell: "fish", assistant: "node"},
+		map[int]int{forked: sandboxInit, sandboxInit: pane, pane: 1, assistant: shell, shell: 1}))
+	assert.True(t, agentd.ExternalCallerManagedForTest(forked, ""), "under a live pane")
+	assert.True(t, agentd.ExternalCallerManagedForTest(assistant, "claimed-session"), "a session claim is agent-shaped")
+	assert.False(t, agentd.ExternalCallerManagedForTest(assistant, ""), "the operator's own assistant")
+	f.World.Tmux.KillBySignalForTest("tclaude-panes")
+	assert.False(t, agentd.ExternalCallerManagedForTest(forked, ""), "a dead pane proves nothing")
+}
+
+// capture reports whether the principal got past the dashboard.capture gate:
+// with a grant the route goes on to find no dashboard open.
+func (s *externalStewardFlow) capture(credential string) int {
+	s.t.Helper()
+	code, _ := s.call(credential, http.MethodPost, "/v1/dashboard/capture", map[string]any{})
+	return code
+}
+
+func TestExternalSteward_StartsWithTheStewardLevelsLessOptIns(t *testing.T) {
 	s := newExternalStewardFlow(t, true)
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Agent = &config.AgentConfig{DefaultPermissions: []string{agentd.PermAgentSpawn}}
+	cfg.Steward.Writes = config.StewardWritesWorkers
+	cfg.Agent = &config.AgentConfig{DefaultPermissions: []string{agentd.PermDashboardCapture}}
 	require.NoError(t, config.Save(cfg))
 	issued := s.create("assistant")
 	assert.Contains(t, issued.Grants, agentd.PermFleetRead)
@@ -262,9 +298,21 @@ func TestExternalSteward_StartsWithTheStewardLevelsLessCapture(t *testing.T) {
 		assert.NotContains(t, issued.Grants, optIn)
 	}
 	// agent.default_permissions is for agents tclaude runs, not this one.
-	s.f.HaveGroup("team")
-	code, body := s.call(issued.Credential, http.MethodPost, "/v1/groups/team/spawn", map[string]any{"name": "x"})
-	assert.Equal(t, http.StatusForbidden, code, body)
+	assert.Equal(t, http.StatusForbidden, s.capture(issued.Credential))
+	code, body := s.humanPost("/v1/permissions/grant", map[string]any{"target": issued.AgentID, "slug": agentd.PermDashboardCapture})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, http.StatusNotFound, s.capture(issued.Credential), "with the grant the gate opens")
+}
+
+// The Steward role would bring capture and stored grants with it.
+func TestExternalSteward_CannotTakeTheStewardRole(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	issued := s.create("assistant")
+	rec := testharness.Serve(dashMessageMux(t), testharness.JSONRequest(t, http.MethodPost, "/api/steward/handover",
+		map[string]any{"agent": issued.AgentID, "then": "roster"}))
+	assert.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "cannot take the Steward role")
+	assert.Equal(t, http.StatusForbidden, s.capture(issued.Credential))
 }
 
 func TestExternalSteward_NeverListGrantFailsLoudly(t *testing.T) {
@@ -301,13 +349,11 @@ func TestExternalSteward_NoSudo(t *testing.T) {
 
 	// A row that got there anyway is not consulted.
 	now := time.Now()
-	s.f.HaveGroup("team")
-	id, err := db.InsertSudoGrantForAgent(&db.SudoGrant{AgentID: issued.AgentID, Slug: agentd.PermAgentSpawn,
+	id, err := db.InsertSudoGrantForAgent(&db.SudoGrant{AgentID: issued.AgentID, Slug: agentd.PermDashboardCapture,
 		GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test"})
 	require.NoError(t, err)
 	require.NotZero(t, id)
-	code, body = s.call(issued.Credential, http.MethodPost, "/v1/groups/team/spawn", map[string]any{"name": "x"})
-	assert.Equal(t, http.StatusForbidden, code, body)
+	assert.Equal(t, http.StatusForbidden, s.capture(issued.Credential))
 }
 
 // The credential is in no log, no audit row and no response but the one that
@@ -325,6 +371,24 @@ func TestExternalSteward_CredentialIsNeverRecorded(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, body)
 	s.call(issued.Credential+"x", http.MethodGet, "/v1/fleet", nil)
 	s.humanRenew("assistant")
+
+	// What the CLI sends: the replay table must not keep the response either.
+	req := testharness.JSONRequest(t, http.MethodPost, "/v1/external-stewards", map[string]any{"name": "second"})
+	req.Header.Set(agent.IdempotencyKeyHeader, "3f2b8c1e-5a44-4e7e-9a55-0d6f7f3a1c21")
+	req.Header.Set(agent.RequestDigestHeader, "digest")
+	rec := testharness.Serve(s.f.Mux, agentd.AsHumanPeer(req))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "tcls_")
+	req = testharness.JSONRequest(t, http.MethodPost, "/v1/external-stewards/assistant/renew", map[string]any{})
+	req.Header.Set(agent.IdempotencyKeyHeader, "7a1d2e3f-6b55-4f8f-8b66-1e7a8f4b2d32")
+	req.Header.Set(agent.RequestDigestHeader, "digest")
+	rec = testharness.Serve(s.f.Mux, agentd.AsHumanPeer(req))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	d, err := db.Open()
+	require.NoError(t, err)
+	var replayable int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agentd_idempotency WHERE response_body LIKE '%tcls_%'`).Scan(&replayable))
+	assert.Zero(t, replayable, "a credential was kept for replay")
 
 	rows, err := db.ListAuditLog(db.AuditLogFilter{})
 	require.NoError(t, err)

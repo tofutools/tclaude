@@ -36,6 +36,15 @@ func migrateV298toV299(d *sql.DB) error {
 		ON external_steward_credentials (agent_id)`); err != nil {
 		return err
 	}
+	// A trigger because several writers retire an agent. Bringing the agent back
+	// does not bring its credentials back.
+	if _, err := tx.Exec(`CREATE TRIGGER IF NOT EXISTS external_steward_retired
+		AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
+			UPDATE external_steward_credentials SET revoked_at = NEW.retired_at
+			WHERE agent_id = NEW.agent_id AND revoked_at IS NULL;
+		END`); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 299`); err != nil {
 		return err
 	}

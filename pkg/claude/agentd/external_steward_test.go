@@ -216,5 +216,8 @@ func TestExternalSteward_NeverListRefusedAtTheGate(t *testing.T) {
 		src.override[slug] = overridePermSource{Effect: "grant"}
 		src.group[slug] = []string{""}
 		assert.Equalf(t, permDeny, resolvePermissionVerdictFrom(src, slug, true).Resolution, slug)
+		// The federation gate rebuilds its sources for peer-scoped grants.
+		src.group[slug] = []string{`{"peer":["some-peer"]}`}
+		assert.Equalf(t, permDeny, resolveRemotePermissionVerdictFrom(src, slug).Resolution, slug)
 	}
 }

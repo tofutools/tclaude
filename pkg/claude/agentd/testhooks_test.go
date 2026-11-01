@@ -2497,6 +2497,11 @@ func SetExternalCallerManagedForTest(managed bool) (restore func()) {
 	return func() { externalCallerManaged = old }
 }
 
+// ExternalCallerManagedForTest runs the production managed-caller check.
+func ExternalCallerManagedForTest(pid int, claimedID string) bool {
+	return externalCallerManaged(pid, claimedID)
+}
+
 // ExternalStewardNeverForTest lists the slugs the ceiling refuses.
 func ExternalStewardNeverForTest() []string { return slices.Clone(externalStewardNever) }
 

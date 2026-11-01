@@ -54,6 +54,9 @@ editor. There are three differences:
 - **No screen capture.** `dashboard.capture` is off until you grant it, because a
   capture shows whatever you have open and would go to your assistant's own model
   provider. `dashboard.forms.capture` and `dashboard.forms.fill` are separate opt-ins.
+- **No starting agents.** It doesn't get `agent.spawn`, even with **Message agents and
+  start workers**. Spawning needs the launch record of a running agent, which it
+  doesn't have, so a grant wouldn't work yet.
 - **No default permissions.** `agent.default_permissions` is for agents tclaude runs,
   and doesn't apply.
 - **No sudo.** It can't request or hold sudo, and what you stored for future Stewards
@@ -68,7 +71,7 @@ notifications work without one.
 ### What it can never do
 
 It is never treated as you. Everything only you can do stays out of its reach,
-including answering permission requests.
+including answering permission requests. It also can't become the Steward.
 
 These permissions can't be used, even if you grant them. Trying fails with an error in
 the editor rather than saving a grant that does nothing:
@@ -110,8 +113,11 @@ It does **not** protect against:
 - **Your assistant's model provider.** What the assistant reads, it may send there.
   That includes agents' messages and anything else you let it read.
 
-A managed agent that gets hold of a credential is still refused: tclaude recognises it
-from its session and keeps its own identity.
+An agent running in a tclaude terminal that gets hold of a credential is still refused,
+because tclaude checks for a live tclaude terminal above the caller. This also catches a
+background process started inside a sandbox. It can't catch an unsandboxed process that
+has detached from its terminal, which is the first point above. It also means your own
+assistant has to run outside tclaude's terminals.
 
 ### How this differs from the operator token
 

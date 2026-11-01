@@ -65,6 +65,16 @@ func isEnrollmentCredentialRoute(path string) bool {
 	return path == "/v1/federation/enroll-tokens" || path == "/v1/federation/enroll/preview" || path == "/v1/federation/enroll"
 }
 
+// An external steward's credential is shown once and stored only hashed, so the
+// responses that issue one stay out of the durable replay table too.
+func isExternalStewardCredentialRoute(path string) bool {
+	if path == "/v1/external-stewards" {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, "/v1/external-stewards/")
+	return ok && strings.HasSuffix(rest, "/renew")
+}
+
 func idempotencyRequests(h http.Handler) http.Handler {
 	return idempotencyRequestsWithOwner(h, idempotencyOwnerID)
 }
@@ -81,7 +91,7 @@ func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
 func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, waitHook func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get(agent.IdempotencyKeyHeader))
-		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) || isEnrollmentCredentialRoute(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/") || strings.HasPrefix(r.URL.Path, "/v1/models/") {
+		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) || isEnrollmentCredentialRoute(r.URL.Path) || isExternalStewardCredentialRoute(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/") || strings.HasPrefix(r.URL.Path, "/v1/models/") {
 			h.ServeHTTP(w, r)
 			return
 		}

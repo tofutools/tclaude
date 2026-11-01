@@ -234,6 +234,9 @@ func stewardRefusal(conv, agentID string, h *harness.Harness) string {
 	if h != nil && h.Name == harness.ShellName {
 		return "a plain shell cannot read a Steward's brief"
 	}
+	if db.IsExternalStewardConv(conv) {
+		return "an external steward keeps its own permissions and cannot take the Steward role"
+	}
 	return ""
 }
 
