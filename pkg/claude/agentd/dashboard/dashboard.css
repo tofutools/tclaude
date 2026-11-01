@@ -21278,6 +21278,8 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .gp-stale { color: #e3b341; font-size: 11px; }
 .gp-group { padding: 4px 0; }
+/* A file dragged over a group: it takes a .pwf (Groups › Processes). */
+.gp-group.gp-pwf-over { outline: 1.5px dashed #58a6ff; outline-offset: 2px; }
 .gp-group-head { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
 .gp-group-name { font-weight: 700; font-size: 15px; color: #e6edf3; }
 .gp-avatar-strip { display: inline-flex; align-items: center; gap: 8px; }
@@ -21434,6 +21436,7 @@ body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #
 .gq-ask { display: flex; gap: 8px; margin: 10px 0 4px; }
 .gq-ask-in { flex: 1; font: inherit; font-size: 13px; border: 1px solid #30363d; border-radius: 8px; padding: 8px 12px; background: #0d1117; color: #e6edf3; }
 .gq-ask-in:disabled { opacity: .7; }
+.gq-import { margin: 8px 0 0; font-size: 12px; color: #8b949e; }
 .gq-sec { margin: 14px 0 8px; font-size: 10.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: #8b949e; }
 .gq-sec .gq-dim { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .gq-starters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }

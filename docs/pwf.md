@@ -104,7 +104,9 @@ tclaude agent process-templates import ship-feature.pwf --group webshop --yes
 Mapping and renaming rewrite templates, so the stored versions have new refs;
 the review lists each one as `<ref> as <new ref>`. A subprocess step pinned to
 a rewritten version is re-pinned to the rewritten one. In the dashboard, the
-import dialog offers the same choices.
+import dialog offers the same choices. Importing from a group, by *Import a
+.pwf* in *Get started* or by dropping the file on the group in Groups ›
+Processes, starts with that group chosen.
 
 Importing stores templates only. It never starts a run, and starting one later
 asks you to authorize each program profile its command steps use, as for any

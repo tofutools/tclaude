@@ -67,6 +67,7 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   const graphHost = host.querySelector('.process-editor-canvas-host');
   const graphRoot = host.querySelector('.process-graph');
   assert.ok(graphHost && graphRoot);
+  assert.equal(host.querySelector('[data-process-action="export"]').disabled, true, 'an unsaved template has nothing to share');
   assert.deepEqual([...host.querySelectorAll('.process-node')].map((node) => node.dataset.nodeId), ['start']);
   assertAbsent(host.querySelector('.process-node[data-node-id="end"]'), 'the production blank controller/Preact path does not recreate an End node');
   assert.equal(host.querySelectorAll('.process-edge').length, 0);
@@ -181,6 +182,8 @@ test('loaded templates retain their existing End node and exact editor payload',
     template: loaded.template, edges: loaded.edges, layout: loaded.layout, sourceHash: loaded.sourceHash,
   });
   assert.deepEqual([...host.querySelectorAll('.process-node')].map((node) => node.dataset.nodeId).sort(), ['begin', 'done']);
+  assert.equal(host.querySelector('[data-process-action="export"]').dataset.id, 'loaded-end');
+  assert.equal(host.querySelector('[data-process-action="export"]').disabled, false, 'a saved template can be shared');
   assert.ok(host.querySelector('.process-node[data-node-id="done"]'));
   assert.equal(editor.model.node('done').type, 'end');
   assert.equal(editor.model.dirty, false);

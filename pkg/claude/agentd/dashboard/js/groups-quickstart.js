@@ -136,7 +136,7 @@ function stepKind(step) {
 }
 
 // GetStarted is the first-run panel of a group without processes.
-export function GetStarted({ group, roster, wizard = false, api, onEditList, onOpenGraph, onDraft = null, onReuse, onDismiss }) {
+export function GetStarted({ group, roster, wizard = false, api, onEditList, onOpenGraph, onDraft = null, onImport = null, onReuse, onDismiss }) {
   const [templates, setTemplates] = useState(null);
   const [description, setDescription] = useState('');
   // pending holds the panel while a starter is stored for the graph editor,
@@ -178,6 +178,8 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
           : 'Opens the process in the graph editor and asks a process scribe to draft its steps from your words. You see the request and approve the scribe\'s access first; nothing runs.'}
       >✨ Draft steps</button>
     </form>
+    ${onImport && html`<p class="gq-import"><button type="button" class="gq-link" data-quickstart-import disabled=${pending} onClick=${onImport}
+      title="Import a shared .pwf workflow file: you review what it runs before anything is stored, and it never starts a run">⤒ Import a .pwf</button> or drop one on this group</p>`}
     <div class="gq-sec">Or start from</div>
     <div class="gq-starters">
       ${STARTERS.map((starter) => {
