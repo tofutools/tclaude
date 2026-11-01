@@ -308,10 +308,14 @@ func settleFileDrops(drops []fileDrop, k importKeep, p *spawnProfileJSON) fileIm
 	if k.ignored {
 		out.warnings = append(out.warnings, importKeepIgnored)
 	}
-	if len(out.kept) > 0 {
-		slog.Info("import: a human kept elevated items from a file", "items", out.kept)
-	}
 	return out
+}
+
+// logKeptImportItems records what a human kept, once it has landed.
+func logKeptImportItems(kept []string) {
+	if len(kept) > 0 {
+		slog.Info("import: a human kept elevated items from a file", "items", kept)
+	}
 }
 
 // fileImportItems lists the drops a human may reverse, by heading.
@@ -389,7 +393,20 @@ func permissionItem(id, label, slug, scopeJSON string) importItem {
 	if _, err := canonicalImportedPermissionScopeForSlug(slug, scopeJSON); err != nil {
 		return importItem{}
 	}
+	if scopeJSON != "" {
+		// A scope can name anything on this node, so the human reads it.
+		label += " scoped to " + scopeJSON
+	}
 	return importItem{ID: id, Kind: importKindPermissions, Label: label, Gives: permissionGives(slug), Default: true}
+}
+
+// environmentItem is a variable's item, or has no ID when no landing could take
+// it, such as a name tclaude reserves.
+func environmentItem(entry sandboxpolicy.EnvironmentEntry, gives string) importItem {
+	if _, err := sandboxpolicy.NormalizeEnvironment([]sandboxpolicy.EnvironmentEntry{entry}); err != nil {
+		return importItem{}
+	}
+	return importItem{ID: "env:" + entry.Name, Kind: importKindEnvironment, Label: "environment variable " + entry.Name, Gives: gives, Revealable: true}
 }
 
 // fileGroupDrops takes out of a group's file what would become a live grant, and
@@ -423,8 +440,7 @@ func fileGroupDrops(exp *groupexport.Export) []fileDrop {
 	exp.Group.Environment = nil
 	for _, entry := range environment {
 		drops = append(drops, fileDrop{
-			item: importItem{ID: "env:" + entry.Name, Kind: importKindEnvironment, Label: "environment variable " + entry.Name,
-				Gives: "Set in every agent spawned into this group. It can change what a harness loads or how it decides.", Revealable: true},
+			item: environmentItem(entry, "Set in every agent spawned into this group. It can change what a harness loads or how it decides."),
 			keep: func(*spawnProfileJSON) { exp.Group.Environment = append(exp.Group.Environment, entry) },
 			list: "environment", name: entry.Name,
 		})

@@ -1027,6 +1027,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if landing.history != nil {
 		recordConvLosses(spawned.ConvID, fileLosses, landing.Losses)
 	}
+	logKeptImportItems(settled.kept)
 	preview.Applied = true
 	preview.Offline = noStart
 	preview.Spawn = &spawned
@@ -1376,8 +1377,7 @@ func receiverLaunchFieldsDrops(p spawnProfileJSON, h *harness.Harness, group, pr
 		}
 		if !given {
 			drops = append(drops, fileDrop{list: "environment", name: entry.Name,
-				item: importItem{ID: "env:" + entry.Name, Kind: importKindEnvironment, Label: "environment variable " + entry.Name,
-					Gives: "Set in the agent's process. It can change what the harness loads or how it decides.", Revealable: true},
+				item: environmentItem(entry, "Set in the agent's process. It can change what the harness loads or how it decides."),
 				keep: func(p *spawnProfileJSON) { p.Environment = append(p.Environment, entry) }})
 		}
 	}

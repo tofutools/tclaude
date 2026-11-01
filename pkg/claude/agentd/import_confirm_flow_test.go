@@ -346,6 +346,22 @@ func TestImportConfirm_AgentFileKeepsWhatWasTicked(t *testing.T) {
 	assert.Equal(t, db.PermEffectGrant, overrides["groups.export"], "a kept permission lands")
 }
 
+// A scope can reach beyond the imported group, so the list says what it names.
+func TestImportConfirm_ListShowsAGrantsScope(t *testing.T) {
+	f := newFlow(t)
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion, SourceGroup: "scoped",
+		Members: []groupexport.Member{{ConvID: confirmConv, Role: "lead"}},
+		Convs:   []groupexport.Conv{{ConvID: confirmConv, Title: "lead", Missing: true}},
+		Permissions: []groupexport.Permission{{ConvID: confirmConv, Slug: agentd.PermGroupsMembersSpawn, Effect: db.PermEffectGrant,
+			ScopeJSON: `{"group":["prod"]}`, GrantedBy: "file"}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	_, _, body := inspectConfirm(t, f, archive, agentd.AsHumanPeer)
+	assert.Contains(t, body, "prod")
+}
+
 func TestGroupExport_HoldsNoSudo(t *testing.T) {
 	f := newFlow(t)
 	const conv = "sudo-holder"

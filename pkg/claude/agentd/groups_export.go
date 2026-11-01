@@ -1116,6 +1116,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	saveCutMemberHistories(landings, exp, convRemap, result.GroupName)
 	fileWarnings = append(fileWarnings, recordOpenCodeLandings(landings, exp, convRemap, targetCwd)...)
+	logKeptImportItems(settled.kept)
 	slog.Info("group import complete",
 		"group", result.GroupName, "agents", result.AgentCount,
 		"messages", result.MessageCount, "remapped", len(collidedOnly),
