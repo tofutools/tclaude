@@ -92,6 +92,8 @@ export function quickShapes(query = '') {
 
 const SHAPES = new Set(['rectangle', 'ellipse', 'diamond']);
 const LINEAR = new Set(['arrow', 'line', 'freedraw']);
+const WHEEL_LINE_PX = 33; // so a notch moves as far in every browser
+const WHEEL_PAGE_PX = 600;
 const BOARD_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 // A board open as a tab: the terminal shell's second pane kind. Its seed names
@@ -112,6 +114,23 @@ export function isBoardId(value) {
 export function boardIdFromTitle(title) {
   const id = String(title || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
   return isBoardId(id) ? id : '';
+}
+
+// wheelIsMouse tells a mouse wheel from a touchpad's two-finger scroll, which
+// browsers report as the same event: a mouse moves in lines or in notches of
+// 120, and only vertically, and a touchpad in anything else. deltaMode comes
+// first because Firefox answers in lines only if it is read before the deltas.
+// It is a guess. A free-spinning or smoothed wheel reads as a touchpad and pans,
+// and one touchpad event can look like a notch, which is why onWheel holds a
+// scroll to its first answer.
+export function wheelIsMouse({ deltaMode, deltaX, wheelDeltaY }) {
+  if (deltaMode === 1 || deltaMode === 2) return !deltaX;
+  return !deltaX && !!wheelDeltaY && wheelDeltaY % 120 === 0;
+}
+
+// wheelPixels is how far a wheel event moved vertically, whatever its unit.
+export function wheelPixels({ deltaMode, deltaY }) {
+  return deltaY * (deltaMode === 1 ? WHEEL_LINE_PX : deltaMode === 2 ? WHEEL_PAGE_PX : 1);
 }
 
 // groupBoards sorts a board listing into its groups, those that match `query`:
