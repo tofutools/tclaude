@@ -2,7 +2,8 @@
 // a shell of the operator's own where the agent is working. It is the directory
 // shell a click on the agent's row opens, here or on a peer under
 // sessions.shell, so it stays away where that is not allowed. The daemon picks
-// the directory from its own tracking; the path here only says where it lands.
+// the directory from its own tracking; the path here only says where it lands,
+// and a restricted peer does not share it.
 
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -36,11 +37,11 @@ export function shellTarget(snapshot, agent) {
   const matches = (row) => row?.agent_id === agent || row?.conv_id === agent;
   const groups = (snapshot?.groups || []).filter((group) => group.members?.some(matches));
   const row = groups[0]?.members.find(matches) || (snapshot?.agents || []).find(matches);
-  const dir = row?.current_dir || row?.startup_dir || row?.state?.cwd || '';
-  if (!dir || row.state?.harness === 'shell') return null;
+  if (!row || row.state?.harness === 'shell') return null;
+  const dir = row.current_dir || row.startup_dir || row.state?.cwd || '';
   const peerView = snapshot.peer_view;
   const group = peerView ? groups.find((candidate) => peerShellAllowed(peerView, candidate.name)) : groups[0];
-  if (peerView && !group) return null;
+  if (peerView ? !group : !dir) return null;
   return { agent: row.agent_id || agent, group: group?.name || '', dir };
 }
 
@@ -76,8 +77,9 @@ export function ShellHere({
     const opened = await openLocal(target.agent, label, SHELL_WHICH, { group: target.group });
     if (!opened) notify('The terminal could not open here (the terminal runtime did not load)', true);
   }
-  const where = node ? ` on ${peerLabel || 'the peer'}` : '';
+  const peer = node ? ` on ${peerLabel || 'the peer'}` : '';
+  const where = target.dir ? ` in ${target.dir}` : ` where ${name} is working`;
   return html`<button type="button" class="companion-tool companion-shell" aria-label=${`Open a shell where ${name} is working`}
-    title=${`Open a shell${where} in ${target.dir}. It runs as you, outside ${name}'s sandbox, and ${name} can write to this directory.`}
+    title=${`Open a shell${peer}${where}. It runs ${node ? 'as the tclaude user there' : 'as you'}, outside ${name}'s sandbox, and ${name} can write to this directory.`}
     onClick=${open}>⌨</button>`;
 }

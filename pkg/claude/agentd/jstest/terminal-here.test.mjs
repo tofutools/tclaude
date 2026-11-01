@@ -39,9 +39,11 @@ test('nothing is offered without a directory, for a plain shell, or for an unkno
 
 test('a peer lets this in only under sessions.shell, in the group that grants it', async (t) => {
   const { shellTarget } = await load(t);
-  const groups = [{ name: 'closed', members: [member] }, { name: 'open', members: [member] }];
+  // A restricted peer's snapshot carries no directory (peer_snapshot_fields.go).
+  const hidden = { agent_id: AGENT, conv_id: 'conv-1', state: { harness: 'claude' } };
+  const groups = [{ name: 'closed', members: [hidden] }, { name: 'open', members: [hidden] }];
   assert.equal(shellTarget({ groups, peer_view: { level: 'restricted', groups: { closed: ['sessions.attach'] } } }, AGENT), null);
-  assert.equal(shellTarget({ groups, peer_view: { level: 'restricted', groups: { open: ['sessions.shell'] } } }, AGENT).group, 'open');
+  assert.deepEqual(shellTarget({ groups, peer_view: { level: 'restricted', groups: { open: ['sessions.shell'] } } }, AGENT), { agent: AGENT, group: 'open', dir: '' });
   assert.equal(shellTarget({ groups, peer_view: { level: 'unrestricted' } }, AGENT).group, 'closed');
 });
 
@@ -66,6 +68,14 @@ test('a terminal that cannot open says so', async (t) => {
   const mounted = await harness.mount(h(ShellHere, { agent: AGENT, snapshot: { agents: [member] }, notify: (text) => notices.push(text), openLocal: async () => null }));
   await harness.act(async () => { mounted.container.querySelector('.companion-shell').click(); await Promise.resolve(); });
   assert.equal(notices.length, 1);
+});
+
+test('without a directory from the peer, the button says where it lands in words', async (t) => {
+  const { harness, ShellHere } = await load(t);
+  const { h } = harness.preact;
+  const snapshot = { groups: [{ name: 'open', members: [{ agent_id: AGENT, state: {} }] }], peer_view: { level: 'restricted', groups: { open: ['sessions.shell'] } } };
+  const mounted = await harness.mount(h(ShellHere, { agent: AGENT, name: 'alpha', snapshot }));
+  assert.match(mounted.container.querySelector('.companion-shell').title, /Open a shell where alpha is working\./);
 });
 
 test('a peer agent reads the peer snapshot, and stays hidden when it is refused', async (t) => {
