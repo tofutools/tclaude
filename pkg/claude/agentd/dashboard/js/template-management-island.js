@@ -23,7 +23,7 @@ import {
 } from './template-management-model.js';
 import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
-import { AgentImportPreview, MemberLandings, agentImportParams, historyCutNeedsConfirm, memberCutsToConfirm, offlineImportBlocker } from './paf-dialogs.js';
+import { AgentImportPreview, ImportWarnings, MemberLandings, agentImportParams, historyCutNeedsConfirm, memberCutsToConfirm, offlineImportBlocker } from './paf-dialogs.js';
 
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -869,6 +869,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
   const [as, setAs] = useState('');
   const [landing, setLanding] = useState({ harness: '', model: '', members: {} });
   const [confirmCut, setConfirmCut] = useState(false);
+  const [landed, setLanded] = useState(null);
   // A new landing choice is a new cut: its confirmation is asked afresh.
   useEffect(() => setConfirmCut(false), [landing, file]);
   const [kind, setKind] = useState('');
@@ -928,7 +929,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
               setPhase('error');
               // An agent PAF the group importer refused: the agent error
               // (say, a harness that is not available here) says more.
-              setError(message(/group PAF/.test(message(err)) ? agentErr : err));
+              setError(message(/group PAF|not a group-export archive/.test(message(err)) ? agentErr : err));
             }
             return;
           }
@@ -979,8 +980,10 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     setError('');
     setPhase('importing');
     try {
-      if (kind === 'agent') await actions.importAgentPAF(file, agentImportParams(choices, true, start));
-      else await actions.importGroup(file, into.trim(), as.trim(), { ...landing, confirmHistoryLoss: confirmCut });
+      const outcome = kind === 'agent'
+        ? await actions.importAgentPAF(file, agentImportParams(choices, true, start))
+        : await actions.importGroup(file, into.trim(), as.trim(), { ...landing, confirmHistoryLoss: confirmCut });
+      if (outcome?.warnings?.length) setLanded(outcome);
     } catch (err) {
       setError(
         kind === 'agent'
@@ -991,6 +994,27 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     }
   };
   const ready = kind === 'agent' ? agentReady : groupReady;
+  if (landed) {
+    return h(
+      Overlay,
+      {
+        id: 'group-import-modal',
+        labelledby: 'group-import-title',
+        onClose: state.closeDialog,
+        onSubmitHotkey: state.closeDialog,
+        dirty: false,
+        confirmDiscard,
+        registerClose,
+      },
+      html`<h3 id="group-import-title">Imported</h3>
+        <div class="modal-meta" id="group-import-result-summary">${landed.summary}</div>
+        <${ImportWarnings} id="group-import-result" title="Check these" warnings=${landed.warnings} />
+        <div class="modal-buttons">
+          <span class="spacer"></span>
+          <button id="group-import-done" class="primary" onClick=${state.closeDialog}>Done</button>
+        </div>`,
+    );
+  }
   return h(
     Overlay,
     {
@@ -1014,7 +1038,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
       <div class="modal-meta">
         ${kind === 'agent'
           ? 'Imports the agent as a new one (a fork): a new identity, landed on the harness you choose. Its permissions and ownership are advisory only.'
-          : 'Recreates a group exported with ⤓ export — its members, roles, owners, permissions, cron jobs, message history and every conversation. Imported agents land offline. The import is transactional: if anything fails, nothing is written. An agent .paf previews as an agent.'}
+          : 'Recreates a group exported with ⤓ export — its members, roles, owners, message history and every conversation. Permissions and sudo grants in the file are not applied, and its cron jobs land disabled. Imported agents land offline. The import is transactional: if anything fails, nothing is written. An agent .paf previews as an agent.'}
       </div>
       <label class="cron-create-row"
         ><span class="cron-create-label">File</span
@@ -1057,7 +1081,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         </div>
       </div>`}${kind === 'group' && inspection &&
       html`<${GroupImportPreview} inspection=${inspection} into=${into} />
-        ${(inspection.file_warnings || []).map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}
+        <${ImportWarnings} id="group-import-warnings" title="This file will not get" warnings=${inspection.file_warnings} />
         <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} confirmCut=${confirmCut} setConfirmCut=${setConfirmCut} />`}${kind === 'agent' && agentPreview &&
       html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} />`}
       <div class="cron-create-error" id="group-import-error" role="alert">

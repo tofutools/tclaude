@@ -221,6 +221,13 @@ function HistoryLanding({ landing }) {
   </div>`;
 }
 
+// ImportWarnings lists what an import warned of, on its preview and its result.
+export function ImportWarnings({ id, title, warnings }) {
+  if (!warnings?.length) return null;
+  return html`<div class="paf-preview paf-box" id=${id}><b>${title}</b>
+    ${warnings.map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>`;
+}
+
 // AgentImportPreview is the agent half of the ⤒ import… dialog: the import
 // preview for an agent PAF or legacy agent bundle, with where and how the
 // agent lands. "Import (offline)" lands it without starting; "Import &

@@ -105,7 +105,8 @@ receiving side.
   proxy, a context feature a tier here trims, and a trim of the repo's or
   organization's instructions. Other trims add to the receiver's. The warning
   names variables, not their values, and a group file's environment goes the
-  same way. A teleport or direct move keeps all of
+  same way. The dashboard keeps the import dialog open on the result when an
+  import has warnings, so you can read them. A teleport or direct move keeps all of
   this, so a moved agent does not stall on prompts, when it lands automatically
   or when its peer holds `agents.teleport.receive` for the receiving group, and
   the preview lists what an accepted move keeps. Without that grant the offer's

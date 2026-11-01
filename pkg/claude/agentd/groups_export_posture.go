@@ -1,10 +1,12 @@
 package agentd
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -210,16 +212,13 @@ func dropFileGroupEnvironment(exp *groupexport.Export) []string {
 // otherwise enable one. It runs before the import validates permission scopes, so
 // a row that never lands cannot refuse the import.
 func dropFileAuthority(exp *groupexport.Export) []string {
-	var granted []string
-	seen := map[string]bool{}
-	grant := func(what string) {
-		if !seen[what] {
-			seen[what] = true
-			granted = append(granted, what)
-		}
+	titles := map[string]string{}
+	for _, c := range exp.Convs {
+		titles[c.ConvID] = c.Title
 	}
+	var granted fileGrants
 	for _, p := range exp.Group.Permissions {
-		grant("group permission " + db.CanonicalPermissionSlug(p.Slug))
+		granted.add("group permission", "", p.Slug)
 	}
 	exp.Group.Permissions = nil
 	kept := exp.Permissions[:0:0]
@@ -228,18 +227,18 @@ func dropFileAuthority(exp *groupexport.Export) []string {
 			kept = append(kept, p)
 			continue
 		}
-		grant("permission " + db.CanonicalPermissionSlug(p.Slug) + " for " + short8(p.ConvID))
+		granted.add("permission", cmp.Or(titles[p.ConvID], short8(p.ConvID)), p.Slug)
 	}
 	exp.Permissions = kept
 	for _, s := range exp.SudoGrants {
 		if fileSudoGrantLive(s) {
-			grant("sudo grant " + db.CanonicalPermissionSlug(s.Slug) + " for " + short8(s.ConvID))
+			granted.add("sudo grant", cmp.Or(titles[s.ConvID], short8(s.ConvID)), s.Slug)
 		}
 	}
 	exp.SudoGrants = nil
 	var warnings []string
 	if len(granted) > 0 {
-		warnings = append(warnings, "This file grants "+strings.Join(granted, ", ")+
+		warnings = append(warnings, "This file grants "+strings.Join(granted.lines(), "; ")+
 			", which authority in a file does not carry, so none of it is applied. Grant what you want here yourself.")
 	}
 	var disabled, unowned []string
@@ -262,6 +261,43 @@ func dropFileAuthority(exp *groupexport.Export) []string {
 			" no longer run as the operator. Set their owner before enabling them.")
 	}
 	return warnings
+}
+
+// fileGrants lists what a file grants, a line per kind and holder, so that one
+// agent's permissions read as one list. A group's export can hold dozens.
+type fileGrants []*fileGrantLine
+
+type fileGrantLine struct {
+	kind, holder string
+	slugs        []string
+}
+
+func (g *fileGrants) add(kind, holder, slug string) {
+	slug = db.CanonicalPermissionSlug(slug)
+	for _, line := range *g {
+		if line.kind == kind && line.holder == holder {
+			if !slices.Contains(line.slugs, slug) {
+				line.slugs = append(line.slugs, slug)
+			}
+			return
+		}
+	}
+	*g = append(*g, &fileGrantLine{kind, holder, []string{slug}})
+}
+
+func (g fileGrants) lines() []string {
+	out := make([]string, len(g))
+	for i, line := range g {
+		out[i] = line.kind
+		if len(line.slugs) > 1 {
+			out[i] += "s"
+		}
+		out[i] += " " + strings.Join(line.slugs, ", ")
+		if line.holder != "" {
+			out[i] += " for " + line.holder
+		}
+	}
+	return out
 }
 
 // fileSudoGrantLive reports whether a file's sudo row was still in force. An

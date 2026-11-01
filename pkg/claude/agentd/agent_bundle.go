@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -650,11 +651,13 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "profile", err.Error())
 			return
 		}
+		recordedSandbox := profile
 		profile = receiverSandboxProfile(profile, h, q.Get("group"), landingProfile)
 		// The receiver owns a teleport or direct move, by landing authority or by
 		// accepting the offer, and dropping its posture could stall the agent on
 		// prompts nobody answers. Everything else is a file.
 		if !movedHere {
+			landingWarnings = append(landingWarnings, droppedSandbox(recordedSandbox, profile, h, q.Get("group"), landingProfile)...)
 			var dropped []string
 			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
 			landingWarnings = append(landingWarnings, dropped...)
@@ -718,9 +721,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	preview := agentBundlePreview{Permissions: carryDecisions, Findings: findings, Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. Launch posture uses normal receiver spawn checks."}
+	preview := agentBundlePreview{Permissions: carryDecisions, Findings: findings, Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. " + agentImportSecurityNote}
 	if carryPolicy.Enabled {
-		preview.Security = permissionCarrySummary(preview.Permissions) + " Launch posture uses normal receiver spawn checks."
+		preview.Security = permissionCarrySummary(preview.Permissions) + " " + agentImportSecurityNote
 	}
 	if preview.Cwd == "" && q.Get("keep_paths") == "true" {
 		preview.Cwd = d.Paths.Cwd
@@ -808,7 +811,6 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		// landing warnings say why when it did not.
 		preview.Warnings = slices.DeleteFunc(preview.Warnings, func(s string) bool { return s == legacy.WarningContextOnly })
 	}
-	preview.Warnings = append(preview.Warnings, "Source groups are advisory; only --group selects receiving membership. Source profile names and role references do not confer grants.")
 	// A large cut of a file import needs the importer's confirmation, as a
 	// morph's does. The full history is never lost: it stays in the file
 	// and is saved beside the agent.
@@ -1123,9 +1125,50 @@ func receiverContextFeatures(recorded map[string]string, h *harness.Harness, tie
 	return out, cut
 }
 
+// agentImportSecurityNote closes every agent import's security line. It is true
+// of every file, so it is no warning.
+const agentImportSecurityNote = "Launch posture uses normal receiver spawn checks. Source groups, profile names and role references confer nothing: only the group chosen here applies."
+
 // fileFieldDropped is the warning for what a file asks for and does not get.
 func fileFieldDropped(what string) string {
 	return fmt.Sprintf("This file asks for %s, which a spawn here would not give, so it is not applied.", what)
+}
+
+// filePostureDropped is the warning for a posture a file asks for and does not
+// get. kept says what applies instead.
+func filePostureDropped(field, value, kept string) string {
+	return fmt.Sprintf("This file asks for %s %s, which is wider than this node would give, or cannot be compared: %s applies.", field, value, kept)
+}
+
+// droppedSandbox warns of the sandbox posture receiverSandboxProfile took out of
+// recorded to leave kept. A file that asks for what the landing resolves to loses
+// nothing: a harness with no OS sandbox never keeps its posture, even an equal one.
+func droppedSandbox(recorded, kept spawnProfileJSON, h *harness.Harness, group, profile string) []string {
+	if kept.Sandbox != "" || kept.SandboxImplementation != "" {
+		return nil
+	}
+	value := cmp.Or(recorded.Sandbox, recorded.SandboxImplementation)
+	if value == "" || sandboxMatchesLanding(recorded, h, group, profile) {
+		return nil
+	}
+	return []string{filePostureDropped("sandbox", value, "this node's sandbox")}
+}
+
+func sandboxMatchesLanding(recorded spawnProfileJSON, h *harness.Harness, group, profile string) bool {
+	landing, fail, err := resolveLaunchDefaults(group, profile, h.Name)
+	if fail != nil || err != nil {
+		return false
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(recorded.SandboxImplementation)
+	if err != nil || (recorded.SandboxImplementation != "" && implementation != landing.implementation) {
+		return false
+	}
+	landingMode, fail := resolveLaunchHarnessBuiltinMode(h, landing.sandbox, string(landing.implementation))
+	if fail != nil {
+		return false
+	}
+	recordedMode, fail := resolveLaunchHarnessBuiltinMode(h, recorded.Sandbox, string(landing.implementation))
+	return fail == nil && recordedMode == landingMode
 }
 
 // receiverLaunchFieldsProfile takes out of a file's profile the launch fields
@@ -1228,7 +1271,7 @@ func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, prof
 	p.Approval, p.ToolGovernance, p.AutoReview = "", "", nil
 	var dropped []string
 	drop := func(field, value, kept string) {
-		dropped = append(dropped, fmt.Sprintf("This file asks for %s %s, which is wider than this node would give, or cannot be compared: %s applies.", field, value, kept))
+		dropped = append(dropped, filePostureDropped(field, value, kept))
 	}
 	recordedReview := recorded.AutoReview != nil && *recorded.AutoReview
 	unjudged := func() (spawnProfileJSON, []string) {
@@ -1293,7 +1336,11 @@ func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, prof
 		if harness.ToolGovernanceNotWider(h, landingTools, recorded.ToolGovernance) {
 			p.ToolGovernance = recorded.ToolGovernance
 		} else {
-			drop("tools", recorded.ToolGovernance, "tools "+landingTools)
+			kept := "the receiver's default"
+			if landingTools != "" {
+				kept = "tools " + landingTools
+			}
+			drop("tools", recorded.ToolGovernance, kept)
 		}
 	}
 	return p, dropped

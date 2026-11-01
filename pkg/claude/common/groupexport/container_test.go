@@ -179,6 +179,15 @@ func TestUnmarshalMissingFormatVersion(t *testing.T) {
 	assert.Contains(t, err.Error(), "format_version")
 }
 
+// TestUnmarshalRefusesAnAgentBundle keeps an agent bundle, also a zip with a
+// versioned manifest, from previewing as an empty group.
+func TestUnmarshalRefusesAnAgentBundle(t *testing.T) {
+	archive := zipWithManifest(t, `{"format":"tclaude-agent-bundle","format_version":1}`)
+	_, err := Unmarshal(archive)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a group-export archive")
+}
+
 // TestUnmarshalMalformedManifest rejects a manifest that is not valid
 // JSON — the "truncated / corrupted archive" case.
 func TestUnmarshalMalformedManifest(t *testing.T) {

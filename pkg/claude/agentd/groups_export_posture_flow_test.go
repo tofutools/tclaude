@@ -516,6 +516,24 @@ func TestAgentImport_RecordedApprovalDoesNotWiden(t *testing.T) {
 	assert.Equal(t, bypass, *landed.ApprovalPolicy)
 }
 
+// A sandbox a file asks for and does not get is said out loud, as approval is.
+func TestAgentImport_RecordedSandboxDropIsReported(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("receivers")
+	b := fedAgentBundle(t)
+	b.Manifest.Agent.Profile = json.RawMessage(`{"sandbox_implementation":"off","tools":"all"}`)
+	raw, err := b.Encode()
+	require.NoError(t, err)
+	dst := f.TestCwd("dst")
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+
+	res := importAgentArchive(t, f, raw, url.Values{"cwd": {dst}, "group": {"receivers"}})
+
+	warnings := strings.Join(res.Warnings, "\n")
+	assert.Contains(t, warnings, "sandbox off")
+	assert.NotContains(t, warnings, "  applies", "a blank value reads as a gap")
+}
+
 // No grant in a group file goes live on import. A deny only takes away, and a job
 // stays for a human to review, off and not speaking as the operator.
 func TestGroupImport_FileAuthorityDoesNotLand(t *testing.T) {
@@ -546,7 +564,8 @@ func TestGroupImport_FileAuthorityDoesNotLand(t *testing.T) {
 	for _, listed := range []string{"group permission " + agentd.PermGroupsMembersSpawn, "sudo grant human.notify", "nightly"} {
 		assert.Contains(t, rec.Body.String(), listed)
 	}
-	assert.Contains(t, rec.Body.String(), "permission "+agentd.PermAgentRetire, "a grant that never lands cannot refuse the import")
+	assert.Contains(t, rec.Body.String(), agentd.PermGroupsMembersSpawn+", "+agentd.PermAgentRetire+" for ",
+		"a grant that never lands cannot refuse the import, and one agent's grants read as one list")
 	assert.NotContains(t, rec.Body.String(), "human.clipboard", "an ended sudo grant is history, not a grant lost")
 	assert.NotContains(t, rec.Body.String(), "sudo grant self.rename", "an ended sudo grant is history, not a grant lost")
 	g, err := db.GetAgentGroupByName("file-authority")
