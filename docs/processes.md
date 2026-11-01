@@ -345,7 +345,11 @@ scribe cannot start a run, and nothing runs until you press *Start now*. *Start
 now* runs the version on screen: if a newer one was saved after you opened it,
 say by asking the scribe for more through the graph editor's dock, nothing
 starts, and you choose between reviewing the newer version and starting the one
-you reviewed. The step
+you reviewed. *Start* in a process's ▶ strip runs the current version, and asks
+first only while a scribe is at work on it: when the scribe is mid-turn, or when
+it saved a version you have not opened. You then open the draft or start anyway,
+and if the scribe saves again before you answer, it asks again. An idle scribe
+with nothing new adds no step, so reruns stay one click. The step
 list edits a process as numbered steps, each done by a specific agent, any
 member with a role, anyone free in the group, you, or a command; one line sets
 what an agent step does when no member can take it (wait, spawn the group's

@@ -29,7 +29,7 @@ import {
 import {
   GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen,
 } from './groups-quickstart.js';
-import { ScribeDraft, draftWithScribe, leaveScribeDraft, restorableScribeDraft } from './groups-scribe-draft.js';
+import { ScribeDraft, draftWithScribe, leaveScribeDraft, noteDraftOpened, restorableScribeDraft } from './groups-scribe-draft.js';
 import { processScribeSessions } from './process-scribe.js';
 import { viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
@@ -497,6 +497,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   };
   const reviewDraft = ({ draft }, view) => {
     leaveScribeDraft(draft.templateId);
+    noteDraftOpened(scribes, draft.templateId, view);
     openStored(savedProcesses.find((saved) => saved.templateId === draft.templateId)
       || { templateId: draft.templateId, name: draft.name, listed: false }, view);
   };

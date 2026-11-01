@@ -24,6 +24,7 @@ const html = htm.bind(h);
 export const SCRIBE_DRAFT_POLL_MS = 2000;
 const LEFT_DRAFTS_PREF = 'tclaude.dash.groupsProcesses.leftScribeDrafts';
 const LEFT_DRAFTS_MAX = 50;
+const REVIEWED_DRAFTS_PREF = 'tclaude.dash.groupsProcesses.reviewedScribeDrafts';
 
 function leftDrafts() {
   try {
@@ -45,6 +46,55 @@ export function leaveScribeDraft(templateId) {
 
 export function reopenScribeDraft(templateId) {
   setLeftDrafts(leftDrafts().filter((id) => id !== templateId));
+}
+
+function reviewedDrafts() {
+  try {
+    const stored = JSON.parse(dashPrefs.getItem(REVIEWED_DRAFTS_PREF) || '[]');
+    return Array.isArray(stored) ? stored.filter(Array.isArray) : [];
+  } catch { return []; }
+}
+
+// noteDraftOpened remembers the version the operator has seen of a process a
+// live scribe is on, so Start does not ask about that version again.
+export function noteDraftOpened(scribes, templateId, view) {
+  const ref = String(view?.currentRef || '');
+  if (!ref || !liveProcessScribe(scribes, templateId)) return;
+  const kept = reviewedDrafts().filter(([id]) => id !== templateId);
+  try {
+    dashPrefs.setItem(REVIEWED_DRAFTS_PREF, JSON.stringify([...kept, [templateId, ref]].slice(-LEFT_DRAFTS_MAX)));
+  } catch { /* best effort */ }
+}
+
+function liveProcessScribe(scribes, templateId) {
+  return scribes.find((scribe) => scribe.online && scribe.scope?.id === templateId) || null;
+}
+
+// scribeStartWarning decides whether a Start from the group's ▶ strip asks
+// first: only while a scribe is at work on the process, because it is mid-turn
+// or because the head is its own save and the operator has not opened that
+// version. An idle scribe with nothing new, or no scribe, answers null, so a
+// rerun stays one click. `ref` is the version asked about, for expectedRef. It
+// reads only when Start is pressed; a read that fails asks rather than assumes.
+export async function scribeStartWarning(api, scribes, templateId) {
+  const scribe = liveProcessScribe(scribes, templateId);
+  if (!scribe) return null;
+  let chat;
+  let head;
+  try {
+    [chat, head] = await Promise.all([api.scribeChat(scribe.agentId), api.getTemplateHead(templateId)]);
+  } catch {
+    return { ref: '', reason: 'Could not check on the scribe.' };
+  }
+  const ref = String(head?.currentRef || '');
+  if (processScribeChatLive(chat) || processScribeChatTranscript(chat).at(-1)?.role === 'human') {
+    return { ref, reason: 'The scribe is still working.' };
+  }
+  const reviewed = reviewedDrafts().find(([id]) => id === templateId)?.[1];
+  if (head?.actor === `agent:${scribe.agentId}` && ref !== reviewed) {
+    return { ref, reason: 'The scribe saved a version you have not opened.' };
+  }
+  return null;
 }
 
 // scribeDraftsOf are the drafts in `processes` with a live scribe still on

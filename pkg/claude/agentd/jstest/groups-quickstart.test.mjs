@@ -1189,3 +1189,94 @@ test('switching to the graph and back keeps the reviewed version', async (t) => 
   await click(root.querySelector('[data-step-start]'));
   assert.equal(api.calls.start.at(-1).expectedRef, REF_A, 'switching without a save keeps the version it came from');
 });
+
+// The group ▶ strip's Start asks only while a scribe is at work on the process.
+const DRAFT_REF = `tmpl_1@sha256:${'2'.repeat(64)}`;
+const REVIEWED_DRAFTS = 'tclaude.dash.groupsProcesses.reviewedScribeDrafts';
+
+function stripStart(t, { actor = `agent:${SCRIBE.agent_id}`, chat = { messages: [] }, reviewed = '[]', online = true } = {}) {
+  const api = scribeApi({ chat: () => chat, stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
+  return mount(t, {
+    api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online })], prefs: { [REVIEWED_DRAFTS]: reviewed },
+  }).then(async (view) => {
+    await view.click(view.root.querySelector('[data-saved-run="tmpl_1"]'));
+    await view.harness.act(() => view.harness.fireEvent(view.root.querySelector('[data-saved-strip="tmpl_1"]'), 'submit'));
+    await view.settle();
+    return { ...view, api };
+  });
+}
+
+for (const [name, options] of [
+  ['the operator\'s own save', { actor: 'operator' }],
+  ['a version the operator opened', { reviewed: JSON.stringify([['tmpl_1', DRAFT_REF]]) }],
+  ['a stopped scribe', { online: false }],
+]) {
+  test(`the ▶ strip stays one click with ${name}`, async (t) => {
+    const { root, api } = await stripStart(t, options);
+    assert.equal(root.querySelector('[data-start-draft-warning]'), null);
+    assert.equal(api.calls.start.length, 1);
+    assert.equal(api.calls.start[0].expectedRef, undefined, 'a rerun runs the head, as before');
+  });
+}
+
+test('the ▶ strip asks about a version the scribe saved, and starting anyway pins it', async (t) => {
+  const { root, api, click, settle } = await stripStart(t);
+  assert.equal(api.calls.start.length, 0, 'nothing runs before the answer');
+  assert.match(root.querySelector('[data-start-draft-warning]').textContent, /This draft isn't reviewed: open it, or start anyway\?/);
+  assert.match(root.querySelector('[data-start-draft-warning]').textContent, /saved a version/);
+  assert.equal(root.querySelector('[data-saved-start]').disabled, true);
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].expectedRef, DRAFT_REF);
+});
+
+for (const [name, chat] of [
+  ['a live turn', { messages: [], live: { items: [] } }],
+  ['mail it has not answered', { messages: [{ id: 'm1', role: 'human', body: 'more', at: '2026-11-01T10:00:00Z' }] }],
+]) {
+  test(`the ▶ strip asks during ${name}, even with nothing saved`, async (t) => {
+    const { root, api } = await stripStart(t, { actor: 'operator', chat });
+    assert.match(root.querySelector('[data-start-draft-warning]').textContent, /still working/);
+    assert.equal(api.calls.start.length, 0);
+  });
+}
+
+test('the ▶ strip asks when it cannot check on the scribe', async (t) => {
+  const api = scribeApi({ chat: () => { throw new Error('no chat'); }, stored: () => SAVED_DRAFT });
+  const { root, click, harness, settle } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '' })] });
+  await click(root.querySelector('[data-saved-run="tmpl_1"]'));
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-saved-strip="tmpl_1"]'), 'submit'));
+  await settle();
+  assert.match(root.querySelector('[data-start-draft-warning]').textContent, /Could not check/);
+  assert.equal(api.calls.start.length, 0);
+});
+
+test('opening the draft from the question records that version as seen', async (t) => {
+  const { root, click, settle, harness } = await stripStart(t);
+  await click(root.querySelector('[data-start-draft-open]'));
+  await settle();
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem(REVIEWED_DRAFTS)), [['tmpl_1', DRAFT_REF]]);
+  assert.equal(root.querySelector('[data-saved-strip]'), null, 'the draft opens in place of the strip');
+});
+
+test('a scribe save after the question asks again rather than running it', async (t) => {
+  const { root, api, click, settle } = await stripStart(t);
+  const start = api.startGroupRun;
+  let moved = true;
+  api.startGroupRun = async (request) => {
+    if (moved) {
+      moved = false;
+      const error = new Error('moved');
+      error.body = { code: 'process_run_template_moved' };
+      throw error;
+    }
+    return start(request);
+  };
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(api.calls.start.length, 0, 'the version nobody was asked about did not run');
+  assert.ok(root.querySelector('[data-start-draft-warning]'), 'the question stands');
+  assert.equal(root.querySelector('.gq-error'), null, 'being asked again is not a failure');
+});
