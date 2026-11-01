@@ -205,21 +205,26 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 		}
 	}
 	o := db.FederationBundleOffer{Descriptor: d, Peer: peer.InstanceID, Direction: "in", State: "pending", GroupID: groupID, SenderAgent: env.From.Agent}
+	// Inline bytes are stored first so the row is ready from the moment it can
+	// be read. Reconcile passes run outside this handler, and one that saw a
+	// pending row would fetch from the sender what is already here.
+	if len(d.Inline) > 0 {
+		if err := fedBundleSpool().Receive("in", peer.InstanceID, d, bytes.NewReader(d.Inline)); err != nil {
+			refuse(fedCodeInternal, "could not store bundle")
+			return
+		}
+		o.State = "ready"
+	}
 	if _, err := db.InsertFederationBundleOffer(o, kind.Type); err != nil {
+		if len(d.Inline) > 0 {
+			_ = fedBundleSpool().Remove("in", peer.InstanceID, d.ID)
+		}
 		code := fedCodeInternal
 		if errors.Is(err, db.ErrOfferQuota) {
 			code = fedCodeQueueFull
 		}
 		refuse(code, err.Error())
 		return
-	}
-	if len(d.Inline) > 0 {
-		if err := fedBundleSpool().Receive("in", peer.InstanceID, d, bytes.NewReader(d.Inline)); err != nil {
-			_ = db.DeleteFederationBundleOffer("in", peer.InstanceID, d.ID)
-			refuse(fedCodeInternal, "could not store bundle")
-			return
-		}
-		_ = db.SetFederationBundleOfferState("in", peer.InstanceID, d.ID, "ready", "")
 	}
 	if d.Return != nil {
 		// Single use: the recall is bound to this one stored offer.
@@ -240,16 +245,10 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 		// Custody needs no operator step: the snapshots.receive grant is
 		// the operator's standing decision. It runs after the ack.
 		stored := o
-		if len(d.Inline) > 0 {
-			stored.State = "ready"
-		}
 		defer func() { go rt.resilienceReceive(&stored) }()
 	}
 	if d.Type == bundletransfer.SnapshotReturn.Name {
 		stored := o
-		if len(d.Inline) > 0 {
-			stored.State = "ready"
-		}
 		defer func() { go rt.resilienceReturnReceive(&stored) }()
 	}
 	if teleport != nil {
