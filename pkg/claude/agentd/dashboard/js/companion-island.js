@@ -21,11 +21,12 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
+  COMPANION_ACTIVE_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
   agentWaitsOnOperator, clampPlacement, fitPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
-  defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent, viewportOf,
+  defaultPlacement, isAgentId, nextActive, parseChipSpot, parsePlacement, parseTabs, peekAnchor, snapZone, spotPlacement, stewardAgent, viewportOf,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
+import { useChipDrag } from './companion-chip-drag.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { ResizeFrame, resizedPlacement, savedAfterResize } from './window-resize.js';
@@ -139,12 +140,12 @@ function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focu
 
 function Peek({ agent, lines, anchor }) {
   if (!agent || !anchor) return null;
-  const style = `right:${Math.max(8, anchor.right)}px;bottom:${anchor.bottom}px`;
+  const style = Object.entries(anchor).map(([side, px]) => `${side}:${Math.max(8, px)}px`).join(';');
   return html`<div class="companion-peek" role="tooltip" style=${style}>
     <div class="companion-peek-head"><${Avatar} agent=${agent} /><b>${agent.name}</b>
       <span class="companion-peek-meta">${companionStatusLabel(companionStatus(agent))} · click to open</span></div>
     <pre class="companion-peek-body">${lines === null ? 'reading…' : lines.length ? lines.join('\n') : agent.online ? '(empty screen)' : '(offline)'}</pre>
-    <div class="companion-peek-foot">Read-only preview. The keyboard stays with the page until you click.</div>
+    <div class="companion-peek-foot">Read-only preview. The keyboard stays with the page until you click. Drag to move.</div>
   </div>`;
 }
 
@@ -282,6 +283,7 @@ export function CompanionApp({
     return isAgentId(saved) ? saved : '';
   });
   const [open, setOpen] = useState(() => readPref(sessionPrefs, COMPANION_OPEN_PREF) === '1');
+  const [chipSpot, setChipSpot] = useState(() => parseChipSpot(readPref(prefs, COMPANION_CHIP_SPOT_PREF)));
   const [placement, setPlacement] = useState(() => {
     const vp = viewportOf(win);
     const saved = parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF));
@@ -574,7 +576,9 @@ export function CompanionApp({
     openFrom.current = null;
     const node = windowRef.current;
     if (!from || !node || reducedMotion(win) || typeof node.animate !== 'function') return;
-    const to = node.getBoundingClientRect();
+    // The effect above only queued the move, so the node isn't there yet.
+    const target = placement.snap ? placement : floatingPlacement();
+    const to = { left: target.x, top: target.y, width: target.w, height: target.h };
     if (!to.width || !to.height) return;
     node.animate([
       { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`, opacity: 0.5, borderRadius: '20px' },
@@ -599,7 +603,9 @@ export function CompanionApp({
 
   function floatingPlacement() {
     const vp = viewportOf(win);
-    return fitPlacement({ ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || defaultPlacement(vp)), snap: '' }, vp);
+    const saved = { ...(parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF)) || defaultPlacement(vp)), snap: '' };
+    const spot = readPref(prefs, COMPANION_WINDOW_SPOT_PREF);
+    return spot ? spotPlacement(parseChipSpot(spot), saved, vp, snapTop()) : fitPlacement(saved, vp);
   }
 
   // A move keeps the saved size: the window may only be small for this viewport.
@@ -610,6 +616,18 @@ export function CompanionApp({
 
   function savePlacement(p) {
     writePref(prefs, COMPANION_PLACEMENT_PREF, JSON.stringify(p));
+  }
+
+  // The operator placed the window themselves: that now beats the chips' spot.
+  function saveMovedWindow(p) {
+    savePlacement(p);
+    writePref(prefs, COMPANION_WINDOW_SPOT_PREF, '');
+  }
+
+  function moveChips(spot) {
+    setChipSpot(spot);
+    writePref(prefs, COMPANION_CHIP_SPOT_PREF, spot);
+    writePref(prefs, COMPANION_WINDOW_SPOT_PREF, spot === DEFAULT_CHIP_SPOT ? '' : spot);
   }
 
   // A click on the title bar or other empty space leaves focus on the page.
@@ -693,10 +711,10 @@ export function CompanionApp({
       setGuide(null);
       if (zone) {
         setPlacement(zoneRect(zone, viewportOf(win), snapTop()));
-        savePlacement({ ...withSavedSize(last), snap: zone });
+        saveMovedWindow({ ...withSavedSize(last), snap: zone });
       } else if (moved) {
         // A click shows the fitted placement, which is not the operator's to keep.
-        savePlacement(withSavedSize(last));
+        saveMovedWindow(withSavedSize(last));
       }
     };
     handle.addEventListener('pointermove', move);
@@ -744,7 +762,7 @@ export function CompanionApp({
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
       handle.removeEventListener('pointercancel', up);
-      if (!start.snap && moved) savePlacement(savedAfterResize(last, zone, parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF))));
+      if (!start.snap && moved) saveMovedWindow(savedAfterResize(last, zone, parsePlacement(readPref(prefs, COMPANION_PLACEMENT_PREF))));
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
@@ -786,11 +804,13 @@ export function CompanionApp({
     peekTimer.current = setTimeout(() => {
       const rect = chip.getBoundingClientRect();
       const vp = viewportOf(win);
-      setPeek({ agentId, lines: null, anchor: { right: vp.width - rect.right, bottom: vp.height - rect.top + 8 } });
+      setPeek({ agentId, lines: null, anchor: peekAnchor(chipSpot, rect, vp) });
       void readPeek(agentId);
       peekRefresh.current = setInterval(() => void readPeek(agentId), PEEK_REFRESH_MS);
     }, PEEK_DELAY_MS);
   }
+
+  const chipDrag = useChipDrag({ win, spot: chipSpot, onDrop: moveChips, onStart: stopPeek, reducedMotion: () => reducedMotion(win) });
 
   function onChipClick(agentId, event) {
     stopPeek();
@@ -1198,7 +1218,12 @@ export function CompanionApp({
   const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
 
-  const chips = !open && html`<div class="companion-chips" role="toolbar" aria-label="Companions">
+  const chipSlots = !open && chipDrag.slots && chipDrag.slots.map(({ spot, near, width, height }) => html`<div key=${spot}
+    class=${`companion-chip-slot companion-spot-${spot}${near ? ' near' : ''}`} data-chip-spot=${spot}
+    style=${`width:${width}px;height:${height}px`} aria-hidden="true"></div>`);
+
+  const chips = !open && html`<div ref=${chipDrag.ref} class=${`companion-chips companion-spot-${chipSpot}${chipDrag.slots ? ' dragging' : ''}`}
+    role="toolbar" aria-label="Companions" onPointerDown=${chipDrag.onPointerDown} onClickCapture=${chipDrag.onClickCapture}>
     ${chipAgents.map((agent) => {
       const status = statusOf(agent);
       return html`<button key=${agent.agentId} type="button"
@@ -1383,6 +1408,7 @@ export function CompanionApp({
     ${guide && html`<div class="companion-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
     ${windowView}
     ${open && !placement.snap && html`<${ResizeFrame} placement=${placement} className="companion-resize-frame" onResizeStart=${onResizePointerDown} />`}
+    ${chipSlots}
     ${chips}
     ${annotation.overlay}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}

@@ -15,22 +15,45 @@
    stay clear of the dock instead of rising above it, because its menus live
    inside it. Asserted over the stylesheets in jstest/companion-layering.test.mjs. */
 .companion-chips {
-  position: fixed; right: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 10;
+  position: fixed; z-index: 10;
   display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap-reverse; justify-content: flex-end;
-  max-width: calc(100vw - 32px); pointer-events: none;
+  max-width: calc(100vw - var(--chip-right) - 16px); pointer-events: none;
 }
-body.dock-open .companion-chips { right: calc(var(--dock-w) + 16px); max-width: calc(100vw - var(--dock-w) - 32px); }
+/* The snap spots (tcl-avebwq), shared by the chips and the outlines a drag
+   shows, so an outline is exactly where the chips will land. The top spots
+   follow the nav bar's live bottom; the insets match spotPlacement. */
+:root { --chip-right: 16px; }
+body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
 /* Too narrow to fit beside the dock: rest on it, tying its 45 and winning by
    DOM order, still under an open PR popover (46). */
 @media (max-width: 620px) {
-  body.dock-open .companion-chips { right: 16px; max-width: calc(100vw - 32px); z-index: 45; }
+  body.dock-open { --chip-right: 16px; }
+  body.dock-open .companion-chips:not(.dragging) { z-index: 45; }
 }
+.companion-spot-top-left { left: 16px; top: calc(var(--dock-top, 0px) + 12px); }
+.companion-spot-top-right { right: var(--chip-right); top: calc(var(--dock-top, 0px) + 12px); }
+.companion-spot-bottom-left { left: 16px; bottom: calc(var(--footer-h, 29px) + 12px); }
+.companion-spot-bottom-center { left: calc((100vw - var(--chip-right) + 16px) / 2); bottom: calc(var(--footer-h, 29px) + 12px); transform: translateX(-50%); }
+.companion-spot-bottom-right { right: var(--chip-right); bottom: calc(var(--footer-h, 29px) + 12px); }
+.companion-chips:is(.companion-spot-top-left, .companion-spot-top-right) { align-items: flex-start; flex-wrap: wrap; }
+.companion-chips:is(.companion-spot-top-left, .companion-spot-bottom-left) { justify-content: flex-start; }
+.companion-chips.companion-spot-bottom-center { width: max-content; justify-content: center; }
+/* A drag lifts the row and its outlines over everything it crosses. */
+.companion-chips.dragging { z-index: 961; }
+.companion-chips.dragging .companion-chip { cursor: grabbing; scale: 1.04; box-shadow: 0 12px 28px rgba(0, 0, 0, .55); }
+.companion-chip-slot {
+  position: fixed; z-index: 960; box-sizing: border-box; pointer-events: none; border-radius: 20px;
+  border: 1.5px dashed color-mix(in srgb, var(--cmp-blue) 55%, transparent); background: rgba(88, 166, 255, .05);
+  animation: companion-slot-in .16s ease-out; transition: background .12s, border-color .12s, box-shadow .12s, scale .18s cubic-bezier(.3,1.5,.5,1);
+}
+.companion-chip-slot.near { border: 1.5px solid var(--cmp-blue); background: rgba(88, 166, 255, .2); box-shadow: 0 0 18px rgba(88, 166, 255, .4); scale: 1.06; }
+@keyframes companion-slot-in { from { opacity: 0; } }
 .companion-chip {
   pointer-events: auto; display: inline-flex; align-items: center; gap: 7px;
   max-width: 240px; padding: 5px 12px 5px 6px; border-radius: 20px;
   background: color-mix(in srgb, var(--cmp-bar) 94%, transparent); color: var(--cmp-text);
   border: 1px solid var(--cmp-line); box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
-  font: inherit; font-size: 12px; cursor: pointer; backdrop-filter: blur(3px);
+  font: inherit; font-size: 12px; cursor: pointer; backdrop-filter: blur(3px); touch-action: none;
   transition: border-color .15s, transform .15s;
 }
 .companion-chip:hover, .companion-chip:focus-visible { border-color: var(--cmp-blue); transform: translateY(-1px); outline: none; }
@@ -339,8 +362,9 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .companion-chip.needs, .companion-peek { animation: none; }
-  .companion-chip { transition: none; }
+  .companion-chip.needs, .companion-peek, .companion-chip-slot { animation: none; }
+  .companion-chip, .companion-chip-slot { transition: none; }
+  .companion-chips.dragging .companion-chip, .companion-chip-slot.near { scale: none; }
 }
 
 /* Annotation (js/companion-annotate.js, tcl-8vjjko): the operator draws over
