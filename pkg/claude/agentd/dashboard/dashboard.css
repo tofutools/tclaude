@@ -9845,6 +9845,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .delete-agent-wt.disabled input[type=checkbox] { cursor: default; }
 .delete-agent-wt .wt-note { color: #7d8590; font-size: 11px; }
 #retire-modal .delete-agent-wt .wt-note { margin-left: 6px; }
+#worktree-cleanup-modal .delete-agent-wt .wt-note { margin-left: 6px; }
 /* Bulk window focus/unfocus selection modal. Reuses the cleanup-modal
    shell (toolbar / list / rows / buttons); the rules below are
    specific to this modal: the focus-vs-unfocus direction picker and

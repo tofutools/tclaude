@@ -21,6 +21,7 @@ export function normalizeWorktreeCandidate(worktree) {
     path: String(worktree?.path || ''),
     name: String(worktree?.name || ''),
     branch: String(worktree?.branch || ''),
+    commit: String(worktree?.commit || ''),
     repo_root: String(worktree?.repo_root || ''),
     category: String(worktree?.category || ''),
     is_main: isMain,
@@ -28,6 +29,7 @@ export function normalizeWorktreeCandidate(worktree) {
     dirty: worktree?.dirty === true,
     merged: worktree?.merged === true,
     unpushed_commits: Number(worktree?.unpushed_commits || 0),
+    unpushed_unknown: !isMain && worktree?.unpushed_commits == null,
     upstream_gone: worktree?.upstream_gone === true,
     base_ref: String(worktree?.base_ref || ''),
     last_commit: Number(worktree?.last_commit || 0),
@@ -154,17 +156,37 @@ export function visibleWorktrees(candidates, query, danglingOnly = false) {
   return [...removable, ...mains];
 }
 
-export function freezeWorktreeCleanupRequest(candidates, prunableRepos, deleteBranches) {
+// Selected rows whose branch would take commits with it: they exist nowhere
+// else, or the scan could not tell. The daemon keeps these branches unless
+// exact path, branch and tip ride along as force_branches.
+export function unpublishedBranches(candidates) {
+  return selectedWorktrees(candidates)
+    .filter((candidate) => candidate.branch && (candidate.unpushed_commits > 0 || candidate.unpushed_unknown));
+}
+
+export function unpublishedBranchesKey(rows) {
+  return rows.map((row) => `${row.path}\0${row.branch}\0${row.commit}\0${row.unpushed_commits}`).join('\n');
+}
+
+export function freezeWorktreeCleanupRequest(candidates, prunableRepos, deleteBranches, confirmForce = false) {
   return Object.freeze({
     paths: Object.freeze(selectedWorktrees(candidates).map((candidate) => candidate.path)),
     pruneRoots: Object.freeze(selectedPrunableRepos(prunableRepos).map((repo) => repo.repo_root)),
     deleteBranches: deleteBranches === true,
+    ...(deleteBranches === true && confirmForce === true
+      ? {
+        forceBranches: Object.freeze(unpublishedBranches(candidates).map((row) => Object.freeze({
+          path: row.path, branch: row.branch, tip: row.commit,
+        }))),
+      }
+      : {}),
   });
 }
 
 export function worktreeCleanupSummary(response) {
   const removed = Number(response?.removed || 0);
   const branches = Number(response?.branches || 0);
+  const branchesKept = Number(response?.branches_kept || 0);
   const skipped = Number(response?.skipped || 0);
   const failed = Number(response?.failed || 0);
   const pruned = Number(response?.pruned || 0);
@@ -173,6 +195,7 @@ export function worktreeCleanupSummary(response) {
   const pruneSkipped = Number(response?.prune_skipped || 0);
   let summary = `removed ${removed} worktree${removed === 1 ? '' : 's'}`;
   if (branches) summary += ` (+${branches} branch${branches === 1 ? '' : 'es'})`;
+  if (branchesKept) summary += `, ${branchesKept} unmerged branch${branchesKept === 1 ? '' : 'es'} kept`;
   if (skipped) summary += `, ${skipped} skipped`;
   if (failed) summary += `, ${failed} failed`;
   if (pruned || pruneRemaining || pruneFailed || pruneSkipped) {

@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -45,7 +47,9 @@ import (
 // label the snapshot rendered) and refuses the main repo and any worktree
 // a still-LIVE agent occupies. Removal is force (the human confirmed),
 // but the dirty/agent badges + un-ticked defaults keep the destructive
-// cases off by default.
+// cases off by default. A branch is force-deleted only when its commits
+// survive elsewhere, or when the human confirmed that exact path, branch
+// and tip in force_branches; sweepBranchRisk re-checks at execute time.
 
 // The repo-scan git seam — production shells out via the worktree
 // package; flow tests swap fakes (the package-level inspectWorktreeFn /
@@ -57,6 +61,7 @@ var (
 	worktreeDirtyFn     = worktree.IsDirtyIn
 	prunableWorktreesFn = worktree.PrunableWorktreesIn
 	pruneWorktreesFn    = worktree.PruneWorktreesIn
+	sweepBranchRiskFn   = sweepBranchRisk
 )
 
 // sweepAgent is an agent bound to a worktree — either its immutable startup
@@ -78,7 +83,10 @@ type sweepAgent struct {
 // sweepWorktree is one candidate row in the discovery response.
 type sweepWorktree struct {
 	sweepSignals
-	commit string // registered HEAD, including detached checkouts
+
+	// Commit is the registered HEAD, including detached checkouts. A
+	// force_branches confirmation echoes it, so it covers only this tip.
+	Commit string `json:"commit,omitempty"`
 
 	Path     string       `json:"path"`
 	Name     string       `json:"name"`      // base dir name, for a terse label
@@ -301,7 +309,7 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 			Branch:   wt.Branch,
 			RepoRoot: repoByPath[path],
 			IsMain:   wt.IsMain,
-			commit:   wt.Commit,
+			Commit:   wt.Commit,
 		}
 		// Resolve the bound agents (title + liveness + retired state) for
 		// this worktree.
@@ -695,6 +703,7 @@ type worktreeCleanupResponse struct {
 	PruneOutcomes  []worktreePruneOutcome   `json:"prune_outcomes"`
 	Removed        int                      `json:"removed"`
 	Branches       int                      `json:"branches"`
+	BranchesKept   int                      `json:"branches_kept"`
 	Skipped        int                      `json:"skipped"`
 	Failed         int                      `json:"failed"`
 	Pruned         int                      `json:"pruned"`
@@ -734,6 +743,10 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		Paths          []string `json:"paths"`
 		PruneRoots     []string `json:"prune_roots"`
 		DeleteBranches bool     `json:"delete_branches"`
+		// ForceBranches are the branches the human confirmed deleting even
+		// though their commits exist nowhere else, each pinned to what the
+		// dialog showed.
+		ForceBranches []sweepConfirmedBranch `json:"force_branches"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -755,6 +768,36 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 	resp := worktreeCleanupResponse{
 		Outcomes:      []worktreeCleanupOutcome{},
 		PruneOutcomes: []worktreePruneOutcome{},
+	}
+	forced := make(map[string]sweepConfirmedBranch, len(body.ForceBranches))
+	for _, confirmed := range body.ForceBranches {
+		forced[strings.TrimSpace(confirmed.Path)] = confirmed
+	}
+	// removeSelected decides the branch half for one worktree, then removes it
+	// through remove, or by compare-and-swap for a confirmation still current.
+	// A confirmation for another branch counts for nothing: the ordinary
+	// check applies, so a branch the human never saw is kept.
+	removeSelected := func(
+		anchor, root, path, branch, commit string,
+		remove func(deleteBranch bool) worktreeCleanupOutcome,
+	) worktreeCleanupOutcome {
+		if !body.DeleteBranches || branch == "" || branch == "HEAD" {
+			return remove(body.DeleteBranches)
+		}
+		if confirmed, ok := forced[path]; ok && confirmed.Branch == branch && confirmed.Tip != "" {
+			out := removeConfirmedBranch(anchor, path, branch, confirmed.Tip)
+			if out.Result == "removed" {
+				resp.BranchesKept++
+			}
+			return out
+		}
+		note := sweepBranchRiskFn(root, path, branch, commit)
+		out := remove(note == "")
+		if note != "" && out.Result == "removed" {
+			out.Detail = note
+			resp.BranchesKept++
+		}
+		return out
 	}
 	seen := map[string]bool{}
 	for _, raw := range body.Paths {
@@ -781,9 +824,10 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 				out.Result, out.Detail = "skipped", "in use by a running agent — stop it first"
 				resp.Skipped++
 			default:
-				out = removeOneRegisteredWorktree(
-					reg, path, body.DeleteBranches,
-				)
+				out = removeSelected(reg.RepoRoot, reg.RepoRoot, path, reg.Info.Branch, reg.Info.Commit,
+					func(deleteBranch bool) worktreeCleanupOutcome {
+						return removeOneRegisteredWorktree(reg, path, deleteBranch)
+					})
 				switch out.Result {
 				case "removed":
 					resp.Removed++
@@ -805,7 +849,10 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 			out.Result, out.Detail = "skipped", "in use by a running agent — stop it first"
 			resp.Skipped++
 		default:
-			out = removeOneWorktree(path, st.Branch, body.DeleteBranches)
+			out = removeSelected("", st.Root, path, st.Branch, "",
+				func(deleteBranch bool) worktreeCleanupOutcome {
+					return removeOneWorktree(path, st.Branch, deleteBranch)
+				})
 			switch out.Result {
 			case "removed":
 				resp.Removed++
@@ -858,6 +905,52 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// sweepConfirmedBranch pins a force confirmation to what the dialog listed.
+type sweepConfirmedBranch struct {
+	Path   string `json:"path"`
+	Branch string `json:"branch"`
+	Tip    string `json:"tip"`
+}
+
+// removeConfirmedBranch removes a worktree and deletes its branch only while
+// the branch still points at the confirmed tip. Git refuses otherwise, so
+// commits added after the confirmation stay on the kept branch.
+func removeConfirmedBranch(anchor, path, branch, tip string) worktreeCleanupOutcome {
+	out := worktreeCleanupOutcome{Path: path, Branch: branch}
+	removed, branchDeleted, resolved, err := removeWorktreeAtFn(anchor, path, branch, tip, true)
+	if resolved != "" {
+		out.Branch = resolved
+	}
+	switch {
+	case err != nil:
+		out.Result, out.Detail = "failed", err.Error()
+	case removed && branchDeleted:
+		out.Result, out.Detail = "removed_with_branch", "worktree + branch "+out.Branch+" removed"
+	case removed:
+		out.Result, out.Detail = "removed", "worktree removed (branch "+out.Branch+" kept: it changed after you confirmed, or is protected)"
+	default:
+		out.Result, out.Detail = "skipped", "already removed"
+	}
+	return out
+}
+
+// sweepBranchRisk re-reads the scan's signals at the destructive boundary. It
+// returns "" when the branch's commits survive on its upstream or the base,
+// and otherwise the note for keeping it. An unknown answer keeps the branch.
+func sweepBranchRisk(root, path, branch, commit string) string {
+	rows := []sweepWorktree{{Path: path, Branch: branch, RepoRoot: root, Commit: commit}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	scanSweepSignals(ctx, root, rows)
+	switch unpublished := rows[0].Unpushed; {
+	case unpublished == nil:
+		return "worktree removed (branch " + branch + " kept: could not confirm its commits exist elsewhere)"
+	case *unpublished > 0:
+		return fmt.Sprintf("worktree removed (branch %s kept: %d unpublished commits)", branch, *unpublished)
+	}
+	return ""
 }
 
 func pruneOneRepo(root string) worktreePruneOutcome {

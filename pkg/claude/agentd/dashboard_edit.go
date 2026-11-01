@@ -1356,7 +1356,8 @@ const (
 //   - "force": the cookie-auth twin of POST /v1/agent/{conv}/reincarnate.
 //     Spawns a fresh CC instance that inherits the target's identity
 //     (groups / perms / ownerships migrate onto the new conv-id),
-//     renames it `<prev>-r-<N>`, and soft-exits the original pane.
+//     keeps its name, archives the original as `<prev>-x`, and
+//     soft-exits the original pane.
 //     Body: `{follow_up}` — REQUIRED.
 //
 // Cookie auth ≈ human (checkDashboardAuth is the consent layer), so the

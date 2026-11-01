@@ -58,8 +58,10 @@ another agent still uses, are never removed.
 For leftovers, such as worktrees from agents you retired without deleting,
 open the group's **⚙** menu and choose **🧹 cleanup worktrees…**. It lists
 the stale worktrees in the group's repository and removes the ones you pick.
-It also force-deletes their branches, merged or not, unless you untick
-**Also delete the feature branch**.
+**Also delete the feature branch** deletes their branches once the commits are
+merged or pushed. A branch holding the only copy of its commits is kept unless
+you also tick the separate option that lists those branches and their commit
+counts.
 
 !!! info "Go deeper"
     [Spawning and lifecycle → Spawning an agent](../spawning-and-lifecycle.md#spawning-an-agent)

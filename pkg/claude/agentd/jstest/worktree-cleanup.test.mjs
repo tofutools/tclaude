@@ -484,3 +484,62 @@ test('dangling view shows reasons and risk badges without selecting hidden workt
   host.querySelector('#worktree-cleanup-cancel').click();
   assert.equal(await pending, null);
 });
+
+test('deleting an unmerged branch takes a separate confirmation that names what is lost', async (t) => {
+  const requests = [];
+  const opened = await mountCleanup(t, {
+    scan: async () => ({
+      repoRoots: ['/repo'],
+      worktrees: [
+        worktree('/repo-safe', { branch: 'safe', checked: true, unpushed_commits: 0 }),
+        worktree('/repo-a', { branch: 'topic-a', commit: 'aaa', checked: true, unpushed_commits: 3 }),
+        worktree('/repo-b', { branch: 'topic-b', commit: 'bbb', checked: false, unpushed_commits: 1 }),
+      ],
+      prunableRepos: [],
+      pruneScanErrors: [],
+    }),
+    cleanup: async (request) => {
+      requests.push(request);
+      return { removed: 2, branches: 2, skipped: 0, failed: 0, outcomes: [] };
+    },
+  });
+  const { harness, host } = opened;
+  await flush(harness);
+  const force = () => host.querySelector('#worktree-cleanup-force');
+  const toggle = async (control, checked) => {
+    control.checked = checked;
+    await harness.act(() => harness.fireEvent(control, 'change'));
+  };
+  const forced = () => force().checked === true || (force().checked === undefined && force().hasAttribute('checked'));
+  assert.equal(forced(), false, 'force-deleting starts off');
+  assert.match(host.querySelector('#worktree-cleanup-force-row').textContent, /topic-a \(3 commits\)/);
+  assert.doesNotMatch(host.querySelector('#worktree-cleanup-force-row').textContent, /safe|topic-b/);
+
+  await toggle(force(), true);
+  await flush(harness);
+  assert.equal(forced(), true);
+  await toggle(checkbox(host, '/repo-b'), true);
+  await flush(harness);
+  assert.match(host.querySelector('#worktree-cleanup-force-row').textContent, /topic-b \(1 commit\)/);
+  assert.equal(forced(), false, 'a changed branch list clears the confirmation');
+  await toggle(checkbox(host, '/repo-b'), false);
+  await flush(harness);
+  assert.equal(forced(), false, 'restoring the old list does not restore the confirmation');
+  await toggle(checkbox(host, '/repo-b'), true);
+  await flush(harness);
+
+  await toggle(host.querySelector('#worktree-cleanup-branches'), false);
+  await flush(harness);
+  assertAbsent(force());
+  await toggle(host.querySelector('#worktree-cleanup-branches'), true);
+  await flush(harness);
+  await toggle(force(), true);
+  await flush(harness);
+  host.querySelector('#worktree-cleanup-submit').click();
+  await flush(harness);
+  assert.deepEqual(requests[0].forceBranches, [
+    { path: '/repo-a', branch: 'topic-a', tip: 'aaa' },
+    { path: '/repo-b', branch: 'topic-b', tip: 'bbb' },
+  ]);
+  assert.deepEqual(requests[0].paths, ['/repo-safe', '/repo-a', '/repo-b']);
+});

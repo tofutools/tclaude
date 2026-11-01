@@ -1610,6 +1610,13 @@ func SetSweepWorktreeFnsForTest(
 	}
 }
 
+// SetSweepBranchRiskFnForTest swaps the execute-time unpublished-commit check.
+func SetSweepBranchRiskFnForTest(risk func(root, path, branch, commit string) string) func() {
+	prev := sweepBranchRiskFn
+	sweepBranchRiskFn = risk
+	return func() { sweepBranchRiskFn = prev }
+}
+
 // SetPruneWorktreeFnsForTest swaps the prune dry-run and mutation seams used
 // by repo-wide stale-record cleanup. The mutation seam returns stderr even on
 // a nil error because real Git may report per-entry failures while exiting 0.

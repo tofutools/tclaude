@@ -1828,7 +1828,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       Sync worktree branch with name
     </label>
     <label class=${`cron-create-enabled cron-check-aligned${worktreeUsable ? '' : ' disabled'}`} id="agent-spawn-wt-fetch-row"
-      title="Before cutting a new worktree branch, fetch its base branch and use the freshly updated remote-tracking ref. Fetch failure stops the spawn.">
+      title="Before cutting a new worktree branch, fetch its base branch and use the freshly updated remote-tracking ref. A repository with no git remote skips the fetch. Any other fetch failure stops the spawn.">
       <input id="agent-spawn-wt-fetch" type="checkbox" checked=${draft.fetchLatestWorktree} disabled=${busy || !worktreeUsable}
         onChange=${(event) => {
           touched.current.add('fetchLatestWorktree');

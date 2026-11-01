@@ -106,8 +106,12 @@ agents, and live-agent worktrees start unticked. Review the selection before
 removing it: removal is forced, so selecting a dirty worktree discards its
 uncommitted changes. Removing an offline agent's worktree also breaks its
 resume from that directory. **Also delete the feature branch** is checked by
-default and force-deletes removed worktrees' local branches; untick it to keep
-them. `main` and `master` branches are always kept.
+default and deletes removed worktrees' local branches once their commits are
+merged or pushed; untick it to keep them all. A selected branch whose commits
+exist nowhere else, or can't be checked, is kept. The dialog lists those
+branches with their commit counts behind a separate, unticked **Also delete**
+option, which permanently loses the listed commits, and changing the selection
+clears it. `main` and `master` branches are always kept.
 
 The daemon acts only on the selected paths and re-validates them against Git
 and live-agent state at execution time. It refuses the main checkout and any

@@ -47,7 +47,8 @@ var (
 	// removeWorktreeBranchFn is the retire-time variant: it removes the
 	// worktree AND deletes its local branch (main/master always kept).
 	// Delete keeps the branch (removeWorktreeFn); retire cleans up the
-	// agent's whole git footprint.
+	// agent's git footprint once its callers have shown the branch holds
+	// nothing unmerged.
 	removeWorktreeBranchFn = worktree.RemoveLinkedWorktreeAndBranch
 	// removeRegisteredWorktreeFn anchors removal at a surviving checkout,
 	// so repo-wide cleanup can remove a Git registration even after its
@@ -94,8 +95,8 @@ type agentWorktreeView struct {
 	// after that proof — the deferred path waits for a pane to exit — and
 	// the identity re-check before it (retireWorktreeDrift) compares the
 	// path, kind and branch NAME, none of which notices a branch that
-	// gained a commit. Empty keeps the unconditional `git branch -D` every
-	// other retire surface uses. Ignored when KeepBranch is set.
+	// gained a commit. Empty leaves the other retire surfaces on their
+	// unmerged-commit check. Ignored when KeepBranch is set.
 	BranchTip string `json:"-"`
 }
 
@@ -666,10 +667,9 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 
 // applyRetireWorktreeCleanup is the retire-flow sibling of
 // applyWorktreeCleanup: it removes wt's worktree AND force-deletes its
-// local branch (main/master are always kept — worktree.go's
-// protected-branch guard). Retiring an agent that owns a throwaway
-// feature branch should leave no git footprint behind, where a plain
-// delete keeps the branch. wt.KeepBranch opts back out of the branch
+// local branch when that branch holds nothing unmerged (main/master are
+// always kept — worktree.go's protected-branch guard). A plain delete
+// keeps the branch. wt.KeepBranch opts back out of the branch
 // half for a caller that removes the directory but must not destroy
 // commits — see its field comment.
 //
