@@ -128,9 +128,19 @@ export function wheelIsMouse({ deltaMode, deltaX, wheelDeltaY }) {
   return !deltaX && !!wheelDeltaY && wheelDeltaY % 120 === 0;
 }
 
+const wheelUnit = (deltaMode) => (deltaMode === 1 ? WHEEL_LINE_PX : deltaMode === 2 ? WHEEL_PAGE_PX : 1);
+
 // wheelPixels is how far a wheel event moved vertically, whatever its unit.
 export function wheelPixels({ deltaMode, deltaY }) {
-  return deltaY * (deltaMode === 1 ? WHEEL_LINE_PX : deltaMode === 2 ? WHEEL_PAGE_PX : 1);
+  return deltaY * wheelUnit(deltaMode);
+}
+
+// wheelPan is how far a wheel event pans in pixels. Shift turns a wheel sideways;
+// Chrome has swapped the axes by now, Firefox only does so for its own scrolling.
+export function wheelPan({ deltaMode, deltaX, deltaY, shiftKey }) {
+  const unit = wheelUnit(deltaMode);
+  if (shiftKey && !deltaX) return { x: deltaY * unit, y: 0 };
+  return { x: deltaX * unit, y: deltaY * unit };
 }
 
 // groupBoards sorts a board listing into its groups, those that match `query`:

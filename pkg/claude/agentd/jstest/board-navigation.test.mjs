@@ -360,7 +360,7 @@ test('a tab left mounted picks up the map settings when it comes back', async (t
 
 test('wheelIsMouse tells a mouse wheel from a touchpad', async (t) => {
   const { harness } = await setup(t);
-  const { wheelIsMouse, wheelPixels } = await harness.importDashboardModule('js/board-model.js');
+  const { wheelIsMouse, wheelPan, wheelPixels } = await harness.importDashboardModule('js/board-model.js');
   const mouse = [
     { deltaMode: 0, deltaX: 0, deltaY: 100, wheelDeltaY: -120 }, // Chrome
     { deltaMode: 0, deltaX: 0, deltaY: 133.33, wheelDeltaY: -240 }, // two notches, fractional
@@ -378,6 +378,10 @@ test('wheelIsMouse tells a mouse wheel from a touchpad', async (t) => {
   for (const event of touchpad) assert.equal(wheelIsMouse(event), false, JSON.stringify(event));
   assert.equal(wheelPixels({ deltaMode: 1, deltaY: 3 }), 99, 'a Firefox notch zooms like a Chrome one');
   assert.equal(wheelPixels({ deltaMode: 0, deltaY: 100 }), 100);
+  assert.deepEqual(wheelPan({ deltaMode: 1, deltaX: 3, deltaY: 0 }), { x: 99, y: 0 }, 'a tilt wheel moves in lines too');
+  assert.deepEqual(wheelPan({ deltaMode: 0, deltaX: 0, deltaY: 4 }), { x: 0, y: 4 });
+  assert.deepEqual(wheelPan({ deltaMode: 1, deltaX: 0, deltaY: 3, shiftKey: true }), { x: 99, y: 0 }, 'Firefox leaves Shift+wheel vertical');
+  assert.deepEqual(wheelPan({ deltaMode: 0, deltaX: 100, deltaY: 0, shiftKey: true }), { x: 100, y: 0 }, 'Chrome has swapped it already');
 });
 
 test('on the canvas a mouse wheel zooms at the pointer and a touchpad pans', async (t) => {
@@ -408,6 +412,9 @@ test('a scroll stays one device from start to end', async (t) => {
   assert.equal(zoomOf(), '1', 'a touchpad event that looks like a notch does not jump the view');
   await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: -300, wheelDeltaY: 120, timeStamp: 2000 });
   assert.notEqual(zoomOf(), '1', 'a pause starts a new scroll');
+  const zoomed = zoomOf();
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: 3, deltaMode: 1, wheelDeltaY: -120, shiftKey: true, timeStamp: 2050 });
+  assert.equal(zoomOf(), zoomed, 'Shift pans, even in the middle of a zoom');
 });
 
 test('a pan does not re-render the shapes', async (t) => {

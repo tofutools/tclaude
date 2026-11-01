@@ -23,7 +23,7 @@ import {
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
   entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
   QUICK_SHAPES, reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, stackOrder, suggestedShape, toExcalidraw, topHit, withLabels,
-  BOARD_ZOOM_MAX, BOARD_ZOOM_MIN, boardAge, clampBoardZoom, groupBoards, wheelIsMouse, wheelPixels,
+  BOARD_ZOOM_MAX, BOARD_ZOOM_MIN, boardAge, clampBoardZoom, groupBoards, wheelIsMouse, wheelPan, wheelPixels,
 } from './board-model.js';
 import { BoardContextMenu } from './board-context-menu.js';
 import { announceBoardDeleted, askDeleteBoard, boardIsGone, exportBoard, freeBoardId, importBoardFile } from './board-manage.js';
@@ -1392,12 +1392,14 @@ export function BoardEditor({
     if (!pinching) {
       // One scroll is one device: a stray event must not jump the view.
       const going = event.timeStamp - wheelScroll.current.at < WHEEL_SCROLL_GAP_MS;
-      const mouse = going ? wheelScroll.current.mouse : wheelIsMouse(event);
+      const mouse = !event.shiftKey && (going ? wheelScroll.current.mouse : wheelIsMouse(event));
       wheelScroll.current = { at: event.timeStamp, mouse };
       if (!mouse) {
-        setView({ ...view, x: view.x + event.deltaX / view.zoom, y: view.y + event.deltaY / view.zoom });
+        const pan = wheelPan(event);
+        setView({ ...view, x: view.x + pan.x / view.zoom, y: view.y + pan.y / view.zoom });
         return;
       }
+      if (gesture.current?.kind === 'pan') return; // a drag holds the zoom it began with
     }
     const rect = svgRef.current?.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
     // Over the toolbar or the title, the point to hold still is the middle.
