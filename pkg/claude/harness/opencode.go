@@ -7,7 +7,7 @@ func init() {
 	Register(&Harness{
 		Name:                     OpenCodeName,
 		DisplayName:              "OpenCode",
-		MailMidTurn: true,
+		MailMidTurn:              true,
 		Spawn:                    openCodeSpawner{},
 		Ask:                      openCodeAsker{},
 		Models:                   openCodeModels{},

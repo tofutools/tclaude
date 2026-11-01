@@ -34,7 +34,7 @@ func init() {
 	Register(&Harness{
 		Name:                      CopilotName,
 		DisplayName:               "GitHub Copilot CLI",
-		MailMidTurn: true,
+		MailMidTurn:               true,
 		AvailabilityCredentialEnv: []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"},
 		ModelProxyProtocol:        "openai-responses-v1",
 		Spawn:                     copilotSpawner{},

@@ -2064,12 +2064,12 @@ var VoicePhraseDefaults = []VoicePhrase{
 // DictationSendPhraseDefault, the phrase cap and the silence-send range bound
 // config dashboard.voice.
 const (
-	DictationSendPhraseDefault  = "send now"
-	DictationSendPhraseMaxRunes = 60
-	SilenceSendSecondsMin       = 2
-	SilenceSendSecondsMax       = 30
-	VoicePauseSecondsMin        = 0.3
-	VoicePauseSecondsMax        = 10.0
+	DictationSendPhraseDefault   = "send now"
+	DictationSendPhraseMaxRunes  = 60
+	SilenceSendSecondsMin        = 2
+	SilenceSendSecondsMax        = 30
+	VoicePauseSecondsMin         = 0.3
+	VoicePauseSecondsMax         = 10.0
 	ContinuousIdleSecondsDefault = 120
 	ContinuousIdleSecondsMin     = 30
 	ContinuousIdleSecondsMax     = 3600
