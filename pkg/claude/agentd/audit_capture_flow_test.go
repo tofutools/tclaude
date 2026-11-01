@@ -332,9 +332,6 @@ func TestAudit_SelfReincarnateWithoutSlugIsRecorded(t *testing.T) {
 	assert.Equal(t, db.AuditSourceCLI, row.Source)
 }
 
-// Scenario: an agent deletes a message from its inbox (DELETE
-// /v1/messages/{id}). We audit sends, so we audit deletions too — verb
-// "message.delete", actor the deleter.
 // Scenario: the operator grants, denies and revokes a permission. Each row must
 // say whose permission changed, and a change to the defaults must name no agent.
 func TestAudit_PermissionChangesNameTheirTarget(t *testing.T) {
@@ -368,6 +365,9 @@ func TestAudit_PermissionChangesNameTheirTarget(t *testing.T) {
 	assert.Equal(t, "default", row.TargetLabel)
 }
 
+// Scenario: an agent deletes a message from its inbox (DELETE
+// /v1/messages/{id}). We audit sends, so we audit deletions too — verb
+// "message.delete", actor the deleter.
 func TestAudit_MessageDeleteRecorded(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
