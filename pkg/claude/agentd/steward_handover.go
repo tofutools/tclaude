@@ -183,13 +183,15 @@ func adoptSummonedSteward(conv string) {
 		if err != nil || agentID == "" {
 			continue
 		}
-		if _, err := demoteSteward(g, offline, agentID); err != nil {
+		demotion, err := demoteSteward(g, offline, agentID)
+		if err != nil {
 			slog.Warn("steward: demote offline Steward failed", "conv", short8(offline), "error", err)
 			continue
 		}
 		if err := db.SetStewardStandby(agentID, granterLabel("")); err != nil {
 			slog.Warn("steward: put offline Steward on the roster failed", "conv", short8(offline), "error", err)
 		}
+		tellStoodDown(offline, agent.FreshTitle(conv), demotion, true)
 	}
 	pruneDeadScribes(g, conv)
 	agentID, err := db.AgentIDForConv(conv)
@@ -252,6 +254,9 @@ type stewardRosterEntry struct {
 	Harness string `json:"harness,omitempty"`
 	// LastRan is when an offline one was last seen running.
 	LastRan string `json:"last_ran,omitempty"`
+	// Keeps is what an offline one would keep if a new Steward replaced it:
+	// what the operator gave it separately.
+	Keeps []string `json:"keeps,omitempty"`
 }
 
 // stewardRosterView lists the active Steward, then the others, in seat order.
@@ -273,6 +278,11 @@ func stewardRosterView() []stewardRosterEntry {
 		if !out.Online {
 			if sess, err := db.FindSessionByConvID(conv); err == nil && sess != nil {
 				out.LastRan = sess.UpdatedAt.UTC().Format(time.RFC3339)
+			}
+			if seat != db.StewardSeatStandby {
+				if demotion, err := readStewardDemotion(conv, agentID); err == nil {
+					out.Keeps = demotion.Keeps
+				}
 			}
 		}
 		return out, true
@@ -570,6 +580,13 @@ func leaveStewardSeat(g *db.AgentGroup, conv, successor, then, by string) (strin
 			return "", err
 		}
 	}
+	tellStoodDown(conv, successor, demotion, then == stewardThenRoster)
+	return "", nil
+}
+
+// tellStoodDown tells a former Steward what happened. One that is not running
+// reads it when it resumes, on a conversation that still says it is the Steward.
+func tellStoodDown(conv, successor string, demotion *stewardDemotion, onRoster bool) {
 	body := "The operator stood you down as Steward"
 	if successor != "" {
 		body = "The operator made " + successor + " the Steward in your place"
@@ -578,13 +595,12 @@ func leaveStewardSeat(g *db.AgentGroup, conv, successor, then, by string) (strin
 	if len(demotion.Keeps) > 0 {
 		body += " You keep what the operator gave you separately: " + strings.Join(demotion.Keeps, ", ") + "."
 	}
-	if then == stewardThenRoster {
+	if onRoster {
 		body += " You are on the roster, so they can bring you back."
 	}
 	if _, err := queueAgentMessage(&db.AgentMessage{ToConv: conv, Subject: "You are no longer the Steward", Body: body}); err != nil {
 		slog.Warn("steward: stand-down message failed", "conv", short8(conv), "error", err)
 	}
-	return "", nil
 }
 
 // routes
@@ -697,7 +713,7 @@ func handleStewardStepDown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Then != "" && body.Then != stewardThenRoster && body.Then != stewardThenKeep {
-		writeError(w, http.StatusBadRequest, "then", fmt.Sprintf("then must be %s or %s; ⏻ retires a Steward", stewardThenRoster, stewardThenKeep))
+		writeError(w, http.StatusBadRequest, "then", fmt.Sprintf("then must be %s or %s; retire a Steward to end it for good", stewardThenRoster, stewardThenKeep))
 		return
 	}
 	scribeSummonMu.Lock()

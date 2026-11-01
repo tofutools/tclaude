@@ -18,7 +18,7 @@ function snapshotWith({ aStatus = 'idle', steward = false } = {}) {
     ],
   }];
   if (steward) groups.push({ name: 'steward', scribe: true, members: [{ agent_id: S, conv_id: 'conv-s', title: 'steward-k3x', online: true, state: { status: 'idle' } }] });
-  return { groups };
+  return { groups, ...(steward ? { steward_roster: [{ agent_id: S, name: 'steward-k3x', seat: 'active', online: true }] } : {}) };
 }
 
 // A hand-over's claim is asynchronous and starts as an act's render ends.
@@ -2007,15 +2007,24 @@ test('Clear context asks first, for any agent that is not a shell', async (t) =>
 test('an offline Steward in the seat offers Resume and Start fresh; with none, only a summon', async (t) => {
   const snapshot = snapshotWith({ steward: true });
   snapshot.groups[1].members[0].online = false;
-  snapshot.steward_roster = [{ agent_id: S, name: 'steward-k3x', seat: 'active', online: false, last_ran: new Date(Date.now() - 2 * 3600e3).toISOString() }];
+  snapshot.steward_roster = [{ agent_id: S, name: 'steward-k3x', seat: 'active', online: false, last_ran: new Date(Date.now() - 2 * 3600e3).toISOString(), keeps: ['node.exec'] }];
   const { view, harness, controller } = await setup(t, { snapshot });
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /Open the companion/ }).click());
   assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
   assert.match(view.container.textContent, /Last ran 2h ago/);
+  assert.match(view.container.textContent, /It keeps what you gave it separately: node\.exec/, 'Start fresh says what stays with the old one');
   assert.ok(view.container.querySelector('.companion-fresh-steward'));
 
   const fresh = await setup(t, { snapshot: snapshotWith() });
   await fresh.harness.act(() => fresh.harness.getByRole(fresh.view.container, 'button', { name: /Open the companion/ }).click());
   assert.equal(fresh.view.container.querySelector('.companion-resume-steward'), null);
   assert.equal(fresh.view.container.querySelector('.companion-fresh-steward'), null);
+});
+
+test('a failed resume is reported and leaves the way back open', async (t) => {
+  const { resumeAgent } = await (await import('./preact-harness.mjs')).createPreactHarness(t).then((harness) => harness.importDashboardModule('js/companion-approval.js'));
+  const answer = (body) => async () => ({ ok: true, json: async () => body });
+  await resumeAgent(answer({ action: 'resumed' }), S);
+  await assert.rejects(resumeAgent(answer({ action: 'error', detail: 'no pane' }), S), /no pane/);
+  await assert.rejects(resumeAgent(answer({ action: 'error:missing_cwd', detail: '/gone' }), S), (error) => error.recoverable === true);
 });

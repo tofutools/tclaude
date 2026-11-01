@@ -152,6 +152,13 @@ function stewardReturnNote({ lastRan }) {
   return age ? `Same conversation. Last ran ${age}.` : 'Same conversation.';
 }
 
+// stewardFreshNote says what Start fresh leaves behind. Going on the roster takes
+// what the role gave, not what the operator gave this agent separately.
+function stewardFreshNote({ name, keeps = [] }) {
+  const kept = keeps.length ? ` It keeps what you gave it separately: ${keeps.join(', ')}.` : '';
+  return `A new Steward. ${name} goes on the roster.${kept}`;
+}
+
 function AddMenu({ agents, tabs, steward, stewardLabel, returning, onResumeSteward, onSummonSteward, onPin, onClose, busy, trigger }) {
   const [filter, setFilter] = useState('');
   const menuRef = useRef(null);
@@ -177,7 +184,7 @@ function AddMenu({ agents, tabs, steward, stewardLabel, returning, onResumeStewa
     </button>`}
     ${returning && html`<button type="button" role="menuitem" class="companion-menu-steward companion-menu-fresh" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
-      <span><b>Start fresh</b><small>A new Steward. ${returning.name} goes on the roster.</small></span>
+      <span><b>Start fresh</b><small>${stewardFreshNote(returning)}</small></span>
     </button>`}
     ${!stewardPinned && !returning && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
@@ -484,6 +491,25 @@ export function CompanionApp({
 
   useEffect(() => registerController({ open: (agentId, options) => showAgent(agentId, options) }), [showAgent]);
 
+  // A shut-down Steward can come back without this window: from the Agents tab,
+  // the CLI, or by the seat going to another agent. Then there is nothing left
+  // to offer. Seeing it offline first tells that from the snapshot still showing
+  // it online for a poll after the shut-down.
+  const shutDownSeen = useRef(false);
+  useEffect(() => {
+    if (!shutDown) {
+      shutDownSeen.current = false;
+      return;
+    }
+    const entry = stewardRoster.find((candidate) => candidate.agent_id === shutDown.agentId);
+    if (!entry || entry.seat === 'standby') setShutDown(null);
+    else if (!entry.online) shutDownSeen.current = true;
+    else if (shutDownSeen.current) {
+      setShutDown(null);
+      setHelperClosed(shutDown.agentId, false);
+    }
+  });
+
   // The Steward that can come back, by Resume. One just shut down can still show
   // as online for a poll, so it stands in for the roster until then.
   const rosterReturn = steward?.online && steward.agentId !== shutDown?.agentId ? null : stewardToResume(stewardRoster);
@@ -491,6 +517,7 @@ export function CompanionApp({
     agentId: shutDown?.agentId || rosterReturn.agent_id,
     name: shutDown?.name || (rosterReturn.agent_id === steward?.agentId ? steward.name : rosterReturn.name),
     lastRan: stewardRoster.find((entry) => entry.agent_id === (shutDown?.agentId || rosterReturn.agent_id))?.last_ran || '',
+    keeps: stewardRoster.find((entry) => entry.agent_id === (shutDown?.agentId || rosterReturn.agent_id))?.keeps || [],
   } : null;
 
   const summonSteward = useCallback(async () => {
@@ -800,6 +827,10 @@ export function CompanionApp({
       notify(`Resuming ${agent.name}…`);
       return true;
     } catch (error) {
+      if (error?.recoverable) {
+        const { resumeAgentReq } = await import('./dashboard-operations.js');
+        return resumeAgentReq(agent.agentId, agent.name);
+      }
       notify(`Could not resume ${agent.name}: ${error?.message || error}`, true);
       return false;
     }
@@ -1225,7 +1256,8 @@ export function CompanionApp({
         <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, 🛡 and sudo in the title bar change its access.</p>
         ${returning ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>${busy ? 'Working…' : `Resume ${returning.name}`}</button>
           <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
-          <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>`
+          <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>
+          <p class="companion-empty-note">${stewardFreshNote(returning)}</p>`
         : html`<button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>`}
         <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
       </div>`}
@@ -1235,7 +1267,8 @@ export function CompanionApp({
         <p><b>${activeAgent.name}</b> is offline.</p>
         ${activeAgent.agentId === returning?.agentId ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>Resume</button>
           <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
-          <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>`
+          <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>
+          <p class="companion-empty-note">${stewardFreshNote(returning)}</p>`
         : html`<button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>`}
       </div>`}
       ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">

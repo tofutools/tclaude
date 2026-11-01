@@ -317,6 +317,7 @@ func TestSteward_NameBelongsToTheSteward(t *testing.T) {
 func TestSteward_ShutDownCanResumeOrStartFresh(t *testing.T) {
 	s := newStewardHandoverFlow(t)
 	s.mustHandover(handoverWorker, "keep")
+	require.NoError(t, db.SetAgentPermissionOverride(handoverWorker, agentd.PermNodeExec, db.PermEffectGrant, "<human-dashboard>"))
 	s.f.MarkOffline("tclaude-hand1")
 
 	roster := s.rosterRows()
@@ -325,12 +326,18 @@ func TestSteward_ShutDownCanResumeOrStartFresh(t *testing.T) {
 	assert.Equal(t, db.StewardSeatActive, roster[0].Seat, "stopping does not take the seat")
 	assert.False(t, roster[0].Online)
 	assert.NotEmpty(t, roster[0].LastRan)
+	assert.Equal(t, []string{agentd.PermNodeExec}, roster[0].Keeps, "Start fresh can say what stays with it")
 
 	fresh := s.summon()
 	roster = s.rosterRows()
 	require.Len(t, roster, 2)
 	assert.Equal(t, s.agentID(fresh), roster[0].AgentID)
 	assert.Equal(t, db.StewardSeatStandby, roster[1].Seat, "the old one goes on the roster")
+	rows, err := db.ListAgentMessagesForConv(handoverWorker, 20)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Contains(t, rows[0].Body, "Stop acting as the Steward", "it hears so when it next resumes")
+	assert.Contains(t, rows[0].Body, agentd.PermNodeExec)
 }
 
 // Clear context keeps the agent and starts a new conversation with its role.
@@ -373,8 +380,9 @@ func (s *stewardHandoverFlow) rosterRows() []stewardRosterRow {
 }
 
 type stewardRosterRow struct {
-	AgentID string `json:"agent_id"`
-	Seat    string `json:"seat"`
-	Online  bool   `json:"online"`
-	LastRan string `json:"last_ran"`
+	AgentID string   `json:"agent_id"`
+	Seat    string   `json:"seat"`
+	Online  bool     `json:"online"`
+	LastRan string   `json:"last_ran"`
+	Keeps   []string `json:"keeps"`
 }

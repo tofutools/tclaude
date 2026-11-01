@@ -390,7 +390,7 @@ the window and **✦ Steward** offer two ways on:
 | Action | What it does |
 |---|---|
 | **Resume** | Brings back the same agent on the same conversation, and says how long ago it last ran. It catches up with its levels as any Steward does when it resumes. |
-| **Start fresh** | Summons a new Steward, with no memory of the old one. The old one goes on the roster, without Steward access, and its conversation stays in history. |
+| **Start fresh** | Summons a new Steward, with no memory of the old one. The old one goes on the roster without Steward access, and its conversation stays in history. It keeps what you gave it separately, as anything leaving the role does, and the window lists that first. |
 
 With no earlier Steward, the window offers only the summon. A detached Steward window
 has the same ⏻ in its header. Its **Resume** brings the agent back in that window, and

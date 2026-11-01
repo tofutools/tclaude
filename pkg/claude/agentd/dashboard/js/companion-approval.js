@@ -69,10 +69,19 @@ export async function shutDownAgent(fetchImpl, agent) {
   if (!response.ok) throw new Error(await refusal(response));
 }
 
-// resumeAgent brings a stopped agent back on its own conversation.
+// resumeAgent brings a stopped agent back on its own conversation. The daemon
+// answers 200 either way and says how it went in action. The dashboard's wake
+// has dialogs for a missing directory and a lost subscription, so the error says
+// when one of them applies.
 export async function resumeAgent(fetchImpl, agentId) {
   const response = await fetchImpl(`/api/agents/${encodeURIComponent(agentId)}/resume`, { method: 'POST', credentials: 'same-origin' });
   if (!response.ok) throw new Error(await refusal(response));
+  const { action = '', detail = '' } = await response.json().catch(() => ({}));
+  if (action === 'error' || action.startsWith('error:')) {
+    const error = new Error(detail || action);
+    error.recoverable = action === 'error:missing_cwd' || action === 'error:claude_subscription_lost';
+    throw error;
+  }
 }
 
 async function clearAgentContext(fetchImpl, agent) {
