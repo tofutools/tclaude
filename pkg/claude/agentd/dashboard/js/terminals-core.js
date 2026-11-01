@@ -397,7 +397,10 @@ export function mountTerminalWidget({
   documentRef.addEventListener('tclaude:terminal-palette', syncTheme);
 
   function fit() {
-    if (disposed) return;
+    // A pending zoom settles with its own fit. Until then the font is the old
+    // one, and a remote host's panel may be shrunk by the preview's scrollbars,
+    // so a fit here would report the peer a wrong grid.
+    if (disposed || zoomPending !== null) return;
     if (remote && remoteState.shared) { fitShared(); return; }
     if (remote) { fitRemote(); return; }
     try { fitAddon.fit(); } catch (_) { /* host may not be laid out yet */ }

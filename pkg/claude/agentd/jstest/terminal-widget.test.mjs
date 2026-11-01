@@ -840,8 +840,9 @@ test('a shared remote terminal keeps its zoom and reports the panel at that size
   const timers = manualTimers();
   const fonts = [];
   class SizedFit extends fakes.FakeFitAddon {
-    proposeDimensions() { return { cols: Math.floor(1300 / fakes.terminal().options.fontSize), rows: 40 }; }
+    proposeDimensions() { return { cols: Math.floor(panel / fakes.terminal().options.fontSize), rows: 40 }; }
   }
+  let panel = 1300;
   const widget = core.mountTerminalWidget({
     host, wsPath: core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'interactive' }), authenticate: false,
     TerminalCtor: fakes.FakeTerminal, FitAddonCtor: SizedFit, WebSocketCtor: fakes.FakeWebSocket,
@@ -860,6 +861,12 @@ test('a shared remote terminal keeps its zoom and reports the panel at that size
 
   widget.zoomBy(6);
   assert.deepEqual(desired(), [65], 'the peer hears nothing until the gesture settles');
+  // A remote host scrolls, so the scaled preview can bring up scrollbars, which
+  // shrink the panel and fire the observer while the old font is still set.
+  panel = 1240;
+  fakes.observer().handler();
+  assert.deepEqual(desired(), [65], 'not even when the preview moves the panel');
+  panel = 1300;
   timers.flush();
   assert.deepEqual(desired(), [65, 50]);
   widget.dispose();
