@@ -36,6 +36,7 @@ import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, ope
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
+import { voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
@@ -343,8 +344,11 @@ export function CompanionApp({
   // Voice input (tcl-sqxkb0): dictation fills the draft; ending with "send"
   // sends it. listeningRef keeps replies from being spoken into the open mic.
   const sendPhrase = dictationSendPhrase(snapshot.value);
+  const composerShown = useRef(false);
   const dictation = useDictation({
     win, targetId: activeId, draft, setDraft, notify, dictationImpl, sendPhrase,
+    silenceSend: voiceSilenceSeconds(snapshot.value),
+    wakeHost: () => (composerShown.current ? windowRef.current : null),
     send: (text) => send(null, text),
     onStart: () => speaker.cancel(),
     onRelease: () => { setFieldFocused(false); setFocusToken((n) => n + 1); },
@@ -1284,6 +1288,7 @@ export function CompanionApp({
   }, [open, warmId, warm]);
 
   const showComposer = !showQueue && activeAgent && activeAgent.online;
+  composerShown.current = !!(open && showComposer);
   const floatingTools = showComposer && html`<${FloatingTools} dictation=${dictation}
     micLabel=${`Dictate a message to ${activeAgent.name}`}
     micTitle=${micTitle(sendPhrase)}

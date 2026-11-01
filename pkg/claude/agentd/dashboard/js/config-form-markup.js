@@ -8,6 +8,8 @@ import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { dashboardState } from './snapshot-store.js';
+import { SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS } from './voice-config.js';
+import { LocalSpeechRow, syncVoiceWarning } from './voice-config-section.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -135,6 +137,7 @@ function ThresholdList({ values = [], onChange }) {
 export const CONFIG_PANELS = Object.freeze([
   { id: 'appearance', icon: '🎨', title: 'Appearance', lede: 'How the dashboard looks: activity bots, which tabs show, and header and row chrome.' },
   { id: 'terminals', icon: '🖥️', title: 'Terminals & windows', lede: 'Which terminal opens, how agent windows are focused and tiled, and how web terminals attach.' },
+  { id: 'voice', icon: '🎙️', title: 'Voice', lede: 'Spoken phrases and the opt-in hands-free settings for dictating to terminals and chat windows. Hands-free settings are off by default.' },
   { id: 'notifications', icon: '🔔', title: 'Notifications', lede: 'When and how tclaude tells you an agent needs attention. Everything still lands in the Messages tab.' },
   { id: 'agents', icon: '🤖', title: 'Agents & spawning', lede: 'Group joining, spawn guardrails, naming and the permissions every agent starts with.' },
   { id: 'context', icon: '🧠', title: 'Context & sessions', lede: 'Compaction, context nudges, resume prompts and how long Claude Code keeps transcripts.' },
@@ -182,8 +185,8 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
   </div>`;
 }
 
-function Toggle({ id, label }) {
-  return html`<${ConfigInput} type="checkbox" class="cfg-switch" role="switch" id=${id} aria-label=${label || undefined} />`;
+function Toggle({ id, label, onChange }) {
+  return html`<${ConfigInput} type="checkbox" class="cfg-switch" role="switch" id=${id} aria-label=${label || undefined} onChange=${onChange} />`;
 }
 
 function Group({ title, lede, children }) {
@@ -407,11 +410,6 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more=${html`The spawn dialog's <strong>Auto focus</strong>, per-agent <strong>focus</strong> (👁), <strong>open window</strong> and <strong>open terminal</strong> actions — plus bulk focus from the 🪟 <em>windows…</em> modal, the same commands in the ⌘ palette, a click on a CWD path cell, and a message's <em>focus</em> button — open <em>in-browser</em> terminal panes in the dashboard's <strong>Terminals</strong> tab by default, so you never leave the browser. Bulk unfocus still detaches the selected terminal clients. The dedicated web buttons are always web. <strong>Uncheck</strong> to make those general actions pop native OS terminal windows instead. Stored as <code>dashboard.default_terminal</code> (the default <code>web</code> is omitted; unchecked writes <code>native</code>).`}>
           <${Toggle} id="cfg-dashboard-default-web-terminal" />
         </${Setting}>
-        <${Setting} title="Spoken send phrase" forId="cfg-dashboard-dictation-send-phrase" k="dashboard.dictation_send_phrase"
-          summary="what you say at the end of a dictated message to send it to an agent"
-          more=${html`Say this at the very end of a dictated message to send it, with no pause needed; the phrase itself is left out of the message. It works in overlay chat windows and agent terminals, never in a plain shell. Dictation listens in your browser's language, so pick a phrase in that language: an English phrase may not be heard on another one. Leave it empty to turn spoken send off; Enter and the Send button always work. Stored as <code>dashboard.dictation_send_phrase</code> (the default <code>send now</code> is omitted).`}>
-          <${ConfigInput} type="text" id="cfg-dashboard-dictation-send-phrase" maxLength="60" placeholder="off" aria-label="Spoken send phrase" style="width:14em" />
-        </${Setting}>
         <${Setting} title="Directory picker" forId="cfg-dashboard-default-web-directory-picker" k="dashboard.default_directory_picker"
           summary="use the in-dashboard directory picker on localhost too"
           more=${html`Directory fields open an in-browser navigator by default, both locally and remotely. <strong>Uncheck</strong> to use the native OS chooser for loopback/localhost dashboards; remote browsers still use the web picker because a native chooser would appear on the agentd host where it cannot be operated. Stored as <code>dashboard.default_directory_picker</code> (the default <code>web</code> is omitted; unchecked writes <code>native</code>).`}>
@@ -513,6 +511,32 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
+    <${Panel} id="voice" active=${active}>
+      <${Group} title="Phrases" lede="What you can say. Dictation listens in your browser's language, so pick phrases in that language: an English phrase may not be heard on another one.">
+        ${VOICE_ACTIONS.map(({ action, phrase, title, summary, more }) => html`<${Setting} key=${action} title=${title} forId=${`cfg-voice-phrase-${action}`} k="dashboard.voice.phrases"
+          summary=${summary} more=${more}>
+          <${ConfigInput} type="text" id=${`cfg-voice-phrase-${action}`} data-voice-action=${action} maxLength="60" placeholder="off" aria-label=${title} style="width:14em" />
+        </${Setting}>`)}
+      </${Group}>
+      <${Group} title="Hands-free" lede="Off unless you turn them on. Neither runs on plain HTTP pages away from localhost, or sends by itself in a plain shell.">
+        <${Setting} title="Wake phrase listener" forId="cfg-voice-wake" k="dashboard.voice.wake_enabled" badges=${['refresh']}
+          summary=${html`<strong>Keeps a microphone open while a dashboard tab is showing</strong>, so saying the wake phrase starts dictation with no click. Without on-device speech, <strong>everything said in the room goes to your browser's speech service, Google's in Chrome, for as long as it listens</strong>, not only what you dictate. On-device speech is recommended here.`}
+          more="It dictates into the terminal or chat window with focus, or the only one showing; otherwise it stays idle and says so. An indicator shows whenever it is on, with a Pause button. It stops while the tab is hidden, runs in one tab at a time, and waits while a reply is read aloud. Plain HTTP pages can't use it, because browsers refuse the microphone there.">
+          <${Toggle} id="cfg-voice-wake" onChange=${() => syncVoiceWarning()} />
+        </${Setting}>
+        <${Setting} title="On-device speech" summary="Recognition that stays on this machine, for dictation and the wake listener. It's a language pack Chrome downloads and manages, not part of tclaude. Its size isn't known here. Nothing downloads without your click, and accuracy may differ."
+          more="Once installed it is used automatically. If it later stops working, the wake listener stops and says why rather than switching to a speech service; a dictation carries on through the service and says so. This row is about this browser, so it isn't saved with the settings below.">
+          <${LocalSpeechRow} />
+        </${Setting}>
+        <${Setting} title="Send after silence" forId="cfg-voice-silence" k="dashboard.voice.silence_send_seconds"
+          summary="send a dictated message to an agent after this many seconds with no new speech"
+          more="The draft counts down first. Press Esc, press Cancel or speak again to stop it. An empty draft never sends, and it never runs in a plain shell.">
+          <${Toggle} id="cfg-voice-silence" onChange=${() => syncVoiceWarning()} />
+          <label class="cfg-inline">after <${ConfigInput} type="number" id="cfg-voice-silence-seconds" min=${SILENCE_SEND_MIN} max=${SILENCE_SEND_MAX} step="1" placeholder=${String(SILENCE_SEND_DEFAULT)} aria-label="Seconds of silence before sending" style="width:5em" /> seconds</label>
+        </${Setting}>
+        <div class="cfg-hint" id="cfg-voice-hands-free-warning" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
+      </${Group}>
+    </${Panel}>
     <${Panel} id="notifications" active=${active}>
       <${Group} title="Delivery">
         <${Setting} title="Desktop notifications" forId="cfg-notif-enabled" k="notifications.enabled"

@@ -604,6 +604,27 @@ export async function mountAccessFeature(actionDependencies) {
   });
 }
 
+const voiceWakeDescriptor = createIslandDescriptor({
+  name: 'voice-wake',
+  label: 'Wake listener',
+  hosts: { host: '#voice-wake-root' },
+  failureClass: 'voice-wake-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./voice-wake-island.js');
+    const snapshotModule = import('./snapshot-store.js');
+    const [{ mountVoiceWakeIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotModule]);
+    return {
+      state: null,
+      mount: () => mountVoiceWakeIsland({ host, snapshot: dependencies.snapshot || dashboardState.snapshot }),
+    };
+  },
+});
+
+// mountVoiceWakeFeature runs on the dashboard and in detached terminal windows.
+export function mountVoiceWakeFeature(dependencies = {}) {
+  return mountIslandDescriptor(voiceWakeDescriptor, dependencies);
+}
+
 const messageAccessDialogsDescriptor = createIslandDescriptor({
   name: 'message-access-dialogs',
   label: 'Message and access dialogs',

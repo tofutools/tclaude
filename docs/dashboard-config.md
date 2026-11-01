@@ -44,7 +44,6 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 |---|---|---|---|
 | Terminal | Terminal | `terminal` | auto-detect |
 | Terminal | Default terminal | `dashboard.default_terminal` | `web` |
-| Terminal | Spoken send phrase | `dashboard.dictation_send_phrase` | `send now` (empty is off) |
 | Terminal | Directory picker | `dashboard.default_directory_picker` | `web` (remote dashboards always use it) |
 | Terminal | TUI color scheme | `tui.color_scheme` | `default` |
 | Window focus | Window title | `focus.window_title` | on |
@@ -55,6 +54,19 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 | Web terminal attachment | Resize strategy | `dashboard.terminal_attach.mode` | `repair` |
 | Web terminal attachment | Wait times | `dashboard.terminal_attach.*_ms` | 0; 250; 250 |
 | Web terminal tabs | Auto-close tabs | `dashboard.close_terminal_tabs` | Shell tabs close when their session ends |
+
+## Voice
+
+Spoken phrases and the opt-in hands-free settings. See
+[Voice and dictation](companion.md#voice-and-dictation).
+
+| Setting | Key | Default |
+|---|---|---|
+| Send phrase | `dashboard.voice.phrases`, action `send` | `send now` (empty is off) |
+| Wake phrase | `dashboard.voice.phrases`, action `wake` | `hey tofu`; must differ from the send phrase |
+| Wake phrase listener | `dashboard.voice.wake_enabled` | off |
+| On-device speech | in this browser, not saved in config | not installed |
+| Send after silence | `dashboard.voice.silence_send_seconds` | off; 2 to 30 seconds |
 
 ## Notifications
 
