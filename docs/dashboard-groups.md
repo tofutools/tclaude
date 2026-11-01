@@ -17,6 +17,8 @@ Above the groups, from left to right:
 - **Filter groups & members.** Matches group names and each member's title,
   role, description, directory and branch. A count shows how many are left;
   **×** clears it.
+- **📜 search conversations.** Opens a panel that searches the text of past
+  conversations. See [Searching conversations](#searching-conversations).
 - **The view switch.** Three icons: **Both**, **Agents** and **Processes**. See
   [Agents and processes](#agents-and-processes). With
   `features.groups_route_map` on, a Route map view joins them; see
@@ -65,6 +67,25 @@ Extra rows appear at the end of the list, depending on ▾ view:
 - **Retired**: retired agents, with who retired them and why. **reinstate**
   brings one back.
 - **Replaced generations**: older versions of an agent that has reincarnated.
+
+## Searching conversations
+
+**📜 search conversations** opens a box above the groups; the command palette
+has it too. Type at least three characters and it searches titles, summaries,
+first prompts and transcripts for that text, ignoring case. It covers
+this node's conversations, not a peer's.
+
+Each result shows its best matches and what you can do with it: **promote** a
+plain conversation into an agent, **reinstate** a retired agent, or **copy id**
+for anything that is already an agent or an older generation. To resume a
+conversation, promote it and then start it from its agent row.
+
+Each search runs once, when you stop typing, and takes at most five seconds.
+It reads the newest conversations first and shows up to 50 results, so the line
+under the box says when older ones weren't reached. Archived conversations
+aren't searched, and transcripts stored compressed or outside plain files are
+matched on title and first prompt only. For a regular expression or a complete
+scan, use [`tclaude conv search --content`](conversations.md#searching).
 
 ## A group
 

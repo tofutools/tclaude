@@ -199,6 +199,7 @@ export function createGroupsState({
     GROUP_VIEW_OPTIONS.map((option) => [option.key, option.defaultValue]),
   ));
   const viewOpen = signal(false);
+  const contentSearchOpen = signal(false);
   const memberEditor = signal(null);
   const addMemberDialog = signal(null);
   const standingOrdersDialog = signal(null);
@@ -433,7 +434,7 @@ export function createGroupsState({
   }
 
   return Object.freeze({
-    snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
+    snapshot, query, visibility, viewOpen, contentSearchOpen, memberEditor, addMemberDialog,
     standingOrdersDialog, subview, routeSelection, routeGroup, setRouteGroup, routeView, setRouteView, focus, processFilter, focusedRun, renderRevision, listed,
     view, columnOptions, deviationCount,
     initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter, setFocusedRun,
