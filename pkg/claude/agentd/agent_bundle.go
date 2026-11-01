@@ -643,10 +643,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		profile = receiverSandboxProfile(profile, h, q.Get("group"), landingProfile)
-		// A teleport or direct move carries landing authority the receiver owns,
-		// and dropping its posture could stall the agent on prompts nobody
-		// answers. Everything else is a file.
-		if authority == nil {
+		// The receiver owns a teleport or direct move, by landing authority or by
+		// accepting the offer, and dropping its posture could stall the agent on
+		// prompts nobody answers. Everything else is a file.
+		if accepted, _ := r.Context().Value(acceptedMoveContextKey{}).(bool); authority == nil && !accepted {
 			var dropped []string
 			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
 			landingWarnings = append(landingWarnings, dropped...)
@@ -1128,6 +1128,10 @@ func receiverApprovalProfile(p spawnProfileJSON, h *harness.Harness, group, prof
 	}
 	return p, dropped
 }
+
+// acceptedMoveContextKey marks an import of a teleport or move offer the
+// receiver accepted by hand.
+type acceptedMoveContextKey struct{}
 
 // bundleNoLaunchContextKey marks an agent import that lands offline
 // (start=false). Only handleAgentBundleImport sets it.

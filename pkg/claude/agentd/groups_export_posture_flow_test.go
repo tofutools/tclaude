@@ -330,6 +330,22 @@ func TestAgentImport_RecordedApprovalDoesNotWiden(t *testing.T) {
 	require.NotNil(t, landed)
 	require.NotNil(t, landed.ApprovalPolicy)
 	assert.NotEqual(t, bypass, *landed.ApprovalPolicy)
+
+	// A teleport or move the receiver accepted keeps it.
+	query := url.Values{"cwd": {dst}, "group": {"receivers"}, "apply": {"true"}}
+	r := agentd.AsAcceptedMove(agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost,
+		"/v1/agent-bundle/import?"+query.Encode(), bytes.NewReader(export.Body.Bytes()))))
+	moved := httptest.NewRecorder()
+	f.Mux.ServeHTTP(moved, r)
+	require.Equal(t, http.StatusOK, moved.Code, moved.Body.String())
+	var accepted landingResult
+	require.NoError(t, json.Unmarshal(moved.Body.Bytes(), &accepted))
+	assert.NotContains(t, strings.Join(accepted.Warnings, "\n"), "approval bypassPermissions")
+	landed, err = db.AgentRelaunchProfileForConv(accepted.Spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, landed)
+	require.NotNil(t, landed.ApprovalPolicy)
+	assert.Equal(t, bypass, *landed.ApprovalPolicy)
 }
 
 // An agent landed offline has its posture before anything launches it.

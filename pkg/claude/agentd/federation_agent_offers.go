@@ -488,6 +488,9 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		if o.Descriptor.Teleport != nil {
 			inner = inner.WithContext(context.WithValue(inner.Context(), teleportOfferContextKey{}, o))
 		}
+		if o.Descriptor.Teleport != nil || o.Descriptor.Move != nil {
+			inner = inner.WithContext(context.WithValue(inner.Context(), acceptedMoveContextKey{}, true))
+		}
 		inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: query.Encode()}
 		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleDataContextKey{}, bundle))
 		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleLossesContextKey{}, losses))
