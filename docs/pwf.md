@@ -181,8 +181,16 @@ Schema: [`manifest.schema.json`](pwf/schema/v0.1/manifest.schema.json).
 }
 ```
 
-`requires` lists features a reader must understand; PWF 0.1 defines none, and
-a 0.1 reader refuses a file that requires any.
+`requires` lists features a reader must understand, and a reader refuses a
+file that requires one it does not know, naming it. PWF 0.1 defines one:
+
+| Feature | Meaning |
+|---|---|
+| `loops` | A step has a [bounded loop](processes.md#review-loops). `workflow.json` lists them under `loops`, which a reader without this feature would leave out of its review. |
+
+A writer lists every feature the workflow uses. A reader still opens a file
+that has loops without the `loops` marker, because files written before the
+marker existed look like that.
 
 ### workflow.json
 
