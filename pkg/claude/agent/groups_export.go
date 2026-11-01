@@ -115,7 +115,7 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 
 type groupsImportParams struct {
 	File   string `pos:"true" help:"Path to the export archive: a .zip or a group .paf"`
-	Into   string `long:"into" help:"Target working directory the imported agents are bound to. Required — on a different machine the source path will not exist, so you choose where the group lives now."`
+	Into   string `long:"into" optional:"true" help:"Target working directory the imported agents are bound to. Required for an import, not for --dry-run — on a different machine the source path will not exist, so you choose where the group lives now."`
 	As     string `long:"as" optional:"true" help:"Import the group under this name instead of its exported name. Required when a group with the exported name already exists locally."`
 	DryRun bool   `long:"dry-run" help:"Inspect the archive and report what would be imported — manifest summary plus group-name and conv-id collisions — WITHOUT importing anything. --into is not needed with --dry-run."`
 	JSON   bool   `long:"json" help:"Output the import (or --dry-run inspection) as JSON"`
