@@ -144,13 +144,15 @@ test('model: a row moving into the footer keeps the spot it left to fall back to
   assert.equal(m.lastRoomSpot('footer-left', 'footer-right'), undefined);
 });
 
-test('a popover opening above the footer takes no room in it', async (t) => {
+test('the PR popover takes no room in the footer, a row scrolled out of sight on the bar included', async (t) => {
   const harness = await createPreactHarness(t);
   const { measureFooterRoom } = await harness.importDashboardModule('js/companion-chip-footer.js');
   const rect = (left, right, top, bottom) => ({ left, right, top, bottom, width: right - left });
-  const shown = (r) => ({ getBoundingClientRect: () => r });
-  const bar = { ...shown(rect(0, 1000, 700, 729)), querySelectorAll: () => [shown(rect(0, 300, 703, 726)), shown(rect(500, 990, 200, 680))] };
-  const document = { querySelector: () => bar, createTreeWalker: () => ({ nextNode: () => null }) };
+  const shown = (r, inPopover = false) => ({ getBoundingClientRect: () => r, closest: () => (inPopover ? {} : null) });
+  const onBar = rect(500, 990, 703, 726);
+  const texts = [{ nodeValue: 'hidden row', parentElement: shown(onBar, true) }];
+  const bar = { ...shown(rect(0, 1000, 700, 729)), querySelectorAll: () => [shown(rect(0, 300, 703, 726)), shown(onBar, true)] };
+  const document = { querySelector: () => bar, createTreeWalker: () => ({ nextNode: () => texts.pop() || null }), createRange: () => { throw new Error('a popover text was measured'); } };
   assert.deepEqual(measureFooterRoom({ document }), { left: 300, right: 1000 });
 });
 

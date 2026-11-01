@@ -9,17 +9,20 @@ const COMPACT = 'compact';
 
 // What the bar shows, as text and as the controls and pictures it holds. A
 // span the bar stretches for layout says nothing about where its text ends, and
-// a popover opening above the bar lives in it without taking room on it.
-function occupied(bar, doc, box) {
-  const rects = [...bar.querySelectorAll('button, a, img, svg')].map((node) => node.getBoundingClientRect());
+// the popover opening above the bar lives in it without taking room on it: its
+// list reports rows scrolled out of sight wherever they would be, the bar included.
+const POPOVER = '.open-prs-popover';
+
+function occupied(bar, doc) {
+  const rects = [...bar.querySelectorAll('button, a, img, svg')].filter((node) => !node.closest(POPOVER)).map((node) => node.getBoundingClientRect());
   const walker = doc.createTreeWalker(bar, 4);
   for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-    if (!text.nodeValue.trim()) continue;
+    if (!text.nodeValue.trim() || text.parentElement?.closest(POPOVER)) continue;
     const range = doc.createRange();
     range.selectNodeContents(text);
     rects.push(...range.getClientRects());
   }
-  return rects.filter((rect) => rect.width > 0 && rect.bottom > box.top && rect.top < box.bottom);
+  return rects.filter((rect) => rect.width > 0);
 }
 
 // measureFooterRoom is the footer's widest free stretch, { left, right }, or null
@@ -29,7 +32,7 @@ export function measureFooterRoom(win) {
   const bar = doc?.querySelector?.('footer .footer-inner');
   const box = bar?.getBoundingClientRect?.();
   if (!box?.width) return null;
-  return freeStretch(occupied(bar, doc, box), box.left, box.right);
+  return freeStretch(occupied(bar, doc), box.left, box.right);
 }
 
 // compactWidth is how wide the row is in the bar, wherever it is now. It takes
