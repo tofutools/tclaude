@@ -6,6 +6,7 @@ import { terminalAttachConfig } from './terminal-attach-config.js';
 import { openBoardOverlay } from './board-overlay-state.js';
 import { openOverlayWindow } from './overlay-instances.js';
 import { overlayablePane, terminalWindowOf } from './terminal-window-model.js';
+import { companionAvailable, floatInCompanion } from './companion-facade.js';
 
 export function createTerminalShellActions({
   state,
@@ -19,6 +20,7 @@ export function createTerminalShellActions({
   if (!state) throw new TypeError('terminal shell actions require state');
   const widgets = new Map();
   let disposed = false;
+  let floatingAgents = 0;
 
   function registerWidget(id, widget) {
     if (disposed) {
@@ -235,9 +237,11 @@ export function createTerminalShellActions({
     return true;
   }
 
-  // openPaneInOverlay moves a board or a shell from its tab into a floating
-  // window. A board's editor saves what it holds as it goes, and a shell's tmux
-  // session outlives the tab's view of it.
+  // openPaneInOverlay moves a board, a shell or an agent from its tab into a
+  // floating window. A board's editor saves what it holds as it goes, and a
+  // shell's tmux session outlives the tab's view of it. An agent goes to its chat
+  // window, which attaches only after this tab let go: the tab's own detach
+  // would drop a chat that got there first.
   async function openPaneInOverlay(key) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
     if (disposed || !pane) return false;
@@ -246,11 +250,26 @@ export function createTerminalShellActions({
       openBoardOverlay(pane.seed.board, pane.label);
       return true;
     }
-    if (!overlayablePane(pane)) return false;
-    await closePane(key, { skipDetach: true });
-    openOverlayWindow(terminalWindowOf(pane));
-    return true;
+    if (overlayablePane(pane)) {
+      await closePane(key, { skipDetach: true });
+      openOverlayWindow(terminalWindowOf(pane));
+      return true;
+    }
+    if (!pane.seed.agent || !companionAvailable()) return false;
+    floatingAgents += 1;
+    try {
+      await closePane(key);
+      if (floatInCompanion(pane.seed.agent)) return true;
+      openPane(pane.seed);
+      return false;
+    } finally {
+      floatingAgents -= 1;
+    }
   }
+
+  // An agent on its way to its chat window: the tab has gone, the window hasn't
+  // come yet.
+  const floatingAgent = () => floatingAgents > 0;
 
   function paneDisconnected(key) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
@@ -301,6 +320,7 @@ export function createTerminalShellActions({
     focusForSelectors,
     popOutPane,
     openPaneInOverlay,
+    floatingAgent,
     reattachPane,
     setArcanePaletteEnabled,
     dispose,

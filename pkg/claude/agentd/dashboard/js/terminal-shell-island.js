@@ -27,12 +27,14 @@ import {
 } from './human-notification-attention.js';
 import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
-import { openInCompanion } from './companion-facade.js';
+import { companionAvailable, openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
 import { boardOverlays, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
-import { overlayablePane } from './terminal-window-model.js';
+import { chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
+import { CHAT_WINDOW_KIND } from './chat-window-model.js';
+import { overlayWindows } from './overlay-instances.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch } from './node-api.js';
@@ -80,6 +82,16 @@ export function tabDragStartedOnClose(target) {
 
 // composeTarget is who Ctrl/Cmd+M messages from a pane: its agent, or a
 // peer pane's agent on that peer (seed.remote), sent through that node.
+// paneFloats reports whether a Terminals pane offers Open in overlay. An agent
+// floats through the companion, which a page without one cannot do.
+function paneFloats(pane, snapshot) {
+  if (snapshot?.collab_enabled !== true) return false;
+  return overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
+}
+
+// A chat window in the page. With Collab off the saved set is still there.
+const chatWindowShowing = () => companionAvailable() && overlayWindows.peek().some((window) => window.kind === CHAT_WINDOW_KIND && !window.minimized);
+
 function composeTarget(pane, actions) {
   const { initialRetry: _initialRetry, ...seed } = pane.seed;
   const remote = pane.seed.remote;
@@ -393,7 +405,7 @@ function TerminalPane({
         ${solo ? html`
           <button type="button" class="mux-btn" title="Move this terminal back to its dashboard tab" onClick=${() => void actions.reattachPane(pane.key)}>↩ dashboard</button>
         ` : html`
-          ${processSnapshot?.value?.collab_enabled === true && overlayablePane(pane) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>` : null}
+          ${paneFloats(pane, processSnapshot?.value) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>` : null}
           <button type="button" class="mux-btn" title="Move this terminal to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>
         `}
       </div>
@@ -812,7 +824,7 @@ function PaneTab({
       key: pane.key,
       board,
       boardId: pane.seed.board,
-      floats: board || (snapshot?.value?.collab_enabled === true && overlayablePane(pane)),
+      floats: board || paneFloats(pane, snapshot?.value),
       groupId,
       label: pane.label,
       trigger: event.currentTarget,
@@ -1742,8 +1754,8 @@ function TerminalTabs({
     hadPanesRef.current = hasPanes;
     if (solo || !had || hasPanes) return undefined;
     const timer = setTimeout(() => {
-      // A board or a shell that moved to the overlay leaves the operator working here.
-      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: boardOverlays.peek().length > 0 || terminalWindowsShowing() });
+      // A board, a shell or an agent that moved to the overlay leaves the operator working here.
+      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: boardOverlays.peek().length > 0 || terminalWindowsShowing() || chatWindowShowing() || actions.floatingAgent() });
     }, 0);
     return () => clearTimeout(timer);
   }, [hasPanes, solo]);

@@ -93,6 +93,12 @@ export function companionAgents(snapshot) {
   return out;
 }
 
+// companionAgentOf finds an agent by its id, or by the conv id a pane may hold.
+export function companionAgentOf(snapshot, selector) {
+  const agents = companionAgents(snapshot);
+  return agents.get(selector) || [...agents.values()].find((agent) => agent.convId === selector) || null;
+}
+
 // companionLaunchData is what a ⚙ "Send elsewhere" item says about this agent,
 // for launchAgent (launch-target-dialog.js): the same dialog opens from the
 // window, so Clone keeps the working directory and Recall home sees where the

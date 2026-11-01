@@ -64,7 +64,7 @@ async function setup(t, snapshotValue = COLLAB_ON) {
       windows.overlayWindows.value = [];
       for (const cleanup of cleanups) cleanup?.();
     },
-    harness, host, overlayHost, overlayState, island, dashboardState, dashPrefs, state: terminalShellState,
+    harness, host, overlayHost, overlayState, island, windows, dashboardState, dashPrefs, state: terminalShellState,
     click: (node) => harness.act(async () => { harness.fireEvent(node, 'click'); await wait(); await wait(); }),
     button: (root, text) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === text),
   };
@@ -84,6 +84,50 @@ const scenario = (name, ...args) => {
 };
 
 const tabLabels = (host) => [...host.querySelectorAll('.mux-tab .mux-tab-label')].map((node) => node.textContent);
+
+const AGENT = 'agt_0123456789abcdef0123456789abcdef';
+const AGENT_ON = { ...COLLAB_ON, agents: [{ agent_id: AGENT, title: 'builder', online: true }] };
+
+async function agentPane(harness) {
+  const { openWebWindowPane } = await harness.importDashboardModule('js/terminals-tab.js');
+  await harness.act(async () => { await openWebWindowPane(AGENT, 'builder'); await wait(); await wait(); });
+}
+
+async function fakeCompanion(harness, float) {
+  const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
+  return registerCompanionController({ open: () => true, float });
+}
+
+scenario('an agent\'s tab moves to its chat, and the operator stays on Terminals', AGENT_ON, async ({ harness, host, windows, click, button }) => {
+  const floated = [];
+  const stop = await fakeCompanion(harness, (agent) => {
+    floated.push(agent);
+    windows.openOverlayWindow({ id: `chat:${agent}`, kind: 'chat', agent, label: 'builder' });
+    return true;
+  });
+  try {
+    await agentPane(harness);
+    await harness.act(async () => { harness.fireEvent(harness.document.querySelector('nav [data-tab="terminals"]'), 'click'); await wait(); });
+    await click(button(host, 'Open in overlay'));
+    await harness.act(() => wait(5));
+    assert.deepEqual(floated, [AGENT]);
+    assert.deepEqual(tabLabels(host), [], 'a terminal is in one place at a time');
+    assert.ok(harness.document.getElementById('tab-terminals').classList.contains('active'), 'moving the last tab out does not send the operator to Groups');
+  } finally { stop(); }
+});
+
+scenario('with Collab off an agent\'s tab offers no overlay', { ...AGENT_ON, collab_enabled: false }, async ({ harness, host, button }) => {
+  const stop = await fakeCompanion(harness, () => true);
+  try {
+    await agentPane(harness);
+    assert.equal(button(host, 'Open in overlay'), undefined);
+  } finally { stop(); }
+});
+
+scenario('with no companion to float it, an agent\'s tab offers no overlay', AGENT_ON, async ({ harness, host, button }) => {
+  await agentPane(harness);
+  assert.equal(button(host, 'Open in overlay'), undefined);
+});
 
 scenario('a board moves from its tab into the overlay and back', async ({ harness, host, overlayHost, overlayState, state, click, button }) => {
   await harness.act(async () => { await overlayState.openBoardPane('plan', 'Release plan'); await wait(); await wait(); });

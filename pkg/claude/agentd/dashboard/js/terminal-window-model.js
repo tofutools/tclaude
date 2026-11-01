@@ -1,8 +1,10 @@
 // terminal-window-model.js -- a plain terminal's overlay window (tcl-0qd62y): a
 // directory shell or a group shell, as a board or a chat floats. An agent's own
-// terminal floats as a chat, and a peer's terminal stays a tab. The window keeps
-// the pane's key, so a terminal is in one place at a time and goes back to the
-// same tab.
+// terminal floats as its chat window instead, and a peer's terminal stays a tab.
+// The window keeps the pane's key, so a terminal is in one place at a time and
+// goes back to the same tab.
+
+import { companionAgentOf } from './companion-model.js';
 
 export const TERMINAL_WINDOW_KIND = 'terminal';
 export const terminalWindowId = (paneKey) => `terminal:${paneKey}`;
@@ -13,6 +15,18 @@ const SHELL_ROUTE = /^\/api\/(?:term-ws|group-term-ws)\/(?!\.|%2e)(?![^?#]*%(?:2
 // overlayablePane reports whether a Terminals pane can float.
 export function overlayablePane(pane) {
   return !pane?.seed?.remote && !pane?.seed?.board && SHELL_ROUTE.test(pane?.seed?.ws || '');
+}
+
+// An agent's live session, as a tab opens it. A shell of its stays a shell.
+const AGENT_ROUTE = /^\/api\/(?:open-window-ws|spawn-focus-ws)\//;
+
+// chatAgentOfPane is the local agent running in a Terminals pane, null when the
+// pane is anything else or the agent is not running: its chat would have nothing
+// to attach to.
+export function chatAgentOfPane(pane, snapshot) {
+  if (pane?.seed?.remote || !pane?.seed?.agent || !AGENT_ROUTE.test(pane.seed.ws || '')) return null;
+  const agent = companionAgentOf(snapshot, pane.seed.agent);
+  return agent?.online ? agent : null;
 }
 
 export function terminalWindowOf(pane) {

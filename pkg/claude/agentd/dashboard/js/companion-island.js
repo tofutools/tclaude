@@ -25,6 +25,7 @@ import {
   agentBlockedOnOperator, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, actionsFor, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
+  companionAgentOf,
 } from './companion-model.js';
 import { useChipDrag } from './companion-chip-drag.js';
 import { registerCompanionController } from './companion-facade.js';
@@ -519,7 +520,18 @@ export function CompanionApp({
     return true;
   }, [agents, closeTerminalPanes]);
 
-  useEffect(() => registerController({ open: (agentId, options) => showAgent(agentId, options) }), [showAgent]);
+  // A tab of the Terminals tab moves here too, parked or not on the tab strip.
+  const floatAgent = useRef(null);
+  floatAgent.current = (selector) => {
+    const agent = companionAgentOf(snapshot.peek(), selector);
+    if (!agent) return false;
+    floatTab(agent);
+    return true;
+  };
+  useEffect(() => registerController({
+    open: (agentId, options) => showAgent(agentId, options),
+    float: (selector) => floatAgent.current(selector),
+  }), [showAgent]);
 
   // A shut-down Steward can come back without this window: from the Agents tab,
   // the CLI, or by the seat going to another agent. Then there is nothing left
@@ -594,7 +606,8 @@ export function CompanionApp({
     if (opened) setTimeout(() => opened.close?.(), RECLAIM_CLOSE_MS);
     setParked((current) => without(current, agent.agentId));
     setDetached((current) => without(current, agent.agentId));
-    closeTab(agent.agentId);
+    // An agent that never had a tab leaves the companion as it was.
+    closeTab(agent.agentId, { keepOpen: !tabs.includes(agent.agentId) });
     openOverlayWindow({ id: chatWindowId(agent.agentId), kind: CHAT_WINDOW_KIND, agent: agent.agentId, label: agent.name, at });
   }
 
