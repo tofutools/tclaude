@@ -45,7 +45,7 @@ export function clipboardReadNote(keys, win = globalThis) {
 }
 
 // dictationBlock says why dictation can't be used here, or null when it can:
-// `note` for the page and `why` for the longer tooltip. A browser without
+// `note` for a line on the page and `why` for the longer tooltip. A browser without
 // speech recognition comes first, since HTTPS would not help it. Otherwise a
 // non-secure page gets its own answer, because the browser refuses the
 // microphone there whatever the site permission says.
