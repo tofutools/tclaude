@@ -289,6 +289,8 @@ type copilotAPIStateConsumer struct {
 
 	stop     chan struct{}
 	stopOnce sync.Once
+	// done closes when run has returned, after stop has taken effect.
+	done chan struct{}
 
 	// lastPermissionRead is when the pending-permission set was last read
 	// successfully. It bounds how long this consumer's awaiting marker may
@@ -324,6 +326,7 @@ func startCopilotAPIStateConsumer(handle *copilotAPISession) {
 		handle:    handle,
 		client:    handle.Client,
 		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 		warnedAt:  map[string]time.Time{},
 		// Counts from birth, so a consumer that never manages a single
 		// permission read still releases a marker inherited from a predecessor
@@ -369,6 +372,7 @@ func (c *copilotAPIStateConsumer) halt() {
 // during that read is not lost between the two — it finds the subscription
 // already in place and marks the session dirty for the next window.
 func (c *copilotAPIStateConsumer) run() {
+	defer close(c.done)
 	defer retireCopilotAPIStateConsumer(c)
 
 	subscription := c.client.Subscribe()
