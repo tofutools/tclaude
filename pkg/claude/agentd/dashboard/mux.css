@@ -598,10 +598,15 @@ body.wizard .mux-pane-xterm {
    reminder, not an alert. */
 .mux-tabbar { display: flex; flex: none; min-width: 0; }
 .mux-tabbar > .mux-tabs { flex: 1 1 auto; min-width: 0; }
-/* The strip's + menu of boards (features.collab). */
-.mux-board-slot { position: relative; flex: none; display: flex; background: #161b22; border-bottom: 1px solid #2a3340; }
+/* The strip's + menu of boards (features.collab). It shares .mux-bg-slot's
+   bottom anchor and vertical padding, and the chip's height, so the two stay
+   level on the strip's last row however many rows the strip wraps to. */
+.mux-board-slot {
+  position: relative; flex: none; display: flex; align-items: flex-end;
+  padding: 5px 0 3px; background: #161b22; border-bottom: 1px solid #2a3340;
+}
 .mux-board-add {
-  align-self: center; margin: 0 6px; width: 26px; height: 24px; padding: 0; border-radius: 5px;
+  margin: 0 6px; width: 26px; height: 23px; padding: 0; border-radius: 5px;
   border: 1px solid #2a3340; background: #21262d; color: #c9d1d9; font-size: 13px; cursor: pointer;
 }
 .mux-board-add:hover, .mux-board-add[aria-expanded="true"] { background: #2d333b; border-color: #3d4451; }
@@ -617,7 +622,7 @@ body.wizard .mux-pane-xterm {
 }
 .mux-bg { position: relative; }
 .mux-bg-trigger {
-  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+  display: inline-flex; align-items: center; gap: 6px; box-sizing: border-box; height: 23px; padding: 0 9px;
   border: 1px solid #3d4451; border-radius: 11px; background: #0d1117;
   color: #aeb9c6; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
 }
