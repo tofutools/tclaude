@@ -126,6 +126,7 @@ type groupsImportParams struct {
 	MemberModel   []string `long:"member-model" optional:"true" help:"Landing model for one member: member=model (repeatable)"`
 
 	ConfirmHistoryLoss bool `long:"confirm-history-loss" help:"Accept landings that cut 25% or more of a member's conversation to fit its landing model; the full history stays in the file and is saved beside the agent."`
+	ImportKeepParams
 }
 
 // landingQuery encodes the landing choices as query parameters.
@@ -146,6 +147,7 @@ func (p *groupsImportParams) landingQuery() string {
 	for _, v := range p.MemberModel {
 		q.Add("member_model", v)
 	}
+	p.addTo(q)
 	if len(q) == 0 {
 		return ""
 	}
@@ -157,9 +159,13 @@ func groupsImportCmd() *cobra.Command {
 		Use:   "import",
 		Short: "Import a group from a .zip or .paf archive produced by `groups export`",
 		Long: "Recreate a group from an export archive: the group, its agents, " +
-			"owners, enrollment, messages and every conversation .jsonl. " +
-			"Permission and sudo grants in a file are dropped and listed, a deny " +
-			"stays, and cron jobs land disabled for you to review. A group .paf is verified first; one written by " +
+			"enrollment, messages and every conversation .jsonl. " +
+			"What the file asks for beyond a spawn here is listed by --dry-run and dropped " +
+			"with a warning unless a human keeps it: --keep-defaults keeps what the " +
+			"dashboard would tick, --keep names items, --keep-all takes them all, each with " +
+			"the --keep-digest the dry run prints; --keep-none drops the owners too. With " +
+			"none of these only owners land. A deny stays, sudo never lands, and an " +
+			"unkept cron job lands disabled. A group .paf is verified first; one written by " +
 			"another tool imports its group, members and their Claude Code " +
 			"histories, and its members may use any harness: each lands on its " +
 			"own harness, or the one --harness / --member-harness names, its " +
@@ -234,6 +240,7 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 		FileWarnings   []string          `json:"file_warnings"`
 		PromptWarnings []string          `json:"prompt_warnings"`
 		Landings       []groupLanding    `json:"landings,omitempty"`
+		importOutcome
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -264,6 +271,7 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 	for _, h := range resp.SkippedAliases {
 		fmt.Fprintf(stdout, "  note: head alias %q already existed locally — left untouched\n", h)
 	}
+	resp.print(stdout)
 	for _, w := range resp.FileWarnings {
 		fmt.Fprintf(stdout, "  warning: %s\n", w)
 	}
@@ -363,6 +371,7 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 		} `json:"findings"`
 		Landings     []groupLanding `json:"landings"`
 		FileWarnings []string       `json:"file_warnings"`
+		Confirm      *importConfirm `json:"confirm"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -405,7 +414,12 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			fmt.Fprintf(stdout, "  %s: %d occurrence(s); first locations: %s\n", f.Kind, f.Count, strings.Join(f.Locations, ", "))
 		}
 	}
-	for _, w := range insp.FileWarnings {
+	insp.Confirm.print(stdout)
+	warnings := insp.FileWarnings
+	if insp.Confirm != nil && insp.Confirm.CanKeep && len(insp.Confirm.Items) > 0 {
+		warnings = insp.Confirm.Warnings
+	}
+	for _, w := range warnings {
 		fmt.Fprintf(stdout, "\nWarning: %s\n", w)
 	}
 	if len(insp.Landings) > 0 {

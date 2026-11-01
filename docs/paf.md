@@ -88,18 +88,21 @@ receiving side.
   recovery after host loss, which also prevents the old host from coming back
   as a second copy.
 - **Authority is advisory.** Groups, roles, permissions and ownerships in a PAF
-  are provenance. They never become grants on the receiver unless that
-  receiver's own policy approves them explicitly. A group import drops a
-  file's permission grants and sudo grants, and lists them in its preview and
-  result; a deny stays, since it only takes away. Scheduled jobs land disabled
-  for a human to review. Members and their roles stay. Agent ownership never
-  travels; a group's owners are part of its member structure.
+  are provenance. They become grants on the receiver only when that receiver's
+  own policy approves them, or a human here keeps them from the import's confirm
+  list (see [Keeping what a file asks for](#keeping-what-a-file-asks-for)). A deny
+  stays, since it only takes away. Scheduled jobs land disabled unless kept.
+  Members and their roles stay. Sudo is temporary, so an export never holds it,
+  and an import always drops it from an older file with a warning, and never
+  offers it. An agent's own ownership never travels, since its source group means
+  nothing here; a group's owners are confirmed like the rest of the list.
 - **Posture is decided by the receiver.** The recorded sandbox and approval
   posture is shown at import, but the landing profile and the receiver's
-  policy decide how the new agent actually runs. A file can make its sandbox,
-  approval, tools and auto-review tighter than a spawn here would resolve,
-  never wider: a wider value is dropped, and the preview and the import result
-  say so. A directory trust, remote control or environment variables it asks
+  policy decide how the new agent actually runs. A file can make its sandbox
+  tighter than a spawn here would resolve, never wider, and no confirmation
+  changes that. Approval, tools and auto-review may tighten too; a wider value
+  is dropped unless a human keeps it, and the preview and the import result say
+  which. A directory trust, remote control or environment variables it asks
   for are dropped the same way, unless a spawn here gives them, as are peer
   messaging, auto memory, the Copilot API drive, a question timeout, a model
   proxy, a context feature a tier here trims, and a trim of the repo's or
@@ -114,6 +117,54 @@ receiving side.
   history is
   untrusted input: it may contain instructions written by anyone whose text
   reached the original agent.
+
+### Keeping what a file asks for
+
+A file import drops what it asks for beyond a spawn here. The preview lists those
+items, grouped by kind, each with what it gives, so a human can keep the ones they
+want. Items a spawn here would give anyway, or that only tighten, are not listed.
+
+| In the list | Starts |
+|---|---|
+| Group owners | ticked |
+| Permissions and per-conversation grants | ticked |
+| Wider approval, tools and auto-review | ticked |
+| `trust_dir`, `remote_control`, `model_proxy`, `peer_messaging` | ticked |
+| `auto_memory`, `copilot_api`, `ask_user_question_timeout` | ticked |
+| `context_features` trims of instructions or policy, and features a tier here trims | ticked |
+| Environment variables | unticked |
+| Enabled scheduled jobs | unticked |
+
+The sandbox and sudo are never in the list. Anything unticked is dropped with a
+warning, and the result lists what was kept and what was dropped. A kept scheduled
+job lands enabled, and it still lands without operator attribution until you set
+that. A grant that cannot land here, such as an unknown permission or a scope naming
+a specific agent, is not offered and only warns.
+
+The list names environment variables and never holds their values. Reveal value in
+the dashboard, or `tclaude paf reveal <file> <name>`, asks for one value in a request
+of its own. Keeping a variable means you could see its value.
+
+The server decides. The apply request names what was kept, with the digest of the
+file it was read from, and the server checks both: a different file is refused, and
+so is an item this file does not list. Only a human on this node can keep anything.
+An agent caller keeps nothing even if it names items, and it gets a warning. So does
+a request a federation peer forwards, including a peer with unrestricted trust.
+
+On the command line, the preview or `--dry-run` prints the list and the digest:
+
+```bash
+tclaude agent groups import team.paf --dry-run --into "$PWD"
+tclaude agent groups import team.paf --into "$PWD" --keep-defaults --keep-digest <digest>
+tclaude agent groups import team.paf --into "$PWD" --keep owner:<conv> --keep cron:nightly --keep-digest <digest>
+tclaude paf import --file scout.paf --group team --apply --keep-all --keep-digest <digest>
+```
+
+`--keep-defaults` keeps what the dashboard starts with ticked, `--keep <id>` names
+items, and `--keep-all` takes every listed item. `--keep-none` drops everything,
+owners included. A request that names no selection has confirmed nothing, so only a
+group's owners land, for a human caller. Snapshot spawns and board imports are such
+requests.
 
 ## How tclaude uses PAF
 

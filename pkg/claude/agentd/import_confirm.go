@@ -181,7 +181,7 @@ func parseImportKeep(q url.Values, human bool) importKeep {
 	k := importKeep{
 		human: human, all: q.Get("keep_all") == "true", none: q.Get("keep_none") == "true",
 		defaults: q.Get("keep_defaults") == "true",
-		ids: map[string]bool{}, digest: strings.TrimSpace(q.Get("keep_digest")),
+		ids:      map[string]bool{}, digest: strings.TrimSpace(q.Get("keep_digest")),
 	}
 	for _, id := range q["keep"] {
 		k.ids[id] = true
