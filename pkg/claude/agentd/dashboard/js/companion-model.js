@@ -26,6 +26,10 @@ export const COMPANION_ACTIVE_PREF = 'tclaude.dash.companion.active';
 // The newest hand-over cue (guide show --open) a dashboard tab acted on.
 export const COMPANION_CUE_OPEN_PREF = 'tclaude.dash.companion.cue-open';
 export const COMPANION_PLACEMENT_PREF = 'tclaude.dash.companion.placement';
+// Where the minimized chips rest (tcl-avebwq), and the spot a floating window
+// opens at. The second holds until the operator moves the window themselves.
+export const COMPANION_CHIP_SPOT_PREF = 'tclaude.dash.companion.chip-spot';
+export const COMPANION_WINDOW_SPOT_PREF = 'tclaude.dash.companion.window-spot';
 export const COMPANION_MAX_TABS = 8;
 
 export const COMPANION_MIN_W = 360;
@@ -281,6 +285,51 @@ export function zoneRect(zone, viewport, top = 0) {
     return { x: 0, y: bottom - h, w: viewport.width, h, snap: zone };
   }
   return null;
+}
+
+// The chips' snap spots. Corners and mid-bottom only: a mid-side spot would sit
+// on the dock's edge tab.
+export const CHIP_SPOTS = Object.freeze(['top-left', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right']);
+export const DEFAULT_CHIP_SPOT = 'bottom-right';
+// The chips' own distance from the viewport edges; companion.css has the same.
+const CHIP_INSET_X = 16;
+const CHIP_INSET_Y = 12;
+
+export function parseChipSpot(raw) {
+  return CHIP_SPOTS.includes(raw) ? raw : DEFAULT_CHIP_SPOT;
+}
+
+// nearestChipSpot picks the slot whose centre is closest to point. slots are
+// {spot, rect} as drawn, so the page's own layout decides where each one is.
+export function nearestChipSpot(point, slots) {
+  let best = '';
+  let bestDistance = Infinity;
+  for (const { spot, rect } of slots) {
+    const distance = Math.hypot(rect.left + rect.width / 2 - point.x, rect.top + rect.height / 2 - point.y);
+    if (distance < bestDistance) {
+      best = spot;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+// spotPlacement puts a floating window in the chip's corner, so it grows from
+// there. It keeps p's size and, through fitPlacement, stays on screen.
+export function spotPlacement(spot, p, viewport, top = 0) {
+  let x = CHIP_INSET_X;
+  if (spot.endsWith('right')) x = viewport.width - p.w - CHIP_INSET_X;
+  if (spot.endsWith('center')) x = (viewport.width - p.w) / 2;
+  const y = spot.startsWith('top') ? top + CHIP_INSET_Y : viewport.height - COMPANION_FOOTER_ROOM - p.h - CHIP_INSET_Y;
+  return fitPlacement({ ...p, x, y, snap: '' }, viewport);
+}
+
+// peekAnchor places the hover peek on the open side of a chip at this spot.
+export function peekAnchor(spot, rect, viewport) {
+  const gap = 8;
+  const anchor = spot.startsWith('top') ? { top: rect.bottom + gap } : { bottom: viewport.height - rect.top + gap };
+  if (spot.endsWith('left')) return { ...anchor, left: rect.left };
+  return { ...anchor, right: viewport.width - rect.right };
 }
 
 const TAB_NAMES = Object.freeze({

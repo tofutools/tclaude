@@ -26,7 +26,10 @@ The companion isn't available in a peer's per-node view or in pop-out windows.
 ## Using the companion
 
 Each pinned agent shows as a pill at the bottom right, with its status. With
-nothing pinned, you'll see a **✦ Steward** pill. A pill can show:
+nothing pinned, you'll see a **✦ Steward** pill. Drag a pill to move the row to
+another corner or to the middle of the bottom edge; outlines show the spots, Esc
+cancels, and the window then opens from there until you move it yourself. A pill
+can show:
 
 - **needs you**: a permission prompt or question is waiting.
 - **🔑 approval**: the agent asked for permission.
