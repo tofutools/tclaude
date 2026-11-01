@@ -3,13 +3,17 @@ package agentd_test
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/pwf"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -23,6 +27,51 @@ func pwfFile(t *testing.T, keys ...paf.SigningKey) []byte {
 	require.NoError(t, pwf.Write(&buf, pwf.Bundle{Root: ref, Templates: []pwf.Template{{Head: true, Source: []byte(pwfChildSource)}}},
 		pwf.WriteOptions{Keys: keys}))
 	return buf.Bytes()
+}
+
+// An agent asking the human to approve an import shows them the review the CLI
+// prints, not the archive, and says what approving does at each step.
+func TestProcessWorkflowImportPopupShowsTheReview(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	const conv = "pwf-popup-aaaa-bbbb-000000000001"
+	f.HaveAliveSession(conv, "pwf-popup", "tmux-pwf-popup", f.TestCwd("popup"))
+	_, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	popups, restore := agentd.StubCapturingApprovalForTest(true)
+	t.Cleanup(restore)
+	file := pwfFile(t)
+
+	ask := func(path string, body []byte) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", pwf.MediaType)
+		req.Header.Set("X-Tclaude-Ask-Human", "30s")
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
+	}
+	rec := ask("/v1/process/import", file)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var view struct {
+		ReviewDigest string `json:"reviewDigest"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &view))
+	require.Len(t, *popups, 1)
+	preview := (*popups)[0]
+	assert.Equal(t, "What approving does", preview.Label)
+	assert.Contains(t, preview.Body, "Nothing is imported yet")
+	assert.Contains(t, preview.Body, "Signature: none (unverified)")
+	assert.Contains(t, preview.Body, "Commands it can run:")
+	assert.Contains(t, preview.Body, "Templates:")
+	assert.Contains(t, preview.Body, "[workflow file omitted]")
+	assert.NotContains(t, preview.Body, "workflow.json", "the archive itself is not shown")
+
+	rec = ask("/v1/process/import?apply=1&review="+view.ReviewDigest, file)
+	require.Equal(t, http.StatusOK, rec.Code, "approval must not cost the handler its body: %s", rec.Body.String())
+	require.Len(t, *popups, 2)
+	assert.Contains(t, (*popups)[1].Body, "Approving imports this workflow")
+
+	rec = ask("/v1/process/import", []byte("not an archive"))
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, (*popups)[2].Body, "cannot be reviewed")
 }
 
 // By default an unsigned file imports. With the policy on it is still shown in
