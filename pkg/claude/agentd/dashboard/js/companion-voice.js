@@ -76,6 +76,44 @@ export function localVoice(synth, language = 'en') {
   return voices.find(matches) || voices[0] || null;
 }
 
+// ---- who holds the microphone ----
+//
+// A page has one microphone to give. A dictation takes it from the wake
+// listener, and speech playing keeps the listener from hearing itself.
+
+const micListeners = new Set();
+let speechCount = 0;
+let wakeHold = null;
+const micChanged = () => { for (const listener of micListeners) listener(); };
+const speechStarted = () => { speechCount += 1; micChanged(); };
+const speechFinished = () => { speechCount = Math.max(0, speechCount - 1); micChanged(); };
+const speechStopped = () => { speechCount = 0; micChanged(); };
+
+// setLocalSpeech records that the browser can recognise on this device; a
+// dictation then uses it (voice-local.js).
+let localSpeech = false;
+export function setLocalSpeech(available) {
+  localSpeech = available;
+}
+
+// onMicChange calls listener whenever a dictation or speech starts or ends,
+// and returns how to stop.
+export function onMicChange(listener) {
+  micListeners.add(listener);
+  return () => micListeners.delete(listener);
+}
+
+export function speechPlaying() {
+  return speechCount > 0;
+}
+
+// holdMicForWake registers the wake listener; holder.release(then) gives the
+// mic up and calls then once it is free.
+export function holdMicForWake(holder) {
+  wakeHold = holder;
+  return () => { if (wakeHold === holder) wakeHold = null; };
+}
+
 // createSpeaker wraps window.speechSynthesis. Utterances queue in order;
 // cancel() stops speech at once (barge-in).
 export function createSpeaker(win = globalThis.window, { rate = 1.05, onBlocked = () => {} } = {}) {
@@ -93,12 +131,23 @@ export function createSpeaker(win = globalThis.window, { rate = 1.05, onBlocked 
       const voice = localVoice(synth, win?.navigator?.language);
       if (voice) utterance.voice = voice;
       // Browsers refuse speech until the page has had a click or key press.
-      utterance.onerror = (event) => { if (event?.error === 'not-allowed') onBlocked(); };
+      let playing = true;
+      speechStarted();
+      const finished = () => {
+        if (playing) speechFinished();
+        playing = false;
+      };
+      utterance.onend = finished;
+      utterance.onerror = (event) => {
+        finished();
+        if (event?.error === 'not-allowed') onBlocked();
+      };
       synth.speak(utterance);
       return true;
     },
     cancel() {
       if (supported) synth.cancel();
+      speechStopped();
     },
   };
 }
@@ -188,8 +237,6 @@ export function speechRecognitionCtor(win = globalThis.window) {
   return win?.SpeechRecognition || win?.webkitSpeechRecognition || null;
 }
 
-export const DEFAULT_SEND_PHRASE = 'send now';
-
 // sendPhraseRest looks for the spoken send phrase at the very end of one
 // finished phrase and returns the words before it, or null when it isn't
 // there. No pause is needed before it, because the recognizer only finishes a
@@ -197,13 +244,23 @@ export const DEFAULT_SEND_PHRASE = 'send now';
 // distinctive phrase, and only at the end. Case and the punctuation the
 // recognizer adds don't count. An empty send phrase never matches.
 export function sendPhraseRest(phrase, sendPhrase) {
-  const words = String(sendPhrase || '').split(/\s+/)
-    .map((word) => word.replace(/^\p{P}+|\p{P}+$/gu, '').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'))
-    .filter(Boolean);
-  if (!words.length) return null;
-  const match = new RegExp(`(?:^|[\\s\\p{P}])${words.join('[\\s\\p{P}]+')}[\\s\\p{P}]*$`, 'iu').exec(String(phrase || ''));
+  const pattern = phrasePattern(sendPhrase);
+  if (!pattern) return null;
+  const match = new RegExp(`(?:^|[\\s\\p{P}])${pattern}[\\s\\p{P}]*$`, 'iu').exec(String(phrase || ''));
   return match ? phrase.slice(0, match.index).replace(/[\s,;:]+$/, '') : null;
 }
+
+// phrasePattern is a spoken phrase as a regular expression source, or '' for
+// an empty phrase: its words as text, whatever punctuation lies between them.
+export function phrasePattern(phrase) {
+  const words = String(phrase || '').split(/\s+/)
+    .map((word) => word.replace(/^\p{P}+|\p{P}+$/gu, '').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'))
+    .filter(Boolean);
+  return words.join('[\\s\\p{P}]+');
+}
+
+// Errors that say nothing against on-device speech.
+const NOT_LOCAL_FAULTS = new Set(['no-speech', 'aborted', 'not-allowed', 'service-not-allowed']);
 
 // A page has one microphone to give: the dictation that holds it, whichever
 // terminal it belongs to.
@@ -222,69 +279,103 @@ export function dictationOpen() {
 // it is still changing, so "send now please" would fire early. Starting one
 // dictation drops any other on the page. stop() still delivers the words
 // already heard but never sends; abort() drops them. Chrome's recognizer runs
-// in Google's cloud; the button says so.
-export function createDictation(win = globalThis.window, { onText, onState, onSend, sendPhrase = () => '', lang } = {}) {
+// in Google's cloud unless on-device speech is installed; the listening state
+// says which. If on-device fails before any words, the dictation falls back
+// and onRoute says so: it is a click and a short burst, unlike the wake
+// listener. start({strictRoute: true}), for a dictation nobody clicked, ends
+// with the error instead.
+export function createDictation(win = globalThis.window, { onText, onState, onSend, onRoute, sendPhrase = () => '', lang } = {}) {
   const Ctor = speechRecognitionCtor(win);
   let recognition = null;
   let stopped = false;
+  let opening = false;
+  let strictRoute = false;
   const dictation = {
     supported: !!Ctor,
-    get active() { return !!recognition; },
-    start() {
-      if (!Ctor || recognition) return;
+    get active() { return !!recognition || opening; },
+    start(options = {}) {
+      if (!Ctor || recognition || opening) return;
+      strictRoute = !!options.strictRoute;
       if (openDictation !== dictation) openDictation?.abort();
       openDictation = dictation;
-      const r = new Ctor();
-      r.continuous = true;
-      r.interimResults = true;
-      r.lang = lang || win?.navigator?.language || 'en-US';
-      const finals = [];
-      let sent = false;
-      stopped = false;
-      r.onresult = (event) => {
-        // Words after a send would bring the sent text back.
-        if (recognition !== r || sent) return;
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          const phrase = result[0].transcript;
-          if (!result.isFinal) {
-            interim += phrase;
-            continue;
-          }
-          const rest = stopped ? null : sendPhraseRest(phrase, sendPhrase());
-          if (rest !== null) {
-            finals.push(rest);
-            const text = finals.join(' ').replace(/\s+/g, ' ').trim();
-            sent = true;
-            onText?.(text);
-            onSend?.(text);
-            r.stop();
-            return;
-          }
-          finals.push(phrase);
-        }
-        onText?.(`${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim());
-      };
-      r.onerror = (event) => onState?.(false, event?.error || 'error');
-      r.onend = () => {
-        if (recognition === r) recognition = null;
-        onState?.(false);
-      };
-      recognition = r;
-      r.start();
-      onState?.(true);
+      opening = true;
+      if (wakeHold) wakeHold.release(begin);
+      else begin();
     },
     stop() {
       stopped = true;
       recognition?.stop();
     },
     abort() {
+      opening = false;
       const r = recognition;
       recognition = null;
       r?.abort?.();
       if (r) onState?.(false);
+      micChanged();
     },
   };
+  function begin() {
+    if (!opening) return;
+    opening = false;
+    open(localSpeech);
+  }
+  function open(local) {
+    const r = new Ctor();
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = lang || win?.navigator?.language || 'en-US';
+    if (local) r.processLocally = true;
+    const finals = [];
+    let sent = false;
+    let heard = false;
+    let fallBack = false;
+    stopped = false;
+    r.onresult = (event) => {
+      // Words after a send would bring the sent text back.
+      if (recognition !== r || sent) return;
+      heard = true;
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const phrase = result[0].transcript;
+        if (!result.isFinal) {
+          interim += phrase;
+          continue;
+        }
+        const rest = stopped ? null : sendPhraseRest(phrase, sendPhrase());
+        if (rest !== null) {
+          finals.push(rest);
+          const text = finals.join(' ').replace(/\s+/g, ' ').trim();
+          sent = true;
+          onText?.(text);
+          onSend?.(text);
+          r.stop();
+          return;
+        }
+        finals.push(phrase);
+      }
+      onText?.(`${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim());
+    };
+    r.onerror = (event) => {
+      fallBack = local && !strictRoute && !heard && !stopped && !NOT_LOCAL_FAULTS.has(event?.error);
+      if (!fallBack) onState?.(false, event?.error || 'error');
+    };
+    r.onend = () => {
+      const again = fallBack && recognition === r;
+      if (recognition === r) recognition = null;
+      if (again) {
+        open(false);
+        return;
+      }
+      onState?.(false);
+      micChanged();
+    };
+    recognition = r;
+    r.start();
+    onRoute?.(local, fallBack || (!local && localSpeech));
+    onState?.(true);
+    micChanged();
+  }
   return dictation;
 }

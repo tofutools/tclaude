@@ -119,9 +119,37 @@ the keyboard goes back to the terminal with the draft kept. Typing in the draft 
 the mic so you can edit. If the browser ends listening by itself, the keyboard stays
 on the draft.
 
-Change the phrase, or empty it to turn spoken send off, under **Spoken send phrase**
-in [Config](dashboard-config.md). Dictation listens in your browser's language, so
-pick a phrase in that language.
+Change the phrase, or empty it to turn spoken send off, in
+[Config › Voice](dashboard-config.md#voice). Dictation listens in your browser's
+language, so pick a phrase in that language.
+
+**Where the audio goes.** Without on-device speech, Chrome sends it to Google's
+service. **Download on-device speech** in Config › Voice has Chrome fetch a language
+pack, after which recognition stays on your machine. tclaude doesn't ship it, Chrome
+manages it, and nothing downloads without that click. Once installed it's used
+automatically, and the draft shows which is in use. If it fails at the start of a
+dictation, that dictation falls back to Google's service and tells you.
+
+**Hands-free (opt-in, both off by default).**
+
+- **Wake phrase.** Saying it, "hey tofu" by default, starts dictating with no click;
+  words after it start the draft. Dictation goes to the terminal or chat window with
+  focus, or the only one showing. Otherwise nothing happens and the indicator says so.
+  Plain shells get a draft as usual. This keeps a microphone open while a tab is
+  showing, so without on-device speech **everything said in the room goes to Google's
+  service for as long as it listens**. On-device speech is recommended.
+
+  An indicator at the top of the page shows whenever it's on, says where the audio goes
+  and has **Pause**. It stops while the tab is hidden, runs in one tab at a time, and
+  waits while the mic is in use or a reply is read aloud. After repeated errors it
+  stops and says why. If on-device speech stops working, it stops rather than
+  switching to Google's service.
+- **Send after silence.** With no new speech for a set time, 3 seconds by default,
+  the draft is sent to the agent. It counts down first: **Esc**, **Cancel** or
+  speaking again stops it. It never runs in a plain shell.
+
+With both on, sound in the room can send mail to an agent, and Config warns about
+that.
 
 The same tools float over agent terminals in the
 [Terminals tab](dashboard-terminals.md#dictation). No reply is read while any mic is

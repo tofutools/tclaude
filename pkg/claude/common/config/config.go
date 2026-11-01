@@ -584,11 +584,12 @@ type DashboardConfig struct {
 	// (off) is distinguishable from an absent key (default). See
 	// (*Config).RecentPRWindowDays.
 	RecentPRWindowDays *int `json:"recent_pr_window_days,omitempty"`
-	// DictationSendPhrase is what the operator says at the end of a dictated
-	// message to send it to an agent. A *string so an explicit "" (spoken send
-	// off) is distinguishable from an absent key (the default). See
-	// (*Config).DictationSendPhrase.
+	// DictationSendPhrase is the send phrase's earlier home, still read when
+	// Voice lists none. A *string so an explicit "" (off) differs from absent.
 	DictationSendPhrase *string `json:"dictation_send_phrase,omitempty"`
+	// Voice holds the spoken phrases and the opt-in hands-free settings. See
+	// (*Config).Voice.
+	Voice *VoiceConfig `json:"voice,omitempty"`
 	// GroupQuickOptions selects how the editable "quick option" chips in each
 	// group <summary> header (📝 description, 📁 default dir, 🧠 default
 	// profile, 🔗 links) are displayed — one of GroupQuickOptions{Hover,
@@ -2009,12 +2010,86 @@ const (
 	RecentPRWindowDaysMax     = 30
 )
 
-// DictationSendPhraseDefault / DictationSendPhraseMaxRunes bound the spoken
-// send phrase — config dashboard.dictation_send_phrase.
+// VoiceConfig is dashboard.voice. A new spoken command is one more
+// VoicePhraseDefaults entry, and its phrase lands in the same list.
+type VoiceConfig struct {
+	// Phrases lists spoken phrases by action. An action left out keeps its
+	// default, and an empty phrase turns that action off.
+	Phrases []VoicePhrase `json:"phrases,omitempty"`
+	// WakeEnabled opts in to the always-on listener for the wake phrase.
+	WakeEnabled bool `json:"wake_enabled,omitempty"`
+	// SilenceSendSeconds opts in to sending a dictated message after this many
+	// seconds with no new speech. 0 is off.
+	SilenceSendSeconds int `json:"silence_send_seconds,omitempty"`
+}
+
+// VoicePhrase is one spoken phrase and what it does.
+type VoicePhrase struct {
+	Action string `json:"action"`
+	Phrase string `json:"phrase"`
+}
+
+// Voice phrase actions.
+const (
+	VoiceActionSend = "send"
+	VoiceActionWake = "wake"
+)
+
+// VoicePhraseDefaults are the known actions in display order, with neutral
+// defaults. The wake phrase avoids words people say to their agents.
+var VoicePhraseDefaults = []VoicePhrase{
+	{Action: VoiceActionSend, Phrase: "send now"},
+	{Action: VoiceActionWake, Phrase: "hey tofu"},
+}
+
+// DictationSendPhraseDefault, the phrase cap and the silence-send range bound
+// config dashboard.voice.
 const (
 	DictationSendPhraseDefault  = "send now"
 	DictationSendPhraseMaxRunes = 60
+	SilenceSendSecondsMin       = 2
+	SilenceSendSecondsMax       = 30
 )
+
+func cleanVoicePhrase(phrase string) string {
+	runes := []rune(strings.Join(strings.Fields(phrase), " "))
+	return strings.TrimSpace(string(runes[:min(len(runes), DictationSendPhraseMaxRunes)]))
+}
+
+// Voice resolves dashboard.voice: every known action with its cleaned phrase,
+// the wake listener only when it has a phrase of its own, and the silence
+// send clamped into range. A wake phrase equal to the send phrase would send
+// and wake on the same words, so it counts as off. Nil-safe on the receiver.
+func (c *Config) Voice() VoiceConfig {
+	var stored VoiceConfig
+	if c != nil && c.Dashboard != nil && c.Dashboard.Voice != nil {
+		stored = *c.Dashboard.Voice
+	}
+	out := VoiceConfig{WakeEnabled: stored.WakeEnabled}
+	if stored.SilenceSendSeconds > 0 {
+		out.SilenceSendSeconds = max(SilenceSendSecondsMin, min(stored.SilenceSendSeconds, SilenceSendSecondsMax))
+	}
+	phrases := map[string]string{}
+	for _, known := range VoicePhraseDefaults {
+		phrases[known.Action] = known.Phrase
+	}
+	phrases[VoiceActionSend] = c.DictationSendPhrase()
+	for _, phrase := range stored.Phrases {
+		if _, known := phrases[phrase.Action]; known {
+			phrases[phrase.Action] = cleanVoicePhrase(phrase.Phrase)
+		}
+	}
+	if strings.EqualFold(phrases[VoiceActionWake], phrases[VoiceActionSend]) {
+		phrases[VoiceActionWake] = ""
+	}
+	for _, known := range VoicePhraseDefaults {
+		out.Phrases = append(out.Phrases, VoicePhrase{Action: known.Action, Phrase: phrases[known.Action]})
+	}
+	if phrases[VoiceActionWake] == "" {
+		out.WakeEnabled = false
+	}
+	return out
+}
 
 // DictationSendPhrase reports the spoken send phrase, with its whitespace
 // collapsed. Default DictationSendPhraseDefault (absent block / nil pointer),
@@ -2024,8 +2099,7 @@ func (c *Config) DictationSendPhrase() string {
 	if c == nil || c.Dashboard == nil || c.Dashboard.DictationSendPhrase == nil {
 		return DictationSendPhraseDefault
 	}
-	phrase := []rune(strings.Join(strings.Fields(*c.Dashboard.DictationSendPhrase), " "))
-	return strings.TrimSpace(string(phrase[:min(len(phrase), DictationSendPhraseMaxRunes)]))
+	return cleanVoicePhrase(*c.Dashboard.DictationSendPhrase)
 }
 
 // AlwaysShowOpenPRs reports whether the dashboard footer's Open PRs

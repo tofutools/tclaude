@@ -20,7 +20,7 @@ function fakeRecognition() {
 
 async function setup(t, {
   seed = { agent: 'agt_0123456789abcdef0123456789abcdef', harness: 'claude' }, collab = true, status = 'connected',
-  canType = true, secure = true, phrase, agents = [], solo = false, fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
+  canType = true, secure = true, phrase, agents = [], solo = false, silence = 0, fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
 } = {}) {
   const harness = await createPreactHarness(t);
   const { h } = harness.preact;
@@ -36,7 +36,7 @@ async function setup(t, {
   let result = true;
   const widget = { paste: (text) => { pasted.push(text); return result; } };
   const actions = { widgetFor: () => widget, activatePane: (key) => activated.push(key) };
-  const snapshot = signal({ collab_enabled: collab, agents, ...(phrase === undefined ? {} : { dictation_send_phrase: phrase }) });
+  const snapshot = signal({ collab_enabled: collab, agents, ...(phrase === undefined && !silence ? {} : { voice: { phrases: phrase === undefined ? [] : [{ action: 'send', phrase }], silence_send_seconds: silence } }) });
   const win = harness.window;
   win.SpeechRecognition = speech.Recognition;
   win.isSecureContext = secure;
@@ -74,7 +74,7 @@ test('a plain shell pastes one line, no newline, and only on an explicit send', 
   await s.harness.act(() => s.speech.last().hear('rm -rf build send now'));
   assert.deepEqual(s.pasted, [], 'the send phrase is only words here');
   assert.equal(s.$('.companion-draft').value, 'rm -rf build send now');
-  assert.ok(!s.$('.companion-send-hint'), 'no hint for a phrase that does nothing');
+  assert.doesNotMatch(s.$('.companion-send-hint').textContent, /to send/, 'no hint for a phrase that does nothing');
   assert.equal(s.$('.companion-input button').textContent, 'Paste');
   await s.harness.act(() => { const f = s.$('.companion-draft'); f.value = 'ls\n-la\u001b[A'; f.dispatchEvent(new s.win.Event('input', { bubbles: true })); });
   await s.submit();
@@ -112,7 +112,7 @@ test('with Collab off an agent terminal pastes and never mails', async (t) => {
 test('an agent terminal sends on the spoken phrase, stripped', async (t) => {
   const s = await setup(t);
   await s.mic();
-  assert.equal(s.$('.companion-send-hint').textContent, 'say “send now” to send');
+  assert.match(s.$('.companion-send-hint').textContent, /^say “send now” to send · .*speech service$/);
   assert.ok(s.harness.document.activeElement === s.$('.companion-draft'), 'the draft takes the keyboard');
   await s.harness.act(async () => { s.speech.last().hear('fix the bug send now.'); await tick(); });
   assert.equal(s.posted.length, 1);
@@ -126,7 +126,7 @@ test('an agent terminal sends on the spoken phrase, stripped', async (t) => {
 test('an emptied phrase turns spoken send off and Enter still sends', async (t) => {
   const s = await setup(t, { phrase: '' });
   await s.mic();
-  assert.ok(!s.$('.companion-send-hint'));
+  assert.doesNotMatch(s.$('.companion-send-hint').textContent, /to send/);
   await s.harness.act(() => s.speech.last().hear('hello send now'));
   assert.deepEqual(s.posted, []);
   await s.harness.act(() => s.speech.last().hear('partial', false));
@@ -197,6 +197,64 @@ test('a drawing in progress survives the terminal dropping', async (t) => {
   await s.rerender(false);
   assert.ok(!s.$('.companion-floating'));
   assert.ok(s.$('.annotate-send'), 'the overlay and its controls stay');
+});
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('silence sends after a countdown that shows, and never when off', async (t) => {
+  const s = await setup(t, { silence: 1 });
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('quiet now', false));
+  await s.harness.act(() => wait(800));
+  assert.match(s.$('.companion-silence').textContent, /Sending in 1s/);
+  await s.harness.act(() => wait(500));
+  assert.equal(s.posted.length, 1);
+  assert.match(s.posted[0].body.body, /^quiet now/);
+  assert.equal(s.speech.last().aborted, true);
+});
+
+test('speaking again restarts the countdown, and Esc ends it for good', async (t) => {
+  const s = await setup(t, { silence: 1 });
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('one', false));
+  await s.harness.act(() => wait(750));
+  await s.harness.act(() => s.speech.last().hear('two', false));
+  await s.harness.act(() => wait(750));
+  assert.deepEqual(s.posted, [], 'new speech pushed it back');
+  await s.harness.act(() => s.$('.companion-draft').dispatchEvent(Object.assign(new s.win.Event('keydown', { bubbles: true, cancelable: true }), { key: 'Escape' })));
+  await s.harness.act(() => wait(600));
+  assert.deepEqual(s.posted, []);
+  assert.ok(!s.$('.companion-silence'));
+  assert.equal(s.speech.last().aborted, true, 'a late result can\'t start it again');
+  assert.equal(s.$('.companion-draft').value, 'two', 'the words stay');
+});
+
+test('silence never sends in a plain shell', async (t) => {
+  const s = await setup(t, { ...SHELL, silence: 1 });
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('rm -rf build'));
+  await s.harness.act(() => wait(1200));
+  assert.deepEqual(s.pasted, []);
+  assert.ok(!s.$('.companion-silence'));
+});
+
+test('silence send is off unless configured', async (t) => {
+  const s = await setup(t);
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('hello'));
+  await s.harness.act(() => wait(1200));
+  assert.deepEqual(s.posted, []);
+});
+
+test('a one-breath wake starts the silence countdown', async (t) => {
+  const s = await setup(t, { silence: 1 });
+  const { pickWakeTarget } = await s.harness.importDashboardModule('js/voice-wake.js');
+  const pane = s.harness.document.body.appendChild(s.harness.document.createElement('div'));
+  pane.id = 'pane-p';
+  await s.harness.act(() => pickWakeTarget(s.harness.document).start('fix the bug'));
+  assert.equal(s.$('.companion-draft').value, 'fix the bug');
+  await s.harness.act(() => wait(1200));
+  assert.match(s.posted[0].body.body, /^fix the bug/);
 });
 
 test('a refused paste keeps the draft', async (t) => {

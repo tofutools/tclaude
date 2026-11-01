@@ -9,7 +9,7 @@ import { createTerminalShellState } from './terminal-shell-state.js';
 import {
   activeMessageAccessDialogKind, openOperatorMessageDialog,
 } from './message-access-dialog-controller.js';
-import { mountMessageAccessDialogsFeature } from './preact-loader.js';
+import { mountMessageAccessDialogsFeature, mountVoiceWakeFeature } from './preact-loader.js';
 import {
   decodeTerminalOpenHash, requestTerminalReattach, terminalDashboardURL,
 } from './terminal-handoff.js';
@@ -35,7 +35,7 @@ export function startStandaloneStatusPoll({
   snapshot,
   path = `/api/agents/${encodeURIComponent(selector)}/status`,
   adopt = (value) => ({
-    agents: [value], collab_enabled: value.collab_enabled, dictation_send_phrase: value.dictation_send_phrase,
+    agents: [value], collab_enabled: value.collab_enabled, voice: value.voice,
   }),
   pollMs = null,
   fetchImpl = globalThis.fetch,
@@ -129,6 +129,7 @@ export function createStandaloneTerminalsPage({
   navigatorRef = globalThis.navigator,
   mountShell = mountStandaloneTerminalShell,
   mountMessageDialogs = mountMessageAccessDialogsFeature,
+  mountVoiceWake = mountVoiceWakeFeature,
   openComposeMessage = openOperatorMessageDialog,
   composeMessageDialogKind = activeMessageAccessDialogKind,
 } = {}) {
@@ -274,6 +275,9 @@ export function createStandaloneTerminalsPage({
       initThemeSync();
       if (disposed) return false;
 
+      void Promise.resolve().then(() => mountVoiceWake({ snapshot })).catch((error) => {
+        console.error('Detached terminal wake listener unavailable.', error);
+      });
       // The terminal is the primary surface, so connect it without waiting for
       // the optional composer module graph. An early shortcut is queued against
       // this promise and opens as soon as the shared dialog island is ready.

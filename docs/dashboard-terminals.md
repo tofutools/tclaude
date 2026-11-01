@@ -128,8 +128,11 @@ leaving the tab or losing the connection stops the mic; the draft stays with its
 terminal.
 
 - **Agent terminals** work like an overlay window: the draft goes to the agent as a
-  message, and you can say "send now".
+  message, you can say "send now", and [send after silence](companion.md#voice-and-dictation)
+  applies if you turned it on.
 - **Plain shells** and shell sessions show only the mic. Enter or **Paste** puts the
   draft at the prompt as one line with no newline, so nothing runs until you press
-  Enter in the terminal. Spoken send is off.
+  Enter in the terminal. Spoken send and send after silence are off.
 - With Collab off, every terminal works like a plain shell.
+
+The wake phrase works here too, for the terminal with focus.

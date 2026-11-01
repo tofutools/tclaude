@@ -1682,3 +1682,38 @@ func TestDictationSendPhrase(t *testing.T) {
 	assert.Equal(t, "skicka nu", phrase("  skicka \t nu "))
 	assert.Len(t, []rune(phrase(strings.Repeat("å", 100))), DictationSendPhraseMaxRunes)
 }
+
+// TestVoice covers opt-in staying off, the phrase list and the guards.
+func TestVoice(t *testing.T) {
+	var nilConfig *Config
+	off := nilConfig.Voice()
+	assert.False(t, off.WakeEnabled)
+	assert.Zero(t, off.SilenceSendSeconds)
+	assert.Equal(t, VoicePhraseDefaults, off.Phrases)
+
+	voice := func(v VoiceConfig) VoiceConfig { return (&Config{Dashboard: &DashboardConfig{Voice: &v}}).Voice() }
+	phrase := func(v VoiceConfig, action string) string {
+		for _, p := range v.Phrases {
+			if p.Action == action {
+				return p.Phrase
+			}
+		}
+		return "missing"
+	}
+	on := voice(VoiceConfig{WakeEnabled: true, SilenceSendSeconds: 1})
+	assert.True(t, on.WakeEnabled)
+	assert.Equal(t, SilenceSendSecondsMin, on.SilenceSendSeconds)
+	assert.Equal(t, SilenceSendSecondsMax, voice(VoiceConfig{SilenceSendSeconds: 900}).SilenceSendSeconds)
+
+	same := voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{{VoiceActionWake, "Send  Now"}}})
+	assert.False(t, same.WakeEnabled, "a wake phrase equal to the send phrase is off")
+	assert.Equal(t, "", phrase(same, VoiceActionWake))
+	assert.False(t, voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{{VoiceActionWake, ""}}}).WakeEnabled)
+
+	legacy := ""
+	cfg := &Config{Dashboard: &DashboardConfig{DictationSendPhrase: &legacy}}
+	assert.Equal(t, "", phrase(cfg.Voice(), VoiceActionSend), "the earlier key still counts")
+	cfg.Dashboard.Voice = &VoiceConfig{Phrases: []VoicePhrase{{VoiceActionSend, "over"}, {"unknown", "x"}}}
+	assert.Equal(t, "over", phrase(cfg.Voice(), VoiceActionSend), "the list wins")
+	assert.Len(t, cfg.Voice().Phrases, len(VoicePhraseDefaults))
+}
