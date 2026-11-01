@@ -223,9 +223,26 @@ test('a window leaving a gap beside it ends the split; a gap holds its place oth
   assert.equal(parseSplit(JSON.stringify(half.b)), null, 'one window is not a split');
 });
 
+test('a line beside a gap is found, and its windows stay put when a pushed line unlocks', async (t) => {
+  const { coveringPath, roomTree, splitLayout, unlockedLine, movedEdge, withoutWindow } = await model(t);
+  const half = roomTree([['a', 'left'], ['b', 'top-right']]);
+  assert.deepEqual(coveringPath(half, ['b']), [1], 'the split, not the window in it');
+
+  const pushed = pair('x', 'a', 'b', 0.05);
+  const shown = splitLayout(pushed, room).rects;
+  assert.deepEqual(splitLayout(unlockedLine(pushed, [], 'x', room), room).rects, shown, 'a line pushed past a minimum');
+
+  const quad = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }] };
+  const open = unlockedLine(quad, [], 'x', room);
+  const live = splitLayout(withoutWindow(open, 'd'), room);
+  const moved = movedEdge(open, [], live.edges.a.e, { x: 400, y: 200 });
+  assert.equal(moved.x, 0.4, 'an edge of a collapsed quad moves the saved quad');
+  assert.equal(moved.at, undefined);
+});
+
 test('detach unlocks one line: the windows stay put, and each side has its own edge', async (t) => {
   const { splitEdges, splitLayout, movedEdge, unlockedLine, parseSplit, withoutWindow } = await model(t);
-  const two = unlockedLine(pair('x', 'a', 'b'), [], 'x');
+  const two = unlockedLine(pair('x', 'a', 'b'), [], 'x', room);
   const before = splitLayout(two, room);
   assert.deepEqual(before.rects, splitLayout(pair('x', 'a', 'b'), room).rects, 'nothing moves');
   assert.deepEqual(before.lines, [], 'and no line is left');
@@ -239,19 +256,19 @@ test('detach unlocks one line: the windows stay put, and each side has its own e
   assert.equal(splitLayout(overlapped, room).rects.a.w, 500, 'an overlap, and the other side stays');
   assert.deepEqual(parseSplit(JSON.stringify(spaced)), spaced, 'it survives a reload');
 
-  const nested = unlockedLine({ axis: 'x', at: 0.5, a: { id: 'a' }, b: pair('y', 'b', 'c') }, [], 'x');
+  const nested = unlockedLine({ axis: 'x', at: 0.5, a: { id: 'a' }, b: pair('y', 'b', 'c') }, [], 'x', room);
   const layout = splitLayout(nested, room);
   assert.deepEqual(layout.lines.map((line) => line.axis), ['y'], 'the nested line stays shared');
   assert.deepEqual(splitEdges(layout.edges.b), ['w']);
 
   const quad = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }] };
-  const one = splitLayout(unlockedLine(quad, [], 'x'), room);
+  const one = splitLayout(unlockedLine(quad, [], 'x', room), room);
   assert.deepEqual(one.lines.map((line) => line.axis), ['y']);
   assert.deepEqual(one.crossings, [], 'no line crosses it now');
   assert.deepEqual(splitEdges(one.edges.a), ['e']);
   assert.deepEqual(splitEdges(one.edges.d), ['w']);
-  const both = splitLayout(unlockedLine(unlockedLine(quad, [], 'x'), [], 'y'), room);
+  const both = splitLayout(unlockedLine(unlockedLine(quad, [], 'x', room), [], 'y', room), room);
   assert.deepEqual(splitEdges(both.edges.a), ['s', 'e', 'se']);
-  const after = withoutWindow(unlockedLine(quad, [], 'x'), 'd');
+  const after = withoutWindow(unlockedLine(quad, [], 'x', room), 'd');
   assert.equal(after.a.free, 0.5, 'collapsing a quad keeps a line unlocked');
 });

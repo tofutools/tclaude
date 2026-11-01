@@ -38,8 +38,10 @@ const TEAR_OFF_PX = 4;
 // The ids of the windows, front last. A window joins as it mounts: floating at
 // the front, snapped at the back, so a reload does not bury one behind a split.
 // Levels come from it: every window is below what sits at 950, such as agent
-// marks. A split moves as one, and its lines sit one above it: anything over it
-// covers them. Past the bottom level, windows share it and DOM order decides.
+// marks. A split moves as one, with its front window one above the rest, for
+// when an unlocked line lets two overlap, and its lines above that: anything over
+// the split covers them. Past the bottom level, windows share it and DOM order
+// decides.
 const OVERLAY_TOP_LEVEL = 948;
 export const OVERLAY_BOTTOM_LEVEL = 930;
 const overlayStack = signal([]);
@@ -79,7 +81,7 @@ const stackUnits = computed(() => {
 
 function levelOf(unit) {
   const depth = stackUnits.value.indexOf(unit);
-  return depth < 0 ? OVERLAY_BOTTOM_LEVEL : Math.max(OVERLAY_BOTTOM_LEVEL, OVERLAY_TOP_LEVEL - 2 * depth);
+  return depth < 0 ? OVERLAY_BOTTOM_LEVEL : Math.max(OVERLAY_BOTTOM_LEVEL, OVERLAY_TOP_LEVEL - 3 * depth);
 }
 
 // forgetOverlayWindow takes a closed window out of the stack and any split.
@@ -252,7 +254,9 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   function pinPanelSize() {
     const { snap, w, h } = shownRef.current;
     const current = saved();
-    if (snap && current) savePlacement({ ...current, panels: { ...current.panels, [snap]: { w, h } } });
+    if (!snap || !current) return;
+    savePlacement({ ...current, panels: { ...current.panels, [snap]: { w, h } } });
+    setPlacement(snappedPlacement(snap));
   }
 
   // Where a drop at pointer lands: { zone, tree?, guide }, or null to float. In
@@ -388,13 +392,20 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     });
   }
 
+  // The saved node a path of the showing tree names. With nobody away they are
+  // one tree, and the path says it exactly.
+  function savedPathOf(path) {
+    const live = liveSplit.peek();
+    return live === splitTree.peek() ? path : coveringPath(splitTree.peek(), leavesOf(nodeAt(live, path)));
+  }
+
   // A line moves live and is saved when it lands. It names a node of the showing
   // tree, and moves that split in the saved one, which keeps windows that are away.
   function onLinePointerDown(event, axes, path, area) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    const savedPath = coveringPath(splitTree.peek(), leavesOf(nodeAt(liveSplit.peek(), path)));
+    const savedPath = savedPathOf(path);
     track(event, (m) => {
       const pointer = { x: m.clientX, y: m.clientY };
       splitTree.value = axes.reduce((tree, axis) => movedLine(tree, savedPath, axis, pointer, area), splitTree.peek());
@@ -404,7 +415,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   // A window's edge an unlocked line left it moves live, like a line.
   function resizeSplitEdges(event, zone) {
     const moves = [...zone].map((side) => layout.edges[id]?.[side]).filter(Boolean)
-      .map((edge) => ({ edge, path: coveringPath(splitTree.peek(), leavesOf(nodeAt(liveSplit.peek(), edge.path))) }));
+      .map((edge) => ({ edge, path: savedPathOf(edge.path) }));
     track(event, (m) => {
       const pointer = { x: m.clientX, y: m.clientY };
       splitTree.value = moves.reduce((tree, { edge, path }) => movedEdge(tree, path, edge, pointer), splitTree.peek());
@@ -416,11 +427,10 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
 
   // Detach unlocks one line. The windows stay snapped where they are, and each
   // side then resizes on its own: a space or an overlap can open, with no line.
-  function detachLine(path, axis) {
-    const ids = leavesOf(nodeAt(liveSplit.peek(), path));
-    const savedPath = coveringPath(splitTree.peek(), ids);
-    for (const member of ids) snappedWindows.peek().get(member)?.pin();
-    saveSplit(prefs, unlockedLine(splitTree.peek(), savedPath, axis));
+  function detachLine({ path, axis, area }) {
+    const savedPath = savedPathOf(path);
+    for (const member of leavesOf(nodeAt(liveSplit.peek(), path))) snappedWindows.peek().get(member)?.pin();
+    saveSplit(prefs, unlockedLine(splitTree.peek(), savedPath, axis, area));
   }
 
   // A mouse press leaves focus on the control, where the next key meant for the
@@ -474,7 +484,9 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
 
   const splitLines = cell && leavesOf(liveSplit.value)[0] === id ? layout : null;
   const edges = cell ? splitEdges(layout.edges[id]) : freeEdges(placement.snap);
-  return { placement: shown, edges, level: levelOf(cell ? SPLIT_UNIT : id), splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo };
+  const unitLevel = levelOf(cell ? SPLIT_UNIT : id);
+  const splitFront = cell && overlayStack.value.findLast((other) => layout.rects[other]) === id;
+  return { placement: shown, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo };
 }
 
 export function ResizeFrame({ placement, level, className, onResizeStart, onPointerDownCapture }) {
@@ -492,7 +504,7 @@ export function ResizeFrame({ placement, level, className, onResizeStart, onPoin
 // One window draws them all, as they belong to none.
 function SplitLines({ overlay }) {
   const { lines, crossings } = overlay.splitLines;
-  const above = overlay.level + 1;
+  const above = overlay.linesLevel;
   const crossingOf = (line) => crossings.find((crossing) => crossing.path.join() === line.path.join()) || null;
   const spots = lines.map((line) => ({ line, spot: detachSpot(line, crossingOf(line)) }));
   const [near, setNear] = useState(-1);
@@ -514,7 +526,7 @@ function SplitLines({ overlay }) {
       onPointerDown=${(event) => overlay.onLinePointerDown(event, ['x', 'y'], crossing.path, crossing.area)}></div>`)}
     ${spots.map(({ line, spot }, index) => html`<button type="button" key=${`detach:${line.path.join()}:${line.axis}`} class=${`overlay-split-detach${near === index ? ' near' : ''}`}
       title="Detach: each side then resizes on its own" aria-label="Unlock this split line" style=${`left:${spot.x}px;top:${spot.y}px;z-index:${above}`}
-      onClick=${() => overlay.detachLine(line.path, line.axis)}>⇱</button>`)}`;
+      onClick=${() => overlay.detachLine(line)}>⇱</button>`)}`;
 }
 
 // OverlayWindow draws what useOverlayWindow (the window prop) runs. id names it
