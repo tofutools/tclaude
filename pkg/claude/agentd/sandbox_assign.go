@@ -198,10 +198,6 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	if fail := openCodePrivateStateRefusal(h, agentID, convID, current.Cwd, implementation); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
 
 	// Then every gate a relaunch applies to an already-resolved posture, against
 	// the chain that relaunch will actually resolve. Running them here is what
@@ -251,13 +247,11 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	previous := current.SandboxImplementation
 	var note string
 	persist := func() *spawnFailure {
-		commit, undo, moved, fail := moveOpenCodeStateForAssignment(h, agentID, convID, current.Cwd, implementation, planned)
+		commit, undo, moveNote, fail := moveOpenCodeStateForAssignment(h, agentID, convID, current.Cwd, implementation, planned)
 		if fail != nil {
 			return fail
 		}
-		if moved {
-			note = openCodeMoveNote
-		}
+		note = moveNote
 		err := db.AssignAgentSandboxImplementation(
 			agentID, implementation, mode, db.AssignedSandboxImplementationSource)
 		if err != nil {
@@ -338,10 +332,14 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 const openCodeMoveNote = "the conversation moved into private state, and its todo list did not: " +
 	"OpenCode's export does not carry it, so it was deleted with the shared copy"
 
-// openCodePrivateStateRefusal refuses moving an OpenCode agent off tclaude's
-// sandbox while its conversation is in private state. Any other implementation
-// reads the shared store, where the conversation is not, so the agent could not
-// resume. An allocation that does not hold the conversation strands nothing.
+const openCodeMoveOutNote = "the agent's conversations moved to the shared OpenCode store, where agents " +
+	"outside tclaude's sandbox can read them, and their todo lists were deleted: OpenCode's export does not carry them"
+
+// openCodePrivateStateRefusal refuses a launch off tclaude's sandbox while the
+// OpenCode conversation is in private state. Any other implementation reads the
+// shared store, where the conversation is not, so the agent could not resume. An
+// allocation that does not hold the conversation strands nothing. An assignment
+// does not need this, since it moves the conversation out.
 func openCodePrivateStateRefusal(h *harness.Harness, agentID, convID, cwd, implementation string) *spawnFailure {
 	if h.Name != harness.OpenCodeName || isTclaudeLayer(implementation) {
 		return nil
@@ -366,7 +364,7 @@ func openCodePrivateStateRefusal(h *harness.Harness, agentID, convID, cwd, imple
 	return &spawnFailure{http.StatusConflict, "opencode_state_private",
 		"this OpenCode agent's conversation is in private state, which " + implementation +
 			" cannot read, so the agent could not resume under it; keep tclaude-layer, " +
-			"or export the agent and import it where the receiving posture is the one you want"}
+			"or assign the implementation you want, which moves the conversation to the shared store"}
 }
 
 // moveOpenCodeStateForAssignment gives an OpenCode agent with no state
@@ -376,21 +374,25 @@ func openCodePrivateStateRefusal(h *harness.Harness, agentID, convID, cwd, imple
 // copy is still there, so commit removes it once the posture is recorded and
 // undo leaves everything as it was. An allocation that does not hold the
 // conversation is a move that never finished, or a conversation started under
-// another posture, and gets the same copy.
+// another posture, and gets the same copy. Any other implementation takes the
+// conversation back out, see moveOpenCodeStateOut.
 func moveOpenCodeStateForAssignment(
 	h *harness.Harness, agentID, convID, cwd, implementation string, planned *sandboxpolicy.Snapshot,
-) (commit, undo func(), moved bool, fail *spawnFailure) {
+) (commit, undo func(), note string, fail *spawnFailure) {
 	commit, undo = func() {}, func() {}
-	if h.Name != harness.OpenCodeName || !isTclaudeLayer(implementation) {
-		return commit, undo, false, nil
+	if h.Name != harness.OpenCodeName {
+		return commit, undo, "", nil
 	}
-	refuse := func(err error) (func(), func(), bool, *spawnFailure) {
-		return func() {}, func() {}, false, &spawnFailure{http.StatusInternalServerError, "opencode_state_move",
+	if !isTclaudeLayer(implementation) {
+		return moveOpenCodeStateOut(h, agentID, convID, cwd)
+	}
+	refuse := func(err error) (func(), func(), string, *spawnFailure) {
+		return func() {}, func() {}, "", &spawnFailure{http.StatusInternalServerError, "opencode_state_move",
 			"move the conversation into private state: " + err.Error()}
 	}
 	existing, err := db.GetOpenCodeAgentStateAllocation(agentID)
 	if err != nil {
-		return commit, undo, false, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		return commit, undo, "", &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
 	if existing != nil {
 		private, err := openCodeHistoryForAgent(h, agentID)
@@ -406,17 +408,11 @@ func moveOpenCodeStateForAssignment(
 			return refuse(err)
 		}
 		if inPrivate || !inShared {
-			return commit, undo, false, nil
+			return commit, undo, "", nil
 		}
 	}
-	// The server holds the shared store until the reaper's next tick, and what
-	// it writes after the export would go with the shared copy.
-	if runtime, err := db.GetOpenCodeRuntimeByConvID(convID); err != nil {
+	if err := stopOpenCodeServerForMove(convID); err != nil {
 		return refuse(err)
-	} else if runtime != nil {
-		if err := stopOpenCodeRuntime(runtime.SessionID); err != nil {
-			return refuse(err)
-		}
 	}
 	allocation, err := allocatePrivateOpenCodeState(agentID)
 	if err != nil {
@@ -454,7 +450,98 @@ func moveOpenCodeStateForAssignment(
 		if err := harness.DeleteOpenCodeConversation(h.History, convID, cwd); err != nil {
 			slog.Warn("sandbox assignment: shared OpenCode copy left behind", "conv", short8(convID), "error", err)
 		}
-	}, discard, true, nil
+	}, discard, openCodeMoveNote, nil
+}
+
+// stopOpenCodeServerForMove stops a conversation's server, which holds its store
+// until the reaper's next tick: what it writes after the export would be lost.
+func stopOpenCodeServerForMove(convID string) error {
+	runtime, err := db.GetOpenCodeRuntimeByConvID(convID)
+	if err != nil || runtime == nil {
+		return err
+	}
+	return stopOpenCodeRuntime(runtime.SessionID)
+}
+
+// moveOpenCodeStateOut gives up an OpenCode agent's private state for an
+// implementation that reads the shared store. Every conversation in it moves and
+// keeps its id, older ones from before a reincarnation too, because the state
+// goes: tclaude reads an agent's conversations from its allocation while it has
+// one. The agent must be stopped. The copies are complete and verified when this
+// returns and the private state is still there, so commit removes it once the
+// posture is recorded and undo leaves everything as it was.
+func moveOpenCodeStateOut(
+	h *harness.Harness, agentID, convID, cwd string,
+) (commit, undo func(), note string, fail *spawnFailure) {
+	commit, undo = func() {}, func() {}
+	refuse := func(err error) (func(), func(), string, *spawnFailure) {
+		return func() {}, func() {}, "", &spawnFailure{http.StatusInternalServerError, "opencode_state_move",
+			"move the conversation out of private state: " + err.Error()}
+	}
+	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	if err != nil {
+		return commit, undo, "", &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if allocation == nil || allocation.Mode != db.OpenCodeStatePrivate {
+		return commit, undo, "", nil
+	}
+	private, err := openCodeHistoryForAgent(h, agentID)
+	if err != nil {
+		return refuse(err)
+	}
+	held, err := harness.OpenCodeHoldsConversation(private.History, convID, cwd)
+	if err != nil {
+		return refuse(err)
+	}
+	if !held {
+		return commit, undo, "", nil
+	}
+	if err := stopOpenCodeServerForMove(convID); err != nil {
+		return refuse(err)
+	}
+	conversations, err := harness.OpenCodeConversations(private.History, cwd)
+	if err != nil {
+		return refuse(err)
+	}
+	var copied []string
+	discard := func() {
+		for _, id := range copied {
+			if err := harness.DeleteOpenCodeConversation(h.History, id, cwd); err != nil {
+				slog.Warn("sandbox assignment: shared OpenCode copy left behind", "conv", short8(id), "error", err)
+			}
+		}
+	}
+	for _, id := range conversations {
+		inShared, err := harness.OpenCodeHoldsConversation(h.History, id, cwd)
+		switch {
+		case err != nil:
+		case inShared:
+			// An import would merge into what is there, and the private store
+			// is the sandboxed agent's to write. Only a true duplicate is fine.
+			var same bool
+			if same, err = harness.OpenCodeSameConversation(private.History, h.History, id, cwd); err == nil && !same {
+				err = fmt.Errorf("the shared store already holds a different conversation %s", id)
+			}
+		default:
+			copied = append(copied, id)
+			err = harness.CopyOpenCodeConversation(private.History, h.History, id, cwd)
+		}
+		if err != nil {
+			discard()
+			return refuse(err)
+		}
+	}
+	return func() {
+		// The record goes first: a directory nothing points at is only unused,
+		// and a record pointing at no directory stops the agent resuming.
+		if err := db.DeleteOpenCodeAgentStateAllocation(agentID); err != nil {
+			slog.Warn("sandbox assignment: forget private OpenCode state", "agent", agentID, "error", err)
+			return
+		}
+		if err := os.RemoveAll(allocation.StateRoot); err != nil {
+			slog.Warn("sandbox assignment: private OpenCode state left behind", "agent", agentID, "error", err)
+		}
+	}, discard, openCodeMoveOutNote, nil
 }
 
 // assignedHarnessBuiltinMode decides which harness-builtin mode the new posture

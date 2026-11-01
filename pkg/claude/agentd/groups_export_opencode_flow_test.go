@@ -58,6 +58,19 @@ session)
 	esac
 	;;
 db)
+	case "$2" in
+	*"parent_id IS NULL"*)
+		sep=''
+		printf '['
+		for f in "$store"/*.json; do
+			[ -e "$f" ] || continue
+			printf '%s{"id":"%s"}' "$sep" "$(field id ses_ "$f")"
+			sep=,
+		done
+		printf ']\n'
+		exit 0
+		;;
+	esac
 	id=$(printf %s "$2" | grep -o 'ses_[A-Za-z0-9_-]*' | head -n 1)
 	if [ -e "$store/$id.json" ]; then printf '[{"id":"%s"}]\n' "$id"; fi
 	;;

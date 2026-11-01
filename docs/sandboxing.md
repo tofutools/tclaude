@@ -182,10 +182,23 @@ The move carries what `opencode export` carries, so the agent's todo list is
 deleted with the shared copy, and the assignment's result says so. Older
 conversations from before a reincarnation stay in the shared store.
 
-There is no move back. Any other implementation reads the shared store, where
-the conversation no longer is, so assigning one to an agent with its conversation
-in private state is refused, as is the dashboard's restart without sandbox. To
-change that agent's posture, export it and import it under the posture you want.
+Assigning any other implementation moves the conversation back, because those
+read the shared store. It works the same way and has the same limits: the
+conversation keeps its id, the copy is checked before the assignment is recorded,
+and the todo list is deleted. Every conversation in the agent's private state
+moves, including any from before a reincarnation, and the private state is then
+deleted. Agents outside tclaude's sandbox can read the shared store, so these
+conversations are no longer private, and the assignment's result says so.
+Assigning tclaude's sandbox again moves only the current conversation back.
+
+If a conversation cannot move, the assignment is refused and the agent stays as
+it was. One reason is that the shared store already holds a different conversation
+under the same id. To change that agent's posture, export it and import it under
+the posture you want.
+
+The dashboard's restart without sandbox is refused while the conversation is in
+private state, because a one-off restart should not move it. Assign the
+implementation you want instead.
 
 ### Imported agents
 
