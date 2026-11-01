@@ -9,7 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -347,7 +350,7 @@ func TestOpenCodeSyncKeepsRowsOutsideTheSnapshot(t *testing.T) {
 	for id, dir := range map[string]string{"ses_gone": "/repo/a", "ses_other": "/repo/b"} {
 		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: dir, ProjectPath: dir, Harness: OpenCodeName}))
 	}
-	_, err := syncOpenCodeConvIndex([]openCodeSession{{ID: "ses_here", Directory: "/repo/a"}})
+	_, err := syncOpenCodeConvIndex([]openCodeSession{{ID: "ses_here", Directory: "/repo/a"}}, time.Now().Add(time.Hour))
 	require.NoError(t, err)
 
 	gone, err := db.GetConvIndex("ses_gone")
@@ -367,8 +370,13 @@ func TestOpenCodeConvStoreFindsConversationInAnotherProject(t *testing.T) {
 	require.NoError(t, db.SetConversationResumeProfile(conv, db.ConversationResumeProfile{
 		Version: db.RelaunchProfileVersion, Harness: OpenCodeName, Cwd: repo,
 	}))
-	var asked []string
+	var (
+		mu    sync.Mutex
+		asked []string
+	)
 	store := openCodeConvStore{listSessions: func(dir string) ([]openCodeSession, error) {
+		mu.Lock()
+		defer mu.Unlock()
 		asked = append(asked, dir)
 		if dir == repo {
 			return []openCodeSession{{ID: conv, Title: "Landed", Directory: repo}}, nil
@@ -381,10 +389,15 @@ func TestOpenCodeConvStoreFindsConversationInAnotherProject(t *testing.T) {
 	assert.True(t, exists)
 	assert.Equal(t, []string{repo}, asked, "a known conversation takes one listing")
 
-	ref, err := store.Resolve("ses_land", "", true)
+	ref, err := store.Resolve(conv, "", true)
 	require.NoError(t, err)
 	require.NotNil(t, ref)
 	assert.Equal(t, repo, ref.ProjectPath)
+	assert.Equal(t, []string{repo, repo}, asked, "nor does resolving its full id")
+
+	ref, err = store.Resolve("ses_land", "", true)
+	require.NoError(t, err)
+	require.NotNil(t, ref, "a prefix lists every project")
 
 	require.NoError(t, store.SetTitle(conv, "Renamed before resume"))
 	title, err := store.Title(conv)
@@ -435,10 +448,9 @@ func TestOpenCodeConvStoreStoreWideListingSurvivesOneProject(t *testing.T) {
 			return []openCodeSession{{ID: "ses_good", Directory: good}}, nil
 		case bad:
 			return nil, errors.New("cannot list")
-		case "":
-			return nil, nil
+		case filepath.Join(bad, "gone"):
+			t.Errorf("listed from %q", dir)
 		}
-		t.Errorf("listed from %q", dir)
 		return nil, nil
 	}}
 
@@ -449,6 +461,64 @@ func TestOpenCodeConvStoreStoreWideListingSurvivesOneProject(t *testing.T) {
 	row, err := db.GetConvIndex("ses_bad")
 	require.NoError(t, err)
 	assert.NotNil(t, row, "unseen is not gone")
+}
+
+// One answer covers its project, so its other directories are not asked.
+func TestOpenCodeConvStoreListsAProjectOnce(t *testing.T) {
+	withTestDB(t)
+	root := testutil.CanonicalTempDir(t)
+	var dirs []string
+	var answer []openCodeSession
+	for i := range 9 {
+		dir := filepath.Join(root, strconv.Itoa(i))
+		require.NoError(t, os.Mkdir(dir, 0o755))
+		id := "ses_" + strconv.Itoa(i)
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: dir, ProjectPath: dir, Harness: OpenCodeName}))
+		dirs = append(dirs, dir)
+		answer = append(answer, openCodeSession{ID: id, Directory: dir})
+	}
+	var calls atomic.Int32
+	store := openCodeConvStore{listSessions: func(dir string) ([]openCodeSession, error) {
+		calls.Add(1)
+		if slices.Contains(dirs, dir) {
+			return answer, nil
+		}
+		return nil, nil
+	}}
+
+	entries, err := store.ListConvs("")
+	require.NoError(t, err)
+	assert.Len(t, entries, 9)
+	assert.LessOrEqual(t, int(calls.Load()), openCodeListConcurrency+1)
+}
+
+// A second identical listing writes nothing, so a watcher of indexed_at rests.
+func TestOpenCodeSyncDoesNotRewriteAnUnchangedRow(t *testing.T) {
+	withTestDB(t)
+	store := openCodeTestStore(openCodeTestSessions())
+	_, err := store.ListConvs("")
+	require.NoError(t, err)
+	before, err := db.GetConvIndex("ses_alpha111")
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	_, err = store.ListConvs("")
+	require.NoError(t, err)
+	after, err := db.GetConvIndex("ses_alpha111")
+	require.NoError(t, err)
+	assert.Equal(t, before.IndexedAt, after.IndexedAt)
+}
+
+// A row written while a listing ran was too new for the snapshot to show.
+func TestOpenCodeSyncKeepsRowWrittenDuringTheListing(t *testing.T) {
+	withTestDB(t)
+	listedAt := time.Now().Add(-time.Minute)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: "ses_new", ProjectDir: "/repo/a", ProjectPath: "/repo/a", Harness: OpenCodeName}))
+	_, err := syncOpenCodeConvIndex([]openCodeSession{{ID: "ses_here", Directory: "/repo/a"}}, listedAt)
+	require.NoError(t, err)
+	row, err := db.GetConvIndex("ses_new")
+	require.NoError(t, err)
+	assert.NotNil(t, row)
 }
 
 func TestListOpenCodeSessionsRunsFromTheProject(t *testing.T) {

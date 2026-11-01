@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,11 +48,12 @@ var _ ConvStore = openCodeConvStore{}
 // openCodeListConcurrency bounds the CLI processes one listing starts.
 const openCodeListConcurrency = 4
 
-// sessions lists each of dirs. `opencode session list` shows only the project
-// of its working directory, so a store-wide view has to ask from each project.
-// The first dir is the one the caller needs: its failure fails the listing. A
-// later dir that fails, or no longer exists, leaves its rows unseen, and the
-// cache sync does not read unseen as gone.
+// sessions lists dirs. `opencode session list` shows only the project of its
+// working directory, so a store-wide view has to ask from each project, but one
+// answer covers every directory of that project (worktrees, subdirectories), so
+// a directory an answer already named is not asked again. A dir that fails
+// leaves its rows unseen, and the cache sync does not read unseen as gone: the
+// listing fails only when nothing answered.
 func (s openCodeConvStore) sessions(dirs ...string) ([]openCodeSession, error) {
 	list := s.listSessions
 	if list == nil {
@@ -61,33 +63,43 @@ func (s openCodeConvStore) sessions(dirs ...string) ([]openCodeSession, error) {
 		}
 		list = func(dir string) ([]openCodeSession, error) { return listOpenCodeSessions(executable, dir) }
 	}
-	listed := make([][]openCodeSession, len(dirs))
-	errs := make([]error, len(dirs))
-	var group errgroup.Group
-	group.SetLimit(openCodeListConcurrency)
-	for i, dir := range dirs {
-		group.Go(func() error {
-			listed[i], errs[i] = list(dir)
-			return nil
-		})
-	}
-	_ = group.Wait()
-	if errs[0] != nil {
-		return nil, errs[0]
-	}
 	seen := map[string]bool{}
+	covered := map[string]bool{}
 	var sessions []openCodeSession
-	for i := range dirs {
-		if errs[i] != nil {
-			slog.Warn("opencode convstore: listing a project failed; its rows stay unseen", "dir", dirs[i], "error", errs[i])
-			continue
+	var failure error
+	answered := false
+	for len(dirs) > 0 {
+		batch := dirs[:min(len(dirs), openCodeListConcurrency)]
+		dirs = dirs[len(batch):]
+		listed := make([][]openCodeSession, len(batch))
+		errs := make([]error, len(batch))
+		var group errgroup.Group
+		for i, dir := range batch {
+			group.Go(func() error {
+				listed[i], errs[i] = list(dir)
+				return nil
+			})
 		}
-		for _, session := range listed[i] {
-			if !seen[session.ID] {
-				seen[session.ID] = true
-				sessions = append(sessions, session)
+		_ = group.Wait()
+		for i := range batch {
+			if errs[i] != nil {
+				slog.Warn("opencode convstore: listing a project failed; its rows stay unseen", "dir", batch[i], "error", errs[i])
+				failure = errs[i]
+				continue
+			}
+			answered = true
+			for _, session := range listed[i] {
+				covered[session.Directory] = true
+				if !seen[session.ID] {
+					seen[session.ID] = true
+					sessions = append(sessions, session)
+				}
 			}
 		}
+		dirs = slices.DeleteFunc(dirs, func(dir string) bool { return covered[dir] })
+	}
+	if !answered {
+		return nil, failure
 	}
 	return sessions, nil
 }
@@ -201,16 +213,23 @@ func parseOpenCodeSessions(output []byte) ([]openCodeSession, error) {
 func (s openCodeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error) {
 	dirs := []string{cwd}
 	if cwd == "" {
-		dirs = append(dirs, openCodeKnownDirs()...)
+		// Spelled out, so that a known directory is not listed twice.
+		dirs = openCodeKnownDirs()
+		if own, err := os.Getwd(); err != nil {
+			dirs = append(dirs, "")
+		} else if !slices.Contains(dirs, own) {
+			dirs = append(dirs, own)
+		}
 	} else if len(existingDirs(dirs)) == 0 {
 		// The CLI cannot run from a directory that has gone.
 		dirs = []string{""}
 	}
+	listedAt := time.Now()
 	sessions, err := s.sessions(dirs...)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := syncOpenCodeConvIndex(sessions)
+	entries, err := syncOpenCodeConvIndex(sessions, listedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -233,11 +252,13 @@ func (s openCodeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error)
 // snapshot, but only in directories the snapshot covers: `opencode session list`
 // shows just the project of its working directory, so another project's rows
 // are unseen, not gone. So is a conversation in an agent's private state, which
-// the CLI never shows. Cache failures degrade enrichment rather than hiding source CLI
+// the CLI never shows, and a row written since listedAt, which the snapshot was
+// too early for. A row that has not changed is not rewritten, so that a poll of
+// the cache's newest indexed_at does not see every listing as news. Cache failures degrade enrichment rather than hiding source CLI
 // sessions. Timestamp representation failures are logged at error level with
 // the source values and skip the cache row, so the invalid instant stays loud
 // without letting one bad third-party value blank the source listing.
-func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, error) {
+func syncOpenCodeConvIndex(sessions []openCodeSession, listedAt time.Time) ([]convops.SessionEntry, error) {
 	cached := map[string]*db.ConvIndexRow{}
 	if rows, err := db.ListAllConvIndex(); err != nil {
 		slog.Warn("opencode convstore: conv_index unreadable; continuing from CLI", "error", err)
@@ -273,6 +294,10 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, 
 			entry.GitBranch = row.GitBranch
 			entry.GitBranchStartup = row.GitBranchStartup
 		}
+		if row := cached[session.ID]; row != nil && openCodeRowCurrent(row, entry) {
+			entries = append(entries, entry)
+			continue
+		}
 		if err := db.UpsertConvIndex(openCodeEntryDBRow(entry)); err != nil {
 			if db.IsTimestampRepresentationError(err) {
 				slog.Error("opencode convstore: timestamp cannot be represented; cache row skipped",
@@ -286,7 +311,7 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, 
 		entries = append(entries, entry)
 	}
 	for id, row := range cached {
-		if !seen[id] && covered[filepath.Clean(row.ProjectPath)] && !openCodeConvInPrivateState(id) {
+		if !seen[id] && covered[filepath.Clean(row.ProjectPath)] && row.IndexedAt.Before(listedAt) && !openCodeConvInPrivateState(id) {
 			if err := db.DeleteConvIndex(id); err != nil {
 				slog.Warn("opencode convstore: stale conv_index eviction failed",
 					"conv", id, "error", err)
@@ -294,6 +319,12 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, 
 		}
 	}
 	return entries, nil
+}
+
+func openCodeRowCurrent(row *db.ConvIndexRow, entry convops.SessionEntry) bool {
+	return row.Summary == entry.Summary && row.CustomTitle == entry.CustomTitle &&
+		row.Created == entry.Created && row.Modified == entry.Modified &&
+		row.ProjectPath == entry.ProjectPath
 }
 
 // openCodeConvInPrivateState reports a conversation whose agent keeps its
@@ -362,6 +393,11 @@ func (s openCodeConvStore) Resolve(idPrefix, cwd string, global bool) (*ConvRef,
 	if global {
 		cwd = ""
 	}
+	if cwd == "" {
+		if entry := s.findNearby(idPrefix); entry != nil {
+			return openCodeConvRef(*entry), nil
+		}
+	}
 	entries, err := s.ListConvs(cwd)
 	if err != nil {
 		return nil, fmt.Errorf("resolve OpenCode conversation %q: %w", idPrefix, err)
@@ -420,20 +456,32 @@ func (s openCodeConvStore) Title(convID string) (string, error) {
 	return "", nil
 }
 
-// find looks convID up where tclaude last knew it to be, and only then lists
-// every project, so that the common lookup starts one CLI process.
-func (s openCodeConvStore) find(convID string) (*convops.SessionEntry, error) {
+// findNearby looks convID up where tclaude last knew it to be, which takes
+// one CLI process.
+func (s openCodeConvStore) findNearby(convID string) *convops.SessionEntry {
 	for _, dir := range openCodeConvDirs(convID) {
 		entries, err := s.ListConvs(dir)
 		if err != nil {
-			slog.Warn("opencode convstore: listing the conversation's project failed; listing all", "dir", dir, "error", err)
-			break
+			slog.Warn("opencode convstore: listing the conversation's project failed", "dir", dir, "error", err)
+			continue
 		}
 		for i := range entries {
 			if entries[i].SessionID == convID {
-				return &entries[i], nil
+				return &entries[i]
 			}
 		}
+	}
+	return nil
+}
+
+// find is findNearby, then every project. A conversation in private state is
+// in no listing, so it does not start any.
+func (s openCodeConvStore) find(convID string) (*convops.SessionEntry, error) {
+	if openCodeConvInPrivateState(convID) {
+		return nil, nil
+	}
+	if entry := s.findNearby(convID); entry != nil {
+		return entry, nil
 	}
 	entries, err := s.ListConvs("")
 	if err != nil {
@@ -479,18 +527,12 @@ func (s openCodeConvStore) SetTitle(convID, title string) error {
 		if err != nil {
 			return fmt.Errorf("opencode SetTitle: verify conversation %s: %w", convID, err)
 		}
-		// A conversation in private state has not been seen by any listing,
-		// but tclaude recorded it when it landed.
-		if !exists && !openCodeConvRecorded(convID) {
+		// A conversation in private state is in no listing.
+		if !exists && !openCodeConvInPrivateState(convID) {
 			return fmt.Errorf("opencode SetTitle: conversation %s not found", convID)
 		}
 	}
 	return db.SetConvIndexCustomTitle(convID, title, OpenCodeName)
-}
-
-func openCodeConvRecorded(convID string) bool {
-	profile, err := db.ConversationResumeProfileForConv(convID)
-	return err == nil && profile != nil && profile.Harness == OpenCodeName
 }
 
 func writeOpenCodeTitle(runtime db.OpenCodeRuntime, convID, title string) error {
