@@ -766,7 +766,7 @@ func sendCmd() *cobra.Command {
 				req["role"] = p.Role
 			}
 			if len(p.Attach) > 0 {
-				atts, err := agent.ReadRemoteAttachments(p.Attach)
+				atts, err := agent.ReadAttachments(p.Attach)
 				if err != nil {
 					os.Exit(fail(os.Stderr, err))
 				}

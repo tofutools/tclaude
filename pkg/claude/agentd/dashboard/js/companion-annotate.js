@@ -1,20 +1,30 @@
 // companion-annotate.js -- freehand annotation over the dashboard
 // (tcl-8vjjko): the operator draws on top of whatever view they are on and
 // sends the marked-up view to the companion agent. Agents cannot see the
-// operator's screen, so each stroke is sent as words: what kind of mark it is
-// (circled, underlined, an arrow, a mark) and which control or text it lands
-// on, read from the page under the stroke.
+// operator's screen, so the message carries an image of the view with the ink
+// on it, and each stroke as words: what kind of mark it is (circled, underlined,
+// an arrow, a mark, a drawing) and which control or text it lands on, read from
+// the page under the stroke.
 
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { TARGET_SELECTOR, textOf } from './companion-guide.js';
+import { terminalRow } from './dashboard-capture.js';
 
 const html = htm.bind(h);
 
 export const ANNOTATE_COLORS = Object.freeze(['#ff4d4f', '#ffd43b', '#4dabf7', '#69db7c']);
 const LABEL_MAX = 80;
 export const ANNOTATE_NOTE_MAX = 2000;
+// A stroke this much longer than the distance it covers wanders, so it is no
+// arrow: a half circle, the most a curved arrow bends, is 0.64.
+const ARROW_STRAIGHTNESS = 0.6;
+const DRAWING_MIN_LENGTH = 60;
+// Handwriting is a run of strokes each close to the last in time and on screen.
+const WRITING_STROKES = 3;
+const WRITING_PAUSE_MS = 1500;
+const WRITING_REACH = 80;
 
 function bounds(points) {
   let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
@@ -22,6 +32,10 @@ function bounds(points) {
     minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
   }
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function pathLength(points) {
+  return points.slice(1).reduce((sum, [x, y], i) => sum + Math.hypot(x - points[i][0], y - points[i][1]), 0);
 }
 
 // classifyStroke names what a stroke (viewport points) most looks like.
@@ -34,8 +48,9 @@ export function classifyStroke(points) {
   const gap = Math.hypot(ex - sx, ey - sy);
   if (points.length >= 8 && span > 24 && gap < span * 0.35 && Math.min(b.width, b.height) > 10) return 'circle';
   if (b.width > 30 && b.height < b.width * 0.25 && gap > b.width * 0.6) return 'underline';
-  if (gap > 40) return 'arrow';
-  return 'mark';
+  const length = pathLength(points);
+  if (gap > 40 && gap / length >= ARROW_STRAIGHTNESS) return 'arrow';
+  return length >= DRAWING_MIN_LENGTH ? 'drawing' : 'mark';
 }
 
 function roleOf(el) {
@@ -93,12 +108,29 @@ function quote(found) {
   return `“${found.text}”${found.role ? ` (${found.role})` : ''}`;
 }
 
-// resolveStroke turns one stroke into {kind, line} for the agent. `at(x, y)`
-// resolves a viewport point to a label (labelFor of the element there).
+// terminalLineAt labels a point in a terminal by the line it is on: the whole
+// terminal is one element, whose text would name every point alike. A blank
+// line is null, so it reads as empty space.
+function terminalLineAt(el, y) {
+  const row = terminalRow(el, y);
+  if (!row) return undefined;
+  const text = (row.textContent || '').replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX);
+  return text ? { text, role: '' } : null;
+}
+
+// resolveStroke turns one stroke into {kind, line, drawn} for the agent, drawn
+// being its line should it turn out to be handwriting. `at(x, y)` resolves a
+// viewport point to a label (labelFor of the element there).
 export function resolveStroke(points, at) {
-  let kind = classifyStroke(points);
   const b = bounds(points);
   const cx = b.x + b.width / 2; const cy = b.y + b.height / 2;
+  const drawn = `drew by hand over ${quote(at(cx, cy))}`;
+  return { ...readStroke(points, at, b, cx, cy), drawn };
+}
+
+function readStroke(points, at, b, cx, cy) {
+  let kind = classifyStroke(points);
+  if (kind === 'drawing') return { kind, line: `drew by hand over ${quote(at(cx, cy))}` };
   const [sx, sy] = points[0];
   const [ex, ey] = points[points.length - 1];
   if (kind === 'circle') return { kind, line: `circled ${quote(at(cx, cy))}` };
@@ -118,16 +150,54 @@ export function describeStroke(points, at) {
   return resolveStroke(points, at).line;
 }
 
+function continuesWriting(previous, next) {
+  if (!(next.startedAt - previous.endedAt < WRITING_PAUSE_MS)) return false;
+  const a = bounds(previous.points);
+  const b = bounds(next.points);
+  return b.x - (a.x + a.width) < WRITING_REACH && a.x - (b.x + b.width) < WRITING_REACH
+    && b.y - (a.y + a.height) < WRITING_REACH && a.y - (b.y + b.height) < WRITING_REACH;
+}
+
+// readStrokes returns the strokes as the agent reads them: the letters of a
+// word are no circles and arrows, however each looks alone.
+export function readStrokes(strokes) {
+  const out = [...strokes];
+  let start = 0;
+  for (let i = 1; i <= strokes.length; i++) {
+    if (i < strokes.length && continuesWriting(strokes[i - 1], strokes[i])) continue;
+    if (i - start >= WRITING_STROKES) {
+      for (let j = start; j < i; j++) out[j] = { ...strokes[j], kind: 'drawing', line: strokes[j].drawn };
+    }
+    start = i;
+  }
+  return out;
+}
+
+// numberedLines numbers the lines as the overlay numbers the strokes, with
+// neighbours that say the same on one line.
+function numberedLines(lines) {
+  const out = [];
+  lines.forEach((line, i) => {
+    const last = out[out.length - 1];
+    if (last?.line === line) last.to = i + 1;
+    else out.push({ line, from: i + 1, to: i + 1 });
+  });
+  return out.map(({ line, from, to }) => `${from === to ? from : `${from}–${to}`}. ${line}`);
+}
+
 // composeAnnotation builds the mail body: the note, then one numbered line
 // per stroke, matching the numbers drawn on the overlay.
 // The view itself rides on the message as the usual "[dashboard view: ...]"
-// line.
-export function composeAnnotation({ note = '', lines = [] }) {
+// line, and with image set, as the picture attached to it.
+export function composeAnnotation({ note = '', lines = [], image = false }) {
   const parts = [];
   const clean = String(note || '').trim().slice(0, ANNOTATE_NOTE_MAX);
   if (clean) parts.push(clean);
   if (lines.length) {
-    parts.push(`The operator marked up the dashboard view they are on:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`);
+    const intro = image
+      ? 'The operator marked up the dashboard view they are on. The attached image shows the view with their ink on it, numbered as below:'
+      : 'The operator marked up the dashboard view they are on:';
+    parts.push(`${intro}\n${numberedLines(lines).join('\n')}`);
   }
   return parts.join('\n\n');
 }
@@ -142,8 +212,40 @@ function arrowHead(points) {
   const [ex, ey] = points[points.length - 1];
   const back = points[Math.max(0, points.length - 4)];
   const angle = Math.atan2(ey - back[1], ex - back[0]);
-  const [l, r] = [angle - 0.5, angle + 0.5].map((a) => `${ex - 14 * Math.cos(a)},${ey - 14 * Math.sin(a)}`);
-  return `M${l} L${ex},${ey} L${r}`;
+  const [l, r] = [angle - 0.5, angle + 0.5].map((a) => [ex - 14 * Math.cos(a), ey - 14 * Math.sin(a)]);
+  return [l, [ex, ey], r];
+}
+
+function tracePath(ctx, points) {
+  ctx.beginPath();
+  points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
+}
+
+// drawInk puts the strokes on a canvas as the overlay shows them, numbers
+// included, for the image that goes to the agent.
+export function drawInk(ctx, strokes, scale) {
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
+  strokes.forEach((stroke, i) => {
+    const [x, y] = stroke.points[0];
+    ctx.strokeStyle = stroke.color;
+    tracePath(ctx, stroke.points);
+    if (stroke.kind === 'arrow') tracePath(ctx, arrowHead(stroke.points));
+    ctx.fillStyle = stroke.color;
+    ctx.beginPath();
+    ctx.arc(x, y, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0d1117';
+    ctx.fillText(String(i + 1), x, y);
+  });
+  ctx.restore();
 }
 
 // AnnotateOverlay is the drawing layer over the whole page.
@@ -201,7 +303,7 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
   function down(event) {
     if (event.button !== 0 || drawing.current) return;
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    drawing.current = { color, pointerId: event.pointerId, points: [[event.clientX, event.clientY]] };
+    drawing.current = { color, pointerId: event.pointerId, points: [[event.clientX, event.clientY]], startedAt: Date.now() };
     setTick((n) => n + 1);
   }
   function move(event) {
@@ -222,7 +324,9 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
     try {
       return resolveStroke(points, (x, y) => {
         const el = doc && elementAt(doc, x, y, '.annotate-root, #companion-root');
-        return el ? labelFor(el) : null;
+        if (!el) return null;
+        const line = terminalLineAt(el, y);
+        return line === undefined ? labelFor(el) : line;
       });
     } finally {
       if (root) root.style.pointerEvents = '';
@@ -233,37 +337,38 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
     const d = drawing.current;
     if (!d || event?.pointerId !== d.pointerId) return;
     drawing.current = null;
-    if (d.points.length > 1) setStrokes((list) => [...list, { ...d, ...resolve(d.points) }]);
+    if (d.points.length > 1) setStrokes((list) => [...list, { ...d, ...resolve(d.points), endedAt: Date.now() }]);
     else setTick((n) => n + 1);
   }
 
   async function send(event) {
     event?.preventDefault?.();
     if (sending || (!strokes.length && !note.trim())) return;
-    const lines = strokes.map((stroke) => stroke.line);
+    const marks = readStrokes(strokes);
     setSending(true);
     try {
-      await onSend({ note, lines });
+      await onSend({ note, lines: marks.map((stroke) => stroke.line), strokes: marks });
     } finally {
       setSending(false);
     }
   }
 
-  const live = drawing.current ? [...strokes, drawing.current] : strokes;
-  return html`<div class="annotate-root" ref=${rootRef} role="dialog" aria-modal="true" aria-label=${`Mark up this view for ${agentName}`}>
+  const done = readStrokes(strokes);
+  const live = drawing.current ? [...done, drawing.current] : done;
+  return html`<div class="annotate-root" ref=${rootRef} data-capture-skip role="dialog" aria-modal="true" aria-label=${`Mark up this view for ${agentName}`}>
     <svg class="annotate-canvas" onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}
       aria-label="Annotation layer: draw on the page">
       ${live.map((stroke, i) => {
         const [x, y] = stroke.points[0];
         return html`<g key=${i}>
           <path d=${strokePath(stroke.points)} stroke=${stroke.color} />
-          ${i < strokes.length && stroke.kind === 'arrow' && html`<path d=${arrowHead(stroke.points)} stroke=${stroke.color} />`}
+          ${i < strokes.length && stroke.kind === 'arrow' && html`<path d=${strokePath(arrowHead(stroke.points))} stroke=${stroke.color} />`}
           ${i < strokes.length && html`<circle cx=${x} cy=${y} r="9" fill=${stroke.color} /><text x=${x} y=${y + 4}>${i + 1}</text>`}
         </g>`;
       })}
     </svg>
     <form class="annotate-bar" onSubmit=${send}>
-      <span class="annotate-title">✎ Mark up this view for <b>${agentName}</b>: circle, underline or point with an arrow</span>
+      <span class="annotate-title">✎ Mark up this view for <b>${agentName}</b>: circle, underline, point with an arrow or write</span>
       ${ANNOTATE_COLORS.map((c) => html`<button key=${c} type="button" class=${`annotate-swatch${color === c ? ' on' : ''}`}
         style=${`background:${c}`} aria-label=${`Pen ${c}`} aria-pressed=${color === c ? 'true' : 'false'} onClick=${() => setColor(c)}></button>`)}
       <button type="button" class="annotate-btn" title="Undo (Ctrl+Z)" disabled=${!strokes.length} onClick=${() => setStrokes((list) => list.slice(0, -1))}>↶</button>

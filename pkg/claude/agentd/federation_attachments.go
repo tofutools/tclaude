@@ -64,7 +64,7 @@ func fedAttachmentName(name string) (string, string, error) {
 // validateFedAttachments checks count, size and names.
 func validateFedAttachments(atts []proto.AttachmentPayload) error {
 	if len(atts) > proto.MaxAttachments {
-		return fmt.Errorf("at most %d attachments per remote message", proto.MaxAttachments)
+		return fmt.Errorf("at most %d attachments per message", proto.MaxAttachments)
 	}
 	total := 0
 	for _, a := range atts {
@@ -119,7 +119,13 @@ func fedAttachmentUsage(instance string) int64 {
 // under the peer's attachment root. The caller removes dir if the message
 // is not committed; the attachment reconciler sweeps it otherwise.
 func storeFedAttachments(instance string, atts []proto.AttachmentPayload) (rows []db.AgentMessageAttachment, dir string, err error) {
-	dir = filepath.Join(fedAttachmentPeerDir(instance), convops.GenerateUUID())
+	return storeMessageAttachments(filepath.Join(fedAttachmentPeerDir(instance), convops.GenerateUUID()), atts)
+}
+
+// storeMessageAttachments writes validated attachments into dir, which it
+// creates. The caller removes dir if the message is not committed.
+func storeMessageAttachments(dir string, atts []proto.AttachmentPayload) ([]db.AgentMessageAttachment, string, error) {
+	var rows []db.AgentMessageAttachment
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, "", err
 	}

@@ -395,8 +395,11 @@ tclaude agent notify-human "PR is ready for review" \
   --attach out.png --attach report.md
 ```
 
-`--attach` (repeatable, files or directories) works on notify-human. Agent-to-agent
-messages carry text only, except `agent message --attach` to a remote `member@peer`. Up to 20 files arrive as separate
+`--attach` (repeatable, files or directories) works on notify-human. `agent message`
+and `agent reply` take `--attach` too, for files you can read: at most 4 files and
+512 KiB in all, images, text, data and PDF, to a local agent or a remote `member@peer`,
+not to a group. The recipient gets a copy under `~/.tclaude/api/message-files` and its
+path in the message. On notify-human, up to 20 files arrive as separate
 downloads; more than 20, or a directory, become a single zip (`--zip`,
 `--separate`, and `--name` control the shape). The body may be omitted
 when `--subject` and `--attach` are both present.

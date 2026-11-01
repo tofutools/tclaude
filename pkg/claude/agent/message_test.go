@@ -28,7 +28,7 @@ func TestOneShotCLIQueueFullIsActionableAndNonZero(t *testing.T) {
 			return runMessageDaemon(&messageParams{Target: "worker"}, "hello", stdout, stderr)
 		}},
 		{name: "reply", call: func(stdout, stderr *bytes.Buffer) int {
-			return runReplyDaemon(42, "", "hello", stdout, stderr)
+			return runReplyDaemon(42, "", "hello", nil, stdout, stderr)
 		}},
 	} {
 		t.Run(run.name, func(t *testing.T) {

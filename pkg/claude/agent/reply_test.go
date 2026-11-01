@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestReplyCmdSupportsBodyFlag(t *testing.T) {
@@ -121,10 +123,10 @@ func TestRunReplyBodySources(t *testing.T) {
 
 			var gotBody, gotSubject string
 			DaemonRequestImpl = func(_, _ string, in, _ any, _ DaemonOpts) error {
-				payload, ok := in.(map[string]string)
-				require.True(t, ok, "reply payload should be map[string]string, got %T", in)
-				gotBody = payload["body"]
-				gotSubject = payload["subject"]
+				payload, ok := in.(map[string]any)
+				require.True(t, ok, "reply payload should be map[string]any, got %T", in)
+				gotBody, _ = payload["body"].(string)
+				gotSubject, _ = payload["subject"].(string)
 				return nil
 			}
 
@@ -138,4 +140,36 @@ func TestRunReplyBodySources(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunReplySendsOnlyFilesTheCallerCanRead(t *testing.T) {
+	prevAvail := DaemonAvailableImpl
+	prevReq := DaemonRequestImpl
+	t.Cleanup(func() {
+		DaemonAvailableImpl = prevAvail
+		DaemonRequestImpl = prevReq
+	})
+	DaemonAvailableImpl = func() bool { return true }
+	var sent []proto.AttachmentPayload
+	DaemonRequestImpl = func(_, _ string, in, _ any, _ DaemonOpts) error {
+		sent, _ = in.(map[string]any)["attachments"].([]proto.AttachmentPayload)
+		return nil
+	}
+
+	dir := testutil.CanonicalTempDir(t)
+	readable := filepath.Join(dir, "mock.png")
+	require.NoError(t, os.WriteFile(readable, []byte("png"), 0o600))
+	var stdout, stderr bytes.Buffer
+	rc := runReply(&replyParams{ID: "42", Text: "see this", Attach: []string{readable}}, &stdout, &stderr, strings.NewReader(""))
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, sent, 1)
+	assert.Equal(t, "mock.png", sent[0].Name)
+	assert.Equal(t, []byte("png"), sent[0].Data)
+
+	// The daemon never sees the path: a file the caller can't open stops here.
+	sent = nil
+	stderr.Reset()
+	rc = runReply(&replyParams{ID: "42", Text: "see this", Attach: []string{filepath.Join(dir, "missing.png")}}, &stdout, &stderr, strings.NewReader(""))
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Nil(t, sent)
 }

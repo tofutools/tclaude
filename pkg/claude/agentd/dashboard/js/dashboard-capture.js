@@ -72,7 +72,7 @@ export function describeElement(el, y = null) {
 // terminalRow is the terminal line an element sits on, which is what the
 // operator is pointing at, rather than the whole screen of text.
 // xterm's layers cover its rows, so the row is found by height.
-function terminalRow(el, y) {
+export function terminalRow(el, y) {
   if (y === null) return null;
   const rows = el.closest?.('.xterm')?.querySelector?.('.xterm-rows');
   if (!rows) return null;
@@ -494,7 +494,8 @@ function loadImage(win, url) {
 // output can hold them.
 const stripXmlInvalid = (markup) => markup.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '');
 
-// renderPage resolves to a PNG Blob of the viewport.
+// renderPage resolves to a PNG Blob of the viewport. draw(ctx, scale) adds to
+// it what the page's DOM does not hold, in CSS pixels times scale.
 export function renderPage(options) {
   return new Promise((resolve, reject) => {
     const timer = options.win.setTimeout(() => reject(new Error('the render took too long')), CAPTURE_RENDER_TIMEOUT_MS);
@@ -502,7 +503,7 @@ export function renderPage(options) {
   });
 }
 
-async function renderViewport({ win, fetchImpl, pointer }) {
+async function renderViewport({ win, fetchImpl, pointer, draw }) {
   const doc = win.document;
   const width = win.innerWidth;
   const height = win.innerHeight;
@@ -551,6 +552,7 @@ async function renderViewport({ win, fetchImpl, pointer }) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   if (pointer) drawCursor(ctx, pointer.x, pointer.y, scale);
+  draw?.(ctx, scale);
   return new Promise((resolve, reject) => {
     try {
       canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('the page could not be encoded'))), 'image/png');
