@@ -1,7 +1,7 @@
 /* The dashboard companion (js/companion-island.js, tcl-6i0283): chips, the
-   hover peek and the floating window hosting agents' native terminals. It sits
-   above page content, the dock (45) and ordinary modal overlays (100) but below
-   the confirmation dialog (1000), which still covers it. */
+   hover peek and the floating window hosting agents' native terminals. The
+   window sits above page content, the dock (45) and ordinary modal overlays
+   (100) but below the confirmation dialog (1000), which still covers it. */
 
 :root {
   --cmp-bg: #0d1117; --cmp-bar: #161b22; --cmp-line: #30363d; --cmp-edge: #4b5a6e;
@@ -10,10 +10,20 @@
   --cmp-steward: linear-gradient(135deg, #6e40c9, #a371f7);
 }
 
+/* The resting chips float over page content (at most 6) and under everything
+   the operator opens: menus and popovers (20 and up), drawers and dialogs. They
+   stay clear of the dock instead of rising above it, because its menus live
+   inside it. Asserted over the stylesheets in jstest/companion-layering.test.mjs. */
 .companion-chips {
-  position: fixed; right: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 950;
+  position: fixed; right: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 10;
   display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap-reverse; justify-content: flex-end;
   max-width: calc(100vw - 32px); pointer-events: none;
+}
+body.dock-open .companion-chips { right: calc(var(--dock-w) + 16px); max-width: calc(100vw - var(--dock-w) - 32px); }
+/* Too narrow to fit beside the dock: rest on it, tying its 45 and winning by
+   DOM order, still under an open PR popover (46). */
+@media (max-width: 620px) {
+  body.dock-open .companion-chips { right: 16px; max-width: calc(100vw - 32px); z-index: 45; }
 }
 .companion-chip {
   pointer-events: auto; display: inline-flex; align-items: center; gap: 7px;
