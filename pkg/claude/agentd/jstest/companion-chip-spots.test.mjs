@@ -32,7 +32,7 @@ async function setup(t, prefs = memoryPrefs()) {
   const layOutSlots = () => {
     const at = { 'top-left': [0, 0], 'top-right': [900, 0], 'bottom-left': [0, 560], 'bottom-center': [450, 560], 'bottom-right': [900, 560] };
     for (const slot of view.container.querySelectorAll('[data-chip-spot]')) {
-      const [left, top] = at[slot.dataset.chipSpot];
+      const [left, top] = at[slot.dataset.chipSpot] || [-5000, -5000];
       slot.getBoundingClientRect = () => ({ left, top, width: 100, height: 40, right: left + 100, bottom: top + 40 });
     }
   };
@@ -55,7 +55,7 @@ test('a drag lights the nearest spot and lands there', async (t) => {
   const { view, chip, row, pointer, layOutSlots, prefs } = await setup(t);
   await pointer('pointerdown', 950, 580, chip());
   await pointer('pointermove', 900, 580);
-  assert.equal(view.container.querySelectorAll('[data-chip-spot]').length, 5, 'an outline at every spot');
+  assert.equal(view.container.querySelectorAll('[data-chip-spot]').length, 16, 'an outline at every spot');
   assert.match(row().className, /dragging/);
   layOutSlots();
   await pointer('pointermove', 60, 30);
@@ -87,6 +87,14 @@ test('the spot survives a reload', async (t) => {
   assert.match(row().className, /companion-spot-bottom-center/);
 });
 
+test('every spot saved before there were sixteen still means the same place', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  assert.equal(m.CHIP_SPOTS.length, 16);
+  for (const spot of ['top-left', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right']) assert.equal(m.parseChipSpot(spot), spot);
+  assert.equal(m.DEFAULT_CHIP_SPOT, 'bottom-right');
+});
+
 test('a nonsense saved spot falls back', async (t) => {
   const { row } = await setup(t, memoryPrefs({ [CHIP_SPOT]: 'ceiling' }));
   assert.match(row().className, /companion-spot-bottom-right/);
@@ -106,4 +114,17 @@ test('model: a window at a spot stays on screen, the peek opens on the free side
   const rect = { left: 16, right: 150, top: 100, bottom: 134 };
   assert.deepEqual(m.peekAnchor('top-left', rect, vp), { top: 142, left: 16 });
   assert.deepEqual(m.peekAnchor('bottom-right', rect, vp), { bottom: 508, right: 850 });
+  assert.deepEqual(m.peekAnchor('left-q1', rect, vp), { top: 142, left: 16 });
+  assert.deepEqual(m.peekAnchor('left-q3', rect, vp), { bottom: 508, left: 16 });
+  assert.deepEqual(m.peekAnchor('right-center', rect, vp), { bottom: 508, right: 850 });
+  assert.deepEqual(m.peekAnchor('top-q3', rect, vp), { top: 142, right: 850 });
+  for (const viewport of [vp, { width: 1600, height: 900 }, { width: 500, height: 400 }]) {
+    for (const spot of m.CHIP_SPOTS) {
+      const { x, y, w, h } = m.spotPlacement(spot, p, viewport, 90);
+      const small = viewport.width < 700;
+      assert.ok(x >= 0 && y >= 0 && (small || (x + w <= viewport.width && y + h <= viewport.height - o.OVERLAY_FOOTER_ROOM)), `${spot} at ${viewport.width}`);
+    }
+  }
+  assert.equal(m.spotPlacement('left-center', p, { width: 1600, height: 900 }, 90).x, 16);
+  assert.equal(m.spotPlacement('top-q1', p, { width: 1600, height: 900 }, 90).x, 16 + (1600 - 640 - 32) / 4);
 });

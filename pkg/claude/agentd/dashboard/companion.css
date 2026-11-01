@@ -21,7 +21,8 @@
 }
 /* The snap spots (tcl-avebwq), shared by the chips and the outlines a drag
    shows, so an outline is exactly where the chips will land. The top spots
-   follow the nav bar's live bottom; the insets match spotPlacement. */
+   follow the nav bar's live bottom, the sides share the room between the nav
+   and the footer, and the insets match spotPlacement. */
 :root { --chip-right: 16px; }
 body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
 /* Too narrow to fit beside the dock: rest on it, tying its 45 and winning by
@@ -30,14 +31,32 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
   body.dock-open { --chip-right: 16px; }
   body.dock-open .companion-chips:not(.dragging) { z-index: 45; }
 }
-.companion-spot-top-left { left: 16px; top: calc(var(--dock-top, 0px) + 12px); }
-.companion-spot-top-right { right: var(--chip-right); top: calc(var(--dock-top, 0px) + 12px); }
-.companion-spot-bottom-left { left: 16px; bottom: calc(var(--footer-h, 29px) + 12px); }
-.companion-spot-bottom-center { left: calc((100vw - var(--chip-right) + 16px) / 2); bottom: calc(var(--footer-h, 29px) + 12px); transform: translateX(-50%); }
-.companion-spot-bottom-right { right: var(--chip-right); bottom: calc(var(--footer-h, 29px) + 12px); }
-.companion-chips:is(.companion-spot-top-left, .companion-spot-top-right) { align-items: flex-start; flex-wrap: wrap; }
-.companion-chips:is(.companion-spot-top-left, .companion-spot-bottom-left) { justify-content: flex-start; }
-.companion-chips.companion-spot-bottom-center { width: max-content; justify-content: center; }
+/* On the elements, not :root: --chip-right changes on body. */
+.companion-chips, .companion-chip-slot {
+  --chip-top: calc(var(--dock-top, 0px) + 12px); --chip-bottom: calc(var(--footer-h, 29px) + 12px);
+  --chip-room-w: calc(100vw - var(--chip-right) - 16px); --chip-room-h: calc(100vh - var(--chip-top) - var(--chip-bottom));
+  /* The right side's middle would otherwise sit on the dock's edge tab or the
+     slop lever, which both ride the edge at half height. */
+  --chip-side-right: calc(var(--chip-right) + var(--dock-tab-w, 22px) + 16px);
+}
+[class*="companion-spot-top-"] { top: var(--chip-top); }
+[class*="companion-spot-bottom-"] { bottom: var(--chip-bottom); }
+.companion-spot-top-left, .companion-spot-bottom-left, [class*="companion-spot-left-"] { left: 16px; }
+.companion-spot-top-right, .companion-spot-bottom-right { right: var(--chip-right); }
+[class*="companion-spot-right-"] { right: var(--chip-side-right); }
+:is(.companion-spot-top-q1, .companion-spot-bottom-q1) { left: calc(16px + var(--chip-room-w) * .25); transform: translateX(-50%); }
+:is(.companion-spot-top-center, .companion-spot-bottom-center) { left: calc(16px + var(--chip-room-w) * .5); transform: translateX(-50%); }
+:is(.companion-spot-top-q3, .companion-spot-bottom-q3) { left: calc(16px + var(--chip-room-w) * .75); transform: translateX(-50%); }
+:is(.companion-spot-left-q1, .companion-spot-right-q1) { top: calc(var(--chip-top) + var(--chip-room-h) * .25); transform: translateY(-50%); }
+:is(.companion-spot-left-center, .companion-spot-right-center) { top: calc(var(--chip-top) + var(--chip-room-h) * .5); transform: translateY(-50%); }
+:is(.companion-spot-left-q3, .companion-spot-right-q3) { top: calc(var(--chip-top) + var(--chip-room-h) * .75); transform: translateY(-50%); }
+.companion-chips[class*="companion-spot-top-"] { align-items: flex-start; flex-wrap: wrap; }
+.companion-chips:is(.companion-spot-top-left, .companion-spot-bottom-left, [class*="companion-spot-left-"]) { justify-content: flex-start; }
+.companion-chips:is(.companion-spot-top-center, .companion-spot-bottom-center) { width: max-content; justify-content: center; }
+/* A row on a quarter point has half the room, so it wraps before it runs off. */
+.companion-chips:is(.companion-spot-top-q1, .companion-spot-top-q3, .companion-spot-bottom-q1, .companion-spot-bottom-q3) {
+  width: max-content; justify-content: center; max-width: calc(var(--chip-room-w) / 2);
+}
 /* A drag lifts the row and its outlines over everything it crosses. */
 .companion-chips.dragging { z-index: 961; }
 .companion-chips.dragging .companion-chip { cursor: grabbing; scale: 1.04; box-shadow: 0 12px 28px rgba(0, 0, 0, .55); }
