@@ -152,6 +152,20 @@ asks you to authorize each program profile its command steps use, as for any
 run (see [Processes](processes.md#running)). Export needs
 `process.templates.read`; import needs `process.templates.manage`.
 
+### Refusing unsigned files
+
+An unsigned file imports by default. To refuse it, turn on *Refuse unsigned
+workflows* in Config › Experimental, or set it in `config.json`:
+
+```json
+{"processes": {"refuse_unsigned_imports": true}}
+```
+
+The review still shows the file and says it is refused, and importing it fails.
+A signature that does not verify counts as none. A valid signature from a key
+this node does not know passes: the setting asks for a signature, so check the
+signer yourself. `inspect` is offline and does not apply it.
+
 ### Before you share
 
 - Read the commands `inspect` lists. They run on the importing node with that
@@ -283,7 +297,8 @@ Signature files have PAF's [signature format](paf.md#signatures). The signed
 message is the ASCII string `pwf-manifest-signature-v1\n` followed by the
 lowercase hex SHA-256 of `manifest.json`. The prefix differs from PAF's, so a
 PAF signature never verifies a PWF file, or the reverse. Trust is decided by
-the public key alone; an unsigned file is valid but unverified.
+the public key alone; an unsigned file is valid but unverified, unless the
+node [refuses unsigned files](#refusing-unsigned-files).
 
 ## Versioning and compatibility
 

@@ -203,7 +203,8 @@ Auto-cleanup is irreversible.
 
 ## Experimental
 
-`/config/experimental`: feature flags, under **Feature flags**.
+`/config/experimental`: feature flags, under **Feature flags**, and process
+policy, under **Processes**.
 
 | Label | Key | Default | What it adds |
 |---|---|---|---|
@@ -215,6 +216,10 @@ Auto-cleanup is irreversible.
 | Command palette in terminals | `features.terminal_command_palette_shortcut` | off | Ctrl/Cmd-K inside a terminal |
 | Recorded sandbox details | `features.recorded_sandbox_details` | off | A `›` details link on the sandbox badge |
 | Agent dirs: mount parent | `features.agent_dirs_mount_parent` | **on** | See [Sandboxing](sandboxing.md) |
+
+| Label | Key | Default | What it does |
+|---|---|---|---|
+| Refuse unsigned workflows | `processes.refuse_unsigned_imports` | off | Refuses to [import a workflow file](pwf.md#refusing-unsigned-files) without a valid signature |
 
 ## Advanced
 

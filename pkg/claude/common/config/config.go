@@ -154,6 +154,9 @@ type Config struct {
 	// ClaudeCleanupPeriodDaysOverride.
 	ClaudeCleanupPeriodDays int `json:"claude_cleanup_period_days,omitempty"`
 
+	// Processes holds operator policy for processes. Absent → all defaults.
+	Processes *ProcessesConfig `json:"processes,omitempty"`
+
 	// Dashboard holds display toggles for the agentd web dashboard that
 	// don't belong to the slop / cost / notification blocks — see
 	// DashboardConfig. Absent → all defaults.
@@ -266,6 +269,19 @@ const CollabDisabledMessage = "this collab command is disabled; set features.col
 // CollabEnabled reports whether the opt-in Collab feature flag is set.
 func (c *Config) CollabEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Collab
+}
+
+// ProcessesConfig is operator policy for processes.
+type ProcessesConfig struct {
+	// RefuseUnsignedImports refuses to import a .pwf workflow file without a
+	// valid signature. A review still shows such a file, and why it is
+	// refused. Off by default: an unsigned file is valid but unverified.
+	RefuseUnsignedImports bool `json:"refuse_unsigned_imports,omitempty"`
+}
+
+// RefuseUnsignedWorkflows reports whether importing an unsigned .pwf is refused.
+func (c *Config) RefuseUnsignedWorkflows() bool {
+	return c != nil && c.Processes != nil && c.Processes.RefuseUnsignedImports
 }
 
 // ProcessesEnabled reports whether the opt-in Processes feature flag is set.
