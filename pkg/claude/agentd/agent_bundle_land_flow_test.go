@@ -40,6 +40,9 @@ type landingResult struct {
 	Spawn struct {
 		ConvID string `json:"conv_id"`
 	} `json:"spawn"`
+	Posture *struct {
+		SandboxImplementation string `json:"sandbox_implementation"`
+	} `json:"posture"`
 }
 
 func importAgentArchive(t *testing.T, f *testharness.Flow, raw []byte, query url.Values) landingResult {

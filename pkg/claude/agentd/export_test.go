@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"strings"
 	"testing"
 )
@@ -74,4 +75,10 @@ func TestSanitizeExportFilename(t *testing.T) {
 	if got := sanitizeExportFilename(string(long)); len(got) > 200 {
 		t.Errorf("expected truncation to <=200, got len %d", len(got))
 	}
+}
+
+// ResolveCurrentSandboxChainForConvForTest exposes the chain a relaunch would
+// compose, which is otherwise only visible by launching.
+func ResolveCurrentSandboxChainForConvForTest(convID string) (*sandboxpolicy.Snapshot, *sandboxpolicy.Snapshot, error) {
+	return resolveCurrentSandboxChainForConv(convID)
 }

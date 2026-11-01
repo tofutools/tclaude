@@ -170,6 +170,20 @@ running agent the same way. A harness mode that was
 merely derived from the old implementation is not carried forward; the harness
 default is recorded instead unless `--sandbox` pins one.
 
+An OpenCode agent with no private state allocation cannot be assigned
+tclaude's sandbox. Its conversation is in the shared store, which the sandboxed
+server cannot read, so the assignment refuses rather than leave an agent whose
+every resume fails. Export it, then import it with `paf import --group` into a
+group whose spawn profile uses tclaude's sandbox, or import it or its group while
+tclaude's sandbox is the install default or the global profile's choice: the
+import installs the conversation in private state.
+
+### Imported agents
+
+Imports take the receiver's posture, resolved the way a spawn resolves it, and
+an unmeetable one is refused rather than downgraded. See
+[Landing posture](paf.md#landing-posture).
+
 ## The harness's own mode: `--sandbox`
 
 `--sandbox` on `tclaude session new` sets the harness-native sandbox mode. It

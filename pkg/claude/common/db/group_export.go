@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/reflink"
 )
 
@@ -620,11 +621,27 @@ type GroupImportPlan struct {
 	// import minted and indexed for this import, so their conv_index rows
 	// are this import's, not a collision.
 	InstalledConversations map[string]bool
-	ByConv                   string            // caller conv-id for the audit log ("" = human)
+	// MemberPostures is the launch posture each member takes on this node,
+	// keyed by final conv-id. Nothing in an archive supplies it: the daemon
+	// resolves it, and it commits with the members so that no imported member
+	// can exist with only the baseline to resume on.
+	MemberPostures map[string]GroupImportMemberPosture
+	ByConv         string // caller conv-id for the audit log ("" = human)
 	// CanonicalizePermissionScope is supplied by the daemon, which owns the
 	// permission registry. ImportGroup requires it for every non-empty archived
 	// scope so direct DB callers cannot bypass registry and selector validation.
 	CanonicalizePermissionScope func(slug, raw string) (string, error)
+}
+
+// GroupImportMemberPosture is one imported member's launch posture.
+type GroupImportMemberPosture struct {
+	// AgentID, when set, is the identity the member's actor takes, for state
+	// installed before this transaction. Empty mints one.
+	AgentID  string
+	Relaunch AgentRelaunchProfile
+	// Sandbox gets the new group as its resolution group here, because the
+	// group does not exist until this transaction creates it.
+	Sandbox sandboxpolicy.Snapshot
 }
 
 // GroupImportResult summarises a completed import.
@@ -736,7 +753,7 @@ func (c *importCtx) ensureActor(conv, via string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	agentID, err := ensureAgentForConvTx(c.tx, conv, via)
+	agentID, err := ensureAgentWithIDForConvTx(c.tx, conv, via, c.plan.MemberPostures[conv].AgentID)
 	if err != nil {
 		return "", err
 	}
@@ -823,9 +840,40 @@ func (c *importCtx) run() error {
 		c.workdirs, c.sudoGrants, c.headAliases, c.successions,
 		c.spawnHist, c.cloneHist, c.cronJobsAndRuns, c.messages,
 		c.transferLog, c.backfillAgentCompanions, c.scrubRetiredActorAuthority,
+		c.memberPostures,
 	} {
 		if err := step(); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// memberPostures records each member's launch posture on its actor.
+func (c *importCtx) memberPostures() error {
+	for conv, posture := range c.plan.MemberPostures {
+		agentID, err := agentIDForConvTx(c.tx, conv)
+		if err != nil {
+			return fmt.Errorf("import: member posture actor: %w", err)
+		}
+		if agentID == "" {
+			// A conversation no member owns: nothing launches it as an agent.
+			continue
+		}
+		relaunch, err := encodeRelaunchProfile(posture.Relaunch)
+		if err != nil {
+			return fmt.Errorf("import: encode member posture: %w", err)
+		}
+		snapshot := posture.Sandbox
+		snapshot.ResolutionGroupID = c.newGroupID
+		sandbox, err := marshalEffectiveSandboxSnapshot(&snapshot)
+		if err != nil {
+			return fmt.Errorf("import: encode member sandbox: %w", err)
+		}
+		if _, err := c.tx.Exec(
+			`UPDATE agents SET relaunch_profile = ?, effective_sandbox_config = ? WHERE agent_id = ?`,
+			relaunch, sandbox, agentID); err != nil {
+			return fmt.Errorf("import: record member posture: %w", err)
 		}
 	}
 	return nil

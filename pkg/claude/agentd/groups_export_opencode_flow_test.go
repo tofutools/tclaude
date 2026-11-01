@@ -30,8 +30,13 @@ func fakeOpenCodeStore(t *testing.T) string {
 	dir := testutil.CanonicalTempDir(t)
 	store := filepath.Join(dir, "store")
 	require.NoError(t, os.Mkdir(store, 0o700))
+	// A launch's private state arrives as XDG_DATA_HOME: that conversation goes
+	// in the store under it, so a test can tell the two stores apart.
 	script := `#!/bin/sh
 store='` + store + `'
+case "$XDG_DATA_HOME" in
+*/tclaude/opencode-agents/*) store="$XDG_DATA_HOME/fake-store"; mkdir -p "$store" ;;
+esac
 field() { sed -n "s|.*\"$1\":\"\($2[^\"]*\)\".*|\1|p" "$3" | head -n 1; }
 case "$1" in
 export) cat "$store/$2.json" ;;
@@ -157,6 +162,8 @@ func TestGroupImport_OpenCodeMemberKeepsItsHistory(t *testing.T) {
 	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
 	require.NoError(t, err)
 	assert.Nil(t, allocation, "the member resumes on the ambient store, so no private state is allocated")
+	require.NotNil(t, landings[0].Posture)
+	assert.Equal(t, "ambient", landings[0].Posture.OpenCodeState)
 }
 
 // Without the opencode binary the conversation cannot install, and the member

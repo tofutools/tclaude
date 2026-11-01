@@ -150,6 +150,13 @@ type groupLandingView struct {
 	Model         string   `json:"model"`
 	Rung          string   `json:"rung"`
 	Warnings      []string `json:"warnings"`
+	Posture       *struct {
+		SandboxImplementation string   `json:"sandbox_implementation"`
+		SandboxProfiles       []string `json:"sandbox_profiles"`
+		ResolvedBy            string   `json:"resolved_by"`
+		OpenCodeState         string   `json:"opencode_state"`
+		Refused               string   `json:"refused"`
+	} `json:"posture"`
 }
 
 func importGroupWith(t *testing.T, f *testharness.Flow, archive []byte, query url.Values) (*httptest.ResponseRecorder, []groupLandingView) {

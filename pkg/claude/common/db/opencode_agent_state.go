@@ -62,3 +62,14 @@ func GetOpenCodeAgentStateAllocation(agentID string) (*OpenCodeAgentStateAllocat
 	allocation.CreatedAt = created.Time()
 	return &allocation, nil
 }
+
+// DeleteOpenCodeAgentStateAllocation forgets an allocation whose agent never
+// came to exist, as when a group import fails after installing its history.
+func DeleteOpenCodeAgentStateAllocation(agentID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM opencode_agent_state_allocations WHERE agent_id = ?`, agentID)
+	return err
+}

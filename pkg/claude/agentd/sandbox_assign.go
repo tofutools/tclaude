@@ -211,6 +211,10 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	if fail := openCodeStateAssignmentFailure(h, agentID, implementation); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	planned, _, err := resolveCurrentSandboxChainForConv(convID)
 	if err != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed", err.Error())
@@ -312,6 +316,28 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	writeSandboxImplementationResponse(w, convID, previous, &sandboxImplementationRestart{
 		Action: resume.Action, SwitchedClients: switchedClients,
 	})
+}
+
+// openCodeStateAssignmentFailure refuses putting tclaude's sandbox on an
+// OpenCode agent with no state allocation. Its conversation is in the ambient
+// store, which the sandboxed server cannot read, so the assignment would only
+// leave an agent whose every resume is refused. Allocating now would not help:
+// the new state would not hold the conversation.
+func openCodeStateAssignmentFailure(h *harness.Harness, agentID, implementation string) *spawnFailure {
+	if h.Name != harness.OpenCodeName || !isTclaudeLayer(implementation) {
+		return nil
+	}
+	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if allocation != nil {
+		return nil
+	}
+	return &spawnFailure{http.StatusConflict, "opencode_state_unallocated",
+		"this OpenCode agent keeps its conversation in the shared store, which tclaude's sandbox cannot read; " +
+			"export it and import it where tclaude's sandbox is the receiving group's spawn profile or the install default, " +
+			"which installs the conversation in private state"}
 }
 
 // assignedHarnessBuiltinMode decides which harness-builtin mode the new posture

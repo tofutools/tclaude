@@ -426,9 +426,12 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		code := "io"
 		var cut *groupHistoryCutError
+		var refused *groupPostureRefusal
 		switch {
 		case errors.As(err, &cut):
 			code = "history_confirmation_required"
+		case errors.As(err, &refused):
+			code = refused.kind
 		case status == http.StatusBadRequest:
 			code = "invalid_arg"
 		case status == http.StatusConflict:
@@ -535,6 +538,9 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	closeGroupLandings(landings)
+	if err := planGroupPostures(landings, exp, cwd); err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("import: %w", err)
+	}
 	insp.Landings = landings
 	if decoded.Archive != nil {
 		insp.Findings, err = privacy.ScanArchive(decoded.Archive, agentRecordLimit())
@@ -853,6 +859,12 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	defer closeGroupLandings(landings)
+	if err := planGroupPostures(landings, exp, targetCwd); err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("import: %w", err)
+	}
+	if refused := refusedPostures(landings); refused != nil {
+		return nil, refused.status, refused
+	}
 	if err := unconfirmedCuts(landings, landing.ConfirmHistoryLoss); err != nil {
 		return nil, http.StatusConflict, err
 	}
@@ -897,6 +909,10 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		}
 		newID, undo, installErr := installGroupLanding(l, targetCwd)
 		if installErr != nil {
+			var refused *groupPostureRefusal
+			if errors.As(installErr, &refused) {
+				return nil, refused.status, refused
+			}
 			return nil, http.StatusInternalServerError, fmt.Errorf("import: land %s on %s: %w", c.Title, l.Harness, installErr)
 		}
 		uninstall = append(uninstall, undo)
@@ -1041,6 +1057,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		ConvRemap:                   convRemap,
 		ClaimedConversationPaths:    claimedConversationPaths,
 		InstalledConversations:      installed,
+		MemberPostures:              memberPostures(landings, exp, convRemap),
 		ByConv:                      caller,
 		CanonicalizePermissionScope: canonicalImportedPermissionScopeForSlug,
 	})
