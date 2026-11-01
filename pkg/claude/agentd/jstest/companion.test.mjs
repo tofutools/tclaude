@@ -2157,6 +2157,27 @@ test('a resume that never comes up falls back to the offline choice', async (t) 
   assert.ok(view.container.querySelector('.companion-resume-steward'), 'the way back is open again');
 });
 
+test('minimizing while it starts keeps the tab, and offers no second start', async (t) => {
+  const { view, harness, controller, snap } = await setup(t, { snapshot: offlineSteward(), fetchImpl: resumeOk });
+  await harness.act(() => controller().open(S));
+  await harness.act(async () => { view.container.querySelector('.companion-resume-steward').click(); await flush(); });
+  const ctrlDot = () => harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  await ctrlDot();
+  await harness.act(() => { snap.value = { ...offlineSteward() }; });
+  await ctrlDot();
+  assert.match(view.container.textContent, /Starting the agent/);
+  assert.equal(view.container.querySelector('.companion-fresh-steward'), null);
+});
+
+test('the ＋ menu offers no resume or fresh start while it starts', async (t) => {
+  const { view, harness, controller } = await setup(t, { snapshot: offlineSteward(), fetchImpl: resumeOk });
+  await harness.act(() => controller().open(S));
+  await harness.act(async () => { view.container.querySelector('.companion-resume-steward').click(); await flush(); });
+  await harness.act(() => view.container.querySelector('.companion-add').click());
+  assert.equal(view.container.querySelector('.companion-menu-resume'), null);
+  assert.equal(view.container.querySelector('.companion-menu-fresh'), null);
+});
+
 test('a resume that fails stays on the offline choice', async (t) => {
   const fetchImpl = async () => ({ ok: true, json: async () => ({ action: 'error', detail: 'no pane' }), text: async () => '' });
   const { view, harness, controller } = await setup(t, { snapshot: offlineSteward(), fetchImpl });

@@ -466,10 +466,10 @@ export function CompanionApp({
   };
   useEffect(() => {
     if (!snapshot.value) return;
-    const keep = new Set([...pending.current.keys(), open ? activeId : ''].filter(Boolean));
+    const keep = new Set([...pending.current.keys(), ...resuming, open ? activeId : ''].filter(Boolean));
     const next = syncHelperTabs(tabs, agents, closedList(), keep);
     if (next !== tabs) setTabs(next);
-  }, [agents, snapshot.value, open, activeId]);
+  }, [agents, snapshot.value, open, activeId, resuming]);
 
   // However an agent comes to be attached here (a tab chosen, a reload, the
   // active tab closing), this view takes over from its Terminals pane.
@@ -556,7 +556,8 @@ export function CompanionApp({
   // The Steward that can come back, by Resume. One just shut down can still show
   // as online for a poll, so it stands in for the roster until then.
   const rosterReturn = steward?.online && steward.agentId !== shutDown?.agentId ? null : stewardToResume(stewardRoster);
-  const returning = shutDown || rosterReturn ? {
+  // One already resuming offers no second start: Start fresh would make two.
+  const returning = (shutDown || rosterReturn) && !resuming.has(shutDown?.agentId || rosterReturn.agent_id) ? {
     agentId: shutDown?.agentId || rosterReturn.agent_id,
     name: shutDown?.name || (rosterReturn.agent_id === steward?.agentId ? steward.name : rosterReturn.name),
     lastRan: stewardRoster.find((entry) => entry.agent_id === (shutDown?.agentId || rosterReturn.agent_id))?.last_ran || '',
@@ -650,6 +651,7 @@ export function CompanionApp({
   // Closing is the window's ✕ asking: then the window goes as a close does, and
   // Resume waits in ✦ Steward.
   function stewardShutDown(agent, { closing = false } = {}) {
+    setResuming((current) => without(current, agent.agentId));
     detachedWindows.current.get(agent.agentId)?.close?.();
     detachedWindows.current.delete(agent.agentId);
     setParked((current) => without(current, agent.agentId));
