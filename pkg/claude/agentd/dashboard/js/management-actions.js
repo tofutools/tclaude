@@ -674,7 +674,7 @@ export function createManagementActions(deps) {
   async function revealImportValue(file, item) {
     const form = new FormData();
     form.append('archive', file);
-    const response = await fetch(`/api/import/reveal${queryString({ item })}`, {
+    const response = await nodeFetch('')(`/api/import/reveal${queryString({ item })}`, {
       method: 'POST',
       credentials: 'same-origin',
       body: form,
