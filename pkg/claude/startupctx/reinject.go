@@ -17,6 +17,10 @@ const (
 	// BoundaryClear is /clear: the conversation restarted empty on purpose,
 	// so only identity is re-injected — the operator cleared the rest.
 	BoundaryClear Boundary = "clear"
+	// BoundaryReset is the operator's Clear context: a new conversation with no
+	// summary behind it, so identity and the durable guidance are re-injected
+	// and the briefing is pointed at to be read.
+	BoundaryReset Boundary = "reset"
 )
 
 // Reinjection is a composed re-injection message.
@@ -124,6 +128,10 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 
 	var lead string
 	switch {
+	case boundary == BoundaryReset && identityOnly:
+		lead = "The operator cleared your context, so this is a new conversation. tclaude re-injected your agent identity so you keep your bearings; this is not a new request."
+	case boundary == BoundaryReset:
+		lead = "The operator cleared your context, so this is a new conversation. tclaude re-injected the durable startup context you were spawned with; this is not a new request."
 	case boundary == BoundaryClear:
 		lead = "Your conversation was cleared. tclaude re-injected your agent identity so you keep your bearings; this is not a new request."
 	case identityOnly:
@@ -145,7 +153,7 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 		if body := ContextBody(groupName, groupContext, profileContext, "", nil); body != "" {
 			sections = append(sections, body)
 		}
-		if ref := briefReference(agentID, snap); ref != "" {
+		if ref := briefReference(agentID, snap, boundary); ref != "" {
 			sections = append(sections, ref)
 		}
 	}
@@ -183,9 +191,13 @@ func otherGroupNames(memberships []db.AgentGroupMembership, primary *db.AgentGro
 }
 
 // briefReference points at the original startup briefing and the task link.
-func briefReference(agentID string, snap *db.AgentStartupSnapshot) string {
+func briefReference(agentID string, snap *db.AgentStartupSnapshot, boundary Boundary) string {
 	var lines []string
-	if snap != nil && snap.BriefMessageID > 0 {
+	if snap != nil && snap.BriefMessageID > 0 && boundary == BoundaryReset {
+		lines = append(lines, fmt.Sprintf(
+			"Your original startup briefing is inbox message #%d. Read it with `tclaude agent inbox read %d` to pick your work back up; nothing carried over from before.",
+			snap.BriefMessageID, snap.BriefMessageID))
+	} else if snap != nil && snap.BriefMessageID > 0 {
 		lines = append(lines, fmt.Sprintf(
 			"Your original startup briefing is inbox message #%d. Re-read it with `tclaude agent inbox read %d` only if you need its exact wording; your compaction summary carries the current state of the task.",
 			snap.BriefMessageID, snap.BriefMessageID))

@@ -25,7 +25,7 @@ import { terminalCostsHidden, subscribeTerminalCosts, toggleTerminalCosts } from
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
-import { StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
+import { StewardShutdown, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { pendingApprovals } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
@@ -437,13 +437,26 @@ const fetchFromPage = (...args) => globalThis.fetch(...args);
 // The page is going away by script and must not ask first.
 const TERMINAL_LEAVING_EVENT = 'tclaude:terminal-leaving';
 
-// StewardDownNotice is a detached Steward window after its shut down. The new
+// StewardDownNotice is a detached Steward window after its shut down. A fresh
 // Steward lives in the dashboard's companion, not here: the companion would
 // attach it anyway, and a terminal has one attach, so this window would lose it.
 // With no dashboard behind it, this window becomes one.
 function StewardDownNotice({ pane, actions }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // This window was attached to the same agent, so it comes back here.
+  async function resume() {
+    setBusy(true);
+    setError('');
+    try {
+      await resumeAgent(fetchFromPage, pane.seed.agent);
+      window.dispatchEvent(new Event(TERMINAL_LEAVING_EVENT));
+      window.location.reload();
+    } catch (cause) {
+      setError(`Could not resume: ${cause?.message || cause}`);
+      setBusy(false);
+    }
+  }
   async function start() {
     setBusy(true);
     setError('');
@@ -460,13 +473,14 @@ function StewardDownNotice({ pane, actions }) {
         window.location.replace('/');
       }
     } catch (cause) {
-      setError(`Could not start a new Steward: ${cause?.message || cause}`);
+      setError(`Could not start fresh: ${cause?.message || cause}`);
       setBusy(false);
     }
   }
   return html`<div class="steward-down-notice" role="status">
-    <span><b>${pane.label || 'The Steward'}</b> is shut down. Its conversation stays in history.</span>
-    <button type="button" class="mux-btn" disabled=${busy} onClick=${start}>${busy ? 'Starting…' : 'Start a new Steward'}</button>
+    <span><b>${pane.label || 'The Steward'}</b> is shut down. You can pick its conversation back up.</span>
+    <button type="button" class="mux-btn" disabled=${busy} onClick=${resume}>Resume</button>
+    <button type="button" class="mux-btn" disabled=${busy} onClick=${start}>${busy ? 'Starting…' : 'Start fresh'}</button>
     ${error ? html`<span class="steward-shutdown-error" role="alert">${error}</span>` : null}
   </div>`;
 }

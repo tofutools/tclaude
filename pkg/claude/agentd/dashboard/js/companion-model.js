@@ -119,6 +119,13 @@ export function stewardAgent(agents) {
   return fallback;
 }
 
+// stewardToResume is the roster's Steward that can be brought back: the one in
+// the seat, or one running without the seat, once it is not running. A Steward
+// on standby is a normal agent, and a retired one is not listed at all.
+export function stewardToResume(roster) {
+  return (roster || []).find((entry) => (entry.seat === 'active' || entry.seat === 'alongside') && !entry.online) || null;
+}
+
 // syncHelperTabs follows the live scribes and Stewards, whichever summoned
 // them: a live one gets a tab unless the operator closed it, an ended one
 // loses its tab. keep lists tabs to leave alone: the one on screen, and agents
