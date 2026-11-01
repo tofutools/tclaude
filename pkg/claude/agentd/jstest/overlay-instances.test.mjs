@@ -35,13 +35,22 @@ const PAIR = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { id: 'b' } };
 test('a window raised over a split sits above the split and its lines', async (t) => {
   const { harness, overlay, level, lineLevel } = await setup(t, PAIR);
   await harness.act(() => overlay.raiseOverlayWindow('a'));
-  assert.equal(level('a'), level('b'), 'a split moves as one');
+  assert.equal(level('a'), level('b') + 1, 'a split moves as one, its front window one above the rest');
   assert.equal(lineLevel(), level('a') + 1, 'its lines sit just above it');
+  assert.ok(lineLevel() < 950, 'under agent marks');
   await harness.act(() => overlay.raiseOverlayWindow('c'));
   assert.ok(level('c') > lineLevel(), 'so a window raised over it covers them');
   await harness.act(() => overlay.raiseOverlayWindow('b'));
   assert.ok(level('c') < level('a'), 'and clicking the split brings all of it back');
   assert.ok(level('c') < lineLevel());
+});
+
+test('a click raises one of two windows in a split, for when an unlocked line lets them overlap', async (t) => {
+  const { harness, overlay, level } = await setup(t, PAIR);
+  await harness.act(() => overlay.raiseOverlayWindow('b'));
+  assert.ok(level('b') > level('a'));
+  await harness.act(() => overlay.raiseOverlayWindow('a'));
+  assert.ok(level('a') > level('b'));
 });
 
 test('every window has its own level from the start, so a reload keeps lines under what is over them', async (t) => {

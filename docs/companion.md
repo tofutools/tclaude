@@ -42,12 +42,16 @@ Click a pill, or press **Ctrl+.** anywhere, to open the window. It stays above t
 page without blocking it, and comes back when you reload the tab.
 
 - **Move it** by its title bar. Resize it from any edge or corner.
-- **Split the room** with any windows, boards and chats alike: snap one to the left and one to the right, or
-  two corners, and they fill the room and share a line. Drag the line to redistribute,
+- **Split the room** with any windows, boards and chats alike: snap one to the left and one to the right, and they
+  fill the room and share a line. A corner stays a corner beside a half or another
+  corner, and the cell nobody took stays empty: dragging a window over it offers that
+  corner, or both corners of an empty half. Drag a line to redistribute,
   and it is remembered. Dropping a window near the edge or corner of a snapped window
   splits that window, so two windows, 2+1 and four are all possible, and four around
   one crossing drag together at the crossing. Bring the pointer near the centre of a line for a detach button,
-  which floats the windows under that line. Dragging one out by its title bar, or
+  which unlocks that line: the windows stay snapped where they are, the line goes, and
+  each side resizes from that edge on its own, so a space or an overlap can open. The
+  other lines of a nested split or a quad stay shared. Dragging one out by its title bar, or
   closing or minimizing it, gives its room to its neighbour, and a window left alone
   goes back to its own panel size. A minimized or maximized window rejoins the split
   when it is back; a closed one does not. Pairs fill the room while it holds both windows at their
