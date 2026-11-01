@@ -26,6 +26,7 @@ func inboxCmd() *cobra.Command {
 			inboxWatchCmd(),
 			inboxSentCmd(),
 			inboxReadCmd(),
+			inboxAttachmentCmd(),
 			inboxPruneCmd(),
 		},
 	}.ToCobra()
@@ -281,8 +282,8 @@ type recipientLine struct {
 }
 
 type inboxAttachment struct {
+	ID          int64  `json:"id"`
 	Name        string `json:"name"`
-	Path        string `json:"path"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
 }
@@ -395,9 +396,9 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	fmt.Fprintln(stdout, m.Body)
 	if len(m.Attachments) > 0 {
 		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Attachments:")
+		fmt.Fprintf(stdout, "Attachments (save with `tclaude agent inbox attachment %d`):\n", m.ID)
 		for _, a := range m.Attachments {
-			fmt.Fprintf(stdout, "  %s (%d bytes, %s): %s\n", a.Name, a.Size, a.ContentType, a.Path)
+			fmt.Fprintf(stdout, "  %s (%d bytes, %s)\n", a.Name, a.Size, a.ContentType)
 		}
 	}
 	return rcOK

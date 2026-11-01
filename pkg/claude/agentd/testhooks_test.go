@@ -2420,3 +2420,15 @@ func SetOperatorMessageAttachmentsBaseForTest(dir string) func() {
 	operatorMessageAttachmentsBase = dir
 	return func() { operatorMessageAttachmentsBase = previous }
 }
+
+// SetLegacyMessageAttachmentsBaseForTest repoints the old attachment tree and
+// returns the restore.
+func SetLegacyMessageAttachmentsBaseForTest(dir string) func() {
+	previous := legacyMessageAttachmentsBase
+	legacyMessageAttachmentsBase = dir
+	return func() { legacyMessageAttachmentsBase = previous }
+}
+
+func MigrateLegacyMessageAttachmentsForTest() { migrateLegacyMessageAttachments() }
+
+func MessageAttachmentsBaseForTest() string { return operatorMessageAttachmentsBase }

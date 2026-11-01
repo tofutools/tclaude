@@ -1542,9 +1542,9 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	}
 	fmt.Fprintf(&b, "] %s", m.Body)
 	if len(attachments) > 0 {
-		b.WriteString(" Attachments:")
+		fmt.Fprintf(&b, " Attachments (save with `tclaude agent inbox attachment %d`):", m.ID)
 		for _, a := range attachments {
-			fmt.Fprintf(&b, " %s (%s);", a.Filename, a.StoragePath)
+			fmt.Fprintf(&b, " %s;", a.Filename)
 		}
 	}
 	text := b.String()
@@ -2883,6 +2883,7 @@ func isValidRenameSink(t string) bool {
 // reply, and delete endpoints based on path suffix and HTTP method.
 // GET  /v1/messages/{id}        -> handleMessageByID
 // POST /v1/messages/{id}/reply  -> handleMessageReply
+// GET  /v1/messages/{id}/attachments[/{attachment}] -> the message's files
 // DELETE /v1/messages/{id}      -> handleMessageDelete
 func handleMessageByIDOrReply(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/v1/messages/")
@@ -2893,6 +2894,14 @@ func handleMessageByIDOrReply(w http.ResponseWriter, r *http.Request) {
 	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) == 2 && parts[1] == "reply" {
 		handleMessageReply(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "attachments" {
+		handleMessageAttachmentList(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && strings.HasPrefix(parts[1], "attachments/") {
+		handleMessageAttachment(w, r, parts[0], strings.TrimPrefix(parts[1], "attachments/"))
 		return
 	}
 	if r.Method == http.MethodDelete {
