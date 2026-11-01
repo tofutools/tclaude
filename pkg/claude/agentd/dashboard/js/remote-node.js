@@ -29,6 +29,8 @@
   const LOCAL_PREFIXES = [
     '/api/federation/', '/api/peer/', '/api/node-summary', '/api/node/update',
     '/api/dashboard/prefs', '/api/auth/', '/api/human-messages', '/api/browser-notifications', '/api/slop/',
+    // This node's agents see, capture and mark the operator's tab, whichever node it shows.
+    '/api/companion/view', '/api/companion/presence', '/api/companion/capture/', '/api/companion/marks/',
     // A peer's notification files, read by this node from the peer.
     '/api/peer-attachments/', '/api/peer-message-export/',
     // A peer's file downloads, read the same way (dashboard_peer_downloads.go).

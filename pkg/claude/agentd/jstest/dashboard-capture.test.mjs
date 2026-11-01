@@ -79,6 +79,23 @@ function presenceHarness(responses) {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 
+test('a tab asks rarely while the presence route is absent, and resumes when it answers', async () => {
+  const h = presenceHarness([]);
+  let status = 404;
+  const pings = [];
+  const stop = startCapturePresence({
+    win: h.win, fetchImpl: async () => ({ ok: status === 200, status, json: async () => ({}) }), tab: () => 'groups', randomId: () => 'tab-1',
+    setTimeoutImpl: (fn, ms) => { if (ms >= 1500) pings.push({ fn, ms }); return 1; }, clearTimeoutImpl: () => {},
+  });
+  await settle();
+  assert.equal(pings.at(-1).ms, 60000, 'Collab off on this node: nothing to reach');
+  status = 200;
+  pings.at(-1).fn();
+  await settle();
+  assert.equal(pings.at(-1).ms, 1500);
+  stop();
+});
+
 test('a tab reports presence, then shows the cue and hands in its render', async () => {
   const h = presenceHarness([{ capture: { id: 'c1', agent_name: 'steward' } }]);
   const notices = [];

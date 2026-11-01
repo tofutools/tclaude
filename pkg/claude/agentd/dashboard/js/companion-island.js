@@ -29,8 +29,7 @@ import {
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { ResizeFrame, resizedPlacement, savedAfterResize } from './window-resize.js';
-import { CAPTURE_NOTICE_MS, startCapturePresence } from './dashboard-capture.js';
-import { MarksLayer, marksKey } from './companion-marks.js';
+import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { ApprovalCard, ElevatedBand, StewardAccessControls, StewardShutdown, openAccessPanel, requestStewardSummon } from './companion-approval.js';
 import { StewardRoster } from './steward-roster.js';
@@ -945,94 +944,7 @@ export function CompanionApp({
   const setStatusFor = useCallback((agentId) => (status) => setStatuses((current) => (current[agentId] === status ? current : { ...current, [agentId]: status })), []);
 
   // -- dashboard guidance ---------------------------------------------------
-  // Report the operator's view so companion agents can ask where they are
-  // (GET /v1/dashboard/view), and play the agents' pointing cues.
-
-  const lastView = useRef('');
-  useEffect(() => {
-    const doc = win?.document;
-    const report = () => {
-      if (doc?.visibilityState === 'hidden') return;
-      const view = {
-        tab: String(activeTab.value || ''),
-        path: `${win?.location?.pathname || '/'}${win?.location?.search || ''}`.slice(0, 240),
-        title: String(doc?.title || '').slice(0, 160),
-      };
-      const key = JSON.stringify(view);
-      if (key === lastView.current) return;
-      lastView.current = key;
-      Promise.resolve(fetchImpl('/api/companion/view', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: key,
-      })).then((response) => { if (response && response.ok === false) lastView.current = ''; })
-        .catch(() => { lastView.current = ''; });
-    };
-    // A top-level nav click switches the view without any navigation event;
-    // report once its handlers have run.
-    const onNavClick = (event) => {
-      if (event.target?.closest?.('nav [data-tab]')) setTimeout(report, 0);
-    };
-    report();
-    doc?.addEventListener?.('click', onNavClick);
-    doc?.addEventListener?.('tclaude:snapshot', report);
-    doc?.addEventListener?.('tclaude:navigated', report);
-    doc?.addEventListener?.('visibilitychange', report);
-    win?.addEventListener?.('popstate', report);
-    return () => {
-      doc?.removeEventListener?.('click', onNavClick);
-      doc?.removeEventListener?.('tclaude:snapshot', report);
-      doc?.removeEventListener?.('tclaude:navigated', report);
-      doc?.removeEventListener?.('visibilitychange', report);
-      win?.removeEventListener?.('popstate', report);
-    };
-  }, [win, fetchImpl]);
-
-  // Stay reachable for `tclaude agent guide capture`, and tell the operator
-  // each time their view is captured.
-  const [captureNotice, setCaptureNotice] = useState('');
-  const [marks, setMarks] = useState([]);
-  const marksSeen = useRef('');
-  const markReport = useRef([]);
-  const receiveMarks = useCallback((next) => {
-    const key = marksKey(next);
-    if (key === marksSeen.current) return;
-    marksSeen.current = key;
-    // The layer leaves with the last mark, so it cannot report that itself.
-    if (!next.length) markReport.current = [];
-    setMarks(next);
-  }, []);
-  const postMark = (path, body) => fetchImpl(`/api/companion/marks/${path}`, {
-    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
-  });
-  const endMark = useCallback(async (mark, action) => {
-    receiveMarks(marks.filter((each) => each.id !== mark.id));
-    try { await postMark(`${mark.id}/${action}`); } catch { notify?.('Could not end that mark', 'error'); }
-  }, [marks]);
-  const dismissAllMarks = useCallback(async () => {
-    receiveMarks([]);
-    try { await postMark('dismiss'); } catch { notify?.('Could not dismiss the marks', 'error'); }
-  }, []);
-  const replyToMark = useCallback(async (mark, text) => {
-    try {
-      const response = await postMark(`${mark.id}/reply`, { text });
-      if (response?.ok) return true;
-      const data = await response?.json?.().catch(() => null);
-      notify?.(data?.error || 'Could not send that reply', 'error');
-    } catch { notify?.('Could not send that reply', 'error'); }
-    return false;
-  }, []);
-  useEffect(() => {
-    if (!win?.document) return undefined;
-    return startCapturePresence({
-      win, fetchImpl, tab: () => activeTab.value,
-      onCapture: (request) => setCaptureNotice(request.agent_name || 'An agent'),
-      onMarks: receiveMarks, marks: () => markReport.current,
-    });
-  }, [win, fetchImpl]);
-  useEffect(() => {
-    if (!captureNotice) return undefined;
-    const timer = setTimeout(() => setCaptureNotice(''), CAPTURE_NOTICE_MS);
-    return () => clearTimeout(timer);
-  }, [captureNotice]);
+  // Play the agents' pointing cues.
 
   const seenCues = useRef(new Set());
   const cuesPrimed = useRef(false);
@@ -1407,18 +1319,22 @@ export function CompanionApp({
     ${chips}
     ${annotation.overlay}
     ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
-    ${marks.length > 0 && win && html`<${MarksLayer} marks=${marks} win=${win} onEnd=${endMark} onDismissAll=${dismissAllMarks}
-      onReply=${replyToMark} onReport=${(report) => { markReport.current = report; }} />`}
-    ${captureNotice && html`<div class="companion-capture-notice" role="status" data-capture-skip>${captureNotice} captured this view</div>`}
+    <${CompanionViewChannel} activeTab=${activeTab} notify=${notify} fetchImpl=${fetchImpl} win=${win} />
     ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} marks=${guideCue.marks} onDismiss=${dismissGuide} win=${win} />`}
     ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
 }
 
 // CompanionGate keeps the whole companion out of the page while
 // features.collab is off: no chips, no Ctrl+., and no registered controller,
-// so callers of openInCompanion take their usual path.
+// so callers of openInCompanion take their usual path. A peer's page carries a
+// peer snapshot, which never says collab is on, and shows that node's agents,
+// so it gets no window; but the operator is still looking at this node's
+// dashboard, so this node's agents can capture and mark it. The channel's route
+// answers 404 here while this node has Collab off.
 export function CompanionGate(props) {
-  return props.snapshot.value?.collab_enabled === true ? html`<${CompanionApp} ...${props} />` : null;
+  if (props.snapshot.value?.collab_enabled === true) return html`<${CompanionApp} ...${props} />`;
+  if (!globalThis.__tclaudeRemoteNode?.id) return null;
+  return html`<${CompanionViewChannel} activeTab=${props.activeTab} notify=${props.notify} fetchImpl=${props.fetchImpl} win=${props.win} />`;
 }
 
 export function mountCompanionIsland({ host, registerCleanup, ...props }) {

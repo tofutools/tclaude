@@ -15,6 +15,9 @@ import { randomUUID } from './insecure-origin.js';
 
 export const CAPTURE_PRESENCE_MS = 1500;
 export const CAPTURE_HIDDEN_PRESENCE_MS = 10000;
+// A peer's page cannot see whether this node has Collab on, so it asks, and
+// keeps asking rarely in case it is switched on.
+export const CAPTURE_ABSENT_PRESENCE_MS = 60000;
 export const CAPTURE_NOTICE_MS = 4000;
 const CAPTURE_MAX_SIDE = 2560;
 const CAPTURE_RENDER_TIMEOUT_MS = 12000;
@@ -137,6 +140,7 @@ export function startCapturePresence({
   let timer = null;
   let stopped = false;
   let inFlight = false;
+  let absent = false;
 
   const hidden = () => doc.visibilityState === 'hidden';
   const within = (work, ms) => new Promise((resolve, reject) => {
@@ -147,6 +151,7 @@ export function startCapturePresence({
     const response = await fetchImpl('/api/companion/presence', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
     });
+    absent = response?.status === 404;
     return response?.ok ? response.json() : null;
   };
   const answer = async (request) => {
@@ -171,7 +176,8 @@ export function startCapturePresence({
   const schedule = () => {
     if (stopped) return;
     clearTimeoutImpl(timer);
-    timer = setTimeoutImpl(ping, hidden() ? CAPTURE_HIDDEN_PRESENCE_MS : CAPTURE_PRESENCE_MS);
+    const wait = absent ? CAPTURE_ABSENT_PRESENCE_MS : hidden() ? CAPTURE_HIDDEN_PRESENCE_MS : CAPTURE_PRESENCE_MS;
+    timer = setTimeoutImpl(ping, wait);
   };
   async function ping() {
     if (stopped || inFlight) return;
