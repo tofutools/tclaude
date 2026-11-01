@@ -251,8 +251,8 @@ local address is reachable.
 
 Enforcement is claimed only where a real harness/platform smoke has proven it.
 The current activation record: **Linux — Claude Code, Codex, OpenCode, Gemini
-CLI; macOS — Claude Code, Codex, OpenCode** (pinned against Claude Code
-2.1.220, Codex 0.145.0, OpenCode 1.18.6, Gemini CLI 0.62.0). Selecting the proxy engine for a non-activated cell
+CLI, pi; macOS — Claude Code, Codex, OpenCode** (pinned against Claude Code
+2.1.220, Codex 0.145.0, OpenCode 1.18.6, Gemini CLI 0.62.0, pi 1.1.0). Selecting the proxy engine for a non-activated cell
 leaves the rules unenforced with a notice. Engine defaults do not flip: unset
 means the packet engine on Linux and historical behavior on macOS.
 
@@ -317,8 +317,9 @@ web tools and MCP servers need their own destinations.
 
 ## pi
 
-pi launches are enforced by the Linux packet gateway; the proxy engine is not
-yet offered for pi. tclaude resolves the model route from the model's provider
+pi launches are enforced by the Linux packet gateway, and on Linux the proxy
+engine works for pi too; it is not activated on macOS. Under either engine pi
+runs offline and needs the same model route. tclaude resolves the model route from the model's provider
 (`--model provider/id`, else `defaultProvider` in pi's `settings.json`, and on
 resume the model the session records) and checks it against the authored list:
 `anthropic` needs `net-anthropic`, `openai` needs `net-openai-codex`,

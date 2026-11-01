@@ -121,7 +121,7 @@ warning. Model and effort are remembered by the harness itself.
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Native sandbox-profile path rules / reopen beneath deny | ✅ sandbox on; caveats | ✅ managed Linux profile + probe | ⚠️ soft tool permissions only | ❌ native command sandbox does not cover file tools; use tclaude-layer | ❌ fixed native sandbox profile; use tclaude-layer | ❌ no native sandbox | ❌ use tclaude-layer |
 | Global OS filesystem rules in profile editor | ✅ settings + managed baseline | ✅ managed baseline | ❌ native config is soft tool control | ❌ native policy only confines commands | ❌ tools.sandbox selects posture, not path rules | ❌ no native policy | ❌ no native policy |
-| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ❌ no proxy carriage smoke; filtered launches use the packet gateway | ❌ no shell carriage smoke |
+| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ⚠️ Linux only; no Darwin carriage smoke | ❌ no shell carriage smoke |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ | ❌ |
 | [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ the only boundary | ✅ |
 | Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, derived virtual USD | ✅ what-if cost; real spend on API-key or Vertex | ✅ pi's catalog price; what-if under a subscription login | ❌ |
@@ -896,8 +896,8 @@ than guessing, as does an `httpProxy` in pi's settings. The launch also runs pi
 offline (`PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`): no
 version check, catalog refresh, install telemetry or tool download. Outside a
 filtered network tclaude sets none of these and your pi settings decide.
-Filtered pi launches use the packet gateway; the proxy engine is not yet
-offered for pi.
+Filtered pi launches use the packet gateway by default; the proxy engine is
+activated on Linux only.
 
 **Conversations.** tclaude lists and searches pi's session files wherever pi
 keeps them (`~/.pi/agent/sessions`, or the `sessionDir` your settings name),

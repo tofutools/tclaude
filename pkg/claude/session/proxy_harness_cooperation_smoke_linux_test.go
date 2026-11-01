@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // §8.1 test 4 for the proxy filtering engine: do the pinned harnesses actually
@@ -57,6 +58,8 @@ import (
 //	api.anthropic.com                 -> TCLAUDE_FILTERED_ALLOWED_ADDR
 //	api.openai.com                    -> TCLAUDE_FILTERED_ALLOWED_ADDR
 //	generativelanguage.googleapis.com -> TCLAUDE_FILTERED_ALLOWED_ADDR
+//
+// pi needs no line of its own: its scenario uses the anthropic provider.
 //
 // and a listener on port 443 at that address. 443 is mandatory, not a
 // parameter: the pinned harnesses pick it themselves.
@@ -111,6 +114,7 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 	claude := requirePinnedFilteredHarness(t, "claude", filteredClaudePinnedVersion)
 	codex := requirePinnedFilteredHarness(t, "codex", filteredCodexPinnedVersion)
 	gemini := requirePinnedFilteredHarness(t, "gemini", filteredGeminiPinnedVersion)
+	pi := requirePinnedFilteredHarness(t, "pi", harness.PiMinimumVersion)
 
 	carriageByHarness := map[string][]string{}
 	for _, scenario := range []proxyCooperationScenario{
@@ -176,6 +180,29 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 				// Gemini writes its state under <GEMINI_CLI_HOME>/.gemini; only
 				// the workspace is visible inside the constructed root.
 				return map[string]string{"GEMINI_CLI_HOME": workspace}
+			},
+		},
+		{
+			// pi on an invalid API key, through a built-in provider so nothing
+			// overrides the origin, with the offline environment a filtered pi
+			// launch runs with. Anything pi still tried outside the model route
+			// is undeclared and must be refused.
+			name:    "pi",
+			binary:  pi,
+			version: harness.PiMinimumVersion,
+			args: []string{
+				"--print", "--model", "anthropic/claude-sonnet-4-5", "Reply with exactly ok.",
+			},
+			env: func() map[string]string {
+				env := harness.PiFilteredNetworkEnv()
+				env["ANTHROPIC_API_KEY"] = "invalid-ci-evidence-key"
+				return env
+			}(),
+			origins: []string{"api.anthropic.com"},
+			prepare: func(t *testing.T, home, workspace string) map[string]string {
+				t.Helper()
+				// Only the workspace is visible inside the constructed root.
+				return map[string]string{harness.PiAgentDirEnvVar: filepath.Join(workspace, ".pi-agent")}
 			},
 		},
 	} {
@@ -249,7 +276,7 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 		})
 	}
 
-	require.Len(t, carriageByHarness, 3,
+	require.Len(t, carriageByHarness, 4,
 		"every declared harness scenario must have produced a carriage record")
 }
 

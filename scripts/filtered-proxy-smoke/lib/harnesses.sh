@@ -23,6 +23,8 @@ HARNESS_OPENCODE_VERSION="1.18.6"
 # The Gemini CLI version the adapter in pkg/claude/harness is pinned to
 # (GeminiPinnedVersion), so the cooperation record is about the same CLI.
 HARNESS_GEMINI_VERSION="0.62.0"
+# harness.PiMinimumVersion, the same pi the pi fixture and sandbox smokes install.
+HARNESS_PI_VERSION="1.1.0"
 
 # Where a CI cache may keep pinned harness artifacts between runs. The workflow
 # keys its cache on a hash of THIS FILE, which is where the pins live — a
@@ -200,6 +202,27 @@ harnesses::install_gemini() {
   gemini --version
   gemini --version | grep -qF "$HARNESS_GEMINI_VERSION" || {
     smoke::error "gemini is not at the pinned version ${HARNESS_GEMINI_VERSION}"
+    return 1
+  }
+}
+
+harnesses::install_pi() {
+  smoke::log "Installing pinned pi ${HARNESS_PI_VERSION}"
+  npm install --global "@earendil-works/pi-coding-agent@${HARNESS_PI_VERSION}"
+  # Must resolve under the read-only OS surface the constructed root binds,
+  # for the same reason as every harness above.
+  local resolved
+  resolved="$(command -v pi)"
+  case "$resolved" in
+    /usr/*|/opt/*) ;;
+    *)
+      smoke::error "pi resolved to $resolved, which the sandbox root does not bind"
+      return 1
+      ;;
+  esac
+  pi --version </dev/null
+  pi --version </dev/null | grep -qF "$HARNESS_PI_VERSION" || {
+    smoke::error "pi is not at the pinned version ${HARNESS_PI_VERSION}"
     return 1
   }
 }
