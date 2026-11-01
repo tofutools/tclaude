@@ -50,8 +50,10 @@ page without blocking it, and comes back when you reload the tab.
   splits that window, so two windows, 2+1 and four are all possible, and four around
   one crossing drag together at the crossing. Bring the pointer near the centre of a line for a detach button,
   which unlocks that line: the windows stay snapped where they are, the line goes, and
-  each side resizes from that edge on its own, so a space or an overlap can open. The
-  other lines of a nested split or a quad stay shared. Dragging one out by its title bar, or
+  each side resizes from that edge on its own, so a space or an overlap can open.
+  Drag an edge back near the other side's and a preview shows the snap: release there
+  and the line is shared again, or press **Esc** to leave things as they were. The
+  other lines of a nested split or a quad stay as they are. Dragging one out by its title bar, or
   closing or minimizing it, gives its room to its neighbour, and a window left alone
   goes back to its own panel size. A minimized or maximized window rejoins the split
   when it is back; a closed one does not. Pairs fill the room while it holds both windows at their

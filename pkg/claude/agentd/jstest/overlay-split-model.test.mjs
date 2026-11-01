@@ -240,6 +240,41 @@ test('a line beside a gap is found, and its windows stay put when a pushed line 
   assert.equal(moved.at, undefined);
 });
 
+test('an edge brought back locks its line where the other side stands, with the other lines as they are', async (t) => {
+  const { edgeMeets, lockedEdge, movedEdge, parseSplit, splitLayout, unlockedLine } = await model(t);
+  const two = unlockedLine(pair('x', 'a', 'b'), [], 'x', room);
+  const edges = splitLayout(two, room).edges;
+  const spaced = movedEdge(movedEdge(two, [], edges.b.w, { x: 600, y: 300 }), [], edges.a.e, { x: 400, y: 300 });
+  const { a: { e }, b: { w } } = splitLayout(spaced, room).edges;
+  assert.equal(e.partner, 600);
+  assert.equal(w.partner, 400);
+  assert.ok(edgeMeets(e, { x: 560, y: 300 }, 40) && edgeMeets(e, { x: 640, y: 300 }, 40), 'short of it or past it');
+  assert.ok(!edgeMeets(e, { x: 559, y: 300 }, 40));
+
+  const relocked = lockedEdge(spaced, [], e);
+  assert.deepEqual(relocked, pair('x', 'a', 'b', 0.6), 'the dragged edge goes to the other side');
+  assert.equal(splitLayout(relocked, room).lines.length, 1);
+  assert.deepEqual(lockedEdge(spaced, [], w), pair('x', 'a', 'b', 0.4));
+  assert.deepEqual(parseSplit(JSON.stringify(relocked)), relocked, 'it survives a reload');
+
+  const open = unlockedLine(unlockedLine(quad(), [], 'x', room), [], 'y', room);
+  const low = movedEdge(open, [], splitLayout(open, room).edges.c.n, { x: 100, y: 650 });
+  const { c, a } = splitLayout(low, room).edges;
+  assert.equal(a.s.partner, 650);
+  const crossed = lockedEdge(low, [], c.e);
+  assert.equal(crossed.freeX, undefined);
+  assert.equal(crossed.freeY, low.freeY, 'the quad\u2019s other line stays unlocked');
+  assert.deepEqual(splitLayout(crossed, room).lines.map((line) => line.axis), ['x']);
+  assert.deepEqual(splitLayout(lockedEdge(crossed, [], a.s), room).crossings.length, 1, 'both locked is a crossing again');
+
+  const nested = { axis: 'x', at: 0.5, a: pair('y', 'a', 'b'), b: { id: 'c' } };
+  const inner = unlockedLine(unlockedLine(nested, [0], 'y', { ...room, w: 500 }), [], 'x', room);
+  const deep = splitLayout(inner, room).edges;
+  assert.deepEqual(lockedEdge(inner, deep.a.s.path, deep.a.s).a, pair('y', 'a', 'b'), 'a nested line locks alone');
+  assert.equal(lockedEdge(inner, deep.a.s.path, deep.a.s).free, inner.free);
+  assert.deepEqual(lockedEdge(inner, deep.a.e.path, deep.a.e).a, inner.a, 'as does the line around it');
+});
+
 test('detach unlocks one line: the windows stay put, and each side has its own edge', async (t) => {
   const { splitEdges, splitLayout, movedEdge, unlockedLine, parseSplit, withoutWindow } = await model(t);
   const two = unlockedLine(pair('x', 'a', 'b'), [], 'x', room);

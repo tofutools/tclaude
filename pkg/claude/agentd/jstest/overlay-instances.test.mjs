@@ -92,3 +92,63 @@ test('the open windows survive a reload, and invalid ones do not', async (t) => 
   assert.equal(saved[1].at, undefined, 'a drop point is not a place to reopen at');
   assert.ok(harness);
 });
+
+// A pointer on an unlocked edge of the window, in the room's coordinates.
+function edgeDrag(harness, container, overlayClass, side) {
+  const handle = container.querySelector(`.${overlayClass} .overlay-window-edge.${side}`);
+  const fire = (type, x) => harness.act(() => handle.dispatchEvent(Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: 300 })));
+  return { down: (x) => fire('pointerdown', x), move: (x) => fire('pointermove', x), up: (x) => fire('pointerup', x), cancel: (x) => fire('pointercancel', x) };
+}
+
+async function spacedPair(t) {
+  const s = await setup(t, { axis: 'x', at: 0.25, free: 0.75, a: { id: 'a' }, b: { id: 'b' } });
+  s.harness.window.innerWidth = 1600;
+  s.harness.window.innerHeight = 900;
+  await s.harness.act(() => s.harness.window.dispatchEvent(new s.harness.window.Event('resize')));
+  s.guide = () => s.mounted.container.querySelector('.overlay-snap-guide');
+  s.saved = () => JSON.parse(s.prefs.getItem(s.overlay.OVERLAY_SPLIT_PREF));
+  s.line = () => s.mounted.container.querySelector('.overlay-split-line');
+  s.drag = edgeDrag(s.harness, s.mounted.container, 'w-a', 'e');
+  return s;
+}
+
+test('an edge dragged near its partner shows the snap, and released there the line is shared again', async (t) => {
+  const s = await spacedPair(t);
+  await s.drag.down(400);
+  await s.drag.move(900);
+  assert.equal(s.guide(), null, 'still far off');
+  await s.drag.move(1170);
+  assert.equal(s.guide().style.width, '1200px', 'the preview shows where the window lands');
+  await s.drag.up(1170);
+  assert.equal(s.guide(), null);
+  assert.equal(s.saved().free, undefined);
+  assert.equal(s.saved().at, 0.75);
+  assert.ok(s.line(), 'a shared line again');
+});
+
+test('released outside the reach an edge stays unlocked where it was let go', async (t) => {
+  const s = await spacedPair(t);
+  await s.drag.down(400);
+  await s.drag.move(1170);
+  await s.drag.move(800);
+  assert.equal(s.guide(), null, 'leaving the reach takes the preview away');
+  await s.drag.up(800);
+  assert.deepEqual([s.saved().at, s.saved().free], [0.5, 0.75]);
+  assert.equal(s.line(), null);
+});
+
+for (const [name, end] of [['Escape', (s) => s.harness.act(() => s.harness.window.dispatchEvent(Object.assign(new s.harness.window.Event('keydown', { cancelable: true }), { key: 'Escape' })))], ['a cancelled pointer', (s) => s.drag.cancel(1170)]]) {
+  test(`${name} leaves an edge as it was, even inside the preview`, async (t) => {
+    const s = await spacedPair(t);
+    const before = s.prefs.getItem(s.overlay.OVERLAY_SPLIT_PREF);
+    await s.drag.down(400);
+    await s.drag.move(1170);
+    await end(s);
+    assert.equal(s.guide(), null);
+    assert.equal(s.mounted.container.querySelector('.w-a').style.width, '400px', 'the window is back');
+    await s.drag.move(1000);
+    await s.drag.up(1000);
+    assert.equal(s.mounted.container.querySelector('.w-a').style.width, '400px', 'and the drag is over');
+    assert.equal(s.prefs.getItem(s.overlay.OVERLAY_SPLIT_PREF), before);
+  });
+}

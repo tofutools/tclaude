@@ -22,10 +22,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { computed, signal } from '@preact/signals';
 import htm from 'htm';
 import {
-  clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapZone, viewportOf, zoneRect,
+  clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapReach, snapZone, viewportOf, zoneRect,
 } from './overlay-window-model.js';
 import {
-  coveringPath, detachSpot, dropZone, fits, keepingWindows, leavesOf, movedEdge, movedLine, nodeAt, parseSplit, rectZone, roomPair, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
+  coveringPath, detachSpot, dropZone, edgeMeets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, parseSplit, rectZone, roomPair, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
 
@@ -303,22 +303,37 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
   }
 
-  function track(event, onMove, onEnd) {
+  // With onCancel, Escape and a cancelled pointer end the gesture through it, and
+  // otherwise a cancelled pointer ends it like a release.
+  function track(event, onMove, onEnd, onCancel = null) {
     const handle = event.currentTarget;
     handle.setPointerCapture?.(event.pointerId);
     const stop = () => {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', up);
-      handle.removeEventListener('pointercancel', up);
+      handle.removeEventListener('pointercancel', cancelled);
+      win?.removeEventListener?.('keydown', onKey, true);
       gesture.current = null;
     };
     const up = () => {
       stop();
       onEnd();
     };
+    const cancel = () => {
+      stop();
+      onCancel();
+    };
+    const cancelled = onCancel ? cancel : up;
+    const onKey = (key) => {
+      if (key.key !== 'Escape') return;
+      key.preventDefault();
+      key.stopImmediatePropagation();
+      cancel();
+    };
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', up);
-    handle.addEventListener('pointercancel', up);
+    handle.addEventListener('pointercancel', cancelled);
+    if (onCancel) win?.addEventListener?.('keydown', onKey, true);
     gesture.current = stop;
   }
 
@@ -412,16 +427,29 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     }, () => saveSplit(prefs, splitTree.peek()));
   }
 
-  // A window's edge an unlocked line left it moves live, like a line.
+  // A window's edge an unlocked line left it moves live, like a line. Brought
+  // near the edge across its line it shows the snap, and released there the line
+  // is shared again. Only that edge's line: a corner may leave the other unlocked.
   function resizeSplitEdges(event, zone) {
+    const before = splitTree.peek();
     const moves = [...zone].map((side) => layout.edges[id]?.[side]).filter(Boolean)
       .map((edge) => ({ edge, path: savedPathOf(edge.path) }));
+    let locking = [];
+    const relocked = () => locking.reduce((tree, { edge, path }) => lockedEdge(tree, path, edge), splitTree.peek());
     track(event, (m) => {
       const pointer = { x: m.clientX, y: m.clientY };
       splitTree.value = moves.reduce((tree, { edge, path }) => movedEdge(tree, path, edge, pointer), splitTree.peek());
+      const { edge: reach } = snapReach(viewportOf(win));
+      locking = moves.filter(({ edge }) => edgeMeets(edge, pointer, reach));
+      const next = locking.length ? layoutOf(keepingWindows(relocked(), new Set(snappedWindows.peek().keys()))) : null;
+      setGuide(next?.rects[id] || null);
     }, () => {
-      saveSplit(prefs, splitTree.peek());
-      pinPanelSize();
+      setGuide(null);
+      saveSplit(prefs, relocked());
+      if (locking.length < moves.length) pinPanelSize();
+    }, () => {
+      setGuide(null);
+      splitTree.value = before;
     });
   }
 
