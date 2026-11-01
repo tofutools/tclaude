@@ -75,6 +75,9 @@ func TestAgentImportPopupShowsTheReview(t *testing.T) {
 		assert.Contains(t, popup.Body, "Agent: visitor, on claude")
 	}
 
+	askHumanAs(f, "caller", "/v1/agent-bundle/import?apply=true&confirm_history_loss=true&group=receiver&cwd="+url.QueryEscape(cwd), "application/zip", file)
+	assert.Contains(t, (*popups)[3].Body, "cuts 25% or more of the conversation", "a confirmation flag shows as what it accepts")
+
 	rec = askHumanAs(f, "caller", "/v1/agent-bundle/import", "application/zip", []byte("not an archive"))
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, (*popups)[len(*popups)-1].Body, "cannot be reviewed")

@@ -62,6 +62,18 @@ func TestSnapshotSpawnFlow(t *testing.T) {
 	assert.NotContains(t, (*popups)[1].Body, "cuts 25%")
 	restorePopup()
 
+	// Past that gate the import raises its own, which says the same beside the review.
+	popups, restorePopup = agentd.StubCapturingApprovalForTest(true)
+	var buf bytes.Buffer
+	require.NoError(t, json.NewEncoder(&buf).Encode(map[string]any{"group": "receiver", "confirm_history_loss": true}))
+	asked := httptest.NewRequest(http.MethodPost, "/v1/snapshots/known-good/spawn", &buf)
+	asked.Header.Set("X-Tclaude-Ask-Human", "30s")
+	f.Mux.ServeHTTP(httptest.NewRecorder(), agentd.AsAgentPeer(asked, other))
+	restorePopup()
+	require.Len(t, *popups, 2)
+	assert.Contains(t, (*popups)[1].Body, "Agent: ")
+	assert.Contains(t, (*popups)[1].Body, "cuts 25% or more of the conversation")
+
 	rec = post("/v1/snapshots/known-good/spawn", map[string]any{"group": "receiver", "count": 21}, "")
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	rec = post("/v1/snapshots/missing/spawn", map[string]any{"group": "receiver"}, "")

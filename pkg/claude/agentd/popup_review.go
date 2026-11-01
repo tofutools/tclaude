@@ -98,7 +98,10 @@ func agentImportApprovalFacts(r *http.Request, body []byte) string {
 	}
 	lead := "Approving lets the agent read this review. Nothing is imported yet."
 	if r.URL.Query().Get("apply") == "true" {
-		lead = "Approving lands this agent here as a new one, with what is listed below."
+		lead = "Approving lands this agent here as a new one, with what is listed below, unless this node then refuses it."
+		if r.URL.Query().Get("confirm_history_loss") == "true" {
+			lead += " " + historyLossFacts
+		}
 	}
 	return approvalReviewText(lead, review)
 }
