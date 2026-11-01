@@ -29,7 +29,7 @@ import {
 import {
   GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen,
 } from './groups-quickstart.js';
-import { ScribeDraft, draftWithScribe, leaveScribeDraft, noteDraftOpened, restorableScribeDraft } from './groups-scribe-draft.js';
+import { DraftStartWarning, ScribeDraft, draftWithScribe, leaveScribeDraft, noteDraftOpened, restorableScribeDraft, scribeStartWarning } from './groups-scribe-draft.js';
 import { processScribeSessions } from './process-scribe.js';
 import { viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
@@ -69,8 +69,9 @@ function memberInitial(member) {
 // pre-ticked: authorizing host program execution is the human's call), then
 // POST it with the group pre-filled. Refusals show inline; a refusal naming
 // unauthorized profiles (a referenced template's) adds them to the list. The
-// created run appears on the next context refresh.
-function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', members = null, onBuild = null }) {
+// created run appears on the next context refresh. While a scribe is at work on
+// the template it asks first, as the ▶ strip does.
+function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', members = null, onBuild = null, scribes = [], onOpenTemplate = null }) {
   // members set means an agent-scoped run: the operator picks which member
   // the run is bound to, and its steps run as that agent's work.
   const agentScoped = Array.isArray(members);
@@ -82,6 +83,8 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
   const [authorized, setAuthorized] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Set while Start asks about a scribe's unreviewed work; see scribeStartWarning.
+  const [draftWarning, setDraftWarning] = useState(null);
   useEffect(() => {
     let live = true;
     api.listTemplates().then((rows) => {
@@ -97,6 +100,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     setValues({});
     setAuthorized(new Set());
     setError('');
+    setDraftWarning(null);
     if (!templateId || typeof api.templateRequirements !== 'function') return () => { live = false; };
     api.templateRequirements(templateId).then((found) => {
       if (!live) return;
@@ -116,17 +120,12 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     return () => { live = false; };
   }, [api, templateId]);
   const missing = needs.params.filter((param) => param.required && !String(values[param.name] ?? '').trim());
-  const start = async (event) => {
-    event.preventDefault();
-    if (!templateId || busy || missing.length || (agentScoped && !agent)) return;
+  const act = async (work) => {
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
-      const scope = agentScoped ? { agent } : { group: group.name };
-      await api.startGroupRun({ templateId, ...scope, params: values, authorizeProgramProfiles: [...authorized] });
-      markQuickStart();
-      onClose();
-      void source.refresh();
+      await work();
     } catch (cause) {
       const named = unauthorizedProfiles(cause.message);
       if (named.length) {
@@ -137,6 +136,45 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
       setBusy(false);
     }
   };
+  const begin = async (expectedRef = '') => {
+    const scope = agentScoped ? { agent } : { group: group.name };
+    await api.startGroupRun({
+      templateId, ...scope, params: values, authorizeProgramProfiles: [...authorized], ...(expectedRef ? { expectedRef } : {}),
+    });
+    markQuickStart();
+    onClose();
+    void source.refresh();
+  };
+  const start = (event) => {
+    event.preventDefault();
+    if (!templateId || busy || draftWarning || missing.length || (agentScoped && !agent)) return;
+    void act(async () => {
+      const warning = await scribeStartWarning(api, scribes, templateId);
+      if (warning) setDraftWarning(warning);
+      else await begin();
+    });
+  };
+  // Pinned to the version the question was about: a save since then asks again
+  // instead of running what nobody was asked about.
+  const startAnyway = () => act(async () => {
+    try {
+      await begin(draftWarning.ref);
+    } catch (cause) {
+      if (cause.body?.code !== 'process_run_template_moved') throw cause;
+      const warning = await scribeStartWarning(api, scribes, templateId);
+      setDraftWarning(warning);
+      if (!warning) setError('It changed since you were asked. Press start to run the current version.');
+    }
+  });
+  const openDraft = () => act(async () => {
+    const chosen = templates.find((template) => template.id === templateId);
+    // An agent-scoped start stays one from the editor it opens.
+    const bound = agentScoped ? agents.find((member) => member.agent_id === agent) : null;
+    await onOpenTemplate({
+      templateId, name: chosen?.name || templateId,
+      ...(bound ? { runAgent: { id: bound.agent_id, name: memberName(bound) } } : {}),
+    });
+  });
   const toggleProfile = (profile, on) => setAuthorized((current) => {
     const next = new Set(current);
     if (on) next.add(profile);
@@ -148,7 +186,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     : (wizard ? `Begin a rite for ${group.name}` : `Start a process in ${group.name}`);
   const agents = agentScoped ? members.filter((member) => member.agent_id) : [];
   return html`<form class="gp-start-form" aria-label=${label} data-start-scope=${agentScoped ? 'agent' : 'group'} onSubmit=${start}
-    onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+    onKeyDown=${(event) => { if (event.key === 'Escape' && !busy) { event.stopPropagation(); onClose(); } }}>
     ${agentScoped
     ? html`<span class="pk-chip pk-scope pk-scope-agent">◉ ${wizard ? 'hero-bound' : 'agent scope'}</span>
       ${agents.length
@@ -164,9 +202,10 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
       : html`<select aria-label="Template" value=${templateId} disabled=${busy} onChange=${(event) => setTemplateId(event.currentTarget.value)}>
         ${templates.map((template) => html`<option key=${template.id} value=${template.id}>${template.name}</option>`)}
       </select>`}
-    <button type="submit" class="primary" disabled=${busy || !templateId || missing.length > 0 || (agentScoped && !agent)}
+    <button type="submit" class="primary" disabled=${busy || !!draftWarning || !templateId || missing.length > 0 || (agentScoped && !agent)}
       title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}</button>
-    <button type="button" onClick=${onClose}>cancel</button>
+    <button type="button" disabled=${busy} onClick=${onClose}>cancel</button>
+    ${draftWarning && html`<${DraftStartWarning} warning=${draftWarning} busy=${busy} openDisabled=${!onOpenTemplate} onOpen=${openDraft} onStartAnyway=${startAnyway} />`}
     ${onBuild && html`<button type="button" class="gq-link" data-process-new=${group.name} onClick=${onBuild}
       title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? 'or shape a new rite ▸' : 'or build a new one ▸'}</button>`}
     ${needs.params.length > 0 && html`<div class="gp-start-params" role="group" aria-label="Parameters">
@@ -521,6 +560,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         notify=${notify || defaultNotify} onClose=${() => setQuick(null)} onSteps=${toSteps} />`
     : editing
     ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null} groupInfo=${entry}
+        runAgent=${quick.process?.runAgent || null}
         api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)}
         onGraph=${quick.saved && quick.process ? toGraph : null}
         onNewer=${quick.saved && quick.process ? (view) => openStored(quick.process, view) : null} />`
@@ -554,7 +594,12 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       }} />`}
     ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
       members=${starting.scope === 'agent' ? members : null} onBuild=${() => { setStarting(false); setQuick('pick'); }}
-      initialTemplateId=${starting?.templateId || ''} onClose=${() => setStarting(false)} />`}
+      initialTemplateId=${starting?.templateId || ''} scribes=${scribes} onClose=${() => setStarting(false)}
+      onOpenTemplate=${async (process) => {
+        const view = await api.getTemplate(process.templateId);
+        setStarting(false);
+        openStored({ ...process, listed: view.listed }, view);
+      }} />`}
     ${quickStart}
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
     <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Hero rites' : 'Member runs'} onOpen=${open} />
