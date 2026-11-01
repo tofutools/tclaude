@@ -56,7 +56,7 @@ func handleAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	// operator policy, like sandbox-profiles.manage — humans pass, an agent needs
 	// a real grant.
 	if r.Method == http.MethodPost {
-		r = withApprovalFacts(r, func(body string) string { return sandboxMoveOutApprovalFacts(convID, body) })
+		r = withApprovalFacts(r, func(body []byte) string { return sandboxMoveOutApprovalFacts(convID, body) })
 	}
 	if _, ok := requirePermission(w, r, PermAgentSandboxImplementation); !ok {
 		return
@@ -370,6 +370,9 @@ func openCodeMoveOutFacts(count int) string {
 		"OpenCode store. " + openCodeMoveOutCommonFacts
 }
 
+// moveOutFactsTimeout bounds counting the conversations for a popup.
+const moveOutFactsTimeout = 10 * time.Second
+
 const openCodeMoveOutCommonFacts = "Agents outside tclaude's sandbox can read them once moved. Their todo lists are " +
 	"deleted, because OpenCode's export does not carry them. Private conversation storage is something " +
 	"only OpenCode has here: other harnesses keep conversations in a state root shared per harness, " +
@@ -403,40 +406,58 @@ func openCodeMoveOutConfirmation(h *harness.Harness, agentID, convID, cwd string
 // approving it would move an OpenCode agent out of private state. Only a request
 // that confirms the move can do that: without confirm_move_out it is refused,
 // with these facts, after the human approves.
-func sandboxMoveOutApprovalFacts(convID, body string) string {
+func sandboxMoveOutApprovalFacts(convID string, body []byte) string {
 	var req struct {
 		Implementation string `json:"implementation"`
 		ConfirmMoveOut bool   `json:"confirm_move_out"`
 	}
-	if json.Unmarshal([]byte(body), &req) != nil || !req.ConfirmMoveOut {
+	if !decodeLikeHandler(body, &req) || !req.ConfirmMoveOut {
 		return ""
 	}
+	// A failed read is not a move that won't happen: the human still hears
+	// what it does.
+	uncounted := func(cause string) string {
+		return "This may move conversations out of an OpenCode agent's private state, but tclaude could not count them: " +
+			cause + ". " + openCodeMoveOutCommonFacts
+	}
 	agentID, err := db.AgentIDForConv(convID)
-	if err != nil || agentID == "" {
+	if err != nil {
+		return uncounted(err.Error())
+	}
+	if agentID == "" {
 		return ""
 	}
 	current, err := durableRelaunchConfigForConv(convID)
 	if err != nil {
-		return ""
+		return uncounted(err.Error())
 	}
 	h, err := harness.Resolve(current.Harness)
 	if err != nil {
+		return uncounted(err.Error())
+	}
+	if h.Name != harness.OpenCodeName {
 		return ""
 	}
 	implementation, err := validateAssignedSandboxImplementation(h, strings.TrimSpace(req.Implementation))
 	if err != nil || isTclaudeLayer(implementation) {
 		return ""
 	}
-	fail := openCodeMoveOutConfirmation(h, agentID, convID, current.Cwd)
-	switch {
-	case fail == nil:
-		return ""
-	case fail.Kind == openCodeMoveOutConfirmKind:
-		return fail.Msg
+	// Counting runs OpenCode, with a human-free timeout of days, and no popup
+	// may wait on it. A count that outlives this finishes unobserved.
+	counted := make(chan *spawnFailure, 1)
+	go func() { counted <- openCodeMoveOutConfirmation(h, agentID, convID, current.Cwd) }()
+	select {
+	case fail := <-counted:
+		switch {
+		case fail == nil:
+			return ""
+		case fail.Kind == openCodeMoveOutConfirmKind:
+			return fail.Msg
+		}
+		return uncounted(fail.Msg)
+	case <-time.After(moveOutFactsTimeout):
+		return uncounted("OpenCode did not answer in time")
 	}
-	// The count failed, not the move: the human still has to hear what it does.
-	return "This may move conversations out of this OpenCode agent's private state, but tclaude could not count them: " +
-		fail.Msg + ". " + openCodeMoveOutCommonFacts
 }
 
 // openCodeStateToMoveOut returns the private state an assignment off tclaude's

@@ -316,6 +316,18 @@ func TestSandboxImplAssign_MovesOpenCodeAgentIntoPrivateState(t *testing.T) {
 	assert.Contains(t, popup.Body, "only OpenCode has here")
 	assert.Contains(t, popup.Body, `"confirm_move_out": true`, "the request itself still shows")
 
+	// Nothing after the JSON hides the confirmation: the handler reads past
+	// the end of the preview and ignores what follows the value.
+	for _, trailer := range []string{" x", strings.Repeat(" ", 70<<10) + "x"} {
+		agentAsk := httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl",
+			strings.NewReader(`{"implementation":"harness-builtin","confirm_move_out":true}`+trailer))
+		agentAsk.Header.Set("X-Tclaude-Ask-Human", "30s")
+		testharness.Serve(f.Mux, agentd.AsAgentPeer(agentAsk, asker))
+		last := (*popups)[len(*popups)-1]
+		assert.Contains(t, last.Body, "2 conversations")
+	}
+	*popups = (*popups)[:1]
+
 	// Unconfirmed, or staying in tclaude's sandbox, approving moves nothing.
 	askAs(map[string]any{"implementation": "harness-builtin"})
 	askAs(map[string]any{"implementation": "tclaude-layer", "confirm_move_out": true})

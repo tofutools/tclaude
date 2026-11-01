@@ -782,7 +782,13 @@ type approvalFactsKey struct{}
 // approvalFactsFunc states, from the request body, what approving does that the
 // body does not say: a confirmation flag shows as true, not as what it accepts.
 // "" adds nothing.
-type approvalFactsFunc func(body string) string
+type approvalFactsFunc func(body []byte) string
+
+// decodeLikeHandler reads a request body's first JSON value, as the handlers do,
+// so nothing after it can hide a confirmation from the facts.
+func decodeLikeHandler(body []byte, v any) bool {
+	return json.NewDecoder(bytes.NewReader(body)).Decode(v) == nil
+}
 
 // withApprovalFacts makes a handler's facts part of any popup a gate raises for
 // r, so the human sees what a client asking for the same thing is shown.
@@ -791,12 +797,19 @@ func withApprovalFacts(r *http.Request, facts approvalFactsFunc) *http.Request {
 }
 
 // approvalPreviewFacts puts the request's facts ahead of its body in a popup.
+// Call it after the body is snapshotted. Facts read the body the handler will,
+// not the preview, which is capped.
 func approvalPreviewFacts(r *http.Request, bodyPreview, bodyLabel string) (string, string) {
 	facts, _ := r.Context().Value(approvalFactsKey{}).(approvalFactsFunc)
 	if facts == nil {
 		return bodyPreview, bodyLabel
 	}
-	stated := facts(bodyPreview)
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	stated := facts(body)
 	if stated == "" {
 		return bodyPreview, bodyLabel
 	}
