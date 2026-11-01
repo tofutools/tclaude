@@ -169,7 +169,9 @@ func pwfConvertAssignees(b pwf.Bundle, roles map[string]pwfAssigneeRole) (pwf.Bu
 		return b, err
 	}
 	planner := &pwfPlanner{a: a, assignees: roles, done: map[string]*pwfPlanned{}, active: map[string]bool{}}
-	converted := pwf.Bundle{Title: b.Title, Summary: b.Summary, Readme: b.Readme}
+	// Everything but the templates carries over, fields added later included.
+	converted := b
+	converted.Root, converted.Templates = "", nil
 	seen := map[string]int{}
 	for _, ref := range a.Order {
 		planned, err := planner.plan(ref)
