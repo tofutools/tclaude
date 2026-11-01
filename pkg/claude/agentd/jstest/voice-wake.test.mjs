@@ -54,7 +54,7 @@ async function setup(t, options = {}) {
   const woken = [];
   const listener = wakeModule.createWakeListener({
     win: fake.win, phrase: () => 'hey tofu', onChange: (view) => views.push(view), onWake: (words) => woken.push(words),
-    locks: options.locks ?? null, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl,
+    locks: options.locks ?? null, ChannelImpl: options.ChannelImpl ?? null, pausedElsewhere: options.pausedElsewhere, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl,
   });
   t.after(() => listener.dispose());
   return { harness, voice, wakeModule, ...fake, time, views, woken, listener, state: () => views[views.length - 1]?.state };
@@ -258,6 +258,80 @@ test('the shared target rule: focus first, then the only one showing, else nobod
   stopB();
 });
 
+test('nothing listens before the route is settled', async (t) => {
+  const s = await setup(t, { local: 'available' });
+  let answer;
+  s.Recognition.available = () => new Promise((resolve) => { answer = resolve; });
+  const enabling = s.listener.setEnabled(true);
+  s.win.document.dispatchEvent(new s.win.Event('visibilitychange'));
+  assert.equal(s.made.length, 0);
+  answer('available');
+  await enabling;
+  assert.equal(s.last().processLocally, true);
+});
+
+test('installing on-device speech moves a running listener over', async (t) => {
+  const s = await setup(t, { local: 'downloadable', install: async () => { s.Recognition.available = async () => 'available'; return true; } });
+  const local = await s.harness.importDashboardModule('js/voice-local.js');
+  await s.listener.setEnabled(true);
+  const google = s.last();
+  assert.notEqual(google.processLocally, true);
+  await local.installLocalSpeech(s.win);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(google.aborted, true);
+  assert.equal(s.last().processLocally, true);
+  assert.equal(s.views.at(-1).route, 'on this device');
+});
+
+test('a dictation nobody clicked never falls back', async (t) => {
+  const s = await setup(t, { local: 'available' });
+  const local = await s.harness.importDashboardModule('js/voice-local.js');
+  await local.localSpeechState(s.win);
+  const made = s.made.length;
+  const states = [];
+  const dictation = s.voice.createDictation(s.win, { onState: (...args) => states.push(args) });
+  dictation.start({ strictRoute: true });
+  s.last().die('network');
+  assert.equal(s.made.length, made + 1, 'no second recognizer');
+  assert.ok(states.some(([on, error]) => !on && error === 'network'));
+  s.voice.setLocalSpeech(false);
+});
+
+test('a mic busy in another window holds the listener', async (t) => {
+  const channels = [];
+  class Channel {
+    constructor() { channels.push(this); this.sent = []; }
+    postMessage(data) { this.sent.push(data); }
+    close() {}
+  }
+  const s = await setup(t, { ChannelImpl: Channel });
+  await s.listener.setEnabled(true);
+  const listening = s.last();
+  channels[0].onmessage({ data: { id: 'other', busy: true } });
+  assert.equal(listening.aborted, true);
+  assert.equal(s.state(), 'held');
+  channels[0].onmessage({ data: { id: 'other', busy: false } });
+  assert.equal(s.state(), 'listening');
+  channels[0].onmessage({ data: { id: 'other', busy: true } });
+  s.time.advance(41000);
+  assert.equal(s.state(), 'listening', 'a window that went away stops counting');
+  const dictation = s.voice.createDictation(s.win, {});
+  dictation.start();
+  assert.deepEqual(channels[0].sent.at(-1).busy, true, 'its own dictation is announced');
+  dictation.abort();
+  assert.deepEqual(channels[0].sent.at(-1).busy, false);
+});
+
+test('a lock handed over while paused elsewhere stays paused', async (t) => {
+  let grant;
+  const locks = { request: (_name, _options, callback) => new Promise((resolve) => { grant = () => callback().then(resolve); }) };
+  const s = await setup(t, { locks, pausedElsewhere: () => true });
+  await s.listener.setEnabled(true);
+  grant();
+  assert.equal(s.state(), 'paused');
+  assert.equal(s.made.length, 0);
+});
+
 test('off by default: no listener, no indicator', async (t) => {
   const harness = await createPreactHarness(t);
   const { VoiceWake } = await harness.importDashboardModule('js/voice-wake-island.js');
@@ -279,6 +353,36 @@ test('on a non-secure page it never starts, and says why', async (t) => {
   const view = await harness.mount(harness.html`<${VoiceWake} snapshot=${snapshot} win=${win} listenerImpl=${() => { built += 1; }} />`);
   assert.equal(built, 0);
   assert.match(view.container.querySelector('.voice-wake').textContent, /HTTPS or localhost/);
+});
+
+test('pausing in one tab pauses them all, and a wake in an unused window stays idle', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { VoiceWake } = await harness.importDashboardModule('js/voice-wake-island.js');
+  const { registerWakeTarget } = await harness.importDashboardModule('js/voice-wake.js');
+  const { win } = fakeWin(harness);
+  const calls = [];
+  let woke;
+  let change;
+  const impl = ({ onChange, onWake }) => {
+    change = onChange;
+    woke = onWake;
+    return { pause: () => calls.push('pause'), resume: () => calls.push('resume'), setEnabled: async () => {}, dispose() {} };
+  };
+  const snapshot = harness.signals.signal({ voice: { wake_enabled: true, phrases: [{ action: 'wake', phrase: 'hey tofu' }] } });
+  const view = await harness.mount(harness.html`<${VoiceWake} snapshot=${snapshot} win=${win} listenerImpl=${impl} />`);
+  await harness.act(() => change({ state: 'listening', detail: '', local: false, route: 'x' }));
+  win.dispatchEvent(Object.assign(new win.Event('storage'), { key: 'tclaude.dash.voice.wake-paused', newValue: '1' }));
+  win.dispatchEvent(Object.assign(new win.Event('storage'), { key: 'tclaude.dash.voice.wake-paused', newValue: null }));
+  assert.deepEqual(calls, ['pause', 'resume']);
+  const started = [];
+  const host = win.document.body.appendChild(win.document.createElement('div'));
+  const stop = registerWakeTarget({ host: () => host, start: (words) => started.push(words) });
+  win.document.hasFocus = () => false;
+  win.localStorage.setItem('tclaude.dash.voice.last-window', 'another');
+  await harness.act(() => woke('fix it'));
+  assert.deepEqual(started, []);
+  assert.match(view.container.querySelector('.voice-wake').textContent, /no terminal here has focus/);
+  stop();
 });
 
 test('the indicator shows the route and pauses in one click', async (t) => {

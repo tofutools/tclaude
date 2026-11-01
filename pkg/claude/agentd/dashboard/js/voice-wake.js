@@ -5,10 +5,14 @@
 // recognizer ends by itself, so it restarts, backing off after errors and
 // stopping with a message rather than looping.
 
-import { localSpeechState, onDeviceChosen, speechRouteLabel } from './voice-local.js';
+import { localSpeechState, onDeviceChosen, onLocalSpeechChange, speechRouteLabel } from './voice-local.js';
 import { dictationOpen, holdMicForWake, onMicChange, phrasePattern, speechPlaying, speechRecognitionCtor } from './companion-voice.js';
 
 export const WAKE_LOCK = 'tclaude.voice.wake';
+const MIC_CHANNEL = 'tclaude.voice.mic';
+// A window busy with the mic says so this often, and silence means it's gone.
+const BUSY_REPEAT_MS = 15000;
+const BUSY_EXPIRY_MS = 40000;
 const RESTART_MS = 300;
 const BACKOFF_MAX_MS = 30000;
 const MAX_FAILURES = 5;
@@ -55,7 +59,9 @@ export function createWakeListener({
   phrase = () => '',
   onWake = () => {},
   onChange = () => {},
+  pausedElsewhere = () => false,
   locks = win?.navigator?.locks,
+  ChannelImpl = win?.BroadcastChannel,
   now = () => Date.now(),
   setTimeoutImpl = (...args) => globalThis.setTimeout(...args),
   clearTimeoutImpl = (...args) => globalThis.clearTimeout(...args),
@@ -80,9 +86,45 @@ export function createWakeListener({
   let lastView = '';
   let afterRelease = null;
   let stopping = false;
+  let routeKnown = false;
+  let busyTimer = null;
+  let wasBusy = false;
+  const others = new Map();
+  const self = `${now()}-${Math.random()}`;
+  const channel = typeof ChannelImpl === 'function' ? new ChannelImpl(MIC_CHANNEL) : null;
 
-  const wantsLock = () => enabled && !paused && !failure && !doc?.hidden;
-  const held = () => dictationOpen() || speechPlaying();
+  // Nothing listens until the route is settled: an early start would send the
+  // room to a speech service before on-device speech was even looked for.
+  const wantsLock = () => enabled && routeKnown && !paused && !failure && !doc?.hidden;
+  const busyHere = () => dictationOpen() || speechPlaying();
+  // The mic and the speakers belong to the whole browser, not this page.
+  const busyElsewhere = () => {
+    for (const [id, until] of others) {
+      if (until <= now()) others.delete(id);
+    }
+    return others.size > 0;
+  };
+  const held = () => busyHere() || busyElsewhere();
+
+  function announceBusy() {
+    const busy = busyHere();
+    if (busy || wasBusy) channel?.postMessage({ id: self, busy });
+    wasBusy = busy;
+    if (busyTimer !== null) clearTimeoutImpl(busyTimer);
+    busyTimer = busy ? setTimeoutImpl(() => { busyTimer = null; announceBusy(); }, BUSY_REPEAT_MS) : null;
+  }
+
+  function hearOther({ data } = {}) {
+    if (!data || data.id === self) return;
+    if (data.busy) {
+      others.set(data.id, now() + BUSY_EXPIRY_MS);
+      setTimeoutImpl(sync, BUSY_EXPIRY_MS + 100);
+    } else {
+      others.delete(data.id);
+    }
+    sync();
+  }
+  if (channel) channel.onmessage = hearOther;
 
   function report() {
     let state = 'listening';
@@ -111,6 +153,8 @@ export function createWakeListener({
     lockAbort = abort;
     locks.request(WAKE_LOCK, abort ? { signal: abort.signal } : {}, () => {
       lockState = 'held';
+      // Paused in the tab that held it, the lock must not start this one.
+      if (pausedElsewhere()) paused = true;
       sync();
       return new Promise((resolve) => { releaseLock = resolve; });
     }).catch(() => {});
@@ -228,9 +272,20 @@ export function createWakeListener({
   // Once this browser has had on-device speech, losing it is a failure: the
   // operator chose that their room stays on this machine.
   async function chooseRoute() {
+    routeKnown = false;
+    sync();
     local = await localSpeechState(win) === 'available';
     if (!local && onDeviceChosen(win)) failure = NO_DOWNGRADE;
+    routeKnown = true;
   }
+
+  // Installed from Config: move the running listener over at once.
+  const stopRoute = onLocalSpeechChange(async () => {
+    if (!enabled) return;
+    failure = '';
+    await chooseRoute();
+    sync();
+  });
 
   const stopHold = holdMicForWake({
     release(then) {
@@ -250,7 +305,10 @@ export function createWakeListener({
       setTimeoutImpl(once, RELEASE_TIMEOUT_MS);
     },
   });
-  const stopMic = onMicChange(sync);
+  const stopMic = onMicChange(() => {
+    announceBusy();
+    sync();
+  });
   doc?.addEventListener?.('visibilitychange', sync);
 
   return {
@@ -281,6 +339,10 @@ export function createWakeListener({
       enabled = false;
       stopHold();
       stopMic();
+      stopRoute();
+      if (busyTimer !== null) clearTimeoutImpl(busyTimer);
+      if (wasBusy) channel?.postMessage({ id: self, busy: false });
+      channel?.close?.();
       doc?.removeEventListener?.('visibilitychange', sync);
       clearRestart();
       recognition?.abort?.();

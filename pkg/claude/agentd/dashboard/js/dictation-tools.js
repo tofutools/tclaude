@@ -62,14 +62,14 @@ export function useDictation({
   const [local, setLocal] = useState(false);
   const [silenceLeft, setSilenceLeft] = useState(0);
   const silence = useRef(null);
-  function cancelSilence() {
+  function clearSilence() {
     if (silence.current) clearInterval(silence.current);
     silence.current = null;
     setSilenceLeft(0);
   }
   // The countdown shows after a moment's quiet, not between every two words.
   function armSilence() {
-    cancelSilence();
+    clearSilence();
     const seconds = latest.current.silenceSend;
     if (!seconds) return;
     const started = Date.now();
@@ -77,7 +77,7 @@ export function useDictation({
       const quiet = Date.now() - started;
       if (quiet >= seconds * 1000) {
         const text = latest.current.draft;
-        cancelSilence();
+        clearSilence();
         if (!text.trim()) return;
         dictationRef.current.abort?.();
         void latest.current.send(text);
@@ -102,7 +102,7 @@ export function useDictation({
     onState: (on, error) => {
       listeningRef.current = on;
       setListening(on);
-      if (!on) cancelSilence();
+      if (!on) clearSilence();
       if (error && error !== 'no-speech' && error !== 'aborted') {
         latest.current.notify(error === 'not-allowed' ? 'The browser blocked the microphone for this page.' : `Dictation stopped: ${error}`, true);
       }
@@ -121,22 +121,24 @@ export function useDictation({
   dictationRef.current = dictation;
   useEffect(() => { void localSpeechState(win); }, [win]);
   useEffect(() => () => {
-    cancelSilence();
+    clearSilence();
     dictation.abort?.();
   }, [targetId, dictation]);
   const block = dictationBlock(dictation.supported, win);
-  function open(from) {
+  function open(from, options) {
     latest.current.onStart();
     base.current = from;
     owner.current = target.current;
-    dictation.start();
+    dictation.start(options);
   }
   const opener = useRef(null);
   opener.current = (words) => {
     if (block || listeningRef.current || !target.current) return;
     const text = joinDraft(latest.current.draft, words);
     if (words) latest.current.setDraft(target.current, text);
-    open(text);
+    // Nobody clicked, so this one mustn't fall back to a speech service.
+    open(text, { strictRoute: true });
+    if (words) armSilence();
   };
   useEffect(() => registerWakeTarget({
     host: () => latest.current.wakeHost(),
@@ -149,7 +151,11 @@ export function useDictation({
     sendPhrase,
     route: speechRouteLabel(local, win),
     silenceLeft,
-    cancelSilence,
+    // Cancelling is final: words still arriving must not start it again.
+    cancelSilence: () => {
+      clearSilence();
+      dictation.abort?.();
+    },
     abort: () => dictation.abort?.(),
     toggle() {
       if (listening) {
@@ -244,7 +250,7 @@ export function DraftField({
       placeholder=${listening ? 'Listening…' : ''} onFocus=${onFocus} onBlur=${onBlur} onKeyDown=${onKeyDown}
       aria-label=${label} value=${draft} onInput=${(event) => { if (listeningRef.current) abort(); onEdit(event.currentTarget.value); }} />
     ${silenceLeft ? html`<span class="companion-send-hint companion-silence" role="status">Sending in ${silenceLeft}s</span>
-      <button type="button" class="companion-silence-cancel" title="Keep the draft and don't send it (Esc)" onClick=${cancelSilence}>Cancel</button>`
+      <button type="button" class="companion-silence-cancel" title="Stop the mic and keep the draft (Esc)" onClick=${cancelSilence}>Cancel</button>`
       : listening && html`<span class="companion-send-hint">${sendPhrase ? `say “${sendPhrase}” to send · ` : ''}${route}</span>`}
     <button type="submit" title=${submitTitle} disabled=${sending || !draft.trim()}>${submitLabel}</button>
   </form>`;

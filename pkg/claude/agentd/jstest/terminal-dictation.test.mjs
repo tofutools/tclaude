@@ -213,7 +213,7 @@ test('silence sends after a countdown that shows, and never when off', async (t)
   assert.equal(s.speech.last().aborted, true);
 });
 
-test('speaking again restarts the countdown, and Esc cancels it', async (t) => {
+test('speaking again restarts the countdown, and Esc ends it for good', async (t) => {
   const s = await setup(t, { silence: 1 });
   await s.mic();
   await s.harness.act(() => s.speech.last().hear('one', false));
@@ -225,6 +225,7 @@ test('speaking again restarts the countdown, and Esc cancels it', async (t) => {
   await s.harness.act(() => wait(600));
   assert.deepEqual(s.posted, []);
   assert.ok(!s.$('.companion-silence'));
+  assert.equal(s.speech.last().aborted, true, 'a late result can\'t start it again');
   assert.equal(s.$('.companion-draft').value, 'two', 'the words stay');
 });
 
@@ -243,6 +244,17 @@ test('silence send is off unless configured', async (t) => {
   await s.harness.act(() => s.speech.last().hear('hello'));
   await s.harness.act(() => wait(1200));
   assert.deepEqual(s.posted, []);
+});
+
+test('a one-breath wake starts the silence countdown', async (t) => {
+  const s = await setup(t, { silence: 1 });
+  const { pickWakeTarget } = await s.harness.importDashboardModule('js/voice-wake.js');
+  const pane = s.harness.document.body.appendChild(s.harness.document.createElement('div'));
+  pane.id = 'pane-p';
+  await s.harness.act(() => pickWakeTarget(s.harness.document).start('fix the bug'));
+  assert.equal(s.$('.companion-draft').value, 'fix the bug');
+  await s.harness.act(() => wait(1200));
+  assert.match(s.posted[0].body.body, /^fix the bug/);
 });
 
 test('a refused paste keeps the draft', async (t) => {

@@ -12,6 +12,7 @@ import { createWakeListener, pickWakeTarget } from './voice-wake.js';
 
 const html = htm.bind(h);
 const PAUSE_PREF = 'tclaude.dash.voice.wake-paused';
+const LAST_WINDOW_PREF = 'tclaude.dash.voice.last-window';
 const NOTICE_MS = 6000;
 
 function readPaused(win) {
@@ -23,6 +24,14 @@ function writePaused(win, paused) {
     if (paused) win?.localStorage?.setItem(PAUSE_PREF, '1');
     else win?.localStorage?.removeItem(PAUSE_PREF);
   } catch { /* the pause just won't outlive this page */ }
+}
+
+function readLastWindow(win) {
+  try { return win?.localStorage?.getItem(LAST_WINDOW_PREF) || ''; } catch { return ''; }
+}
+
+function writeLastWindow(win, id) {
+  try { win?.localStorage?.setItem(LAST_WINDOW_PREF, id); } catch { /* one window then counts as its own */ }
 }
 
 export function VoiceWake({ snapshot, win = globalThis.window, listenerImpl = createWakeListener }) {
@@ -48,16 +57,32 @@ export function VoiceWake({ snapshot, win = globalThis.window, listenerImpl = cr
       win,
       phrase: () => phraseRef.current,
       onChange: setView,
+      pausedElsewhere: () => readPaused(win),
       onWake: (words) => {
-        const target = pickWakeTarget(win.document);
+        // The lock sits with the first visible window, which may not be the
+        // one the operator is in, and its terminal would be the wrong target.
+        const otherWindow = win.document.hasFocus?.() === false && readLastWindow(win) !== self;
+        const target = otherWindow ? null : pickWakeTarget(win.document);
         if (target) target.start(words);
-        else say(`Heard “${phraseRef.current}”, but no terminal has focus. Click the one you mean and say it again.`);
+        else say(`Heard “${phraseRef.current}”, but no terminal here has focus. Click the one you mean and say it again.`);
       },
     });
     listener.current = wake;
+    const self = `${Date.now()}-${Math.random()}`;
+    const noteFocus = () => writeLastWindow(win, self);
+    if (win.document.hasFocus?.() !== false) noteFocus();
+    win.addEventListener('focus', noteFocus);
+    const onStorage = (event) => {
+      if (event.key !== PAUSE_PREF) return;
+      if (event.newValue === '1') wake.pause();
+      else wake.resume();
+    };
+    win.addEventListener('storage', onStorage);
     if (readPaused(win)) wake.pause();
     void wake.setEnabled(true);
     return () => {
+      win.removeEventListener('focus', noteFocus);
+      win.removeEventListener('storage', onStorage);
       clearTimeout(noticeTimer);
       wake.dispose();
       listener.current = null;

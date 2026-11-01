@@ -281,17 +281,21 @@ export function dictationOpen() {
 // already heard but never sends; abort() drops them. Chrome's recognizer runs
 // in Google's cloud unless on-device speech is installed; the listening state
 // says which. If on-device fails before any words, the dictation falls back
-// and onRoute says so: it is a click and a short burst, unlike the wake listener.
+// and onRoute says so: it is a click and a short burst, unlike the wake
+// listener. start({strictRoute: true}), for a dictation nobody clicked, ends
+// with the error instead.
 export function createDictation(win = globalThis.window, { onText, onState, onSend, onRoute, sendPhrase = () => '', lang } = {}) {
   const Ctor = speechRecognitionCtor(win);
   let recognition = null;
   let stopped = false;
   let opening = false;
+  let strictRoute = false;
   const dictation = {
     supported: !!Ctor,
     get active() { return !!recognition || opening; },
-    start() {
+    start(options = {}) {
       if (!Ctor || recognition || opening) return;
+      strictRoute = !!options.strictRoute;
       if (openDictation !== dictation) openDictation?.abort();
       openDictation = dictation;
       opening = true;
@@ -354,7 +358,7 @@ export function createDictation(win = globalThis.window, { onText, onState, onSe
       onText?.(`${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim());
     };
     r.onerror = (event) => {
-      fallBack = local && !heard && !stopped && !NOT_LOCAL_FAULTS.has(event?.error);
+      fallBack = local && !strictRoute && !heard && !stopped && !NOT_LOCAL_FAULTS.has(event?.error);
       if (!fallBack) onState?.(false, event?.error || 'error');
     };
     r.onend = () => {

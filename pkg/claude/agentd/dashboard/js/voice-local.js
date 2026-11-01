@@ -20,6 +20,16 @@ function writeChosen(win, chosen) {
   } catch { /* the choice just won't outlive this page */ }
 }
 
+const changes = new Set();
+const routeChanged = () => { for (const listener of changes) listener(); };
+
+// onLocalSpeechChange calls listener when on-device speech is installed or the
+// operator gives it up, and returns how to stop.
+export function onLocalSpeechChange(listener) {
+  changes.add(listener);
+  return () => changes.delete(listener);
+}
+
 const options = (win) => ({ langs: [win?.navigator?.language || 'en-US'], processLocally: true });
 
 // localSpeechState is the browser's answer for this page's language:
@@ -49,6 +59,7 @@ export function onDeviceChosen(win = globalThis.window) {
 // forgetOnDevice accepts the speech service again, on the operator's word.
 export function forgetOnDevice(win = globalThis.window) {
   writeChosen(win, false);
+  routeChanged();
 }
 
 // installLocalSpeech asks the browser for the language pack. Call it only from
@@ -58,7 +69,9 @@ export async function installLocalSpeech(win = globalThis.window) {
   if (typeof Ctor?.install !== 'function') throw new Error('this browser has no on-device speech');
   const installed = await Ctor.install(options(win));
   if (installed === false) throw new Error('the browser could not install it');
-  return localSpeechState(win);
+  const state = await localSpeechState(win);
+  routeChanged();
+  return state;
 }
 
 // speechServiceName names where the audio goes without on-device speech.

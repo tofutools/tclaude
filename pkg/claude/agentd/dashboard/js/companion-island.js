@@ -1289,6 +1289,8 @@ export function CompanionApp({
 
   const showComposer = !showQueue && activeAgent && activeAgent.online;
   composerShown.current = !!(open && showComposer);
+  // A mic with no window showing would have no countdown and no Cancel.
+  useEffect(() => { if (!composerShown.current) dictation.abort?.(); }, [composerShown.current]);
   const floatingTools = showComposer && html`<${FloatingTools} dictation=${dictation}
     micLabel=${`Dictate a message to ${activeAgent.name}`}
     micTitle=${micTitle(sendPhrase)}
