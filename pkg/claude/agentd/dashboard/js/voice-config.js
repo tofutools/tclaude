@@ -16,6 +16,10 @@ export const VOICE_ACTIONS = Object.freeze([
   }),
 ]);
 
+export const COMMA_PAUSE_DEFAULT = 0.7;
+export const PERIOD_PAUSE_DEFAULT = 1.5;
+export const VOICE_PAUSE_MIN = 0.3;
+export const VOICE_PAUSE_MAX = 10;
 export const SILENCE_SEND_DEFAULT = 3;
 export const SILENCE_SEND_MIN = 2;
 export const SILENCE_SEND_MAX = 30;
@@ -40,6 +44,20 @@ export function voiceMarksDictated(snapshot) {
 
 export function voiceSilenceSeconds(snapshot) {
   return snapshot?.voice?.silence_send_seconds || 0;
+}
+
+// voicePauses is the pause, in seconds, that adds a comma and a period; 0 is off.
+export function voicePauses(snapshot) {
+  return { comma: snapshot?.voice?.comma_pause_seconds || 0, period: snapshot?.voice?.period_pause_seconds || 0 };
+}
+
+// voicePausesProblem says what is wrong with the form's pause settings, each
+// 0 when off, or returns ''. A pause that reaches the next one could never
+// add its mark.
+export function voicePausesProblem({ comma, period, silence }) {
+  if (comma && period && comma >= period) return 'The comma pause must be shorter than the period pause.';
+  if (silence && Math.max(comma, period) >= silence) return 'A punctuation pause must be shorter than send after silence.';
+  return '';
 }
 
 const sameWords = (a, b) => a.trim().split(/\s+/).join(' ').toLowerCase() === b.trim().split(/\s+/).join(' ').toLowerCase();

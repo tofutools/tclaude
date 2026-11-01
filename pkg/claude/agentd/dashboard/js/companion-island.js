@@ -36,7 +36,7 @@ import { StewardRoster } from './steward-roster.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
-import { voiceMarksDictated, voiceSilenceSeconds } from './voice-config.js';
+import { voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
@@ -350,6 +350,7 @@ export function CompanionApp({
   const dictation = useDictation({
     win, targetId: activeId, draft, setDraft, notify, dictationImpl, sendPhrase,
     silenceSend: voiceSilenceSeconds(snapshot.value),
+    pauses: voicePauses(snapshot.value),
     mark: voiceMarksDictated(snapshot.value),
     wakeHost: () => (composerShown.current ? windowRef.current : null),
     send: (text) => send(null, text),

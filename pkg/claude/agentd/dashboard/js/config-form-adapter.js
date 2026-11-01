@@ -1,5 +1,5 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
-import { SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, storedVoicePhrases, voiceFormPhrase, voicePhrasesClash } from './voice-config.js';
+import { COMMA_PAUSE_DEFAULT, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN, storedVoicePhrases, voiceFormPhrase, voicePausesProblem, voicePhrasesClash } from './voice-config.js';
 import { syncVoiceSection } from './voice-config-section.js';
 import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
@@ -570,6 +570,10 @@ function populateConfigForm(cfg) {
     $(`#cfg-voice-on-${action}`).checked = on;
   }
   $('#cfg-voice-mark').checked = voice.mark_dictated !== false;
+  for (const [id, seconds] of [['cfg-voice-comma', voice.comma_pause_seconds], ['cfg-voice-period', voice.period_pause_seconds]]) {
+    $(`#${id}`).checked = seconds > 0;
+    $(`#${id}-seconds`).value = seconds > 0 ? seconds : '';
+  }
   $('#cfg-voice-wake').checked = voice.wake_enabled === true;
   $('#cfg-voice-silence').checked = voice.silence_send_seconds > 0;
   $('#cfg-voice-silence-seconds').value = voice.silence_send_seconds > 0 ? voice.silence_send_seconds : '';
@@ -957,6 +961,16 @@ function assembleConfig() {
     const seconds = cfgInt('cfg-voice-silence-seconds', SILENCE_SEND_DEFAULT);
     voiceConfig.silence_send_seconds = Math.min(SILENCE_SEND_MAX, Math.max(SILENCE_SEND_MIN, seconds));
   } else delete voiceConfig.silence_send_seconds;
+  const pauseSeconds = (id, fallback) => {
+    if (!$(`#${id}`).checked) return 0;
+    return Math.min(VOICE_PAUSE_MAX, Math.max(VOICE_PAUSE_MIN, cfgFloat(`${id}-seconds`, fallback)));
+  };
+  const comma = pauseSeconds('cfg-voice-comma', COMMA_PAUSE_DEFAULT);
+  const period = pauseSeconds('cfg-voice-period', PERIOD_PAUSE_DEFAULT);
+  const pauseProblem = voicePausesProblem({ comma, period, silence: voiceConfig.silence_send_seconds || 0 });
+  if (pauseProblem) throw new Error(pauseProblem);
+  if (comma) voiceConfig.comma_pause_seconds = comma; else delete voiceConfig.comma_pause_seconds;
+  if (period) voiceConfig.period_pause_seconds = period; else delete voiceConfig.period_pause_seconds;
   if (Object.keys(voiceConfig).length) dashboard.voice = voiceConfig; else delete dashboard.voice;
   delete dashboard.dictation_send_phrase;
   const terminalAttach = (dashboard.terminal_attach && typeof dashboard.terminal_attach === 'object')

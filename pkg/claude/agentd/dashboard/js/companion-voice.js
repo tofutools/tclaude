@@ -259,6 +259,65 @@ export function phrasePattern(phrase) {
   return words.join('[\\s\\p{P}]+');
 }
 
+// Languages written without spaces between words, or with marks of their own,
+// get no marks from pauses: a Latin comma would be wrong there.
+const NO_PAUSE_MARKS = new Set(['am', 'ar', 'bn', 'fa', 'hi', 'hy', 'ja', 'km', 'lo', 'mr', 'my', 'ne', 'th', 'ur', 'zh']);
+
+// pauseMarksApply reports whether pauses can punctuate this language.
+export function pauseMarksApply(lang) {
+  return !NO_PAUSE_MARKS.has(String(lang || '').toLowerCase().split(/[-_]/)[0]);
+}
+
+const spokenWords = (text) => String(text || '').split(/\s+/).filter(Boolean);
+
+// punctuateAtPauses adds the marks to text. marks maps a word's position to
+// the ',' or '.' that goes before it. A mark the recognizer already put there
+// stays alone. Capitals go through the language's own rules, and a script
+// without case is left as it is.
+export function punctuateAtPauses(text, marks, lang) {
+  const words = spokenWords(text);
+  for (const [at, mark] of marks) {
+    if (at < 1 || at >= words.length) continue;
+    if (/\p{P}$/u.test(words[at - 1]) || /^\p{P}/u.test(words[at])) continue;
+    words[at - 1] += mark;
+    if (mark !== '.') continue;
+    const [first, ...others] = words[at];
+    words[at] = first.toLocaleUpperCase(lang) + others.join('');
+  }
+  return words.join(' ');
+}
+
+// createPauseMarks turns the gaps between recognition results into marks. The
+// clock runs from the last result that added words: the result that finishes
+// a phrase arrives during the pause, and adds none. pauses() gives the
+// {comma, period} seconds, 0 for off, and is read as the words come. Results
+// can rewrite words already heard, so a mark can land a word off. The gaps go
+// to the console at debug level, to tune the settings against.
+export function createPauseMarks(lang, pauses, now) {
+  const marks = new Map();
+  let counted = 0;
+  let at = 0;
+  const usable = pauseMarksApply(lang);
+  return {
+    heard(text) {
+      const total = spokenWords(text).length;
+      const { comma = 0, period = 0 } = pauses() || {};
+      for (const position of marks.keys()) if (position > total) marks.delete(position);
+      if (total > counted) {
+        const quiet = (now() - at) / 1000;
+        if (usable && counted && (comma || period)) {
+          console.debug(`[voice] ${quiet.toFixed(2)}s pause after ${counted} words`);
+          if (period && quiet >= period) marks.set(counted, '.');
+          else if (comma && quiet >= comma) marks.set(counted, ',');
+        }
+        at = now();
+      }
+      counted = total;
+    },
+    render: (text) => (marks.size ? punctuateAtPauses(text, marks, lang) : text),
+  };
+}
+
 // Errors that say nothing against on-device speech.
 const NOT_LOCAL_FAULTS = new Set(['no-speech', 'aborted', 'not-allowed', 'service-not-allowed']);
 
@@ -283,8 +342,11 @@ export function dictationOpen() {
 // says which. If on-device fails before any words, the dictation falls back
 // and onRoute says so: it is a click and a short burst, unlike the wake
 // listener. start({strictRoute: true}), for a dictation nobody clicked, ends
-// with the error instead.
-export function createDictation(win = globalThis.window, { onText, onState, onSend, onRoute, sendPhrase = () => '', lang } = {}) {
+// with the error instead. pauses() gives the pause punctuation, see
+// createPauseMarks; the marks are in what onText and onSend carry.
+export function createDictation(win = globalThis.window, {
+  onText, onState, onSend, onRoute, sendPhrase = () => '', pauses = () => null, lang, now = () => Date.now(),
+} = {}) {
   const Ctor = speechRecognitionCtor(win);
   let recognition = null;
   let stopped = false;
@@ -326,6 +388,7 @@ export function createDictation(win = globalThis.window, { onText, onState, onSe
     r.interimResults = true;
     r.lang = lang || win?.navigator?.language || 'en-US';
     if (local) r.processLocally = true;
+    const pauseMarks = createPauseMarks(r.lang, pauses, now);
     const finals = [];
     let sent = false;
     let heard = false;
@@ -348,14 +411,18 @@ export function createDictation(win = globalThis.window, { onText, onState, onSe
           finals.push(rest);
           const text = finals.join(' ').replace(/\s+/g, ' ').trim();
           sent = true;
-          onText?.(text);
-          onSend?.(text);
+          pauseMarks.heard(text);
+          const marked = pauseMarks.render(text);
+          onText?.(marked);
+          onSend?.(marked);
           r.stop();
           return;
         }
         finals.push(phrase);
       }
-      onText?.(`${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim());
+      const text = `${finals.join(' ')} ${interim}`.replace(/\s+/g, ' ').trim();
+      pauseMarks.heard(text);
+      onText?.(pauseMarks.render(text));
     };
     r.onerror = (event) => {
       fallBack = local && !strictRoute && !heard && !stopped && !NOT_LOCAL_FAULTS.has(event?.error);

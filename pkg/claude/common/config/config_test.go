@@ -1704,6 +1704,13 @@ func TestVoice(t *testing.T) {
 	}
 	assert.False(t, *voice(VoiceConfig{MarkDictated: new(false)}).MarkDictated)
 
+	assert.Zero(t, off.CommaPauseSeconds, "pause punctuation is off by default")
+	assert.Zero(t, off.PeriodPauseSeconds)
+	pauses := voice(VoiceConfig{CommaPauseSeconds: 0.7, PeriodPauseSeconds: 99})
+	assert.Equal(t, 0.7, pauses.CommaPauseSeconds)
+	assert.Equal(t, VoicePauseSecondsMax, pauses.PeriodPauseSeconds)
+	assert.Equal(t, VoicePauseSecondsMin, voice(VoiceConfig{CommaPauseSeconds: 0.01}).CommaPauseSeconds)
+
 	wakeOn := VoicePhrase{Action: VoiceActionWake, Phrase: "hey tofu", Enabled: new(true)}
 	on := voice(VoiceConfig{WakeEnabled: true, SilenceSendSeconds: 1, Phrases: []VoicePhrase{wakeOn}})
 	assert.True(t, on.WakeEnabled)

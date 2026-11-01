@@ -1013,6 +1013,32 @@ test('Config voice phrases: each has its own switch, and hands-free stays separa
   assert.equal(el('cfg-voice-phrase-send').disabled, false);
   assert.equal(voice(), undefined);
 
+  // Pause punctuation is off until asked for, and each mark has its own switch.
+  assert.equal(el('cfg-voice-comma').checked, false);
+  assert.equal(el('cfg-voice-period').checked, false);
+  await click('cfg-voice-comma');
+  await click('cfg-voice-period');
+  assert.deepEqual(voice(), { comma_pause_seconds: 0.7, period_pause_seconds: 1.5 });
+  el('cfg-voice-comma-seconds').value = '1.5';
+  assert.throws(() => adapter.assembleConfig(), /comma pause must be shorter/);
+  el('cfg-voice-comma-seconds').value = '0.5';
+  el('cfg-voice-period-seconds').value = '4';
+  await click('cfg-voice-silence');
+  el('cfg-voice-silence-seconds').value = '3';
+  assert.throws(() => adapter.assembleConfig(), /shorter than send after silence/);
+  await click('cfg-voice-silence');
+  assert.deepEqual(voice(), { comma_pause_seconds: 0.5, period_pause_seconds: 4 });
+  await click('cfg-voice-comma');
+  await click('cfg-voice-period');
+  el('cfg-voice-comma-seconds').value = '';
+  el('cfg-voice-period-seconds').value = '';
+  el('cfg-voice-silence-seconds').value = '';
+  assert.equal(voice(), undefined);
+  adapter.populateConfigForm({ dashboard: { voice: { comma_pause_seconds: 0.9 } } });
+  assert.equal(el('cfg-voice-comma').checked, true);
+  assert.equal(el('cfg-voice-comma-seconds').value, '0.9');
+  adapter.populateConfigForm({});
+
   // Neither wake setting moves the other; a one-sided combination gets a hint.
   await click('cfg-voice-wake');
   assert.equal(el('cfg-voice-on-wake').checked, false);

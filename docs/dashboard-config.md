@@ -65,6 +65,8 @@ Spoken phrases and the opt-in hands-free settings. See
 | Send phrase | `dashboard.voice.phrases`, action `send` | on, `send now` |
 | Wake phrase | `dashboard.voice.phrases`, action `wake` | off, `hey tofu`; must differ from the send phrase while both are on |
 | Mark dictated messages | `dashboard.voice.mark_dictated` | on |
+| Comma at a pause | `dashboard.voice.comma_pause_seconds` | off; 0.7 seconds when on, 0.3 to 10 |
+| Period at a pause | `dashboard.voice.period_pause_seconds` | off; 1.5 seconds when on, 0.3 to 10 |
 | Wake phrase listener | `dashboard.voice.wake_enabled` | off; needs the wake phrase on too |
 | On-device speech | in this browser, not saved in config | not installed |
 | Send after silence | `dashboard.voice.silence_send_seconds` | off; 2 to 30 seconds |

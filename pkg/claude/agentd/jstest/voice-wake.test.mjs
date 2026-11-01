@@ -404,3 +404,103 @@ test('the indicator shows the route and pauses in one click', async (t) => {
   await harness.act(() => pill.querySelector('button').click());
   assert.deepEqual(calls, ['pause']);
 });
+
+// ---- punctuation from pauses ----
+
+async function pausedDictation(t, { pauses = { comma: 0.7, period: 1.5 }, sendPhrase = '', lang = 'en-US' } = {}) {
+  const harness = await createPreactHarness(t);
+  const voice = await harness.importDashboardModule('js/companion-voice.js');
+  const { win, last } = fakeWin(harness);
+  let time = 1000;
+  const texts = [];
+  const sent = [];
+  const dictation = voice.createDictation(win, {
+    lang, pauses: () => pauses, sendPhrase: () => sendPhrase, now: () => time,
+    onText: (text) => texts.push(text), onSend: (text) => sent.push(text), onRoute() {}, onState() {},
+  });
+  dictation.start();
+  const result = (at, transcript, isFinal) => {
+    time = 1000 + at * 1000;
+    const item = [{ transcript }];
+    item.isFinal = isFinal;
+    last().onresult({ resultIndex: 0, results: [item] });
+  };
+  return { voice, texts, sent, final: (at, words) => result(at, words, true), interim: (at, words) => result(at, words, false), text: () => texts[texts.length - 1] };
+}
+
+test('a short pause adds a comma and a long one a period and a capital', async (t) => {
+  const s = await pausedDictation(t);
+  s.final(0, 'first part');
+  s.final(1, 'second part');
+  assert.equal(s.text(), 'first part, second part');
+  s.final(3, 'third part');
+  assert.equal(s.text(), 'first part, second part. Third part');
+  s.final(3.3, 'no pause here');
+  assert.equal(s.text(), 'first part, second part. Third part no pause here');
+});
+
+test('the clock runs from the last new words, not the result that finishes a phrase', async (t) => {
+  const s = await pausedDictation(t);
+  s.interim(0, 'first part');
+  s.final(0.9, 'first part');
+  s.final(1.2, 'next');
+  assert.equal(s.text(), 'first part, next', 'the final arrived in the pause and restarted nothing');
+});
+
+test('a pause inside an unfinished phrase marks the right word', async (t) => {
+  const s = await pausedDictation(t);
+  s.interim(0, 'one two');
+  s.interim(0.2, 'one two three');
+  s.interim(1.8, 'one two three four');
+  s.final(2, 'one two three four five');
+  assert.equal(s.text(), 'one two three. Four five');
+});
+
+test('marks the recognizer added are not doubled', async (t) => {
+  const s = await pausedDictation(t);
+  s.final(0, 'is it done?');
+  s.final(2, 'yes it is.');
+  s.final(4, 'Fine');
+  assert.equal(s.text(), 'is it done? yes it is. Fine');
+});
+
+test('each mark can be off, and a mark never trails the last word', async (t) => {
+  const comma = await pausedDictation(t, { pauses: { comma: 0.7, period: 0 } });
+  comma.final(0, 'one');
+  comma.final(5, 'two');
+  assert.equal(comma.text(), 'one, two', 'with the period off a long pause is still a comma');
+  assert.ok(!/[,.]$/.test(comma.text()));
+});
+
+test('with neither mark on the text is as heard', async (t) => {
+  const s = await pausedDictation(t, { pauses: { comma: 0, period: 0 } });
+  s.final(0, 'one');
+  s.final(5, 'two');
+  assert.equal(s.text(), 'one two');
+});
+
+test('the send phrase still strips, whatever the pause before it', async (t) => {
+  const s = await pausedDictation(t, { sendPhrase: 'send now' });
+  s.final(0, 'fix the bug');
+  s.final(2, 'and the test');
+  s.final(4, 'send now');
+  assert.deepEqual(s.sent, ['fix the bug. And the test']);
+});
+
+test('languages decide: capitals follow them, and some get no marks', async (t) => {
+  const turkish = await pausedDictation(t, { lang: 'tr-TR' });
+  turkish.final(0, 'bir');
+  turkish.final(2, 'iki');
+  assert.equal(turkish.text(), 'bir. İki');
+  assert.equal(turkish.voice.pauseMarksApply('en-GB'), true);
+  assert.equal(turkish.voice.pauseMarksApply('ja-JP'), false);
+  assert.equal(turkish.voice.pauseMarksApply('zh'), false);
+  assert.equal(turkish.voice.punctuateAtPauses('한국어 문장', new Map([[1, '.']]), 'ko'), '한국어. 문장', 'a script without case stays as it is');
+});
+
+test('a language with its own marks gets none from pauses', async (t) => {
+  const s = await pausedDictation(t, { lang: 'ja-JP' });
+  s.final(0, 'こんにちは');
+  s.final(2, '世界');
+  assert.equal(s.text(), 'こんにちは 世界');
+});

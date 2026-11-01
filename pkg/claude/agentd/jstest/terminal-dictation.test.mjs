@@ -20,7 +20,7 @@ function fakeRecognition() {
 
 async function setup(t, {
   seed = { agent: 'agt_0123456789abcdef0123456789abcdef', harness: 'claude' }, collab = true, status = 'connected',
-  canType = true, secure = true, phrase, agents = [], solo = false, silence = 0, mark, fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
+  canType = true, secure = true, phrase, agents = [], solo = false, silence = 0, mark, pauses = {}, fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
 } = {}) {
   const harness = await createPreactHarness(t);
   const { h } = harness.preact;
@@ -36,7 +36,7 @@ async function setup(t, {
   let result = true;
   const widget = { paste: (text) => { pasted.push(text); return result; } };
   const actions = { widgetFor: () => widget, activatePane: (key) => activated.push(key) };
-  const snapshot = signal({ collab_enabled: collab, agents, ...(phrase === undefined && !silence && mark === undefined ? {} : { voice: { phrases: phrase === undefined ? [] : [{ action: 'send', phrase }], silence_send_seconds: silence, mark_dictated: mark } }) });
+  const snapshot = signal({ collab_enabled: collab, agents, ...(phrase === undefined && !silence && mark === undefined && !Object.keys(pauses).length ? {} : { voice: { phrases: phrase === undefined ? [] : [{ action: 'send', phrase }], silence_send_seconds: silence, mark_dictated: mark, ...pauses } }) });
   const win = harness.window;
   win.SpeechRecognition = speech.Recognition;
   win.isSecureContext = secure;
@@ -311,6 +311,24 @@ test('a one-breath wake starts the silence countdown', async (t) => {
   assert.equal(s.$('.companion-draft').value, 'fix the bug');
   await s.harness.act(() => wait(1200));
   assert.match(s.posted[0].body.body, /^\[dictated\] fix the bug/);
+});
+
+test('pauses never punctuate in a plain shell', async (t) => {
+  const s = await setup(t, { ...SHELL, pauses: { comma_pause_seconds: 0.01 } });
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('ls'));
+  await s.harness.act(() => wait(40));
+  await s.harness.act(() => s.speech.last().hear('build'));
+  assert.equal(s.$('.companion-draft').value, 'ls build');
+});
+
+test('pauses punctuate a draft for an agent', async (t) => {
+  const s = await setup(t, { pauses: { comma_pause_seconds: 0.01 } });
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('first'));
+  await s.harness.act(() => wait(40));
+  await s.harness.act(() => s.speech.last().hear('second'));
+  assert.equal(s.$('.companion-draft').value, 'first, second');
 });
 
 test('a refused paste keeps the draft', async (t) => {
