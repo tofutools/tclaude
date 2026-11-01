@@ -185,11 +185,16 @@ conversations from before a reincarnation stay in the shared store.
 Assigning any other implementation moves the conversation back, because those
 read the shared store. It works the same way and has the same limits: the
 conversation keeps its id, the copy is checked before the assignment is recorded,
-and the todo list does not move. Every conversation in the agent's private state
+and the todo list is deleted. Every conversation in the agent's private state
 moves, including any from before a reincarnation, and the private state is then
 deleted. Agents outside tclaude's sandbox can read the shared store, so these
 conversations are no longer private, and the assignment's result says so.
 Assigning tclaude's sandbox again moves only the current conversation back.
+
+If a conversation cannot move, the assignment is refused and the agent stays as
+it was. One reason is that the shared store already holds a different conversation
+under the same id. To change that agent's posture, export it and import it under
+the posture you want.
 
 The dashboard's restart without sandbox is refused while the conversation is in
 private state, because a one-off restart should not move it. Assign the

@@ -333,7 +333,7 @@ const openCodeMoveNote = "the conversation moved into private state, and its tod
 	"OpenCode's export does not carry it, so it was deleted with the shared copy"
 
 const openCodeMoveOutNote = "the agent's conversations moved to the shared OpenCode store, where agents " +
-	"outside tclaude's sandbox can read them, and their todo lists did not: OpenCode's export does not carry them"
+	"outside tclaude's sandbox can read them, and their todo lists were deleted: OpenCode's export does not carry them"
 
 // openCodePrivateStateRefusal refuses a launch off tclaude's sandbox while the
 // OpenCode conversation is in private state. Any other implementation reads the
@@ -513,10 +513,17 @@ func moveOpenCodeStateOut(
 	}
 	for _, id := range conversations {
 		inShared, err := harness.OpenCodeHoldsConversation(h.History, id, cwd)
-		if err == nil && !inShared {
+		switch {
+		case err != nil:
+		case inShared:
+			// An import would merge into what is there, and the private store
+			// is the sandboxed agent's to write. Only a true duplicate is fine.
+			var same bool
+			if same, err = harness.OpenCodeSameConversation(private.History, h.History, id, cwd); err == nil && !same {
+				err = fmt.Errorf("the shared store already holds a different conversation %s", id)
+			}
+		default:
 			copied = append(copied, id)
-		}
-		if err == nil {
 			err = harness.CopyOpenCodeConversation(private.History, h.History, id, cwd)
 		}
 		if err != nil {
@@ -525,13 +532,14 @@ func moveOpenCodeStateOut(
 		}
 	}
 	return func() {
-		// The agent reads the shared store from here on, so what this leaves
-		// behind is unused, not a broken agent.
-		if err := os.RemoveAll(allocation.StateRoot); err != nil {
-			slog.Warn("sandbox assignment: private OpenCode state left behind", "agent", agentID, "error", err)
-		}
+		// The record goes first: a directory nothing points at is only unused,
+		// and a record pointing at no directory stops the agent resuming.
 		if err := db.DeleteOpenCodeAgentStateAllocation(agentID); err != nil {
 			slog.Warn("sandbox assignment: forget private OpenCode state", "agent", agentID, "error", err)
+			return
+		}
+		if err := os.RemoveAll(allocation.StateRoot); err != nil {
+			slog.Warn("sandbox assignment: private OpenCode state left behind", "agent", agentID, "error", err)
 		}
 	}, discard, openCodeMoveOutNote, nil
 }

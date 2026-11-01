@@ -330,17 +330,30 @@ func TestSandboxImplAssign_FailedMoveOutLeavesTheAgentPrivate(t *testing.T) {
 	privateStore := filepath.Join(allocation.StateRoot, "data", "fake-store")
 	before := storedOpenCodeSessions(t, privateStore)[landed]
 	require.NotEmpty(t, before)
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(store), "import-fails"), nil, 0o600))
+	assign := func() *httptest.ResponseRecorder {
+		body, err := json.Marshal(map[string]string{"implementation": "harness-builtin"})
+		require.NoError(t, err)
+		r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
+		return testharness.Serve(f.Mux, r)
+	}
 
-	body, err := json.Marshal(map[string]string{"implementation": "harness-builtin"})
-	require.NoError(t, err)
-	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
-	failed := testharness.Serve(f.Mux, r)
-
+	failFile := filepath.Join(filepath.Dir(store), "import-fails")
+	require.NoError(t, os.WriteFile(failFile, nil, 0o600))
+	failed := assign()
 	require.Equal(t, http.StatusInternalServerError, failed.Code, failed.Body.String())
 	assert.Contains(t, failed.Body.String(), "opencode_state_move")
 	assert.Equal(t, before, storedOpenCodeSessions(t, privateStore)[landed])
 	assert.NotContains(t, storedOpenCodeSessions(t, store), landed)
+	require.NoError(t, os.Remove(failFile))
+
+	// A different conversation under the same id is not merged into.
+	seedOpenCodeSession(t, store, landed, "someone else's", testutil.CanonicalTempDir(t))
+	theirs := storedOpenCodeSessions(t, store)[landed]
+	failed = assign()
+	require.Equal(t, http.StatusInternalServerError, failed.Code, failed.Body.String())
+	assert.Contains(t, failed.Body.String(), "already holds a different conversation")
+	assert.Equal(t, theirs, storedOpenCodeSessions(t, store)[landed])
+	assert.Equal(t, before, storedOpenCodeSessions(t, privateStore)[landed])
 	assert.DirExists(t, allocation.StateRoot)
 	relaunch, err := db.AgentRelaunchProfileForConv(landed)
 	require.NoError(t, err)

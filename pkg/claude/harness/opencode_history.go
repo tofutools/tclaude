@@ -546,6 +546,37 @@ func CopyOpenCodeConversation(from, to HistoryTransfer, id, cwd string) error {
 	return nil
 }
 
+// OpenCodeSameConversation reports whether a conversation and its subagent
+// sessions read the same in two stores. Neither store changes.
+func OpenCodeSameConversation(a, b HistoryTransfer, id, cwd string) (bool, error) {
+	first, ok := a.(openCodeHistory)
+	second, ok2 := b.(openCodeHistory)
+	if !ok || !ok2 {
+		return false, errors.New("not an OpenCode history")
+	}
+	if !validOpenCodeHistoryID(id, "ses_") {
+		return false, errors.New("invalid OpenCode session identity")
+	}
+	tree, err := first.sessionTree(id, cwd)
+	if err != nil {
+		return false, err
+	}
+	for _, session := range tree {
+		exports := [2]string{}
+		for i, history := range []openCodeHistory{first, second} {
+			if exports[i], err = history.exportFile(session, cwd); err != nil {
+				return false, err
+			}
+			defer func(path string) { _ = os.Remove(path) }(exports[i])
+		}
+		same, err := sameOpenCodeExport(exports[0], exports[1])
+		if err != nil || !same {
+			return false, err
+		}
+	}
+	return len(tree) > 0, nil
+}
+
 func copyOpenCodeSession(from, to openCodeHistory, id, cwd string) error {
 	exported, err := from.exportFile(id, cwd)
 	if err != nil {
