@@ -15,7 +15,7 @@ import htm from 'htm';
 import { unauthorizedProfiles } from './process-context.js';
 import { viewToStepList } from './process-step-list.js';
 import { defaultNotify, markQuickStart } from './groups-quickstart.js';
-import { noteDraftOpened, reopenScribeDraft, scribeDraftsOf, scribeStartWarning } from './groups-scribe-draft.js';
+import { DraftStartWarning, noteDraftOpened, reopenScribeDraft, scribeDraftsOf, scribeStartWarning } from './groups-scribe-draft.js';
 import { bindSavedProcessDnd, registerSavedProcessRemover } from './groups-saved-process-dnd.js';
 import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
@@ -143,11 +143,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
     <span class="gq-strip-acts">
     <button type="submit" class="gq-btn primary" data-saved-start disabled=${!!busy || !!blockedWhy || !!draftWarning} title=${blockedWhy}>${busy === 'start' ? 'starting…' : 'Start'}</button>
     ${blockedWhy && html`<span class="gq-why" data-start-blocked>${blockedWhy}</span>`}
-    ${draftWarning && html`<span class="gq-confirm" role="alert" data-start-draft-warning>
-      This draft isn't reviewed: open it, or start anyway? <span class="gq-dim">${draftWarning.reason}</span>
-      <button type="button" class="gq-btn" data-start-draft-open disabled=${!!busy || !!editing} onClick=${edit}>open it</button>
-      <button type="button" class="gq-link" data-start-draft-anyway disabled=${!!busy} onClick=${startAnyway}>start anyway</button>
-    </span>`}
+    ${draftWarning && html`<${DraftStartWarning} warning=${draftWarning} busy=${!!busy} openDisabled=${!!editing} onOpen=${edit} onStartAnyway=${startAnyway} />`}
     <button type="button" class="gq-btn" data-saved-edit disabled=${!!busy || !!editing} onClick=${edit}
       title=${editing ? 'Save or cancel the open editor first' : 'Edit the steps; saving writes a new version'}>${busy === 'edit' ? 'opening…' : '✎ Edit steps'}</button>
     ${scribeDraft && html`<button type="button" class="gq-btn" data-saved-scribe disabled=${!!busy || !!editing}

@@ -1220,6 +1220,62 @@ for (const [name, options] of [
   });
 }
 
+// The group body's start form asks the same question.
+async function formStart(t, options = {}) {
+  const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0 } = options;
+  const api = scribeApi({ chat: () => ({ messages: [] }), stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
+  api.listTemplates = async () => [{ id: 'tmpl_1', name: 'Ship it' }];
+  let refusals = moved;
+  const startRun = api.startGroupRun;
+  api.startGroupRun = async (request) => {
+    if (refusals-- > 0) throw Object.assign(new Error('moved'), { body: { code: 'process_run_template_moved' } });
+    return startRun(request);
+  };
+  const view = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online, status: 'idle', scope: 'tmpl_1' })] });
+  await view.click(view.root.querySelector('[data-process-start]'));
+  await view.settle();
+  const form = view.root.querySelector('.gp-start-form');
+  await view.harness.act(() => view.harness.fireEvent(form, 'submit'));
+  await view.settle();
+  return { ...view, api };
+}
+
+test('the start form asks about a version the scribe saved, and starting anyway pins it', async (t) => {
+  const { root, api, click, settle } = await formStart(t);
+  assert.equal(api.calls.start.length, 0, 'nothing runs before the answer');
+  assert.match(root.querySelector('.gp-start-form [data-start-draft-warning]').textContent, /saved a version/);
+  assert.equal(root.querySelector('.gp-start-form button[type="submit"]').disabled, true);
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].expectedRef, DRAFT_REF);
+  assert.equal(root.querySelector('.gp-start-form'), null);
+});
+
+test('the start form stays one click with no scribe at work', async (t) => {
+  const { root, api } = await formStart(t, { online: false });
+  assert.equal(root.querySelector('[data-start-draft-warning]'), null);
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].expectedRef, undefined);
+});
+
+test('the start form opens the draft it asks about', async (t) => {
+  const { root, api, click, settle } = await formStart(t);
+  await click(root.querySelector('[data-start-draft-open]'));
+  await settle();
+  assert.equal(root.querySelector('.gp-start-form'), null, 'the review replaces the form');
+  assert.equal(api.calls.start.length, 0, 'opening it starts nothing');
+  assert.ok(root.querySelector('[data-mini-editor="tmpl_1"], [data-step-start]'), 'the draft is open');
+});
+
+test('the start form asks again when the version moved under the question', async (t) => {
+  const { root, api, click, settle } = await formStart(t, { moved: 1 });
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(api.calls.start.length, 0);
+  assert.ok(root.querySelector('.gp-start-form [data-start-draft-warning]'), 'the question stands');
+});
+
 test('the ▶ strip asks about a version the scribe saved, and starting anyway pins it', async (t) => {
   const { root, api, click, settle } = await stripStart(t);
   assert.equal(api.calls.start.length, 0, 'nothing runs before the answer');

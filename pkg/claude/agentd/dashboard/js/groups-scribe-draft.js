@@ -93,6 +93,15 @@ export async function scribeStartWarning(api, scribes, templateId) {
     ? { ref, reason: 'A scribe saved a version you have not opened here.' } : null;
 }
 
+// DraftStartWarning is the question Start asks while scribeStartWarning answers.
+export function DraftStartWarning({ warning, busy = false, openDisabled = false, onOpen, onStartAnyway }) {
+  return html`<span class="gq-confirm" role="alert" data-start-draft-warning>
+    This draft isn't reviewed: open it, or start anyway? <span class="gq-dim">${warning.reason}</span>
+    <button type="button" class="gq-btn" data-start-draft-open disabled=${busy || openDisabled} onClick=${onOpen}>open it</button>
+    <button type="button" class="gq-link" data-start-draft-anyway disabled=${busy} onClick=${onStartAnyway}>start anyway</button>
+  </span>`;
+}
+
 // scribeDraftsOf are the drafts in `processes` with a live scribe still on
 // them, rebuilt from the snapshot's scribes: only a scribe started by Draft
 // steps carries the draft label. What the panel knew at the start and the
