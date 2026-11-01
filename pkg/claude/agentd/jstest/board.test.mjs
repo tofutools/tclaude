@@ -1120,7 +1120,7 @@ test('the editor attaches lines at snap points, offers a next shape, and routes 
   assert.deepEqual(await saved(), [], 'no edit');
   assert.equal(svg.querySelectorAll('.board-line-end.on').length, 2, 'both ends still attached');
 
-  // Clicking a snap point offers the next shape; a click on blank takes it.
+  // Clicking a snap point offers the next shape; a click on blank asks which.
   await harness.act(() => pointer(harness, svg, 'pointerdown', 340, 480));
   await harness.act(() => pointer(harness, svg, 'pointerup', 340, 480));
   await harness.act(() => pointer(harness, svg, 'pointermove', 450 + 40, 165 + 40));
@@ -1144,16 +1144,18 @@ test('the editor attaches lines at snap points, offers a next shape, and routes 
   await harness.act(() => pointer(harness, svg, 'pointermove', 700, 500));
   await harness.act(() => pointer(harness, svg, 'pointerdown', 700, 500));
   await harness.act(() => pointer(harness, svg, 'pointerup', 700, 500));
+  await harness.act(() => wait(20));
+  await harness.act(() => harness.fireEvent(harness.window.document.querySelector('.board-quick input'), 'keydown', { key: 'Enter' }));
   const offered = await saved();
   const next = offered.find((el) => el.type === 'rectangle');
   const link = offered.find((el) => el.type === 'arrow');
-  assert.deepEqual([next.width, next.height, next.x, next.y], [100, 60, 610, 430], 'a same-sized shape, centred on the click');
+  assert.deepEqual([next.width, next.height, next.x, next.y], [100, 60, 610, 460], 'a same-sized shape, its near side at the click');
   assert.deepEqual(link.startBinding, { elementId: 'b', fixedPoint: [0.5, 1] });
   assert.deepEqual(link.endBinding, { elementId: next.id, fixedPoint: [0.5, 0] }, 'at the snap point facing where it came from');
 
   // Deleting a shape frees the lines on it, in one step with the deletion.
-  await harness.act(() => pointer(harness, svg, 'pointerdown', 660, 470));
-  await harness.act(() => pointer(harness, svg, 'pointerup', 660, 470));
+  await harness.act(() => pointer(harness, svg, 'pointerdown', 660, 530));
+  await harness.act(() => pointer(harness, svg, 'pointerup', 660, 530));
   await harness.act(() => harness.fireEvent(harness.window.document.body, 'keydown', { key: 'Delete' }));
   const deleted = await saved();
   assert.deepEqual(deleted.filter((el) => el.isDeleted).map((el) => el.id), [next.id]);

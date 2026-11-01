@@ -110,7 +110,7 @@ the middle of each side, under the pointer.
   needs no toolbar: `→` `Enter` `Enter`, type, `Enter`, `→` and so on.
 - **Click a connection point** for a suggestion: a faint arrow to a copy of the
   shape. It follows the pointer. Click a shape to connect to it, click blank
-  board to add the copy there, or press Escape.
+  board for the same quick menu as a drop, or press Escape.
 - **The arrow and line tools** attach either end the same way. The line tool
   leaves a free end on blank board and asks nothing.
 - **Select a line** to see its ends, which are filled when attached. Drag an end
