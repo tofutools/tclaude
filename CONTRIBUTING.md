@@ -149,6 +149,15 @@ conversions should keep total suite time flat or make it faster.
 
 ## Dashboard frontend
 
+### Docs drift
+
+`.claude/skills/docs-drift` compares what `docs/` says with what the dashboard
+shows and files what differs as tickets for review. `scripts/docs/drift.sh` records
+each page in `scripts/docs/tour.json` from a seeded throwaway server, and
+`scripts/docs/drift-file.sh` files each finding once. Neither touches the docs, the
+UI or a running daemon. To run it on a schedule, opt in with the `cron` command in
+the skill.
+
 ### Documentation screenshots
 
 Every dashboard image in `docs/assets/` comes from one command:
