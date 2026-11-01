@@ -26,6 +26,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { PROCESS_SCRIBE_PROMPT_MAX, processScribeChatLive, processScribeChatTranscript } from './process-scribe.js';
 import { dashPrefs } from './prefs.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 
@@ -324,7 +325,7 @@ export function ScribeDock({ controller, view }) {
 
     ${live && dock.mode === 'chat' && html`<${ChatLog} messages=${chat.messages} live=${chat.live} loaded=${chat.loaded} error=${chat.error} pendingSend=${sending} />`}
     ${live && dock.mode === 'terminal' && html`<div class="psd-terminal">
-      <p>${companionAvailable() ? 'The scribe\'s terminal opens in the floating companion window over the editor (Ctrl+. toggles it).' : 'The scribe\'s terminal opens in the Terminals tab.'} Messages and context actions sent from here arrive there too.</p>
+      <p>${companionAvailable() ? 'The scribe\'s terminal opens in the floating companion window over the editor (Ctrl+. toggles it).' : dashboardState.snapshot.value?.default_terminal === 'web' ? 'The scribe\'s terminal opens in the Terminals tab.' : 'The scribe\'s terminal opens in its own window, or in the Terminals tab if no window can be opened.'} Messages and context actions sent from here arrive there too.</p>
       <button type="button" class="process-action" data-scribe-open-terminal onClick=${() => api.openTerminal?.(scribe)}>Open terminal</button>
     </div>`}
 
