@@ -370,7 +370,7 @@ func stewardPreview(cfg *config.Config, res *agent.Resolved) (*stewardHandoverPr
 	}
 	out := &stewardHandoverPreview{
 		AgentID: agentID, Name: agent.FreshTitle(conv), Online: pickAliveSession(conv) != nil,
-		Refused: stewardRefusal(conv, agentID, h), AlreadyActive: seat == agentID,
+		Refused: stewardRefusal(conv, agentID, h), AlreadyActive: seat == agentID && slices.Contains(stewardConvs(), conv),
 		Gains: append([]string{}, plan.Gains...), Denied: plan.Denied, Withheld: plan.Withheld,
 		Notes: stewardHarnessNotes(h), Extra: stewardElevationOf(cfg, state, conv),
 	}
@@ -503,10 +503,16 @@ func seatSteward(cfg *config.Config, res *agent.Resolved, then, by string) (*ste
 		return nil, "", fail
 	}
 	previous := activeStewardConv()
+	wasSteward := slices.Contains(stewardConvs(), conv)
 	if err := grantStewardRole(cfg, g, conv, agentID); err != nil {
 		return nil, "", &spawnFailure{http.StatusInternalServerError, "io", "give the Steward role: " + err.Error()}
 	}
 	if err := db.SetActiveSteward(agentID, by); err != nil {
+		if !wasSteward {
+			if _, undo := demoteSteward(g, conv, agentID); undo != nil {
+				slog.Warn("steward: undo the role failed", "conv", short8(conv), "error", undo)
+			}
+		}
 		return nil, "", &spawnFailure{http.StatusInternalServerError, "io", "take the seat: " + err.Error()}
 	}
 	name := agent.FreshTitle(conv)

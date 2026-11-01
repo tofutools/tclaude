@@ -197,7 +197,7 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 		if unknown := unknownStewardSlugs(cfg); len(unknown) > 0 {
 			slog.Warn("steward.default_permissions: skipping unknown permission slugs", "slugs", unknown)
 		}
-		body.Brief = stewardBrief(cmp.Or(strings.TrimSpace(body.Brief), stewardBaseBrief), cfg)
+		body.Brief = stewardBrief(strings.TrimSpace(stewardBaseBrief+"\n"+body.Brief), cfg)
 		titleBase = cfg.StewardName()
 	}
 
