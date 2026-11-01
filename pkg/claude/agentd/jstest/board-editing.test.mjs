@@ -299,6 +299,43 @@ test('clicking elsewhere cancels quick connect and the click still counts', asyn
   assert.deepEqual(await saved(), []);
 });
 
+test('clicking a connection point out to blank board asks what goes there', async (t) => {
+  const { harness, root, svg, fire, click, saved, key } = await setup(t, twoShapes);
+  const menu = () => root.querySelector('.board-quick');
+  const offerFrom = async () => { await fire('pointermove', 200, 130); await click(200, 130); await fire('pointermove', 300, 300); };
+
+  // The press makes nothing, and the release opens the menu with the keys.
+  await offerFrom();
+  await fire('pointerdown', 300, 300);
+  assert.equal(menu(), null, 'not until the release');
+  assert.deepEqual(await saved(), []);
+  await fire('pointerup', 300, 300);
+  assert.ok(menu(), 'the menu opens');
+  assert.equal(harness.window.document.activeElement, menu().querySelector('input'));
+  assert.deepEqual(await saved(), [], 'it does not repeat the shape');
+
+  await key('Escape', menu().querySelector('input'));
+  assert.equal(menu(), null);
+  assert.equal(svg.querySelector('.board-suggestion'), null);
+  assert.deepEqual(await saved(), []);
+
+  // Escape with the button down leaves nothing for the release to do.
+  await offerFrom();
+  await fire('pointerdown', 300, 300);
+  await key('Escape');
+  await fire('pointerup', 300, 300);
+  assert.equal(menu(), null);
+  assert.equal(svg.querySelector('.board-suggestion'), null);
+  assert.deepEqual(await saved(), []);
+
+  // Picking from it adds the shape and the line together.
+  await offerFrom();
+  await click(300, 300);
+  await key('2', menu().querySelector('input'));
+  const made = await saved();
+  assert.deepEqual(made.map((el) => el.type).sort(), ['arrow', 'ellipse']);
+});
+
 test('a connector dropped on blank board with the border key stays a free line', async (t) => {
   const { root, drag, saved } = await setup(t, twoShapes);
   await drag([200, 130], [300, 300], { ctrlKey: true });

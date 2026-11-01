@@ -892,7 +892,11 @@ export function BoardEditor({
     if (suggesting.current) {
       const { clicked } = suggesting.current;
       const again = clicked && event.timeStamp - clicked.at < DOUBLE_CLICK_MS && Math.hypot(p.x - clicked.x, p.y - clicked.y) * view.zoom < SNAP_RADIUS_PX;
-      if (again) { suggesting.current = null; redraw(); } else acceptSuggestion(p);
+      if (again) { suggesting.current = null; redraw(); }
+      // On blank board the release asks what goes there: a menu opened now would
+      // lose its focus to this press.
+      else if (shapeAt(p)) acceptSuggestion(p);
+      else gesture.current = { kind: 'offer' };
       return;
     }
     const snapTol = SNAP_RADIUS_PX / view.zoom;
@@ -1066,6 +1070,11 @@ export function BoardEditor({
     if (shape) setHoverShape(shape.id);
   }
 
+  // shapeAt is where the end of an offered connector would attach.
+  function shapeAt(p) {
+    return bindingAt(liveElements(elements.current), p.x, p.y, SNAP_MARGIN_PX / view.zoom, suggesting.current.from);
+  }
+
   // openQuickMenu asks what shape to make at the end of a connector.
   function openQuickMenu(from, fixedPoint, at, dir) {
     suggesting.current = { from: from.id, fixedPoint, at, dir, menu: true, kind: lastKind.current || from.type };
@@ -1160,6 +1169,15 @@ export function BoardEditor({
     active.current = new Set();
     if (!g) return;
     if (g.target) setHoverShape('');
+    if (g.kind === 'offer') {
+      // Escape can take the offer back while the button is down.
+      const offer = suggesting.current;
+      const from = offer && elements.current.get(offer.from);
+      const p = toBoard(event);
+      if (from && shapeAt(p)) acceptSuggestion(p);
+      else if (from) openQuickMenu(from, offer.fixedPoint, p, dropDirection(from, offer.fixedPoint, p));
+      return;
+    }
     if (g.kind === 'band') {
       const box = normalizeBox(g.start.x, g.start.y, g.now.x, g.now.y);
       const inside = box.width > 2 || box.height > 2 ? elementsInBox(liveElements(elements.current), box).map((el) => el.id) : [];
