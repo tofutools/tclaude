@@ -51,7 +51,7 @@ func TestDashboardTerminalStatus_ReturnsCompactLiveAgentProjection(t *testing.T)
 
 	var fields map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &fields))
-	assert.ElementsMatch(t, []string{"agent_id", "conv_id", "online", "state"}, mapKeys(fields),
+	assert.ElementsMatch(t, []string{"agent_id", "conv_id", "online", "state", "collab_enabled", "dictation_send_phrase"}, mapKeys(fields),
 		"standalone status must not inherit full snapshot fields")
 }
 

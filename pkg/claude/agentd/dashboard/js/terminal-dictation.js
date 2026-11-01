@@ -23,8 +23,8 @@ const html = htm.bind(h);
 // itself; a peer's agent is not in this node's roster, so its pane decides.
 export function paneTalksToAgent(pane, target, snapshot) {
   if (!target || snapshot?.collab_enabled !== true) return false;
-  const row = (snapshot.agents || []).find((agent) => agent.agent_id === target.agent);
-  const harness = pane.seed.harness || row?.harness || '';
+  const row = (snapshot.agents || []).find((agent) => agent.agent_id === target.agent || agent.conv_id === target.agent);
+  const harness = pane.seed.harness || row?.state?.harness || '';
   if (harness === 'shell') return false;
   return !!(harness || pane.seed.remote);
 }

@@ -20,7 +20,7 @@ function fakeRecognition() {
 
 async function setup(t, {
   seed = { agent: 'agt_0123456789abcdef0123456789abcdef', harness: 'claude' }, collab = true, status = 'connected',
-  canType = true, secure = true, phrase, fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
+  canType = true, secure = true, phrase, agents = [], fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
 } = {}) {
   const harness = await createPreactHarness(t);
   const { h } = harness.preact;
@@ -36,7 +36,7 @@ async function setup(t, {
   let result = true;
   const widget = { paste: (text) => { pasted.push(text); return result; } };
   const actions = { widgetFor: () => widget, activatePane: (key) => activated.push(key) };
-  const snapshot = signal({ collab_enabled: collab, ...(phrase === undefined ? {} : { dictation_send_phrase: phrase }) });
+  const snapshot = signal({ collab_enabled: collab, agents, ...(phrase === undefined ? {} : { dictation_send_phrase: phrase }) });
   const win = harness.window;
   win.SpeechRecognition = speech.Recognition;
   win.isSecureContext = secure;
@@ -60,6 +60,10 @@ async function setup(t, {
 }
 
 const SHELL = { seed: {} };
+const paneTalks = async (s, seed, agents) => {
+  const { paneTalksToAgent } = await s.harness.importDashboardModule('js/terminal-dictation.js');
+  return paneTalksToAgent({ seed }, { agent: seed.agent }, { collab_enabled: true, agents });
+};
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 test('a plain shell pastes one line, no newline, and only on an explicit send', async (t) => {
@@ -85,6 +89,14 @@ test('a shell session with an agent id is a plain shell', async (t) => {
   await s.harness.act(() => s.speech.last().hear('whoami send now'));
   assert.deepEqual(s.posted, []);
   assert.deepEqual(s.pasted, []);
+});
+
+test('a pane opened without a harness takes it from the roster', async (t) => {
+  const agent = 'agt_0123456789abcdef0123456789abcdef';
+  const s = await setup(t, { seed: { agent }, agents: [{ agent_id: agent, state: { harness: 'shell' } }] });
+  assert.ok(!s.$('.companion-context'));
+  assert.equal(await paneTalks(s, { agent }, [{ agent_id: agent, state: { harness: 'codex' } }]), true);
+  assert.equal(await paneTalks(s, { agent }, []), false, 'unknown stays a terminal');
 });
 
 test('with Collab off an agent terminal pastes and never mails', async (t) => {

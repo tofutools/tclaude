@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -32,6 +33,10 @@ type dashboardTerminalAgentStatus struct {
 	// Steward marks a live Steward, whose detached window offers shutting it down.
 	Steward bool                         `json:"steward,omitempty"`
 	State   dashboardTerminalStatusState `json:"state"`
+	// CollabEnabled and DictationSendPhrase carry what a detached window has no
+	// snapshot for: whether its mic can talk to the agent, and with which phrase.
+	CollabEnabled       bool   `json:"collab_enabled"`
+	DictationSendPhrase string `json:"dictation_send_phrase"`
 }
 
 // terminalStatusForSessions is the status-only counterpart of
@@ -134,6 +139,7 @@ func writeDashboardTerminalAgentStatus(w http.ResponseWriter, selector string) {
 		return
 	}
 	state, online := terminalStatusForSessions(rows, alive)
+	cfg, _ := config.LoadShared()
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, dashboardTerminalAgentStatus{
 		AgentID: resolved.AgentID,
@@ -142,5 +148,8 @@ func writeDashboardTerminalAgentStatus(w http.ResponseWriter, selector string) {
 		Waking:  isConvWaking(resolved.ConvID),
 		Steward: isLiveSteward(resolved.ConvID),
 		State:   state,
+
+		CollabEnabled:       cfg.CollabEnabled(),
+		DictationSendPhrase: cfg.DictationSendPhrase(),
 	})
 }

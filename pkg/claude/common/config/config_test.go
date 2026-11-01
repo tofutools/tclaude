@@ -1667,3 +1667,18 @@ func TestOverlayBackdrop(t *testing.T) {
 		assert.Equal(t, tc.want, c.OverlayBackdrop(), tc.in)
 	}
 }
+
+// TestDictationSendPhrase covers the default, the explicit off and the
+// cleanup of a hand-edited phrase.
+func TestDictationSendPhrase(t *testing.T) {
+	var nilConfig *Config
+	assert.Equal(t, DictationSendPhraseDefault, nilConfig.DictationSendPhrase())
+	assert.Equal(t, DictationSendPhraseDefault, (&Config{Dashboard: &DashboardConfig{}}).DictationSendPhrase())
+	phrase := func(value string) string {
+		return (&Config{Dashboard: &DashboardConfig{DictationSendPhrase: &value}}).DictationSendPhrase()
+	}
+	assert.Equal(t, "", phrase(""))
+	assert.Equal(t, "", phrase("   "))
+	assert.Equal(t, "skicka nu", phrase("  skicka \t nu "))
+	assert.Len(t, []rune(phrase(strings.Repeat("å", 100))), DictationSendPhraseMaxRunes)
+}
