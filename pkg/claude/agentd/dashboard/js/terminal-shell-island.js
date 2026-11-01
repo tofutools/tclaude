@@ -31,6 +31,8 @@ import { openInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
 import { boardOverlays, openBoardPane, openLinkedBoard } from './board-overlay-state.js';
+import { terminalOverlays } from './terminal-window.js';
+import { overlayablePane } from './terminal-window-model.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
 import { isPageNode, nodeFetch } from './node-api.js';
@@ -391,6 +393,7 @@ function TerminalPane({
         ${solo ? html`
           <button type="button" class="mux-btn" title="Move this terminal back to its dashboard tab" onClick=${() => void actions.reattachPane(pane.key)}>↩ dashboard</button>
         ` : html`
+          ${processSnapshot?.value?.collab_enabled === true && overlayablePane(pane) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>` : null}
           <button type="button" class="mux-btn" title="Move this terminal to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>
         `}
       </div>
@@ -809,6 +812,7 @@ function PaneTab({
       key: pane.key,
       board,
       boardId: pane.seed.board,
+      floats: board || (snapshot?.value?.collab_enabled === true && overlayablePane(pane)),
       groupId,
       label: pane.label,
       trigger: event.currentTarget,
@@ -1171,7 +1175,7 @@ function PaneContextMenu({
       .map((group) => item(`Add to “${group.name}”`, () => actions.assignPaneToGroup(menu.key, group.id))),
     ...(menu.groupId ? [item('Remove from group', () => actions.assignPaneToGroup(menu.key, null))] : []),
     separator,
-    ...(menu.board ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
+    ...(menu.floats ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
     item('Detach tab', () => actions.popOutPane(menu.key)),
     separator,
     ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'mux-tab-menu-item danger', refocus: false })] : []),
@@ -1738,8 +1742,8 @@ function TerminalTabs({
     hadPanesRef.current = hasPanes;
     if (solo || !had || hasPanes) return undefined;
     const timer = setTimeout(() => {
-      // A board that moved to the overlay leaves the operator working here.
-      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: boardOverlays.peek().length > 0 });
+      // A board or a shell that moved to the overlay leaves the operator working here.
+      if (!state.panes.value.length) leaveTerminalsAfterLastClose({ stayHere: boardOverlays.peek().length + terminalOverlays.peek().length > 0 });
     }, 0);
     return () => clearTimeout(timer);
   }, [hasPanes, solo]);

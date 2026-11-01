@@ -23,6 +23,13 @@ export function registerTerminalShellController(next, runtimeLoader = null) {
   };
 }
 
+// The overlay windows answer for a terminal floating in one, which this facade
+// leaves to them to stay free of Preact.
+let floatingTerminals = () => false;
+export function setFloatingTerminals(lookup) {
+  floatingTerminals = lookup;
+}
+
 export function openTerminalPane(seedOrPromise, { reveal = true, activate = true } = {}) {
   // activate rides along only when a caller opts out, so every ordinary open
   // keeps the plain { reveal } contract.
@@ -31,6 +38,7 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     const normalized = normalizeSeed(rawSeed);
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
+    if (floatingTerminals(seed.key)) return { floating: true };
     const current = controller;
     if (!current) return null;
     // A board pane has no xterm to load.

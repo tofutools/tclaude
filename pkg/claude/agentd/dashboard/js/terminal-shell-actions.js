@@ -4,6 +4,8 @@ import { shellToast } from './shell-state.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
 import { openBoardOverlay } from './board-overlay-state.js';
+import { openOverlayWindow } from './overlay-instances.js';
+import { overlayablePane, terminalWindowOf } from './terminal-window-model.js';
 
 export function createTerminalShellActions({
   state,
@@ -233,13 +235,20 @@ export function createTerminalShellActions({
     return true;
   }
 
-  // openPaneInOverlay moves a board from its tab into the floating overlay. The
-  // tab's editor saves what it holds as it goes.
+  // openPaneInOverlay moves a board or a shell from its tab into a floating
+  // window. A board's editor saves what it holds as it goes, and a shell's tmux
+  // session outlives the tab's view of it.
   async function openPaneInOverlay(key) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
-    if (disposed || !pane?.seed.board) return false;
-    await closePane(key);
-    openBoardOverlay(pane.seed.board, pane.label);
+    if (disposed || !pane) return false;
+    if (pane.seed.board) {
+      await closePane(key);
+      openBoardOverlay(pane.seed.board, pane.label);
+      return true;
+    }
+    if (!overlayablePane(pane)) return false;
+    await closePane(key, { skipDetach: true });
+    openOverlayWindow(terminalWindowOf(pane));
     return true;
   }
 

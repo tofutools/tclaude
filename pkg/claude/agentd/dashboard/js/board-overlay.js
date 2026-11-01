@@ -19,6 +19,7 @@ import { isBoardId } from './board-model.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { closeOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
+import { TERMINAL_WINDOW_KIND, validTerminalWindow } from './terminal-window-model.js';
 import { OverlayWindow, overlayStackReset, readPref, useOverlayWindow } from './overlay-window.js';
 
 const html = htm.bind(h);
@@ -27,6 +28,7 @@ const html = htm.bind(h);
 // a board not yet moved starts from.
 export const BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.board-overlay.placement';
 const CASCADE_PX = 28;
+const WINDOW_GLYPHS = { [BOARD_WINDOW_KIND]: '✎', [TERMINAL_WINDOW_KIND]: '⌨' };
 const DEFAULT_W = 760;
 const DEFAULT_H = 540;
 
@@ -84,7 +86,7 @@ function OverlayDock({ snapshot }) {
   };
   return html`<div class="overlay-dock" role="group" aria-label="Minimized windows">
     ${minimized.map((window) => html`<button type="button" key=${window.id} class=${`overlay-dock-item${needs(window) ? ' needs' : ''}`}
-      title=${`Bring back ${window.label}`} onClick=${() => minimizeOverlayWindow(window.id, false)}>${window.kind === BOARD_WINDOW_KIND ? '✎' : '▣'} ${window.label}</button>`)}
+      title=${`Bring back ${window.label}`} onClick=${() => minimizeOverlayWindow(window.id, false)}>${WINDOW_GLYPHS[window.kind] || '▣'} ${window.label}</button>`)}
   </div>`;
 }
 
@@ -99,6 +101,7 @@ export function BoardOverlay({ snapshot, ...props }) {
 
 function validWindow(window) {
   if (window.kind === BOARD_WINDOW_KIND) return isBoardId(window.board);
+  if (window.kind === TERMINAL_WINDOW_KIND) return validTerminalWindow(window);
   return window.kind === CHAT_WINDOW_KIND && isAgentId(window.agent);
 }
 

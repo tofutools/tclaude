@@ -31,12 +31,16 @@ pending permission request, a **🔑** opens the
   with it, so a reload starts without them.
 - **Right-click a tab** (or Shift+F10) for `New group from this tab`, `Add to
   "<group>"`, `Remove from group`, `Detach tab`, `Close tab`, `Close other tabs`
-  and `Close all tabs`. Boards add `Open in overlay`.
+  and `Close all tabs`. Boards, directory shells and group shells add `Open in overlay`.
 - **Right-click a group** for `Expand group` or `Collapse group`, `Rename group…`,
   `Ungroup tabs` and `Close tabs in group`. Double-click or press F2 to rename.
 - **Detach** a tab by dragging it off the strip, which opens its own browser
   window, or with **⧉ tab** or `Detach tab`, which open it in a new browser tab.
   **↩ dashboard**, or dragging the pop-out's header back, reattaches it.
+- **Float** a directory or group shell with **Open in overlay** (needs Collab). It
+  moves, snaps and splits like a board's window, on the same tmux session, and
+  **Back to a tab** returns it. Closing the window leaves the shell running. A peer's
+  terminal stays a tab, and an agent's own terminal floats from the companion.
 - **`$`** after the last tab shows or hides costs next to agent names. It works
   separately from the one in Groups. Green is API spend, and muted italic `≈$…` is
   a subscription what-if estimate. A tab's tooltip always has its cost.
