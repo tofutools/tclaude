@@ -48,6 +48,22 @@ func TestReceiverSandboxProfile_OpenCodeKeepsATighterModeFromARelaunchProfile(t 
 	assert.Empty(t, got.SandboxImplementation)
 }
 
+// Only a posture that changes is a drop worth saying. A harness with no OS
+// sandbox never keeps its posture, so an equal one must not read as wider.
+func TestDroppedSandbox(t *testing.T) {
+	setupTestDB(t)
+	pi, err := harness.Resolve(harness.PiName)
+	require.NoError(t, err)
+	landing, fail, err := resolveLaunchDefaults("", "", pi.Name)
+	require.NoError(t, err)
+	require.Nil(t, fail)
+	same := spawnProfileJSON{Sandbox: landing.sandbox, SandboxImplementation: string(landing.implementation)}
+	assert.Empty(t, droppedSandbox(same, spawnProfileJSON{}, pi, "", ""))
+
+	wider := spawnProfileJSON{SandboxImplementation: "off"}
+	assert.Len(t, droppedSandbox(wider, spawnProfileJSON{}, pi, "", ""), 1)
+}
+
 // A file may tighten approval, tools and auto-review, never widen them, against
 // what a spawn into the landing would resolve. A wider value is reported.
 func TestReceiverApprovalProfile(t *testing.T) {

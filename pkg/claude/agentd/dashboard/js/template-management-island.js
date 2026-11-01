@@ -929,7 +929,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
               setPhase('error');
               // An agent PAF the group importer refused: the agent error
               // (say, a harness that is not available here) says more.
-              setError(message(/group PAF/.test(message(err)) ? agentErr : err));
+              setError(message(/group PAF|not a group-export archive/.test(message(err)) ? agentErr : err));
             }
             return;
           }

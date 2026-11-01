@@ -657,7 +657,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		// accepting the offer, and dropping its posture could stall the agent on
 		// prompts nobody answers. Everything else is a file.
 		if !movedHere {
-			landingWarnings = append(landingWarnings, droppedSandbox(recordedSandbox, profile)...)
+			landingWarnings = append(landingWarnings, droppedSandbox(recordedSandbox, profile, h, q.Get("group"), landingProfile)...)
 			var dropped []string
 			profile, dropped = receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
 			landingWarnings = append(landingWarnings, dropped...)
@@ -1141,16 +1141,34 @@ func filePostureDropped(field, value, kept string) string {
 }
 
 // droppedSandbox warns of the sandbox posture receiverSandboxProfile took out of
-// recorded to leave kept.
-func droppedSandbox(recorded, kept spawnProfileJSON) []string {
+// recorded to leave kept. A file that asks for what the landing resolves to loses
+// nothing: a harness with no OS sandbox never keeps its posture, even an equal one.
+func droppedSandbox(recorded, kept spawnProfileJSON, h *harness.Harness, group, profile string) []string {
 	if kept.Sandbox != "" || kept.SandboxImplementation != "" {
 		return nil
 	}
 	value := cmp.Or(recorded.Sandbox, recorded.SandboxImplementation)
-	if value == "" {
+	if value == "" || sandboxMatchesLanding(recorded, h, group, profile) {
 		return nil
 	}
 	return []string{filePostureDropped("sandbox", value, "this node's sandbox")}
+}
+
+func sandboxMatchesLanding(recorded spawnProfileJSON, h *harness.Harness, group, profile string) bool {
+	landing, fail, err := resolveLaunchDefaults(group, profile, h.Name)
+	if fail != nil || err != nil {
+		return false
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(recorded.SandboxImplementation)
+	if err != nil || (recorded.SandboxImplementation != "" && implementation != landing.implementation) {
+		return false
+	}
+	landingMode, fail := resolveLaunchHarnessBuiltinMode(h, landing.sandbox, string(landing.implementation))
+	if fail != nil {
+		return false
+	}
+	recordedMode, fail := resolveLaunchHarnessBuiltinMode(h, recorded.Sandbox, string(landing.implementation))
+	return fail == nil && recordedMode == landingMode
 }
 
 // receiverLaunchFieldsProfile takes out of a file's profile the launch fields
