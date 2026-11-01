@@ -5,7 +5,7 @@ import { detachWindowFeatures } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
 import { openBoardOverlay } from './board-overlay-state.js';
 import { openOverlayWindow } from './overlay-instances.js';
-import { overlayablePane, terminalWindowOf } from './terminal-window-model.js';
+import { agentSessionSeed, overlayablePane, terminalWindowOf } from './terminal-window-model.js';
 import { companionAvailable, floatInCompanion } from './companion-facade.js';
 
 export function createTerminalShellActions({
@@ -198,6 +198,11 @@ export function createTerminalShellActions({
     return key ? state.activatePane(key, options) : false;
   }
 
+  function hasAgentPane(selectors) {
+    const wanted = new Set(selectors || []);
+    return state.panes.value.some((pane) => wanted.has(pane.seed.agent) && agentSessionSeed(pane.seed));
+  }
+
   // `detachTo` decides tab vs. window. Browsers open a tab when a window is
   // asked for with no features and a separate window when any are given, so the
   // drag gesture passes the pane size and release point it measured and gets a
@@ -320,6 +325,7 @@ export function createTerminalShellActions({
     focusForSelectors,
     popOutPane,
     openPaneInOverlay,
+    hasAgentPane,
     floatingAgent,
     reattachPane,
     setArcanePaletteEnabled,

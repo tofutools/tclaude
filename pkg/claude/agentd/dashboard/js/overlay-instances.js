@@ -29,6 +29,12 @@ export function openOverlayWindow(instance) {
   raiseOverlayWindow(instance.id);
 }
 
+// focusOverlayWindow asks a shown window to take the keyboard.
+export function focusOverlayWindow(id) {
+  const window = overlayWindows.peek().find((candidate) => candidate.id === id);
+  if (window) patchWindow(id, { focusAsked: (window.focusAsked || 0) + 1 });
+}
+
 export function closeOverlayWindow(id) {
   overlayWindows.value = overlayWindows.peek().filter((window) => window.id !== id);
   forgetOverlayWindow(id);

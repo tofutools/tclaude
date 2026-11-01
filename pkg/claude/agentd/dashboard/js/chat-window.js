@@ -48,6 +48,7 @@ export function ChatWindow({
   const [generation, setGeneration] = useState(0);
   const widgetRef = useRef(null);
   const [font, onFontChange] = useTerminalFont('companion', agentId, prefs);
+  useEffect(() => { if (instance.focusAsked) setFocusToken((n) => n + 1); }, [instance.focusAsked]);
   useEffect(() => {
     if (open) closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
   }, [open, agentId]);

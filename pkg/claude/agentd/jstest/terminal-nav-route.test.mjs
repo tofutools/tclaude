@@ -168,6 +168,22 @@ test('a dead deep link with other terminals open corrects to the live one', asyn
   assert.equal(left(), 0, 'the tab still has something to show');
 });
 
+test('a link to an agent held in a window corrects, so Back cannot bounce off it', async (t) => {
+  const { state, restore, announced, settle } = await setup(t, {
+    snapshot: rosterOf(AGENT, OTHER),
+    openAgentPane: async () => ({ key: `window:${AGENT}`, floating: true }),
+  });
+  state.openPane(seedFor(OTHER));
+  await settle();
+  announced.length = 0;
+
+  await restore({ tab: 'terminals', selection: AGENT });
+
+  assert.equal(announced.length, 1);
+  assert.equal(announced[0].correction, true, 'a push here would cut the forward history');
+  assert.equal(announced[0].location.selection, OTHER);
+});
+
 test('a dead cold deep link corrects the URL to the bare Terminals tab and stays', async (t) => {
   // A correction (not a push) so Back never bounces off the dead link.
   const { restore, announced, left, state } = await setup(t, { snapshot: rosterOf(OTHER) });

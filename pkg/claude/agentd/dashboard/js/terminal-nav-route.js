@@ -150,7 +150,8 @@ export function bindTerminalNavRouting({
       agentLabel(snapshot?.value, agent),
       agentHarness(snapshot?.value, agent),
     );
-    return !!opened;
+    // One held in a window has no pane to name: the router corrects the URL.
+    return !!opened && !opened.floating;
   }
 
   const onRestore = (event) => {
