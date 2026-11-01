@@ -125,18 +125,42 @@ func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relate
 			}
 			return
 		}
-		outcome := escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason)
-		if outcome == softExitClosed || outcome == softExitEscalated {
-			reconcileReason := fallbackExitReason
-			if outcome == softExitEscalated {
-				reconcileReason = daemonEscalatedKillReason
-			}
-			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, reconcileReason); err != nil {
-				slog.Warn("soft-exit: recording verified pane exit after escalation check failed",
-					"session", target.sessionID, "conv", short8(target.convID), "error", err)
-			}
-		}
+		escalateAndRecord(target, lifecycleAction, relatedEventID, reason, fallbackExitReason)
 	})
+}
+
+// scheduleForceStopEscalation is the ladder after a force stop's kill. A kill
+// that failed, or that tmux accepted without letting go of the pane, has only
+// the signals left, so there is no delivered exit to wait out first. A pane
+// that went stays the reaper's to record: it can still see a surviving PID, and
+// it raises the operator's offline notification.
+func scheduleForceStopEscalation(target *lifecycleTarget, lifecycleAction, relatedEventID string) {
+	if target == nil {
+		return
+	}
+	goBackground(func() {
+		defer target.markSoftExitSettled()
+		if waitForLifecycleTargetGone(target, softExitEscalationSignalGrace) {
+			return
+		}
+		escalateAndRecord(target, lifecycleAction, relatedEventID, "force-stop", daemonEscalatedKillReason)
+	})
+}
+
+// escalateAndRecord runs the ladder and records an exit it verified.
+func escalateAndRecord(target *lifecycleTarget, lifecycleAction, relatedEventID, reason, fallbackExitReason string) {
+	outcome := escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason)
+	if outcome != softExitClosed && outcome != softExitEscalated {
+		return
+	}
+	reconcileReason := fallbackExitReason
+	if outcome == softExitEscalated {
+		reconcileReason = daemonEscalatedKillReason
+	}
+	if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, reconcileReason); err != nil {
+		slog.Warn("soft-exit: recording verified pane exit after escalation check failed",
+			"session", target.sessionID, "conv", short8(target.convID), "error", err)
+	}
 }
 
 // awaitLifecycleTargetExit is scheduleSoftExitEscalation run INLINE: it gives
@@ -158,7 +182,7 @@ func awaitLifecycleTargetExit(target *lifecycleTarget, deadline time.Duration, l
 	if target == nil {
 		return softExitClosed
 	}
-	if waitForLifecycleTargetGone(target, deadline) {
+	if waitForLifecycleTargetGone(target, softExitEscalationDeadline) {
 		return softExitClosed
 	}
 	return escalateStuckSoftExitUnderLaunchLock(target, lifecycleAction, relatedEventID, reason)

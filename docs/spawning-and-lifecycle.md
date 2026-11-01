@@ -463,8 +463,8 @@ predecessor's launch directory to still exist.
 `stop <selector>` soft-exits the target's session, escalating after about
 ten seconds through pane kill, SIGTERM, and finally SIGKILL of the frozen
 pane's process group, re-checking identity at each step. Idempotent;
-`--force` skips the soft phase and kills the pane at once, with no SIGTERM or
-SIGKILL after it.
+`--force` skips the soft phase and kills the pane at once, and the same SIGTERM
+and SIGKILL follow in the background if the pane does not go.
 
 `resume <selector>` relaunches an offline agent into its recorded working
 directory. If that directory has vanished, resume fails with

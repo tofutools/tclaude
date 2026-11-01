@@ -337,8 +337,12 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		}
 		// A successful kill-pane is tmux letting go of the pane, not proof the
 		// harness process died — it can be wedged in uninterruptible work or
-		// held open by a child. A waiting caller gets the signal half of the
-		// ladder (SIGTERM, then SIGKILL) until the process group is really gone.
+		// held open by a child. The rest of the ladder follows while tmux still
+		// lists the pane, so a force stop reaches as far as a soft one: a
+		// waiting caller gets it inline, anyone else out-of-band.
+		if !waitPolicy.wait {
+			scheduleForceStopEscalation(target, lifecycleAction, relatedEventID)
+		}
 		return res, finishStopWait(target, waitPolicy, lifecycleAction, relatedEventID, "force-stop", daemonEscalatedKillReason, &res)
 	}
 	// Soft stop: inject the harness's exit command (CC's `/exit`). The
@@ -2826,7 +2830,7 @@ func joinDetail(base, extra string) string {
 // handleAgentStop stops a single conv's tmux session. Sibling of
 // the bulk groups.members.stop. Auth: agent.stop slug OR caller is owner of
 // a group containing target. Routed via /v1/agent/{selector}/stop;
-// `?force=1` switches to tmux kill-session.
+// `?force=1` kills the pane at once, with the signal ladder after it.
 func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
