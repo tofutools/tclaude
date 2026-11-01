@@ -32,8 +32,7 @@ over the title bar zooms the board. It has the companion's
 the bottom of the page; with the Classic look it has a plain × instead. Several
 boards can float at once, each in its own window, and the open windows come back
 after a reload. Clicking the overlay
-or the companion brings that one forward. **Back to a tab** returns the board to the strip. One
-board floats at a time: opening another sends the first back to a tab.
+or the companion brings that one forward. **Back to a tab** returns the board to the strip.
 
 ### Drawing
 

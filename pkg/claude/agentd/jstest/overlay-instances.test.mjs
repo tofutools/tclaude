@@ -44,12 +44,12 @@ test('a window raised over a split sits above the split and its lines', async (t
   assert.ok(level('c') < lineLevel());
 });
 
-test('a window never raised stays below the rest', async (t) => {
-  const { harness, overlay, level } = await setup(t);
-  await harness.act(() => overlay.raiseOverlayWindow('b'));
-  assert.equal(level('a'), overlay.OVERLAY_BOTTOM_LEVEL);
-  assert.ok(level('b') > level('a'));
-  assert.ok(level('b') < 950, 'under agent marks');
+test('every window has its own level from the start, so a reload keeps lines under what is over them', async (t) => {
+  const { overlay, level, lineLevel } = await setup(t, PAIR);
+  assert.ok(level('c') > lineLevel(), 'c mounted last, over the split');
+  assert.equal(overlay.frontOverlayWindow.value, 'c');
+  assert.ok(level('c') < 950, 'under agent marks');
+  assert.ok(level('a') >= overlay.OVERLAY_BOTTOM_LEVEL);
 });
 
 test('closing a window gives its place in a split to its sibling', async (t) => {

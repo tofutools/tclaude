@@ -35,10 +35,11 @@ const html = htm.bind(h);
 const RESIZE_ZONES = ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'];
 const TEAR_OFF_PX = 4;
 
-// The ids of the windows raised so far, front last. Levels come from it: every
-// window is below what sits at 950, such as agent marks. A window never raised
-// stays at the bottom, where DOM order leaves the companion on top. A split moves
-// as one, and its lines sit one above it: anything raised over it covers them.
+// The ids of the windows, front last. A window joins as it mounts: floating at
+// the front, snapped at the back, so a reload does not bury one behind a split.
+// Levels come from it: every window is below what sits at 950, such as agent
+// marks. A split moves as one, and its lines sit one above it: anything over it
+// covers them. Past the bottom level, windows share it and DOM order decides.
 const OVERLAY_TOP_LEVEL = 948;
 export const OVERLAY_BOTTOM_LEVEL = 930;
 const overlayStack = signal([]);
@@ -46,6 +47,11 @@ export const frontOverlayWindow = computed(() => overlayStack.value[overlayStack
 
 export function raiseOverlayWindow(id) {
   overlayStack.value = [...overlayStack.peek().filter((other) => other !== id), ...(id ? [id] : [])];
+}
+
+function joinOverlayStack(id, snapped) {
+  if (!id || overlayStack.peek().includes(id)) return;
+  overlayStack.value = snapped ? [id, ...overlayStack.peek()] : [...overlayStack.peek(), id];
 }
 
 export function overlayStackReset() {
@@ -165,7 +171,10 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   });
   const [guide, setGuide] = useState(null);
   useEffect(() => () => gesture.current?.(), []);
-  useState(() => loadSplit(prefs));
+  useState(() => {
+    loadSplit(prefs);
+    joinOverlayStack(id, !!placement.snap);
+  });
 
   const splitArea = () => {
     const viewport = viewportOf(win);

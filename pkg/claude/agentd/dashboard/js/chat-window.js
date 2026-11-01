@@ -8,10 +8,10 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { approvalsFor, companionAgents, companionStatus, companionStatusLabel, decisionsFor, defaultPlacement } from './companion-model.js';
 import { ApprovalCard } from './companion-approval.js';
-import { OVERLAY_MIN_H, OVERLAY_MIN_W, fitPlacement } from './overlay-window-model.js';
+import { parsePlacement, viewportOf } from './overlay-window-model.js';
 import { closeOverlayWindow, minimizeOverlayWindow, placedOverlayWindow } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { OverlayWindow, useOverlayWindow, writePref } from './overlay-window.js';
+import { OverlayWindow, readPref, useOverlayWindow, writePref } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { ShellHere } from './terminal-here.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
@@ -27,20 +27,19 @@ export function ChatWindow({
   const agent = companionAgents(snapshot.value).get(agentId) || null;
   const name = agent?.name || instance.label;
   const open = !instance.minimized;
-  const at = useRef(instance.at || null);
   const placementKey = `${CHAT_PLACEMENT_PREF}.${agentId}`;
+  // Where it was dropped is its place from now on, floating, and every panel
+  // size it had stays saved.
+  useState(() => {
+    if (!instance.at) return;
+    const saved = parsePlacement(readPref(prefs, placementKey)) || defaultPlacement(viewportOf(win));
+    writePref(prefs, placementKey, JSON.stringify({ ...saved, ...instance.at, snap: '' }));
+  });
+  useEffect(() => { if (instance.at) placedOverlayWindow(instance.id); }, []);
   const overlay = useOverlayWindow({
     id: instance.id, win, prefs, prefKey: placementKey, defaultPlacement, snaps: true, open,
-    spotted: (base, viewport) => (at.current ? fitPlacement({ ...base, x: at.current.x, y: at.current.y, w: Math.max(base.w, OVERLAY_MIN_W), h: Math.max(base.h, OVERLAY_MIN_H) }, viewport) : null),
     onRefocus: () => setFocusToken((n) => n + 1),
   });
-  // Where it was dropped is its place from now on.
-  useEffect(() => {
-    at.current = null;
-    if (!instance.at) return;
-    writePref(prefs, placementKey, JSON.stringify(overlay.placement));
-    placedOverlayWindow(instance.id);
-  }, []);
   const [focusToken, setFocusToken] = useState(1);
   const [status, setStatus] = useState('');
   const [canReconnect, setCanReconnect] = useState(false);
@@ -64,7 +63,7 @@ export function ChatWindow({
   return html`<${OverlayWindow} id=${instance.id} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
     controls=${{ look, closeLabel: `Close ${name}`, closeTitle: 'Close (the agent keeps running)', onClose: close, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
-    <div class="companion-body">
+    <div class="companion-body" id=${instance.id}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${!agent?.online && html`<div class="companion-empty"><p><b>${name}</b> is ${agent ? 'offline' : 'gone'}.</p>

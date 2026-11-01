@@ -168,7 +168,7 @@ scenario('clicking the overlay or the companion brings that one forward', async 
   const { OverlayWindow, useOverlayWindow } = await harness.importDashboardModule('js/overlay-window.js');
   const Other = () => {
     const overlay = useOverlayWindow({ win: harness.window, defaultPlacement: () => ({ x: 0, y: 0, w: 400, h: 300, snap: '' }) });
-    return harness.html`<${OverlayWindow} id="companion" window=${overlay} lifts=${false} className="companion-window"
+    return harness.html`<${OverlayWindow} id="companion" window=${overlay} className="companion-window"
       frameClass="companion-resize-frame" titlebarClass="companion-titlebar" label="Companion" />`;
   };
   const other = await harness.mount(harness.html`<${Other} />`);

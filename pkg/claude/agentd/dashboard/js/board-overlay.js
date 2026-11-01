@@ -21,7 +21,8 @@ import { OverlayWindow, overlayStackReset, readPref, useOverlayWindow } from './
 
 const html = htm.bind(h);
 
-// What a window for a board not yet moved starts from.
+// Where the one board window stood before there were several: what a window for
+// a board not yet moved starts from.
 export const BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.board-overlay.placement';
 const CASCADE_PX = 28;
 const DEFAULT_W = 760;
@@ -37,7 +38,7 @@ export function defaultOverlayPlacement(viewport) {
 function BoardOverlayWindow({ instance, index, snapshot, fetchImpl, notify, prefs, win }) {
   const board = { id: instance.board, label: instance.label };
   const open = !instance.minimized;
-  // A new window starts where boards last stood, stepped clear of the others.
+  // Stepped clear of the windows already open.
   const startPlacement = (viewport) => {
     const base = parsePlacement(readPref(prefs, BOARD_OVERLAY_PLACEMENT_PREF)) || defaultOverlayPlacement(viewport);
     return clampPlacement({ ...base, x: base.x + index * CASCADE_PX, y: base.y + index * CASCADE_PX, snap: '' }, viewport);

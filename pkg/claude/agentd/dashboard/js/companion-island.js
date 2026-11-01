@@ -29,7 +29,7 @@ import {
 import { useChipDrag } from './companion-chip-drag.js';
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
-import { OverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
+import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
 import { closeOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
 import { ChatWindow } from './chat-window.js';
@@ -133,6 +133,12 @@ function without(set, value) {
   const next = new Set(set);
   next.delete(value);
   return next;
+}
+
+// The agent of the chat window target is in, null outside one.
+function chatAgentOf(target, snapshotValue) {
+  const id = target?.closest?.('.chat-window')?.querySelector?.('[data-companion-terminal]')?.dataset?.companionTerminal;
+  return id ? companionAgents(snapshotValue).get(id) || null : null;
 }
 
 // companionContinuous is continuous mode's settings for an agent's tab, null
@@ -332,7 +338,10 @@ export function CompanionApp({
   // Agents just summoned or opened but not yet in a snapshot: kept pinned (and
   // shown as starting) until a snapshot lists them or PENDING_MS passes.
   const pending = useRef(new Map());
-  const activeId = tabs.includes(active) ? active : (tabs[0] || '');
+  // A tab whose agent has a window of its own is not here: the session has one view.
+  const hasWindow = (agentId) => overlayWindows.value.some((window) => window.id === chatWindowId(agentId));
+  const docked = tabs.filter((id) => !hasWindow(id));
+  const activeId = docked.includes(active) ? active : (docked[0] || '');
   const activeAgent = activeId ? agents.get(activeId) || null : null;
   const [terminalFont, onTerminalFontChange] = useTerminalFont('companion', activeId, prefs);
   const draft = drafts[activeId] || '';
@@ -366,6 +375,10 @@ export function CompanionApp({
       if (detachedRef.current.has(steward.agentId)) {
         detachedWindows.current.get(steward.agentId)?.focus?.();
         return `${name} is in its own window. Dictate there, or bring it back here.`;
+      }
+      if (hasWindow(steward.agentId)) {
+        raiseOverlayWindow(chatWindowId(steward.agentId));
+        return `${name} is in its own window. Dictate there.`;
       }
       return '';
     },
@@ -474,6 +487,7 @@ export function CompanionApp({
     setDeciding(false);
     setMenu(false);
     setOpen(true);
+    raiseOverlayWindow('companion');
     if (focus) setFocusToken((n) => n + 1);
     return true;
   }, [agents, closeTerminalPanes]);
@@ -499,6 +513,8 @@ export function CompanionApp({
     }
   }, [steward, shutDown, stewardLabel, fetchImpl, notify, showAgent]);
 
+  const chatOf = (target) => chatAgentOf(target, snapshot.peek());
+
   const closeTab = useCallback((agentId, { keepOpen = false } = {}) => {
     if (agents.get(agentId)?.scribe) setHelperClosed(agentId, true);
     setVoiceAgents((current) => {
@@ -515,6 +531,11 @@ export function CompanionApp({
 
   // floatTab moves a tab into a window of its own, at at if it was dragged there.
   function floatTab(agent, at = null) {
+    // A browser window of it goes, as Bring it back here closes one: it would
+    // lose the session to this window with no idea why.
+    const opened = detachedWindows.current.get(agent.agentId);
+    detachedWindows.current.delete(agent.agentId);
+    if (opened) setTimeout(() => opened.close?.(), RECLAIM_CLOSE_MS);
     setParked((current) => without(current, agent.agentId));
     setDetached((current) => without(current, agent.agentId));
     closeTab(agent.agentId);
@@ -579,14 +600,15 @@ export function CompanionApp({
       minimize();
       return;
     }
-    if (!tabs.length) {
+    raiseOverlayWindow('companion');
+    if (!docked.length) {
       setOpen(true);
       return;
     }
     openFrom.current = chipRects.current.get(activeId) || null;
     setOpen(true);
     setFocusToken((n) => n + 1);
-  }, [open, tabs, activeId, minimize]);
+  }, [open, docked.length, activeId, minimize]);
 
   // Ctrl+. toggles the window from anywhere, including from inside a focused
   // terminal: capture phase, before xterm sees the key.
@@ -600,7 +622,7 @@ export function CompanionApp({
         // Ctrl+Shift+. marks up the page for the agent in the window.
         event.preventDefault();
         event.stopPropagation();
-        startAnnotating();
+        startAnnotating(chatOf(event.target) || activeAgent);
       }
     };
     win?.addEventListener?.('keydown', onKey, true);
@@ -815,12 +837,12 @@ export function CompanionApp({
     viewNow: () => viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search }),
   });
 
-  function startAnnotating() {
-    if (!activeAgent?.online) {
+  function startAnnotating(agent = activeAgent) {
+    if (!agent?.online) {
       notify('Open a live agent in the companion first, then mark up the page for it.', true);
       return;
     }
-    annotation.start({ agentId: activeAgent.agentId, name: activeAgent.name, fetchImpl });
+    annotation.start({ agentId: agent.agentId, name: agent.name, fetchImpl });
   }
 
   async function resume(agent) {
@@ -905,12 +927,9 @@ export function CompanionApp({
     return () => clearTimeout(timer);
   }, [guideCue]);
 
-  function composeToActive() {
-    if (!activeAgent?.online) return false;
-    onComposeMessage?.({
-      agent: activeAgent.agentId, label: activeAgent.name,
-      restoreFocus: () => setFocusToken((n) => n + 1),
-    });
+  function composeToActive(agent = activeAgent, restoreFocus = () => setFocusToken((n) => n + 1)) {
+    if (!agent?.online) return false;
+    onComposeMessage?.({ agent: agent.agentId, label: agent.name, restoreFocus });
     return true;
   }
   const composeRef = useRef(composeToActive);
@@ -930,7 +949,11 @@ export function CompanionApp({
         return;
       }
       if (!event.target?.closest?.('.companion-window') || hasShownOverlay()) return;
-      if (composeRef.current()) {
+      const chat = event.target.closest('.chat-window');
+      const sent = chat
+        ? composeRef.current(chatOf(event.target), () => chat.querySelector('.companion-term-host textarea')?.focus?.())
+        : composeRef.current();
+      if (sent) {
         event.preventDefault();
         event.stopPropagation();
       }
@@ -966,7 +989,7 @@ export function CompanionApp({
     const typing = Date.now() - lastTerminalKey.current < CUE_TYPING_WINDOW_MS;
     const drafting = !showQueue && activeAgent?.online && draftRef.current.trim();
     if (drafting || listeningRef.current || typing) {
-      setTabs((current) => withTab(current, agent.agentId));
+      if (!hasWindow(agent.agentId)) setTabs((current) => withTab(current, agent.agentId));
       notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
       return;
     }
@@ -1071,7 +1094,7 @@ export function CompanionApp({
   const decisions = (agent) => decisionsFor(snapshot.value, agent);
   // A pending approval or decision is the clearest "needs you" there is.
   const statusOf = (agent) => (approvals(agent).length || decisions(agent).length ? 'needs' : companionStatus(agent));
-  const chipAgents = tabs.filter((id) => !overlayWindows.value.some((window) => window.agent === id)).map((id) => agents.get(id)).filter(Boolean);
+  const chipAgents = docked.map((id) => agents.get(id)).filter(Boolean);
   const queue = pendingDecisions(snapshot.value);
   const toApprove = pendingApprovals(snapshot.value);
   const elsewhere = toApprove.filter((request) => !chipAgents.some((agent) => approvalsFor({ access_requests: [request] }, agent).length));
@@ -1155,7 +1178,7 @@ export function CompanionApp({
     withContext=${withContext} onContext=${setWithContext}
     contextNote=${(snapshot.value?.steward_access?.capture_off || []).includes(activeAgent.agentId)
       ? `${activeAgent.name} can't capture your screen: that permission is off for it. The attached view says where you are, not what is on screen.` : ''}
-    annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${startAnnotating}>${children}<//>`;
+    annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${() => startAnnotating()}>${children}<//>`;
   const terminalZoom = html`<${ShellHere} agent=${activeAgent?.agentId} name=${activeAgent?.name} snapshot=${snapshot.value} notify=${notify} />
     <${TerminalZoom} font=${terminalFont} widget=${() => terminalWidgetRef.current} />`;
 
@@ -1207,7 +1230,7 @@ export function CompanionApp({
         ${openStewardHandover && activeAgent && !showQueue && (activeAgent.steward || stewardRoster.some((entry) => entry.agent_id === activeAgent.agentId)) && html`<${StewardRoster}
           roster=${stewardRoster} agents=${agents} fetchImpl=${fetchImpl} notify=${notify} openHandover=${openStewardHandover} showAgent=${showAgent} />`}
         ${activeAgent?.online && !showQueue && html`
-          ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${composeToActive}>✉</button>`}
+          ${onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${() => composeToActive()}>✉</button>`}
           <button type="button" class="companion-float" aria-label=${`Float ${activeAgent.name} in an overlay window of its own`} title="Float in an overlay window of its own" onClick=${() => floatTab(activeAgent)}>▣</button>
           ${detachWindow && !parked.has(activeAgent.agentId) && html`<button type="button" class="companion-detach" aria-label=${`Detach ${activeAgent.name} into its own window`} title="Detach into its own browser window" onClick=${() => detachToWindow(activeAgent)}>⧉</button>`}
           ${openMorph && html`<button type="button" class="companion-morph" aria-label=${`Morph ${activeAgent.name}`} title="Morph: relaunch on another harness, model or profile"
