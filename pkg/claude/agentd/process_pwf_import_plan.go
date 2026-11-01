@@ -82,7 +82,7 @@ func (o pwfImportOptions) digestKey() string {
 	for _, from := range sortedKeysOf(o.RoleMap) {
 		fmt.Fprintf(&b, "map %q=%q\n", from, o.RoleMap[from])
 	}
-	fmt.Fprintf(&b, "rename %t\ngroup %q\n", o.Rename, o.Group)
+	fmt.Fprintf(&b, "rename %t\ngroup %q\nworkflow %q\n", o.Rename, o.Group, o.Workflow)
 	return b.String()
 }
 

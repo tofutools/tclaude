@@ -234,7 +234,8 @@ func serveWorkflowWithPerformers(w http.ResponseWriter, r *http.Request, bundle 
 			_ = b.Close()
 		}
 	}()
-	findings := scanWorkflowBundles([]pwf.Bundle{bundle})
+	workflowFindings := scanWorkflowBundles([]pwf.Bundle{bundle})
+	findings := slices.Clone(workflowFindings)
 	for _, p := range performers {
 		if _, ok := requireCrossAgentPermission(w, r, PermAgentBundleExport, p.ConvID); !ok {
 			return
@@ -269,6 +270,7 @@ func serveWorkflowWithPerformers(w http.ResponseWriter, r *http.Request, bundle 
 		Producer:        paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()},
 		MaxRecordBytes:  pafContextRecordLimit(),
 		AllowedFindings: classify(peerFromContext(r.Context())) == classHuman && privacy.Blocking(findings),
+		ContentFindings: bundleFindings(workflowFindings),
 		AddContent: func(pw *paf.Writer, keys []string) error {
 			key := envelopeWorkflowKey(bundle.Root, map[string]bool{})
 			if err := pwf.WriteEmbedded(pw, key, bundle); err != nil {

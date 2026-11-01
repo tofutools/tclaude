@@ -24,7 +24,7 @@ import {
 import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
 import { keepParams } from './paf-model.js';
-import { AgentImportPreview, ImportConfirmList, ImportOutcome, ImportWarnings, MemberLandings, agentImportParams, historyCutNeedsConfirm, memberCutsToConfirm, offlineImportBlocker } from './paf-dialogs.js';
+import { AgentImportPreview, CarriedWorkflows, ImportConfirmList, ImportOutcome, ImportWarnings, MemberLandings, agentImportParams, historyCutNeedsConfirm, memberCutsToConfirm, offlineImportBlocker } from './paf-dialogs.js';
 
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -863,7 +863,7 @@ function GroupImportPreview({ inspection, into }) {
 // decides whether it previews a group (.zip or group PAF) or an agent (agent
 // PAF or legacy agent bundle). The group path is tried first, since that is
 // what the dialog always imported; anything it refuses is tried as an agent.
-export function GroupImportDialog({ state, actions, confirmDiscard, initialFile = null }) {
+export function GroupImportDialog({ state, actions, confirmDiscard, initialFile = null, landing: performer = null }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [file, setFile] = useState(initialFile);
   const [into, setInto] = useState('');
@@ -877,10 +877,11 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
   const reveal = (item) => actions.revealImportValue(file, item);
   // A new landing choice is a new cut: its confirmation is asked afresh.
   useEffect(() => setConfirmCut(false), [landing, file]);
-  const [kind, setKind] = useState('');
+  // A performer picked from a workflow review is an agent from the start.
+  const [kind, setKind] = useState(performer ? 'agent' : '');
   const [inspection, setInspection] = useState(null);
   const [agentPreview, setAgentPreview] = useState(null);
-  const [choices, setChoices] = useState({ name: '', group: '', cwd: '', keepPaths: false, harness: '', model: '', confirmHistoryLoss: false });
+  const [choices, setChoices] = useState({ name: '', group: '', cwd: '', keepPaths: false, harness: '', model: '', confirmHistoryLoss: false, agent: performer?.agent || '', role: performer?.role || '' });
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
   const request = useRef(0);
@@ -1088,10 +1089,12 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         </div>
       </div>`}${kind === 'group' && inspection &&
       html`<${GroupImportPreview} inspection=${inspection} into=${into} />
+        <${CarriedWorkflows} workflows=${inspection.carried_workflows} file=${file} />
         <${ImportConfirmList} confirm=${inspection.confirm} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
         <${ImportWarnings} id="group-import-warnings" title="This file will not get" warnings=${inspection.confirm?.can_keep && inspection.confirm.items?.length ? inspection.confirm.warnings : inspection.file_warnings} />
         <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} confirmCut=${confirmCut} setConfirmCut=${setConfirmCut} />`}${kind === 'agent' && agentPreview &&
-      html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />`}
+      html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
+        <${CarriedWorkflows} workflows=${agentPreview.carried_workflows} file=${file} />`}
       <div class="cron-create-error" id="group-import-error" role="alert">
         ${phase === 'error' ? '' : error}
       </div>

@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -141,6 +142,9 @@ type WriteOptions struct {
 	// AddContent, when set, adds to the archive before it closes, such as
 	// the workflows an agent carries. It gets the agent keys.
 	AddContent func(w *paf.Writer, agents []string) error
+	// ContentFindings are the scan findings of what AddContent adds, recorded
+	// in privacy.json with the agents' own.
+	ContentFindings []agentbundle.Finding
 }
 
 func writeLosses(w *paf.Writer, key string, l paf.Losses, opts WriteOptions) error {
@@ -165,7 +169,7 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 	if err := writeAgent(w, key, b, opts); err != nil {
 		return err
 	}
-	if err := writeBundlePrivacy(w, m.Findings, opts.AllowedFindings); err != nil {
+	if err := writeBundlePrivacy(w, append(slices.Clone(m.Findings), opts.ContentFindings...), opts.AllowedFindings); err != nil {
 		return err
 	}
 	if opts.AddContent != nil {
@@ -200,7 +204,7 @@ func WriteBundlePAF(agents []BundleAgent, out io.Writer, opts WriteOptions, limi
 	}
 	used := map[string]bool{}
 	keys := make([]string, 0, len(agents))
-	var findings []agentbundle.Finding
+	findings := slices.Clone(opts.ContentFindings)
 	for _, a := range agents {
 		key := uniqueKey(AgentKey(a.Bundle.Manifest.Agent.Name), used)
 		keys = append(keys, key)

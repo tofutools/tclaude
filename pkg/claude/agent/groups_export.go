@@ -375,9 +375,13 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			Count     int      `json:"count"`
 			Locations []string `json:"locations"`
 		} `json:"findings"`
-		Landings     []groupLanding `json:"landings"`
-		FileWarnings []string       `json:"file_warnings"`
-		Confirm      *importConfirm `json:"confirm"`
+		Landings         []groupLanding `json:"landings"`
+		FileWarnings     []string       `json:"file_warnings"`
+		Confirm          *importConfirm `json:"confirm"`
+		CarriedWorkflows []struct {
+			Key  string `json:"key"`
+			Root string `json:"root"`
+		} `json:"carried_workflows"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -413,6 +417,9 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 		fmt.Fprintf(stdout, "  exported at:    %s\n", insp.ExportedAt)
 	}
 	fmt.Fprintf(stdout, "  format version: %d\n", insp.FormatVersion)
+	for _, w := range insp.CarriedWorkflows {
+		fmt.Fprintf(stdout, "  also carries:   workflow %s, not imported here; review it with process-templates import --workflow %s\n", w.Root, w.Key)
+	}
 
 	if len(insp.Findings) > 0 {
 		fmt.Fprintf(stdout, "\nCredential scan (this node):\n")

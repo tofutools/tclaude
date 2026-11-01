@@ -174,7 +174,9 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts.Workflows = workflows
-	meta.Findings = append(meta.Findings, scanWorkflowBundles(workflows)...)
+	carriedFindings := scanWorkflowBundles(workflows)
+	meta.Findings = append(meta.Findings, carriedFindings...)
+	b.Manifest.Findings = append(b.Manifest.Findings, bundleFindings(carriedFindings)...)
 	archive, err := archiveAgentPAFWith(b, false, parts)
 	if err != nil {
 		writeError(w, 400, "snapshot", err.Error())

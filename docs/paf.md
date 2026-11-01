@@ -186,6 +186,9 @@ requests.
 | **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots), [recovered](#recovering-an-agent) under its agent id |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
+Any of the file operations above can also carry workflows beside the agents;
+see [Carrying workflows](#carrying-workflows).
+
 The last column says what each operation uses in this release. tclaude keeps
 importing every legacy carrier after an operation switches to PAF; see
 [Legacy formats](#legacy-formats).
@@ -386,6 +389,82 @@ When the original harness or model is unavailable, the importer must name a
 landing harness and model explicitly (or a spawn profile). The preview shows
 the original environment next to the landing one, the expected losses and the
 security posture before anything starts.
+
+## Carrying workflows
+
+A PAF is also the shared envelope: one archive that holds agents and
+[PWF](pwf.md) workflows side by side, and can say which agents perform which
+workflows. There is no separate file type. A `.pwf` stays a workflow on its
+own, and a `.paf` that carries workflows opens wherever a `.pwf` does.
+
+Carrying is opt-in. Nothing below happens unless you ask for it.
+
+```bash
+# An agent, with the templates of its active runs or a named template.
+tclaude paf export reviewer --file reviewer.paf --workflows
+tclaude paf export reviewer --file reviewer.paf --workflow ship-feature
+
+# A group with its saved processes; a snapshot likewise.
+tclaude agent groups export team --out team.paf --workflows
+tclaude agent snapshot create before-release --workflow ship-feature
+
+# A workflow with an agent for one of its roles, pre-briefed.
+tclaude agent process-templates export ship-feature \
+  --performer reviewer=alice --performer-history
+```
+
+The last form writes `ship-feature.paf`, of the [kind `bundle`](#manifestjson):
+workflows and the agents that perform them, with no group.
+
+Each side keeps its own gates. Carrying a workflow needs
+`process.templates.read` and processes turned on. Shipping a performer needs
+`agent.bundle.export` on that agent, and is refused on suspected credentials
+in the conversation until you pass `--allow-flagged`. Without
+`--performer-history` a performer travels as its definition only.
+
+### Importing what a file carries
+
+Importing never takes both sides at once. The file is reviewed one thing at a
+time, with the review that thing always gets:
+
+- `paf import` and `agent groups import` land the agents, store no workflows,
+  and tell you what else the file holds. `--dry-run` and the preview list it.
+- `process-templates import` stores the workflow after the
+  [workflow review](pwf.md#sharing-a-workflow), and lands no agents. Its review
+  lists the performers the file ships. `--workflow <key>` picks one when the
+  file holds several.
+- A performer lands through the agent import, by its key:
+
+```bash
+tclaude paf import --file ship-feature.paf --agent reviewer --role reviewer \
+  --cwd "$PWD" --group team --apply
+```
+
+`--role` is the role you land it under. The file proposes a role and cannot
+assign one: a role given by the importer is the only way a performer gets it.
+
+In the dashboard, *import workflow* accepts a `.paf`. Its review lists the
+agents the file ships, each with *Land it…*, and the agent import dialog offers
+*Review workflows…* for a file that carries them. Both export dialogs offer
+*Carry its workflows*. Shipping performers is on the command line for now. All of
+this is hidden when processes are turned off.
+
+### What sharing does to a carried workflow
+
+A carried workflow's templates are addressed by hash, so they cannot be edited
+in place. [Redaction](#redacting-a-paf) keeps or drops each workflow whole, and
+records a dropped one as `drop_unredactable`:
+
+| Redaction | Carried workflow |
+| --- | --- |
+| Conversation-only (`--stub-tool-results`, `--drop-reasoning`, `--keep-turns`, …) | Kept |
+| `mask_flagged` | Kept if its scan is clean, otherwise dropped |
+| Paths to placeholders, `strip_identity` (so every [published](#publishing) PAF) | Dropped |
+
+A `bundle` that loses all its workflows this way becomes an `agent` PAF if it
+has one agent; with several, the redaction is refused. The credential scan
+covers workflow entries like any other. Federation transfers do not carry
+workflows; only files do. A bundle offered as a federation transfer is refused.
 
 ## Exporting and importing an agent
 
@@ -1226,6 +1305,9 @@ must enforce these rules and refuse an archive that breaks them:
 manifest.json                         format, version, kind, entry hashes
 privacy.json                          scan, redactions, consent, retention   (optional)
 group.json                            group configuration                    (kind "group")
+workflows/<key>/workflow.json         a carried PWF workflow                 (optional)
+workflows/<key>/README.md             its readme                             (optional)
+workflows/<key>/templates/<id>/<hash> its templates, addressed by hash       (with workflow.json)
 signatures/<key-id>.json              detached signatures over manifest.json (optional)
 attachments/<sha256>                  content-addressed media and files      (optional)
 agents/<key>/agent.json               identity, definition, provenance, lineage
@@ -1239,8 +1321,10 @@ ext/<extension-id>/...                extension entries                      (op
 ```
 
 `<key>` names the agent inside the archive (`[a-z0-9-]{1,64}`). An agent PAF
-has exactly one agent; a group PAF has one per member. Attachments are shared
-by every agent in the archive.
+has exactly one agent; a group PAF has one per member; a bundle PAF has one per
+performer. Attachments are shared by every agent in the archive. A
+`workflows/<key>/` tree has the [PWF layout](pwf.md#layout) and passes the same
+checks and limits as a `.pwf`.
 
 A PAF without `context/` is a *definition-only* PAF: a configured agent with
 no history.
@@ -1268,8 +1352,19 @@ Schema: [`manifest.schema.json`](paf/schema/v0.1/manifest.schema.json).
 }
 ```
 
-- `kind` is `agent` or `group`.
+- `kind` is `agent`, `group` or `bundle` (workflows and the agents that perform
+  them, with no group). A reader that opens a `bundle` as one agent must be told
+  which.
 - `agents` lists the agent keys present, in order.
+- `workflows` lists each carried workflow as `{key, root, requires, digest}`:
+  its key under `workflows/`, its root template ref, what it requires, and a
+  digest over its entries.
+- `links` says how entries relate, as
+  `{type, workflow, agent, role?, digest}`. `performer` means the agent performs
+  that role of the workflow, and `carries` means the agent's file carries the
+  workflow. The links are flat manifest data rather than fields inside agents
+  and workflows, so that they cannot create a hash cycle. A reader skips a link
+  `type` it does not know.
 - `requires` lists [features](#versioning-and-compatibility) a reader must
   understand to resume or import faithfully.
 - `extensions_used` declares every [extension](#extensions) the file uses.
@@ -1785,6 +1880,7 @@ is best effort rather than a guarantee, and any break is marked clearly.
 | Version | Breaking? | Changes |
 | --- | --- | --- |
 | 0.1 | (first version) | The initial format. |
+| 0.2 | Only for files that carry workflows | Adds the [envelope](#carrying-workflows): `workflows`, `links`, `workflows/` entries and the kind `bundle`. Such a file sets `min_reader_version` to 0.2, because an older reader would silently lose its workflows. A file with agents only is still written as 0.1. |
 
 - Readers **ignore unknown fields** and any listed entry they do not
   understand, wherever it sits. Writers must not rely on readers understanding
@@ -1801,7 +1897,7 @@ is best effort rather than a guarantee, and any break is marked clearly.
   value lists a feature in `requires`.
 - **Closed enumerations** change only in a major version, or in a minor
   version that sets `min_reader_version`: `format`, `kind`
-  (`agent`, `group`), entry `role` (`user`, `assistant`), and the
+  (`agent`, `group`, `bundle`), entry `role` (`user`, `assistant`), and the
   transcript `scope`.
 - **`requires`** names features without which the content would be
   misunderstood, not merely incomplete (for example, a context stored as a

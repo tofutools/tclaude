@@ -16,11 +16,12 @@ export function queryString(params) {
 
 // exportParams is the agent export query for the dialog's choices. Without
 // history the conversation stays home; native and neutral pick its copies.
-export function exportParams({ agent, history = true, native = true, neutral = true, allowFlagged = false }) {
+export function exportParams({ agent, history = true, native = true, neutral = true, allowFlagged = false, workflows = false }) {
   return {
     agent, format: 'paf', history,
     no_native: history && !native, no_context: history && !neutral,
     allow_flagged: allowFlagged,
+    workflows: workflows ? 'own' : '',
   };
 }
 

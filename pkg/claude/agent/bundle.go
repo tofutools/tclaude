@@ -318,7 +318,11 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		formatted.Write(pretty)
 		fmt.Fprintln(out, formatted.String())
 		var preview struct {
-			Unresolved []configbundle.Placeholder `json:"unresolved"`
+			Unresolved       []configbundle.Placeholder `json:"unresolved"`
+			CarriedWorkflows []struct {
+				Key  string `json:"key"`
+				Root string `json:"root"`
+			} `json:"carried_workflows"`
 			importOutcome
 		}
 		_ = json.Unmarshal(result, &preview)
@@ -329,6 +333,9 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		}
 		for _, p := range preview.Unresolved {
 			fmt.Fprintf(out, "Unresolved %s %s (original: %q): --set %s=value or --keep-paths\n", p.Item, p.Field, p.Original, p.Name)
+		}
+		for _, w := range preview.CarriedWorkflows {
+			fmt.Fprintf(out, "Also carries workflow %s, not imported here: review it with process-templates import --workflow %s\n", w.Root, w.Key)
 		}
 		if !p.Apply {
 			fmt.Fprintln(out, "Preview only. Use --apply --group NAME to create an agent.")

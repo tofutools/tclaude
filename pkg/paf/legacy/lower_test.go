@@ -123,3 +123,24 @@ func TestDecodeRefusesGroupPAF(t *testing.T) {
 	_, _, err = DecodeBundleBytes(buf.Bytes(), DecodeLimits{MaxBytes: agentbundle.MaxBytes}, dir)
 	assert.ErrorContains(t, err, "exactly one agent")
 }
+
+// A bundle holds several agents with no group. A federation offer names none of
+// them, so it is refused rather than taking whichever comes first.
+func TestDecodeRefusesBundlePAFWithoutAnAgentKey(t *testing.T) {
+	dir := testutil.CanonicalTempDir(t)
+	var buf bytes.Buffer
+	w := paf.NewWriter(&buf, paf.KindBundle, paf.Limits{})
+	for _, key := range []string{"a", "b"} {
+		require.NoError(t, w.AddAgent(key, paf.Agent{Name: key}, paf.Environment{Harness: paf.Harness{Name: "codex"}}))
+	}
+	require.NoError(t, w.AddWorkflow("flow", "flow@sha256:aa", nil))
+	require.NoError(t, w.WriteJSON(paf.WorkflowPath("flow", "workflow.json"), map[string]string{"root": "flow@sha256:aa"}))
+	_, err := w.Close(paf.Producer{Name: "t"})
+	require.NoError(t, err)
+	_, _, err = DecodeBundleBytes(buf.Bytes(), DecodeLimits{MaxBytes: agentbundle.MaxBytes}, dir)
+	require.Error(t, err)
+	b, _, err := DecodeBundleBytes(buf.Bytes(), DecodeLimits{MaxBytes: agentbundle.MaxBytes, AgentKey: "b"}, dir)
+	require.NoError(t, err, "naming one lands that one")
+	defer func() { _ = b.Close() }()
+	assert.Equal(t, "b", b.Manifest.Agent.Name)
+}

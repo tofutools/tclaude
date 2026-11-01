@@ -27,8 +27,8 @@ export function openTemplatesManageModal(options) {
   return managementController().openTemplatesManageModal(options);
 }
 
-export function openGroupImport(file = null) {
-  return managementController().openGroupImport(file);
+export function openGroupImport(file = null, landing = null) {
+  return managementController().openGroupImport(file, landing);
 }
 
 export function openTemplateEditor(template, options = {}) {
