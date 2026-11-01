@@ -27,6 +27,42 @@ export function boardToolDigit(index) {
   return index < 9 ? String(index + 1) : index === 9 ? '0' : '';
 }
 
+// Text styles. fontFamily is Excalidraw's number, so a family survives the
+// .excalidraw export; an element without one is in the board's own hand.
+export const BOARD_FONTS = Object.freeze([
+  { id: 1, label: 'Hand', css: "'Segoe Print','Comic Sans MS','Chalkboard SE',cursive" },
+  { id: 2, label: 'Sans', css: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
+  { id: 3, label: 'Mono', css: "'Cascadia Code','SF Mono',Menlo,Consolas,monospace" },
+]);
+export const BOARD_FONT_SIZES = Object.freeze([12, 16, 20, 24, 32, 48, 64, 96]);
+export const BOARD_TEXT_STYLE = Object.freeze({ fontSize: 20, fontFamily: 1, fontWeight: undefined, fontStyle: undefined });
+
+export function boardFont(el) {
+  return BOARD_FONTS.find((font) => font.id === el?.fontFamily) || BOARD_FONTS[0];
+}
+
+// textStyleOf reads an element's style, every key present so it can be compared
+// and laid over another element, clearing what that one had.
+export function textStyleOf(el) {
+  return {
+    fontSize: el?.fontSize || BOARD_TEXT_STYLE.fontSize,
+    fontFamily: boardFont(el).id,
+    fontWeight: el?.fontWeight === 'bold' ? 'bold' : undefined,
+    fontStyle: el?.fontStyle === 'italic' ? 'italic' : undefined,
+  };
+}
+
+export function sameTextStyle(a, b) {
+  const [x, y] = [textStyleOf(a), textStyleOf(b)];
+  return Object.keys(x).every((key) => x[key] === y[key]);
+}
+
+// boardFontSizes is what the size list offers: an agent's size not among them
+// still shows as itself.
+export function boardFontSizes(current) {
+  return BOARD_FONT_SIZES.includes(current) ? BOARD_FONT_SIZES : [...BOARD_FONT_SIZES, current].sort((a, b) => a - b);
+}
+
 export const BOARD_COLORS = Object.freeze(['#1e1e1e', '#e03131', '#2f9e44', '#1971c2', '#f08c00', '#9c36b5']);
 export const BOARD_FILLS = Object.freeze(['transparent', '#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99', '#eebefa']);
 
@@ -715,7 +751,7 @@ export function labelOf(map, shapeId) {
 // newLabel builds text attached to an element, under the CLI's `<id>-label` id.
 export function newLabel(shape, text, props = {}, opts) {
   const lines = String(text).split('\n');
-  const size = 20;
+  const size = props.fontSize || 20;
   const width = Math.ceil(Math.max(...lines.map((l) => l.length), 1) * size * 0.6);
   const height = Math.ceil(lines.length * size * 1.25);
   const c = labelPoint(shape);
@@ -843,6 +879,10 @@ export function sanitizeElement(raw) {
     el.text = text;
     el.fontSize = clampNum(raw.fontSize, 4, 200, 20);
     el.textAlign = ['left', 'center', 'right'].includes(raw.textAlign) ? raw.textAlign : 'left';
+    const { fontFamily, fontWeight, fontStyle } = textStyleOf(raw);
+    if (fontFamily !== BOARD_TEXT_STYLE.fontFamily) el.fontFamily = fontFamily;
+    if (fontWeight) el.fontWeight = fontWeight;
+    if (fontStyle) el.fontStyle = fontStyle;
     if (typeof raw.containerId === 'string' && ELEMENT_ID.test(raw.containerId)) el.containerId = raw.containerId;
   }
   if (LINEAR.has(raw.type)) {

@@ -602,6 +602,10 @@ type boardAddParams struct {
 	Above   string   `long:"above" optional:"true" help:"Place the shape above this element id"`
 	Gap     *float64 `long:"gap" help:"Space to the --right-of/--left-of/--below/--above element (default 60)"`
 	Link    bool     `long:"link" optional:"true" help:"With a relative placement: also draw an arrow from that element to the new shape"`
+
+	FontSize *float64 `long:"font-size" help:"Text size, 4-200 (default 20)"`
+	Font     string   `long:"font" optional:"true" help:"Text font: hand (default), sans or mono"`
+	Style    string   `long:"style" optional:"true" help:"Text style: normal (default), bold, italic or bold-italic"`
 }
 
 var boardAddTypes = map[string]bool{"rectangle": true, "ellipse": true, "diamond": true, "text": true, "arrow": true, "line": true}
@@ -642,6 +646,15 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 	}
 	if typ == "text" && strings.TrimSpace(p.Text) == "" {
 		fmt.Fprintln(stderr, "Error: a text element needs --text")
+		return rcInvalidArg
+	}
+	style := boardTextStyle{Size: p.FontSize, Font: p.Font, Style: p.Style}
+	if err := style.validate(); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if style.set() && typ != "text" && p.Text == "" {
+		fmt.Fprintln(stderr, "Error: --font-size, --font and --style need --text")
 		return rcInvalidArg
 	}
 	isLine := typ == "arrow" || typ == "line"
@@ -714,7 +727,7 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 	if relRef != "" {
 		w, h := floatOr(p.W, 160), floatOr(p.H, 80)
 		if typ == "text" {
-			tw, th := boardTextSize(p.Text)
+			tw, th := boardTextSizeAt(p.Text, style.size())
 			w, h = floatOr(p.W, tw), floatOr(p.H, th)
 		}
 		x, y = placeRelative(ref, w, h, relDir, floatOr(p.Gap, boardDefaultGap))
@@ -727,8 +740,9 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 	var labelX, labelY float64
 	switch typ {
 	case "text":
-		w, h := boardTextSize(p.Text)
-		e["text"], e["fontSize"], e["textAlign"] = p.Text, boardFontSize, "left"
+		w, h := boardTextSizeAt(p.Text, style.size())
+		e["text"], e["fontSize"], e["textAlign"] = p.Text, style.size(), "left"
+		style.apply(e)
 		e["x"], e["y"] = x, y
 		e["width"], e["height"] = floatOr(p.W, w), floatOr(p.H, h)
 	case "arrow", "line":
@@ -766,13 +780,15 @@ func runBoardAdd(p *boardAddParams, id, typ string, stdout, stderr io.Writer) in
 		if len(labelID) > 64 {
 			labelID = boardRandomID()
 		}
-		w, h := boardTextSize(p.Text)
-		elems = append(elems, map[string]any{
+		w, h := boardTextSizeAt(p.Text, style.size())
+		label := map[string]any{
 			"id": labelID, "type": "text", "version": 1, "versionNonce": boardRandomNonce(), "isDeleted": false,
 			"updated": e["updated"], "strokeColor": stroke, "backgroundColor": "transparent", "opacity": 100, "angle": 0,
-			"text": p.Text, "fontSize": boardFontSize, "textAlign": "center", "containerId": elemID,
+			"text": p.Text, "fontSize": style.size(), "textAlign": "center", "containerId": elemID,
 			"x": labelX - w/2, "y": labelY - h/2, "width": w, "height": h,
-		})
+		}
+		style.apply(label)
+		elems = append(elems, label)
 	}
 	linkID := ""
 	if p.Link {
@@ -828,12 +844,65 @@ const boardFontSize = 20.0
 
 // boardTextSize estimates a text element's box at boardFontSize.
 func boardTextSize(text string) (w, h float64) {
+	return boardTextSizeAt(text, boardFontSize)
+}
+
+func boardTextSizeAt(text string, size float64) (w, h float64) {
 	lines := strings.Split(text, "\n")
 	widest := 0
 	for _, l := range lines {
 		widest = max(widest, len([]rune(l)))
 	}
-	return math.Ceil(float64(widest) * boardFontSize * 0.6), math.Ceil(float64(len(lines)) * boardFontSize * 1.25)
+	return math.Ceil(float64(widest) * size * 0.6), math.Ceil(float64(len(lines)) * size * 1.25)
+}
+
+// boardFonts names Excalidraw's fontFamily numbers, which the board stores.
+var boardFonts = map[string]int{"hand": 1, "sans": 2, "mono": 3}
+
+// boardTextStyle is the --font-size, --font and --style of a command; what was
+// not given leaves an element as it is.
+type boardTextStyle struct {
+	Size  *float64
+	Font  string
+	Style string
+}
+
+func (s boardTextStyle) set() bool { return s.Size != nil || s.Font != "" || s.Style != "" }
+
+func (s boardTextStyle) size() float64 { return floatOr(s.Size, boardFontSize) }
+
+func (s boardTextStyle) validate() error {
+	if s.Size != nil && (*s.Size < 4 || *s.Size > 200) {
+		return errors.New("--font-size must be 4-200")
+	}
+	if _, ok := boardFonts[s.Font]; s.Font != "" && !ok {
+		return errors.New("--font must be hand, sans or mono")
+	}
+	switch s.Style {
+	case "", "normal", "bold", "italic", "bold-italic":
+		return nil
+	}
+	return errors.New("--style must be normal, bold, italic or bold-italic")
+}
+
+func (s boardTextStyle) apply(e map[string]any) {
+	if s.Size != nil {
+		e["fontSize"] = *s.Size
+	}
+	if s.Font != "" {
+		e["fontFamily"] = boardFonts[s.Font]
+	}
+	if s.Style == "" {
+		return
+	}
+	delete(e, "fontWeight")
+	delete(e, "fontStyle")
+	if strings.Contains(s.Style, "bold") {
+		e["fontWeight"] = "bold"
+	}
+	if strings.Contains(s.Style, "italic") {
+		e["fontStyle"] = "italic"
+	}
 }
 
 func findBoardElements(doc *boardDoc, fromID, toID string) (from, to boardElementView, ok bool) {
@@ -1058,13 +1127,16 @@ func runBoardMove(p *boardMoveParams, id, elemID string, stdout, stderr io.Write
 }
 
 type boardTextParams struct {
-	Text string `long:"text" help:"New text"`
+	Text     string   `long:"text" optional:"true" help:"New text; without it the text stays and only its style changes"`
+	FontSize *float64 `long:"font-size" help:"Text size, 4-200"`
+	Font     string   `long:"font" optional:"true" help:"Text font: hand, sans or mono"`
+	Style    string   `long:"style" optional:"true" help:"Text style: normal, bold, italic or bold-italic"`
 }
 
 func boardTextCmd() *cobra.Command {
 	return boa.CmdT[boardTextParams]{
-		Use:         "text <board> <element> --text <text>",
-		Short:       "Change a text element, or set the text attached to any other element",
+		Use:         "text <board> <element> [--text <text>] [--font-size <n>] [--font <font>] [--style <style>]",
+		Short:       "Change a text element, or the text attached to any other element, and its style",
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardTextParams, _ *cobra.Command, args []string) {
@@ -1087,22 +1159,43 @@ func runBoardText(p *boardTextParams, id, elemID string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "Error: board %s has no live element %s\n", id, elemID)
 		return rcNotFound
 	}
-	if strings.TrimSpace(p.Text) == "" {
+	style := boardTextStyle{Size: p.FontSize, Font: p.Font, Style: p.Style}
+	if err := style.validate(); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if strings.TrimSpace(p.Text) == "" && !style.set() {
 		fmt.Fprintln(stderr, "Error: --text is empty; `board rm` deletes text")
 		return rcInvalidArg
 	}
 	target := elemID
 	if v.Type != "text" {
 		if target, ok = s.labelOf(elemID); !ok {
+			if strings.TrimSpace(p.Text) == "" {
+				fmt.Fprintf(stderr, "Error: element %s has no text to style; give --text too\n", elemID)
+				return rcInvalidArg
+			}
 			target = s.addAttachedText(doc, elemID, p.Text)
 		}
 	}
-	s.raw[target]["text"] = p.Text
-	if t := s.view[target]; t.ContainerID != "" {
-		t.Text = p.Text
-		t.Width, t.Height = boardTextSize(p.Text)
+	text := s.view[target].Text
+	if strings.TrimSpace(p.Text) != "" {
+		text = p.Text
+		s.raw[target]["text"] = text
+	}
+	style.apply(s.raw[target])
+	size, _ := s.raw[target]["fontSize"].(float64)
+	if size == 0 {
+		size = boardFontSize
+	}
+	t := s.view[target]
+	if t.ContainerID != "" || style.Size != nil {
+		t.Text = text
+		t.Width, t.Height = boardTextSizeAt(text, size)
 		s.view[target] = t
 		s.raw[target]["width"], s.raw[target]["height"] = t.Width, t.Height
+	}
+	if t.ContainerID != "" {
 		s.placeAttachedText(target)
 	}
 	return patchScene(id, s, []string{target}, stdout, stderr)

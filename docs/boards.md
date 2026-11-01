@@ -41,6 +41,10 @@ and with three or more, space them evenly.
 - **Text:** double-click anywhere inside a shape for its label, or blank board for
   free text. Enter on a selected shape does the same. Enter finishes, Shift+Enter
   is a new line.
+- **Text style:** with the text tool, a text editor open, or text selected (a
+  shape's label counts), the toolbar offers the size, the font (Hand, Sans or Mono),
+  bold and italic. They change what is selected or being typed, and hold for the
+  next text you add. The style is saved with the board.
 - **Right-click** for what applies to what is under the pointer; see below.
 - **Select:** Shift-click or drag a rectangle. Ctrl+A selects everything, Ctrl+D
   duplicates, Del deletes.
@@ -186,6 +190,7 @@ tclaude agent board close plan                # end your board session
 
 tclaude agent board add plan rectangle --x 100 --y 80 --w 160 --h 80 --text API
 tclaude agent board add plan text --x 100 --y 200 --text "Owned by the platform team"
+tclaude agent board add plan text --x 100 --y 40 --text Roadmap --font-size 48 --font sans --style bold
 tclaude agent board add plan arrow --from <elemA> --to <elemB>
 tclaude agent board add plan arrow --from api --from-side right --to db --to-side left --routing elbow --text calls
 tclaude agent board add plan rectangle --right-of api --link --text DB --id db   # beside api, with an arrow from it
@@ -195,6 +200,7 @@ tclaude agent board from-process flow review          # draw process template "r
 tclaude agent board from-fleet fleet                  # draw the fleet: a column per group, a card per agent
 tclaude agent board fleet-changes fleet               # read the operator's edits on that map as staffing proposals
 tclaude agent board text plan <elem> --text "API v2"   # any element; adds attached text if it has none
+tclaude agent board text plan <elem> --font-size 32 --font mono --style italic   # style only; any of the three
 tclaude agent board connect plan <line> --routing curved
 tclaude agent board connect plan <line> --to cache --to-side top   # or --free-to, --free-from
 tclaude agent board rm plan <elem> [<elem>...]         # attached text goes too; lines stay, free at that end
@@ -244,7 +250,8 @@ The server keeps only the element keys it knows and bounds each of them:
 `id`, `type` (`rectangle`, `ellipse`, `diamond`, `arrow`, `line`, `freedraw`,
 `text`), geometry (`x`, `y`, `width`, `height`, `angle`, `points`), style
 (`strokeColor`, `backgroundColor`, `fillStyle`, `strokeWidth`, `strokeStyle`,
-`roughness`, `opacity`), text (`text`, `fontSize`, `textAlign`, `containerId`),
+`roughness`, `opacity`), text (`text`, `fontSize`, `fontFamily`, `fontWeight`,
+`fontStyle`, `textAlign`, `containerId`),
 connectors (`startBinding`, `endBinding`, `routing`), `z` for an element sent to the front or back, and `version`,
 `versionNonce`, `isDeleted` and `updated`. `customData.author` is always set by the server: to
 `operator` for the dashboard, and to the calling agent's id for an agent.

@@ -295,6 +295,62 @@ func TestBoardTextWritesTheLabelTheBoardDraws(t *testing.T) {
 	assert.InDelta(t, 650, added["x"].(float64)+added["width"].(float64)/2, 0.01)
 }
 
+func TestBoardTextStyleChangesSizeFontAndWeight(t *testing.T) {
+	patched := fakeBoardDaemonWith(t, `{"id":"plan","version":4,"elements":[
+	 {"id":"a","type":"rectangle","x":0,"y":0,"width":100,"height":50,"version":2},
+	 {"id":"a-label","type":"text","x":10,"y":10,"width":40,"height":20,"text":"old","fontWeight":"bold","fontSize":20,"containerId":"a","version":5},
+	 {"id":"free","type":"text","x":0,"y":200,"width":60,"height":25,"text":"note","fontSize":20,"version":1},
+	 {"id":"plain","type":"rectangle","x":300,"y":0,"width":100,"height":50,"version":1}]}`)
+	var out, errb bytes.Buffer
+	size := 40.0
+
+	styled := &boardTextParams{FontSize: &size, Font: "mono", Style: "italic"}
+	require.Equal(t, rcOK, runBoardText(styled, "plan", "a", &out, &errb), errb.String())
+	label := patchedByID(*patched)["a-label"]
+	assert.Equal(t, "old", label["text"], "with no --text the words stay")
+	assert.EqualValues(t, 40, label["fontSize"])
+	assert.EqualValues(t, 3, label["fontFamily"])
+	assert.Equal(t, "italic", label["fontStyle"])
+	assert.NotContains(t, label, "fontWeight", "a style replaces the one before")
+	assert.InDelta(t, 50, label["x"].(float64)+label["width"].(float64)/2, 0.01, "a resized label stays centred")
+
+	require.Equal(t, rcOK, runBoardText(&boardTextParams{FontSize: &size}, "plan", "free", &out, &errb), errb.String())
+	free := patchedByID(*patched)["free"]
+	assert.EqualValues(t, 96, free["width"], "its box follows the size")
+	assert.Equal(t, "note", free["text"])
+
+	before := len(*patched)
+	assert.Equal(t, rcInvalidArg, runBoardText(&boardTextParams{Font: "serif"}, "plan", "free", &out, &errb))
+	huge := 500.0
+	assert.Equal(t, rcInvalidArg, runBoardText(&boardTextParams{FontSize: &huge}, "plan", "free", &out, &errb))
+	assert.Equal(t, rcInvalidArg, runBoardText(&boardTextParams{Style: "loud"}, "plan", "free", &out, &errb))
+	assert.Equal(t, rcInvalidArg, runBoardText(&boardTextParams{Style: "bold"}, "plan", "plain", &out, &errb), "nothing to style")
+	assert.Len(t, *patched, before, "a refused style writes nothing")
+}
+
+func TestBoardAddSetsTextStyle(t *testing.T) {
+	patched := fakeBoardDaemonWith(t, `{"id":"plan","version":4,"elements":[]}`)
+	var out, errb bytes.Buffer
+	size := 32.0
+
+	add := &boardAddParams{Text: "Title", FontSize: &size, Font: "sans", Style: "bold-italic"}
+	require.Equal(t, rcOK, runBoardAdd(add, "plan", "text", &out, &errb), errb.String())
+	e := (*patched)[len(*patched)-1]
+	assert.EqualValues(t, 32, e["fontSize"])
+	assert.EqualValues(t, 2, e["fontFamily"])
+	assert.Equal(t, "bold", e["fontWeight"])
+	assert.Equal(t, "italic", e["fontStyle"])
+	assert.EqualValues(t, 96, e["width"])
+
+	label := &boardAddParams{Text: "API", ID: "api", Font: "mono"}
+	require.Equal(t, rcOK, runBoardAdd(label, "plan", "rectangle", &out, &errb), errb.String())
+	byID := patchedByID(*patched)
+	assert.EqualValues(t, 3, byID["api-label"]["fontFamily"], "a shape's label takes the style")
+	assert.NotContains(t, byID["api"], "fontFamily")
+
+	assert.Equal(t, rcInvalidArg, runBoardAdd(&boardAddParams{Font: "mono"}, "plan", "rectangle", &out, &errb), "no text to style")
+}
+
 func TestBoardTextReachesLinesAndOutranksAnOldTombstone(t *testing.T) {
 	patched := fakeBoardDaemonWith(t, `{"id":"plan","version":4,"elements":[
 	 {"id":"l","type":"line","x":0,"y":0,"width":100,"height":100,"version":1,"points":[[0,0],[100,0],[100,100]]},

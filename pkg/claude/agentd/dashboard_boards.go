@@ -104,6 +104,9 @@ type boardElement struct {
 	Points          [][]float64       `json:"points,omitempty"`
 	Text            *string           `json:"text,omitempty"`
 	FontSize        *float64          `json:"fontSize,omitempty"`
+	FontFamily      *int              `json:"fontFamily,omitempty"` // Excalidraw's: 1 hand, 2 sans, 3 mono
+	FontWeight      string            `json:"fontWeight,omitempty"` // bold
+	FontStyle       string            `json:"fontStyle,omitempty"`  // italic
 	TextAlign       string            `json:"textAlign,omitempty"`
 	ContainerID     string            `json:"containerId,omitempty"`
 	StartBinding    *boardBinding     `json:"startBinding,omitempty"`
@@ -184,6 +187,17 @@ func normalizeBoardElement(raw json.RawMessage, author string) (db.CollabBoardEl
 	}
 	if !boardInRange(e.FontSize, 4, 200) {
 		return fail("fontSize must be 4-200")
+	}
+	// What this board cannot draw goes the way of any key it does not know: a
+	// newer Excalidraw font number must not refuse a whole pasted drawing.
+	if e.FontFamily != nil && (*e.FontFamily < 1 || *e.FontFamily > 3) {
+		e.FontFamily = nil
+	}
+	if e.FontWeight != "bold" {
+		e.FontWeight = ""
+	}
+	if e.FontStyle != "italic" {
+		e.FontStyle = ""
 	}
 	if !boardLinearTypes[e.Type] {
 		e.Points = nil
