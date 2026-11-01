@@ -124,9 +124,6 @@ func TestCanonicalizeImportedPermissionScopesCoversAllGrantTables(t *testing.T) 
 		Permissions: []groupexport.Permission{{
 			ConvID: "conv", Slug: PermGroupsMembersSpawn, Effect: "grant", ScopeJSON: raw,
 		}},
-		SudoGrants: []groupexport.SudoGrant{{
-			ConvID: "conv", Slug: PermGroupsMembersSpawn, ScopeJSON: raw,
-		}},
 	}
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		t.Fatalf("canonicalizeImportedPermissionScopes: %v", err)
@@ -136,9 +133,6 @@ func TestCanonicalizeImportedPermissionScopesCoversAllGrantTables(t *testing.T) 
 	}
 	if got := exp.Permissions[0].ScopeJSON; got != want {
 		t.Errorf("permanent permission scope = %s, want %s", got, want)
-	}
-	if got := exp.SudoGrants[0].ScopeJSON; got != want {
-		t.Errorf("sudo grant scope = %s, want %s", got, want)
 	}
 }
 

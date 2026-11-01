@@ -37,9 +37,10 @@ var ErrImportConversationCollision = errors.New("import conversation collision")
 // Tables carried (every table keyed to the group or to a member's
 // conv-id): agent_groups, agent_group_members, agent_group_owners,
 // agent_group_audit, agent_permissions, agents (as enrollments), agent_workdir,
-// agent_sudo_grants, agent_head_aliases, agent_conv_succession,
+// agent_head_aliases, agent_conv_succession,
 // agent_spawn_history, agent_clone_history, agent_cron_jobs,
-// agent_cron_runs, agent_messages. Deliberately NOT carried: conv_index
+// agent_cron_runs, agent_messages. Deliberately NOT carried: agent_sudo_grants
+// (sudo is temporary, so an export never holds it), conv_index
 // and conv_embeddings (rebuilt from the .jsonl on scan), sessions and
 // notify_state (live tmux runtime), usage_cache / git_cache (DB-global
 // caches), agent_group_links (cross-group — deferred to a future
@@ -142,9 +143,6 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 		return nil, err
 	}
 	if exp.Workdirs, err = collectWorkdirs(d, convIDs); err != nil {
-		return nil, err
-	}
-	if exp.SudoGrants, err = collectSudoGrants(d, convIDs); err != nil {
 		return nil, err
 	}
 	if exp.HeadAliases, err = collectHeadAliases(d, convIDs); err != nil {
@@ -453,32 +451,6 @@ func collectWorkdirs(d *sql.DB, convIDs []string) ([]groupexport.Workdir, error)
 		}
 		w.UpdatedAt = exportTimestamp(updatedAt)
 		out = append(out, w)
-	}
-	return out, rows.Err()
-}
-
-func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, error) {
-	clause, args := inClause(convIDs)
-	rows, err := d.Query(`
-		SELECT ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.uses_limit, s.uses_left
-		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
-		WHERE ag.current_conv_id `+clause+` ORDER BY s.id`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("collect sudo grants: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []groupexport.SudoGrant
-	for rows.Next() {
-		var s groupexport.SudoGrant
-		var grantedAt, expiresAt, revokedAt dbTimestamp
-		if err := rows.Scan(&s.ConvID, &s.Slug, &s.ScopeJSON, &grantedAt, &expiresAt,
-			&s.GrantedBy, &s.Reason, &revokedAt, &s.UsesLimit, &s.UsesLeft); err != nil {
-			return nil, fmt.Errorf("scan sudo grant: %w", err)
-		}
-		s.GrantedAt = exportTimestamp(grantedAt)
-		s.ExpiresAt = exportTimestamp(expiresAt)
-		s.RevokedAt = exportTimestamp(revokedAt)
-		out = append(out, s)
 	}
 	return out, rows.Err()
 }
@@ -837,7 +809,7 @@ func (c *importCtx) run() error {
 	}
 	for _, step := range []func() error{
 		c.members, c.owners, c.audit, c.permissions, c.enrollments,
-		c.workdirs, c.sudoGrants, c.headAliases, c.successions,
+		c.workdirs, c.headAliases, c.successions,
 		c.spawnHist, c.cloneHist, c.cronJobsAndRuns, c.messages,
 		c.transferLog, c.backfillAgentCompanions, c.scrubRetiredActorAuthority,
 		c.memberPostures,
@@ -1200,29 +1172,6 @@ func (c *importCtx) workdirs() error {
 			VALUES (?, ?, ?, '', '')`,
 			c.rc(w.ConvID), c.plan.TargetCwd, requiredImportDBTime(w.UpdatedAt)); err != nil {
 			return fmt.Errorf("import: workdir %s: %w", w.ConvID, err)
-		}
-	}
-	return nil
-}
-
-func (c *importCtx) sudoGrants() error {
-	for _, s := range c.exp.SudoGrants {
-		scopeJSON, err := c.permissionScope(s.Slug, s.ScopeJSON)
-		if err != nil {
-			return fmt.Errorf("import: sudo grant %s/%s scope: %w", s.ConvID, s.Slug, err)
-		}
-		conv := c.rc(s.ConvID)
-		agentID, err := c.ensureActor(conv, "import")
-		if err != nil {
-			return fmt.Errorf("import: sudo grant %s/%s actor: %w", s.ConvID, s.Slug, err)
-		}
-		if _, err := c.tx.Exec(`
-			INSERT INTO agent_sudo_grants
-				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json, uses_limit, uses_left)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			agentID, s.Slug, requiredImportDBTime(s.GrantedAt), nullableDBTimeText(s.ExpiresAt), s.GrantedBy,
-			s.Reason, nullableDBTimeText(s.RevokedAt), scopeJSON, s.UsesLimit, s.UsesLeft); err != nil {
-			return fmt.Errorf("import: sudo grant %s/%s: %w", s.ConvID, s.Slug, err)
 		}
 	}
 	return nil

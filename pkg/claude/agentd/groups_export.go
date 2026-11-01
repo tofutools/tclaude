@@ -320,6 +320,9 @@ type importResponse struct {
 	Retitled       map[string]string `json:"retitled,omitempty"`
 	SkippedAliases []string          `json:"skipped_head_aliases,omitempty"`
 	FileWarnings   []string          `json:"file_warnings,omitempty"`
+	// Kept and Dropped list the file's elevated items by what became of them.
+	Kept    []string `json:"kept,omitempty"`
+	Dropped []string `json:"dropped,omitempty"`
 	// PromptWarnings reports what happened to the group's saved-prompt
 	// defaults: prompts created here, local versions kept, names dropped.
 	PromptWarnings []string `json:"prompt_warnings,omitempty"`
@@ -422,12 +425,15 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "import: "+err.Error())
 		return
 	}
-	resp, status, err := runGroupImport(archive, into, asName, caller, landing)
+	resp, status, err := runGroupImport(archive, into, asName, caller, landing, readImportKeep(r))
 	if err != nil {
 		code := "io"
 		var cut *groupHistoryCutError
 		var refused *groupPostureRefusal
+		var keep *importKeepError
 		switch {
+		case errors.As(err, &keep):
+			code = keep.code
 		case errors.As(err, &cut):
 			code = "history_confirmation_required"
 		case errors.As(err, &refused):
@@ -476,6 +482,8 @@ type importInspection struct {
 	Landings []*groupMemberLanding `json:"landings"`
 	// FileWarnings says what the file asks for and will not get.
 	FileWarnings []string `json:"file_warnings,omitempty"`
+	// Confirm lists what a human may keep of that.
+	Confirm *importConfirmation `json:"confirm"`
 	// Findings are this node's own credential scan of the archive.
 	Findings []paf.Finding `json:"findings"`
 }
@@ -499,13 +507,14 @@ type convCollision struct {
 //   - (nil, 400, err) — the archive itself is unusable: not a zip, no
 //     manifest, malformed, or a format version this tclaude predates.
 //     There is nothing safe to preview; the caller blocks the import.
-func inspectGroupImport(archive []byte, asName, into string, landing groupLandingOptions) (*importInspection, int, error) {
+func inspectGroupImport(archive []byte, asName, into string, landing groupLandingOptions, keep importKeep) (*importInspection, int, error) {
 	decoded, err := decodeGroupArchive(archive)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	exp, source := decoded.Export, decoded.Source
-	authorityWarnings := dropFileAuthority(exp)
+	drops := fileGroupDrops(exp)
+	settled := settleFileDrops(drops, keep.preview(), nil)
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
@@ -536,7 +545,8 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if into != "" {
 		cwd, _ = filepath.Abs(expandTilde(into))
 	}
-	insp.FileWarnings = append(dropFileGroupEnvironment(exp), authorityWarnings...)
+	insp.FileWarnings = settled.warnings
+	insp.Confirm = newImportConfirmation(archiveDigest(archive), drops, keep.human, settled.warnings)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
@@ -637,7 +647,7 @@ func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "import: "+err.Error())
 		return
 	}
-	insp, status, err := inspectGroupImport(archive, asName, into, landing)
+	insp, status, err := inspectGroupImport(archive, asName, into, landing, readImportKeep(r))
 	if err != nil {
 		code := "io"
 		if status == http.StatusBadRequest {
@@ -735,15 +745,6 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 		}
 		permission.ScopeJSON = canonical
 	}
-	for i := range exp.SudoGrants {
-		grant := &exp.SudoGrants[i]
-		grant.Slug = db.CanonicalPermissionSlug(grant.Slug)
-		canonical, err := canonicalImportedPermissionScopeForSlug(grant.Slug, grant.ScopeJSON)
-		if err != nil {
-			return fmt.Errorf("sudo grant %s/%s has invalid scope: %w", grant.ConvID, grant.Slug, err)
-		}
-		grant.ScopeJSON = canonical
-	}
 	return nil
 }
 
@@ -770,13 +771,19 @@ func canonicalImportedPermissionScopeForSlug(slug, raw string) (string, error) {
 	return canonical, nil
 }
 
-func runGroupImport(archive []byte, into, asName, caller string, landing groupLandingOptions) (resp *importResponse, status int, err error) {
+func runGroupImport(archive []byte, into, asName, caller string, landing groupLandingOptions, keep importKeep) (resp *importResponse, status int, err error) {
 	decoded, err := decodeGroupArchive(archive)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	exp := decoded.Export
-	authorityWarnings := dropFileAuthority(exp)
+	drops := fileGroupDrops(exp)
+	if err := keep.check(archiveDigest(archive), fileImportItems(drops)); err != nil {
+		var refused *importKeepError
+		errors.As(err, &refused)
+		return nil, refused.status, err
+	}
+	settled := settleFileDrops(drops, keep, nil)
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
@@ -859,7 +866,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	// Members landing through a harness's own history import get the
 	// conversation id that import mints; the rest take the file path below.
-	fileWarnings := append(dropFileGroupEnvironment(exp), authorityWarnings...)
+	fileWarnings := settled.warnings
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, targetCwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
@@ -1124,6 +1131,8 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		Retitled:       retitled,
 		SkippedAliases: result.HeadAliasesSkipped,
 		FileWarnings:   append(fileWarnings, landingWarnings(landings)...),
+		Kept:           settled.kept,
+		Dropped:        settled.dropped,
 		PromptWarnings: append(promptWarnings, groupImportPromptWarnings(result)...),
 		Landings:       landings,
 	}, http.StatusOK, nil

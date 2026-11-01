@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"cmp"
 	"fmt"
 	"net/http"
 	"os"
@@ -188,79 +187,6 @@ func nearestExistingDir(cwd string) string {
 func isTclaudeLayer(implementation string) bool {
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
 	return err == nil && normalized == sandboxpolicy.ImplementationTclaudeLayer
-}
-
-// dropFileGroupEnvironment takes a group's environment out of its file: it would
-// reach every spawn into the new group. The warning names the variables, never
-// their values.
-func dropFileGroupEnvironment(exp *groupexport.Export) []string {
-	if len(exp.Group.Environment) == 0 {
-		return nil
-	}
-	names := make([]string, len(exp.Group.Environment))
-	for i, entry := range exp.Group.Environment {
-		names[i] = entry.Name
-	}
-	exp.Group.Environment = nil
-	return []string{fileFieldDropped("environment variables " + strings.Join(names, ", "))}
-}
-
-// dropFileAuthority takes out of a group's file what would become a live grant.
-// Nothing here is a move the receiver owns: only a file reaches this path. A deny
-// only takes away, so it stays. Scheduled jobs stay for a human to review, with
-// none enabled and none speaking as the operator: an owner this file named could
-// otherwise enable one. It runs before the import validates permission scopes, so
-// a row that never lands cannot refuse the import.
-func dropFileAuthority(exp *groupexport.Export) []string {
-	titles := map[string]string{}
-	for _, c := range exp.Convs {
-		titles[c.ConvID] = c.Title
-	}
-	var granted fileGrants
-	for _, p := range exp.Group.Permissions {
-		granted.add("group permission", "", p.Slug)
-	}
-	exp.Group.Permissions = nil
-	kept := exp.Permissions[:0:0]
-	for _, p := range exp.Permissions {
-		if p.Effect == db.PermEffectDeny {
-			kept = append(kept, p)
-			continue
-		}
-		granted.add("permission", cmp.Or(titles[p.ConvID], short8(p.ConvID)), p.Slug)
-	}
-	exp.Permissions = kept
-	for _, s := range exp.SudoGrants {
-		if fileSudoGrantLive(s) {
-			granted.add("sudo grant", cmp.Or(titles[s.ConvID], short8(s.ConvID)), s.Slug)
-		}
-	}
-	exp.SudoGrants = nil
-	var warnings []string
-	if len(granted) > 0 {
-		warnings = append(warnings, "This file grants "+strings.Join(granted.lines(), "; ")+
-			", which authority in a file does not carry, so none of it is applied. Grant what you want here yourself.")
-	}
-	var disabled, unowned []string
-	for i := range exp.CronJobs {
-		job := &exp.CronJobs[i]
-		if job.Enabled != 0 {
-			disabled = append(disabled, job.Name)
-		}
-		if job.OperatorAuthored {
-			unowned = append(unowned, job.Name)
-		}
-		job.Enabled, job.RunImmediately, job.OperatorAuthored = 0, 0, false
-	}
-	if len(disabled) > 0 {
-		warnings = append(warnings, "Scheduled jobs "+strings.Join(disabled, ", ")+
-			" land disabled. Review them and enable the ones you want.")
-	}
-	if len(unowned) > 0 {
-		warnings = append(warnings, "Scheduled jobs "+strings.Join(unowned, ", ")+
-			" no longer run as the operator. Set their owner before enabling them.")
-	}
-	return warnings
 }
 
 // fileGrants lists what a file grants, a line per kind and holder, so that one
