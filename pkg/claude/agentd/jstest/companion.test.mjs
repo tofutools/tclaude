@@ -199,6 +199,21 @@ test('a floated Steward: its window ✕ asks too, and Cancel keeps it running', 
   assert.equal(floated(), null, 'the window closed');
 });
 
+test('shutting down a floated Steward leaves an open companion on Resume', async (t) => {
+  const fetchImpl = async () => ({ ok: true, text: async () => '', json: async () => ({}) });
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  await harness.act(() => controller().open(S));
+  await harness.act(() => view.container.querySelector('.companion-float').click());
+  await harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  assert.ok(view.container.querySelector(SHOWN_WINDOW), 'the companion is open, with no tab');
+  const floated = () => view.container.querySelector('.chat-window');
+  await harness.act(() => floated().querySelector('.overlay-wc-close').click());
+  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(floated(), null);
+  assert.ok(view.container.querySelector(SHOWN_WINDOW), 'still open');
+  assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
+});
+
 test('a floated agent that is no Steward still closes at once', async (t) => {
   const { view, harness, controller } = await setup(t);
   await harness.act(() => controller().open(A));
