@@ -20492,6 +20492,9 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
    popover that spells out who can do what. */
 .fleet-edge-link { position: absolute; transform: translate(-50%, -50%); z-index: 2; }
 .fleet-edge-link.open { z-index: 6; }
+/* The map's transform traps the popover, so the whole map rises while it's open:
+   above the resting chips (10), and below anything else the operator opens. */
+.fleet-map:has(.fleet-edge-link.open) { z-index: 11; }
 .fleet-edge-label { display: inline-flex; gap: 10px; text-align: left; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 3px 9px; font: 11px/1.5 system-ui, sans-serif; color: #c9d1d9; white-space: nowrap; cursor: pointer; }
 .fleet-edge-label:hover, .fleet-edge-label[aria-expanded="true"] { border-color: #58a6ff; }
 .fleet-edge-label.asymmetric { border-color: #6e5a1f; }
