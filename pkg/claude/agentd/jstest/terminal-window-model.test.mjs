@@ -21,6 +21,21 @@ test('a directory or group shell floats; an agent, a board and a peer do not', a
   assert.equal(overlayablePane(null), false);
 });
 
+test('a running local agent floats as its chat; anything else in a pane does not', async (t) => {
+  const { chatAgentOfPane } = await model(t);
+  const conv = 'conv-a';
+  const online = (value) => ({ agents: [{ agent_id: AGENT, conv_id: conv, title: 'builder', online: value }] });
+  const pane = (seed) => ({ key: 'k', seed: { ws: `/api/open-window-ws/${AGENT}`, agent: AGENT, ...seed } });
+  assert.equal(chatAgentOfPane(pane(), online(true))?.agentId, AGENT);
+  assert.equal(chatAgentOfPane(pane({ agent: conv }), online(true))?.agentId, AGENT, 'a pane may hold the conv id');
+  assert.equal(chatAgentOfPane(pane({ ws: '/api/spawn-focus-ws/label' }), online(true))?.agentId, AGENT);
+  assert.equal(chatAgentOfPane(pane(), online(false)), null, 'an offline chat has nothing to attach to');
+  assert.equal(chatAgentOfPane(pane({ agent: 'someone-else' }), online(true)), null);
+  assert.equal(chatAgentOfPane(pane({ remote: { peer: 'p' } }), online(true)), null, 'a peer stays a tab');
+  assert.equal(chatAgentOfPane(shell, online(true)), null, 'its shell stays a shell');
+  assert.equal(chatAgentOfPane(null, online(true)), null);
+});
+
 test('a window keeps what brings the same tab back', async (t) => {
   const { paneSeedOf, terminalWindowOf, validTerminalWindow } = await model(t);
   const window = terminalWindowOf(shell);

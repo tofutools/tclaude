@@ -24,3 +24,9 @@ export function openInCompanion(agentId, options = {}) {
   if (!controller) return false;
   return controller.open(agentId, options) !== false;
 }
+
+// floatInCompanion moves the agent to its chat overlay window, the one a tab
+// dragged off the companion gets. It reports whether a companion handled it.
+export function floatInCompanion(agentId) {
+  return controller ? controller.float(agentId) === true : false;
+}

@@ -56,7 +56,7 @@ function fakeDictation() {
 
 const SHOWN_WINDOW = '.companion-window:not(.companion-window-warm)';
 
-async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, openPermissions = null, openSudo = null, detachWindow = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {}, locks = null } = {}) {
+async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sessionPrefs = memoryPrefs(), onComposeMessage = null, openMorph = null, openPermissions = null, openSudo = null, detachWindow = null, openTerminalsPane = null, fetchImpl, speakerImpl = null, dictationImpl = null, notify = () => {}, locks = null } = {}) {
   const harness = await createPreactHarness(t);
   const { CompanionApp } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal(snapshot);
@@ -73,7 +73,7 @@ async function setup(t, { snapshot = snapshotWith(), prefs = memoryPrefs(), sess
   });
   const view = await harness.mount(harness.html`<${CompanionApp}
     snapshot=${snap} activeTab=${activeTab} prefs=${prefs} sessionPrefs=${sessionPrefs} fetchImpl=${fetchFn} notify=${notify}
-    locks=${locks} onComposeMessage=${onComposeMessage} openMorph=${openMorph} openPermissions=${openPermissions} openSudo=${openSudo} detachWindow=${detachWindow} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
+    locks=${locks} onComposeMessage=${onComposeMessage} openMorph=${openMorph} openPermissions=${openPermissions} openSudo=${openSudo} detachWindow=${detachWindow} openTerminalsPane=${openTerminalsPane} widgetFactory=${fakeWidgetFactory(mounted)} speakerImpl=${speakerImpl} dictationImpl=${dictationImpl} closeTerminalPanes=${(selectors) => closed.push(selectors)}
     registerController=${(c) => { controller = c; return () => { controller = null; }; }} />`);
   return { harness, view, snap, mounted, requests, closed, prefs, controller: () => controller };
 }
@@ -212,6 +212,29 @@ test('shutting down a floated Steward leaves an open companion on Resume', async
   assert.equal(floated(), null);
   assert.ok(view.container.querySelector(SHOWN_WINDOW), 'still open');
   assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
+});
+
+test('a Terminals tab floats its agent as a chat, and a parked tab goes with it', async (t) => {
+  const { view, harness, controller } = await setup(t, { openTerminalsPane: () => {} });
+  const tabOfAlpha = () => [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('alpha'));
+  await harness.act(() => controller().open(A));
+  await harness.act(() => view.container.querySelector('[aria-label="Open in the Collab tab"]').click());
+  assert.ok(tabOfAlpha(), 'parked in the companion while it is in the Collab tab');
+  let floated = false;
+  await harness.act(() => { floated = controller().float('conv-a'); });
+  assert.equal(floated, true, 'a pane may hold the conv id');
+  assert.ok(view.container.querySelector('.chat-window .companion-term-host'), 'the chat window has the terminal');
+  assert.equal(tabOfAlpha(), undefined, 'no second place for it');
+  assert.equal(controller().float('agt_nobody'), false);
+});
+
+test('an agent that never had a tab floats without touching the companion', async (t) => {
+  const { view, harness, controller } = await setup(t);
+  await harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  assert.ok(view.container.querySelector(SHOWN_WINDOW), 'open, with no tab');
+  await harness.act(() => controller().float(A));
+  assert.ok(view.container.querySelector('.chat-window'));
+  assert.ok(view.container.querySelector(`.companion-window:not(.chat-window):not(.companion-window-warm)`), 'still open');
 });
 
 test('a floated agent that is no Steward still closes at once', async (t) => {
