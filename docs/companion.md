@@ -139,7 +139,7 @@ dictation, that dictation falls back to Google's service and tells you.
   showing, so without on-device speech **everything said in the room goes to Google's
   service for as long as it listens**. On-device speech is recommended.
 
-  An indicator at the bottom left shows whenever it's on, says where the audio goes
+  An indicator at the top of the page shows whenever it's on, says where the audio goes
   and has **Pause**. It stops while the tab is hidden, runs in one tab at a time, and
   waits while the mic is in use or a reply is read aloud. After repeated errors it
   stops and says why. If on-device speech stops working, it stops rather than

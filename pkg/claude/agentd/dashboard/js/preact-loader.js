@@ -615,7 +615,7 @@ const voiceWakeDescriptor = createIslandDescriptor({
     const [{ mountVoiceWakeIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotModule]);
     return {
       state: null,
-      mount: () => mountVoiceWakeIsland({ host, snapshot: dependencies.snapshot || dashboardState.snapshot }),
+      mount: (registerCleanup) => registerCleanup(mountVoiceWakeIsland({ host, snapshot: dependencies.snapshot || dashboardState.snapshot })),
     };
   },
 });
