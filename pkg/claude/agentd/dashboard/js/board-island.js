@@ -26,7 +26,7 @@ import {
   BOARD_ZOOM_MAX, BOARD_ZOOM_MIN, boardAge, clampBoardZoom, groupBoards,
 } from './board-model.js';
 import { BoardContextMenu } from './board-context-menu.js';
-import { announceBoardDeleted, askDeleteBoard, exportBoard, freeBoardId, importBoardFile } from './board-manage.js';
+import { announceBoardDeleted, askDeleteBoard, boardIsGone, exportBoard, freeBoardId, importBoardFile } from './board-manage.js';
 import { clipboardReadNote } from './insecure-origin.js';
 import { BoardMinimap } from './board-minimap.js';
 import { BoardQuickMenu, QUICK_MENU_SIZE } from './board-quick-menu.js';
@@ -359,8 +359,7 @@ export function BoardEditor({
       } catch (error) {
         retry = true;
         if (disposed.current) return;
-        // A daemon with collab off answers 404 too, and has deleted nothing.
-        if (error?.status === 404 && error.code !== 'collab_disabled') {
+        if (boardIsGone(error)) {
           missing = true;
           setGone(true);
           notify(`The board ${boardId} was deleted.`);
@@ -1863,7 +1862,7 @@ function BoardRow({ board, onOpen, onExport, onDelete }) {
   const changed = board.updated_at ? new Date(board.updated_at).toLocaleString() : '';
   return html`<li class="board-row">
     <button type="button" class="board-row-open" title=${`${label}: ${elements}${changed ? `, changed ${changed}` : ''}`} onClick=${() => onOpen(board.id, label)}>
-      <span class=${`board-row-dot${board.active ? ' active' : ''}`} title=${board.active ? 'An agent is working on it' : ''}></span>
+      <span class=${`board-row-dot${board.active ? ' active' : ''}`} title=${board.active ? 'An agent has a session on it' : ''}></span>
       <span class="board-row-title">${label}</span>
       ${agents > 0 && html`<span class="board-row-agents">${agents} agent${agents === 1 ? '' : 's'}</span>`}
       <span class="board-row-age">${boardAge(board.updated_at)}</span>
@@ -1874,8 +1873,9 @@ function BoardRow({ board, onOpen, onExport, onDelete }) {
 }
 
 // BoardList offers every board, and a new one; one box does both. `compact` is
-// the strip's + menu.
-export function BoardList({ fetchImpl, notify, onOpen, compact = false }) {
+// the strip's + menu. onPicking says while a file is being chosen and read, when
+// a menu around the list must stay open: the file input is inside it.
+export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, compact = false }) {
   const [boards, setBoards] = useState(null);
   const [title, setTitle] = useState('');
   const [error, setError] = useState('');
@@ -1922,7 +1922,10 @@ export function BoardList({ fetchImpl, notify, onOpen, compact = false }) {
   async function importFile(event) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = '';
-    if (!file) return;
+    if (!file) {
+      onPicking(false);
+      return;
+    }
     setImporting(true);
     try {
       const board = await importBoardFile(file, { fetchImpl, taken: (boards || []).map((b) => b.id) });
@@ -1932,6 +1935,7 @@ export function BoardList({ fetchImpl, notify, onOpen, compact = false }) {
       notify(`Could not import ${file.name}: ${err?.message || err}`, true);
     } finally {
       setImporting(false);
+      onPicking(false);
     }
   }
   const groups = groupBoards(boards || [], clean);
@@ -1939,26 +1943,26 @@ export function BoardList({ fetchImpl, notify, onOpen, compact = false }) {
     <form class="board-new" onSubmit=${create}>
       <input type="text" placeholder="Search, or type a title to create" aria-label="Search boards, or title a new one" maxLength="120"
         value=${title} onInput=${(event) => setTitle(event.currentTarget.value)} />
-      <button type="submit" disabled=${!clean || !!same}>Create</button>
+      <button type="submit" disabled=${!clean}>${same ? 'Open' : 'Create'}</button>
     </form>
     ${error && html`<p class="board-error" role="alert">Boards are unavailable: ${error}</p>`}
     ${boards === null && !error && html`<p class="board-muted">Loading boards…</p>`}
     ${boards && !boards.length && html`<p class="board-muted">No boards yet. A board is a shared canvas: you draw, agents read it and draw back.</p>`}
     ${boards?.length > 0 && !groups.length && html`<p class="board-muted">No board matches. Create makes one with this title.</p>`}
     <div class="board-groups">
-      ${groups.map(({ name, boards: rows }) => html`<section key=${name} class="board-group" aria-label=${name ? `Group ${name}` : 'Boards without a group'}>
-        ${(name || groups.length > 1) && html`<h3 class="board-group-name"><span>${name || 'No group'}</span><span class="board-group-count">${rows.length}</span></h3>`}
+      ${groups.map(({ name, boards: rows }) => html`<div key=${name} class="board-section" role="group" aria-label=${name ? `Group ${name}` : 'Boards without a group'}>
+        ${(name || groups.length > 1) && html`<h3 class="board-section-name"><span>${name || 'No group'}</span><span class="board-section-count">${rows.length}</span></h3>`}
         <ul class="board-rows">
           ${rows.map((board) => html`<${BoardRow} key=${board.id} board=${board} onOpen=${onOpen} onExport=${exportRow}
             onDelete=${() => askDeleteBoard({ id: board.id, title: board.title, onDeleted: load })} />`)}
         </ul>
-      </section>`)}
+      </div>`)}
     </div>
-    <footer class="board-store">
+    <div class="board-store">
       <span>Stored in this tclaude instance, not in a file. ⤓ exports one.</span>
-      <button type="button" class="board-import" disabled=${importing} onClick=${() => fileRef.current?.click()}>${importing ? 'Importing…' : 'Import…'}</button>
-      <input ref=${fileRef} type="file" accept=".excalidraw,.json,application/json" hidden aria-label="Import an .excalidraw file" onChange=${importFile} />
-    </footer>
+      <button type="button" class="board-import" disabled=${importing} onClick=${() => { onPicking(true); fileRef.current?.click(); }}>${importing ? 'Importing…' : 'Import…'}</button>
+      <input ref=${fileRef} type="file" accept=".excalidraw,.json,application/json" hidden aria-label="Import an .excalidraw file" onChange=${importFile} onCancel=${() => onPicking(false)} />
+    </div>
   </div>`;
 }
 

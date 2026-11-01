@@ -10,6 +10,7 @@ import { signal } from '@preact/signals';
 import htm from 'htm';
 import { boardIdFromTitle, cleanText, drawnElements, fromExcalidraw, toExcalidraw } from './board-model.js';
 import { companionAgents } from './companion-model.js';
+import { useDialogFocus } from './dialog-focus.js';
 
 const html = htm.bind(h);
 
@@ -22,10 +23,14 @@ async function bodyOf(response) {
   if (!response.ok) {
     const error = new Error(body.error || `${response.status} ${response.statusText || ''}`.trim());
     error.status = response.status;
+    error.code = body.code;
     throw error;
   }
   return body;
 }
+
+// A daemon with collab off answers 404 too, and has deleted nothing.
+export const boardIsGone = (error) => error?.status === 404 && error.code === 'not_found';
 
 const readBoard = async (id, fetchImpl) => bodyOf(await fetchImpl(`/api/boards/${encodeURIComponent(id)}`, { credentials: 'same-origin' }));
 
@@ -119,14 +124,14 @@ function BoardDeleteDialog({ request, snapshot, fetchImpl, notify, close }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
   const cancelRef = useRef(null);
-  useEffect(() => { cancelRef.current?.focus?.(); }, []);
+  const { dialogRef } = useDialogFocus({ open: true, initialFocusRef: cancelRef, onEscape: close });
   useEffect(() => {
     let current = true;
     readBoard(request.id, fetchImpl).then((read) => {
       if (current) setBoard(read);
     }).catch((error) => {
       if (!current) return;
-      if (error.status === 404) {
+      if (boardIsGone(error)) {
         notify('That board is already gone.');
         announceBoardDeleted(request.id);
         request.onDeleted?.();
@@ -157,7 +162,7 @@ function BoardDeleteDialog({ request, snapshot, fetchImpl, notify, close }) {
       await bodyOf(await deleteRequest(request.id, fetchImpl));
     } catch (error) {
       // Someone else got there first: what was asked for has happened.
-      if (error.status !== 404) {
+      if (!boardIsGone(error)) {
         setBusy(false);
         setProblem(`Could not delete it: ${error.message}`);
         return;
@@ -168,13 +173,7 @@ function BoardDeleteDialog({ request, snapshot, fetchImpl, notify, close }) {
     request.onDeleted?.();
     close();
   }
-  function onKeyDown(event) {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    close();
-  }
-  return html`<div class="modal-overlay show board-delete-overlay" onKeyDown=${onKeyDown}>
+  return html`<div ref=${dialogRef} class="modal-overlay show board-delete-overlay">
     <div class="modal board-delete" role="alertdialog" aria-modal="true" aria-label=${`Delete ${title}`}>
       <h3>Delete “${title}”?</h3>
       ${board ? html`<p>
@@ -188,7 +187,7 @@ function BoardDeleteDialog({ request, snapshot, fetchImpl, notify, close }) {
       </ul>` : html`<p class="board-muted">No agents are on it.</p>`}` : !problem && html`<p class="board-muted">Loading…</p>`}
       ${problem && html`<p class="board-error" role="alert">${problem}</p>`}
       <div class="modal-buttons">
-        <button type="button" class="board-delete-export" disabled=${!board || exported} onClick=${exportFirst}>${exported ? '✓ Exported' : '⤓ Export first'}</button>
+        <button type="button" class="board-delete-export" disabled=${!board} onClick=${exportFirst}>${exported ? '✓ Exported' : '⤓ Export first'}</button>
         <button type="button" ref=${cancelRef} onClick=${close}>Cancel</button>
         <button type="button" class="confirm-danger board-delete-confirm" disabled=${!board || busy} onClick=${confirm}>Delete board</button>
       </div>

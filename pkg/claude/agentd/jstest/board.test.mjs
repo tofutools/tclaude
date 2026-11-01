@@ -109,7 +109,7 @@ test('the board list groups boards on one line each, and filters them', async (t
   const fetchImpl = async () => ok({ boards: LISTED });
   const view = await harness.mount(harness.html`<${BoardList} compact fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${() => {}} />`);
   await harness.act(() => wait());
-  const names = () => [...view.container.querySelectorAll('.board-group-name span:first-child')].map((el) => el.textContent);
+  const names = () => [...view.container.querySelectorAll('.board-section-name span:first-child')].map((el) => el.textContent);
   const rows = () => [...view.container.querySelectorAll('.board-row-title')].map((el) => el.textContent);
   assert.deepEqual(names(), ['beta', 'alpha', 'No group'], 'groups by their newest board, no group last');
   assert.deepEqual(rows(), ['Newest', 'Oldest', 'Older', 'Solo']);
@@ -119,7 +119,8 @@ test('the board list groups boards on one line each, and filters them', async (t
   await harness.input(input, 'ALPHA');
   assert.deepEqual(rows(), ['Older'], 'a search finds a group too');
   await harness.input(input, 'older');
-  assert.equal(view.container.querySelector('.board-new button').disabled, true, 'a title that exists is no new board');
+  assert.equal(view.container.querySelector('.board-new button').disabled, false, 'Enter needs a default button that works');
+  assert.equal(view.container.querySelector('.board-new button').textContent, 'Open', 'a title that exists is no new board');
   await harness.input(input, 'nothing here');
   assert.match(view.container.textContent, /No board matches/);
 });
@@ -226,7 +227,7 @@ test('importing a file makes a board under the file name, and a failed one leave
 test('an open editor says so when its board is gone, and not when collab is off', async (t) => {
   const harness = await createPreactHarness(t);
   const { BoardEditor } = await harness.importDashboardModule('js/board-island.js');
-  const { onBoardDeleted } = await harness.importDashboardModule('js/board-manage.js');
+  const { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } = await harness.importDashboardModule('js/board-manage.js');
   const gone = [];
   t.after(onBoardDeleted((id) => gone.push(id)));
   const snapshot = harness.signals.signal({ agents: [] });
@@ -235,6 +236,12 @@ test('an open editor says so when its board is gone, and not when collab is off'
   await harness.act(() => wait());
   assert.deepEqual(gone, []);
   assert.equal(disabled.container.querySelector('.board-gone'), null);
+  const asked = await harness.mount(harness.html`<${BoardDeleteHost} snapshot=${snapshot} fetchImpl=${notFound('collab_disabled')} notify=${() => {}} />`);
+  await harness.act(async () => { askDeleteBoard({ id: 'off' }); await wait(); });
+  await harness.act(() => wait());
+  assert.deepEqual(gone, [], 'nor does the delete dialog take collab off for a deletion');
+  assert.match(asked.container.textContent, /nope/);
+  await harness.act(async () => { boardDeleteRequest.value = null; await wait(); });
   const deleted = await harness.mount(harness.html`<${BoardEditor} boardId="plan" snapshot=${snapshot} win=${harness.window} WebSocketCtor=${null} fetchImpl=${notFound('not_found')} />`);
   await harness.act(() => wait());
   assert.deepEqual(gone, ['plan']);

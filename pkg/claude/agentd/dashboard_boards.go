@@ -800,8 +800,8 @@ func handleDashboardBoardDelete(w http.ResponseWriter, r *http.Request) {
 // tellBoardDeleted mails everyone who was on a deleted board. Unlike activity
 // mail this goes to stopped agents too: the news is still true when they
 // resume. A board that is gone stays gone whoever could not be told, so a
-// failure is only logged. Operator-authored, this quotes nothing agents wrote:
-// not the title, which any agent with boards.write can set.
+// failure is only logged. Operator-authored, this quotes the id, which is held
+// to [a-z0-9-], and not the title, which any agent with boards.write can set.
 func tellBoardDeleted(id string, audience []string) {
 	body := fmt.Sprintf("The operator deleted board %s. Its contents are gone, and `tclaude agent board` commands for it now fail.", id)
 	for _, agentID := range audience {

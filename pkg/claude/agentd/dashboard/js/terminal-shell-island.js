@@ -522,18 +522,20 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
 // It reads the snapshot itself so the strip does not re-render on each poll.
 function BoardMenu({ state, snapshot }) {
   const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
   const rootRef = useRef(null);
   const request = state.boardMenuRequest.value;
   useEffect(() => { if (request) setOpen(true); }, [request]);
-  // The delete dialog is outside the menu, and it is what the menu is waiting for.
-  useDismissablePopover(rootRef, open && !boardDeleteRequest.value, () => setOpen(false));
+  // The delete dialog and the file picker are outside the menu, and the menu is
+  // waiting for them.
+  useDismissablePopover(rootRef, open && !boardDeleteRequest.value && !picking, () => setOpen(false));
   if (snapshot?.value?.collab_enabled !== true) return null;
   return html`<div ref=${rootRef} class="mux-board-slot">
     <button type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       title="Open a board in a tab, or create one" aria-label="Open or create a board"
       onClick=${() => setOpen((value) => !value)}>＋</button>
     ${open ? html`<div class="mux-board-menu" role="dialog" aria-label="Boards">
-      <${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast}
+      <${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast} onPicking=${setPicking}
         onOpen=${(id, label) => { setOpen(false); void openBoardPane(id, label); }} />
     </div>` : null}
   </div>`;

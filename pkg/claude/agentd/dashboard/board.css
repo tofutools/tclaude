@@ -44,12 +44,12 @@ body.slop, body.vegas {
 .board-new button:disabled { opacity: .5; cursor: default; }
 .board-muted { color: var(--board-muted); }
 .board-error { color: #f85149; }
-.board-group { margin-bottom: 6px; }
-.board-group-name {
+.board-section { margin-bottom: 6px; }
+.board-section-name {
   display: flex; justify-content: space-between; margin: 6px 4px 2px; font-size: 11px; font-weight: 600;
   letter-spacing: .05em; text-transform: uppercase; color: var(--board-muted);
 }
-.board-group-count { font-weight: 400; letter-spacing: 0; }
+.board-section-count { font-weight: 400; letter-spacing: 0; }
 .board-rows { list-style: none; margin: 0; padding: 0; }
 .board-row { display: flex; align-items: center; gap: 2px; height: 28px; border-radius: 5px; }
 .board-row:hover, .board-row:focus-within { background: var(--board-bar); }
