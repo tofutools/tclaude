@@ -259,7 +259,7 @@ export function CompanionApp({
   const [open, setOpen] = useState(() => readPref(sessionPrefs, COMPANION_OPEN_PREF) === '1');
   const [chipSpot, setChipSpot] = useState(() => parseChipSpot(readPref(prefs, COMPANION_CHIP_SPOT_PREF)));
   const overlay = useOverlayWindow({
-    win, prefs, prefKey: COMPANION_PLACEMENT_PREF, defaultPlacement, snaps: true, open,
+    id: 'companion', win, prefs, prefKey: COMPANION_PLACEMENT_PREF, defaultPlacement, snaps: true, open,
     // A floating window opens at the chips' spot until the operator moves it.
     spotted: (base, viewport, top) => {
       const spot = readPref(prefs, COMPANION_WINDOW_SPOT_PREF);
