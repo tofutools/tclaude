@@ -268,3 +268,48 @@ func TestSteward_SummonWithoutABriefGetsTheDaemons(t *testing.T) {
 	assert.Contains(t, rows[len(rows)-1].Body, "tclaude agent board show")
 	assert.Contains(t, rows[len(rows)-1].Body, "--ask-human")
 }
+
+// A Steward that predates the record has an empty one, so what it was born with
+// has to go by its label.
+func TestStewardHandover_SummonedStewardLosesItsBirthGrants(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Steward.DefaultPermissions = []string{agentd.PermAgentRename}
+	require.NoError(t, config.Save(cfg))
+	old := s.summon()
+	require.NoError(t, db.CloseStewardRecord(s.agentID(old), agentd.PermAgentRename))
+	require.NoError(t, db.OfferStewardPermissions(s.agentID(old), db.StewardRecordOpened))
+
+	s.mustHandover(handoverWorker, "keep")
+	_, held := stewardOverrideHeld(t, old, agentd.PermAgentRename)
+	assert.False(t, held)
+}
+
+// What a promoted agent held by its own birth, as another scribe, is not the role's.
+func TestStewardHandover_KeepsAnEarlierScribesOwnGrants(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	require.NoError(t, db.SetAgentPermissionOverride(handoverWorker, agentd.PermFleetRead, db.PermEffectGrant, "<human>:scribe-summon:correlation-id=x"))
+	s.mustHandover(handoverWorker, "roster")
+	require.Equal(t, http.StatusOK, s.post("/api/steward/step-down", map[string]any{}).Code)
+	assert.Equal(t, "grant", stewardOverride(t, handoverWorker, agentd.PermFleetRead))
+}
+
+// A slug the agent held through the role's time is not one the operator took off.
+func TestStewardHandover_LaterRevokeIsNotWithheld(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	require.NoError(t, db.SetAgentPermissionOverride(handoverWorker, agentd.PermHostRead, db.PermEffectDeny, "dashboard"))
+	s.mustHandover(handoverWorker, "roster")
+	require.Equal(t, http.StatusOK, s.post("/api/steward/step-down", map[string]any{}).Code)
+	_, err := db.RevokeAgentPermission(handoverWorker, agentd.PermHostRead)
+	require.NoError(t, err)
+	assert.NotContains(t, s.preview(handoverWorker).Withheld, agentd.PermHostRead)
+}
+
+func TestSteward_NameBelongsToTheSteward(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	rec := testharness.Serve(s.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "slugs": []string{agentd.PermFleetRead}, "brief": "Help.",
+	})))
+	assert.Equalf(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}

@@ -24,7 +24,7 @@ func TestDashboardCompanionSpeech_ReturnsTheAgentsTextAfterTheCursor(t *testing.
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
-		map[string]any{"name": "steward", "slugs": []string{agentd.PermProcessTemplatesRead}, "brief": "Help."})))
+		map[string]any{"name": "speaker", "slugs": []string{agentd.PermProcessTemplatesRead}, "brief": "Help."})))
 	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
 	conv := decodeScribeResp(t, rec).ConvID
 	agentID, err := db.AgentIDForConv(conv)

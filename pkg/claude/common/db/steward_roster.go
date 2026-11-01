@@ -136,7 +136,7 @@ func CloseStewardRecord(agentID string, slugs ...string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, slug := range append(slugs, StewardRecordOpened) {
+	for _, slug := range append(slugs, StewardRecordOpened, StewardRecordPromoted) {
 		if _, err := tx.Exec(`DELETE FROM steward_offered_permissions WHERE agent_id = ? AND slug = ?`, agentID, slug); err != nil {
 			return err
 		}

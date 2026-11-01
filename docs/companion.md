@@ -283,7 +283,8 @@ An offline agent can take the role too. Its brief waits until you resume it.
 One Steward is active. `steward`, your chosen name, the companion's **✦** and a
 changed-name message all mean that agent, even while it's offline. Until you first
 choose, the newest running Steward is the active one. Summoning a Steward yourself
-makes the new one active.
+makes the new one active. Only you can summon one: an agent's summon is refused,
+whatever it holds.
 
 Agents on the roster are normal agents, without Steward access, so only the active
 Steward holds it. **✦** in the title bar lists them:
@@ -299,7 +300,7 @@ Leaving the role removes what the role gave and nothing else. What you granted t
 agent separately, in its permissions editor or with sudo, stays, and the confirmation
 lists it. Coming back gives the role's access again, except anything you took off it
 yourself. If you summon a new Steward while the active one is offline, the old one
-goes on the roster the same way. Retiring an agent takes it off the roster.
+goes on the roster the same way, once the new one is running. Retiring an agent takes it off the roster.
 
 Other live Stewards, such as a second one summoned earlier, stay as they are and show
 as **also running**. Only one is active, and **Switch** makes one of them active.

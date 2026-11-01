@@ -167,6 +167,9 @@ func endCarriedSudo(tx *sql.Tx, where string, args ...any) error {
 // is a record with nothing in it yet.
 const StewardRecordOpened = ""
 
+// StewardRecordPromoted marks a record opened by a handover rather than a summon.
+const StewardRecordPromoted = "promoted"
+
 // OfferStewardPermissions records that a Steward's levels have given it these
 // slugs, once and all together. What the operator does with them afterwards is
 // theirs.

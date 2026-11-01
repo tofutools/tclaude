@@ -161,7 +161,17 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	titleBase := "" // the group's name, unless the operator named this agent
 	// The Steward is a Collab surface; other scribes are not.
 	isSteward := body.Scope != nil && strings.TrimSpace(body.Scope.Kind) == stewardScopeKind
+	// The group holds Stewards and nothing else: a summon that lands there
+	// without being one would prune them without demoting them.
+	if !isSteward && strings.TrimSpace(body.Name) == stewardGroupName {
+		writeError(w, http.StatusBadRequest, "name", "the name "+stewardGroupName+" is the Steward's")
+		return
+	}
 	if isSteward {
+		// Who is a Steward is the human's alone, whatever the caller holds.
+		if !requireHuman(w, r, "summon a Steward") {
+			return
+		}
 		if !collabRoutesEnabled() {
 			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
 			return
@@ -321,10 +331,8 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 	if !reused {
 		spawnUse.keep()
 	}
-	// The seat is the operator's. An agent's summon joins the group and takes
-	// the role only if nobody holds it.
-	if isSteward && spawnerConvID == "" {
-		seatSummonedSteward(out.ConvID)
+	if isSteward {
+		adoptSummonedSteward(out.ConvID)
 	}
 
 	resp := map[string]any{
@@ -417,9 +425,8 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	// Dead sessions are no longer doing useful parallel work. Preserve the old
 	// cleanup behavior by unlinking them, while every live scribe stays in the
 	// group and continues its independent editing task.
-	if g.Name == stewardGroupName {
-		pruneDeadStewards(g, spawnerConvID == "")
-	} else {
+	// A Steward's group is pruned once its replacement exists: adoptSummonedSteward.
+	if g.Name != stewardGroupName {
 		pruneDeadScribes(g)
 	}
 	if scopeKey != "" {
@@ -485,10 +492,7 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 			autoFetchKnowledgeSource(cfg)
 		}
 	}
-	// Sudo stands on the operator's approval, so only the operator's own summon
-	// passes it on: an agent could otherwise write a brief for a Steward holding
-	// what it does not hold itself.
-	if scopeKey == stewardScopeKind+"/" && spawnerConvID == "" {
+	if scopeKey == stewardScopeKind+"/" {
 		inheritStewardCarriedSudo(outcome.ConvID)
 	}
 	out := &scribeOutcome{Name: p.Name, ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}

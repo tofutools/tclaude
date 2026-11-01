@@ -39,10 +39,12 @@ const (
 )
 
 // isStewardRoleGrant reports whether a row exists only because of the role. The
-// operator's own grant of the same slug carries their label, and stays.
+// operator's own grant of the same slug carries their label, and stays. Every
+// birth grant of a summoned Steward came with the role; a promoted agent's birth
+// grants, if it was summoned as another scribe, did not.
 func isStewardRoleGrant(row db.AgentPermission, offered map[string]bool) bool {
-	return row.GrantedBy == stewardRoleGranter ||
-		(offered[row.Slug] && (row.GrantedBy == stewardReconcileGranter || strings.Contains(row.GrantedBy, ":scribe-summon:")))
+	return row.GrantedBy == stewardRoleGranter || row.GrantedBy == stewardReconcileGranter ||
+		(!offered[db.StewardRecordPromoted] && strings.Contains(row.GrantedBy, ":scribe-summon:"))
 }
 
 // stewardAccessPlan is what the role would change on one agent.
@@ -94,7 +96,9 @@ func planStewardAccess(cfg *config.Config, conv, agentID string, state permissio
 type stewardDemotion struct {
 	Loses []string `json:"loses"`
 	Keeps []string `json:"keeps"`
-	rows  []string
+	// rows are the overrides to delete, held all it still has a row for: only a
+	// slug with no row left is one the operator took off.
+	rows, held []string
 }
 
 func readStewardDemotion(conv, agentID string) (*stewardDemotion, error) {
@@ -112,6 +116,7 @@ func readStewardDemotion(conv, agentID string) (*stewardDemotion, error) {
 	}
 	out := &stewardDemotion{Loses: []string{}, Keeps: []string{}}
 	for _, row := range rows {
+		out.held = append(out.held, row.Slug)
 		switch {
 		case isStewardRoleGrant(row, offered):
 			out.rows = append(out.rows, row.Slug)
@@ -149,7 +154,7 @@ func demoteSteward(g *db.AgentGroup, conv, agentID string) (*stewardDemotion, er
 	if _, err := db.EndInheritedStewardSudo(agentID, stewardCarriedGranter); err != nil {
 		return nil, err
 	}
-	if err := db.CloseStewardRecord(agentID, demotion.rows...); err != nil {
+	if err := db.CloseStewardRecord(agentID, demotion.held...); err != nil {
 		return nil, err
 	}
 	if err := db.RemoveAgentGroupMember(g.ID, conv); err != nil {
@@ -158,38 +163,34 @@ func demoteSteward(g *db.AgentGroup, conv, agentID string) (*stewardDemotion, er
 	return demotion, nil
 }
 
-// pruneDeadStewards is pruneDeadScribes for the Steward group. The operator's
-// own summon replaces an offline Steward, which then stands by on the roster
-// without its access, ready to come back. An agent's summon changes nothing about
-// the seat.
-func pruneDeadStewards(g *db.AgentGroup, byOperator bool) {
-	active := activeStewardConv()
-	if !byOperator {
-		pruneDeadScribes(g, active)
+// adoptSummonedSteward gives the operator's new Steward the seat. An offline
+// Steward it replaces stands by on the roster without its access, ready to come
+// back. It runs only once the new one exists, so a failed summon changes nothing.
+func adoptSummonedSteward(conv string) {
+	scribeSummonMu.Lock()
+	defer scribeSummonMu.Unlock()
+	g, fail := ensureScribeGroup(stewardGroupName)
+	if fail != nil {
+		slog.Warn("steward: read group failed", "error", fail.Msg)
 		return
 	}
-	for _, conv := range stewardConvs() {
-		if pickAliveSession(conv) != nil {
+	for _, offline := range stewardConvs() {
+		if offline == conv || pickAliveSession(offline) != nil {
 			continue
 		}
-		agentID, err := db.AgentIDForConv(conv)
+		agentID, err := db.AgentIDForConv(offline)
 		if err != nil || agentID == "" {
 			continue
 		}
-		if _, err := demoteSteward(g, conv, agentID); err != nil {
-			slog.Warn("steward: demote offline Steward failed", "conv", short8(conv), "error", err)
+		if _, err := demoteSteward(g, offline, agentID); err != nil {
+			slog.Warn("steward: demote offline Steward failed", "conv", short8(offline), "error", err)
 			continue
 		}
 		if err := db.SetStewardStandby(agentID, granterLabel("")); err != nil {
-			slog.Warn("steward: put offline Steward on the roster failed", "conv", short8(conv), "error", err)
+			slog.Warn("steward: put offline Steward on the roster failed", "conv", short8(offline), "error", err)
 		}
 	}
-	pruneDeadScribes(g)
-}
-
-// seatSummonedSteward gives the operator's summon the seat. A failure leaves the
-// newest running Steward active, as it was before anyone was seated.
-func seatSummonedSteward(conv string) {
+	pruneDeadScribes(g, conv)
 	agentID, err := db.AgentIDForConv(conv)
 	if err != nil || agentID == "" {
 		slog.Warn("steward: resolve agent for the seat failed", "conv", short8(conv), "error", err)
@@ -427,7 +428,11 @@ func grantStewardRole(cfg *config.Config, g *db.AgentGroup, conv, agentID string
 			return err
 		}
 	}
-	if err := db.OfferStewardPermissions(agentID, append(offered, db.StewardRecordOpened)...); err != nil {
+	record := append(offered, db.StewardRecordOpened)
+	if !wasSteward {
+		record = append(record, db.StewardRecordPromoted)
+	}
+	if err := db.OfferStewardPermissions(agentID, record...); err != nil {
 		return err
 	}
 	if !wasSteward {
@@ -466,10 +471,16 @@ func handOverSteward(cfg *config.Config, res *agent.Resolved, then, by, auditEve
 		return nil, fail
 	}
 	if retiring != "" {
-		if _, _, err := retireAgentConv(retiring, by, "the operator replaced this Steward"); err != nil {
+		_, ownerGroups, err := retireAgentConv(retiring, by, "the operator replaced this Steward")
+		if err != nil {
 			out.Warning = "could not retire the old Steward: " + err.Error()
 			return out, nil
 		}
+		owned := map[int64]bool{}
+		for _, id := range ownerGroups {
+			owned[id] = true
+		}
+		out.Warning = strings.Join(warnOwnerlessGroups(owned), " ")
 		finishRetiredConv(retiring, true, false, agentWorktreeView{}, auditEventID)
 	}
 	return out, nil

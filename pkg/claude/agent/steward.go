@@ -99,7 +99,7 @@ type stewardSetParams struct {
 
 func stewardSetCmd() *cobra.Command {
 	return boa.CmdT[stewardSetParams]{
-		Use:         "set <agent>",
+		Use:         "set",
 		Short:       "Make a running agent the Steward",
 		Long:        "Shows what changes, and with --yes makes the change. The agent keeps its conversation, harness, working directory and what it already held, and gets the Steward's access and brief. The current Steward loses what the role gave it.\n\n" + stewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -200,7 +200,7 @@ type stewardStepDownParams struct {
 
 func stewardStepDownCmd() *cobra.Command {
 	return boa.CmdT[stewardStepDownParams]{
-		Use:         "step-down [agent]",
+		Use:         "step-down",
 		Short:       "Stand a Steward down, with nobody in its place",
 		Long:        "The agent loses what the role gave it, and keeps what you granted it separately. It keeps running.\n\n" + stewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -216,7 +216,7 @@ type stewardRemoveParams struct {
 
 func stewardRemoveCmd() *cobra.Command {
 	return boa.CmdT[stewardRemoveParams]{
-		Use:         "rm <agent>",
+		Use:         "rm",
 		Short:       "Take a standby off the roster",
 		Long:        "It stays a normal agent.\n\n" + stewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),

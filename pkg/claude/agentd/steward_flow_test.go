@@ -716,8 +716,7 @@ func TestSteward_StoredSudoReachesOnlyTheOperatorsSummon(t *testing.T) {
 	byAgent := agentReq(t, c.f, caller, http.MethodPost, "/v1/scribe", map[string]any{
 		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
 	})
-	require.Equalf(t, http.StatusOK, byAgent.Code, "body=%s", byAgent.Body.String())
-	assert.Empty(t, c.sudoSlugs(decodeScribeResp(t, byAgent).ConvID))
+	assert.Equalf(t, http.StatusForbidden, byAgent.Code, "an agent summons no Steward, whatever it holds: body=%s", byAgent.Body.String())
 }
 
 // The name reaches a Steward in its brief, and the companion does not summon
