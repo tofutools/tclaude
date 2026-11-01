@@ -380,7 +380,7 @@ export async function attachAllBackgroundTerminals(rows, snapshotValue, {
       const pane = await attachBackgroundTerminal(row, snapshotValue, { reveal: opened === 0 });
       if (!pane) continue;
       opened += 1;
-      await waitForSettled(pane.key, { timeoutMs });
+      if (!pane.floating) await waitForSettled(pane.key, { timeoutMs });
     }
   } finally {
     attachAllRunning = false;

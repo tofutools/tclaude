@@ -33,6 +33,8 @@ import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayW
 import { closeOverlayWindow, openOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
 import { ChatWindow } from './chat-window.js';
+import { TerminalWindow } from './terminal-window.js';
+import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -77,7 +79,7 @@ function StatusDot({ status }) {
 // CompanionTerminal mounts the opaque xterm widget for one agent. It owns the
 // widget's whole lifecycle: a new agent id or a reconnect generation disposes
 // the old widget before attaching a fresh one.
-function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focusToken, onStatus, onReconnectChange, widgetRef, fontSize, onFontChange }) {
+function CompanionTerminal({ agent, wsPath = '', generation, widgetFactory, loadRuntime, focusToken, onStatus, onReconnectChange, onDisconnect, widgetRef, fontSize, onFontChange }) {
   const hostRef = useRef(null);
   useEffect(() => {
     let cancelled = false;
@@ -89,11 +91,12 @@ function CompanionTerminal({ agent, generation, widgetFactory, loadRuntime, focu
       widget = widgetFactory({
         ...terminalAttachWidgetOptions(),
         host: hostRef.current,
-        wsPath: `/api/open-window-ws/${encodeURIComponent(agent.agentId)}`,
+        wsPath: wsPath || `/api/open-window-ws/${encodeURIComponent(agent.agentId)}`,
         initialRetry: true,
         applicationClipboardShortcuts: agent.harness === 'copilot',
         onStatus: (status) => { if (!cancelled) onStatus(status); },
         onReconnectChange: (available) => { if (!cancelled) onReconnectChange(!!available); },
+        ...(onDisconnect && { onDisconnect: (info) => { if (!cancelled) onDisconnect(info); } }),
         initialFontSize: fontSize(),
         onFontChange: (font) => { if (!cancelled) onFontChange(font); },
       });
@@ -1392,6 +1395,8 @@ export function CompanionApp({
     ${overlayWindows.value.filter((window) => window.kind === CHAT_WINDOW_KIND).map((instance) => html`<${ChatWindow} key=${instance.id} instance=${instance}
       snapshot=${snapshot} prefs=${prefs} win=${win} fetchImpl=${fetchImpl} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
       closeTerminalPanes=${closeTerminalPanes} onBackToTab=${chatBackToTab} onStewardDown=${stewardShutDown} Terminal=${CompanionTerminal} DecisionCard=${DecisionCard} StatusDot=${StatusDot} />`)}
+    ${overlayWindows.value.filter((window) => window.kind === TERMINAL_WINDOW_KIND).map((instance) => html`<${TerminalWindow} key=${instance.id} instance=${instance}
+      snapshot=${snapshot} prefs=${prefs} win=${win} notify=${notify} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} Terminal=${CompanionTerminal} />`)}
     ${windowView}
     ${chipSlots}
     ${chips}
