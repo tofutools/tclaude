@@ -185,8 +185,9 @@ dictation, that dictation falls back to Google's service and tells you.
   the Steward, and what was in the draft stays with the old agent, unsent. So do **Esc**,
   **Stop**, typing in the draft, a failed send, saying the stop phrase ("stop
   listening") on its own, and silence, 2 minutes by default. The draft shows it's on.
-  It stops rather than sends when the agent is waiting on you, at a prompt or with an
-  approval or decision open, so it can't answer one. Plain shells, peers' agents,
+  It stops rather than sends when the agent is blocked on you, at a prompt or held on
+  an approval request, so it can't answer one. An open decision doesn't stop it: the
+  agent has carried on, so your words go as a normal message and the decision stays open. Plain shells, peers' agents,
   detached terminal windows, Gemini CLI and pi get one message at a time. The microphone stays open, so without on-device speech **everything said
   in the room goes to Google's service for as long as it runs**. Replies aren't read
   aloud while it listens.

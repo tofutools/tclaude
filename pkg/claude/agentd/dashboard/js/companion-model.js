@@ -358,13 +358,14 @@ function requestFrom(request, agent) {
   return !!agent.convId && (request?.conv_id === agent.convId || request?.current_conv_id === agent.convId);
 }
 
-// agentWaitsOnOperator reports whether an agent is waiting on the operator:
-// its session is at a prompt, or it has a request or decision open, which leave
-// the session working or idle. Every request counts here, not only the ones a
-// card can answer.
-export function agentWaitsOnOperator(snapshot, agent) {
-  return companionStatus(agent) === 'needs' || decisionsFor(snapshot, agent).length > 0
-    || pendingAccess(snapshot).some((request) => requestFrom(request, agent));
+// agentBlockedOnOperator reports whether an agent can't go on without the
+// operator: its session is at a prompt, or a command of its is held on an access
+// request, which leaves the session working or idle. Every such request counts
+// here, not only the ones a card can answer. A decision or a federation proposal
+// doesn't count: the agent asked and carried on, however long it stays open.
+export function agentBlockedOnOperator(snapshot, agent) {
+  return companionStatus(agent) === 'needs'
+    || pendingAccess(snapshot).some((request) => !request.proposal && requestFrom(request, agent));
 }
 
 // pendingAccess lists every request waiting on the operator, in the daemon's
