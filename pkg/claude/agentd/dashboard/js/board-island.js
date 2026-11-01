@@ -23,7 +23,7 @@ import {
   boardToolDigit, cleanText, clipboardText, cloneElements, contentBounds, describeChanges, detachedLines, drawnElements, dropDirection, elementBounds, elementsInBox,
   entryPoint, labelOf, labelOwners, labelPoint, liveElements, mergeElements, newElement, newLabel, nextShapeSpot, normalizeBox, parseClipboard,
   QUICK_SHAPES, reboundArrows, routeConnector, shapeInside, shapeNear, sideOf, simplifyStroke, snapHit, snapPoints, snapPosition, stackOrder, suggestedShape, toExcalidraw, topHit, withLabels,
-  BOARD_ZOOM_MAX, BOARD_ZOOM_MIN, boardAge, clampBoardZoom, groupBoards,
+  BOARD_ZOOM_MAX, BOARD_ZOOM_MIN, boardAge, clampBoardZoom, groupBoards, wheelIsMouse, wheelPan, wheelPixels,
 } from './board-model.js';
 import { BoardContextMenu } from './board-context-menu.js';
 import { announceBoardDeleted, askDeleteBoard, boardIsGone, exportBoard, freeBoardId, importBoardFile } from './board-manage.js';
@@ -102,6 +102,8 @@ export async function rasterizeBoard(svg, box) {
   const { svgToPng } = await import('./board-export.js');
   return svgToPng(svg, box);
 }
+
+const WHEEL_SCROLL_GAP_MS = 150;
 
 async function jsonOrThrow(response) {
   const body = await response.json().catch(() => ({}));
@@ -219,6 +221,7 @@ export function BoardEditor({
   onScreen = true, visible = null, headActions = null, onTitle = null,
 }) {
   const [gone, setGone] = useState(false);
+  const wheelScroll = useRef({ at: -Infinity, mouse: false });
   const elements = useRef(new Map());
   // The live elements as drawn, by id: lines on their shapes and text on its
   // container. One Map refilled on each change, as the minimap expects.
@@ -1376,25 +1379,35 @@ export function BoardEditor({
 
   // onWheel takes the whole editor: Ctrl+wheel (a trackpad pinch arrives as
   // one) must zoom the board over its text inputs and controls too, or the
-  // browser zooms the page instead.
+  // browser zooms the page instead. On the canvas a mouse wheel zooms as well,
+  // and a touchpad's two-finger scroll pans.
   function onWheel(event) {
     const target = event.target;
     if (target?.closest?.('.board-minimap-frame')) return; // zooms the map
-    const zooming = event.ctrlKey || event.metaKey;
-    if (!zooming && !target?.closest?.('.board-canvas-wrap')) return;
-    if (!zooming && target?.closest?.('.board-context, .board-quick')) return; // a menu scrolls
+    const pinching = event.ctrlKey || event.metaKey;
+    if (!pinching && !target?.closest?.('.board-canvas-wrap')) return;
+    if (!pinching && target?.closest?.('.board-context, .board-quick')) return; // a menu scrolls
     event.preventDefault();
     setContextMenu(null);
-    if (!zooming) {
-      setView({ ...view, x: view.x + event.deltaX / view.zoom, y: view.y + event.deltaY / view.zoom });
-      return;
+    if (!pinching) {
+      // One scroll is one device: a stray event must not jump the view.
+      const going = event.timeStamp - wheelScroll.current.at < WHEEL_SCROLL_GAP_MS;
+      const mouse = !event.shiftKey && (going ? wheelScroll.current.mouse : wheelIsMouse(event));
+      wheelScroll.current = { at: event.timeStamp, mouse };
+      if (!mouse) {
+        const pan = wheelPan(event);
+        setView({ ...view, x: view.x + pan.x / view.zoom, y: view.y + pan.y / view.zoom });
+        return;
+      }
+      if (gesture.current?.kind === 'pan') return; // a drag holds the zoom it began with
     }
     const rect = svgRef.current?.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
     // Over the toolbar or the title, the point to hold still is the middle.
     const canvas = target?.closest?.('.board-canvas-wrap');
     const px = canvas ? event.clientX - rect.left : rect.width / 2;
     const py = canvas ? event.clientY - rect.top : rect.height / 2;
-    const zoom = Math.min(4, Math.max(0.2, view.zoom * Math.exp(-event.deltaY * 0.002)));
+    const delta = pinching ? event.deltaY : wheelPixels(event);
+    const zoom = Math.min(4, Math.max(0.2, view.zoom * Math.exp(-delta * 0.002)));
     setView({ zoom, x: px / view.zoom + view.x - px / zoom, y: py / view.zoom + view.y - py / zoom });
   }
 

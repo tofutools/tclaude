@@ -358,6 +358,65 @@ test('a tab left mounted picks up the map settings when it comes back', async (t
   assert.equal(root.querySelector('.board-minimap'), null);
 });
 
+test('wheelIsMouse tells a mouse wheel from a touchpad', async (t) => {
+  const { harness } = await setup(t);
+  const { wheelIsMouse, wheelPan, wheelPixels } = await harness.importDashboardModule('js/board-model.js');
+  const mouse = [
+    { deltaMode: 0, deltaX: 0, deltaY: 100, wheelDeltaY: -120 }, // Chrome
+    { deltaMode: 0, deltaX: 0, deltaY: 133.33, wheelDeltaY: -240 }, // two notches, fractional
+    { deltaMode: 1, deltaX: 0, deltaY: 3, wheelDeltaY: -120 }, // Firefox
+    { deltaMode: 2, deltaX: 0, deltaY: 1 },
+  ];
+  const touchpad = [
+    { deltaMode: 0, deltaX: 0, deltaY: 4, wheelDeltaY: -12 },
+    { deltaMode: 0, deltaX: 0, deltaY: 7.5, wheelDeltaY: -22 },
+    { deltaMode: 0, deltaX: 3, deltaY: 40, wheelDeltaY: -120 }, // a notch's value, but it moves sideways
+    { deltaMode: 0, deltaX: 40, deltaY: 0, wheelDeltaY: 0 },
+    { deltaMode: 0, deltaX: 0, deltaY: 40 }, // no wheelDeltaY: no evidence of a mouse
+  ];
+  for (const event of mouse) assert.equal(wheelIsMouse(event), true, JSON.stringify(event));
+  for (const event of touchpad) assert.equal(wheelIsMouse(event), false, JSON.stringify(event));
+  assert.equal(wheelPixels({ deltaMode: 1, deltaY: 3 }), 99, 'a Firefox notch zooms like a Chrome one');
+  assert.equal(wheelPixels({ deltaMode: 0, deltaY: 100 }), 100);
+  assert.deepEqual(wheelPan({ deltaMode: 1, deltaX: 3, deltaY: 0 }), { x: 99, y: 0 }, 'a tilt wheel moves in lines too');
+  assert.deepEqual(wheelPan({ deltaMode: 0, deltaX: 0, deltaY: 4 }), { x: 0, y: 4 });
+  assert.deepEqual(wheelPan({ deltaMode: 1, deltaX: 0, deltaY: 3, shiftKey: true }), { x: 99, y: 0 }, 'Firefox leaves Shift+wheel vertical');
+  assert.deepEqual(wheelPan({ deltaMode: 0, deltaX: 100, deltaY: 0, shiftKey: true }), { x: 100, y: 0 }, 'Chrome has swapped it already');
+});
+
+test('on the canvas a mouse wheel zooms at the pointer and a touchpad pans', async (t) => {
+  const { harness, mount } = await setup(t);
+  const root = await mount(boardFetch({ version: 1, elements: [{ ...rect(0, 0, 100, 100), id: 'a' }] }));
+  const svg = root.querySelector('svg.board-canvas');
+  sized(svg, 0, 0, 1000, 600);
+  const view = () => root.querySelector('[data-board-viewport]').getAttribute('transform');
+  const start = view();
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: 4, wheelDeltaY: -12, clientX: 500, clientY: 300 });
+  assert.notEqual(view(), start);
+  assert.match(view(), /^scale\(1\)/, 'a touchpad pans');
+  await new Promise((r) => setTimeout(r, 200));
+  const panned = view();
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: -Math.log(2) / 0.002, wheelDeltaY: 360, clientX: 500, clientY: 300 });
+  assert.match(view(), /^scale\(2\)/, 'a mouse notch zooms');
+  assert.notEqual(view(), panned);
+});
+
+test('a scroll stays one device from start to end', async (t) => {
+  const { harness, mount } = await setup(t);
+  const root = await mount(boardFetch({ version: 1, elements: [] }));
+  const svg = root.querySelector('svg.board-canvas');
+  sized(svg, 0, 0, 1000, 600);
+  const zoomOf = () => root.querySelector('[data-board-viewport]').getAttribute('transform').match(/^scale\(([^)]+)\)/)[1];
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: 4, wheelDeltaY: -12, timeStamp: 1000 });
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: 40, wheelDeltaY: -120, timeStamp: 1050 });
+  assert.equal(zoomOf(), '1', 'a touchpad event that looks like a notch does not jump the view');
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: -300, wheelDeltaY: 120, timeStamp: 2000 });
+  assert.notEqual(zoomOf(), '1', 'a pause starts a new scroll');
+  const zoomed = zoomOf();
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: 3, deltaMode: 1, wheelDeltaY: -120, shiftKey: true, timeStamp: 2050 });
+  assert.equal(zoomOf(), zoomed, 'Shift pans, even in the middle of a zoom');
+});
+
 test('a pan does not re-render the shapes', async (t) => {
   const { harness, mount } = await setup(t);
   const root = await mount(boardFetch({ version: 1, elements: [{ ...rect(0, 0, 100, 100), id: 'a' }] }));

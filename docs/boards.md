@@ -69,11 +69,14 @@ and with three or more, space them evenly.
 - **Select:** Shift-click or drag a rectangle. Ctrl+A selects everything, Ctrl+D
   duplicates, Del deletes.
 - **Undo:** Ctrl/Cmd+Z, and Ctrl+Shift+Z or Ctrl+Y to redo.
-- **Zoom:** Ctrl+wheel or a trackpad pinch zooms from 20% to 400%. The controls by
+- **Zoom:** the mouse wheel, Ctrl+wheel or a trackpad pinch zooms from 20% to 400%,
+  around the pointer. The controls by
   the zoom level in the toolbar zoom out, zoom in, reset to 100% and fit everything
   in view; their keys are `-`, `+`, Shift+0 and Shift+1.
-- **Move around:** the wheel pans. Middle-drag
-  pans too.
+- **Move around:** two-finger scroll on a touchpad pans, and so do middle-drag and
+  Shift+wheel. Browsers report a mouse wheel and a touchpad scroll as the same
+  event, so the board tells them apart by their steps: a free-spinning or smoothed
+  mouse wheel can read as a touchpad and pan instead of zooming.
 - **Copy and paste:** Ctrl+C, X and V use Excalidraw's clipboard format, so they work
   with excalidraw.com. Plain text pastes as a text element.
 
