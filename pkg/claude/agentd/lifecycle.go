@@ -5754,6 +5754,10 @@ type spawnParams struct {
 	// validation failures; the launch-success flag preserves it after the pane
 	// exists, including later enrollment/claim failures.
 	privateAttachmentRootCleanup func()
+	// privateOpenCodeStateDiscard transfers the deferred pass's fresh private
+	// OpenCode state into executeSpawn, which removes it if the spawn fails
+	// before a pane exists. Nil when this spawn did not create the state.
+	privateOpenCodeStateDiscard func()
 	// SpawnConfigJSON is the JSON of the agent.SpawnRequest this spawn came
 	// from, captured at the HTTP boundary (handleGroupSpawn) AFTER its profile
 	// tier stack resolves — so it states what the launch actually used, not what
@@ -6976,6 +6980,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			privateAttachmentCleanup()
 		}
 	}()
+	// Registered before the history cleanup so the conversation is undone
+	// while its store still exists.
+	discardPrivateOpenCodeState := p.privateOpenCodeStateDiscard
+	defer func() {
+		if failure != nil && !privateAttachmentsLaunched && discardPrivateOpenCodeState != nil {
+			discardPrivateOpenCodeState()
+		}
+	}()
 	timeout := p.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -7379,9 +7391,23 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			if p.AgentID == "" {
 				p.AgentID = db.NewAgentID()
 			}
-			if _, allocationErr := allocatePrivateOpenCodeState(p.AgentID); allocationErr != nil {
+			discard, allocationErr := claimPrivateOpenCodeState(p.AgentID)
+			if allocationErr != nil {
 				return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 					"failed to allocate private OpenCode state: " + allocationErr.Error()}
+			}
+			if discard != nil {
+				discardPrivateOpenCodeState = discard
+			}
+			if discardState := discardPrivateOpenCodeState; discardState != nil {
+				// Not every failure below stops the server, and it must not
+				// outlive the state it serves from.
+				discardPrivateOpenCodeState = func() {
+					if openCodeLaunch != nil {
+						_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+					}
+					discardState()
+				}
 			}
 		}
 		sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
@@ -8358,8 +8384,14 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_network", err.Error()}
 	}
+	var discardPrivateState func()
+	defer func() {
+		if discardPrivateState != nil {
+			discardPrivateState()
+		}
+	}()
 	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
-		if _, err := allocatePrivateOpenCodeState(p.AgentID); err != nil {
+		if discardPrivateState, err = claimPrivateOpenCodeState(p.AgentID); err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"failed to allocate private OpenCode state: " + err.Error()}
 		}
@@ -8407,6 +8439,7 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	continuation.privateAttachmentRootReserved =
 		p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
 	continuation.privateAttachmentRootCleanup = privateRootCleanup
+	continuation.privateOpenCodeStateDiscard, discardPrivateState = discardPrivateState, nil
 	*syncProofCleanup = false // the continuation owns the proof markers now
 
 	type deferredResult struct {

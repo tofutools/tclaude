@@ -102,3 +102,6 @@ func AsAcceptedMove(r *http.Request) *http.Request {
 func OfferKeepsItsPostureForTest(o *db.FederationBundleOffer, groupID int64) bool {
 	return offerKeepsItsPosture(o, groupID)
 }
+
+// ClaimPrivateOpenCodeStateForTest exposes claimPrivateOpenCodeState.
+var ClaimPrivateOpenCodeStateForTest = claimPrivateOpenCodeState

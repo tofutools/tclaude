@@ -293,6 +293,33 @@ func TestOpenCodeAgent_BackgroundBootFailureClearsPendingAndNotifies(t *testing.
 	assert.True(t, found, "the operator gets a Messages-tab notice for the failed spawn; have %+v", msgs)
 }
 
+// A deferred launch that fails hands nothing on: the private state its first
+// pass allocated goes with it.
+func TestOpenCodeAgent_BackgroundBootFailureLeavesNoPrivateState(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+	setSandboxImplDefault(t, f, "tclaude-layer")
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	blockedOpenCodeRuntime(t, release, errors.New("port already in use"))
+
+	f.HaveGroup("oc-crew")
+	resp := f.AsHuman().SpawnWith("oc-crew", map[string]any{"name": "doomed-worker", "harness": "opencode"})
+	require.Equal(t, 200, resp.Code, "the failure lands after the pending response (raw=%s)", resp.Raw)
+	roots, rows := privateOpenCodeStateLeft(t)
+	require.Len(t, roots, 1, "the launch is still running")
+	require.Equal(t, 1, rows)
+
+	releaseOnce.Do(func() { close(release) })
+	agentd.WaitForBackgroundForTest()
+
+	roots, rows = privateOpenCodeStateLeft(t)
+	assert.Empty(t, roots)
+	assert.Zero(t, rows)
+}
+
 // Scenario (cold-review follow-up, PR #1496 finding 2): a reservation whose
 // launch never produced a session row — e.g. a daemon restart killed a
 // deferred OpenCode boot in flight — is dropped by the sweeper. The operator
