@@ -44,7 +44,7 @@ function whoLine(node, fallbackInfo) {
   if (who.mode === 'anyone') return agent('anyone free');
   if (who.mode === 'you') return 'you';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
-  return 'pick who';
+  return agent('pick who');
 }
 
 function viewOf(model) {
