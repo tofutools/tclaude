@@ -283,9 +283,34 @@ test('filling a checkbox is not the operator editing it', async () => {
 
 test('an edit during the wait after a write wins', async () => {
   const p = page();
-  const tick = async () => { typed(p, 'agent-spawn-name', 'mine'); };
+  let once = () => typed(p, 'agent-spawn-name', 'mine');
+  const tick = async () => { once(); once = () => {}; };
   const result = await applyFill({ win: p.window, tick, request: { form: 'spawn', agent: 'a', fields: [{ field: 'agent-spawn-name', value: 'theirs' }] } });
   assert.deepEqual(statuses(result), { 'agent-spawn-name': 'operator_edited' });
+  assert.equal(value(p, 'name'), 'mine');
+  assert.deepEqual(filledIn('spawn'), []);
+  p.stop();
+});
+
+test('what the operator types in their own field during a fill or undo stays', async () => {
+  const p = page();
+  typed(p, 'agent-spawn-name', 'mi');
+  let once = () => typed(p, 'agent-spawn-name', 'mine');
+  const tick = async () => { once(); once = () => {}; };
+  await applyFill({ win: p.window, tick, request: { form: 'spawn', agent: 'a', fields: [{ field: 'agent-spawn-model', value: 'opus' }] } });
+  assert.equal(value(p, 'name'), 'mine');
+  once = () => typed(p, 'agent-spawn-name', 'mine too');
+  await undoFill('spawn', { win: p.window, tick });
+  assert.equal(value(p, 'name'), 'mine too');
+  assert.equal(value(p, 'model'), '');
+  p.stop();
+});
+
+test('an Undo pressed during a fill undoes all of it', async () => {
+  const p = page();
+  const filling = fill(p, { 'agent-spawn-name': 'a', 'agent-spawn-sandbox': 'off' });
+  await Promise.all([filling, undoFill('spawn', { win: p.window, tick: p.tick })]);
+  assert.equal(value(p, 'sandbox'), 'inherit');
   assert.deepEqual(filledIn('spawn'), []);
   p.stop();
 });
@@ -335,7 +360,7 @@ test('Config warns unless a section is known to be cosmetic', () => {
     <input id="cfg-outside"></div></body></html>`);
   const widens = (id) => FILL_FORMS.config.widens(document.getElementById(id));
   assert.equal(widens('cfg-theme'), '');
-  assert.equal(widens('cfg-voice-x'), '');
+  assert.equal(widens('cfg-voice-x'), 'Voice settings');
   assert.equal(widens('cfg-steward-model'), 'Steward settings');
   for (const id of ['cfg-agent-spawnrestrict', 'cfg-agent-spawnmax', 'cfg-feature-agent-dirs-mount-parent', 'cfg-processes-refuse-unsigned', 'cfg-broker-enforce']) assert.ok(widens(id), id);
   assert.equal(widens('cfg-outside'), 'settings');

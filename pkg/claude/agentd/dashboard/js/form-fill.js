@@ -30,7 +30,10 @@ const SPAWN_WORKTREE = spawnIds('worktree', 'wt-branch', 'wt-base');
 // What a field resets as it changes (agent-spawn-model.js). A fill of one of these
 // is refused while any of them is the operator's, since it would overwrite it.
 const SPAWN_RESETS = new Map(Object.entries({
-  harness: spawnIds('model', 'model-codex', 'model-custom', 'effort', 'fast-mode', 'sandbox', 'sandbox-impl', 'approval', 'approval-reviewer', 'tools', 'ask-timeout', 'trust-dir', 'remote-control'),
+  harness: spawnIds(
+    'model', 'model-codex', 'model-custom', 'effort', 'fast-mode', 'sandbox', 'sandbox-impl', 'approval', 'approval-reviewer', 'tools', 'ask-timeout', 'trust-dir', 'remote-control',
+    'ssh-workaround', 'auto-memory', 'peer-messaging', 'auto-compact-window', 'context-window-max', 'copilot-api', 'codex-app-server',
+  ),
   group: [...SPAWN_WORKTREE, ...spawnIds('remote-control', 'sandbox-profile', 'group-context')],
   cwd: SPAWN_WORKTREE,
   'wt-repo': SPAWN_WORKTREE,
@@ -39,8 +42,8 @@ const SPAWN_RESETS = new Map(Object.entries({
 
 // Config warns unless a section is known to hold nothing about access. A setting
 // missed here costs one needless warning, where a list of risky ones would miss
-// the next setting without a word.
-const CONFIG_COSMETIC = new Set(['appearance', 'voice']);
+// the next setting without a word. Voice is not one: it can hold a microphone open.
+const CONFIG_COSMETIC = new Set(['appearance']);
 
 function configWidens(el) {
   const panel = el.closest('[data-cfg-panel]');
@@ -136,6 +139,8 @@ export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl 
   const look = () => { for (const el of fieldsIn(root)) seen.set(el.id, readField(el)); };
   const release = (id) => {
     owned.add(id);
+    // Whatever the operator does while a write is out stands.
+    watch.kept?.delete(id);
     const held = filledIn(form);
     if (held.some((field) => field.id === id)) setFilled(form, held.filter((field) => field.id !== id));
   };
@@ -150,7 +155,7 @@ export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl 
     }
     look();
   };
-  const watch = { root, owned, look, sweep, writing: false };
+  const watch = { root, owned, look, sweep, writing: false, kept: null };
   const onEdit = (event) => {
     if (!event.isTrusted || watch.writing || !event.target?.id) return;
     look();
@@ -199,13 +204,23 @@ function refusal(form, watch, el, id) {
 
 const isOpen = (name, watch) => watches.get(name) === watch && watch.root.isConnected;
 
+// fillsAndUndos runs one at a time. An Undo pressed during a fill waits for it,
+// and so undoes all of it, rather than racing the fields still to come.
+let lastTurn = Promise.resolve();
+function inTurn(fn) {
+  const turn = lastTurn.then(fn, fn);
+  lastTurn = turn.catch(() => {});
+  return turn;
+}
+
 // keepOwned puts back any field of the operator's that a write moved, which
 // nothing should have, but a form can grow a cascade this file does not know.
-async function keepOwned(win, watch, values, tick) {
+// watch.kept loses a field the moment the operator touches it.
+async function keepOwned(win, watch, tick) {
   for (const id of watch.owned) {
     const el = win.document.getElementById(id);
-    if (el && values.has(id) && readField(el) !== values.get(id)) {
-      writeField(win, watch, el, values.get(id));
+    if (el && watch.kept.has(id) && readField(el) !== watch.kept.get(id)) {
+      writeField(win, watch, el, watch.kept.get(id));
       await tick();
       watch.look();
     }
@@ -229,7 +244,9 @@ function record(name, form, win, agent, changes) {
 // cascade has run before the next, which may depend on it (a harness, then its
 // model). Whatever a write moves counts as filled, the named field or not, so the
 // warning and the undo cover it. It answers what became of each field.
-export async function applyFill({ win = globalThis.window, request, tick = defaultTick }) {
+export const applyFill = ({ win = globalThis.window, request, tick = defaultTick }) => inTurn(() => fillForm(win, request, tick));
+
+async function fillForm(win, request, tick) {
   const form = FILL_FORMS[request.form];
   const watch = watches.get(request.form);
   if (!form || !watch || !isOpen(request.form, watch) || !watch.root.getClientRects().length) return { error: `the ${request.form} form is not open` };
@@ -254,13 +271,14 @@ export async function applyFill({ win = globalThis.window, request, tick = defau
       continue;
     }
     const before = valuesIn(watch.root);
+    watch.kept = before;
     writeField(win, watch, el, value);
     await tick();
     if (!isOpen(request.form, watch)) {
       outcomes.push({ field: id, status: 'form_closed' });
       break;
     }
-    await keepOwned(win, watch, before, tick);
+    await keepOwned(win, watch, tick);
     // The operator can get in during the wait.
     if (watch.owned.has(id)) {
       watch.look();
@@ -298,11 +316,13 @@ function fillLabel(el) {
 // first, since that can move others, and the rest are then set back directly.
 // Undoing a harness resets the fields it controls, so the operator's are put back
 // afterwards. A field that could not be restored stays listed, warning and all.
-export async function undoFill(name, { win = globalThis.window, tick = defaultTick } = {}) {
+export const undoFill = (name, { win = globalThis.window, tick = defaultTick } = {}) => inTurn(() => undoForm(name, win, tick));
+
+async function undoForm(name, win, tick) {
   const watch = watches.get(name);
   if (!watch) return;
   watch.sweep();
-  const mine = valuesIn(watch.root);
+  watch.kept = valuesIn(watch.root);
   const held = filledIn(name);
   const restore = async (field) => {
     const el = win.document.getElementById(field.id);
@@ -313,9 +333,9 @@ export async function undoFill(name, { win = globalThis.window, tick = defaultTi
   };
   for (const field of held.filter((each) => !each.cascade).reverse()) await restore(field);
   for (const field of held) await restore(field);
-  await keepOwned(win, watch, mine, tick);
+  await keepOwned(win, watch, tick);
   watch.look();
-  setFilled(name, held.filter((field) => {
+  setFilled(name, filledIn(name).filter((field) => {
     const el = win.document.getElementById(field.id);
     return el && readField(el) !== field.before;
   }));

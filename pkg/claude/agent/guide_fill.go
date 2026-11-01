@@ -35,7 +35,7 @@ func guideFillCmd() *cobra.Command {
 			"shows a warning with your name. It refuses a password or marked field and any field the operator edited. Each field " +
 			"reports what became of it. Needs dashboard.forms.fill.\n\n" +
 			"A select takes an option's label or value, and a checkbox true or false. Fields apply in order, so set a harness before its model.\n\n" +
-			"Example: tclaude agent guide fill --form spawn --set agent-spawn-name=reviewer --set agent-spawn-harness=Codex",
+			"Example: tclaude agent guide fill --form spawn --set agent-spawn-name=reviewer --set agent-spawn-harness=codex",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *guideFillParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGuideFill(p, os.Stdout, os.Stderr))

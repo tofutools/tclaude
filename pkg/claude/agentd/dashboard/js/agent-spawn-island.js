@@ -1029,6 +1029,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         operatorSet.current.add('contextFeatures');
         profileOverrides.current.add('contextFeatures');
         setDraft((before) => ({ ...before, contextFeatures: { ...kept } }));
+        // A harness change resets these, and no field shows them, so hold that here.
+        claimField('spawn', 'agent-spawn-harness');
       },
     });
   };

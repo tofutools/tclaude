@@ -699,6 +699,9 @@ names that agent. The spawn form and Config take fills. Field ids come from
 - Filled fields stay highlighted, and a bar next to submit lists them. **Undo all**
   puts back what was there. Config also flags the changed sections on its rail,
   because a fill can reach a section that isn't open.
+- Undo puts values back, but the form still treats those fields as set by hand. A
+  group or profile picked afterwards won't replace them, so check them first. Config
+  also keeps showing unsaved changes, though saving then finds nothing to save.
 - A field you edited stays yours: a fill won't touch it, before or after, and
   **Undo all** keeps your edit. That includes anything your own change moved, such
   as the fields a profile pick set, and a directory you browsed to. A queued spawn's
@@ -715,7 +718,7 @@ names that agent. The spawn form and Config take fills. Field ids come from
   `Stewie widened: sandbox, approval`, even when a fill only moved that field by
   cascade. On the spawn form that covers harness, group, directories, sandbox,
   approval, tools, owner, trust and similar fields. In Config it covers everything
-  except the Appearance and Voice sections. Whether a value is actually wider
+  except the Appearance section. Whether a value is actually wider
   depends on the harness, so any change warns.
 
 Fills apply in order, one at a time, so set a harness before its model. A hidden
