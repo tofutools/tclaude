@@ -2022,6 +2022,9 @@ type VoiceConfig struct {
 	// SilenceSendSeconds opts in to sending a dictated message after this many
 	// seconds with no new speech. 0 is off.
 	SilenceSendSeconds int `json:"silence_send_seconds,omitempty"`
+	// MarkDictated prefixes dictated messages to agents with a short marker,
+	// so the agent knows why punctuation may be missing. Default on.
+	MarkDictated *bool `json:"mark_dictated,omitempty"`
 }
 
 // VoicePhrase is one spoken phrase and what it does.
@@ -2070,7 +2073,7 @@ func (c *Config) Voice() VoiceConfig {
 	if c != nil && c.Dashboard != nil && c.Dashboard.Voice != nil {
 		stored = *c.Dashboard.Voice
 	}
-	out := VoiceConfig{WakeEnabled: stored.WakeEnabled}
+	out := VoiceConfig{WakeEnabled: stored.WakeEnabled, MarkDictated: new(stored.MarkDictated == nil || *stored.MarkDictated)}
 	if stored.SilenceSendSeconds > 0 {
 		out.SilenceSendSeconds = max(SilenceSendSecondsMin, min(stored.SilenceSendSeconds, SilenceSendSecondsMax))
 	}

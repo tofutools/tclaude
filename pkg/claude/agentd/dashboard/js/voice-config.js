@@ -33,6 +33,11 @@ export function voiceWakeOn(snapshot) {
   return snapshot?.voice?.wake_enabled === true;
 }
 
+// voiceMarksDictated is the opt-out for the marker on dictated messages.
+export function voiceMarksDictated(snapshot) {
+  return snapshot?.voice?.mark_dictated !== false;
+}
+
 export function voiceSilenceSeconds(snapshot) {
   return snapshot?.voice?.silence_send_seconds || 0;
 }

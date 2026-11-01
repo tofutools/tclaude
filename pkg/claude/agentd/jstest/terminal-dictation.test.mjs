@@ -20,7 +20,7 @@ function fakeRecognition() {
 
 async function setup(t, {
   seed = { agent: 'agt_0123456789abcdef0123456789abcdef', harness: 'claude' }, collab = true, status = 'connected',
-  canType = true, secure = true, phrase, agents = [], solo = false, silence = 0, fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
+  canType = true, secure = true, phrase, agents = [], solo = false, silence = 0, mark, fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
 } = {}) {
   const harness = await createPreactHarness(t);
   const { h } = harness.preact;
@@ -36,7 +36,7 @@ async function setup(t, {
   let result = true;
   const widget = { paste: (text) => { pasted.push(text); return result; } };
   const actions = { widgetFor: () => widget, activatePane: (key) => activated.push(key) };
-  const snapshot = signal({ collab_enabled: collab, agents, ...(phrase === undefined && !silence ? {} : { voice: { phrases: phrase === undefined ? [] : [{ action: 'send', phrase }], silence_send_seconds: silence } }) });
+  const snapshot = signal({ collab_enabled: collab, agents, ...(phrase === undefined && !silence && mark === undefined ? {} : { voice: { phrases: phrase === undefined ? [] : [{ action: 'send', phrase }], silence_send_seconds: silence, mark_dictated: mark } }) });
   const win = harness.window;
   win.SpeechRecognition = speech.Recognition;
   win.isSecureContext = secure;
@@ -117,7 +117,7 @@ test('an agent terminal sends on the spoken phrase, stripped', async (t) => {
   await s.harness.act(async () => { s.speech.last().hear('fix the bug send now.'); await tick(); });
   assert.equal(s.posted.length, 1);
   assert.equal(s.posted[0].url, '/api/operator-message');
-  assert.match(s.posted[0].body.body, /^fix the bug\n/);
+  assert.match(s.posted[0].body.body, /^\[dictated\] fix the bug\n/, 'marked, with the phrase stripped');
   assert.deepEqual(s.pasted, []);
   assert.ok(!s.$('.companion-input'));
   assert.deepEqual(s.activated, ['p']);
@@ -132,7 +132,63 @@ test('an emptied phrase turns spoken send off and Enter still sends', async (t) 
   await s.harness.act(() => s.speech.last().hear('partial', false));
   await s.submit();
   assert.equal(s.speech.last().aborted, true, 'sending closes the mic first');
-  assert.match(s.posted[0].body.body, /^hello send now partial/, 'the words heard so far all go');
+  assert.match(s.posted[0].body.body, /^\[dictated\] hello send now partial/, 'the words heard so far all go');
+});
+
+const typeDraft = (s, text) => s.harness.act(() => {
+  s.$('.companion-draft').value = text;
+  s.harness.fireEvent(s.$('.companion-draft'), 'input');
+});
+
+test('a draft with dictated words stays marked through an edit, until it is emptied', async (t) => {
+  const s = await setup(t);
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('fix the bug'));
+  await typeDraft(s, 'fix the login bug');
+  await s.submit();
+  assert.match(s.posted[0].body.body, /^\[dictated\] fix the login bug\n/);
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('scrap this'));
+  await typeDraft(s, '');
+  await s.mic();
+  await typeDraft(s, 'typed instead');
+  await s.submit();
+  assert.match(s.posted[1].body.body, /^typed instead\n/, 'emptying the draft ends the mark');
+});
+
+test('a typed draft is not marked, even with the mic opened on the way', async (t) => {
+  const s = await setup(t);
+  await s.mic();
+  await typeDraft(s, 'typed by hand');
+  await s.submit();
+  assert.match(s.posted[0].body.body, /^typed by hand\n/);
+});
+
+test('the marker can be turned off', async (t) => {
+  const s = await setup(t, { mark: false });
+  await s.mic();
+  await s.harness.act(async () => { s.speech.last().hear('plain words send now'); await tick(); });
+  assert.match(s.posted[0].body.body, /^plain words\n/);
+});
+
+test('a failed send keeps the mark for the retry, and the marker out of the draft', async (t) => {
+  let refuse = true;
+  const s = await setup(t, { fetchImpl: async () => (refuse ? { ok: false, status: 500, statusText: 'no', json: async () => ({}) } : { ok: true, json: async () => ({}) }) });
+  await s.mic();
+  await s.harness.act(async () => { s.speech.last().hear('keep me send now'); await tick(); });
+  assert.equal(s.$('.companion-draft').value, 'keep me', 'the marker stays out of the draft');
+  refuse = false;
+  await s.submit();
+  await s.harness.act(tick);
+  assert.match(s.posted[1].body.body, /^\[dictated\] keep me\n/);
+});
+
+test('a plain shell never gets the marker', async (t) => {
+  const s = await setup(t, SHELL);
+  await s.mic();
+  await s.harness.act(() => s.speech.last().hear('ls -la'));
+  await s.submit();
+  assert.deepEqual(s.pasted, ['ls -la']);
 });
 
 test('a failed send leaves the words in the draft', async (t) => {
@@ -209,7 +265,7 @@ test('silence sends after a countdown that shows, and never when off', async (t)
   assert.match(s.$('.companion-silence').textContent, /Sending in 1s/);
   await s.harness.act(() => wait(500));
   assert.equal(s.posted.length, 1);
-  assert.match(s.posted[0].body.body, /^quiet now/);
+  assert.match(s.posted[0].body.body, /^\[dictated\] quiet now/);
   assert.equal(s.speech.last().aborted, true);
 });
 
@@ -254,7 +310,7 @@ test('a one-breath wake starts the silence countdown', async (t) => {
   await s.harness.act(() => pickWakeTarget(s.harness.document).start('fix the bug'));
   assert.equal(s.$('.companion-draft').value, 'fix the bug');
   await s.harness.act(() => wait(1200));
-  assert.match(s.posted[0].body.body, /^fix the bug/);
+  assert.match(s.posted[0].body.body, /^\[dictated\] fix the bug/);
 });
 
 test('a refused paste keeps the draft', async (t) => {

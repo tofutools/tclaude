@@ -36,7 +36,7 @@ import { StewardRoster } from './steward-roster.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
-import { voiceSilenceSeconds } from './voice-config.js';
+import { voiceMarksDictated, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
@@ -350,6 +350,7 @@ export function CompanionApp({
   const dictation = useDictation({
     win, targetId: activeId, draft, setDraft, notify, dictationImpl, sendPhrase,
     silenceSend: voiceSilenceSeconds(snapshot.value),
+    mark: voiceMarksDictated(snapshot.value),
     wakeHost: () => (composerShown.current ? windowRef.current : null),
     send: (text) => send(null, text),
     onStart: () => speaker.cancel(),
@@ -754,11 +755,12 @@ export function CompanionApp({
     const context = withContext
       ? viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search })
       : '';
-    if (!companionMessageFits(text, context)) {
+    const message = dictation.outgoing(text);
+    if (!companionMessageFits(message, context)) {
       notify('That message is too long to send. Shorten it and try again.', true);
       return false;
     }
-    const body = composeCompanionMessage(text, context);
+    const body = composeCompanionMessage(message, context);
     if (!body || !activeAgent || sending) return false;
     // An open mic would bring the sent text back. Enter or Send with the mic
     // on sends what the draft holds; a failed send leaves it there.

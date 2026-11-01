@@ -14,7 +14,7 @@ import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorM
 import { nodeFetch } from './node-api.js';
 import { shellToast } from './shell-state.js';
 import { dashboardState } from './snapshot-store.js';
-import { voiceSilenceSeconds } from './voice-config.js';
+import { voiceMarksDictated, voiceSilenceSeconds } from './voice-config.js';
 
 const html = htm.bind(h);
 
@@ -65,6 +65,7 @@ export function PaneDictation({
     win, targetId: shown ? pane.key : '', draft, notify: report,
     sendPhrase: talks ? dictationSendPhrase(snapshot?.value) : '',
     silenceSend: talks ? voiceSilenceSeconds(snapshot?.value) : 0,
+    mark: voiceMarksDictated(snapshot?.value),
     wakeHost: () => (shownRef.current ? win?.document?.getElementById(pane.id) : null),
     setDraft: (_, text) => setDraftText(text),
     send: (text) => send(null, text),
@@ -85,13 +86,14 @@ export function PaneDictation({
 
   async function mailAgent(text) {
     const context = withContext ? viewNow() : '';
-    if (!companionMessageFits(text, context)) {
+    const message = dictation.outgoing(text);
+    if (!companionMessageFits(message, context)) {
       report('That message is too long to send. Shorten it and try again.', true);
       return;
     }
     setSending(true);
     try {
-      await postOperatorMessage(agentFetch(), { to: target.agent, body: composeCompanionMessage(text, context) });
+      await postOperatorMessage(agentFetch(), { to: target.agent, body: composeCompanionMessage(message, context) });
       settle(text);
     } catch (error) {
       report(`Message to ${name} failed: ${error?.message || error}`, true);

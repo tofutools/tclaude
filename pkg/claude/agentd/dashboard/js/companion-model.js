@@ -317,6 +317,11 @@ export function clipUtf8(s, maxBytes) {
 
 const viewSuffix = (context) => (context ? `\n\n[dashboard view: ${context}]` : '');
 
+// DICTATED_MARKER opens a dictated message, so the agent knows why sensible
+// symbols may be missing. It is a constant: nothing a person said goes in it.
+export const DICTATED_MARKER = '[dictated]';
+export const markDictated = (text) => `${DICTATED_MARKER} ${String(text || '').trim()}`;
+
 // companionMessageFits reports whether composeCompanionMessage keeps all of
 // text. A caller checks this first and tells the operator, rather than send
 // a clipped message as if it had gone out whole.
