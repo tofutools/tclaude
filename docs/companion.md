@@ -159,15 +159,15 @@ dictation, that dictation falls back to Google's service and tells you.
   stops and says why. If on-device speech stops working, it stops rather than
   switching to Google's service.
 - **Continuous mode.** After a voice message sends, the next thing you say sends
-  another, with no wake phrase, while the agent is still working. Each one sends on
-  send after silence, or after 3 seconds if that is off, and queues while the agent
-  is busy. It stays on the agent it started on: changing focus, closing that terminal
+  another, with no wake phrase, while the agent is still working. Each one after the
+  first sends on send after silence, or after 3 seconds if that is off, and queues
+  while the agent is busy. It stays on the agent it started on: changing focus, closing that terminal
   or hiding the tab stops it, and speech never moves to another agent. So do **Esc**,
   **Stop**, typing in the draft, a failed send, saying the stop phrase ("stop
   listening") on its own, and silence, 2 minutes by default. The draft shows it's on.
-  It stops rather than sends when the agent is waiting on you, so it can't answer a
-  permission question. Plain shells, peers' agents, Gemini CLI and pi get one message
-  at a time. The microphone stays open, so without on-device speech **everything said
+  It stops rather than sends when the agent is waiting on you, at a prompt or with an
+  approval or decision open, so it can't answer one. Plain shells, peers' agents,
+  detached terminal windows, Gemini CLI and pi get one message at a time. The microphone stays open, so without on-device speech **everything said
   in the room goes to Google's service for as long as it runs**. Replies aren't read
   aloud while it listens.
 

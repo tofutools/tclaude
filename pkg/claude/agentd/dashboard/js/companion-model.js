@@ -388,6 +388,13 @@ export function approvalsFor(snapshot, agent) {
   });
 }
 
+// agentWaitsOnOperator reports whether an agent is waiting on the operator:
+// its session is at a prompt, or it has an approval or decision open, which
+// leave the session working or idle.
+export function agentWaitsOnOperator(snapshot, agent) {
+  return companionStatus(agent) === 'needs' || approvalsFor(snapshot, agent).length > 0 || decisionsFor(snapshot, agent).length > 0;
+}
+
 // pendingAccess lists every request waiting on the operator, in the daemon's
 // order. A list on screen must not reorder under the pointer.
 export function pendingAccess(snapshot) {

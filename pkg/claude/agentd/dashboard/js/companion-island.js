@@ -22,7 +22,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_MIN_H, COMPANION_MIN_W, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF,
-  clampPlacement, fitPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
+  agentWaitsOnOperator, clampPlacement, fitPlacement, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
   defaultPlacement, isAgentId, nextActive, parsePlacement, parseTabs, snapZone, stewardAgent, viewportOf,
   parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, zoneRect, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
 } from './companion-model.js';
@@ -160,7 +160,7 @@ function without(set, value) {
 function companionContinuous(snapshot, agent) {
   const mode = voiceContinuous(snapshot);
   if (!mode || !agent || agent.presence || !harnessTakesMailMidTurn(snapshot, agent.harness || 'claude')) return null;
-  return { ...mode, held: () => (companionStatus(agent) === 'needs' ? `${agent.name} is waiting on you, so continuous mode stopped. Your words stay in the draft.` : '') };
+  return { ...mode, held: () => (agentWaitsOnOperator(snapshot, agent) ? `${agent.name} is waiting on you, so continuous mode stopped. Your words stay in the draft.` : '') };
 }
 
 // How recently a key in the terminal counts as still typing when a cue lands.

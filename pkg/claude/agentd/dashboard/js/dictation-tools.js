@@ -18,6 +18,8 @@ const html = htm.bind(h);
 
 const dictationFailure = (error) => (error === 'not-allowed' ? 'The browser blocked the microphone for this page.' : `Dictation stopped: ${error}`);
 
+const TAB_HIDDEN = 'Continuous mode stopped because the tab was hidden.';
+
 const joinDraft = (base, heard) => [base.trim(), heard.trim()].filter(Boolean).join(' ');
 
 // postOperatorMessage sends operator mail to an agent and throws what the
@@ -54,7 +56,7 @@ export function micTitle(sendPhrase) {
 // the marker stays out of the draft. continuous is continuous mode's
 // {stopPhrase, idleSeconds, held}, null where it can't run: after a voice send
 // the mic reopens for the next message, each sent on silence, 3 seconds of it
-// if that setting is off. It stays on this target, and anything but speech ends
+// if that setting is off, which leaves the first message to the send phrase. It stays on this target, and anything but speech ends
 // it: a change of target, a hidden tab, Esc, Stop, typing, or a failed send.
 // held() names a reason not to send, which also ends it. wakeHost offers this target to the wake listener:
 // it returns the target's element while it can dictate, else null. The
@@ -84,10 +86,14 @@ export function useDictation({
   // The countdown shows after a moment's quiet, not between every two words.
   function armSilence() {
     clearSilence();
-    const seconds = latest.current.silenceSend || (latest.current.continuous ? SILENCE_SEND_DEFAULT : 0);
+    const seconds = latest.current.silenceSend || (loop.current ? SILENCE_SEND_DEFAULT : 0);
     if (!seconds) return;
     const started = Date.now();
     silence.current = setInterval(() => {
+      if (!own()) {
+        clearSilence();
+        return;
+      }
       const quiet = Date.now() - started;
       if (quiet >= seconds * 1000) {
         const text = latest.current.draft;
@@ -127,6 +133,7 @@ export function useDictation({
     loop.current = null;
     clearTimeout(live.idle);
     clearTimeout(live.reopen);
+    clearSilence();
     setContinuing(false);
     dictationRef.current?.keep?.(false);
     dictationRef.current?.abort?.();
@@ -153,6 +160,10 @@ export function useDictation({
     live.sent = false;
     live.reopen = setTimeout(() => {
       if (loop.current !== live) return;
+      if (win?.document?.hidden) {
+        endLoop(TAB_HIDDEN);
+        return;
+      }
       live.openedAt = Date.now();
       live.heard = false;
       opener.open(from, { strictRoute: true });
@@ -182,6 +193,13 @@ export function useDictation({
       endLoop();
       stopMic();
       latest.current.notify(held, true);
+      return;
+    }
+    // A hidden tab shows no indicator, so no loop starts in one.
+    if (win?.document?.hidden) {
+      endLoop();
+      stopMic();
+      void latest.current.send(text);
       return;
     }
     const live = beginLoop();
@@ -264,7 +282,7 @@ export function useDictation({
       event.stopPropagation();
       stopListening();
     };
-    const onVisibility = () => { if (doc.hidden) endLoop('Continuous mode stopped because the tab was hidden.'); };
+    const onVisibility = () => { if (doc.hidden) endLoop(TAB_HIDDEN); };
     doc.addEventListener('keydown', onKey, true);
     doc.addEventListener('visibilitychange', onVisibility);
     return () => {

@@ -9,7 +9,7 @@
 import { h } from 'preact';
 import { useCallback, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { companionMessageFits, composeCompanionMessage, viewContext } from './companion-model.js';
+import { agentWaitsOnOperator, companionMessageFits, composeCompanionMessage, viewContext } from './companion-model.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
 import { nodeFetch } from './node-api.js';
 import { shellToast } from './shell-state.js';
@@ -41,8 +41,8 @@ export function paneContinuous(pane, target, snapshot, name) {
   const row = paneRow(target, snapshot);
   if (!mode || !row || pane.seed.remote) return null;
   if (!harnessTakesMailMidTurn(snapshot, pane.seed.harness || row.state?.harness)) return null;
-  const waiting = ['awaiting_permission', 'awaiting_input'].includes(row.state?.status);
-  return { ...mode, held: () => (waiting ? `${name} is waiting on you, so continuous mode stopped. Your words stay in the draft.` : '') };
+  const agent = { agentId: row.agent_id, convId: row.conv_id, online: true, status: row.state?.status };
+  return { ...mode, held: () => (agentWaitsOnOperator(snapshot, agent) ? `${name} is waiting on you, so continuous mode stopped. Your words stay in the draft.` : '') };
 }
 
 // terminalDraftText is a draft as one line of terminal input. Control

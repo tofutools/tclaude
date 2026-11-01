@@ -556,6 +556,72 @@ test('it stops rather than sends while the agent waits on the operator', async (
   assert.equal(s.speech.made.length, 1);
 });
 
+test('an open approval or decision holds it too, with the session still working', async (t) => {
+  const { paneContinuous } = await (await createPreactHarness(t)).importDashboardModule('js/terminal-dictation.js');
+  const base = { voice: { continuous_enabled: true }, harnesses: CATALOG, agents: [{ agent_id: AGENT, conv_id: 'c1', state: { harness: 'claude', status: 'working' } }] };
+  const held = (extra) => paneContinuous({ seed: { harness: 'claude' } }, { agent: AGENT }, { ...base, ...extra }, 'alpha').held();
+  assert.equal(held({}), '');
+  assert.match(held({ access_requests: [{ agent_id: AGENT, status: 'pending', perm: 'x' }] }), /waiting on you/);
+  assert.match(held({ messages: [{ id: 1, from_agent: AGENT, options: ['yes', 'no'] }] }), /waiting on you/);
+  assert.equal(held({ messages: [{ id: 1, from_agent: AGENT, options: ['yes', 'no'], decision: { choice: 'yes' } }] }), '', 'an answered decision holds nothing');
+});
+
+test('with silence send off the first message waits for the send phrase', async (t) => {
+  const s = await continuous(t);
+  await s.mic();
+  await says(s, 'thinking out loud');
+  await s.harness.act(() => wait(3300));
+  assert.deepEqual(s.posted, []);
+  assert.ok(!s.$('.companion-continuous'));
+  await says(s, 'and done send now');
+  assert.equal(s.posted.length, 1);
+});
+
+test('a loop never starts in a hidden tab', async (t) => {
+  const s = await continuous(t);
+  await s.mic();
+  Object.defineProperty(s.harness.document, 'hidden', { configurable: true, value: true });
+  t.after(() => { delete s.harness.document.hidden; });
+  await says(s, 'one send now');
+  assert.deepEqual(bodies(s), ['[dictated] one'], 'the message said out loud still goes');
+  await reopened(s);
+  assert.equal(s.speech.made.length, 1);
+  assert.ok(!s.$('.companion-continuous'));
+});
+
+test('a tab hidden in the gap between recognizers stops it', async (t) => {
+  const s = await continuous(t);
+  await s.mic();
+  await says(s, 'one send now');
+  Object.defineProperty(s.harness.document, 'hidden', { configurable: true, value: true });
+  t.after(() => { delete s.harness.document.hidden; });
+  await reopened(s);
+  assert.equal(s.speech.made.length, 1);
+  assert.ok(!s.$('.companion-continuous'));
+});
+
+test('ending it in the gap between recognizers stops a countdown too', async (t) => {
+  const s = await continuous(t);
+  await s.mic();
+  await says(s, 'one send now');
+  await reopened(s);
+  await says(s, 'half a thought');
+  await s.harness.act(() => s.speech.last().onend());
+  await typeDraft(s, 'half a thought, edited');
+  await s.harness.act(() => wait(3300));
+  assert.deepEqual(bodies(s), ['[dictated] one']);
+  assert.equal(s.$('.companion-draft').value, 'half a thought, edited');
+});
+
+test('the stop phrase ending in the send phrase is never sent', async (t) => {
+  const s = await continuous(t);
+  await s.mic();
+  await says(s, 'stop listening send now');
+  assert.deepEqual(s.posted, []);
+  await reopened(s);
+  assert.equal(s.speech.made.length, 1);
+});
+
 test('a failed send ends it and keeps the words', async (t) => {
   const s = await continuous(t, { fetchImpl: async () => ({ ok: false, status: 500, statusText: 'no', json: async () => ({}) }) });
   await s.mic();

@@ -433,13 +433,13 @@ export function createDictation(win = globalThis.window, {
           continue;
         }
         finished = true;
-        if (!stopped && isWholePhrase(phrase, stopPhrase())) {
+        const rest = stopped ? null : sendPhraseRest(phrase, sendPhrase());
+        if (!stopped && (isWholePhrase(phrase, stopPhrase()) || isWholePhrase(rest, stopPhrase()))) {
           sent = true;
           onText?.(pauseMarks.render(finals.join(' ').replace(/\s+/g, ' ').trim()), { interim: '', settled: '' });
           onStopPhrase?.();
           return;
         }
-        const rest = stopped ? null : sendPhraseRest(phrase, sendPhrase());
         if (rest !== null) {
           finals.push(rest);
           const text = finals.join(' ').replace(/\s+/g, ' ').trim();
