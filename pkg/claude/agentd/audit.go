@@ -228,6 +228,7 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"groups"}, verb: "group.create", describe: describeGroupCreate},
 	{method: http.MethodPost, segs: []string{"groups", "import"}, verb: "group.import"},
 	{method: http.MethodDelete, segs: []string{"groups", "{name}"}, verb: "group.delete"},
+	{method: http.MethodDelete, segs: []string{"boards", "{id}"}, verb: "board.delete"},
 	{method: http.MethodPatch, segs: []string{"groups", "{name}"}, verb: "group.update"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "rename"}, verb: "group.rename", describe: describeNewName},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "clone"}, verb: "group.clone"},

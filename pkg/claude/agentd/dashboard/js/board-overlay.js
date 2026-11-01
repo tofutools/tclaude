@@ -7,8 +7,10 @@
 // it, and the host for the windows' dock.
 
 import { h, render } from 'preact';
+import { useEffect } from 'preact/hooks';
 import htm from 'htm';
 import { BoardEditor, BoardsGate } from './board-island.js';
+import { onBoardDeleted } from './board-manage.js';
 import { BOARD_WINDOW_KIND, boardOverlays, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
 import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId } from './companion-model.js';
@@ -46,6 +48,9 @@ function BoardOverlayWindow({ instance, index, snapshot, fetchImpl, notify, pref
   const overlay = useOverlayWindow({ id: instance.id, win, prefs, prefKey: `${BOARD_OVERLAY_PLACEMENT_PREF}.${instance.board}`, defaultPlacement: startPlacement, snaps: true, open });
   const look = windowControlsLook(snapshot.value?.window_controls);
   const close = () => closeOverlayWindow(instance.id);
+  useEffect(() => onBoardDeleted((id) => {
+    if (id === instance.board) closeOverlayWindow(instance.id);
+  }), [instance.id, instance.board]);
   // The title bar is outside the editor, whose Ctrl+wheel zooms the board.
   // Anywhere else in the window that gesture would zoom the whole page.
   function onTitleWheel(event) {

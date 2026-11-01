@@ -155,13 +155,38 @@ test('the + menu lists boards and opens one in a tab', async (t) => {
   const { harness, host } = env;
   await harness.act(async () => { harness.fireEvent(host.querySelector('.mux-board-add'), 'click'); await wait(); });
   await harness.act(() => wait());
-  const cards = host.querySelectorAll('.mux-board-menu .board-card');
+  const cards = host.querySelectorAll('.mux-board-menu .board-row-open');
   assert.equal(cards.length, 2);
   assert.ok(requests.includes('GET /api/boards'));
   await harness.act(async () => { harness.fireEvent(cards[1], 'click'); await wait(); });
   assert.deepEqual(tabLabels(host), ['Team map'], 'the tab carries the board title');
   assertAbsent(host.querySelector('.mux-board-menu'), 'picking a board closes the menu');
   assert.ok(harness.document.getElementById('tab-terminals').classList.contains('active'));
+  cleanup();
+});
+
+test('deleting a board from its tab asks, then closes the tab', async (t) => {
+  const boards = [...BOARD_LIST];
+  const requests = fakeDaemon(t, boards);
+  const env = await mountShell(t, COLLAB_ON);
+  const cleanup = await start(env);
+  const { harness, host, state } = env;
+  const { openBoardPane } = await harness.importDashboardModule('js/board-overlay-state.js');
+  await harness.act(async () => { await openBoardPane('plan', 'Release plan'); await wait(); });
+  assert.deepEqual(tabLabels(host), ['Release plan']);
+  const tab = host.querySelector('.mux-tab');
+  await harness.act(() => harness.fireEvent(tab, 'contextmenu', { clientX: 8, clientY: 8 }));
+  const item = [...harness.document.querySelectorAll('.mux-tab-menu-item')].find((el) => el.textContent === 'Delete board…');
+  await harness.act(async () => { harness.fireEvent(item, 'click'); await wait(); });
+  await harness.act(() => wait());
+  const dialog = harness.document.querySelector('.board-delete');
+  assert.match(dialog.textContent, /Delete “Release plan”\?/);
+  assert.equal(requests.filter((r) => r.startsWith('DELETE')).length, 0, 'nothing is deleted before the operator says so');
+  await harness.act(async () => { harness.fireEvent(dialog.querySelector('.board-delete-confirm'), 'click'); await wait(); await wait(); });
+  assert.ok(requests.includes('DELETE /api/boards/plan'));
+  assert.deepEqual(tabLabels(host), [], 'the tab of a deleted board closes');
+  assertAbsent(harness.document.querySelector('.board-delete'), 'the dialog closes');
+  assert.equal(state.panes.value.length, 0);
   cleanup();
 });
 
