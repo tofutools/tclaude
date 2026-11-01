@@ -30,7 +30,7 @@ type processTemplatesExportParams struct {
 	Title            string   `long:"title" optional:"true" help:"Workflow title (default: the template's name)."`
 	Summary          string   `long:"summary" optional:"true" help:"One-paragraph summary (default: the template's description)."`
 	Strict           bool     `long:"strict" optional:"true" help:"Refuse to export a workflow that is not portable: paths from this machine, steps naming a specific agent, or failing validation."`
-	AssigneesToRoles bool     `long:"assignees-to-roles" optional:"true" help:"Export steps naming a specific agent with that agent's role instead, when it has exactly one role here."`
+	AssigneesToRoles bool     `long:"assignees-to-roles" optional:"true" help:"Stop naming a specific agent in exported steps: they ask for the role it holds here (when it has exactly one), or for the profile they already have."`
 	AssigneeRole     []string `long:"assignee-role" optional:"true" help:"Export steps naming an agent with a role instead, as <agent>=<role> (repeatable). Wins over --assignees-to-roles."`
 	AskHuman         string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
@@ -113,7 +113,7 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 	}
 	fmt.Fprintf(stdout, "Wrote %s (%d bytes, %d template(s)%s).\n", out, len(data), len(archive.Order), signedNote(archive))
 	if n := len(archive.Workflow.Assignees); n > 0 {
-		fmt.Fprintf(stdout, "Note: %d step(s) name a specific agent, which the importing node will not have; they wait until reassigned there.\n", n)
+		fmt.Fprintf(stdout, "Note: %d step(s) name a specific agent, which the importing node will not have; they fall to their profile there, or wait until reassigned.\n", n)
 	}
 	warnWorkflowProblems(stderr, archive)
 	warnWorkflowPaths(stderr, archive.Paths)
@@ -144,7 +144,7 @@ func reportAssigneeRoles(path string, q url.Values, stderr io.Writer) {
 	}
 	for _, a := range view.Assignees {
 		if a.Role != "" && !slices.ContainsFunc(q["assignee"], func(m string) bool { return strings.HasPrefix(m, a.Name+"=") }) {
-			fmt.Fprintf(stderr, "Agent %s becomes role %s.\n", shown(a.Name), shown(a.Role))
+			fmt.Fprintf(stderr, "Agent %s is no longer named: its steps ask for role %s, or for the profile they already have.\n", shown(a.Name), shown(a.Role))
 		}
 	}
 }

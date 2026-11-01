@@ -61,8 +61,8 @@ export function exportConfirmation(id, problems, paths, assignees = []) {
   const kept = assignees.filter((a) => !a.role);
   if (problems.length > 0) parts.push(`${id} cannot run until these are fixed. You can still share it; whoever imports it sees the same list.\n\n${listed(problems)}`);
   if (paths.length > 0) parts.push(`${id} carries paths from this machine. A param or a relative path travels better; whoever imports it sees the same list.\n\n${listed(paths.map(pathLine))}`);
-  if (converted.length > 0) parts.push(`These steps name an agent the importing node will not have, so they are shared with the agent's role instead.\n\n${listed(converted.map((a) => `${a.name} becomes role ${a.role}, in ${a.steps.join(', ')}`))}`);
-  if (kept.length > 0) parts.push(`These agents have no single role here, so their steps stay named and wait on the importing node until reassigned.\n\n${listed(kept.map((a) => `${a.name}, in ${a.steps.join(', ')}`))}`);
+  if (converted.length > 0) parts.push(`These steps name an agent the importing node will not have, so they are shared without the name. They ask for the agent's role, or for the profile they already have.\n\n${listed(converted.map((a) => `${a.name} (role ${a.role}), in ${a.steps.join(', ')}`))}`);
+  if (kept.length > 0) parts.push(`These agents have no single role here, so their steps stay named. On the importing node they fall to their profile, or wait until reassigned.\n\n${listed(kept.map((a) => `${a.name}, in ${a.steps.join(', ')}`))}`);
   let title = 'Share a workflow that names specific agents?';
   if (problems.length > 0) title = 'Share a workflow that fails validation?';
   else if (paths.length > 0) title = 'Share a workflow with paths from this machine?';

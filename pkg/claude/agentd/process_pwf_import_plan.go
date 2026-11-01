@@ -244,9 +244,9 @@ type pwfPlanned struct {
 type pwfPlanner struct {
 	a       *pwf.Archive
 	roleMap map[string]string
-	// assignees turns a step naming an agent into one asking for a role; an
-	// export sets it (pwfConvertAssignees).
-	assignees map[string]string
+	// assignees rewrites the steps naming an agent; an export sets it
+	// (pwfConvertAssignees).
+	assignees map[string]pwfAssigneeRole
 	renames   map[string]string
 	done      map[string]*pwfPlanned
 	active    map[string]bool
@@ -312,8 +312,13 @@ func (p *pwfPlanner) rewriteNodes(nodes map[string]model.Node, changed *bool) er
 			if perf.Kind != model.PerformerAgent {
 				return
 			}
-			if role, ok := p.assignees[perf.Assignee]; ok {
-				perf.Role, perf.Assignee, *changed = role, "", true
+			if to, ok := p.assignees[perf.Assignee]; ok {
+				// A profile already says who can take the step, and a role
+				// would narrow it, so only a role asked for by name wins.
+				if !to.Held || perf.Profile == "" {
+					perf.Role = to.Role
+				}
+				perf.Assignee, *changed = "", true
 			}
 			*changed = p.mapName(&perf.Profile) || *changed
 			*changed = p.mapName(&perf.Role) || *changed

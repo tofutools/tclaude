@@ -27,6 +27,13 @@ type pwfAssigneeView struct {
 	Role  string   `json:"role,omitempty"`
 }
 
+// pwfAssigneeRole is what a named agent's steps become. Held marks the role the
+// agent holds here, as opposed to one the exporter chose.
+type pwfAssigneeRole struct {
+	Role string
+	Held bool
+}
+
 // pwfPerRun reports a value picked per run from a param: not a named agent.
 func pwfPerRun(name string) bool { return strings.Contains(name, "{{") }
 
@@ -107,7 +114,7 @@ func pwfAgentRoles(r *http.Request) (func(string) string, error) {
 
 // pwfExportRoles reads which agents the export gives a role. An explicit
 // assignee= wins over assignees=roles; an agent neither names keeps its name.
-func pwfExportRoles(r *http.Request, b pwf.Bundle) (map[string]string, error) {
+func pwfExportRoles(r *http.Request, b pwf.Bundle) (map[string]pwfAssigneeRole, error) {
 	q := r.URL.Query()
 	if len(q["assignee"]) == 0 && q.Get("assignees") != "roles" {
 		return nil, nil
@@ -120,7 +127,7 @@ func pwfExportRoles(r *http.Request, b pwf.Bundle) (map[string]string, error) {
 	for _, use := range named {
 		known[use.Name] = true
 	}
-	roles := map[string]string{}
+	roles := map[string]pwfAssigneeRole{}
 	for _, m := range q["assignee"] {
 		from, to, ok := strings.Cut(m, "=")
 		from, to = strings.TrimSpace(from), strings.TrimSpace(to)
@@ -130,7 +137,7 @@ func pwfExportRoles(r *http.Request, b pwf.Bundle) (map[string]string, error) {
 		if !known[from] {
 			return nil, fmt.Errorf("no step names the agent %q", from)
 		}
-		roles[from] = to
+		roles[from] = pwfAssigneeRole{Role: to}
 	}
 	if q.Get("assignees") == "roles" {
 		held, err := pwfAgentRoles(r)
@@ -138,18 +145,18 @@ func pwfExportRoles(r *http.Request, b pwf.Bundle) (map[string]string, error) {
 			return nil, err
 		}
 		for _, use := range named {
-			if role := held(use.Name); role != "" && roles[use.Name] == "" {
-				roles[use.Name] = role
+			if _, chosen := roles[use.Name]; !chosen && held(use.Name) != "" {
+				roles[use.Name] = pwfAssigneeRole{Role: held(use.Name), Held: true}
 			}
 		}
 	}
 	return roles, nil
 }
 
-// pwfConvertAssignees rewrites a bundle so the given agents' steps ask for a
-// role. It goes through the import planner, which rewrites templates
+// pwfConvertAssignees rewrites a bundle so the given agents' steps no longer
+// name them. It goes through the import planner, which rewrites templates
 // consistently: a subprocess step pinned to a rewritten version follows it.
-func pwfConvertAssignees(b pwf.Bundle, roles map[string]string) (pwf.Bundle, error) {
+func pwfConvertAssignees(b pwf.Bundle, roles map[string]pwfAssigneeRole) (pwf.Bundle, error) {
 	if len(roles) == 0 {
 		return b, nil
 	}

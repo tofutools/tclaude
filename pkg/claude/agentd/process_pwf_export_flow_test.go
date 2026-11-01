@@ -16,13 +16,19 @@ import (
 const pwfMemberConv = "qa00-1111-2222-3333-4444"
 
 // pwfAssigneeFlow stores a root that pins a child version whose step names an
-// agent holding the role qa here.
+// agent holding the role qa here, instead of asking for a profile.
 func pwfAssigneeFlow(t *testing.T) (*testharness.Flow, string) {
+	t.Helper()
+	return pwfAssigneeFlowWith(t, "assignee: "+pwfMemberConv+"\n")
+}
+
+// pwfAssigneeFlowWith puts selector in place of the child step's profile.
+func pwfAssigneeFlowWith(t *testing.T, selector string) (*testharness.Flow, string) {
 	t.Helper()
 	f, _ := processAuthoringFlow(t)
 	f.HaveGroup("webshop")
 	f.HaveMemberWithRole("webshop", pwfMemberConv, "qa")
-	child := strings.Replace(pwfChildSource, "profile: reviewer\n", "profile: reviewer\n      assignee: "+pwfMemberConv+"\n", 1)
+	child := strings.Replace(pwfChildSource, "profile: reviewer\n", selector, 1)
 	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/pwf-review", map[string]any{"source": child})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	_, childRef, err := pwf.ParseTemplate([]byte(child))
@@ -79,6 +85,22 @@ func TestProcessWorkflowExportConvertsAssigneesToRoles(t *testing.T) {
 
 	bad := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-ship/export?assignee=nobody=qa", nil)
 	assert.Equal(t, http.StatusBadRequest, bad.Code, bad.Body.String())
+}
+
+// A step that has a profile already says who can take it. The agent's role
+// would narrow that, so it only loses the name, unless a role is asked for.
+func TestProcessWorkflowExportKeepsAStepsProfile(t *testing.T) {
+	f, _ := pwfAssigneeFlowWith(t, "profile: reviewer\n      assignee: "+pwfMemberConv+"\n")
+	reviewer := pwf.Use{Name: "reviewer", Steps: []string{"pwf-review:review"}}
+
+	held := pwfExportOpen(t, f, "?assignees=roles")
+	assert.Empty(t, held.Workflow.Assignees)
+	assert.Contains(t, held.Workflow.Roles, reviewer)
+	assert.NotContains(t, held.Workflow.Roles, pwf.Use{Name: "qa", Steps: reviewer.Steps})
+
+	chosen := pwfExportOpen(t, f, "?assignee="+pwfMemberConv+"=qa")
+	assert.Empty(t, chosen.Workflow.Assignees)
+	assert.Contains(t, chosen.Workflow.Roles, pwf.Use{Name: "qa", Steps: reviewer.Steps})
 }
 
 // An agent with several roles has no obvious one: it stays named.

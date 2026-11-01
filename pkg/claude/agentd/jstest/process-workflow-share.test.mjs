@@ -279,7 +279,7 @@ test('exportWorkflow: confirming shares named agents with their roles, and the r
   const both = await run([{ name: 'checkout', role: 'dev', steps: ['ship:build'] }, { name: 'solo', steps: ['ship:fix'] }], true);
   assert.equal(both.urls.at(-1), '/v1/process/templates/ship/export?assignees=roles');
   assert.equal(both.asked[0].okLabel, 'Use roles and share');
-  assert.match(both.asked[0].body, /checkout becomes role dev, in ship:build/);
+  assert.match(both.asked[0].body, /checkout \(role dev\), in ship:build/);
   assert.match(both.asked[0].body, /solo, in ship:fix/);
 
   const none = await run([{ name: 'solo', steps: ['ship:fix'] }], true);

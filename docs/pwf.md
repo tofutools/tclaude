@@ -43,8 +43,8 @@ sees the same list in its review, and the workflow cannot run there until the
 problems are fixed.
 
 A step that names one specific agent (an `assignee`) is not portable: the
-importing node has different agents, so the step waits there until someone
-reassigns it. Export points those steps out and writes them as they are unless
+importing node has different agents, so the step falls to whoever holds its
+profile there, or waits until someone reassigns it. Export points those steps out and writes them as they are unless
 you give them a role instead:
 
 ```bash
@@ -52,12 +52,15 @@ tclaude agent process-templates export ship-feature --assignees-to-roles
 tclaude agent process-templates export ship-feature --assignee-role checkout=dev
 ```
 
-`--assignees-to-roles` uses the role the agent holds in your groups, and prints
-it; an agent with no role or several keeps its name, or give it one with
-`--assignee-role <agent>=<role>`. The dashboard's share button offers the same
-conversion, and those steps then export with the role. This changes the
-exported templates only, not yours, so their refs differ from the stored ones
-and importing the file back here shows them as `update`.
+`--assignees-to-roles` drops the name. The step asks for the role the agent
+holds in your groups, which the command prints, or keeps asking for its
+profile if it has one, since a role would narrow who can take it. An agent with
+no role or several keeps its name. `--assignee-role <agent>=<role>` sets the
+role you give, profile or not. The dashboard's share button offers the same
+conversion as `--assignees-to-roles`. This changes the exported templates only,
+not yours, so their refs differ from the stored ones and importing the file
+back here shows them as `update`. A run with no group needs the assignee, so
+don't take that update for a workflow you run that way.
 
 Export also scans the workflow for paths from your machine. A path under a
 home directory reveals a username, and a path outside the standard system
