@@ -83,9 +83,11 @@ func TestProcessWorkflowExportConvertsAssigneesToRoles(t *testing.T) {
 
 	assert.Len(t, pwfExportOpen(t, f, "").Workflow.Assignees, 1, "the stored template is unchanged")
 
-	titled := pwfExportOpen(t, f, "?assignees=roles&title=Shipping&summary=Ships%20it")
+	titled := pwfExportOpen(t, f, "?assignees=roles&title=Shipping&summary=Ships%20it&author=Acme&licence=MIT")
 	assert.Equal(t, "Shipping", titled.Workflow.Title, "conversion keeps the exporter's text")
 	assert.Equal(t, "Ships it", titled.Workflow.Summary)
+	assert.Equal(t, "Acme", titled.Workflow.Author)
+	assert.Equal(t, "MIT", titled.Workflow.Licence)
 
 	bad := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-ship/export?assignee=nobody=qa", nil)
 	assert.Equal(t, http.StatusBadRequest, bad.Code, bad.Body.String())

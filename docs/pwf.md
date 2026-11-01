@@ -28,6 +28,7 @@ Export a stored template. Its subprocess templates come with it:
 tclaude agent process-templates export ship-feature            # writes ship-feature.pwf
 tclaude agent process-templates export ship-feature -o - > x.pwf
 tclaude agent process-templates export ship-feature --version sha256:<hex> --title "Ship a feature"
+tclaude agent process-templates export ship-feature --author "Acme platform team" --licence MIT
 ```
 
 Exporting an older version (`--version`) makes that version the current one
@@ -91,7 +92,8 @@ Check a file without a daemon and without changing anything:
 tclaude agent process-templates inspect ship-feature.pwf
 ```
 
-`inspect` verifies the file and prints what the workflow needs: its inputs,
+`inspect` verifies the file and prints who it says it is from and its licence,
+if the exporter gave them, and what the workflow needs: its inputs,
 the agent roles its steps ask for, the steps that ask you something, every
 command it would run, the steps that name a specific agent, paths from the
 exporting machine, and anything that keeps it from running (validation
@@ -179,7 +181,7 @@ signer yourself. `inspect` is offline and does not apply it.
 
 ### Before you import
 
-- Check the signer. An unknown key proves only that the file is unchanged
+- Check the signer, not the author line, which anyone can write. An unknown key proves only that the file is unchanged
   since it was signed, not who signed it.
 - Read every command and its program profile. You authorize them, per run,
   when a run starts.
@@ -251,8 +253,10 @@ marker existed look like that.
 
 Schema: [`workflow.schema.json`](pwf/schema/v0.1/workflow.schema.json).
 
-`title` and `summary` are free text from the exporter, without control
-characters (the summary may contain newlines and tabs). Everything else is
+`title`, `summary`, and the optional `author` and `licence` are free text from
+the exporter, without control characters (the summary may contain newlines and
+tabs). `author` and `licence` are at most 200 bytes, and they are only what the
+exporter says: a signature is what ties a file to a key. Everything else is
 derived from the templates, and a reader recomputes it and refuses a file
 whose `workflow.json` disagrees. That makes it safe to show a review from
 `workflow.json` alone.

@@ -569,3 +569,31 @@ func TestScanPathsCleanWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, paths)
 }
+
+// An author and licence travel with the file, stay optional, and are text
+// like the title.
+func TestAuthorAndLicence(t *testing.T) {
+	_, ref, err := pwf.ParseTemplate([]byte(childSource))
+	require.NoError(t, err)
+	b := pwf.Bundle{Root: ref, Author: " Acme ", Licence: "MIT", Templates: []pwf.Template{{Head: true, Source: []byte(childSource)}}}
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, b, pwf.WriteOptions{}))
+	a, err := pwf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, "Acme", a.Workflow.Author)
+	assert.Equal(t, "MIT", a.Workflow.Licence)
+
+	b.Author = "Acme\x1b[2K"
+	assert.ErrorContains(t, pwf.Write(io.Discard, b, pwf.WriteOptions{}), "author has control characters")
+	b.Author, b.Licence = "", strings.Repeat("x", 201)
+	assert.ErrorContains(t, pwf.Write(io.Discard, b, pwf.WriteOptions{}), "licence exceeds")
+}
+
+// An author line is text the importer reads, so a path in it counts too.
+func TestScanPathsCoversAuthor(t *testing.T) {
+	_, ref, err := pwf.ParseTemplate([]byte(rootSource))
+	require.NoError(t, err)
+	paths, err := pwf.ScanPaths(pwf.Bundle{Root: ref, Author: "/home/alice/team", Templates: []pwf.Template{{Head: true, Source: []byte(rootSource)}}})
+	require.NoError(t, err)
+	assert.Equal(t, []pwf.PathFinding{{Where: "author", Path: "/home/alice/team", Kind: pwf.PathHome}}, paths)
+}

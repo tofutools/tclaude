@@ -9,6 +9,8 @@
   "properties": {
     "title": {"type": "string", "minLength": 1, "maxLength": 200},
     "summary": {"type": "string", "maxLength": 2000},
+    "author": {"type": "string", "maxLength": 200},
+    "licence": {"type": "string", "maxLength": 200},
     "root": {"$ref": "manifest.schema.json#/$defs/ref"},
     "templates": {
       "type": "array",
