@@ -77,7 +77,11 @@ test('the context carries no masked text, selected or under the cursor', () => {
   assert.equal(describeElement(document.getElementById('wrap')).text, '', 'nor from around it');
   assert.equal(describeElement(document.getElementById('ok')).text, 'Save', 'ordinary text is still described');
 
-  const selecting = (text, node) => ({ toString: () => text, containsNode: (el) => el === node });
+  // A selection also reads what is selected inside a field, even after that
+  // field loses focus. Its ranges hold only the page's text (seen in Chrome).
+  const selecting = (text, node, fieldText = text) => ({
+    toString: () => fieldText, containsNode: (el) => el === node, rangeCount: 1, getRangeAt: () => ({ toString: () => text }),
+  });
   const context = (selection) => captureContext({
     win: { document, location: { pathname: '/' }, innerWidth: 1, innerHeight: 1, getSelection: () => selection }, tab: 'x',
   });
@@ -85,6 +89,8 @@ test('the context carries no masked text, selected or under the cursor', () => {
   assert.equal(context(selecting('words', null)).selection, 'words', 'ordinary text is still shared');
   Object.defineProperty(document, 'activeElement', { value: document.getElementById('bearer'), configurable: true });
   assert.equal(context(selecting(SECRET, null)).selection, undefined, 'a field that selected itself on focus');
+  Object.defineProperty(document, 'activeElement', { value: document.getElementById('ok'), configurable: true });
+  assert.equal(context(selecting('', null, SECRET)).selection, undefined, 'nor once focus has moved on from it');
 });
 
 test('a board element under the cursor is named', () => {
@@ -96,7 +102,7 @@ test('the context carries the cursor, focus and viewport', () => {
   const button = element('button', { text: 'Save  draft' });
   const win = {
     innerWidth: 1000, innerHeight: 700, devicePixelRatio: 2, location: { pathname: '/config', search: '?q=1' },
-    getSelection: () => ({ toString: () => 'picked' }),
+    getSelection: () => ({ toString: () => 'picked', rangeCount: 1, getRangeAt: () => ({ toString: () => 'picked' }) }),
     document: {
       title: 'tclaude', body: {}, documentElement: {}, activeElement: button, hasFocus: () => true,
       elementFromPoint: () => button, querySelector: () => null,

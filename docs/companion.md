@@ -523,7 +523,7 @@ it's summoned, and aren't granted to other agents by default.
 `tclaude agent guide capture -o view.png` shows the Steward what
 you see, with `dashboard.capture`, which it gets when summoned and other agents
 do not. It saves an image of your dashboard and prints the cursor position and
-what is under it, the focused control, any selected text, the viewport, and the
+what is under it, the focused control, any selected page text, the viewport, and the
 open board with the region on screen. `--json` gives the same as data.
 
 The tab renders its own page, so a capture holds only that dashboard page,
@@ -538,7 +538,8 @@ asked to with `--save`.
 A capture shows whatever is on screen, including open messages and terminal
 output, which reaches the Steward even though it cannot read agents' mail
 through the API. Password fields and fields holding tokens, keys or environment
-values are masked, in the image and in the text that comes with it. Hover styles are not reproduced,
+values are masked, in the image and in the text that comes with it. Text selected
+inside a field is never reported. Hover styles are not reproduced,
 and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
 in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
 command fails there. It needs Collab, like the rest of the Steward.

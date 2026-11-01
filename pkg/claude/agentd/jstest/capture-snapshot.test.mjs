@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { CAPTURE_MASK, diffSecrets, filterSnapshot, openForm, readPage, snapshotPage, snapshotText } from '../dashboard/js/capture-snapshot.js';
+import { lineDiff } from '../dashboard/js/line-diff.js';
 import { parseHTML } from './third_party/linkedom.mjs';
 
 const SECRET = 'sk-live-s3cret-value';
@@ -100,7 +101,10 @@ test('a dialog inside something masked is not read as the open form', () => {
   assert.match(text, /^Page: /);
 });
 
-const masked = (lines) => diffSecrets(lines).map(([, secret]) => secret).filter(Boolean);
+// asDiff is a file shown unchanged, as a diff's context lines.
+const asDiff = (lines) => lines.map((s) => ({ t: 'ctx', s }));
+const shownOf = (before, after) => diffSecrets(lineDiff(JSON.stringify(before, null, 2), JSON.stringify(after, null, 2))).map(([plain]) => plain).join('\n');
+const masked = (lines) => diffSecrets(asDiff(lines)).map(([, secret]) => secret).filter(Boolean);
 
 test('a diff dialog masks secret names in any case, and shows the rest', () => {
   const lines = JSON.stringify({
@@ -110,7 +114,7 @@ test('a diff dialog masks secret names in any case, and shows the rest', () => {
   }, null, 2).split('\n');
   const secret = masked(lines).join('\n');
   for (let i = 1; i <= 12; i++) assert.ok(secret.includes(`"s${i}"`), `s${i} is masked`);
-  const parts = diffSecrets(lines);
+  const parts = diffSecrets(asDiff(lines));
   const plain = parts.map(([text]) => text).join('\n');
   assert.ok(!/"s\d+"/.test(plain), plain);
   for (const shown of ['"name": "p"', '"name": "API"', '"/work"', '"enabled": true']) assert.ok(plain.includes(shown), shown);
@@ -119,9 +123,41 @@ test('a diff dialog masks secret names in any case, and shows the rest', () => {
 
 test('everything inside a secret-named key is masked, and it ends where the block does', () => {
   const lines = JSON.stringify({ tokens: ['t1', { deep: 't2' }], auth: { user: 't3' }, after: 'shown' }, null, 2).split('\n');
-  const plain = diffSecrets(lines).map(([text]) => text).join('\n');
+  const plain = diffSecrets(asDiff(lines)).map(([text]) => text).join('\n');
   assert.ok(!/"t\d"/.test(plain), plain);
   assert.ok(plain.includes('"after": "shown"'), plain);
+});
+
+test('the old side of a diff cannot end the new side\'s secret block', () => {
+  for (const [before, after] of [
+    [{ auth: { a: '1' } }, { auth: { a: '1', user: SECRET }, z: 1 }],
+    [{ api_keys: ['old'] }, { api_keys: ['old', SECRET], z: 1 }],
+    [{ api_keys: ['old'], z: 1 }, { api_keys: [SECRET] }],
+    [{ outer: { token_map: { a: '1' } } }, { outer: { token_map: { a: '1', b: SECRET } }, z: 1 }],
+  ]) {
+    const plain = shownOf(before, after);
+    assert.ok(!plain.includes(SECRET), plain);
+  }
+});
+
+test('a secret block on one side masks a line both sides share', () => {
+  const plain = shownOf({ tokens: [SECRET] }, { notes: [SECRET] });
+  assert.ok(!plain.includes(SECRET), plain);
+});
+
+test('a masked dialog gives no title', () => {
+  const win = page(`<div data-capture-form="${SECRET}" data-capture-mask data-rect="0 0 800 600"></div>`);
+  const text = textOf(win);
+  assert.ok(!text.includes(SECRET), text);
+});
+
+test('surfaces that echo a masked value are marked', () => {
+  const source = (file) => readFileSync(new URL(file, SOURCE_DIR), 'utf8');
+  assert.equal((source('management-island.js').match(/<textarea data-capture-mask rows="6" value=\$\{raw\}/g) || []).length, 2, 'both import boxes');
+  assert.ok(!/<textarea rows="6" value=\$\{raw\}/.test(source('management-island.js')));
+  assert.equal((source('audit-island.js').match(/<pre data-capture-mask>/g) || []).length, 2, 'audit request and resolved input');
+  assert.ok(source('fleet-admin-bundle.js').includes('<pre data-capture-mask class="fa-bi-text"'));
+  assert.ok(source('fleet-admin-spawns.js').includes('<code data-capture-mask=${x.secret}>'));
 });
 
 test('a diff line that cannot be told apart from a secret fails closed', () => {
@@ -132,12 +168,12 @@ test('a diff line that cannot be told apart from a secret fails closed', () => {
     `invite=${SECRET}`,
     `  "unterminated: "${SECRET}`,
   ]) {
-    assert.ok(!diffSecrets([line])[0][0].includes(SECRET), line);
+    assert.ok(!diffSecrets(asDiff([line]))[0][0].includes(SECRET), line);
   }
 });
 
 test('a line marked by a diff dialog never reaches the text', () => {
-  const [[plain, secret]] = diffSecrets([`"value": "${SECRET}"`]);
+  const [[plain, secret]] = diffSecrets(asDiff([`"value": "${SECRET}"`]));
   const text = textOf(page(`<div aria-modal="true"><span class="dl">+ ${plain}<span data-capture-mask>${secret}</span></span></div>`));
   assert.ok(!text.includes(SECRET), text);
   assert.ok(text.includes('"value":'), 'the line itself still reads');

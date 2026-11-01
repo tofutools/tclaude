@@ -27,9 +27,8 @@ const DIFF_BARE = /^\s*(?:"(?:[^"\\]|\\.)*"|-?\d[\d.eE+-]*|true|false|null|[[\]{
 // what a dialog must mark. Everything inside a secret-named key is marked, since
 // lines there have no name of their own, and so is whatever cannot be told apart
 // from a secret: an escaped key, a value holding more JSON, or a line that is
-// not JSON at all. Lines from both sides of a diff can share one walk, because
-// it goes by indentation.
-export function diffSecrets(lines) {
+// not JSON at all.
+function walkSecrets(lines) {
   let secretAt = -1;
   return lines.map((line) => {
     const indent = line.length - line.trimStart().length;
@@ -45,6 +44,21 @@ export function diffSecrets(lines) {
       return [line, ''];
     }
     return opens || DIFF_SCALAR.test(value) ? [line, ''] : [entry[1], entry[2]];
+  });
+}
+
+// diffSecrets marks the lines of a diff. Each side is walked as the document it
+// is, because a merged walk would let the old side's closing brace end a block
+// the new side is still inside. A shared line is marked if either side marks it.
+export function diffSecrets(diff) {
+  const lines = (t) => diff.filter((line) => line.t !== t).map((line) => line.s);
+  const before = walkSecrets(lines('add'));
+  const after = walkSecrets(lines('del'));
+  return diff.map((line) => {
+    const old = line.t === 'add' ? null : before.shift();
+    const next = line.t === 'del' ? null : after.shift();
+    if (!old || !next) return old || next;
+    return old[1].length >= next[1].length ? old : next;
   });
 }
 
@@ -299,6 +313,7 @@ export function filterSnapshot(snapshot) {
   filterNode(snapshot.root);
   // A dialog inside something masked is masked, so it is not a form to read.
   if (snapshot.form?.scrubbed) snapshot.form = null;
+  if (snapshot.form?.masked || !snapshot.form) snapshot.formTitle = '';
   return snapshot;
 }
 

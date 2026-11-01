@@ -94,7 +94,7 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
         <div class="fa-bi-view">
           ${!open ? html`<div class="muted">Pick an entry to read it here.</div>`
             : open.kind === 'binary' ? html`<div class="muted" id="fleet-bundle-binary">${open.path} is binary (${size(open.size)}); it is not shown. Download the bundle to inspect it.</div>`
-            : html`<pre class="fa-bi-text" id="fleet-bundle-text">${shown}</pre>
+            : html`<pre data-capture-mask class="fa-bi-text" id="fleet-bundle-text">${shown}</pre>
               ${open.truncated && html`<div class="fa-bi-more muted">Showing the first ${size(open.next ?? 0)} of ${size(open.size)}.
                 ${open.next != null && html` <button type="button" class="fa-link" id="fleet-bundle-more" disabled=${busy} onClick=${() => read({ path: open.path, kind: open.kind, size: open.size }, open.next)}>Load more</button>`}</div>`}`}
         </div>

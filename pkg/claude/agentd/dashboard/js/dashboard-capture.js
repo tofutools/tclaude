@@ -51,6 +51,16 @@ function selectionIsMasked(win) {
   return [...(doc.querySelectorAll?.(MASKED) || [])].some((el) => selection?.containsNode?.(el, true));
 }
 
+// selectedText reads the ranges rather than the selection. A selection's text
+// includes what is selected inside a field, and keeps it after the field loses
+// focus, when nothing can say it came from a masked one. A range holds only the
+// page's text, so no field's value is reported, as describeElement promises.
+function selectedText(win) {
+  const selection = win.getSelection?.();
+  const ranges = Array.from({ length: selection?.rangeCount || 0 }, (_, i) => selection.getRangeAt(i));
+  return ranges.map((range) => range.toString()).join(' ');
+}
+
 export function describeElement(el, y = null) {
   if (!el?.tagName) return null;
   const control = el.closest?.('button, a[href], [role="button"], [role="tab"], [role="menuitem"], [role="link"], label, summary, th, input, select, textarea') || el;
@@ -119,7 +129,7 @@ export function captureContext({ win, tab, pointer, marks = [], now = Date.now()
   }
   const active = doc.activeElement;
   if (active && active !== doc.body && active !== doc.documentElement) context.focus = describeElement(active);
-  const selection = clip(win.getSelection?.()?.toString?.(), 400);
+  const selection = clip(selectedText(win), 400);
   if (selection && !selectionIsMasked(win)) context.selection = selection;
   const board = boardContext(doc);
   if (board) context.board = board;
