@@ -274,13 +274,79 @@ func TestSandboxImplAssign_MovesOpenCodeAgentIntoPrivateState(t *testing.T) {
 	assert.True(t, inheritedBefore.Equal(inherited), "a move is the same conversation, its spend is not inherited anew")
 	assert.Contains(t, assign.Body.String(), "todo list")
 
-	// There is no way back: the shared store no longer holds it.
+	// Any other implementation takes it back, under the same id.
+	// A conversation from before a reincarnation shares the private store.
+	const older = "ses_0123456789abcdefghijklmnov"
+	seedOpenCodeSession(t, filepath.Join(allocation.StateRoot, "data", "fake-store"), older, "older", testutil.CanonicalTempDir(t))
 	body, err = json.Marshal(map[string]string{"implementation": "harness-builtin"})
 	require.NoError(t, err)
 	r = agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
 	back := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusConflict, back.Code, back.Body.String())
-	assert.Contains(t, back.Body.String(), "opencode_state_private")
+	require.Equal(t, http.StatusOK, back.Code, back.Body.String())
+	assert.Contains(t, back.Body.String(), "outside tclaude's sandbox can read them")
+	assert.Equal(t, shared, storedOpenCodeSessions(t, store)[landed], "the shared copy is the conversation")
+	assert.Contains(t, storedOpenCodeSessions(t, store), older, "an older conversation moves with it")
+	assert.NoDirExists(t, allocation.StateRoot, "the private state is gone")
+	allocation, err = db.GetOpenCodeAgentStateAllocation(agentID)
+	require.NoError(t, err)
+	assert.Nil(t, allocation)
+	relaunch, err := db.AgentRelaunchProfileForConv(landed)
+	require.NoError(t, err)
+	require.NotNil(t, relaunch)
+	require.NotNil(t, relaunch.SandboxImplementation)
+	assert.Equal(t, "harness-builtin", *relaunch.SandboxImplementation)
+
+	// And the move into private state works again.
+	body, err = json.Marshal(map[string]string{"implementation": "tclaude-layer"})
+	require.NoError(t, err)
+	r = agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
+	again := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, again.Code, again.Body.String())
+	allocation, err = db.GetOpenCodeAgentStateAllocation(agentID)
+	require.NoError(t, err)
+	require.NotNil(t, allocation)
+	assert.Equal(t, shared, storedOpenCodeSessions(t, filepath.Join(allocation.StateRoot, "data", "fake-store"))[landed])
+	assert.NotContains(t, storedOpenCodeSessions(t, store), landed)
+}
+
+// A copy that fails leaves the agent as it was, in private state and resumable.
+func TestSandboxImplAssign_FailedMoveOutLeavesTheAgentPrivate(t *testing.T) {
+	f := newFlow(t)
+	store := fakeOpenCodeStore(t)
+	const source = "ses_0123456789abcdefghijklmnox"
+	seedOpenCodeSession(t, store, source, "scout", testutil.CanonicalTempDir(t))
+	f.HaveGroup("crew")
+	f.HaveMember("crew", source)
+	archive := exportGroupAs(t, f, "crew", "paf")
+	setSandboxImplDefault(t, f, "tclaude-layer")
+	rec, _ := importGroupWith(t, f, archive, url.Values{"into": {testutil.CanonicalTempDir(t)}, "as": {"crew-private"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	landed := landedMember(t, "crew-private")
+	agentID, err := db.AgentIDForConv(landed)
+	require.NoError(t, err)
+	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	require.NoError(t, err)
+	require.NotNil(t, allocation)
+	privateStore := filepath.Join(allocation.StateRoot, "data", "fake-store")
+	before := storedOpenCodeSessions(t, privateStore)[landed]
+	require.NotEmpty(t, before)
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(store), "import-fails"), nil, 0o600))
+
+	body, err := json.Marshal(map[string]string{"implementation": "harness-builtin"})
+	require.NoError(t, err)
+	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
+	failed := testharness.Serve(f.Mux, r)
+
+	require.Equal(t, http.StatusInternalServerError, failed.Code, failed.Body.String())
+	assert.Contains(t, failed.Body.String(), "opencode_state_move")
+	assert.Equal(t, before, storedOpenCodeSessions(t, privateStore)[landed])
+	assert.NotContains(t, storedOpenCodeSessions(t, store), landed)
+	assert.DirExists(t, allocation.StateRoot)
+	relaunch, err := db.AgentRelaunchProfileForConv(landed)
+	require.NoError(t, err)
+	require.NotNil(t, relaunch)
+	require.NotNil(t, relaunch.SandboxImplementation)
+	assert.Equal(t, "tclaude-layer", *relaunch.SandboxImplementation)
 }
 
 // A move that died after allocating left the conversation in the shared store.

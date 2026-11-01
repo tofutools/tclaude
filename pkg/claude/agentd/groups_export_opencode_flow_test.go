@@ -40,7 +40,7 @@ esac
 field() { sed -n "s|.*\"$1\":\"\($2[^\"]*\)\".*|\1|p" "$3" | head -n 1; }
 case "$1" in
 export) cat "$store/$2.json" ;;
-import) cp "$2" "$store/$(field id ses_ "$2").json" ;;
+import) [ ! -e '` + dir + `/import-fails' ] || exit 1; cp "$2" "$store/$(field id ses_ "$2").json" ;;
 session)
 	case "$2" in
 	delete) rm "$store/$3.json" ;;
@@ -58,6 +58,19 @@ session)
 	esac
 	;;
 db)
+	case "$2" in
+	*"parent_id IS NULL"*)
+		sep=''
+		printf '['
+		for f in "$store"/*.json; do
+			[ -e "$f" ] || continue
+			printf '%s{"id":"%s"}' "$sep" "$(field id ses_ "$f")"
+			sep=,
+		done
+		printf ']\n'
+		exit 0
+		;;
+	esac
 	id=$(printf %s "$2" | grep -o 'ses_[A-Za-z0-9_-]*' | head -n 1)
 	if [ -e "$store/$id.json" ]; then printf '[{"id":"%s"}]\n' "$id"; fi
 	;;

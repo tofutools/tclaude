@@ -436,9 +436,13 @@ func rewriteOpenCodeHistory(r io.Reader, source, newID, cwd string, out io.Write
 // sessionTree is id and its descendants, parents first. An export holds one
 // session, and deleting a session deletes its children.
 func (h openCodeHistory) sessionTree(id, cwd string) ([]string, error) {
+	return h.sessionIDs(cwd, "WITH RECURSIVE tree(id) AS (SELECT id FROM session WHERE id = '"+id+
+		"' UNION ALL SELECT session.id FROM session JOIN tree ON session.parent_id = tree.id) SELECT id FROM tree")
+}
+
+// sessionIDs is the session ids a read-only query of the store returns.
+func (h openCodeHistory) sessionIDs(cwd, query string) ([]string, error) {
 	var out bytes.Buffer
-	query := "WITH RECURSIVE tree(id) AS (SELECT id FROM session WHERE id = '" + id +
-		"' UNION ALL SELECT session.id FROM session JOIN tree ON session.parent_id = tree.id) SELECT id FROM tree"
 	if err := h.command(cwd, &out, "db", query, "--format", "json"); err != nil {
 		return nil, err
 	}
@@ -471,6 +475,15 @@ func OpenCodeHoldsConversation(h HistoryTransfer, id, cwd string) (bool, error) 
 	}
 	tree, err := history.sessionTree(id, cwd)
 	return len(tree) > 0, err
+}
+
+// OpenCodeConversations lists a store's conversations, without subagent sessions.
+func OpenCodeConversations(h HistoryTransfer, cwd string) ([]string, error) {
+	history, ok := h.(openCodeHistory)
+	if !ok {
+		return nil, errors.New("not an OpenCode history")
+	}
+	return history.sessionIDs(cwd, "SELECT id FROM session WHERE parent_id IS NULL")
 }
 
 // exportFile is OpenCode's own export of id, unrewritten.
