@@ -1426,7 +1426,9 @@ func normalizeEnvironment(in []EnvironmentEntry) ([]EnvironmentEntry, error) {
 	total := 0
 	for i, entry := range in {
 		if len(entry.Name) > MaxEnvironmentName || !environmentNameRE.MatchString(entry.Name) {
-			return nil, fmt.Errorf("environment[%d].name %q is invalid (want an ASCII identifier up to %d bytes)", i, entry.Name, MaxEnvironmentName)
+			// Not quoted: an invalid name may be a value in the wrong field, and
+			// this text is stored with the spawn's audit row.
+			return nil, fmt.Errorf("environment[%d].name is invalid (want an ASCII identifier up to %d bytes)", i, MaxEnvironmentName)
 		}
 		if isReservedEnvironmentName(entry.Name) {
 			return nil, fmt.Errorf("environment[%d].name %q is reserved for launch or sandbox control", i, entry.Name)

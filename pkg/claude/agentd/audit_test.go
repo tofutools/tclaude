@@ -479,3 +479,17 @@ func TestBufferAuditBodyIsBoundedAndExact(t *testing.T) {
 		assert.Nil(t, bufferAuditBody(r))
 	})
 }
+
+// Environment values stay out of a spawn row whatever shape the request has,
+// and the names stay in, so an operator can still see what was set.
+func TestSpawnAuditRedactsEnvironmentValues(t *testing.T) {
+	request := `{"name":"worker","environment":[{"name":"API_TOKEN","value":"s3cret-input"}]}`
+	refused := `{"name":"worker","ENVIRONMENT":"s3cret-input"}`
+	response := []byte(`{"launch":{"sandbox_policy":{"environment":["API_TOKEN"]}},"debug":{"environment":[{"name":"X","value":"s3cret-output"}]}}`)
+	for _, body := range []string{request, refused} {
+		detail := encodeSpawnAuditDetail("role: dev", []byte(body), response, nil, false)
+		assert.NotContains(t, detail, "s3cret")
+		assert.Contains(t, detail, `"sandbox_policy":{"environment":["API_TOKEN"]}`)
+	}
+	assert.Contains(t, encodeSpawnAuditDetail("", []byte(request), nil, nil, false), `{"name":"API_TOKEN","value":"[redacted]"}`)
+}

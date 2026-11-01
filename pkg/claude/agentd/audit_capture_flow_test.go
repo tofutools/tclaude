@@ -91,6 +91,39 @@ func TestAudit_SpawnSnapshotIncludesResolutionAndFailureResponse(t *testing.T) {
 	assert.NotContains(t, row.Detail, "private failed briefing")
 }
 
+// A spawn row says which environment variables were set and never what to, on a
+// spawn that landed and on one the daemon refused.
+func TestAudit_SpawnSnapshotKeepsEnvironmentNamesOnly(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	const secret = "s3cret-environment-value"
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":        "worker",
+		"environment": []map[string]string{{"name": "API_TOKEN", "value": secret}},
+	})
+	require.Equal(t, http.StatusOK, spawn.Code, "spawn should succeed; body=%s", spawn.Raw)
+	row := auditRowByVerb(t, "spawn")
+	assert.NotContains(t, row.Detail, secret)
+	assert.Contains(t, row.Detail, `{"name":"API_TOKEN","value":"[redacted]"}`)
+
+	refused := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":        "worker",
+		"environment": []map[string]string{{"name": "API_TOKEN", "value": secret}, {"name": "API_TOKEN", "value": secret + "-conflict"}},
+	})
+	require.Equal(t, http.StatusBadRequest, refused.Code, "spawn should be refused; body=%s", refused.Raw)
+	row = auditRowByVerb(t, "spawn")
+	assert.Equal(t, http.StatusBadRequest, row.Status)
+	assert.NotContains(t, row.Detail, secret)
+
+	misplaced := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":        "worker",
+		"environment": []map[string]string{{"name": "API_TOKEN=" + secret, "value": "x"}},
+	})
+	require.Equal(t, http.StatusBadRequest, misplaced.Code, "spawn should be refused; body=%s", misplaced.Raw)
+	assert.Contains(t, string(misplaced.Raw), "environment[0].name is invalid")
+	assert.NotContains(t, auditRowByVerb(t, "spawn").Detail, secret, "a value typed as a name")
+}
+
 func TestAudit_ForceStopCorrelatesSystemExitObservation(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
