@@ -11,14 +11,41 @@
 
 export const CAPTURE_MASK = '••••••••';
 export const MASKED = '[data-capture-mask], input[type="password"], input[autocomplete$="-password"]';
-// splitDiffSecret separates what a JSON diff line must keep from a capture, an
-// environment value or a hub invite, so that a dialog can show the operator the
-// line and mark that part. Such a dialog echoes values whose own fields are
-// masked, and the file behind it, not just what changed.
-const DIFF_SECRET = /^(\s*"(?:value|invite)":\s*)(.+)$/;
-export function splitDiffSecret(line) {
-  const match = DIFF_SECRET.exec(line);
-  return match ? [match[1], match[2]] : [line, ''];
+// A diff dialog echoes values whose own fields are masked, and the file behind
+// it rather than just what changed, so it masks by name and fails closed. "key"
+// covers api_key and private_key, and "value" an environment entry. Masking too
+// much costs an agent one line. TestDiffSecretsCoverConfigShapes holds this
+// pattern against the real config and sandbox profile types: keep it on one line.
+const DIFF_SECRET_NAME = /passw|passphrase|secret|token|credential|key|auth|invite|cookie|bearer|value/i;
+// An entry whose key holds a backslash does not match, because an escape can
+// spell any name.
+const DIFF_ENTRY = /^(\s*"[^"\\]*"\s*:\s*)(.*)$/;
+const DIFF_SCALAR = /^(?:"(?:[^"\\]|\\.)*"|-?\d[\d.eE+-]*|true|false|null|\{\}|\[\])$/;
+const DIFF_BARE = /^\s*(?:"(?:[^"\\]|\\.)*"|-?\d[\d.eE+-]*|true|false|null|[[\]{}]|\},?|\],?)?,?\s*$/;
+
+// diffSecrets splits each line of pretty-printed JSON into what may be read and
+// what a dialog must mark. Everything inside a secret-named key is marked, since
+// lines there have no name of their own, and so is whatever cannot be told apart
+// from a secret: an escaped key, a value holding more JSON, or a line that is
+// not JSON at all. Lines from both sides of a diff can share one walk, because
+// it goes by indentation.
+export function diffSecrets(lines) {
+  let secretAt = -1;
+  return lines.map((line) => {
+    const indent = line.length - line.trimStart().length;
+    if (secretAt >= 0 && indent > secretAt) return ['', line];
+    secretAt = -1;
+    const entry = DIFF_ENTRY.exec(line);
+    if (!entry) return DIFF_BARE.test(line) ? [line, ''] : ['', line];
+    const value = entry[2].trim().replace(/,$/, '');
+    const opens = value === '{' || value === '[';
+    if (DIFF_SECRET_NAME.test(entry[1])) {
+      if (!opens) return [entry[1], entry[2]];
+      secretAt = indent;
+      return [line, ''];
+    }
+    return opens || DIFF_SCALAR.test(value) ? [line, ''] : [entry[1], entry[2]];
+  });
 }
 
 // Text is capped well under what the daemon accepts, so a long page says it was

@@ -3,13 +3,16 @@
 
 import { h } from 'preact';
 import htm from 'htm';
-import { splitDiffSecret } from './capture-snapshot.js';
+import { diffSecrets } from './capture-snapshot.js';
 
 const html = htm.bind(h);
 
-export function DiffLines({ diff, sign }) {
+// unreadable is for text that may not be JSON at all, where no line can be
+// told apart from a secret.
+export function DiffLines({ diff, sign, unreadable = false }) {
+  const parts = diffSecrets(diff.map((line) => line.s));
   return diff.map((line, index) => {
-    const [plain, secret] = splitDiffSecret(line.s);
+    const [plain, secret] = unreadable ? ['', line.s] : parts[index];
     return html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${plain}${secret && html`<span data-capture-mask>${secret}</span>`}</span>`;
   });
 }

@@ -566,8 +566,16 @@ delivered to an agent in either, even when a show button has made it readable.
   rows`.
 - Terminals appear as `[terminal]`. Their output has no secret marker, so it
   stays out of the text, although the image shows it.
-- A confirm dialog's diff keeps environment values and hub invites masked.
+- A confirm dialog's diff masks any key with a secret-like name, what is nested
+  under one, and whatever it can't parse, so a corrupt `config.json` is masked whole.
 - `--save` keeps the image and context, never this text.
+
+**Rule for new surfaces:** a capture can only mask what is marked. Any element
+that shows a secret needs `data-capture-mask`, and that includes a plain element
+echoing one, such as a preview, a diff or a confirmation, not just the field it
+was typed into. A test catches unmarked secret-named inputs and a diff body that
+doesn't use `DiffLines`, but nothing can catch a secret in any other plain
+element, so mark it when you write it.
 
 Each field line gives its label, type, id and value:
 
