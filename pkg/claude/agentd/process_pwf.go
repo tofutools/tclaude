@@ -464,47 +464,62 @@ func processImportApprovalFacts(r *http.Request, data []byte) string {
 	if err != nil {
 		return "This workflow file cannot be reviewed: " + guideText(err.Error(), 300)
 	}
-	lead := "Approving lets the agent read this review. Nothing is imported yet."
-	if r.URL.Query().Get("apply") == "1" {
-		lead = "Approving imports this workflow. It stores templates and starts no run."
-		if r.URL.Query().Get("replace") == "1" {
-			lead += " Imported versions become current where this node already has the template."
-		}
-	}
-	if len(review) > maxApprovalBodyPreview {
-		review = strings.ToValidUTF8(review[:maxApprovalBodyPreview], "") + "\n…[truncated]"
-	}
-	return lead + "\n\n" + review
+	q := r.URL.Query()
+	return processImportApprovalText(review, q.Get("apply") == "1", q.Get("replace") == "1")
 }
 
-func processImportReview(r *http.Request, data []byte) (string, error) {
+// processImportApprovalText leads with what approving does and what must not be
+// missed, because the file decides how long the rest is and where its commands
+// come in it. A review past the preview limit says so before anything else.
+func processImportApprovalText(review agent.ImportReview, apply, replace bool) string {
+	lead := "Approving lets the agent read this review. Nothing is imported yet."
+	switch {
+	case apply && review.Refused != "":
+		lead = "This node refuses this file, so approving imports nothing: " + review.Refused
+	case apply:
+		lead = "Approving imports this workflow. It stores templates and starts no run."
+		if replace {
+			lead += " Imported versions become current where this node already has the template."
+		}
+	case review.Refused != "":
+		lead += " This node would refuse it: " + review.Refused
+	}
+	full := review.Full
+	if len(full) > maxApprovalBodyPreview {
+		lead = "This review is too long to show in full, so commands past the cut are not listed. Decline unless you have read all of it.\n" + lead
+		full = strings.ToValidUTF8(full[:maxApprovalBodyPreview], "") + "\n…[truncated]"
+	}
+	return lead + "\n\n" + review.Summary + "\n" + full
+}
+
+func processImportReview(r *http.Request, data []byte) (agent.ImportReview, error) {
 	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
 	if err != nil {
-		return "", err
+		return agent.ImportReview{}, err
 	}
 	opts, err := parsePWFImportOptions(r.URL.Query())
 	if err != nil {
-		return "", err
+		return agent.ImportReview{}, err
 	}
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
-		return "", err
+		return agent.ImportReview{}, err
 	}
 	planned, _, err := pwfImportPlan(r.Context(), fs, archive, opts)
 	if err != nil {
-		return "", err
+		return agent.ImportReview{}, err
 	}
 	local, err := pwfLocalRoleNames(r)
 	if err != nil {
-		return "", err
+		return agent.ImportReview{}, err
 	}
 	view, err := pwfImportPreview(r.Context(), fs, archive, data, planned, opts, pwfRoleUses(archive), local)
 	if err != nil {
-		return "", err
+		return agent.ImportReview{}, err
 	}
 	preview, err := json.Marshal(view)
 	if err != nil {
-		return "", err
+		return agent.ImportReview{}, err
 	}
 	return agent.WorkflowImportReview(preview)
 }

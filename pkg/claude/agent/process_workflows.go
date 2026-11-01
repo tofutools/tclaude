@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"slices"
@@ -252,7 +253,7 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 		_ = enc.Encode(map[string]any{"workflow": a.Workflow, "signatures": sigs, "problems": problems, "paths": paths})
 		return rcOK
 	}
-	renderWorkflow(stdout, a.Workflow)
+	renderWorkflow(stdout, a.Workflow, len(a.Workflow.Templates))
 	if len(a.Problems) > 0 {
 		fmt.Fprintln(stdout, "Fails validation (it imports, but cannot run until fixed):")
 		renderProblems(stdout, a.Problems)
@@ -453,7 +454,7 @@ func renderImportChanges(out io.Writer, view *workflowImportJSON) {
 // the workflow, what it needs and every command it would run, and what
 // importing changes here.
 func renderImportReview(out io.Writer, view *workflowImportJSON) {
-	renderWorkflow(out, view.Workflow)
+	renderWorkflow(out, view.Workflow, len(view.Templates))
 	if len(view.Signatures) == 0 {
 		fmt.Fprintln(out, "Signature: none (unverified)")
 	}
@@ -471,24 +472,58 @@ func renderImportReview(out io.Writer, view *workflowImportJSON) {
 	renderImportChanges(out, view)
 }
 
-// WorkflowImportReview renders the daemon's import preview as the review the
-// CLI prints, so an approval popup can show the human the same thing.
-func WorkflowImportReview(preview []byte) (string, error) {
+// ImportReview is a workflow import's review for an approval popup.
+type ImportReview struct {
+	// Summary is what a person must not miss, for the top of the popup, where
+	// no cut can reach it: the signer, how many commands, what changes here.
+	Summary string
+	// Full is the review the CLI prints.
+	Full string
+	// Refused says why this node would refuse the file.
+	Refused string
+}
+
+// WorkflowImportReview renders the daemon's import preview as the CLI does, so
+// the human approving an import sees what the agent asking for it sees.
+func WorkflowImportReview(preview []byte) (ImportReview, error) {
 	var view workflowImportJSON
 	if err := json.Unmarshal(preview, &view); err != nil {
-		return "", err
+		return ImportReview{}, err
 	}
-	var out strings.Builder
-	renderImportReview(&out, &view)
-	return out.String(), nil
+	var full, summary strings.Builder
+	renderImportReview(&full, &view)
+	switch {
+	case len(view.Signatures) == 0:
+		fmt.Fprintln(&summary, "Signature: none (unverified)")
+	case len(view.Signatures) == 1:
+		s := view.Signatures[0]
+		fmt.Fprintf(&summary, "Signature: %s, key %s (%s)\n", shown(s.Status), shown(s.KeyID), shown(s.Trust))
+	default:
+		fmt.Fprintf(&summary, "Signatures: %d, see below\n", len(view.Signatures))
+	}
+	fmt.Fprintf(&summary, "Commands it can run: %d\n", len(view.Programs))
+	changes := map[string]int{}
+	for _, t := range view.Templates {
+		changes[t.Status]++
+	}
+	var counts []string
+	for _, status := range slices.Sorted(maps.Keys(changes)) {
+		counts = append(counts, fmt.Sprintf("%d %s", changes[status], shown(status)))
+	}
+	fmt.Fprintf(&summary, "Templates: %s\n", strings.Join(counts, ", "))
+	if view.Group != "" {
+		fmt.Fprintf(&summary, "Pins the process to group %s.\n", shown(view.Group))
+	}
+	return ImportReview{Summary: summary.String(), Full: full.String(), Refused: shown(view.Refused)}, nil
 }
 
 // shown makes a file-controlled string safe to print in a review: anything
 // with control characters (which could redraw the terminal and fake what the
-// review says) is shown quoted, escapes visible.
+// review says) or format characters (bidi overrides, which make a browser show
+// a command other than the one that runs) is shown quoted, escapes visible.
 func shown(v string) string {
 	for _, r := range v {
-		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
 			return strconv.Quote(v)
 		}
 	}
@@ -507,7 +542,7 @@ func shownAll(vs []string) string {
 // workflow: what it is, its inputs, the roles it asks for, every command it
 // would run, and the steps that are not portable. Every string comes from
 // the file, so each goes through shown.
-func renderWorkflow(out io.Writer, wf pwf.Workflow) {
+func renderWorkflow(out io.Writer, wf pwf.Workflow, templates int) {
 	fmt.Fprintf(out, "Workflow: %s\n", shown(wf.Title))
 	if wf.Summary != "" {
 		fmt.Fprintf(out, "  %s\n", shown(wf.Summary))
@@ -518,7 +553,7 @@ func renderWorkflow(out io.Writer, wf pwf.Workflow) {
 	if wf.Licence != "" {
 		fmt.Fprintf(out, "Licence: %s\n", shown(wf.Licence))
 	}
-	fmt.Fprintf(out, "Root: %s (%d template(s))\n", shown(wf.Root), len(wf.Templates))
+	fmt.Fprintf(out, "Root: %s (%d template(s))\n", shown(wf.Root), templates)
 	if len(wf.Params) > 0 {
 		fmt.Fprintln(out, "Inputs:")
 		for _, p := range wf.Params {

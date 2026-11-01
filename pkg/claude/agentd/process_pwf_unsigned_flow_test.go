@@ -59,6 +59,7 @@ func TestProcessWorkflowImportPopupShowsTheReview(t *testing.T) {
 	assert.Equal(t, "What approving does", preview.Label)
 	assert.Contains(t, preview.Body, "Nothing is imported yet")
 	assert.Contains(t, preview.Body, "Signature: none (unverified)")
+	assert.Contains(t, preview.Body, "Commands it can run:")
 	assert.Contains(t, preview.Body, "Templates:")
 	assert.Contains(t, preview.Body, "[workflow file omitted]")
 	assert.NotContains(t, preview.Body, "workflow.json", "the archive itself is not shown")
