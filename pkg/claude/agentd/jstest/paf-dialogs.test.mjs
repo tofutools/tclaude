@@ -319,12 +319,12 @@ test('the import confirm list starts as previewed, and the import sends what sta
     async importAgentPAF() { throw new Error('should not be tried for a group'); },
     async revealImportValue(file, item) { revealed.push(item); return { value: 'the-value' }; },
   };
-  const { host, settle } = await mountManagement(t, actions, { kind: 'group-import', file: { name: 'crew.paf' } });
+  const { host, settle, tick } = await mountManagement(t, actions, { kind: 'group-import', file: { name: 'crew.paf' } });
   await settle();
   const owner = host.querySelector('[data-item="owner:c1"] input');
   const env = host.querySelector('[data-item="env:TOKEN"] input');
-  assert.equal(owner.checked, true, 'owners start ticked');
-  assert.equal(env.checked, false, 'environment starts unticked');
+  assert.equal(owner.getAttribute('checked') !== null, true, 'owners start ticked');
+  assert.equal(env.getAttribute('checked') !== null, false, 'environment starts unticked');
   assert.doesNotMatch(host.textContent, /the-value/);
   assert.deepEqual([...host.querySelectorAll('#group-import-warnings .gi-warn')].map((row) => row.textContent), ['⚠ other warning'], 'the list already shows the rest');
 
@@ -333,10 +333,8 @@ test('the import confirm list starts as previewed, and the import sends what sta
   assert.deepEqual(revealed, ['env:TOKEN']);
   assert.match(host.querySelector('[data-item="env:TOKEN"] .import-confirm-value').textContent, /the-value/);
 
-  owner.click();
-  await settle();
-  env.click();
-  await settle();
+  await tick(owner, false);
+  await tick(env, true);
   const into = host.querySelector('#group-import-into');
   into.value = '/tmp/app';
   into.dispatchEvent(new host.ownerDocument.defaultView.Event('input', { bubbles: true }));
