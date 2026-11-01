@@ -2299,7 +2299,7 @@ type agentState struct {
 	// ("low"…"max"), recorded by the statusline hook on the same row as
 	// Model. Empty until the statusbar has ticked, or when the model
 	// lacks reasoning-effort support; the dashboard appends it to the
-	// per-agent model line ("CC · Opus 4.8 high") and omits it when empty.
+	// per-agent model line ("<logo> · Opus 4.8 high") and omits it when empty.
 	EffortLevel string `json:"effort_level,omitempty"`
 	// CostUSD is the agent's cumulative API cost in USD, recorded by the
 	// statusline hook on the same row — but only when the session runs

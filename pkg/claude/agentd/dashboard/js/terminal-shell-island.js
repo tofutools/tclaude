@@ -1898,7 +1898,7 @@ function TerminalTabs({
         <div id="mux-empty">
           <div class="mux-empty-title">No terminals open</div>
           <div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu item and pick a browser option — it opens in the dashboard's <code>Terminals</code> tab.</div>
-          <div>Each terminal there has a <code>⧉ tab</code> button that pops it out into its own browser window here.</div>
+          <div>Each terminal there has a <code>⧉ tab</code> button that pops it out into its own browser tab.</div>
         </div>
       ` : null}
     </div>

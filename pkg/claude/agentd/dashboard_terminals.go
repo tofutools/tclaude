@@ -11,7 +11,7 @@ var terminalsPageHTML = mustReadFS(dashboardAssetsFS, "terminals.html")
 //
 //   - /terminals?solo=1 — exactly that, value and all — the standalone popout
 //     page (js/terminals.js): the
-//     per-terminal "⧉ tab" pop-out, one terminal in its own OS/browser window,
+//     per-terminal "⧉ tab" pop-out, one terminal in its own browser tab or window,
 //     seeded via the URL hash. It only loads /static/* assets and connects to
 //     the /api/term-ws and /api/open-window-ws WebSocket endpoints.
 //   - plain /terminals — the dashboard's own "Terminals" TAB under path routing

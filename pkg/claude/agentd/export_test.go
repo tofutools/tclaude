@@ -97,3 +97,8 @@ func AllocatePrivateOpenCodeStateForTest(agentID string) (*db.OpenCodeAgentState
 func AsAcceptedMove(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), acceptedMoveContextKey{}, true))
 }
+
+// OfferKeepsItsPostureForTest exposes offerKeepsItsPosture.
+func OfferKeepsItsPostureForTest(o *db.FederationBundleOffer, groupID int64) bool {
+	return offerKeepsItsPosture(o, groupID)
+}

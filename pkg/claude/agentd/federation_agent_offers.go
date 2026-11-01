@@ -349,6 +349,14 @@ func federationOfferProvenance(o *db.FederationBundleOffer) map[string]any {
 // Caller holds fedBundleMu across validation, reservation and the normal
 // bundle importer. A durable reserved identity prevents an interrupted apply
 // from silently spawning another agent when the operator retries.
+// offerKeepsItsPosture says whether an accepted offer lands as a move rather than
+// a file. Its teleport or move label comes from the sender, so the label counts
+// only from a peer this receiver trusts with moves into that group.
+func offerKeepsItsPosture(o *db.FederationBundleOffer, groupID int64) bool {
+	return (o.Descriptor.Teleport != nil || o.Descriptor.Move != nil) &&
+		fedPeerAllows(o.Peer, groupID, PermAgentsTeleportReceive)
+}
+
 func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.FederationBundleOffer, in *fedBundleImportRequest) {
 	subscriptionOffer := false
 	if o.Descriptor.Teleport != nil {
@@ -488,7 +496,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		if o.Descriptor.Teleport != nil {
 			inner = inner.WithContext(context.WithValue(inner.Context(), teleportOfferContextKey{}, o))
 		}
-		if o.Descriptor.Teleport != nil || o.Descriptor.Move != nil {
+		if offerKeepsItsPosture(o, g.ID) {
 			inner = inner.WithContext(context.WithValue(inner.Context(), acceptedMoveContextKey{}, true))
 		}
 		inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: query.Encode()}

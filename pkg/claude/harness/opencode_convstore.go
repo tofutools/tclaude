@@ -37,10 +37,16 @@ type openCodeSession struct {
 	Directory string `json:"directory"`
 }
 
+// OpenCodePrivateEnvironment is the environment that selects an allocation's
+// private state. agentd owns that layout and sets this.
+var OpenCodePrivateEnvironment func(*db.OpenCodeAgentStateAllocation) ([]string, error)
+
 type openCodeConvStore struct {
 	// listSessions lists the project of dir; "" is this process's own.
 	listSessions func(dir string) ([]openCodeSession, error)
-	writeTitle   func(db.OpenCodeRuntime, string, string) error
+	// listPrivate lists the project of dir in one agent's private state.
+	listPrivate func(dir string, environment []string) ([]openCodeSession, error)
+	writeTitle  func(db.OpenCodeRuntime, string, string) error
 }
 
 var _ ConvStore = openCodeConvStore{}
@@ -61,7 +67,7 @@ func (s openCodeConvStore) sessions(dirs ...string) ([]openCodeSession, error) {
 		if err != nil {
 			return nil, fmt.Errorf("find OpenCode executable: %w", err)
 		}
-		list = func(dir string) ([]openCodeSession, error) { return listOpenCodeSessions(executable, dir) }
+		list = func(dir string) ([]openCodeSession, error) { return listOpenCodeSessions(executable, dir, nil) }
 	}
 	seen := map[string]bool{}
 	covered := map[string]bool{}
@@ -154,16 +160,73 @@ func existingDirs(dirs []string) []string {
 	return out
 }
 
+// openCodeIsolation shuts a CLI run off from every config source, on top of
+// --pure. It matches what the filtered server gets in agentd. The auth content
+// matters as much as the rest: a data directory holds auth.json, and a wellknown
+// entry there is remote config OpenCode fetches and acts on.
+var openCodeIsolation = []string{
+	"OPENCODE_PURE=1",
+	"OPENCODE_DISABLE_PROJECT_CONFIG=1",
+	"OPENCODE_CONFIG=",
+	"OPENCODE_CONFIG_DIR=",
+	"OPENCODE_DISABLE_AUTOUPDATE=1",
+	"OPENCODE_DISABLE_MODELS_FETCH=1",
+	"OPENCODE_AUTH_CONTENT={}",
+}
+
+// openCodeCLIEnvironment is the environment of a CLI run tclaude starts itself.
+// Such a run is outside any sandbox, and the project directory and an agent's
+// private state are both writable by that agent, so nothing there may be loaded
+// as config. A run against private state takes only its data directory; the
+// agent's config, cache and state are replaced by fresh directories, removed by
+// the returned cleanup.
+//
+// OpenCode still opens the database in that data directory, which the agent can
+// write. This closes code loading, not a hostile database.
+func openCodeCLIEnvironment(environment []string) ([]string, func(), error) {
+	env := append(os.Environ(), openCodeIsolation...)
+	var data string
+	for _, entry := range environment {
+		if value, ok := strings.CutPrefix(entry, "XDG_DATA_HOME="); ok {
+			data = value
+		}
+	}
+	if data == "" {
+		return append(env, environment...), func() {}, nil
+	}
+	fresh, err := os.MkdirTemp("", "tclaude-opencode-cli-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(fresh) }
+	env = append(env, "XDG_DATA_HOME="+data)
+	for name, dir := range map[string]string{"XDG_CONFIG_HOME": "config", "XDG_CACHE_HOME": "cache", "XDG_STATE_HOME": "state"} {
+		path := filepath.Join(fresh, dir)
+		if err = os.Mkdir(path, 0o700); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		env = append(env, name+"="+path)
+	}
+	return env, cleanup, nil
+}
+
 // listOpenCodeSessions deliberately uses the supported CLI instead of reading
 // opencode.db. OpenCode already migrated its private store from JSON files to
 // SQLite once; pinning tclaude to that schema would turn a future migration
 // into a silent empty conversation list.
-func listOpenCodeSessions(executable, dir string) ([]openCodeSession, error) {
+func listOpenCodeSessions(executable, dir string, environment []string) ([]openCodeSession, error) {
+	env, cleanup, err := openCodeCLIEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), openCodeConvStoreTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable,
 		"session", "list", "--format", "json", "--pure", "--log-level", "ERROR")
 	cmd.Dir = dir
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
@@ -327,15 +390,76 @@ func openCodeRowCurrent(row *db.ConvIndexRow, entry convops.SessionEntry) bool {
 		row.ProjectPath == entry.ProjectPath
 }
 
-// openCodeConvInPrivateState reports a conversation whose agent keeps its
-// OpenCode state privately.
-func openCodeConvInPrivateState(convID string) bool {
+// openCodePrivateAllocation is the private state of a conversation's agent, nil
+// when it keeps none.
+func openCodePrivateAllocation(convID string) *db.OpenCodeAgentStateAllocation {
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil || agentID == "" {
-		return false
+		return nil
 	}
 	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
-	return err == nil && allocation != nil && allocation.Mode == db.OpenCodeStatePrivate
+	if err != nil || allocation == nil || allocation.Mode != db.OpenCodeStatePrivate {
+		return nil
+	}
+	return allocation
+}
+
+func openCodeConvInPrivateState(convID string) bool {
+	return openCodePrivateAllocation(convID) != nil
+}
+
+// findPrivate looks a conversation up in its agent's private state, from the
+// directories tclaude knows it in. Its listing stays out of the cache sync: it
+// covers a directory without showing what the shared store holds there. A lookup
+// that could not run is an error, never a conversation that is gone.
+func (s openCodeConvStore) findPrivate(convID string, allocation *db.OpenCodeAgentStateAllocation) (*convops.SessionEntry, error) {
+	if OpenCodePrivateEnvironment == nil {
+		return nil, fmt.Errorf("opencode private state: no environment for conversation %s", convID)
+	}
+	environment, err := OpenCodePrivateEnvironment(allocation)
+	if err != nil {
+		return nil, fmt.Errorf("opencode private state: %w", err)
+	}
+	list := s.listPrivate
+	if list == nil {
+		executable, err := OpenCodeExecutable()
+		if err != nil {
+			return nil, fmt.Errorf("find OpenCode executable: %w", err)
+		}
+		list = func(dir string, environment []string) ([]openCodeSession, error) {
+			return listOpenCodeSessions(executable, dir, environment)
+		}
+	}
+	dirs := openCodeConvDirs(convID)
+	if rows, err := db.FindSessionsByConvID(convID); err == nil {
+		var known []string
+		for _, row := range rows {
+			known = append(known, row.Cwd)
+		}
+		dirs = existingDirs(append(dirs, known...))
+	}
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("opencode private state: no directory to look for conversation %s in", convID)
+	}
+	var failure error
+	for _, dir := range dirs {
+		sessions, err := list(dir, environment)
+		if err != nil {
+			failure = err
+			continue
+		}
+		for _, session := range sessions {
+			if session.ID != convID {
+				continue
+			}
+			entry := openCodeSessionEntry(session)
+			if row, err := db.GetConvIndex(convID); err == nil && row != nil && row.CustomTitle != session.Title {
+				entry.CustomTitle = row.CustomTitle
+			}
+			return &entry, nil
+		}
+	}
+	return nil, failure
 }
 
 func openCodeSessionEntry(session openCodeSession) convops.SessionEntry {
@@ -393,6 +517,16 @@ func (s openCodeConvStore) Resolve(idPrefix, cwd string, global bool) (*ConvRef,
 	if global {
 		cwd = ""
 	}
+	if allocation := openCodePrivateAllocation(idPrefix); allocation != nil {
+		entry, err := s.findPrivate(idPrefix, allocation)
+		if err != nil {
+			return nil, fmt.Errorf("resolve OpenCode conversation %q: %w", idPrefix, err)
+		}
+		if entry == nil {
+			return nil, nil
+		}
+		return openCodeConvRef(*entry), nil
+	}
 	if cwd == "" {
 		if entry := s.findNearby(idPrefix); entry != nil {
 			return openCodeConvRef(*entry), nil
@@ -443,17 +577,14 @@ func (s openCodeConvStore) Title(convID string) (string, error) {
 		return "", nil
 	}
 	entry, err := s.find(convID)
-	if err != nil {
-		return "", err
-	}
 	if entry != nil {
 		return entry.DisplayTitle(), nil
 	}
 	// A rename the CLI cannot see the conversation for is still a rename.
-	if row, err := db.GetConvIndex(convID); err == nil && row != nil {
+	if row, rowErr := db.GetConvIndex(convID); rowErr == nil && row != nil && row.CustomTitle != "" {
 		return row.CustomTitle, nil
 	}
-	return "", nil
+	return "", err
 }
 
 // findNearby looks convID up where tclaude last knew it to be, which takes
@@ -475,10 +606,10 @@ func (s openCodeConvStore) findNearby(convID string) *convops.SessionEntry {
 }
 
 // find is findNearby, then every project. A conversation in private state is
-// in no listing, so it does not start any.
+// in no ambient listing, so it is looked up there instead.
 func (s openCodeConvStore) find(convID string) (*convops.SessionEntry, error) {
-	if openCodeConvInPrivateState(convID) {
-		return nil, nil
+	if allocation := openCodePrivateAllocation(convID); allocation != nil {
+		return s.findPrivate(convID, allocation)
 	}
 	if entry := s.findNearby(convID); entry != nil {
 		return entry, nil
@@ -522,13 +653,14 @@ func (s openCodeConvStore) SetTitle(convID, title string) error {
 			slog.Warn("opencode SetTitle: live API unavailable; using local title cache",
 				"conv", convID, "error", err)
 		}
-	} else {
+	} else if !openCodeConvInPrivateState(convID) {
+		// tclaude recorded a private conversation when it landed, and a rename
+		// of it should not depend on its store being readable right now.
 		exists, err := s.Exists(convID, "")
 		if err != nil {
 			return fmt.Errorf("opencode SetTitle: verify conversation %s: %w", convID, err)
 		}
-		// A conversation in private state is in no listing.
-		if !exists && !openCodeConvInPrivateState(convID) {
+		if !exists {
 			return fmt.Errorf("opencode SetTitle: conversation %s not found", convID)
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -420,9 +421,15 @@ func TestOpenCodeConvStoreKeepsPrivateStateConversation(t *testing.T) {
 		AgentID: agentID, Mode: db.OpenCodeStatePrivate, StateRoot: t.TempDir(),
 	})
 	require.NoError(t, err)
-	store := openCodeConvStore{listSessions: func(string) ([]openCodeSession, error) {
-		return []openCodeSession{{ID: "ses_ambient", Directory: repo}}, nil
-	}}
+	previous := OpenCodePrivateEnvironment
+	t.Cleanup(func() { OpenCodePrivateEnvironment = previous })
+	OpenCodePrivateEnvironment = func(*db.OpenCodeAgentStateAllocation) ([]string, error) { return nil, nil }
+	store := openCodeConvStore{
+		listSessions: func(string) ([]openCodeSession, error) {
+			return []openCodeSession{{ID: "ses_ambient", Directory: repo}}, nil
+		},
+		listPrivate: func(string, []string) ([]openCodeSession, error) { return nil, nil },
+	}
 
 	require.NoError(t, store.SetTitle(conv, "Private name"))
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: conv, ProjectDir: repo, ProjectPath: repo, CustomTitle: "Private name", Harness: OpenCodeName}))
@@ -521,12 +528,123 @@ func TestOpenCodeSyncKeepsRowWrittenDuringTheListing(t *testing.T) {
 	assert.NotNil(t, row)
 }
 
+// A conversation in private state is found through that state, and its listing
+// does not evict what the shared store holds in the same directory.
+func TestOpenCodeConvStoreSeesPrivateState(t *testing.T) {
+	withTestDB(t)
+	repo := testutil.CanonicalTempDir(t)
+	const conv, shared = "ses_private1", "ses_shared1"
+	require.NoError(t, db.SetConversationResumeProfile(conv, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: OpenCodeName, Cwd: repo,
+	}))
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: shared, ProjectDir: repo, ProjectPath: repo, Harness: OpenCodeName}))
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	_, err = db.InsertOpenCodeAgentStateAllocation(db.OpenCodeAgentStateAllocation{
+		AgentID: agentID, Mode: db.OpenCodeStatePrivate, StateRoot: t.TempDir(),
+	})
+	require.NoError(t, err)
+	previous := OpenCodePrivateEnvironment
+	t.Cleanup(func() { OpenCodePrivateEnvironment = previous })
+	OpenCodePrivateEnvironment = func(*db.OpenCodeAgentStateAllocation) ([]string, error) {
+		return []string{"XDG_DATA_HOME=/private"}, nil
+	}
+	found := true
+	failure := error(nil)
+	store := openCodeConvStore{
+		listSessions: func(string) ([]openCodeSession, error) {
+			t.Error("a private conversation needs no ambient listing")
+			return nil, nil
+		},
+		listPrivate: func(dir string, environment []string) ([]openCodeSession, error) {
+			assert.Equal(t, repo, dir)
+			assert.Equal(t, []string{"XDG_DATA_HOME=/private"}, environment)
+			if !found {
+				return []openCodeSession{{ID: "ses_other", Directory: repo}}, failure
+			}
+			return []openCodeSession{{ID: conv, Title: "Private", Directory: repo}}, failure
+		},
+	}
+
+	exists, err := store.Exists(conv, "")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	ref, err := store.Resolve(conv, "", true)
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	assert.Equal(t, repo, ref.ProjectPath)
+	row, err := db.GetConvIndex(shared)
+	require.NoError(t, err)
+	assert.NotNil(t, row, "the private listing evicts nothing")
+
+	found = false
+	exists, err = store.Exists(conv, "")
+	require.NoError(t, err)
+	assert.False(t, exists, "a conversation gone from its own store is gone")
+
+	failure = errors.New("cannot read")
+	_, err = store.Exists(conv, "")
+	require.Error(t, err, "a store that cannot be read says so, not that it is gone")
+	_, err = store.Resolve(conv, "", true)
+	require.Error(t, err)
+
+	// A recorded name survives a store that cannot be read.
+	require.NoError(t, db.SetConvIndexCustomTitle(conv, "Recorded", OpenCodeName))
+	title, err := store.Title(conv)
+	require.NoError(t, err)
+	assert.Equal(t, "Recorded", title)
+
+	// With its directory gone nothing was looked at, so nothing is known.
+	failure = nil
+	require.NoError(t, os.RemoveAll(repo))
+	_, err = store.Exists(conv, "")
+	require.Error(t, err, "no directory to look in is not a conversation that is gone")
+}
+
+// A CLI run outside the sandbox must not read what an agent can write. Private
+// state contributes its data directory and nothing else, and project config is
+// off everywhere.
+func TestOpenCodeCLIEnvironmentLoadsNothingAnAgentWrote(t *testing.T) {
+	value := func(env []string, name string) string {
+		found := ""
+		for _, entry := range env {
+			if rest, ok := strings.CutPrefix(entry, name+"="); ok {
+				found = rest
+			}
+		}
+		return found
+	}
+	const agent = "/state/agt_x"
+	env, cleanup, err := openCodeCLIEnvironment([]string{
+		"XDG_DATA_HOME=" + agent + "/data", "XDG_CONFIG_HOME=" + agent + "/config",
+		"XDG_CACHE_HOME=" + agent + "/cache", "XDG_STATE_HOME=" + agent + "/state",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, agent+"/data", value(env, "XDG_DATA_HOME"))
+	fresh := value(env, "XDG_CONFIG_HOME")
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"} {
+		assert.NotContains(t, value(env, name), agent)
+		assert.DirExists(t, value(env, name))
+	}
+	cleanup()
+	assert.NoDirExists(t, fresh)
+
+	ambient, cleanup, err := openCodeCLIEnvironment(nil)
+	require.NoError(t, err)
+	defer cleanup()
+	for _, isolated := range [][]string{env, ambient} {
+		assert.Equal(t, "1", value(isolated, "OPENCODE_DISABLE_PROJECT_CONFIG"))
+		assert.Equal(t, "1", value(isolated, "OPENCODE_PURE"))
+		assert.Equal(t, "{}", value(isolated, "OPENCODE_AUTH_CONTENT"))
+	}
+}
+
 func TestListOpenCodeSessionsRunsFromTheProject(t *testing.T) {
 	dir := testutil.CanonicalTempDir(t)
 	executable := filepath.Join(testutil.CanonicalTempDir(t), "opencode")
 	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nprintf '[{\"id\":\"ses_here\",\"directory\":\"%s\"}]' \"$PWD\"\n"), 0o755))
 
-	sessions, err := listOpenCodeSessions(executable, dir)
+	sessions, err := listOpenCodeSessions(executable, dir, nil)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, dir, sessions[0].Directory)

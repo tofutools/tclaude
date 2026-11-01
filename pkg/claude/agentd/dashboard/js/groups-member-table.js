@@ -200,7 +200,7 @@ export function HarnessLine({ member, snapshot, local = true }) {
   const labels = harnessLabels(harness);
   const model = state.model || '';
   // Both indicators trail the metadata text as bare glyphs, tightly packed:
-  // "CC · Opus 4.8 high 🔒 📱". The sandbox one used to own a framed chip on its
+  // "<logo> · Opus 4.8 high 🔒 📱". The sandbox one used to own a framed chip on its
   // own line below, which cost a whole row of height to say what a padlock says.
   const sandbox = html`<${SandboxBadge} member=${member}
     showDetails=${!!snapshot?.recorded_sandbox_details_enabled} />`;

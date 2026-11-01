@@ -127,7 +127,7 @@ a terminal's top right, dimmed until the pointer is on them. Switching terminals
 leaving the tab or losing the connection stops the mic; the draft stays with its
 terminal.
 
-- **Agent terminals** work like an overlay window: the draft goes to the agent as a
+- **Agent terminals** work like the companion: the draft goes to the agent as a
   message, you can say "send now", and [send after silence](companion.md#voice-and-dictation)
   applies if you turned it on.
 - **Plain shells** and shell sessions show only the mic. Enter or **Paste** puts the
