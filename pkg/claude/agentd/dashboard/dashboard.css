@@ -6883,7 +6883,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   #perm-edit-modal .perm-row { flex-wrap: wrap; }
   #perm-edit-modal .perm-row > .perm-scope-chips {
     order: 5; flex-basis: 100%; max-width: 100%;
-    justify-content: flex-start; padding-left: 36px;
+    justify-content: flex-start; padding-left: 32px;
   }
   #perm-edit-modal .perm-row > .perm-scope-chips .perm-scope-chip { display: inline-flex; }
 }
@@ -6905,10 +6905,12 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
    nothing at the gate, and the editor cannot show what it says. */
 .perm-scope-chip.unreadable { background: #2d1416; border-color: #7a2a2a; color: #ff9492; }
 .perm-scope-stale { color: #e3b341; font-size: 9px; }
-/* The disclosure gutter is a fixed 26px for every row in a list that has any
+/* The disclosure gutter is a fixed 22px for every row in a list that has any
    scopable slug — including the inert placeholder — so slugs stay aligned
    instead of stepping sideways as grants are toggled. */
-.perm-scope-twisty { flex: 0 0 26px; height: 26px; }
+.perm-scope-twisty { flex: 0 0 22px; height: 22px; }
+/* The global .empty padding would otherwise widen the placeholder past the gutter. */
+.perm-scope-twisty.empty { padding: 0; }
 button.perm-scope-twisty {
   display: inline-grid; place-items: center; box-sizing: border-box; padding: 0; margin: 0;
   background: #21262d; border: 1px solid #3d4451; border-radius: 5px;
@@ -6918,13 +6920,13 @@ button.perm-scope-twisty:hover { background: #2d333b; border-color: #58a6ff; col
 button.perm-scope-twisty:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 button.perm-scope-twisty[aria-expanded="true"] { border-color: #58a6ff; color: #58a6ff; }
 .perm-scope-chevron {
-  display: block; width: 18px; height: 18px; transition: transform 0.12s;
+  display: block; width: 14px; height: 14px; transition: transform 0.12s;
   fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
 }
 button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: rotate(90deg); }
 .perm-scope-drawer {
   background: #0f151c; border-bottom: 1px solid #21262d;
-  padding: 7px 10px 8px 36px; display: flex; flex-direction: column; gap: 3px;
+  padding: 7px 10px 8px 32px; display: flex; flex-direction: column; gap: 3px;
 }
 /* The drawer head carries the semantics hint and, at its right edge, the
    effective-source line this row gave up to make space for its chips. */
