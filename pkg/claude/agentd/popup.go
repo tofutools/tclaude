@@ -846,6 +846,10 @@ func snapshotRequestBody(r *http.Request) string {
 	// metadata lives in a bounded header specifically so an ad-hoc approval can
 	// describe the action without consuming, buffering, or truncating the binary
 	// request stream before the handler receives it.
+	// A workflow file is an archive: its popup shows the review instead.
+	if r.URL.Path == "/v1/process/import" {
+		return "[workflow file omitted]"
+	}
 	if r.URL.Path == "/v1/notify-human/attachment" {
 		if raw, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Tclaude-Notify-Metadata")); err == nil {
 			var pretty bytes.Buffer

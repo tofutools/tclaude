@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -300,11 +302,12 @@ type pwfTemplateImported struct {
 // pwfImportOptions). Without apply it is a preview and changes nothing; an
 // apply must carry the reviewDigest of the preview it acts on.
 func handleProcessImport(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxPWFUpload)
+	r = withApprovalFacts(r, func(body []byte) string { return processImportApprovalFacts(r, body) })
 	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxPWFUpload)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("a workflow file is at most %d bytes", maxPWFUpload))
@@ -451,6 +454,59 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("process workflow imported", "root", view.Root, "templates", len(view.Templates), "actor", actor, "group", view.Group)
 	writeProcessJSON(w, http.StatusOK, view)
+}
+
+// processImportApprovalFacts is the review a popup shows for an import, the one
+// the CLI prints: the file itself says nothing a person can judge. The handler
+// checks everything again and refuses what this cannot read.
+func processImportApprovalFacts(r *http.Request, data []byte) string {
+	review, err := processImportReview(r, data)
+	if err != nil {
+		return "This workflow file cannot be reviewed: " + guideText(err.Error(), 300)
+	}
+	lead := "Approving lets the agent read this review. Nothing is imported yet."
+	if r.URL.Query().Get("apply") == "1" {
+		lead = "Approving imports this workflow. It stores templates and starts no run."
+		if r.URL.Query().Get("replace") == "1" {
+			lead += " Imported versions become current where this node already has the template."
+		}
+	}
+	if len(review) > maxApprovalBodyPreview {
+		review = strings.ToValidUTF8(review[:maxApprovalBodyPreview], "") + "\n…[truncated]"
+	}
+	return lead + "\n\n" + review
+}
+
+func processImportReview(r *http.Request, data []byte) (string, error) {
+	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
+	if err != nil {
+		return "", err
+	}
+	opts, err := parsePWFImportOptions(r.URL.Query())
+	if err != nil {
+		return "", err
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		return "", err
+	}
+	planned, _, err := pwfImportPlan(r.Context(), fs, archive, opts)
+	if err != nil {
+		return "", err
+	}
+	local, err := pwfLocalRoleNames(r)
+	if err != nil {
+		return "", err
+	}
+	view, err := pwfImportPreview(r.Context(), fs, archive, data, planned, opts, pwfRoleUses(archive), local)
+	if err != nil {
+		return "", err
+	}
+	preview, err := json.Marshal(view)
+	if err != nil {
+		return "", err
+	}
+	return agent.WorkflowImportReview(preview)
 }
 
 // pwfImportPreview says what importing the planned templates changes here.

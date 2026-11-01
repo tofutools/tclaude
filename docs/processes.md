@@ -70,7 +70,8 @@ tclaude agent process-templates import <file.pwf> --yes  # review, then import
 ```
 
 Importing stores templates and never starts a run. The review lists every
-command the workflow would run, the roles it asks for and the signer. See
+command the workflow would run, the roles it asks for and the signer, and an
+`--ask-human` popup shows the human the same review. See
 [Portable Workflow Format](pwf.md).
 
 In the dashboard, **share** downloads a `.pwf` from a template's row, the full

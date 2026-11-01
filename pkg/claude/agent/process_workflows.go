@@ -359,22 +359,7 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	renderWorkflow(stdout, view.Workflow)
-	if len(view.Signatures) == 0 {
-		fmt.Fprintln(stdout, "Signature: none (unverified)")
-	}
-	for _, s := range view.Signatures {
-		fmt.Fprintf(stdout, "Signature: %s, key %s (%s)\n", shown(s.Status), shown(s.KeyID), shown(s.Trust))
-	}
-	if len(view.Problems) > 0 {
-		fmt.Fprintln(stdout, "Fails validation (it imports, but cannot run until fixed here):")
-		renderProblems(stdout, view.Problems)
-	}
-	if len(view.Paths) > 0 {
-		fmt.Fprintln(stdout, "Paths from the machine it was exported on (steps using them may need changing here):")
-		renderPaths(stdout, view.Paths)
-	}
-	renderImportChanges(stdout, &view)
+	renderImportReview(stdout, &view)
 	if view.Refused != "" {
 		if p.Yes {
 			fmt.Fprintf(stderr, "Error: %s\n", view.Refused)
@@ -462,6 +447,40 @@ func renderImportChanges(out io.Writer, view *workflowImportJSON) {
 	if view.Group != "" {
 		fmt.Fprintf(out, "Pins the process to group %s.\n", shown(view.Group))
 	}
+}
+
+// renderImportReview prints what a person reviews before importing: who signed
+// the workflow, what it needs and every command it would run, and what
+// importing changes here.
+func renderImportReview(out io.Writer, view *workflowImportJSON) {
+	renderWorkflow(out, view.Workflow)
+	if len(view.Signatures) == 0 {
+		fmt.Fprintln(out, "Signature: none (unverified)")
+	}
+	for _, s := range view.Signatures {
+		fmt.Fprintf(out, "Signature: %s, key %s (%s)\n", shown(s.Status), shown(s.KeyID), shown(s.Trust))
+	}
+	if len(view.Problems) > 0 {
+		fmt.Fprintln(out, "Fails validation (it imports, but cannot run until fixed here):")
+		renderProblems(out, view.Problems)
+	}
+	if len(view.Paths) > 0 {
+		fmt.Fprintln(out, "Paths from the machine it was exported on (steps using them may need changing here):")
+		renderPaths(out, view.Paths)
+	}
+	renderImportChanges(out, view)
+}
+
+// WorkflowImportReview renders the daemon's import preview as the review the
+// CLI prints, so an approval popup can show the human the same thing.
+func WorkflowImportReview(preview []byte) (string, error) {
+	var view workflowImportJSON
+	if err := json.Unmarshal(preview, &view); err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	renderImportReview(&out, &view)
+	return out.String(), nil
 }
 
 // shown makes a file-controlled string safe to print in a review: anything
