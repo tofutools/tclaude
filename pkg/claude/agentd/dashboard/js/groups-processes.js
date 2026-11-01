@@ -502,9 +502,11 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
     agentIds=${members.map((member) => member.agent_id).filter(Boolean)} wizard=${wizard} runApi=${runApi}
     source=${source} notify=${notify} onStart=${startScope} inline=${inline} />`;
-  const body = html`<span ref=${importerRef}><${WorkflowImportButton} group=${group.name} id="" className="dock-process-import-hidden"
-      dropped=${droppedPwf} onImported=${() => void source.refresh()} /></span>
-    ${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
+  // Beside the body, not in it: Both's section unmounts its body when folded,
+  // which would lose an open review and replay a dropped file on unfolding.
+  const importer = html`<span ref=${importerRef}><${WorkflowImportButton} group=${group.name} id="" className="dock-process-import-hidden"
+    dropped=${droppedPwf} onImported=${() => void source.refresh()} /></span>`;
+  const body = html`${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}
       editing=${editing ? quick.process?.templateId || quick.saved?.templateId || '' : ''}
       onEdit=${(edit) => {
@@ -535,9 +537,11 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
         <div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}</div>
       <//>
-      ${fused.after}`;
+      ${fused.after}
+      ${importer}`;
   }
   return html`<div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}>
+    ${importer}
     ${controls(false)}
     <div class="gp-group-head">
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
