@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Readable, non-interleaved failure reports for the two agentd test processes."""
+"""Readable, non-interleaved failure reports for the agentd test processes."""
 import json
 import sys
 from collections import defaultdict
@@ -47,10 +47,11 @@ def report(path, status):
 
 
 def main():
-    if len(sys.argv) != 5:
-        raise SystemExit("usage: agentd-test-report.py LOG STATUS LOG STATUS")
+    args = sys.argv[1:]
+    if not args or len(args) % 2:
+        raise SystemExit("usage: agentd-test-report.py LOG STATUS [LOG STATUS ...]")
     invalid = False
-    for path, status in ((sys.argv[1], sys.argv[2]), (sys.argv[3], sys.argv[4])):
+    for path, status in zip(args[::2], args[1::2]):
         try:
             report(path, int(status))
         except (ValueError, OSError) as error:
