@@ -6896,6 +6896,15 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	privateAttachmentsLaunched := false
+	// Registered first: a deferred launch hands its state over before the
+	// checks below, and the conversation is undone while its store still exists.
+	discardPrivateOpenCodeState := p.privateOpenCodeStateDiscard
+	defer func() {
+		if failure != nil && !privateAttachmentsLaunched && discardPrivateOpenCodeState != nil {
+			discardPrivateOpenCodeState()
+		}
+	}()
 	if p.launchAuthority != nil {
 		if err := p.launchAuthority(); err != nil {
 			return nil, &spawnFailure{Status: 403, Kind: "teleport_revoked", Msg: err.Error()}
@@ -6974,18 +6983,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if p.privateAttachmentRootCleanup != nil {
 		privateAttachmentCleanup = p.privateAttachmentRootCleanup
 	}
-	privateAttachmentsLaunched := false
 	defer func() {
 		if !privateAttachmentsLaunched {
 			privateAttachmentCleanup()
-		}
-	}()
-	// Registered before the history cleanup so the conversation is undone
-	// while its store still exists.
-	discardPrivateOpenCodeState := p.privateOpenCodeStateDiscard
-	defer func() {
-		if failure != nil && !privateAttachmentsLaunched && discardPrivateOpenCodeState != nil {
-			discardPrivateOpenCodeState()
 		}
 	}()
 	timeout := p.Timeout
@@ -7848,6 +7848,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		}
+		// A confirmed failure can come after the fork, when the deferred check
+		// no longer runs.
+		if discardPrivateOpenCodeState != nil {
+			discardPrivateOpenCodeState()
+			discardPrivateOpenCodeState = nil
 		}
 		federationSpawnFailed(p.AgentID, "spawn", err.Error())
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",

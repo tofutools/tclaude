@@ -221,12 +221,14 @@ func privateOpenCodeStateLeft(t *testing.T) ([]string, int) {
 // the offline path and on the started one.
 func TestAgentImport_FailedLandingLeavesNoPrivateState(t *testing.T) {
 	for _, tc := range []struct {
-		name, start string
-		failImport  bool
+		name, start           string
+		failImport, failStart bool
+		failPrompt            bool
 	}{
 		{name: "offline, the conversation does not import", start: "false", failImport: true},
 		{name: "started, the conversation does not import", start: "true", failImport: true},
-		{name: "started, the server does not start", start: "true"},
+		{name: "started, the server does not start", start: "true", failStart: true},
+		{name: "started, the first prompt fails after the fork", start: "true", failPrompt: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFlow(t)
@@ -242,9 +244,15 @@ func TestAgentImport_FailedLandingLeavesNoPrivateState(t *testing.T) {
 			if tc.failImport {
 				require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(store), "import-fails"), nil, 0o600))
 			}
-			t.Cleanup(agentd.SetOpenCodeRuntimeForTest(func(string, string, string, string) (agentd.OpenCodeRuntimeFixture, error) {
-				return agentd.OpenCodeRuntimeFixture{}, errors.New("port already in use")
+			t.Cleanup(agentd.SetOpenCodeRuntimeForTest(func(sessionID, _, _, resumeID string) (agentd.OpenCodeRuntimeFixture, error) {
+				if tc.failStart {
+					return agentd.OpenCodeRuntimeFixture{}, errors.New("port already in use")
+				}
+				return agentd.OpenCodeRuntimeFixture{SessionID: sessionID, ConvID: resumeID, ServerURL: "http://127.0.0.1:1", Password: "pw", PID: 1}, nil
 			}))
+			if tc.failPrompt {
+				t.Cleanup(agentd.SetOpenCodePromptErrorForTest(errors.New("server went away")))
+			}
 			query := url.Values{"apply": {"true"}, "start": {tc.start}, "cwd": {testutil.CanonicalTempDir(t)}, "group": {"receiver"}}
 			r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent-bundle/import?"+query.Encode(), bytes.NewReader(rec.Body.Bytes())))
 			failed := httptest.NewRecorder()

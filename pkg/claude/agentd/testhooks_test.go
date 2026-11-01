@@ -88,6 +88,14 @@ func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string
 	}
 }
 
+// SetOpenCodePromptErrorForTest fails the first prompt, which a spawn sends after
+// its pane forked. Call it after SetOpenCodeRuntimeForTest.
+func SetOpenCodePromptErrorForTest(err error) func() {
+	previous := sendOpenCodePromptForSpawn
+	sendOpenCodePromptForSpawn = func(*openCodeLaunch, string, string, string, string) error { return err }
+	return func() { sendOpenCodePromptForSpawn = previous }
+}
+
 // ResetProcessRunRuntimeForTest replaces the daemon-lifetime run manager with
 // a fresh instance. Tests use it to model a daemon restart without replacing
 // the production HTTP mux or SQLite store.
