@@ -8,6 +8,7 @@ import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { dashboardState } from './snapshot-store.js';
+import { DICTATED_MARKER } from './companion-model.js';
 import { SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS } from './voice-config.js';
 import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
 
@@ -519,6 +520,13 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <${ConfigInput} type="text" id=${`cfg-voice-phrase-${action}`} data-voice-action=${action} maxLength="60" aria-label=${title} style="width:14em" />
         </${Setting}>`)}
         <div class="cfg-hint" id="cfg-voice-wake-no-listener" style="padding-left:0" hidden>The wake phrase won't start anything until the wake phrase listener below is on too.</div>
+      </${Group}>
+      <${Group} title="Dictation">
+        <${Setting} title="Mark dictated messages" forId="cfg-voice-mark" k="dashboard.voice.mark_dictated"
+          summary=${html`start messages dictated to an agent with <code>${DICTATED_MARKER}</code>, so it knows why sensible symbols may be missing`}
+          more="A draft with dictated words in it stays marked after you edit it. Typed messages aren't marked, and neither is anything put in a plain shell.">
+          <${Toggle} id="cfg-voice-mark" />
+        </${Setting}>
       </${Group}>
       <${Group} title="Hands-free" lede="Off unless you turn them on. Neither runs on plain HTTP pages away from localhost, or sends by itself in a plain shell.">
         <${Setting} title="Wake phrase listener" forId="cfg-voice-wake" k="dashboard.voice.wake_enabled" badges=${['refresh']}

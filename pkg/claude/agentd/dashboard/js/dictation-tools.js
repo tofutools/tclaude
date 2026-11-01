@@ -7,7 +7,7 @@ import { h } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
-import { COMPANION_MESSAGE_MAX, companionMessageFits, composeCompanionMessage } from './companion-model.js';
+import { COMPANION_MESSAGE_MAX, companionMessageFits, composeCompanionMessage, markDictated } from './companion-model.js';
 import { createDictation } from './companion-voice.js';
 import { dictationBlock } from './insecure-origin.js';
 import { voicePhrase } from './voice-config.js';
@@ -45,11 +45,14 @@ export function micTitle(sendPhrase) {
 // Stopping with the button hands focus on through onRelease; a recognizer that
 // ends by itself leaves it on the draft, where Enter still sends. silenceSend
 // sends after that many seconds with no new speech, counting down where the
-// draft shows it; 0 is off. wakeHost offers this target to the wake listener:
+// draft shows it; 0 is off. outgoing(text) is a message as it should go to an
+// agent: with mark on, a draft holding dictated words gets the marker, however
+// the operator edited it since, until it is emptied. Typed drafts don't, and
+// the marker stays out of the draft. wakeHost offers this target to the wake listener:
 // it returns the target's element while it can dictate, else null. The
 // callbacks read the latest props through a ref.
 export function useDictation({
-  win, targetId, draft, setDraft, send, notify, sendPhrase = '', silenceSend = 0, wakeHost = () => null,
+  win, targetId, draft, setDraft, send, notify, sendPhrase = '', silenceSend = 0, mark = false, wakeHost = () => null,
   onStart = () => {}, onRelease = () => {}, dictationImpl = null,
 }) {
   const [listening, setListening] = useState(false);
@@ -88,10 +91,13 @@ export function useDictation({
   }
   const dictationRef = useRef(null);
   target.current = targetId || '';
+  const dictatedDrafts = useRef(new Set());
+  if (!draft.trim()) dictatedDrafts.current.delete(target.current);
   const own = () => owner.current && owner.current === target.current;
   const dictation = useMemo(() => (dictationImpl || ((callbacks) => createDictation(win, callbacks)))({
     onText: (heard) => {
       if (!own()) return;
+      if (heard.trim()) dictatedDrafts.current.add(owner.current);
       latest.current.setDraft(owner.current, joinDraft(base.current, heard));
       if (heard.trim()) armSilence();
     },
@@ -112,6 +118,7 @@ export function useDictation({
       if (!own()) return;
       const text = joinDraft(base.current, heard);
       if (!text) return;
+      if (heard.trim()) dictatedDrafts.current.add(owner.current);
       // The draft takes the final words first: a send clears the draft it
       // sent, and only when the message really went out.
       latest.current.setDraft(owner.current, text);
@@ -135,7 +142,10 @@ export function useDictation({
   opener.current = (words) => {
     if (block || listeningRef.current || !target.current) return;
     const text = joinDraft(latest.current.draft, words);
-    if (words) latest.current.setDraft(target.current, text);
+    if (words) {
+      dictatedDrafts.current.add(target.current);
+      latest.current.setDraft(target.current, text);
+    }
     // Nobody clicked, so this one mustn't fall back to a speech service.
     open(text, { strictRoute: true });
     if (words) armSilence();
@@ -151,6 +161,7 @@ export function useDictation({
     sendPhrase,
     route: speechRouteLabel(local, win),
     silenceLeft,
+    outgoing: (text) => (mark && dictatedDrafts.current.has(target.current) ? markDictated(text) : text),
     // Cancelling is final: words still arriving must not start it again.
     cancelSilence: () => {
       clearSilence();

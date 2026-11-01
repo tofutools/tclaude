@@ -569,6 +569,7 @@ function populateConfigForm(cfg) {
     $(`#cfg-voice-phrase-${action}`).value = phrase;
     $(`#cfg-voice-on-${action}`).checked = on;
   }
+  $('#cfg-voice-mark').checked = voice.mark_dictated !== false;
   $('#cfg-voice-wake').checked = voice.wake_enabled === true;
   $('#cfg-voice-silence').checked = voice.silence_send_seconds > 0;
   $('#cfg-voice-silence-seconds').value = voice.silence_send_seconds > 0 ? voice.silence_send_seconds : '';
@@ -950,6 +951,7 @@ function assembleConfig() {
   const voiceConfig = { ...(dashboard.voice || {}) };
   const voiceList = storedVoicePhrases(phrases);
   if (voiceList.length) voiceConfig.phrases = voiceList; else delete voiceConfig.phrases;
+  if ($('#cfg-voice-mark').checked) delete voiceConfig.mark_dictated; else voiceConfig.mark_dictated = false;
   if ($('#cfg-voice-wake').checked) voiceConfig.wake_enabled = true; else delete voiceConfig.wake_enabled;
   if ($('#cfg-voice-silence').checked) {
     const seconds = cfgInt('cfg-voice-silence-seconds', SILENCE_SEND_DEFAULT);

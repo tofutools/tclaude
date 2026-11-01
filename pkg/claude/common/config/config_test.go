@@ -1689,6 +1689,7 @@ func TestVoice(t *testing.T) {
 	off := nilConfig.Voice()
 	assert.False(t, off.WakeEnabled)
 	assert.Zero(t, off.SilenceSendSeconds)
+	assert.True(t, *off.MarkDictated, "dictated messages are marked by default")
 	assert.Equal(t, []VoicePhrase{{Action: VoiceActionSend, Phrase: "send now"}, {Action: VoiceActionWake}}, off.Phrases,
 		"the send phrase is on by default and the wake phrase off")
 
@@ -1701,6 +1702,8 @@ func TestVoice(t *testing.T) {
 		}
 		return "missing"
 	}
+	assert.False(t, *voice(VoiceConfig{MarkDictated: new(false)}).MarkDictated)
+
 	wakeOn := VoicePhrase{Action: VoiceActionWake, Phrase: "hey tofu", Enabled: new(true)}
 	on := voice(VoiceConfig{WakeEnabled: true, SilenceSendSeconds: 1, Phrases: []VoicePhrase{wakeOn}})
 	assert.True(t, on.WakeEnabled)

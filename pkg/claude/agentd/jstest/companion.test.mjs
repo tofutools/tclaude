@@ -224,7 +224,7 @@ test('the message row queues operator mail with the dashboard view attached', as
   const mail = requests.find((r) => r.url === '/api/operator-message');
   assert.ok(mail, 'operator mail was posted');
   assert.equal(mail.body.to, A);
-  assert.match(mail.body.body, /^what can I do here\?\n\n\[dashboard view: Processes \(/);
+  assert.match(mail.body.body, /^\[dictated\] what can I do here\?\n\n\[dashboard view: Processes \(/);
 });
 
 test('a minimized window reopens on the same terminal, and releases it after a while', async (t) => {
@@ -1126,7 +1126,7 @@ test('dictation fills the draft and sends when the operator ends with "send"', a
   assert.equal(view.container.querySelector('input.companion-draft').value, 'what can I do');
   await harness.act(async () => { callbacks.onSend('what can I do here'); await new Promise((r) => setTimeout(r, 0)); });
   const mail = requests.find((r) => r.url === '/api/operator-message');
-  assert.match(mail.body.body, /^what can I do here\n\n\[dashboard view:/);
+  assert.match(mail.body.body, /^\[dictated\] what can I do here\n\n\[dashboard view:/);
   const voice = await harness.importDashboardModule('js/companion-voice.js');
   assert.equal(voice.sendPhraseRest('fix the bug send now', 'send now'), 'fix the bug');
   assert.equal(voice.sendPhraseRest('Fix the bug, Send Now.', 'send now'), 'Fix the bug');

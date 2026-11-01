@@ -119,6 +119,11 @@ the keyboard goes back to the terminal with the draft kept. Typing in the draft 
 the mic so you can edit. If the browser ends listening by itself, the keyboard stays
 on the draft.
 
+A message dictated to an agent starts with `[dictated]`, so the agent knows why
+sensible symbols may be missing. A draft stays marked after you edit it, typed
+messages aren't marked, and the marker never reaches a plain shell. Turn it off in
+Config › Voice.
+
 Change the phrase, or untick it to turn spoken send off, in
 [Config › Voice](dashboard-config.md#voice). Dictation listens in your browser's
 language, so pick a phrase in that language.

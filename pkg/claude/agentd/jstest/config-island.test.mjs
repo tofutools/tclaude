@@ -998,6 +998,11 @@ test('Config voice phrases: each has its own switch, and hands-free stays separa
   assert.equal(el('cfg-voice-phrase-wake').disabled, true);
   assert.equal(el('cfg-voice-phrase-wake').value, 'hey tofu');
   assert.equal(voice(), undefined, 'the defaults store nothing');
+  assert.equal(el('cfg-voice-mark').checked, true, 'dictated messages are marked by default');
+  await click('cfg-voice-mark');
+  assert.deepEqual(voice(), { mark_dictated: false });
+  await click('cfg-voice-mark');
+  assert.equal(voice(), undefined);
 
   // Unticking keeps the text, disables the field, and re-ticking restores it.
   await click('cfg-voice-on-send');
