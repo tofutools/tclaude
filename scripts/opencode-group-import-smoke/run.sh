@@ -313,9 +313,10 @@ node dst tclaude agent groups stop crew-walled --force
 node dst tmux -L tclaude kill-server 2>/dev/null || true
 node dst tclaude agent sandbox-impl set "$LANDED" tclaude-layer | tee "$ROOT/move.txt"
 grep -q 'todo list' "$ROOT/move.txt" || die "the assignment does not disclose the todo list"
-if node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin; then
+if node dst tclaude agent sandbox-impl set "$LANDED" harness-builtin 2>"$ROOT/refused.txt"; then
 	die "an assignment stranded the moved conversation"
 fi
+grep -q 'private state' "$ROOT/refused.txt" || die "the refusal does not say why: $(cat "$ROOT/refused.txt")"
 sessions_on_dst | jq -es --arg id "$LANDED" 'add // [] | all(.[]; .id != $id)' >/dev/null || die "the shared copy is still there"
 if (cd "$DST_CWD" && node dst opencode export "$CHILD_ID" --pure --log-level ERROR >/dev/null 2>&1); then
 	die "the shared copy of the child session is still there"
@@ -340,7 +341,9 @@ grep -q 'resumed' "$ROOT/moved-resume.txt" || die "the moved agent did not resum
 managed_server_holds "$LANDED" tclaude-layer
 
 log "landing an agent offline under tclaude's sandbox"
+# The move took the first member out of the shared store since the last snapshot.
+AMBIENT_BEFORE=$(sessions_on_dst | jq -cs 'add // [] | [.[].id] | sort')
 land_offline crew-walled parked-walled tclaude-layer
-[[ $(sessions_on_dst | jq -c '[.[].id] | sort') == "$AMBIENT_BEFORE" ]] || die "the offline sandboxed agent reached the shared store"
+[[ $(sessions_on_dst | jq -cs 'add // [] | [.[].id] | sort') == "$AMBIENT_BEFORE" ]] || die "the offline sandboxed agent reached the shared store"
 
 log "PASS: the imported OpenCode conversation is in the store, the server and the TUI, shared and sandboxed, started and offline"

@@ -184,8 +184,8 @@ conversations from before a reincarnation stay in the shared store.
 
 There is no move back. Any other implementation reads the shared store, where
 the conversation no longer is, so assigning one to an agent with its conversation
-in private state is refused. To change that agent's posture, export it and import
-it under the posture you want.
+in private state is refused, as is the dashboard's restart without sandbox. To
+change that agent's posture, export it and import it under the posture you want.
 
 ### Imported agents
 

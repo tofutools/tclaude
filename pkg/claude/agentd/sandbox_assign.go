@@ -322,9 +322,12 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 	resume := resumeOneConvUnderLaunchLock(convID, false, nil)
 	switchedClients := clientHandoff.finishForConv(convID)
 	if resume.Action != "resumed" {
-		writeError(w, http.StatusInternalServerError, "restart_failed",
-			"sandbox implementation "+implementation+" was recorded, but the agent could not be restarted: "+
-				resume.Detail+"; use the normal wake action to retry")
+		msg := "sandbox implementation " + implementation + " was recorded, but the agent could not be restarted: " +
+			resume.Detail + "; use the normal wake action to retry"
+		if note != "" {
+			msg += "; " + note
+		}
+		writeError(w, http.StatusInternalServerError, "restart_failed", msg)
 		return
 	}
 	writeSandboxImplementationResponse(w, convID, previous, &sandboxImplementationRestart{
