@@ -45,14 +45,15 @@ export function micTitle(sendPhrase) {
 // Stopping with the button hands focus on through onRelease; a recognizer that
 // ends by itself leaves it on the draft, where Enter still sends. silenceSend
 // sends after that many seconds with no new speech, counting down where the
-// draft shows it; 0 is off. outgoing(text) is a message as it should go to an
+// draft shows it; 0 is off. pauses are the {comma, period} seconds that
+// punctuate a dictation, null for none. outgoing(text) is a message as it should go to an
 // agent: with mark on, a draft holding dictated words gets the marker, however
 // the operator edited it since, until it is emptied. Typed drafts don't, and
 // the marker stays out of the draft. wakeHost offers this target to the wake listener:
 // it returns the target's element while it can dictate, else null. The
 // callbacks read the latest props through a ref.
 export function useDictation({
-  win, targetId, draft, setDraft, send, notify, sendPhrase = '', silenceSend = 0, mark = false, wakeHost = () => null,
+  win, targetId, draft, setDraft, send, notify, sendPhrase = '', silenceSend = 0, pauses = null, mark = false, wakeHost = () => null,
   onStart = () => {}, onRelease = () => {}, dictationImpl = null,
 }) {
   const [listening, setListening] = useState(false);
@@ -61,7 +62,7 @@ export function useDictation({
   const owner = useRef('');
   const target = useRef('');
   const latest = useRef(null);
-  latest.current = { draft, setDraft, send, notify, sendPhrase, silenceSend, wakeHost, onStart };
+  latest.current = { draft, setDraft, send, notify, sendPhrase, silenceSend, pauses, wakeHost, onStart };
   const [local, setLocal] = useState(false);
   const [silenceLeft, setSilenceLeft] = useState(0);
   const silence = useRef(null);
@@ -114,6 +115,7 @@ export function useDictation({
       }
     },
     sendPhrase: () => latest.current.sendPhrase,
+    pauses: () => latest.current.pauses,
     onSend: (heard) => {
       if (!own()) return;
       const text = joinDraft(base.current, heard);

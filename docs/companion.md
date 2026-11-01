@@ -124,6 +124,13 @@ sensible symbols may be missing. A draft stays marked after you edit it, typed
 messages aren't marked, and the marker never reaches a plain shell. Turn it off in
 Config › Voice.
 
+Pauses can add punctuation while you dictate to an agent: a comma after a short
+one, a period and a capital after a longer one. Both are off by default and set in
+Config › Voice, and both must be shorter than send after silence. Timing comes from
+when the recognizer reports words, so it's approximate and a mark can land a word
+off. Marks the recognizer added aren't doubled. Plain shells get none, and neither do
+languages written without spaces or with their own marks.
+
 Change the phrase, or untick it to turn spoken send off, in
 [Config › Voice](dashboard-config.md#voice). Dictation listens in your browser's
 language, so pick a phrase in that language.

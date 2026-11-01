@@ -2025,6 +2025,11 @@ type VoiceConfig struct {
 	// MarkDictated prefixes dictated messages to agents with a short marker,
 	// so the agent knows why punctuation may be missing. Default on.
 	MarkDictated *bool `json:"mark_dictated,omitempty"`
+	// CommaPauseSeconds and PeriodPauseSeconds opt in to punctuation from
+	// pauses in dictation: a pause this long adds a comma, or a period that
+	// capitalizes what follows. 0 is off.
+	CommaPauseSeconds  float64 `json:"comma_pause_seconds,omitempty"`
+	PeriodPauseSeconds float64 `json:"period_pause_seconds,omitempty"`
 }
 
 // VoicePhrase is one spoken phrase and what it does.
@@ -2056,6 +2061,8 @@ const (
 	DictationSendPhraseMaxRunes = 60
 	SilenceSendSecondsMin       = 2
 	SilenceSendSecondsMax       = 30
+	VoicePauseSecondsMin        = 0.3
+	VoicePauseSecondsMax        = 10.0
 )
 
 func cleanVoicePhrase(phrase string) string {
@@ -2076,6 +2083,12 @@ func (c *Config) Voice() VoiceConfig {
 	out := VoiceConfig{WakeEnabled: stored.WakeEnabled, MarkDictated: new(stored.MarkDictated == nil || *stored.MarkDictated)}
 	if stored.SilenceSendSeconds > 0 {
 		out.SilenceSendSeconds = max(SilenceSendSecondsMin, min(stored.SilenceSendSeconds, SilenceSendSecondsMax))
+	}
+	if stored.CommaPauseSeconds > 0 {
+		out.CommaPauseSeconds = max(VoicePauseSecondsMin, min(stored.CommaPauseSeconds, VoicePauseSecondsMax))
+	}
+	if stored.PeriodPauseSeconds > 0 {
+		out.PeriodPauseSeconds = max(VoicePauseSecondsMin, min(stored.PeriodPauseSeconds, VoicePauseSecondsMax))
 	}
 	phrases := map[string]string{}
 	enabled := map[string]bool{}

@@ -14,7 +14,7 @@ import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorM
 import { nodeFetch } from './node-api.js';
 import { shellToast } from './shell-state.js';
 import { dashboardState } from './snapshot-store.js';
-import { voiceMarksDictated, voiceSilenceSeconds } from './voice-config.js';
+import { voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 
 const html = htm.bind(h);
 
@@ -65,6 +65,7 @@ export function PaneDictation({
     win, targetId: shown ? pane.key : '', draft, notify: report,
     sendPhrase: talks ? dictationSendPhrase(snapshot?.value) : '',
     silenceSend: talks ? voiceSilenceSeconds(snapshot?.value) : 0,
+    pauses: talks ? voicePauses(snapshot?.value) : null,
     mark: voiceMarksDictated(snapshot?.value),
     wakeHost: () => (shownRef.current ? win?.document?.getElementById(pane.id) : null),
     setDraft: (_, text) => setDraftText(text),

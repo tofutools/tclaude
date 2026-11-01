@@ -9,7 +9,7 @@ import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
-import { SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS } from './voice-config.js';
+import { COMMA_PAUSE_DEFAULT, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN } from './voice-config.js';
 import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
 
 const html = htm.bind(h);
@@ -185,6 +185,11 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
     <div class="cfg-row-ctl">${children}</div>
   </div>`;
 }
+
+const VOICE_PAUSE_ROWS = [
+  { id: 'cfg-voice-comma', title: 'Comma at a pause', k: 'dashboard.voice.comma_pause_seconds', fallback: COMMA_PAUSE_DEFAULT, summary: 'add a comma where you pause this long while dictating' },
+  { id: 'cfg-voice-period', title: 'Period at a pause', k: 'dashboard.voice.period_pause_seconds', fallback: PERIOD_PAUSE_DEFAULT, summary: 'add a period and capitalize what follows where you pause this long' },
+];
 
 function Toggle({ id, label, onChange }) {
   return html`<${ConfigInput} type="checkbox" class="cfg-switch" role="switch" id=${id} aria-label=${label || undefined} onChange=${onChange} />`;
@@ -527,6 +532,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more="A draft with dictated words in it stays marked after you edit it. Typed messages aren't marked, and neither is anything put in a plain shell.">
           <${Toggle} id="cfg-voice-mark" />
         </${Setting}>
+        ${VOICE_PAUSE_ROWS.map(({ id, title, k, fallback, summary }) => html`<${Setting} key=${id} title=${title} forId=${id} k=${k} summary=${summary}
+          more="Timing comes from the gaps between recognition results, so it is approximate and a mark can land a word off. Marks the recognizer added aren't doubled. Pauses add nothing in a plain shell, or in languages written without spaces or with marks of their own, such as Japanese, Chinese, Arabic or Hindi. Both must be shorter than send after silence.">
+          <${Toggle} id=${id} />
+          <label class="cfg-inline">after <${ConfigInput} type="number" id=${`${id}-seconds`} min=${VOICE_PAUSE_MIN} max=${VOICE_PAUSE_MAX} step="0.1" placeholder=${String(fallback)} aria-label=${`Seconds of pause for ${title.toLowerCase()}`} style="width:5em" /> seconds</label>
+        </${Setting}>`)}
       </${Group}>
       <${Group} title="Hands-free" lede="Off unless you turn them on. Neither runs on plain HTTP pages away from localhost, or sends by itself in a plain shell.">
         <${Setting} title="Wake phrase listener" forId="cfg-voice-wake" k="dashboard.voice.wake_enabled" badges=${['refresh']}
