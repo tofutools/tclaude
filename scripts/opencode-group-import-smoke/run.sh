@@ -281,7 +281,7 @@ jq --arg id "$CHILD_ID" --arg parent "$LANDED" --arg cwd "$DST_CWD" '
 (cd "$DST_CWD" && node dst opencode import "$ROOT/child.json" --pure --log-level ERROR)
 (cd "$DST_CWD" && node dst opencode export "$LANDED" --pure --log-level ERROR) >"$ROOT/before-move.json"
 node dst tclaude agent sandbox-impl set "$LANDED" tclaude-layer
-sessions_on_dst | jq -e --arg id "$LANDED" 'all(.[]; .id != $id)' >/dev/null || die "the shared copy is still there"
+sessions_on_dst | jq -es --arg id "$LANDED" 'add // [] | all(.[]; .id != $id)' >/dev/null || die "the shared copy is still there"
 if (cd "$DST_CWD" && node dst opencode export "$CHILD_ID" --pure --log-level ERROR >/dev/null 2>&1); then
 	die "the shared copy of the child session is still there"
 fi

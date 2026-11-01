@@ -178,6 +178,12 @@ records the assignment, then deletes the shared copy. If the copy fails, the
 agent stays as it was and the assignment reports why. A running agent is
 stopped first, as for any assignment with a restart.
 
+The move carries what `opencode export` carries, so the agent's todo list stays
+behind and is deleted with the shared copy. Older conversations from before a
+reincarnation stay in the shared store. There is no move back: under another
+implementation the server reads the shared store and cannot find the
+conversation, so assign `tclaude-layer` again to bring the agent back.
+
 ### Imported agents
 
 Imports take the receiver's posture, resolved the way a spawn resolves it, and

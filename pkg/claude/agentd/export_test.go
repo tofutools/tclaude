@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"strings"
 	"testing"
@@ -81,4 +82,10 @@ func TestSanitizeExportFilename(t *testing.T) {
 // compose, which is otherwise only visible by launching.
 func ResolveCurrentSandboxChainForConvForTest(convID string) (*sandboxpolicy.Snapshot, *sandboxpolicy.Snapshot, error) {
 	return resolveCurrentSandboxChainForConv(convID)
+}
+
+// AllocatePrivateOpenCodeStateForTest allocates an agent's private state, as a
+// move does before it copies anything.
+func AllocatePrivateOpenCodeStateForTest(agentID string) (*db.OpenCodeAgentStateAllocation, error) {
+	return allocatePrivateOpenCodeState(agentID)
 }

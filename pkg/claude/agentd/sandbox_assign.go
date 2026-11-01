@@ -329,7 +329,9 @@ func assignAgentSandboxImplementation(w http.ResponseWriter, r *http.Request, co
 // the shared store, which the sandboxed server cannot read. The agent must be
 // stopped. The copy is complete and verified when this returns and the shared
 // copy is still there, so commit removes it once the posture is recorded and
-// undo leaves everything as it was.
+// undo leaves everything as it was. An allocation that does not hold the
+// conversation is a move that never finished, or a conversation started under
+// another posture, and gets the same copy.
 func moveOpenCodeStateForAssignment(
 	h *harness.Harness, agentID, convID, cwd, implementation string, planned *sandboxpolicy.Snapshot,
 ) (commit, undo func(), fail *spawnFailure) {
@@ -337,22 +339,48 @@ func moveOpenCodeStateForAssignment(
 	if h.Name != harness.OpenCodeName || !isTclaudeLayer(implementation) {
 		return commit, undo, nil
 	}
+	refuse := func(err error) (func(), func(), *spawnFailure) {
+		return func() {}, func() {}, &spawnFailure{http.StatusInternalServerError, "opencode_state_move",
+			"move the conversation into private state: " + err.Error()}
+	}
 	existing, err := db.GetOpenCodeAgentStateAllocation(agentID)
 	if err != nil {
 		return commit, undo, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
 	if existing != nil {
-		return commit, undo, nil
+		private, err := openCodeHistoryForAgent(h, agentID)
+		if err != nil {
+			return refuse(err)
+		}
+		inPrivate, err := harness.OpenCodeHoldsConversation(private.History, convID, cwd)
+		if err != nil {
+			return refuse(err)
+		}
+		inShared, err := harness.OpenCodeHoldsConversation(h.History, convID, cwd)
+		if err != nil {
+			return refuse(err)
+		}
+		if inPrivate || !inShared {
+			return commit, undo, nil
+		}
 	}
-	refuse := func(err error) (func(), func(), *spawnFailure) {
-		return func() {}, func() {}, &spawnFailure{http.StatusInternalServerError, "opencode_state_move",
-			"move the conversation into private state: " + err.Error()}
+	// The server holds the shared store until the reaper's next tick, and what
+	// it writes after the export would go with the shared copy.
+	if runtime, err := db.GetOpenCodeRuntimeByConvID(convID); err != nil {
+		return refuse(err)
+	} else if runtime != nil {
+		if err := stopOpenCodeRuntime(runtime.SessionID); err != nil {
+			return refuse(err)
+		}
 	}
 	allocation, err := allocatePrivateOpenCodeState(agentID)
 	if err != nil {
 		return refuse(err)
 	}
 	discard := func() {
+		if existing != nil {
+			return
+		}
 		if err := os.RemoveAll(allocation.StateRoot); err != nil {
 			slog.Warn("sandbox assignment: remove unused OpenCode state", "agent", agentID, "error", err)
 		}

@@ -440,11 +440,10 @@ func (h openCodeHistory) sessionTree(id, cwd string) ([]string, error) {
 	var rows []struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
-		return nil, fmt.Errorf("read OpenCode session tree: %w", err)
-	}
-	if len(rows) == 0 || rows[0].ID != id {
-		return nil, fmt.Errorf("OpenCode session %s is not in its store", id)
+	if raw := bytes.TrimSpace(out.Bytes()); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			return nil, fmt.Errorf("read OpenCode session tree: %w", err)
+		}
 	}
 	tree := make([]string, len(rows))
 	for i, row := range rows {
@@ -454,6 +453,19 @@ func (h openCodeHistory) sessionTree(id, cwd string) ([]string, error) {
 		tree[i] = row.ID
 	}
 	return tree, nil
+}
+
+// OpenCodeHoldsConversation says whether h's store has the session.
+func OpenCodeHoldsConversation(h HistoryTransfer, id, cwd string) (bool, error) {
+	history, ok := h.(openCodeHistory)
+	if !ok {
+		return false, errors.New("not an OpenCode history")
+	}
+	if !validOpenCodeHistoryID(id, "ses_") {
+		return false, errors.New("invalid OpenCode session identity")
+	}
+	tree, err := history.sessionTree(id, cwd)
+	return len(tree) > 0, err
 }
 
 // exportFile is OpenCode's own export of id, unrewritten.
@@ -504,6 +516,9 @@ func CopyOpenCodeConversation(from, to HistoryTransfer, id, cwd string) error {
 	tree, err := source.sessionTree(id, cwd)
 	if err != nil {
 		return err
+	}
+	if len(tree) == 0 || tree[0] != id {
+		return fmt.Errorf("OpenCode session %s is not in its store", id)
 	}
 	for _, session := range tree {
 		if err = copyOpenCodeSession(source, target, session, cwd); err != nil {

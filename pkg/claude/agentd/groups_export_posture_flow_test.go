@@ -271,6 +271,34 @@ func TestSandboxImplAssign_MovesOpenCodeAgentIntoPrivateState(t *testing.T) {
 	assert.True(t, inheritedBefore.Equal(inherited), "a move is the same conversation, its spend is not inherited anew")
 }
 
+// A move that died after allocating left the conversation in the shared store.
+// The next assignment finishes it instead of trusting the empty allocation.
+func TestSandboxAssign_FinishesAnInterruptedOpenCodeMove(t *testing.T) {
+	f := newFlow(t)
+	store := fakeOpenCodeStore(t)
+	const source = "ses_0123456789abcdefghijklmnou"
+	seedOpenCodeSession(t, store, source, "scout", testutil.CanonicalTempDir(t))
+	f.HaveGroup("crew")
+	f.HaveMember("crew", source)
+	archive := exportGroupAs(t, f, "crew", "paf")
+	rec, _ := importGroupWith(t, f, archive, url.Values{"into": {testutil.CanonicalTempDir(t)}, "as": {"crew-shared"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	landed := landedMember(t, "crew-shared")
+	agentID, err := db.AgentIDForConv(landed)
+	require.NoError(t, err)
+	allocation, err := agentd.AllocatePrivateOpenCodeStateForTest(agentID)
+	require.NoError(t, err)
+
+	body, err := json.Marshal(map[string]string{"implementation": "tclaude-layer"})
+	require.NoError(t, err)
+	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent/"+landed+"/sandbox-impl", bytes.NewReader(body)))
+	assign := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, assign.Code, assign.Body.String())
+
+	assert.Contains(t, storedOpenCodeSessions(t, filepath.Join(allocation.StateRoot, "data", "fake-store")), landed)
+	assert.NotContains(t, storedOpenCodeSessions(t, store), landed)
+}
+
 // A conversation that cannot be copied stays where it was, with the posture
 // unchanged and no state left behind.
 func TestSandboxAssign_FailedOpenCodeMoveChangesNothing(t *testing.T) {

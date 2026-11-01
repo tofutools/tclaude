@@ -57,7 +57,10 @@ session)
 		;;
 	esac
 	;;
-db) printf '[{"id":"%s"}]\n' "$(printf %s "$2" | grep -o 'ses_[A-Za-z0-9_-]*' | head -n 1)" ;;
+db)
+	id=$(printf %s "$2" | grep -o 'ses_[A-Za-z0-9_-]*' | head -n 1)
+	if [ -e "$store/$id.json" ]; then printf '[{"id":"%s"}]\n' "$id"; fi
+	;;
 *) exit 1 ;;
 esac
 `
