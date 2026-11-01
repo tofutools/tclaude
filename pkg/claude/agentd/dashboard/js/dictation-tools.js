@@ -8,7 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import htm from 'htm';
 import { AnnotateOverlay, composeAnnotation } from './companion-annotate.js';
 import { COMPANION_MESSAGE_MAX, companionMessageFits, composeCompanionMessage, markDictated } from './companion-model.js';
-import { createDictation, isWholePhrase } from './companion-voice.js';
+import { createDictation, saysStop } from './companion-voice.js';
 import { dictationBlock } from './insecure-origin.js';
 import { SILENCE_SEND_DEFAULT, voicePhrase } from './voice-config.js';
 import { localSpeechState, speechRouteLabel } from './voice-local.js';
@@ -86,7 +86,7 @@ export function useDictation({
   // The countdown shows after a moment's quiet, not between every two words.
   function armSilence() {
     clearSilence();
-    const seconds = latest.current.silenceSend || (loop.current ? SILENCE_SEND_DEFAULT : 0);
+    const seconds = latest.current.silenceSend || (loop.current && latest.current.continuous ? SILENCE_SEND_DEFAULT : 0);
     if (!seconds) return;
     const started = Date.now();
     silence.current = setInterval(() => {
@@ -100,7 +100,7 @@ export function useDictation({
         clearSilence();
         if (!text.trim()) return;
         // The recognizer hasn't finished the stop phrase yet, and it never sends.
-        if (isWholePhrase(lastHeard.current.interim, latest.current.continuous?.stopPhrase)) {
+        if (saysStop(lastHeard.current.interim, latest.current.continuous?.stopPhrase, latest.current.sendPhrase)) {
           latest.current.setDraft(owner.current, joinDraft(base.current, lastHeard.current.settled || ''));
           stopListening();
           return;

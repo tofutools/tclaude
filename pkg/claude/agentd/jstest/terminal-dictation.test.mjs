@@ -465,6 +465,17 @@ test('an unfinished stop phrase never goes out on silence', async (t) => {
   assert.ok(!s.$('.companion-continuous'));
 });
 
+test('an unfinished stop phrase with the send phrase after it never goes out either', async (t) => {
+  const s = await continuous(t);
+  await s.mic();
+  await says(s, 'one send now');
+  await reopened(s);
+  await says(s, 'stop listening send now', false);
+  await s.harness.act(() => wait(3300));
+  assert.deepEqual(bodies(s), ['[dictated] one']);
+  assert.ok(!s.$('.companion-continuous'));
+});
+
 test('off, the stop phrase is words', async (t) => {
   const s = await setup(t);
   await s.mic();
@@ -562,6 +573,10 @@ test('an open approval or decision holds it too, with the session still working'
   const held = (extra) => paneContinuous({ seed: { harness: 'claude' } }, { agent: AGENT }, { ...base, ...extra }, 'alpha').held();
   assert.equal(held({}), '');
   assert.match(held({ access_requests: [{ agent_id: AGENT, status: 'pending', perm: 'x' }] }), /waiting on you/);
+  assert.match(held({ access_requests: [{ agent_id: AGENT, status: 'pending', perm: 'models.proxy' }] }), /waiting on you/, 'a request no card can answer counts');
+  assert.match(held({ access_requests: [{ conv_id: 'c1', status: 'pending', proposal: true }] }), /waiting on you/);
+  assert.equal(held({ access_requests: [{ agent_id: AGENT, status: 'approved' }] }), '');
+  assert.equal(held({ access_requests: [{ agent_id: 'agt_other', status: 'pending' }] }), '');
   assert.match(held({ messages: [{ id: 1, from_agent: AGENT, options: ['yes', 'no'] }] }), /waiting on you/);
   assert.equal(held({ messages: [{ id: 1, from_agent: AGENT, options: ['yes', 'no'], decision: { choice: 'yes' } }] }), '', 'an answered decision holds nothing');
 });

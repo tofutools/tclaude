@@ -257,6 +257,12 @@ export function isWholePhrase(heard, phrase) {
   return !!pattern && new RegExp(`^[\\s\\p{P}]*${pattern}[\\s\\p{P}]*$`, 'iu').test(String(heard || ''));
 }
 
+// saysStop reports whether heard is the stop phrase, alone or with the send
+// phrase after it, which would otherwise send it.
+export function saysStop(heard, stopPhrase, sendPhrase) {
+  return isWholePhrase(heard, stopPhrase) || isWholePhrase(sendPhraseRest(heard, sendPhrase), stopPhrase);
+}
+
 // phrasePattern is a spoken phrase as a regular expression source, or '' for
 // an empty phrase: its words as text, whatever punctuation lies between them.
 export function phrasePattern(phrase) {
@@ -434,7 +440,7 @@ export function createDictation(win = globalThis.window, {
         }
         finished = true;
         const rest = stopped ? null : sendPhraseRest(phrase, sendPhrase());
-        if (!stopped && (isWholePhrase(phrase, stopPhrase()) || isWholePhrase(rest, stopPhrase()))) {
+        if (!stopped && saysStop(phrase, stopPhrase(), sendPhrase())) {
           sent = true;
           onText?.(pauseMarks.render(finals.join(' ').replace(/\s+/g, ' ').trim()), { interim: '', settled: '' });
           onStopPhrase?.();
