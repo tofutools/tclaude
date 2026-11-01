@@ -289,3 +289,24 @@ test('exportWorkflow: confirming shares named agents with their roles, and the r
   const declined = await run([{ name: 'checkout', role: 'dev', steps: ['ship:build'] }], false);
   assert.equal(declined.urls.length, 1, 'declining downloads nothing');
 });
+
+test('import dialog: a file this node refuses can be reviewed but not imported', async (t) => {
+  const harness = await createPreactHarness(t);
+  const previous = globalThis.fetch;
+  const refused = { ...PREVIEW, signatures: [], updates: 0, refused: 'this node refuses workflows without a valid signature (processes.refuse_unsigned_imports)' };
+  globalThis.fetch = async (url) => (String(url) === '/v1/process/context' ? CONTEXT_RESPONSE : { ok: true, status: 200, json: async () => refused });
+  t.after(() => { globalThis.fetch = previous; });
+  const { WorkflowImportButton } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const { container } = await harness.mount(harness.html`<${WorkflowImportButton} />`);
+  const input = container.querySelector('[data-pwf-file]');
+  Object.defineProperty(input, 'files', { configurable: true, value: [{ name: 'ship.pwf', size: 3, arrayBuffer: async () => new Uint8Array([1]).buffer }] });
+  await harness.act(async () => { harness.fireEvent(input, 'change'); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  const doc = harness.document;
+  assert.match(doc.querySelector('[data-pwf-refused]').textContent, /without a valid signature/);
+  assert.ok(doc.querySelector('[data-pwf-command="ship:merge"]'), 'the review is still shown');
+  const button = doc.querySelector('[data-pwf-import]');
+  assert.equal(button.disabled, true);
+  assert.equal(button.textContent, 'Refused');
+});

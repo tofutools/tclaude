@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
@@ -247,6 +249,9 @@ type pwfImportView struct {
 	Rename bool   `json:"rename,omitempty"`
 	Group  string `json:"group,omitempty"`
 	Pinned bool   `json:"pinned,omitempty"`
+	// Refused says why this node's policy refuses to import the file; a review
+	// still shows it, and an apply is refused.
+	Refused string `json:"refused,omitempty"`
 	// Updates counts templates whose local head the import would move; an
 	// import with updates needs replace.
 	Updates int  `json:"updates"`
@@ -362,6 +367,10 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		writeProcessJSON(w, http.StatusOK, view)
 		return
 	}
+	if view.Refused != "" {
+		writeError(w, http.StatusForbidden, "process_import_unsigned", view.Refused)
+		return
+	}
 	if q.Get("review") != view.ReviewDigest {
 		writeProcessJSON(w, http.StatusConflict, map[string]any{
 			"error":   "process_import_review_stale",
@@ -455,6 +464,9 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 		Signatures: pwfSignatureViews(a.Signatures), RoleMap: []pwfRoleMapping{}, LocalRoles: local,
 		Rename: opts.Rename, Group: opts.Group,
 	}
+	if pwfRefusedUnsigned(a) {
+		view.Refused = "this node refuses workflows without a valid signature (processes.refuse_unsigned_imports)"
+	}
 	known := map[string]bool{}
 	for _, name := range local {
 		known[name] = true
@@ -507,6 +519,18 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 	fmt.Fprintf(digest, "\n%s", opts.digestKey())
 	view.ReviewDigest = hex.EncodeToString(digest.Sum(nil))
 	return view, nil
+}
+
+// pwfRefusedUnsigned applies the operator's policy. A signature that does not
+// verify proves nothing, so it counts as none; a valid one by an unknown key
+// passes, since the policy asks for a signature, not for a known signer. A
+// config that cannot be read refuses nothing, like every other opt-in setting.
+func pwfRefusedUnsigned(a *pwf.Archive) bool {
+	cfg, err := config.Load()
+	if err != nil || !cfg.RefuseUnsignedWorkflows() {
+		return false
+	}
+	return !slices.ContainsFunc(a.Signatures, func(s paf.SignatureResult) bool { return s.Status == paf.SignatureValid })
 }
 
 // pwfSignatureViews labels valid signatures by key: this node, a known

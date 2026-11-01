@@ -168,6 +168,7 @@ export function importReview(preview) {
     assignees: preview.assignees || [],
     problems: preview.problems || [],
     paths: preview.paths || [],
+    refused: preview.refused || '',
     templates,
     updates: preview.updates || 0,
     nothingToDo: templates.length > 0 && templates.every((t) => t.status === 'identical'),
@@ -223,7 +224,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
       if (seq === latest.current) setReviewing(false);
     }
   };
-  const blocked = review.updates > 0 && !replace;
+  const blocked = Boolean(review.refused) || (review.updates > 0 && !replace);
   const submit = async () => {
     if (busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)) return;
     setBusy(true);
@@ -260,6 +261,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
     <p class="muted pwf-file">${file}</p>
     ${review.summary && html`<p class="pwf-summary">${review.summary}</p>`}
     <p class=${`pwf-signer ${review.trusted ? 'is-trusted' : 'is-untrusted'}`} data-pwf-signer>${review.signer}</p>
+    ${review.refused && html`<div class="island-error" role="alert" data-pwf-refused>Import refused: ${review.refused}. Change this in Config › Experimental.</div>`}
     <div class="pwf-section"><h4>Commands it would run</h4>
       ${review.programs.length === 0 ? html`<p class="muted">None. Every step is an agent or you.</p>` : html`<ul class="pwf-commands">${review.programs.map((p) => html`<li key=${p.step} data-pwf-command=${p.step}><code>${p.command}</code> <span class="muted">· ${p.step} · program profile <b>${p.profile || 'default'}</b></span></li>`)}</ul>
       <p class="muted">Nothing runs on import. Starting a run asks you to allow each program profile first.</p>`}
@@ -291,7 +293,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
       </select></label></div>`}
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
     <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
-      <button class="primary" type="button" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
+      <button class="primary" type="button" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : review.refused ? 'Refused' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
   </${Overlay}>`;
 }
 

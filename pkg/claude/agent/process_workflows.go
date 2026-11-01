@@ -297,6 +297,7 @@ type workflowImportJSON struct {
 	} `json:"roleMap"`
 	Group        string `json:"group"`
 	Pinned       bool   `json:"pinned"`
+	Refused      string `json:"refused"`
 	Updates      int    `json:"updates"`
 	Applied      bool   `json:"applied"`
 	ReviewDigest string `json:"reviewDigest"`
@@ -372,6 +373,13 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 		renderPaths(stdout, view.Paths)
 	}
 	renderImportChanges(stdout, &view)
+	if view.Refused != "" {
+		if p.Yes {
+			fmt.Fprintf(stderr, "Error: %s\n", view.Refused)
+			return rcInvalidArg
+		}
+		fmt.Fprintf(stdout, "Refused here: %s\n", view.Refused)
+	}
 	if !p.Yes {
 		fmt.Fprintln(stdout, "Preview only; nothing was imported. Re-run with --yes to import.")
 		return rcOK

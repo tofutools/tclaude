@@ -519,6 +519,7 @@ function populateConfigForm(cfg) {
   // the shared agent-directory parent defaults on and only an explicit false
   // unchecks it.
   $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
+  $('#cfg-processes-refuse-unsigned').checked = !!(cfg.processes && cfg.processes.refuse_unsigned_imports);
   $('#cfg-feature-triggers').checked = !!(cfg.features && cfg.features.triggers);
   $('#cfg-feature-groups-route-map').checked = !!(cfg.features && cfg.features.groups_route_map);
   $('#cfg-feature-collab').checked = !!(cfg.features && cfg.features.collab);
@@ -890,6 +891,10 @@ function assembleConfig() {
   }
   if ($('#cfg-feature-agent-dirs-mount-parent').checked) delete feats.agent_dirs_mount_parent; else feats.agent_dirs_mount_parent = false;
   if (Object.keys(feats).length) cfg.features = feats; else delete cfg.features;
+  // Stored only when on, and the block goes with it, like the Go omitempty.
+  const processes = { ...(cfg.processes || {}) };
+  if ($('#cfg-processes-refuse-unsigned').checked) processes.refuse_unsigned_imports = true; else delete processes.refuse_unsigned_imports;
+  if (Object.keys(processes).length) cfg.processes = processes; else delete cfg.processes;
 
   // slop is an optional block — its volumes/channel (owned by the header
   // mixer + picker, no widget on this page) ride along in the clone. Set

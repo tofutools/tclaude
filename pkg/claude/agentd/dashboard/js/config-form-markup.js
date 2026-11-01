@@ -1076,6 +1076,13 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <${Toggle} id="cfg-feature-agent-dirs-mount-parent" />
         </${Setting}>
       </${Group}>
+      <${Group} title="Processes">
+        <${Setting} title="Refuse unsigned workflows" forId="cfg-processes-refuse-unsigned" k="processes.refuse_unsigned_imports"
+          summary=${html`refuse to import a <code>.pwf</code> workflow file without a valid signature`}
+          more="The import review still shows such a file and says why it is refused. A valid signature from a key this node does not know passes: the file is unchanged since signing, but the signer is not known. Off by default.">
+          <${Toggle} id="cfg-processes-refuse-unsigned" />
+        </${Setting}>
+      </${Group}>
     </${Panel}>
 
     <${Panel} id="advanced" active=${active}>
