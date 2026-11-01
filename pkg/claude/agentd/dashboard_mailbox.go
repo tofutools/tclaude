@@ -551,6 +551,12 @@ type mailboxMessage struct {
 	// Action is a notification's action link. A peer reading this mailbox never
 	// gets it: see peerMailboxReadKey.
 	Action *dashboardHumanMessageAction `json:"action,omitempty"`
+	// A notification's decision, as dashboardHumanMessage carries it, for the
+	// reader's buttons. A peer's reader shows them and answers on that node.
+	Options     []string `json:"options,omitempty"`
+	Recommended int      `json:"recommended,omitempty"`
+	Decision    string   `json:"decision,omitempty"`
+	DecidedAt   string   `json:"decided_at,omitempty"`
 }
 
 // Mailbox pagination bounds. defaultMailboxPageSize is what the
@@ -769,6 +775,10 @@ func humanMailboxMessages(page []*db.HumanMessage) []mailboxMessage {
 			Attachment:  m.Attachment,
 			Attachments: m.Attachments,
 			Action:      m.Action,
+			Options:     m.Options,
+			Recommended: m.Recommended,
+			Decision:    m.Decision,
+			DecidedAt:   m.DecidedAt,
 		})
 	}
 	return out
