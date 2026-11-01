@@ -182,6 +182,29 @@ func TestFederation_DirectMoveReceiverDecidesAndReportsDirectory(t *testing.T) {
 	}
 }
 
+// A reconcile pass already in flight can read an offer the moment its row
+// exists. Seeing it pending, the pass would fetch from the sender bytes that
+// came with the offer, and hold the landing locks until that fetch timed out.
+func TestFederation_InlineOfferIsReadyFromItsFirstRow(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("receiver")
+	fedReceiveAgents(t, fh, "receiver")
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`CREATE TABLE inserted_offer_states(state TEXT); CREATE TRIGGER record_inserted_offer_state AFTER INSERT ON federation_bundle_offers BEGIN INSERT INTO inserted_offer_states VALUES(NEW.state); END`)
+	require.NoError(t, err)
+
+	d := fedIncomingDirectMove(t, fh)
+
+	var state string
+	require.NoError(t, database.QueryRow(`SELECT state FROM inserted_offer_states`).Scan(&state))
+	require.Equal(t, "ready", state)
+	offer, err := db.GetFederationBundleOffer("in", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Equal(t, "ready", offer.State)
+	require.Empty(t, fh.peer.envelopes(proto.KindBundleFetch))
+}
+
 func TestFederation_DirectMoveSourceDispositionAndConfirmedRetirement(t *testing.T) {
 	fh := newFedHarness(t)
 	aid := fedMoveSource(t, fh)
