@@ -1081,6 +1081,15 @@ test('a re-attached panel does not take the empty draft for saved work', async (
   assert.ok(root.querySelector('[data-scribe-review]').disabled);
 });
 
+test('a re-attached panel sees saved work that has no performer steps', async (t) => {
+  const graphOnly = { ...SAVED_DRAFT, template: { ...SAVED_DRAFT.template, nodes: {
+    start: { type: 'start' }, nested: { type: 'subprocess' }, done: { type: 'end', result: 'success' },
+  } } };
+  const api = scribeApi({ stored: () => graphOnly, chat: () => ({ messages: [{ id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 }] }) });
+  const { root } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  assert.ok(root.querySelector('[data-scribe-ready]'));
+});
+
 test('hiding the panel leaves the scribe working and the panel gone', async (t) => {
   const chat = () => ({ messages: [{ id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 }] });
   const api = scribeApi({ chat });

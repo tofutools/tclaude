@@ -379,7 +379,8 @@ type processRunCreateRequest struct {
 	// caller reviewed. With neither the run takes the template's head.
 	// ExpectedRef refuses the start with process_run_template_moved when the
 	// head is no longer that version; TemplateRef runs that stored version of
-	// templateId even though a newer one exists.
+	// templateId even though a newer one exists, and only the operator may ask
+	// for that.
 	ExpectedRef string `json:"expectedRef,omitempty"`
 	TemplateRef string `json:"templateRef,omitempty"`
 }
@@ -1059,6 +1060,12 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 	templateID := strings.TrimSpace(request.TemplateID)
 	caller, scope, ok := authorizeProcessRunCreate(w, r, request, templateID)
 	if !ok {
+		return
+	}
+	// A grant to start a template covers what its editors made current. Going
+	// back to an older version is the operator's call, not an agent's.
+	if caller != "" && strings.TrimSpace(request.TemplateRef) != "" {
+		writeError(w, http.StatusForbidden, "process_run_version", "only the operator can start an older version of a template")
 		return
 	}
 	setAuditDetail(r, processRunCreateAuditDetail(request))

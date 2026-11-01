@@ -1026,6 +1026,27 @@ func TestProcessRuntimeStartPinsTheReviewedVersion(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
 }
 
+func TestProcessRuntimeOnlyTheOperatorStartsAnOlderVersion(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	older := putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reviewed", 1))
+	newer := putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reviewed", 2))
+	const worker = "pinned-version-worker-0007"
+	f.HaveConvWithTitle(worker, "process worker")
+	f.HaveEnrolledAgent(worker)
+	grantScoped(t, f, worker, agentd.PermProcessRunsManage, map[string]any{"process_template": []string{"reviewed"}})
+	start := func(field, ref string) *httptest.ResponseRecorder {
+		return agentReq(t, f, worker, http.MethodPost, "/v1/process/runs", map[string]any{
+			"templateId": "reviewed", "authorizeProgramProfiles": []string{"safe"},
+			"params": map[string]string{"branch": "main"}, field: ref,
+		})
+	}
+	refused := start("templateRef", older.Ref)
+	require.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), "process_run_version")
+	created := start("expectedRef", newer.Ref)
+	require.Equal(t, http.StatusCreated, created.Code, "an agent can still pin the head: %s", created.Body.String())
+}
+
 func processRuntimeFlow(t *testing.T) (*testharness.Flow, string) {
 	t.Helper()
 	f := newFlow(t)

@@ -131,9 +131,10 @@ function draftSteps(view) {
 
 // scribeSaved says a stored version is the scribe's work rather than the empty
 // draft it started from. A re-attached panel does not have that first version,
-// so it goes by whether there are any steps.
+// so it goes by whether anything was added to the empty graph.
 function scribeSaved(draft, view) {
-  return draft.sourceHash ? String(view.sourceHash || '') !== draft.sourceHash : draftSteps(view) > 0;
+  if (draft.sourceHash) return String(view.sourceHash || '') !== draft.sourceHash;
+  return Object.values(view?.template?.nodes || {}).some((node) => node?.type !== 'start' && node?.type !== 'end');
 }
 
 // useScribeDraft polls the scribe's conversation and the draft template.
