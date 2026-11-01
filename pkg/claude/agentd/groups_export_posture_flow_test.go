@@ -352,3 +352,75 @@ func TestGroupImport_ConfigOnlyOpenCodeMemberReportsNoState(t *testing.T) {
 	assert.Equal(t, "tclaude-layer", landings[0].Posture.SandboxImplementation)
 	assert.Empty(t, landings[0].Posture.OpenCodeState)
 }
+
+// A file may tighten the receiver's posture and never widen it. Each row lands
+// a recorded Codex posture in a group whose default is workspace-write.
+func TestAgentImport_RecordedCodexModeTightensButNeverWidens(t *testing.T) {
+	for _, tc := range []struct {
+		name, recordedMode, recordedImplementation, wantMode, wantImplementation string
+	}{
+		{"read-only stays", "read-only", "harness-builtin", "read-only", "harness-builtin"},
+		{"the same mode stays", "workspace-write", "harness-builtin", "workspace-write", "harness-builtin"},
+		{"full access is dropped", "danger-full-access", "harness-builtin", "workspace-write", "harness-builtin"},
+		{"off is dropped", "danger-full-access", "off", "workspace-write", "harness-builtin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := landCodexFile(t, tc.recordedMode, tc.recordedImplementation, "workspace-write", "")
+			assert.Equal(t, tc.wantMode, got.Sandbox)
+			assert.Equal(t, tc.wantImplementation, got.Implementation)
+		})
+	}
+}
+
+// A landing under tclaude's sandbox keeps it: a native mode, however strict,
+// does not replace the wall.
+func TestAgentImport_NativeModeDoesNotReplaceTheLandingSandbox(t *testing.T) {
+	got := landCodexFile(t, "read-only", "harness-builtin", "", "tclaude-layer")
+	assert.Equal(t, "tclaude-layer", got.Implementation)
+}
+
+type landedCodexPosture struct {
+	Sandbox        string `json:"sandbox"`
+	Implementation string `json:"sandbox_implementation"`
+}
+
+// landCodexFile lands a Codex agent file recording a posture into a group whose
+// default spawn profile sets the landing one, and reads back what it recorded.
+func landCodexFile(t *testing.T, recordedMode, recordedImplementation, landingMode, landingImplementation string) landedCodexPosture {
+	t.Helper()
+	f := newFlow(t)
+	t.Setenv("CODEX_HOME", "")
+	cwd := f.TestCwd("src")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	sim := f.HaveAliveCodexSession(postureMember, "scout", "scout-pane", cwd)
+	require.NoError(t, sim.WriteExchange("hello", "hi"))
+	f.HaveGroup("origin")
+	f.HaveMember("origin", postureMember)
+	agentID, err := db.AgentIDForConv(postureMember)
+	require.NoError(t, err)
+	profile, err := db.AgentRelaunchProfileForConv(postureMember)
+	require.NoError(t, err)
+	if profile == nil {
+		profile = &db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
+	}
+	profile.HarnessBuiltinMode, profile.SandboxImplementation = &recordedMode, &recordedImplementation
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+	export := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+postureMember+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, export.Code, export.Body.String())
+
+	f.HaveGroup("receivers")
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "landing", Harness: "codex", Sandbox: landingMode, SandboxImplementation: landingImplementation})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultProfile("receivers", "landing")
+	require.NoError(t, err)
+	dst := f.TestCwd("dst")
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+	res := importAgentArchive(t, f, export.Body.Bytes(), url.Values{"apply": {"true"}, "cwd": {dst}, "group": {"receivers"}})
+	require.True(t, res.Applied)
+
+	read := profileReq(t, f, http.MethodGet, "/v1/agent/"+res.Spawn.ConvID+"/sandbox-impl", nil)
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	var got landedCodexPosture
+	require.NoError(t, json.Unmarshal(read.Body.Bytes(), &got))
+	return got
+}

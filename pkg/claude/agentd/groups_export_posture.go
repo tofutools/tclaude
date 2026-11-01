@@ -69,14 +69,15 @@ func (e *groupPostureRefusal) Error() string { return e.msg }
 
 // resolveLandingPosture resolves and gates the posture of a member landing on
 // harnessName in g. A nil g is the group this import is about to create, which
-// has no tiers yet. requestedImplementation is the explicit tier; only an agent
-// bundle's retained confinement sets it (see receiverSandboxProfile).
+// has no tiers yet. requestedImplementation and requestedMode are the explicit
+// tier; only what an agent bundle may keep sets them (see
+// receiverSandboxProfile).
 //
 // A refusal is reported on the posture, because the dry run has to show it.
 // The returned error is storage.
 func resolveLandingPosture(
 	g *db.AgentGroup,
-	harnessName, requestedImplementation, model, cwd string,
+	harnessName, requestedImplementation, requestedMode, model, cwd string,
 	environment []sandboxpolicy.EnvironmentEntry,
 ) (*landingPosture, error) {
 	groupName := ""
@@ -93,14 +94,19 @@ func resolveLandingPosture(
 	}
 	h := defaults.harness
 	implementation, source := string(defaults.implementation), defaults.implementationSource
-	resolvedBy := defaults.resolvedBy
+	mode, modeSource, resolvedBy := defaults.sandbox, defaults.sandboxSource, defaults.resolvedBy
 	if requestedImplementation != "" {
 		implementation, source = requestedImplementation, agent.ProvExplicit
-		resolvedBy = joinProvenanceSources("the agent file", defaults.sandboxSource)
+	}
+	if requestedMode != "" {
+		mode, modeSource = requestedMode, agent.ProvExplicit
+	}
+	if requestedImplementation != "" || requestedMode != "" {
+		resolvedBy = joinProvenanceSources("the agent file", modeSource)
 	}
 	posture := &landingPosture{
-		SandboxImplementation: implementation, Sandbox: defaults.sandbox,
-		ResolvedBy: resolvedBy, modeSource: defaults.sandboxSource,
+		SandboxImplementation: implementation, Sandbox: mode,
+		ResolvedBy: resolvedBy, modeSource: modeSource,
 	}
 	refuse := func(fail *spawnFailure) (*landingPosture, error) {
 		posture.Refused, posture.refusal = fail.Msg, fail
@@ -112,11 +118,11 @@ func resolveLandingPosture(
 	if fail := withInstallDefaultRemedy(sandboxImplementationPostureFailure(h.Name, implementation), source); fail != nil {
 		return refuse(fail)
 	}
-	nativeMode, fail := resolveSandboxImplementationMode(h, defaults.sandbox, implementation)
+	nativeMode, fail := resolveSandboxImplementationMode(h, mode, implementation)
 	if fail != nil {
 		return refuse(fail)
 	}
-	if posture.mode, fail = resolveLaunchHarnessBuiltinMode(h, defaults.sandbox, implementation); fail != nil {
+	if posture.mode, fail = resolveLaunchHarnessBuiltinMode(h, mode, implementation); fail != nil {
 		return refuse(fail)
 	}
 	posture.Sandbox = posture.mode
@@ -185,7 +191,7 @@ func isTclaudeLayer(implementation string) bool {
 // planGroupPostures resolves every member's landing posture.
 func planGroupPostures(ls []*groupMemberLanding, exp *groupexport.Export, cwd string) error {
 	for _, l := range ls {
-		posture, err := resolveLandingPosture(nil, l.Harness, "", l.Model, cwd, exp.Group.Environment)
+		posture, err := resolveLandingPosture(nil, l.Harness, "", "", l.Model, cwd, exp.Group.Environment)
 		if err != nil {
 			return fmt.Errorf("resolve the posture of %s: %w", l.Title, err)
 		}

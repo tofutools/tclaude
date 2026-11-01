@@ -365,11 +365,14 @@ the conversation takes:
   after trimming. The agent then imports as configuration only, with a
   warning; `tclaude paf render` still reads the whole conversation.
 
-The source's sandbox posture does not travel: the receiving group's applies, so
-a file cannot widen it, and the preview states the result. The one exception
-tightens rather than widens: an agent that ran under tclaude's sandbox keeps it,
-and the import is refused where this node cannot run it. Without `--group` the
-preview shows the posture with no group's settings.
+The receiving group's sandbox posture applies, and a file may tighten it but
+never widen it. An agent that ran under tclaude's sandbox keeps it, and the import
+is refused where this node cannot run it. A harness's own mode stays only when it
+is stricter than the landing posture, such as Codex `read-only` landing on
+`workspace-write`; anything looser is dropped, as is `off`. A landing under
+tclaude's sandbox keeps tclaude's sandbox. This holds for moves and teleports too,
+so an agent does not land with wider access than it had. The preview states the
+result. Without `--group` it shows the posture with no group's settings.
 
 On another harness the rest of the source's launch posture (approval and the
 other profile settings) is not applied either; the receiver's defaults and normal
