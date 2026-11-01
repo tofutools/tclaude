@@ -342,7 +342,9 @@ harness. Landing offline needs a conversation that lands (not
 `--skip-history` or a configuration-only import). On OpenCode the
 conversation goes in the store its landing posture reads, so a
 tclaude-sandboxed agent lands in private state, and its server starts at
-resume.
+resume. OpenCode takes a model only from the launch prompt, so an offline
+landing with its conversation intact keeps the conversation's last model, even
+when the import names another; the import warns when it does.
 
 The agent lands on its own harness unless `--harness` names another. When
 the source harness is not available here, the import says so and asks for

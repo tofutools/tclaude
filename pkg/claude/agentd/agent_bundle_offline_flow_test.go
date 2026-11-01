@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -106,6 +107,27 @@ func TestAgentImportWithoutStartLandsOffline(t *testing.T) {
 
 // An OpenCode agent lands offline with no server started. Its conversation goes
 // in the store its posture's server reads, and resume finds it there.
+// OpenCode takes a model only from the launch prompt, so an offline landing says
+// that the model it records is not yet the one the conversation runs on.
+func TestAgentImportWithoutStartWarnsOfOpenCodeModel(t *testing.T) {
+	f := newFlow(t)
+	store := fakeOpenCodeStore(t)
+	const source = "ses_0123456789abcdefghijklmnoq"
+	seedOpenCodeSession(t, store, source, "scout", testutil.CanonicalTempDir(t))
+	f.HaveGroup("source")
+	f.HaveMember("source", source)
+	f.HaveGroup("receiver")
+	rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	query := url.Values{"apply": {"true"}, "start": {"false"}, "cwd": {testutil.CanonicalTempDir(t)},
+		"group": {"receiver"}, "model": {"openai/gpt-landing"}}
+
+	res := importAgentArchive(t, f, rec.Body.Bytes(), query)
+
+	require.True(t, res.Applied)
+	assert.Contains(t, strings.Join(res.Warnings, " "), "continues on the model it last used")
+}
+
 func TestAgentImportWithoutStartLandsOnOpenCode(t *testing.T) {
 	for _, tc := range []struct {
 		name, implementation string

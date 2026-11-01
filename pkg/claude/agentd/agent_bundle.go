@@ -736,6 +736,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer landing.close()
 	preview.Landing, preview.History = landing, landing.history != nil
+	if noStart && h.UsesAuthoritativeServer() && landing.Rung == landingNative && landingModel != "" &&
+		(d.Origin == nil || d.Origin.Model != landingModel) {
+		// Only the launch prompt names a model to this harness, and an offline
+		// landing sends none, so the imported conversation's model carries on.
+		preview.Warnings = append(preview.Warnings, fmt.Sprintf(
+			"This offline landing records %s, but its conversation continues on the model it last used until you change it there. Start the import instead to apply the model now.",
+			landingModel))
+	}
 	// The posture this import launches under: the receiver's, which a
 	// recorded posture can tighten but not widen.
 	var postureGroup *db.AgentGroup
