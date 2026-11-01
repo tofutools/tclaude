@@ -17,6 +17,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -355,4 +357,71 @@ func TestGroupExport_HoldsNoSudo(t *testing.T) {
 	exp, err := db.CollectGroupExport("sudoers")
 	require.NoError(t, err)
 	assert.Empty(t, exp.SudoGrants)
+}
+
+// fedMoveOffer offers an agent labelled as a move, asking for wider launch
+// settings than a spawn here gives.
+func fedMoveOffer(t *testing.T, p *fedPeer) bundletransfer.Descriptor {
+	t.Helper()
+	b := fedAgentBundle(t)
+	b.Manifest.Agent.Profile = json.RawMessage(`{"trust_dir":true,"remote_control":true}`)
+	b.SetHistory("claude-jsonl", moveSourceConv, []byte(`{"type":"user","sessionId":"`+moveSourceConv+`","cwd":"/source","message":{"content":"move history"}}`+"\n"))
+	raw, err := b.Encode()
+	require.NoError(t, err)
+	d := bundletransfer.New(bundletransfer.Agent, raw, "Moved agent", time.Now().Add(time.Hour))
+	d.Group = "receiver"
+	d.Move = &bundletransfer.MoveIntent{SourceAgent: "agt_bobremote0000000000000000", SourceConv: moveSourceConv}
+	env := p.envelope(proto.KindBundleOffer, proto.Endpoint{}, d)
+	env.ID = d.ID
+	p.send(env)
+	return d
+}
+
+func TestImportConfirm_HandAcceptedOfferUsesTheList(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		unrestricted bool
+	}{{"a restricted peer's items start unticked", false}, {"an unrestricted peer's items start ticked", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fh := newFedHarness(t)
+			f, p := fh.f, fh.peer
+			f.HaveGroup("receiver")
+			fedReceiveAgents(t, fh, "receiver")
+			if tc.unrestricted {
+				setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+			}
+			d := fedMoveOffer(t, p)
+			path := "/v1/federation/bundle-offers/" + d.ID + "/import"
+			require.Equal(t, proto.AckAccepted, fedAckFor(t, p, d.ID).Status)
+			cwd := testutil.CanonicalTempDir(t)
+
+			rec := fedHuman(t, f, http.MethodPost, path, map[string]any{"cwd": cwd})
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			var preview struct {
+				Preview struct {
+					Confirm confirmView `json:"confirm"`
+				} `json:"preview"`
+				Confirm confirmView `json:"confirm"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
+			confirm := preview.Confirm
+			if confirm.Digest == "" {
+				confirm = preview.Preview.Confirm
+			}
+			require.ElementsMatch(t, []string{"trust_dir", "remote_control"}, confirm.ids())
+			assert.Equal(t, d.SHA256, confirm.Digest)
+			for _, item := range confirm.Items {
+				assert.Equal(t, tc.unrestricted, item.Default, item.ID)
+			}
+
+			rec = fedHuman(t, f, http.MethodPost, path, map[string]any{"cwd": cwd, "apply": true, "keep": []string{"sudo"}, "keep_digest": confirm.Digest})
+			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "keep_unknown", "an item the offer does not hold reserves no launch")
+
+			rec = fedHuman(t, f, http.MethodPost, path, map[string]any{"cwd": cwd, "apply": true, "keep": []string{"trust_dir"}, "keep_digest": confirm.Digest})
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), `"kept":["trusted working directory"]`)
+			assert.Contains(t, rec.Body.String(), `"dropped":["remote control"]`)
+		})
+	}
 }

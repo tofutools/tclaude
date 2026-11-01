@@ -635,14 +635,23 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	d.Profile = safe.Sections["profiles"][0].Value
 	var landingWarnings []string
 	// What this file loses, and what a human may keep of it. Only a file import
-	// reaches a selection: every other path here builds its own query.
+	// or an offer a human accepts reaches a selection: every other path here
+	// builds its own query.
+	offerList, _ := r.Context().Value(offerConfirmKey{}).(*offerConfirmation)
 	var keep importKeep
-	if direct {
+	switch {
+	case offerList != nil:
+		keep, fileDigest = offerList.keep, offerList.digest
+	case direct:
 		keep = readImportKeep(r)
 	}
 	selection := keep
 	if !apply {
 		selection = keep.preview()
+	}
+	if offerList != nil && accepted && !keep.named {
+		// A caller that shows no list, such as the CLI, keeps what a move keeps.
+		selection = importKeep{human: true, named: true, all: true}
 	}
 	var fileDrops []fileDrop
 	if crossHarness || model != "" {
@@ -679,7 +688,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		// The receiver owns a teleport or direct move, by landing authority or by
 		// accepting the offer, and dropping its posture could stall the agent on
 		// prompts nobody answers. Everything else is a file.
-		if !movedHere {
+		if !movedHere || offerList != nil {
 			landingWarnings = append(landingWarnings, droppedSandbox(recordedSandbox, profile, h, q.Get("group"), landingProfile)...)
 			var drops []fileDrop
 			profile, drops = receiverApprovalDrops(profile, h, q.Get("group"), landingProfile)
@@ -744,6 +753,11 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	keptPermissions := map[string]bool{}
 	if direct && !movedHere {
 		fileDrops = append(fileDrops, fileAgentPermissionDrops(d.Permissions, q.Get("group"), carryOverrides, keptPermissions)...)
+	}
+	if offerList != nil {
+		for i := range fileDrops {
+			fileDrops[i].item.Default, fileDrops[i].item.Revealable = offerList.unrestricted, false
+		}
 	}
 	settled := settleFileDrops(fileDrops, selection, &profile)
 	landingWarnings = append(landingWarnings, settled.warnings...)
@@ -870,10 +884,19 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preview.ManagedInstructions, preview.ManagedInstructionDigest, preview.ManagedScriptApprovalRequired = managedPreview, managedDigest, managedCode
-	if direct && !movedHere {
+	if (direct && !movedHere) || offerList != nil {
 		preview.Confirm = newImportConfirmation(fileDigest, fileDrops, keep.human, preview.Warnings)
 	}
 	preview.Kept, preview.Dropped = settled.kept, settled.dropped
+	if offerList != nil {
+		// Refused here too, so a stale selection reserves no launch.
+		if err := keep.check(fileDigest, fileImportItems(fileDrops)); err != nil {
+			var refused *importKeepError
+			errors.As(err, &refused)
+			writeError(w, refused.status, refused.code, err.Error())
+			return
+		}
+	}
 	if !apply {
 		writeJSON(w, 200, preview)
 		return

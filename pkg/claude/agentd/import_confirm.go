@@ -255,6 +255,32 @@ func mapsKeys(m map[string]bool) func(func(string) bool) {
 // one.
 const importKeepIgnored = "Only a human on this node can keep what a file asks for, so this selection was ignored and nothing was kept."
 
+// offerConfirmation carries a confirm list into an offer a human accepts by hand.
+// The offer's own digest binds it. An automatic landing under a grant has no
+// human, and never gets one.
+type offerConfirmation struct {
+	keep   importKeep
+	digest string
+	// unrestricted starts every item ticked: the operator's own nodes.
+	unrestricted bool
+}
+
+type offerConfirmKey struct{}
+
+// newOfferConfirmation is the list for offer o, or nil unless a human on this
+// node is accepting a teleport or move by hand.
+func newOfferConfirmation(r *http.Request, o *db.FederationBundleOffer, in *fedBundleImportRequest) *offerConfirmation {
+	if (o.Descriptor.Teleport == nil && o.Descriptor.Move == nil) || teleportLandingFromRequest(r) != nil || !importKeepCaller(r) {
+		return nil
+	}
+	keep := importKeep{human: true, none: in.KeepNone, ids: map[string]bool{}, digest: in.KeepDigest}
+	for _, id := range in.Keep {
+		keep.ids[id] = true
+	}
+	keep.named = keep.none || len(keep.ids) > 0
+	return &offerConfirmation{keep: keep, digest: o.Descriptor.SHA256, unrestricted: db.FederationPeerUnrestricted(o.Peer)}
+}
+
 // fileImportOutcome is what a selection did to a file's drops.
 type fileImportOutcome struct {
 	warnings []string

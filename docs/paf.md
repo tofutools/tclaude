@@ -112,8 +112,11 @@ receiving side.
   import has warnings, so you can read them. A teleport or direct move keeps all of
   this, so a moved agent does not stall on prompts, when it lands automatically
   or when its peer holds `agents.teleport.receive` for the receiving group, and
-  the preview lists what an accepted move keeps. Without that grant the offer's
-  teleport or move label counts for nothing and it lands as a file. A received
+  no human accepts it by hand. A human accepting a teleport or move by hand gets
+  the [same list](#keeping-what-a-file-asks-for), with every item ticked when the
+  sending peer has unrestricted trust and unticked otherwise. Without that grant,
+  and with no human, the offer's teleport or move label counts for nothing and it
+  lands as a file. A received
   history is
   untrusted input: it may contain instructions written by anyone whose text
   reached the original agent.
@@ -162,7 +165,8 @@ tclaude paf import --file scout.paf --group team --apply --keep-all --keep-diges
 
 `--keep-defaults` keeps what the dashboard starts with ticked, `--keep <id>` names
 items, and `--keep-all` takes every listed item. `--keep-none` drops everything,
-owners included. A request that names no selection has confirmed nothing, so only a
+owners included. An offer's environment values cannot be revealed, and its
+permissions stay under the carry policy rather than this list. A request that names no selection has confirmed nothing, so only a
 group's owners land, for a human caller. Snapshot spawns and board imports are such
 requests.
 
