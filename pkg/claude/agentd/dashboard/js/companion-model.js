@@ -31,6 +31,8 @@ export const COMPANION_PLACEMENT_PREF = 'tclaude.dash.companion.placement';
 // opens at. The second holds until the operator moves the window themselves.
 export const COMPANION_CHIP_SPOT_PREF = 'tclaude.dash.companion.chip-spot';
 export const COMPANION_WINDOW_SPOT_PREF = 'tclaude.dash.companion.window-spot';
+// The last spot in the room, where a row saved in the footer rests when it doesn't fit.
+export const COMPANION_CHIP_ROOM_SPOT_PREF = 'tclaude.dash.companion.chip-room-spot';
 export const COMPANION_MAX_TABS = 8;
 
 export const COMPANION_DEFAULT_W = 640;
@@ -225,15 +227,50 @@ const CHIP_SPOT_SHARES = Object.freeze({
   'left-q1': [0, 0.25], 'left-center': [0, 0.5], 'left-q3': [0, 0.75],
   'right-q1': [1, 0.25], 'right-center': [1, 0.5], 'right-q3': [1, 0.75],
   'bottom-left': [0, 1], 'bottom-q1': [0.25, 1], 'bottom-center': [0.5, 1], 'bottom-q3': [0.75, 1], 'bottom-right': [1, 1],
+  'footer-left': [0, 1], 'footer-center': [0.5, 1], 'footer-right': [1, 1],
 });
-export const CHIP_SPOTS = Object.freeze(Object.keys(CHIP_SPOT_SHARES));
+// The spots in the room. The footer's are offered only while the row fits there.
+export const FOOTER_CHIP_SPOTS = Object.freeze(['footer-left', 'footer-center', 'footer-right']);
+export const CHIP_SPOTS = Object.freeze(Object.keys(CHIP_SPOT_SHARES).filter((spot) => !FOOTER_CHIP_SPOTS.includes(spot)));
 export const DEFAULT_CHIP_SPOT = 'bottom-right';
 // The chips' own distance from the viewport edges; companion.css has the same.
 const CHIP_INSET_X = 16;
 const CHIP_INSET_Y = 12;
 
 export function parseChipSpot(raw) {
-  return CHIP_SPOTS.includes(raw) ? raw : DEFAULT_CHIP_SPOT;
+  return Object.hasOwn(CHIP_SPOT_SHARES, raw ?? '') ? raw : DEFAULT_CHIP_SPOT;
+}
+
+export const isFooterSpot = (spot) => FOOTER_CHIP_SPOTS.includes(spot);
+// lastRoomSpot is the spot to fall back to after a move: where the row lands,
+// or where it came from when it lands in the footer.
+export const lastRoomSpot = (next, shown) => [next, shown].find((spot) => !isFooterSpot(spot));
+
+// The space a row keeps from what else is in the footer.
+const FOOTER_CHIP_MARGIN = 12;
+
+// freeStretch is the widest stretch between left and right that no rect covers.
+export function freeStretch(rects, left, right) {
+  let best = null;
+  let from = left;
+  const keep = (to) => { if (to > from && (!best || to - from > best.right - best.left)) best = { left: from, right: to }; };
+  for (const rect of [...rects].sort((a, b) => a.left - b.left)) {
+    keep(Math.min(rect.left, right));
+    from = Math.max(from, rect.right);
+  }
+  keep(right);
+  return best;
+}
+
+export function footerSpotFits(room, width) {
+  return !!room && width > 0 && width + 2 * FOOTER_CHIP_MARGIN <= room.right - room.left;
+}
+
+// footerSpotLeft is where a row of this width starts at a footer spot.
+export function footerSpotLeft(spot, room, width) {
+  if (spot === 'footer-left') return Math.round(room.left + FOOTER_CHIP_MARGIN);
+  if (spot === 'footer-right') return Math.round(room.right - FOOTER_CHIP_MARGIN - width);
+  return Math.round((room.left + room.right - width) / 2);
 }
 
 // nearestChipSpot picks the slot whose centre is closest to point. slots are

@@ -375,6 +375,7 @@ body.dock-open .open-prs.is-open::before {
   body.dock-open .open-prs-popover, body.dock-open .open-prs.is-open::before { right: 8px; }
 }
 footer .meta { color: #7d8590; font-size: 12px; }
+footer .meta-time { font-variant-numeric: tabular-nums; }
 /* Reserve the fixed footer's height at the page bottom so scrolling to the
    end never leaves the last row hidden behind the bar. The Messages tab
    pins body to the viewport height and scrolls internally, so it shrinks

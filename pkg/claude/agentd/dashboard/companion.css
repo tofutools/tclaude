@@ -59,6 +59,15 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
   width: max-content; justify-content: center; max-width: calc(var(--chip-room-w) / 2);
 }
 .companion-chip-slot:is(.companion-spot-top-q1, .companion-spot-top-q3, .companion-spot-bottom-q1, .companion-spot-bottom-q3) { max-width: calc(var(--chip-room-w) / 2); }
+/* In the footer, on its level (its 40), and over it while the PR popover lifts
+   it: the popover opens above the bar, so they never meet. The row stays on one
+   line, with left set from the measured free room. */
+[class*="companion-spot-footer-"] { bottom: calc((var(--footer-h, 29px) - 23px) / 2); }
+.companion-chip-slot[class*="companion-spot-footer-"] { height: 23px; }
+.companion-chips.compact { z-index: 41; flex-wrap: nowrap; width: max-content; max-width: none; align-items: center; }
+body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: 47; }
+.companion-chips.compact .companion-chip { height: 23px; box-sizing: border-box; padding: 0 9px 0 3px; gap: 5px; font-size: 11px; box-shadow: none; }
+.companion-chips.compact .companion-avatar { width: 17px; height: 17px; font-size: 9px; }
 /* A drag lifts the row and its outlines over everything it crosses. */
 .companion-chips.dragging { z-index: 961; }
 .companion-chips.dragging .companion-chip { cursor: grabbing; scale: 1.04; box-shadow: 0 12px 28px rgba(0, 0, 0, .55); }

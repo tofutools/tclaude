@@ -11,9 +11,10 @@ const SETTLE_MS = 260;
 // Overshoots a little, for the spring.
 const SETTLE_EASING = 'cubic-bezier(.3,1.5,.5,1)';
 
-export function useChipDrag({ win, spot, onDrop, onStart, reducedMotion }) {
-  const [drag, setDrag] = useState(null); // {near, width, height}
-  const ref = useRef(null);
+export function useChipDrag({ win, spot, row, extraSlots = () => [], onDrop, onStart, reducedMotion }) {
+  const [drag, setDrag] = useState(null); // {near, width, height, extra}
+  const ownRow = useRef(null);
+  const ref = row || ownRow;
   const settleFrom = useRef(null);
   const swallowClick = useRef(false);
   const release = useRef(null);
@@ -58,7 +59,7 @@ export function useChipDrag({ win, spot, onDrop, onStart, reducedMotion }) {
         swallowClick.current = true;
         chip.setPointerCapture?.(pointerId);
         onStart();
-        setDrag({ near, width: Math.ceil(start.width), height: Math.ceil(start.height) });
+        setDrag({ near, width: Math.ceil(start.width), height: Math.ceil(start.height), extra: extraSlots(node) });
       }
       // The row stays whole on screen however far the pointer goes.
       const vp = viewportOf(win);
@@ -113,6 +114,9 @@ export function useChipDrag({ win, spot, onDrop, onStart, reducedMotion }) {
     event.stopPropagation();
   }
 
-  const slots = drag && CHIP_SPOTS.map((name) => ({ spot: name, near: name === drag.near, width: drag.width, height: drag.height }));
+  const slots = drag && [
+    ...CHIP_SPOTS.map((name) => ({ spot: name, width: drag.width, height: drag.height })),
+    ...drag.extra,
+  ].map((slot) => ({ ...slot, near: slot.spot === drag.near }));
   return { ref, slots, onPointerDown, onClickCapture };
 }
