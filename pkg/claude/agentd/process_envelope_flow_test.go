@@ -142,6 +142,33 @@ func TestWorkflowEnvelopeShipsAPerformerOptIn(t *testing.T) {
 
 // The export gates of both sides apply: a role the workflow does not ask for,
 // an agent the caller may not export, and credentials in what would travel.
+// An agent asking the human to approve a .paf import shows the review of the
+// workflow inside, and what else the file ships.
+func TestWorkflowEnvelopePopupShowsThePerformers(t *testing.T) {
+	f := envelopeFlow(t)
+	rec := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-ship/export?performer=reviewer="+envelopeReviewer, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	file := rec.Body.Bytes()
+
+	const conv = "pwf-envelope-popup-bbbb-000000000001"
+	f.HaveAliveSession(conv, "pwf-env-popup", "tmux-pwf-env-popup", f.TestCwd("popup"))
+	_, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	popups, restore := agentd.StubCapturingApprovalForTest(true)
+	t.Cleanup(restore)
+	req := httptest.NewRequest(http.MethodPost, "/v1/process/import", bytes.NewReader(file))
+	req.Header.Set("Content-Type", paf.MediaType)
+	req.Header.Set("X-Tclaude-Ask-Human", "30s")
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, *popups, 1)
+	body := (*popups)[0].Body
+	assert.Contains(t, body, "The file also ships 1 agent(s); importing the workflow lands none of them.")
+	assert.Contains(t, body, "Agents shipped for its roles")
+	assert.NotContains(t, body, "cannot be reviewed")
+}
+
 func TestWorkflowEnvelopeExportGates(t *testing.T) {
 	f := envelopeFlow(t)
 
