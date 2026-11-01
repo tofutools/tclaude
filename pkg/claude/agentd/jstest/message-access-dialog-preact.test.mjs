@@ -441,6 +441,21 @@ test('the sudo variant is the permission editor: areas, risk, refusal with its r
   await mounted.unmount();
 });
 
+test('the sudo editor\'s Clear selections drops the picks, disables itself, and keeps the filter', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await mountSudo(harness, sudoActions());
+  const reset = () => host.querySelector('#perm-edit-reset');
+  assert.equal(reset().querySelector('.pe-btn-regular').textContent, 'Clear selections');
+  assert.equal(reset().disabled, true, 'nothing picked');
+  await pickSudo(harness, host, 'node.exec');
+  await harness.input(host.querySelector('#perm-edit-filter'), 'node');
+  await harness.act(() => { reset().click(); });
+  assert.match(host.querySelector('#sudo-picked').textContent, /Pick at least one/);
+  assert.equal(host.querySelector('#perm-edit-filter').value, 'node');
+  assert.equal(reset().disabled, true);
+  await mounted.unmount();
+});
+
 test('granting sends the duration, reason and scope, and keeps the draft when it fails', async (t) => {
   const harness = await createPreactHarness(t);
   const payloads = [];

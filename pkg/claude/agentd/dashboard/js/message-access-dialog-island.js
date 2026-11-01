@@ -582,7 +582,7 @@ function ScopeSummary({ scope }) {
     // squeeze the slug column, and hover has to still answer "narrowed to what?".
     ? chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"
       title=${`${chip.dim} = ${chip.values.join(', ')}`}><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)
-    : html`<span class="perm-scope-chip unscoped" title="This grant applies to every target — open ▸ to narrow it">unscoped</span>`}
+    : html`<span class="perm-scope-chip unscoped" title="This grant applies to every target — add a scope to narrow it">unscoped</span>`}
   </span>`;
 }
 
@@ -592,9 +592,22 @@ function ScopeSummary({ scope }) {
 function ScopeTwisty({ scopable, open, toggle, slug }) {
   if (!scopable) return html`<span class="perm-scope-twisty empty" aria-hidden="true"></span>`;
   return html`<button type="button" class="perm-scope-twisty" aria-expanded=${open ? 'true' : 'false'}
-    aria-label=${`${open ? 'Hide' : 'Show'} the scope editor for ${slug}`}
-    title=${open ? 'Hide the scope editor' : 'Narrow this grant to particular targets'}
-    onClick=${toggle}>${open ? '▾' : '▸'}</button>`;
+    aria-label=${`${open ? 'Hide' : 'Add or edit'} scopes for ${slug}`}
+    title=${open ? 'Hide scopes' : 'Add or edit scopes: narrow this grant to particular targets'}
+    onClick=${toggle}><svg class="perm-scope-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg></button>`;
+}
+
+// PermissionFilter is the editor's slug filter with its own clear control.
+// Escape empties a non-empty filter and stops there, so the dialog's Escape
+// only closes it once the filter is already empty. The focus move matters
+// because the clear button unmounts with the text it cleared.
+function PermissionFilter({ value, onChange }) {
+  const inputRef = useRef(null);
+  return html`<div class="perm-edit-filter"><input ref=${inputRef} id="perm-edit-filter" type="text" value=${value} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
+    onInput=${(event) => onChange(event.currentTarget.value)}
+    onKeyDown=${(event) => { if (event.key === 'Escape' && value) { event.preventDefault(); event.stopPropagation(); onChange(''); } }} />
+    ${value && html`<button type="button" id="perm-edit-filter-clear" title="Clear filter" aria-label="Clear filter"
+      onClick=${() => { onChange(''); inputRef.current?.focus(); }}>×</button>`}</div>`;
 }
 
 // holdFocus keeps the focused element focused through a mousedown on a
@@ -832,6 +845,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
   const scopeOf = (slug) => scopes[slug] || {};
   const scopeJSON = (scope) => JSON.stringify(scopeChips(scope));
   const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
+  // Whether the reset button has anything to do: config-granted Steward slugs
+  // are not this editor's to clear, and a buffered draft's unknown legacy slugs
+  // have no row but are cleared too, so read the selection rather than the rows.
+  const resettable = Object.entries(selection).some(([slug, effect]) => effect !== 'default' && !stewardAccess?.config.has(slug));
   const scopesDirty = rows.some((row) => scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}));
   const groupMode = descriptor.mode === 'group';
   const grantOnly = descriptor.mode === 'buffer' && !!descriptor.grantOnly;
@@ -1051,9 +1068,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     <p class="perm-edit-subtitle" id="perm-edit-subtitle"><${Words} plain=${subtitle} wizard=${wizardSubtitle}/></p>
     ${stewardAccess && html`<p class="perm-steward-note" id="perm-steward-note">Each grant is for <b>this Steward only</b>, which ends with this instance, or for <b>all future Stewards</b>, which is stored and given to each new Steward${sudoMode ? ' with the same expiry' : ''}. Config defaults are changed in Config.</p>`}
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
-    <div class="perm-edit-toolbar"><input id="perm-edit-filter" type="text" value=${filter} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
-      onInput=${(event) => setFilter(event.currentTarget.value)} /><button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"
-      onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'clear' : groupMode || grantOnly ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
+    <div class="perm-edit-toolbar"><${PermissionFilter} value=${filter} onChange=${setFilter} /></div>
     <div id="perm-edit-list" class="perm-edit-list">${activeSudo.length > 0 && html`<${SudoActive} grants=${activeSudo}
       duration=${duration.trim()} maxSeconds=${policy.max_seconds} busy=${busy} act=${sudoActive} steward=${!!stewardAccess} />`}
     ${visible.length ? visible.map((row, index) => {
@@ -1136,6 +1151,9 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       maxSeconds=${policy.max_seconds} submit=${submit} />`}
     <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
       ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${usesBad ? 'A use limit is a whole number from 1 to 1000' : sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
+      <button id="perm-edit-reset" type="button" disabled=${busy || !resettable}
+        title=${`Set every slug back to Default (${sudoMode ? 'not picked' : 'inherit'}), including any the filter hides`}
+        onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'Clear selections' : groupMode || grantOnly ? 'Clear all grants' : 'Reset all to Default'}</span><span class="pe-btn-wizard">unbind all</span></button>
       <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
       <button id="perm-edit-submit" class="primary" type="button" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</button>
     </div>

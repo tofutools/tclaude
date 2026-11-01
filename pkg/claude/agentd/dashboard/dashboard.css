@@ -6692,11 +6692,20 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 5px 9px; font-size: 12px; color: #c9d1d9; font-family: inherit;
 }
 .perm-edit-toolbar input[type=text]:focus { outline: none; border-color: #58a6ff; }
+.perm-edit-filter { flex: 1; min-width: 0; display: flex; position: relative; }
+.perm-edit-filter input[type=text] { min-width: 0; padding-right: 28px; }
+.perm-edit-toolbar .perm-edit-filter button {
+  position: absolute; top: 50%; right: 3px; transform: translateY(-50%); width: 22px; height: 22px;
+  padding: 0; border: none; background: none; color: #8b949e; font-size: 15px; line-height: 1;
+}
+.perm-edit-toolbar .perm-edit-filter button:hover { background: #2d333b; color: #e6edf3; }
+.perm-edit-toolbar .perm-edit-filter button:focus-visible { outline: 2px solid #58a6ff; outline-offset: -1px; }
 .perm-edit-toolbar button {
   background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
   padding: 4px 10px; font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
 }
 .perm-edit-toolbar button:hover { background: #2d333b; }
+#perm-edit-reset:disabled { opacity: .45; cursor: default; }
 .perm-edit-list {
   display: flex; flex-direction: column;
   border: 1px solid #2a3340; border-radius: 4px;
@@ -6874,7 +6883,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   #perm-edit-modal .perm-row { flex-wrap: wrap; }
   #perm-edit-modal .perm-row > .perm-scope-chips {
     order: 5; flex-basis: 100%; max-width: 100%;
-    justify-content: flex-start; padding-left: 22px;
+    justify-content: flex-start; padding-left: 36px;
   }
   #perm-edit-modal .perm-row > .perm-scope-chips .perm-scope-chip { display: inline-flex; }
 }
@@ -6896,19 +6905,26 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
    nothing at the gate, and the editor cannot show what it says. */
 .perm-scope-chip.unreadable { background: #2d1416; border-color: #7a2a2a; color: #ff9492; }
 .perm-scope-stale { color: #e3b341; font-size: 9px; }
-/* The disclosure gutter is a fixed 12px for every row in a list that has any
+/* The disclosure gutter is a fixed 26px for every row in a list that has any
    scopable slug — including the inert placeholder — so slugs stay aligned
    instead of stepping sideways as grants are toggled. */
-.perm-scope-twisty {
-  flex: 0 0 12px; display: inline-block; text-align: left;
-  background: none; border: none; padding: 0; margin: 0;
-  color: #7d8590; font-size: 10px; font-family: inherit; cursor: pointer;
+.perm-scope-twisty { flex: 0 0 26px; height: 26px; }
+button.perm-scope-twisty {
+  display: inline-grid; place-items: center; box-sizing: border-box; padding: 0; margin: 0;
+  background: #21262d; border: 1px solid #3d4451; border-radius: 5px;
+  color: #c9d1d9; cursor: pointer;
 }
-.perm-scope-twisty.empty { cursor: default; }
-button.perm-scope-twisty:hover { color: #c9d1d9; }
+button.perm-scope-twisty:hover { background: #2d333b; border-color: #58a6ff; color: #e6edf3; }
+button.perm-scope-twisty:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+button.perm-scope-twisty[aria-expanded="true"] { border-color: #58a6ff; color: #58a6ff; }
+.perm-scope-chevron {
+  display: block; width: 18px; height: 18px; transition: transform 0.12s;
+  fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
+}
+button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: rotate(90deg); }
 .perm-scope-drawer {
   background: #0f151c; border-bottom: 1px solid #21262d;
-  padding: 7px 10px 8px 22px; display: flex; flex-direction: column; gap: 3px;
+  padding: 7px 10px 8px 36px; display: flex; flex-direction: column; gap: 3px;
 }
 /* The drawer head carries the semantics hint and, at its right edge, the
    effective-source line this row gave up to make space for its chips. */
@@ -16288,6 +16304,8 @@ body.wizard #context-features-modal .perm-edit-toolbar button {
 }
 body.wizard #perm-edit-modal .perm-edit-toolbar button:hover,
 body.wizard #context-features-modal .perm-edit-toolbar button:hover { background: #3a2a63; }
+body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button { background: none; border: none; }
+body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button:hover { background: #3a2a63; }
 /* Slug list: violet frame + dividers, gilt slug label, violet description. */
 body.wizard #perm-edit-modal .perm-edit-list,
 body.wizard #context-features-modal .perm-edit-list { border-color: rgba(122, 93, 176, 0.4); }
