@@ -34,7 +34,7 @@ func newSpawnSetup(t *testing.T) *spawnSetup {
 	dir := testutil.CanonicalTempDir(t)
 	_, err := db.SetAgentGroupDefaultCwd("crew", dir)
 	require.NoError(t, err)
-	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "worker", Harness: harness.DefaultName, Approval: "default"})
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "worker", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn})
 	require.NoError(t, err)
 	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
 	require.NoError(t, err)
@@ -130,6 +130,13 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "shell", Harness: harness.ShellName})
 	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "unconfined", Harness: harness.DefaultName, Approval: "default"})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "opencode", Harness: harness.OpenCodeName, Approval: "ask"})
+	require.NoError(t, err)
+	owner := true
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "owner", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn, IsOwner: &owner})
+	require.NoError(t, err)
 	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "theirs", Harness: harness.DefaultName, Approval: "default", OperatorOnly: true})
 	require.NoError(t, err)
 	s.f.HaveGroup("nodir")
@@ -149,6 +156,9 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 		"no approval":   pin([]string{"crew"}, "blank", "locked"),
 		"copilot":       pin([]string{"crew"}, "copilot", "locked"),
 		"shell":         pin([]string{"crew"}, "shell", "locked"),
+		"unconfined":    pin([]string{"crew"}, "unconfined", "locked"),
+		"not enforced":  pin([]string{"crew"}, "opencode", "locked"),
+		"gives owner":   pin([]string{"crew"}, "owner", "locked"),
 		"operator-only": pin([]string{"crew"}, "theirs", "locked"),
 		"unknown box":   pin([]string{"crew"}, "worker", "ghost"),
 	} {
@@ -200,7 +210,7 @@ func TestExternalStewardSpawn_PinIsCheckedAtSpawn(t *testing.T) {
 	s.f.HaveGroup("other")
 	_, err := db.SetAgentGroupDefaultCwd("other", s.dir)
 	require.NoError(t, err)
-	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "second", Harness: harness.DefaultName, Approval: "default"})
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "second", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn})
 	require.NoError(t, err)
 
 	code, body := s.spawn("other", map[string]any{"name": "w"})
@@ -215,6 +225,11 @@ func TestExternalStewardSpawn_PinIsCheckedAtSpawn(t *testing.T) {
 	code, body = s.spawn("crew", map[string]any{"name": "w"})
 	assert.Equal(t, http.StatusForbidden, code, "the profile moved off the baseline: %s", body)
 	profile.Approval = "default"
+	profile.Sandbox = ""
+	require.NoError(t, db.UpdateSpawnProfile(profile))
+	code, body = s.spawn("crew", map[string]any{"name": "w"})
+	assert.Equal(t, http.StatusForbidden, code, "settings.json would decide whether the sandbox holds: %s", body)
+	profile.Sandbox = harness.ClaudeSandboxOn
 	require.NoError(t, db.UpdateSpawnProfile(profile))
 
 	_, err = db.SetAgentGroupDefaultCwd("crew", "")
@@ -300,6 +315,12 @@ func TestExternalStewardSpawn_OtherDoorsAreShut(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusForbidden, code, body)
 	assert.Contains(t, body, "only on this instance")
+	for _, slug := range []string{agentd.PermGroupsClone, agentd.PermAgentResume, agentd.PermGroupsMembersResume,
+		agentd.PermGroupsSettingsDefaultDir, agentd.PermGroupsSettingsEnvironment} {
+		assert.Truef(t, agentd.ExternalStewardRefusesForTest(slug), "%s", slug)
+	}
+	code, body = s.call(s.issued.Credential, http.MethodPatch, "/v1/groups/crew", map[string]any{"default_cwd": "/somewhere/else"})
+	assert.Equal(t, http.StatusForbidden, code, body)
 }
 
 // B's condition. The child stands where it would otherwise get these slugs from
@@ -348,6 +369,8 @@ func TestExternalStewardSpawn_ChildDeniesBeatOwnershipAndGroupsAndDefaults(t *te
 	assert.Truef(t, refusedBySlug(scheduled, agentd.PermSelfSchedule), "a deny beats a group grant, ownership and the default: %s", scheduled.Body.String())
 	spawned := spawn(child)
 	assert.Truef(t, refusedBySlug(spawned, agentd.PermAgentSpawn), "and the tree stops here: %s", spawned.Body.String())
+	cloned := testharness.Serve(s.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/clone", map[string]any{}), child))
+	assert.Truef(t, refusedBySlug(cloned, agentd.PermSelfClone), "a clone would be a worker nothing counts: %s", cloned.Body.String())
 
 	for _, slug := range agentd.ExternalStewardChildDeniesForTest() {
 		effect, ok, err := db.AgentPermissionOverride(child, slug)
@@ -438,6 +461,44 @@ func TestExternalStewardSpawn_ExpiryTellsTheOperatorOnce(t *testing.T) {
 	assert.Equal(t, before+1, notices())
 	agentd.NotifyExternalStewardExpiriesForTest(later)
 	assert.Equal(t, before+1, notices(), "once")
+}
+
+// A deny write that failed mid-enrollment leaves the member in place, so the retry
+// has to put the denies back rather than see an agent already enrolled.
+func TestExternalStewardSpawn_SweeperRepairsDenies(t *testing.T) {
+	s := newSpawnSetup(t)
+	s.pinned()
+	conv := s.worker("w1")
+	_, err := db.RevokeAgentPermission(conv, agentd.PermSelfClone)
+	require.NoError(t, err)
+	row, err := db.FindSessionByConvID(conv)
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("crew")
+	require.NoError(t, err)
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+		Label: row.ID, AgentID: mustAgentID(t, conv), GroupID: g.ID, SpawnedByConv: s.conv(),
+	}))
+	agentd.RunPendingSpawnSweepForTest()
+	effect, ok, err := db.AgentPermissionOverride(conv, agentd.PermSelfClone)
+	require.NoError(t, err)
+	assert.True(t, ok && effect == db.PermEffectDeny)
+}
+
+// Rotating revokes the old credential, which says nothing about the next one.
+func TestExternalStewardSpawn_ExpiryAfterARotationStillTellsTheOperator(t *testing.T) {
+	s := newSpawnSetup(t)
+	s.pinned()
+	s.worker("w1")
+	code, body := s.humanPost("/v1/external-stewards/assistant/renew", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = s.humanPost("/v1/external-stewards/assistant/revoke", map[string]any{"token_id": s.issued.TokenID})
+	require.Equal(t, http.StatusOK, code, body)
+	before, err := db.CountHumanMessages(db.HumanMessageFilter{})
+	require.NoError(t, err)
+	agentd.NotifyExternalStewardExpiriesForTest(time.Now().Add(365 * 24 * time.Hour))
+	after, err := db.CountHumanMessages(db.HumanMessageFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, before+1, after)
 }
 
 // Revoking is the operator's own act, and it already listed the workers.

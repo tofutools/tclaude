@@ -55,7 +55,7 @@ var externalStewardSpawnFields = map[string]bool{
 // hold what its parent never may, and go on acting after the credential ended. The
 // spawn slugs keep the tree one level deep.
 func externalStewardChildDenies() []string {
-	return append(slices.Clone(externalStewardNever), PermAgentSpawn, PermGroupsMembersSpawn)
+	return append(slices.Clone(externalStewardNever), PermAgentSpawn, PermSelfClone)
 }
 
 // externalStewardSpawnPin is what an agent.spawn grant to a principal has to name.
@@ -115,12 +115,8 @@ func checkExternalStewardSpawnPin(pin externalStewardSpawnPin) error {
 	if profile == nil {
 		return fmt.Errorf("no spawn profile is named %q", pin.SpawnProfile)
 	}
-	if fail := profileSpawnFailure(profile, "external-steward"); fail != nil {
-		return fmt.Errorf("%s", fail.Msg)
-	}
-	if !harness.ApprovalIsBaseline(harnessOrDefault(profile.Harness), profile.Approval, false) {
-		return fmt.Errorf("spawn profile %q has to set an approval mode where a human answers every action, such as default on Claude or untrusted on Codex; Copilot and a shell have none",
-			pin.SpawnProfile)
+	if err := externalStewardProfileProblem(profile); err != nil {
+		return err
 	}
 	sandbox, err := db.GetSandboxProfile(pin.SandboxProfile)
 	if err != nil {
@@ -128,6 +124,30 @@ func checkExternalStewardSpawnPin(pin externalStewardSpawnPin) error {
 	}
 	if sandbox == nil {
 		return fmt.Errorf("no sandbox profile is named %q", pin.SandboxProfile)
+	}
+	return nil
+}
+
+// externalStewardProfileProblem says why a spawn profile can't start a principal's
+// worker: everything spawning would refuse about it, heard when choosing.
+func externalStewardProfileProblem(profile *db.SpawnProfile) error {
+	if fail := profileSpawnFailure(profile, "external-steward"); fail != nil {
+		return fmt.Errorf("%s", fail.Msg)
+	}
+	if !harness.ApprovalIsBaseline(harnessOrDefault(profile.Harness), profile.Approval, false) {
+		return fmt.Errorf("spawn profile %q has to set an approval mode where a human answers every action, such as default on Claude or untrusted on Codex; Copilot and a shell have none",
+			profile.Name)
+	}
+	if (profile.IsOwner != nil && *profile.IsOwner) || len(profile.PermissionOverrides) > 0 {
+		return fmt.Errorf("spawn profile %q gives its agents ownership or permissions, which an external steward can't hand out", profile.Name)
+	}
+	if !spawnSandboxLineageAllowed(externalStewardLineage, spawnLineageSandbox{
+		Harness:            harnessOrDefault(profile.Harness),
+		HarnessBuiltinMode: strings.TrimSpace(profile.Sandbox),
+		Implementation:     normalizeLineageImplementation(profile.SandboxImplementation),
+	}) {
+		return fmt.Errorf("spawn profile %q has to confine its agents, or the sandbox profile won't be enforced: sandbox on for Claude, read-only or workspace-write for Codex, tclaude's pane sandbox otherwise",
+			profile.Name)
 	}
 	return nil
 }
@@ -276,8 +296,7 @@ func externalStewardSpawnChoices() map[string][]string {
 	}
 	if profiles, err := db.ListSpawnProfiles(); err == nil {
 		for _, p := range profiles {
-			if profileSpawnFailure(p, "external-steward") == nil &&
-				harness.ApprovalIsBaseline(harnessOrDefault(p.Harness), p.Approval, false) {
+			if externalStewardProfileProblem(p) == nil {
 				choices["spawn_profiles"] = append(choices["spawn_profiles"], p.Name)
 			}
 		}
@@ -308,6 +327,12 @@ func claimExternalStewardChild(w http.ResponseWriter, convID string) (func(), bo
 		writeError(w, http.StatusInternalServerError, "io", "external steward: "+err.Error())
 		return nil, false
 	}
+	cfg, _ := config.LoadShared()
+	limit := cfg.ExternalStewardMaxChildren()
+	// Read under the lock: a spawn that finishes between these reads and the check
+	// would otherwise have let go of its place without yet being counted.
+	externalStewardSpawning.Lock()
+	defer externalStewardSpawning.Unlock()
 	children, err := externalStewardChildren(agentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "external steward: "+err.Error())
@@ -324,10 +349,6 @@ func claimExternalStewardChild(w http.ResponseWriter, convID string) (func(), bo
 			live++
 		}
 	}
-	cfg, _ := config.LoadShared()
-	limit := cfg.ExternalStewardMaxChildren()
-	externalStewardSpawning.Lock()
-	defer externalStewardSpawning.Unlock()
 	if live+externalStewardSpawning.active[agentID] >= limit {
 		writeError(w, http.StatusConflict, "external_steward_child_limit",
 			fmt.Sprintf("this external steward already has %d running workers, the most the operator allows", limit))
@@ -450,12 +471,14 @@ func notifyExternalStewardExpiries(now time.Time) {
 	}
 	for _, steward := range stewards {
 		live := slices.ContainsFunc(steward.Credentials, func(c db.ExternalStewardCredential) bool { return c.Live(now) })
-		revoked := slices.ContainsFunc(steward.Credentials, func(c db.ExternalStewardCredential) bool { return !c.RevokedAt.IsZero() })
+		// Only the newest counts: rotating ends an old credential by revoking it, and
+		// the one after it can still run out.
+		newest := slices.MaxFunc(steward.Credentials, func(a, b db.ExternalStewardCredential) int { return a.CreatedAt.Compare(b.CreatedAt) })
 		if live {
 			externalStewardExpiryNotified.Delete(steward.AgentID)
 			continue
 		}
-		if revoked {
+		if !newest.RevokedAt.IsZero() {
 			continue // Revoking is the operator's own act, and it lists the workers.
 		}
 		children, err := externalStewardChildren(steward.AgentID)

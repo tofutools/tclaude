@@ -182,13 +182,17 @@ and they are checked when you set them and again at every spawn.
   on OpenCode or pi. A worker stops at the first action that isn't read-only until you
   answer, and the assistant can't answer for you. Copilot and a shell have no such mode, so
   they can't be used.
+- **The sandbox holds.** The spawn profile also has to make the harness enforce the sandbox
+  profile: `sandbox` set to `on` for Claude, `read-only` or `workspace-write` for Codex, and
+  tclaude's pane sandbox otherwise. A profile that gives its agents ownership or permissions
+  can't be used either.
 - **A request can't change the launch.** The assistant chooses the group, a name, the first
   message and a task link. Everything else comes from what you chose, and a request that
   sets anything else is refused. A worker starts in the group's default directory, so a
   group without one can't be chosen. A directory the harness doesn't trust yet waits at its
   dialog for you.
 - **Workers can't do what it can't.** Each is denied everything in the table above, plus
-  `agent.spawn`, at birth, ahead of what its group or `agent.default_permissions` would give
+  `agent.spawn` and `self.clone`, at birth, ahead of what its group or `agent.default_permissions` would give
   it. So they can't start workers of their own or schedule anything. You can still lift a
   deny, grant sudo or approve a one-off request for a worker yourself.
 - **There's a cap.** Each external steward can have 3 workers running, or the number you

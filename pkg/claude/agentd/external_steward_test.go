@@ -243,7 +243,9 @@ func TestExternalSteward_EveryPopupIsAccountedFor(t *testing.T) {
 // has to be a change to this test too, not just a line that goes quiet.
 func TestExternalSteward_NeverListIsPinned(t *testing.T) {
 	assert.ElementsMatch(t, []string{
-		"groups.members.spawn", "agent.clone", "groups.members.clone", "agent.morph", "groups.members.morph",
+		"groups.members.spawn", "agent.clone", "groups.members.clone", "groups.clone",
+		"agent.morph", "groups.members.morph", "agent.resume", "groups.members.resume",
+		"groups.settings.default-dir", "groups.settings.environment", "groups.settings.default-spawn-target",
 		"approvals.answer", "human.inbox.read", "human.inbox.answer",
 		"sessions.attach", "sessions.takeover", "sessions.shell",
 		"permissions.grant", "permissions.revoke", "config.import", "roles.manage",

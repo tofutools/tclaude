@@ -73,9 +73,13 @@ var externalStewardNever = []string{
 	PermSelfSchedule, PermAgentSchedule, PermGroupsMembersSchedule, PermGroupsMessagesSchedule,
 	PermTriggersManage, PermGroupsTriggersManage,
 	// Starting or changing a launch by any way but a pinned agent.spawn. A group
-	// spawn comes with owning a group and names no sandbox, and a clone or morph
-	// would copy a posture this principal could never set.
-	PermGroupsMembersSpawn, PermAgentClone, PermGroupsMembersClone, PermAgentMorph, PermGroupsMembersMorph,
+	// spawn comes with owning a group and names no sandbox. A clone, morph or resume
+	// would run a posture this principal could never set, and a resume is past the
+	// cap. A worker's directory and environment come from its group, so changing
+	// those would change the launch the operator pinned.
+	PermGroupsMembersSpawn, PermAgentClone, PermGroupsMembersClone, PermGroupsClone,
+	PermAgentMorph, PermGroupsMembersMorph, PermAgentResume, PermGroupsMembersResume,
+	PermGroupsSettingsDefaultDir, PermGroupsSettingsEnvironment, PermGroupsSettingsDefaultSpawnTarget,
 }
 
 // externalStewardOptIn are level slugs a principal does not start with. A capture

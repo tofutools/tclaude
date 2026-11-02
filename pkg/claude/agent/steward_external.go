@@ -241,6 +241,11 @@ func runExternalStewardRevoke(p *externalStewardRevokeParams, stdout, stderr io.
 	var resp struct {
 		Revoked  int64                     `json:"revoked"`
 		Children []externalStewardChildRow `json:"children"`
+		Stopped  []struct {
+			AgentID string `json:"agent_id"`
+			Action  string `json:"action"`
+			Detail  string `json:"detail"`
+		} `json:"stopped"`
 	}
 	body := map[string]any{"token_id": p.TokenID, "stop_children": p.StopChildren}
 	if err := DaemonPost("/v1/external-stewards/"+url.PathEscape(p.Name)+"/revoke", body, &resp); err != nil {
@@ -255,6 +260,11 @@ func runExternalStewardRevoke(p *externalStewardRevokeParams, stdout, stderr io.
 			fmt.Fprintln(stdout, "Its workers keep running. Use --stop-children to stop them too:")
 		}
 		printExternalStewardChildren(stdout, resp.Children)
+	}
+	for _, stop := range resp.Stopped {
+		if stop.Action == "error" {
+			fmt.Fprintf(stderr, "Could not stop %s: %s\n", stop.AgentID, stop.Detail)
+		}
 	}
 	return rcOK
 }
