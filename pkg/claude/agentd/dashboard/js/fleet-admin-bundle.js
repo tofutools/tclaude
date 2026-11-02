@@ -101,11 +101,11 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
       </div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons">
-      <button type="button" id="fleet-bundle-download" disabled=${!Array.isArray(entries)} onClick=${download}>Download</button>
+      <button class="ui-btn" type="button" id="fleet-bundle-download" disabled=${!Array.isArray(entries)} onClick=${download}>Download</button>
       <span class="spacer"></span>
-      ${onDecline && html`<button type="button" onClick=${onDecline}>Decline…</button>`}
-      <button type="button" class="primary" id="fleet-bundle-import" onClick=${onImport}>Import…</button>
-      <button type="button" onClick=${onClose}>Close</button>
+      ${onDecline && html`<button class="ui-btn" type="button" onClick=${onDecline}>Decline…</button>`}
+      <button type="button" class="ui-btn ui-btn-primary" id="fleet-bundle-import" onClick=${onImport}>Import…</button>
+      <button class="ui-btn" type="button" onClick=${onClose}>Close</button>
     </div>
   </${Overlay}>`;
 }

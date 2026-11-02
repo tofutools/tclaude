@@ -1392,7 +1392,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   assert.equal(host.querySelector('.sbx-section').hidden, true, 'structured fields are unavailable while raw JSON is authoritative');
   assert.equal(host.querySelector('#sandbox-profile-editor-includes').value.includes('base'), true); assert.equal(host.querySelector('#sandbox-profile-editor-agent-directories').value.includes('GOCACHE'), true);
   const raw = host.querySelector('.sbx-advanced-body textarea'); raw.value = '{'; raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
-  host.querySelector('#sandbox-profile-editor-modal .primary').click(); await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-modal .ui-btn-primary').click(); await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('[role="alert"]').textContent, /JSON|position|property/i); assert.equal(saved, null);
   host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve()); assert.equal(scribe, null); assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'invalid raw JSON blocks scribe handoff');
   raw.value = '[{"path":"/raw","access":"read"}]'; raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve()); host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve());
@@ -3756,7 +3756,7 @@ test('role editor preserves nested permission focus and saves behavior/access on
   const permissions = host.querySelector('#role-editor-perms'); permissions.focus(); permissions.click(); await harness.act(() => Promise.resolve());
   assertSameNode(harness.document.activeElement, permissions); assert.equal(permissionOptions.grantOnly, true);
   await harness.act(() => permissionOptions.onSave({ read: 'grant', write: 'grant' }));
-  host.querySelector('#role-editor-modal .primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);
+  host.querySelector('#role-editor-modal .ui-btn-primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);
   assert.equal(saved.payload.spawn_profile, undefined); assert.equal(saved.payload.model, undefined);
   cleanups.reverse().forEach((fn) => fn());
 });

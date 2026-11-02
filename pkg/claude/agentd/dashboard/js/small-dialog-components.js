@@ -92,9 +92,9 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
       </label>
       <div class="cron-create-error" id="clone-modal-error" role="alert">${error}</div>
       <div class="modal-buttons">
-        <button id="clone-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+        <button class="ui-btn" id="clone-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
         <span class="spacer"></span>
-        <button id="clone-modal-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
+        <button id="clone-modal-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy} onClick=${submit}>
           <${Words} plain=${busy ? 'Creating…' : 'Create copy'} wizard=${busy ? 'Mirroring…' : 'Mirror it'}/>
         </button>
       </div>
@@ -325,11 +325,11 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
       <${ExportHistory} jobs=${history} actions=${actions} conv=${descriptor.conv} refreshHistory=${() => setHistoryVersion((value) => value + 1)} />
       <div class="cron-create-error" id="export-agent-error" role="alert">${error}</div>
       <div class="modal-buttons">
-        <button id="export-agent-cancel" type="button" disabled=${submitting} onClick=${() => { void requestClose(); }}>${phase === 'form' ? 'Cancel' : 'Close'}</button>
+        <button class="ui-btn" id="export-agent-cancel" type="button" disabled=${submitting} onClick=${() => { void requestClose(); }}>${phase === 'form' ? 'Cancel' : 'Close'}</button>
         <span class="spacer"></span>
-        ${phase === 'ready' && html`<button id="export-agent-download" class="primary" type="button" onClick=${() => actions.downloadExport(jobID)}>Download again</button>`}
-        ${phase === 'failed' && html`<button id="export-agent-retry" class="primary" type="button" onClick=${retry}>Retry</button>`}
-        ${phase === 'form' && html`<button id="export-agent-submit" class="primary" type="button" disabled=${submitting} onClick=${submit}>${submitting ? 'Requesting…' : 'Export'}</button>`}
+        ${phase === 'ready' && html`<button id="export-agent-download" class="ui-btn ui-btn-primary" type="button" onClick=${() => actions.downloadExport(jobID)}>Download again</button>`}
+        ${phase === 'failed' && html`<button id="export-agent-retry" class="ui-btn ui-btn-primary" type="button" onClick=${retry}>Retry</button>`}
+        ${phase === 'form' && html`<button id="export-agent-submit" class="ui-btn ui-btn-primary" type="button" disabled=${submitting} onClick=${submit}>${submitting ? 'Requesting…' : 'Export'}</button>`}
       </div>
     </${Overlay}>
   `;
@@ -352,10 +352,10 @@ export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard })
       /></p>
       ${descriptor.label && html`<div class="modal-meta" id="term-meta">${descriptor.label}</div>`}
       <div class="modal-buttons">
-        <button id="term-cancel" type="button" onClick=${() => choose(null)}>Cancel</button>
-        <button id="term-start" type="button" onClick=${() => choose('start')}>Launch dir</button>
-        <button id="term-worktree" type="button" onClick=${() => choose('worktree')}>Worktree dir</button>
-        <button id="term-current" type="button" autofocus onClick=${() => choose('current')}>Current dir</button>
+        <button class="ui-btn" id="term-cancel" type="button" onClick=${() => choose(null)}>Cancel</button>
+        <button class="ui-btn" id="term-start" type="button" onClick=${() => choose('start')}>Launch dir</button>
+        <button class="ui-btn" id="term-worktree" type="button" onClick=${() => choose('worktree')}>Worktree dir</button>
+        <button class="ui-btn" id="term-current" type="button" autofocus onClick=${() => choose('current')}>Current dir</button>
       </div>
     </${Overlay}>
   `;
@@ -444,7 +444,7 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
           wizard=${html`Speak <kbd>1</kbd>–<kbd>4</kbd> to choose.`}
         /></p>
         <div class="modal-buttons">
-          <button id="term-chooser-cancel" type="button" onClick=${() => actions.finishChoice(descriptor, null)}>Cancel</button>
+          <button class="ui-btn" id="term-chooser-cancel" type="button" onClick=${() => actions.finishChoice(descriptor, null)}>Cancel</button>
         </div>
       </div>
     </${Overlay}>
@@ -628,9 +628,9 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       `}
       <div class="cron-create-error" id="sandbox-impl-error" role="alert">${error}</div>
       <div class="modal-buttons">
-        <button id="sandbox-impl-cancel" type="button" disabled=${busy}
+        <button class="ui-btn" id="sandbox-impl-cancel" type="button" disabled=${busy}
           onClick=${() => { void requestClose(); }}>Cancel</button>
-        <button id="sandbox-impl-assign" class="primary" type="button"
+        <button id="sandbox-impl-assign" class="ui-btn ui-btn-primary" type="button"
           disabled=${busy || !dirty}
           onClick=${submit}>${busy
             ? (restart ? 'Restarting…' : 'Assigning…')

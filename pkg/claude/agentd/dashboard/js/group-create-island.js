@@ -499,9 +499,9 @@ function GroupCreateDialog({
     </label>` : null}
     <div class="cron-create-error" id="group-create-error" role=${error ? 'alert' : undefined}>${error}</div>
     <div class="modal-buttons">
-      <button id="group-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <button class="ui-btn" id="group-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button id="group-create-submit" class="primary" type="button" disabled=${busy}
+      <button id="group-create-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy}
         aria-busy=${busy ? 'true' : undefined}
         onClick=${() => { void submit(); }}>${busy
           ? (draft.workspaceMode === 'clone' && !cloneMode ? 'Cloning & creating…' : 'Creating…')

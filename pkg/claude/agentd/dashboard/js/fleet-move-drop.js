@@ -199,8 +199,8 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
     ${status}
     <div class="modal-buttons"><span class="spacer"></span>
       ${phase === 'progress'
-        ? html`<button type="button" ref=${okRef} id="fleetview-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</button>`
-        : html`<button type="button" id="fleetview-move-drop-cancel" onClick=${onClose}>Cancel</button>
-          <button type="button" ref=${okRef} class="confirm-danger" id="fleetview-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</button>`}
+        ? html`<button class="ui-btn" type="button" ref=${okRef} id="fleetview-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</button>`
+        : html`<button class="ui-btn" type="button" id="fleetview-move-drop-cancel" onClick=${onClose}>Cancel</button>
+          <button type="button" ref=${okRef} class="ui-btn ui-btn-danger" id="fleetview-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</button>`}
     </div>`;
 }

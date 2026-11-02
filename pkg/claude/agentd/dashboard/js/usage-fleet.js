@@ -176,10 +176,10 @@ export function FleetLimitEditor({ limit, fleet, busy, RuleEditor, onSave, onDel
     <p class="modal-hint">Agent steps (notify agents, wrap up, hard stop, block spawns) reach this node's agents when it is counted, and each member's agents in the groups its <code>usage-rules.enforce</code> grant covers. Elsewhere they only alert you.</p>
     <div role="alert" class="cron-create-error">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onCancel}>Back</button>
-      ${limit.id ? html`<button type="button" disabled=${busy} onClick=${() => onDelete(limit)}>Delete fleet limit</button>` : null}
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onCancel}>Back</button>
+      ${limit.id ? html`<button class="ui-btn" type="button" disabled=${busy} onClick=${() => onDelete(limit)}>Delete fleet limit</button>` : null}
       <span class="spacer"></span>
-      <button type="button" class="primary" id="usage-fleet-limit-save" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : 'Save fleet limit'}</button>
+      <button type="button" class="ui-btn ui-btn-primary" id="usage-fleet-limit-save" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : 'Save fleet limit'}</button>
     </div>
   </div>`;
 }

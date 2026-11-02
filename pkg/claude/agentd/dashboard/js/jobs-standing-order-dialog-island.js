@@ -342,10 +342,10 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
       Enabled</label>
     <div class="cron-create-error" id="standing-order-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button id="standing-order-cancel" type="button" disabled=${busy}
+      <button class="ui-btn" id="standing-order-cancel" type="button" disabled=${busy}
         onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button id="standing-order-submit" class="primary" type="button" disabled=${busy}
+      <button id="standing-order-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy}
         onClick=${submit}>${busy ? 'Saving…' : editing ? 'Save' : 'Create'}</button>
     </div>
   </${Overlay}>`;

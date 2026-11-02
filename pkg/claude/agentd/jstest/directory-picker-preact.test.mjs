@@ -147,7 +147,7 @@ test('Preact picker filters its folder pane and completes the active match', asy
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(calls, ['/root', '/root/tclaude-dir-picker']);
   assert.equal(input.value, '/root/tclaude-dir-picker/');
-  const choose = host.querySelector('.modal-buttons button.primary');
+  const choose = host.querySelector('.modal-buttons button.ui-btn-primary');
   assert.equal(choose.disabled, false, 'trailing slash keeps Use this folder enabled');
   choose.click();
   await harness.act(() => Promise.resolve());
@@ -175,7 +175,7 @@ test('Preact picker accepts a trailing slash through Ctrl/Cmd+Enter and the choo
     await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
     const input = mounted.container.querySelector('#directory-picker-path');
     await harness.input(input, '/root/');
-    const choose = mounted.container.querySelector('.modal-buttons button.primary');
+    const choose = mounted.container.querySelector('.modal-buttons button.ui-btn-primary');
     assert.equal(choose.disabled, false);
     const dialog = mounted.container.querySelector('#directory-picker-modal [role="dialog"]');
     harness.fireEvent(dialog, 'keydown', { key: 'Enter', [modifier]: true });
@@ -188,7 +188,7 @@ test('Preact picker accepts a trailing slash through Ctrl/Cmd+Enter and the choo
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   const input = mounted.container.querySelector('#directory-picker-path');
   await harness.input(input, '/root/');
-  const choose = mounted.container.querySelector('.modal-buttons button.primary');
+  const choose = mounted.container.querySelector('.modal-buttons button.ui-btn-primary');
   assert.equal(choose.disabled, false);
   choose.click();
   await harness.act(() => Promise.resolve());
@@ -245,7 +245,7 @@ test('Preact picker creates, renames, and explicitly confirms recursive deletion
   assert.equal(action.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'true');
   assert.equal(action.querySelector('h3').textContent, 'Create a folder');
   await harness.input(action.querySelector('input'), 'new-child');
-  action.querySelector('button.primary').click();
+  action.querySelector('button.ui-btn-primary').click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(mutations[0], ['create', '/root', 'new-child']);
   assert.equal(pickerOverlay.hasAttribute('inert'), false);
@@ -259,7 +259,7 @@ test('Preact picker creates, renames, and explicitly confirms recursive deletion
   action = mounted.container.querySelector('#directory-picker-action-modal');
   assert.equal(action.querySelector('input').value, 'alpha');
   await harness.input(action.querySelector('input'), 'beta');
-  action.querySelector('button.primary').click();
+  action.querySelector('button.ui-btn-primary').click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(mutations[1], ['rename', '/root/alpha', 'beta']);
   assert.ok(mounted.container.querySelector('[aria-label="Delete beta"]'));
@@ -267,7 +267,7 @@ test('Preact picker creates, renames, and explicitly confirms recursive deletion
   mounted.container.querySelector('[aria-label="Delete beta"]').click();
   await harness.act(() => Promise.resolve());
   action = mounted.container.querySelector('#directory-picker-action-modal');
-  const deleteButton = action.querySelector('button.danger');
+  const deleteButton = action.querySelector('button.ui-btn-danger');
   assert.equal(deleteButton.disabled, true);
   await harness.input(action.querySelector('input'), 'beta');
   assert.equal(deleteButton.disabled, true, 'a folder name alone cannot confirm deletion');
@@ -428,7 +428,7 @@ test('Preact picker leaves the list intact for a directly typed path', async (t)
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(calls, ['/root', '/other/workspace']);
   assert.equal(input.value, '/other/workspace/');
-  assert.equal(mounted.container.querySelector('.modal-buttons button.primary').disabled, false);
+  assert.equal(mounted.container.querySelector('.modal-buttons button.ui-btn-primary').disabled, false);
   state.finish({ canceled: true });
   await result;
   await mounted.unmount();
@@ -478,7 +478,7 @@ test('Preact picker navigates host folders, chooses, cancels, and restores focus
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(calls, ['/root', '/root/alpha', '/root', '/home/me']);
   assert.equal(host.querySelector('#directory-picker-path').value, '/home/me/');
-  host.querySelector('.modal-buttons button.primary').click();
+  host.querySelector('.modal-buttons button.ui-btn-primary').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(await chosen, { path: '/home/me' });
   assertAbsent(host.querySelector('#directory-picker-modal'));
@@ -487,7 +487,7 @@ test('Preact picker navigates host folders, chooses, cancels, and restores focus
   let canceled;
   await harness.act(() => { canceled = state.open({}); });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
-  host.querySelector('.modal-buttons button:not(.primary)').click();
+  host.querySelector('.modal-buttons button:not(.ui-btn-primary)').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(await canceled, { canceled: true });
   await mounted.unmount();

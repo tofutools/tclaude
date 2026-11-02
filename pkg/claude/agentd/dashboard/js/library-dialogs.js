@@ -59,9 +59,9 @@ export function LibraryNameDialog({ descriptor, onClose, confirmDiscard }) {
     </label>
     <div class="cron-create-error" id="library-name-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button id="library-name-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : descriptor.okLabel || 'Save'}</button>
+      <button id="library-name-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : descriptor.okLabel || 'Save'}</button>
     </div>
   </${Overlay}>`;
 }
@@ -156,9 +156,9 @@ export function LibraryBundleImportDialog({ descriptor, onClose, confirmDiscard,
     ${preview?.security_changes > 0 && html`<div class="modal-meta library-import-security">${preview.security_changes} item${preview.security_changes === 1 ? '' : 's'} can change what agents may do. Check them before importing.</div>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy === 'apply'} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <button class="ui-btn" type="button" disabled=${busy === 'apply'} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button id="library-bundle-import-submit" class="primary" type="button" disabled=${blocked} onClick=${apply}>
+      <button id="library-bundle-import-submit" class="ui-btn ui-btn-primary" type="button" disabled=${blocked} onClick=${apply}>
         ${busy === 'apply' ? 'Importing…' : `Import ${pending.length} item${pending.length === 1 ? '' : 's'}`}
       </button>
     </div>

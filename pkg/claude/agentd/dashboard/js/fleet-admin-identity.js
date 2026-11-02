@@ -28,7 +28,7 @@ export function KeyTransitionDialog({ row, resolved = false, copy, toast, onClos
     return html`<${Overlay} id="fleet-key-transition" labelledby="fleet-key-transition-title" onClose=${onClose}>
       <h3 id="fleet-key-transition-title">${row.label}: key transition resolved</h3>
       <p>This node no longer reports a pending or conflicting signing key for ${row.label}. See <code>tclaude federation identity rotations</code> for what happened.</p>
-      <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
+      <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
     </${Overlay}>`;
   }
   const cmds = t.state === 'conflict' ? recoverCommands(t) : null;
@@ -52,7 +52,7 @@ export function KeyTransitionDialog({ row, resolved = false, copy, toast, onClos
           <div class="muted">If the operator names a different instance or fingerprint, do not apply this one: list the candidates with <code>tclaude federation identity rotations</code>.</div>`
         : html`<div class="muted">List the candidates with <code>tclaude federation identity rotations</code>.</div>`}`}
     <div class="muted fa-cli-note">Key rotation and recovery are CLI-only: <code>tclaude federation identity …</code></div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
 

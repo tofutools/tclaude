@@ -187,9 +187,9 @@ function BoardDeleteDialog({ request, snapshot, fetchImpl, notify, close }) {
       </ul>` : html`<p class="board-muted">No agents are on it.</p>`}` : !problem && html`<p class="board-muted">Loading…</p>`}
       ${problem && html`<p class="board-error" role="alert">${problem}</p>`}
       <div class="modal-buttons">
-        <button type="button" class="board-delete-export" disabled=${!board} onClick=${exportFirst}>${exported ? '✓ Exported' : '⤓ Export first'}</button>
-        <button type="button" ref=${cancelRef} onClick=${close}>Cancel</button>
-        <button type="button" class="confirm-danger board-delete-confirm" disabled=${!board || busy} onClick=${confirm}>Delete board</button>
+        <button type="button" class="ui-btn board-delete-export" disabled=${!board} onClick=${exportFirst}>${exported ? '✓ Exported' : '⤓ Export first'}</button>
+        <button class="ui-btn" type="button" ref=${cancelRef} onClick=${close}>Cancel</button>
+        <button type="button" class="ui-btn ui-btn-danger board-delete-confirm" disabled=${!board || busy} onClick=${confirm}>Delete board</button>
       </div>
     </div>
   </div>`;

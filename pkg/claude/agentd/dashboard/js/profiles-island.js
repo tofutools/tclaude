@@ -127,8 +127,8 @@ function ProfileModal({ state, actions }) {
           value=${draft.label} onInput=${field('label')} /></label>
       <div class="cron-create-error" id="profile-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
       <div class="modal-buttons">
-        <button id="profile-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
-        <button id="profile-modal-submit" class="primary" type="submit" disabled=${draft.submitting}>
+        <button class="ui-btn" id="profile-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
+        <button id="profile-modal-submit" class="ui-btn ui-btn-primary" type="submit" disabled=${draft.submitting}>
           ${draft.submitting ? 'Starting…' : 'Start profiling'}</button>
       </div>
     </form>

@@ -315,8 +315,8 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
         ${[...new Set([...(choices.group ? [choices.group] : []), ...groups])].map((g) => html`<option key=${g} value=${g}>${g}</option>`)}
       </select></label></div>`}
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
-    <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
-      <button class="primary" type="button" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : review.refused ? 'Refused' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
+    <div class="modal-buttons"><button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <button class="ui-btn ui-btn-primary" type="button" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : review.refused ? 'Refused' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
   </${Overlay}>`;
 }
 

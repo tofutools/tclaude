@@ -500,8 +500,8 @@ function TriggerDialog({ descriptor, state, actions }) {
         </div>
       </${Step}>
       ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
-      <div class="modal-buttons"><button type="button" onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</button>
-        <button type="submit" class="primary" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</button></div>
+      <div class="modal-buttons"><button class="ui-btn" type="button" onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</button>
+        <button type="submit" class="ui-btn ui-btn-primary" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</button></div>
     </form>
   </${Overlay}>`;
 }

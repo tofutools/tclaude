@@ -181,8 +181,8 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
         <span class="spawn-attachments-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="operator-message-error" value=${error}/>
-    <div class="modal-buttons"><button id="operator-message-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
-      <span class="spacer"></span><button id="operator-message-submit" class="primary operator-message-submit" type="button" disabled=${busy} onClick=${submit}>
+    <div class="modal-buttons"><button class="ui-btn" id="operator-message-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+      <span class="spacer"></span><button id="operator-message-submit" class="ui-btn ui-btn-primary operator-message-submit" type="button" disabled=${busy} onClick=${submit}>
         <${Words} plain=${busy ? 'Queueing…' : allLive ? 'Announce' : 'Send'} wizard=${busy ? '✒ Sending missive…' : allLive ? '📯 Proclaim' : '✒ Send missive'}/></button></div>
   </${Overlay}>`;
 }
@@ -471,8 +471,8 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Body" wizard="Missive"/></span><textarea ref=${bodyRef} id="message-create-body" rows="4"
       value=${body} placeholder=${wizWord('message text (required)', 'missive text (required)')} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     <${ErrorLine} id="message-create-error" value=${error}/>
-    <div class="modal-buttons"><button id="message-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
-      <span class="spacer"></span><button id="message-create-submit" class="primary" type="button" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
+    <div class="modal-buttons"><button class="ui-btn" id="message-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+      <span class="spacer"></span><button id="message-create-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
         <${Words} plain=${busy ? 'Sending…' : 'Send'} wizard=${busy ? 'Sending…' : '✒ Send missive'}/></button></div>
   </${Overlay}>`;
 }
@@ -556,8 +556,8 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
         <span class="spawn-attachments-hint">…or drag files here / paste a screenshot</span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="human-reply-error" value=${error}/><div class="modal-buttons">
-      <button id="human-reply-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span>
-      <button id="human-reply-submit" class="primary" type="button" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</button>
+      <button class="ui-btn" id="human-reply-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span>
+      <button id="human-reply-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</button>
     </div>
   </${Overlay}>`;
 }
@@ -1158,11 +1158,11 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       maxSeconds=${policy.max_seconds} submit=${submit} />`}
     <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
       ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${usesBad ? 'A use limit is a whole number from 1 to 1000' : sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
-      <button id="perm-edit-reset" type="button" disabled=${busy || !resettable}
+      <button class="ui-btn" id="perm-edit-reset" type="button" disabled=${busy || !resettable}
         title=${`Set every slug back to Default (${sudoMode ? 'not picked' : 'inherit'}), including any the filter hides`}
         onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'Clear selections' : groupMode || grantOnly ? 'Clear all grants' : 'Reset all to Default'}</span><span class="pe-btn-wizard">unbind all</span></button>
-      <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
-      <button id="perm-edit-submit" class="primary" type="button" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</button>
+      <button class="ui-btn" id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
+      <button id="perm-edit-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</button>
     </div>
   </${Overlay}>`;
 }
@@ -1248,9 +1248,9 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
     ? 'No matching features.'
     : 'This harness has no steerable startup-context features.'}</div>`}</div>
     <div class="modal-buttons">
-      <button id="context-features-cancel" type="button" onClick=${() => { void requestClose(); }}>Cancel</button>
+      <button class="ui-btn" id="context-features-cancel" type="button" onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button id="context-features-submit" class="primary" type="button" onClick=${submit}>Save</button>
+      <button id="context-features-submit" class="ui-btn ui-btn-primary" type="button" onClick=${submit}>Save</button>
     </div>
   </${Overlay}>`;
 }

@@ -261,12 +261,12 @@ export function PluginsModal({ state, actions }) {
         <textarea id="plugin-modal-descr" rows="2" placeholder="optional — what this plugin provides" spellcheck=${false}
           value=${draft.descr} onInput=${(event) => state.updateModal({ descr: event.currentTarget.value })}></textarea></label>
       <div id="plugin-modal-steps">${draft.steps.map((step, index) => html`<${StepEditor} key=${step._key} step=${step} index=${index} state=${state} />`)}</div>
-      <div class="modal-buttons"><button id="plugin-modal-add-step" type="button" class="tool" onClick=${() => state.addStep()}
+      <div class="modal-buttons"><button id="plugin-modal-add-step" type="button" class="ui-btn tool" onClick=${() => state.addStep()}
         title="Append another check/run step">+ add step</button></div>
       <div class="cron-create-error" id="plugin-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
       <div class="modal-buttons">
-        <button id="plugin-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
-        <button id="plugin-modal-submit" class="primary" type="button" disabled=${draft.submitting}
+        <button class="ui-btn" id="plugin-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
+        <button id="plugin-modal-submit" class="ui-btn ui-btn-primary" type="button" disabled=${draft.submitting}
           onClick=${() => actions.save(draft)}>${draft.submitting ? 'Saving…' : draft.mode === 'edit' ? 'Save changes' : 'Create plugin'}</button>
       </div>
     </div>

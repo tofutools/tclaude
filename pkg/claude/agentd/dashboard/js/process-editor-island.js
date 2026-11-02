@@ -420,11 +420,11 @@ export function ChoiceDialog({ descriptor, complete }) {
     <h3>${descriptor.title}</h3>
     <p>${descriptor.body}</p>
     <div class="modal-buttons">
-      <button ref=${preferred ? null : initial} type="button" class="process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</button>
+      <button ref=${preferred ? null : initial} type="button" class="ui-btn process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</button>
       ${descriptor.choices.map((choice) => html`<button
         key=${choice.key}
         ref=${choice === preferred ? initial : null}
-        class=${`${choice.primary ? 'primary ' : ''}${choice.danger ? 'confirm-danger ' : ''}process-editor-modal-btn`}
+        class=${`ui-btn ${choice.danger ? 'ui-btn-danger ' : choice.primary ? 'ui-btn-primary ' : ''}process-editor-modal-btn`}
         type="button"
         onClick=${() => complete(choice.key)}
       >${choice.label}</button>`)}
@@ -462,8 +462,8 @@ export function ScribeDialog({ descriptor, complete }) {
         : 'END BOUNDED EDITOR CONTEXT · the scribe must reread canonical YAML'}
     </div>
     <div class="modal-buttons">
-      <button type="button" class="process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</button>
-      <button class="primary process-editor-modal-btn" type="button" onClick=${() => complete(prompt.trim())}>Send & open scribe</button>
+      <button type="button" class="ui-btn process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</button>
+      <button class="ui-btn ui-btn-primary process-editor-modal-btn" type="button" onClick=${() => complete(prompt.trim())}>Send & open scribe</button>
     </div>
   </${Overlay}>`;
 }
@@ -503,8 +503,8 @@ export function SnippetNameDialog({ descriptor, complete }) {
       <div id="process-snippet-name-help" class="muted">Up to ${PROCESS_SNIPPET_NAME_MAX_RUNES} characters and ${PROCESS_SNIPPET_NAME_MAX_BYTES} UTF-8 bytes.</div>
       <div id="process-snippet-name-error" class="cron-create-error" role="alert">${error}</div>
     </div>
-    <div class="modal-buttons"><button type="button" class="process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</button><button
-      type="button" class="primary process-editor-modal-btn" disabled=${!trimmed} onClick=${submit}>${descriptor.submitLabel}</button></div>
+    <div class="modal-buttons"><button type="button" class="ui-btn process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</button><button
+      type="button" class="ui-btn ui-btn-primary process-editor-modal-btn" disabled=${!trimmed} onClick=${submit}>${descriptor.submitLabel}</button></div>
   </${Overlay}>`;
 }
 

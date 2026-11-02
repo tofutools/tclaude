@@ -121,8 +121,8 @@ export function PublishDialog({ board, item, actions, confirm, onClose, onDone }
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${board.id} --name … --only roles/NAME${item ? ` --item ${item.id} --parent ${item.latest_version}` : ''}</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Cancel</button>
-      <button type="button" class="primary" id="fleet-board-publish-post" disabled=${!ready} onClick=${post}>Post…</button></div>
+      <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
+      <button type="button" class="ui-btn ui-btn-primary" id="fleet-board-publish-post" disabled=${!ready} onClick=${post}>Post…</button></div>
   </${Overlay}>`;
 }
 
@@ -157,8 +157,8 @@ function RepostDialog({ board, boards, item, version, by, actions, confirm, onCl
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${dest || 'DEST'} --from-board ${board.id} --from-item ${item.id} --from-version ${version}</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Cancel</button>
-      <button type="button" class="primary" id="fleet-board-repost-post" disabled=${!to} onClick=${post}>Post…</button></div>
+      <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
+      <button type="button" class="ui-btn ui-btn-primary" id="fleet-board-repost-post" disabled=${!to} onClick=${post}>Post…</button></div>
   </${Overlay}>`;
 }
 
@@ -237,9 +237,9 @@ export function ImportDialog({ board, item, version, by, actions, confirm, onClo
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards preview|import --board ${board.id} --item ${item.id} --version ${version}</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" id="fleet-board-import-preview" disabled=${busy} onClick=${() => run()}>${busy ? 'Previewing…' : stale && preview ? 'Preview again' : 'Preview'}</button>
-      <button type="button" class="primary" id="fleet-board-import-apply" disabled=${blocked} title=${stale && preview ? 'Preview again after changing options' : ''} onClick=${apply}>Import…</button>
-      <button type="button" onClick=${onClose}>Close</button></div>
+      <button class="ui-btn" type="button" id="fleet-board-import-preview" disabled=${busy} onClick=${() => run()}>${busy ? 'Previewing…' : stale && preview ? 'Preview again' : 'Preview'}</button>
+      <button type="button" class="ui-btn ui-btn-primary" id="fleet-board-import-apply" disabled=${blocked} title=${stale && preview ? 'Preview again after changing options' : ''} onClick=${apply}>Import…</button>
+      <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
 
@@ -271,7 +271,7 @@ function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, on
           ${v.version !== item.pinned_version && html`<button type="button" data-version-act="pin" onClick=${() => pin(v)}>Keep…</button>`}
           ${onRepost && html`<button type="button" data-version-act="repost" onClick=${() => onRepost(v)}>Post to…</button>`}`}</td>
       </tr>`)}</tbody></table>`}
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
 

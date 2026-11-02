@@ -366,10 +366,10 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
           onChange=${(event) => update({ queueWhenOffline: event.currentTarget.checked })} /> Queue while offline
       </label>`}
       <div class="cron-create-error" id="cron-create-error" role="alert">${error}</div>
-      <div class="modal-buttons"><button id="cron-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
-        <span class="spacer"></span>${!editing && html`<button id="cron-create-save-another" class="secondary" type="button" disabled=${busy}
+      <div class="modal-buttons"><button class="ui-btn" id="cron-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+        <span class="spacer"></span>${!editing && html`<button id="cron-create-save-another" class="ui-btn ui-btn-ghost" type="button" disabled=${busy}
           title="Save and reset the form so you can create another in the same sitting" onClick=${() => submit(true)}>Save & create another</button>`}
-        <button id="cron-create-submit" class="primary" type="button" disabled=${busy} onClick=${() => submit(false)}>
+        <button id="cron-create-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy} onClick=${() => submit(false)}>
           ${busy ? (editing ? 'Saving…' : 'Creating…') : (editing ? 'Save' : 'Create')}</button></div>
     </${Overlay}>
     ${picker && html`<${AgentPicker} descriptor=${picker} snapshot=${snapshot} onChoose=${choose}

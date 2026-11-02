@@ -214,9 +214,9 @@ function InboxReader({ item, onClose, actions, confirm, toast }) {
       ${data.body && html`<pre class="remote-inbox-body">${data.body}</pre>`}
       <div class="muted">One answer for this one request; the call runs with all its effects. "Always allow" stays on ${label}'s own dashboard.</div>
       <div class="modal-buttons"><span class="spacer"></span>
-        <button type="button" id="remote-inbox-deny" disabled=${busy} onClick=${deny}>Deny</button>
-        <button type="button" id="remote-inbox-approve" class="primary" disabled=${busy} onClick=${approve}>Approve once…</button>
-        <button type="button" onClick=${onClose}>Close</button></div>`
+        <button class="ui-btn" type="button" id="remote-inbox-deny" disabled=${busy} onClick=${deny}>Deny</button>
+        <button type="button" id="remote-inbox-approve" class="ui-btn ui-btn-primary" disabled=${busy} onClick=${approve}>Approve once…</button>
+        <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>`
     : html`
       <h3 id="remote-inbox-title">${data.subject || '(no subject)'} <span class="muted">@${label}</span></h3>
       <div class="muted">from ${data.from_title || data.from_agent || 'unknown'}${data.group ? ` · ${data.group}` : ''} · ${data.created_at ? new Date(data.created_at).toLocaleString() : ''}</div>
@@ -226,9 +226,9 @@ function InboxReader({ item, onClose, actions, confirm, toast }) {
         ? html`<textarea id="remote-inbox-reply" rows="3" placeholder=${`Reply to ${data.from_title || 'the agent'} on ${label}`} value=${reply} onInput=${(e) => setReply(e.currentTarget.value)}></textarea>`
         : html`<div class="muted">Answer this one on ${label}'s own dashboard.</div>`}
       <div class="modal-buttons"><span class="spacer"></span>
-        ${markable && html`<button type="button" id="remote-inbox-read" disabled=${busy} onClick=${markRead}>Mark read</button>`}
-        ${data.replyable && html`<button type="button" id="remote-inbox-send" class="primary" disabled=${busy || !reply.trim()} onClick=${send}>Send reply</button>`}
-        <button type="button" onClick=${onClose}>Close</button></div>`}
+        ${markable && html`<button class="ui-btn" type="button" id="remote-inbox-read" disabled=${busy} onClick=${markRead}>Mark read</button>`}
+        ${data.replyable && html`<button type="button" id="remote-inbox-send" class="ui-btn ui-btn-primary" disabled=${busy || !reply.trim()} onClick=${send}>Send reply</button>`}
+        <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation human-inbox ${kind === 'request' ? `decide ${label} ID approve|deny` : `reply ${label} ${data.id} --body …`}</code></div>
   </${Overlay}>`;
 }
