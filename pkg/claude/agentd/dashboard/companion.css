@@ -583,7 +583,7 @@ body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.s
 /* The drag owns a touch on a tab: left to the browser it would be cancelled as a pan. */
 .overlay-tab-strip .companion-tab > button[role="tab"], .overlay-tab-group .mux-group-pill { touch-action: none; -webkit-touch-callout: none; }
 /* A title bar is shorter than the Terminals strip these stacks come from. */
-.overlay-tab-group { flex-wrap: nowrap; align-items: center; height: 26px; padding: 0 3px; border-radius: 6px; border-bottom-width: 1px; }
+.overlay-tab-group { flex-wrap: nowrap; align-items: center; max-width: none; height: 26px; padding: 0 3px; border-radius: 6px; border-bottom-width: 1px; }
 .overlay-tab-group .mux-group-pill, .overlay-tab-group .mux-group-rename { margin-bottom: 0; padding: 1px 7px; }
 .overlay-tab-group .mux-group-rename { width: 110px; }
 .overlay-tab-group.dragging { opacity: .35; }

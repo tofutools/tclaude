@@ -108,7 +108,10 @@ export function movedTab(windows, tabId, targetId, index, groupId = '') {
   const onlyTab = source?.id === targetId && source.tabs.length < 2;
   if (!source || onlyTab || !windows.some((window) => window.id === targetId)) return windows;
   const tab = source.tabs.find((candidate) => candidate.id === tabId);
-  const left = replaced(windows, source.id, withoutTab(source, tabId));
+  // A tab staying in its window can be its group's only member for a moment.
+  const left = source.id === targetId
+    ? windows.map((window) => (window.id === targetId ? withoutTab(window, tabId) : window))
+    : replaced(windows, source.id, withoutTab(source, tabId));
   const target = left.find((window) => window.id === targetId);
   const tabs = [...target.tabs];
   tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, memberOf(tab, groupId));
@@ -209,9 +212,13 @@ export function minimizedTab({ windows, minimizedTabs }, tabId) {
   const source = windowHolding(windows, tabId);
   if (!source) return { windows, minimizedTabs };
   const tab = source.tabs.find((candidate) => candidate.id === tabId);
+  const left = withoutTab(source, tabId);
+  // A group going with this tab forgets those waiting for it: its id can come round again.
+  const grouped = !!tab.groupId && left.tabs.some((other) => other.groupId === tab.groupId);
+  const lapsed = (entry) => (!grouped && entry.home === source.id && entry.tab.groupId === tab.groupId ? { ...entry, tab: withoutGroup(entry.tab) } : entry);
   return {
-    windows: replaced(windows, source.id, withoutTab(source, tabId)),
-    minimizedTabs: [...minimizedTabs, { tab, home: source.id, place: source.place }],
+    windows: replaced(windows, source.id, left),
+    minimizedTabs: [...minimizedTabs, { tab, home: source.id, place: source.place }].map(lapsed),
   };
 }
 

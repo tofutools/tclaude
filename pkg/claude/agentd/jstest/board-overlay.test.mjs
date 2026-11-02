@@ -831,6 +831,25 @@ scenario('a tab dropped inside a group joins it, and a pill carries its group to
   assert.equal(joined.groups.length, 1);
 });
 
+scenario('a window dragged by its pill leaves the group as it was, and a pill that stays put still collapses', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { const group = windows.startOverlayGroup('board:plan'); windows.groupOverlayTab('board:map', group); await wait(); await wait(); });
+  const pill = overlayHost.querySelector('.mux-group-pill');
+  const clickAt = (x) => harness.act(async () => { pill.dispatchEvent(Object.assign(new harness.window.Event('click', { bubbles: true, cancelable: true }), { detail: 1, clientX: x, clientY: 15 })); await wait(); });
+  const drag = pointer(harness, pill, pill);
+  await drag.down(100, 15);
+  await drag.move(220, 15);
+  await drag.up(220, 15);
+  await clickAt(220);
+  await harness.act(() => new Promise((resolve) => { setTimeout(resolve, 260); }));
+  assert.equal(windows.overlayWindows.value[0].groups[0].collapsed, false);
+  await drag.down(220, 15);
+  await drag.up(220, 15);
+  await clickAt(220);
+  await harness.act(() => new Promise((resolve) => { setTimeout(resolve, 260); }));
+  assert.equal(windows.overlayWindows.value[0].groups[0].collapsed, true);
+});
+
 scenario('a finger held on a tab opens its menu and drags nothing, and a finger that moves does not', async ({ harness, overlayHost, overlayState, windows }) => {
   await twoInOne(harness, overlayState, windows);
   layOut(harness, overlayHost);

@@ -19,6 +19,8 @@ import { groupsOf, windowHolding } from './overlay-tab-model.js';
 
 const html = htm.bind(h);
 
+const PILL_CLICK_PX = 5;
+
 // The open menu: { x, y, label, trigger } with the tabId or the windowId and
 // groupId it is for. A strip goes when its window shows another tab, so these
 // wait outside it.
@@ -120,8 +122,16 @@ function GroupStack({ window, group, overlay, win, renderTab }) {
     renaming.value = { windowId: window.id, groupId: group.id };
   };
   const stopRename = () => { renaming.value = null; };
+  // A pill that drags its window rides along under the pointer, so the release
+  // lands on it as a click: only one that stayed put is a click on the pill.
+  const pressedAt = useRef(null);
+  const onClick = (event) => {
+    const from = pressedAt.current;
+    if (!event.detail || !from || Math.hypot(event.clientX - from.x, event.clientY - from.y) < PILL_CLICK_PX) onPillClick(event);
+  };
   const onPointerDown = (event) => {
     if (event.button !== 0) return;
+    pressedAt.current = { x: event.clientX, y: event.clientY };
     const trigger = event.currentTarget;
     const cancel = members.length === window.tabs.length ? (overlay.dragWindow(event), overlay.cancelGesture) : startTabDrag(event, {
       ids: members.map((tab) => tab.id),
@@ -147,7 +157,7 @@ function GroupStack({ window, group, overlay, win, renderTab }) {
       <button type="button" class="mux-group-pill" aria-expanded=${group.collapsed ? 'false' : 'true'} aria-haspopup="menu"
         aria-label=${`${group.name}, ${members.length} tab${members.length === 1 ? '' : 's'}`}
         title=${`Drag to move the whole ${group.name} group · click to ${group.collapsed ? 'expand' : 'collapse'} · double-click or F2 to rename · right-click or press and hold for more`}
-        onPointerDown=${onPointerDown} onClick=${onPillClick} onDblClick=${(event) => { event.preventDefault(); event.stopPropagation(); startRename(); }}
+        onPointerDown=${onPointerDown} onClick=${onClick} onDblClick=${(event) => { event.preventDefault(); event.stopPropagation(); startRename(); }}
         onContextMenu=${menu.onContextMenu} onKeyDown=${onKeyDown}>
         <span class="mux-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span>
         <span class="mux-group-name">${group.name}</span>

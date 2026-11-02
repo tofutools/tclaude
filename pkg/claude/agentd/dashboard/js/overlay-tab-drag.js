@@ -80,8 +80,13 @@ function swallowClick(node) {
 function quietLift(node, win) {
   const quiet = (touch) => touch.preventDefault();
   node.addEventListener('touchend', quiet, { once: true, passive: false });
-  const done = () => setTimeout(() => node.removeEventListener('touchend', quiet), 0);
-  for (const type of ['pointerup', 'pointercancel']) win?.addEventListener?.(type, done, { once: true });
+  const done = () => {
+    win?.removeEventListener?.('pointerup', done);
+    win?.removeEventListener?.('pointercancel', done);
+    setTimeout(() => node.removeEventListener('touchend', quiet), 0);
+  };
+  win?.addEventListener?.('pointerup', done);
+  win?.addEventListener?.('pointercancel', done);
 }
 
 // holdForMenu opens a menu when a finger rests on a control, where there is no

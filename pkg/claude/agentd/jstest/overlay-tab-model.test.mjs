@@ -219,6 +219,25 @@ test('a tab back from the dock after its group went comes back ungrouped', async
   assert.equal(back.windows[0].tabs.find((tab) => tab.id === 'a').groupId, undefined);
 });
 
+test('a group\'s only tab dropped back inside it keeps the group', async (t) => {
+  const model = await model_(t);
+  const lone = { ...groupWindow(), tabs: [groupWindow().tabs[0], groupWindow().tabs[2]] };
+  const [window] = model.movedTab([lone], 'a', 'w', 0, 'g');
+  assert.deepEqual(window.groups.map((group) => group.name), ['Work']);
+  assert.equal(window.tabs[0].groupId, 'g');
+});
+
+test('a tab on the dock forgets a group that went, even when the id comes round again', async (t) => {
+  const model = await model_(t);
+  const docked = model.minimizedTab(model.minimizedTab({ windows: [groupWindow()], minimizedTabs: [] }, 'a'), 'b');
+  assert.ok(docked.minimizedTabs.every(({ tab }) => !tab.groupId));
+  const group = model.newTabGroup(docked.windows[0]);
+  assert.equal(group.id, 'group-1');
+  const windows = model.groupedTab(docked.windows, 'c', group);
+  const back = model.restoredTab({ windows, minimizedTabs: docked.minimizedTabs }, 'a');
+  assert.equal(back.windows[0].tabs.find((tab) => tab.id === 'a').groupId, undefined);
+});
+
 test('a whole group moves along its strip, to another window, and out to its own', async (t) => {
   const model = await model_(t);
   const [along] = model.movedGroup([groupWindow()], 'w', 'g', 'w', 1);
