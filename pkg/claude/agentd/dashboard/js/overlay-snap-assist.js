@@ -33,11 +33,19 @@ export function SnapAssist({ win, viewOf }) {
     const focus = setTimeout(() => panel.current?.querySelector?.('.snap-assist-card')?.focus?.(), 0);
     const doc = win?.document;
     const press = (event) => { if (!panel.current?.contains(event.target)) endSnapAssist(); };
+    // While it asks, the keyboard is its: arrows and Enter from wherever focus
+    // went, such as a terminal the snapped window handed it to, reach the cards.
     const key = (event) => {
-      if (event.key !== 'Escape') return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        endSnapAssist();
+        return;
+      }
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(event.key) || panel.current?.contains(doc.activeElement)) return;
       event.preventDefault();
       event.stopPropagation();
-      endSnapAssist();
+      panel.current?.querySelector?.('.snap-assist-card')?.focus?.();
     };
     doc?.addEventListener?.('pointerdown', press, true);
     doc?.addEventListener?.('keydown', key, true);

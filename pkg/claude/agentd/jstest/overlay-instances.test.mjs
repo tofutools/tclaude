@@ -414,3 +414,12 @@ test('Escape ends Snap Assist, and with it off nothing asks', async (t) => {
   assert.ok(s.snapped('b'));
   assert.deepEqual(s.cards(), [], 'Config turned it off');
 });
+
+test('a lone snap beside another window snapped alone asks nothing, rather than offer its space', async (t) => {
+  const s = await floating(t);
+  await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 400 });
+  await s.harness.act(() => s.harness.document.dispatchEvent(Object.assign(new s.harness.window.Event('keydown', { cancelable: true }), { key: 'Escape' })));
+  await dragBar(s.harness, s.mounted, 'b', { x: 400, y: 210 }, { x: 1, y: 60 });
+  assert.ok(s.snapped('b'), 'b snapped to the corner');
+  assert.deepEqual(s.cards(), [], 'a has the left half');
+});
