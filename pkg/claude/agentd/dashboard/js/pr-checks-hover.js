@@ -329,6 +329,12 @@ export function summaryLine(summary) {
 // the badge can name the right forge and link its pipelines tab.
 const GITLAB_MR_RE = /^(https:\/\/[^/]+\/(?:[^/]+\/)+-\/merge_requests\/[0-9]+)(?:[/?#].*)?$/;
 
+// isGitLabMRURL is the same test for the badges beside the CI pill, so every
+// surface names a merge request the way GitLab does (!N, not #N).
+export function isGitLabMRURL(url) {
+  return GITLAB_MR_RE.test(String(url || '').trim());
+}
+
 function badgeTitle(summary, prNumber, url = '') {
   if (GITLAB_MR_RE.test(url || '')) {
     const who = prNumber ? `!${prNumber}` : 'this merge request';

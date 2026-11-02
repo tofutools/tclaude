@@ -23,7 +23,7 @@ import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
-import { PRChain } from './pr-chain.js';
+import { PRChain, prDescription } from './pr-chain.js';
 import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 import { fleetState } from './fleet-state.js';
 import { nodeRef, presenceView } from './agent-presence.js';
@@ -1269,7 +1269,7 @@ function BranchCell({ member }) {
     seen.add(url); return true;
   });
   return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} wrap />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} className="presented-pr"
-    describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} />`)}</span>` : null}`;
+    describe=${prDescription(pr, { presented: true })} />`)}</span>` : null}`;
 }
 
 function TaskCell({ member }) {
