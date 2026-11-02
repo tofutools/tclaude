@@ -386,6 +386,13 @@ func prepareOpenCodeDarwinProxySmoke(t *testing.T) openCodeDarwinProxySmokeFixtu
 	openCodeServeLogLevel = "DEBUG"
 	t.Cleanup(func() { openCodeServeLogLevel = previousLogLevel })
 
+	// Write the debug config BEFORE agentd starts. agentd binds its socket and
+	// only then stores its first-start config defaults (features.collab) by
+	// read-modify-write, so a config written once the socket answers can be
+	// replaced by agentd's copy read moments earlier. The launcher then logs at
+	// info and every debug-level proxy decision is silently dropped.
+	writeOpenCodeDarwinProxyDebugConfig(t, home)
+
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
 	agentSocket := agentipc.CanonicalSocketPath()
@@ -431,7 +438,6 @@ func prepareOpenCodeDarwinProxySmoke(t *testing.T) openCodeDarwinProxySmokeFixtu
 	// Filtered networking retains the profile-frozen harness HOME; provider
 	// isolation no longer redirects the supervisor into filtered-home.
 	supervisorHome := home
-	writeOpenCodeDarwinProxyDebugConfig(t, supervisorHome)
 	spec, err := openCodeTclaudeLayerLaunchSpec(
 		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot, agentID)
 	require.NoError(t, err)
