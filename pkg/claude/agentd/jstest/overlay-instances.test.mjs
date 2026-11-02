@@ -117,6 +117,21 @@ test('the open windows survive a reload, and invalid ones do not', async (t) => 
   assert.ok(harness);
 });
 
+test('a window closed with its ✕ is not saved for a reload, and a minimized tab is', async (t) => {
+  const { instances } = await setup(t);
+  const store = new Map();
+  const win = { sessionStorage: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) } };
+  const stop = instances.keepOverlayWindows(win, () => true);
+  t.after(() => { stop(); instances.overlayWindows.value = []; instances.minimizedOverlayTabs.value = []; });
+  instances.overlayWindows.value = [{ id: 'w', tabs: [{ id: 'p', kind: 'k' }, { id: 'q', kind: 'k' }, { id: 'r', kind: 'k' }], active: 'p', minimized: false, place: '' }];
+  instances.minimizeOverlayTab('r');
+  const saved = () => JSON.parse(store.get(instances.OVERLAY_WINDOWS_KEY));
+  assert.deepEqual(saved().windows.map((window) => window.tabs.map((tab) => tab.id)), [['p', 'q']]);
+  await instances.closeEveryTab('w');
+  assert.deepEqual(saved().windows, [], 'a reload brings the closed window back nowhere');
+  assert.deepEqual(saved().minimizedTabs.map(({ tab }) => tab.id), ['r'], 'the tab minimized before still waits on the dock');
+});
+
 test('windows saved before tabs come back in the split and the stack they had', async (t) => {
   const { harness, instances, overlay, prefs, level, mounted } = await setup(t, PAIR);
   const store = new Map([[instances.OVERLAY_WINDOWS_KEY, JSON.stringify([
