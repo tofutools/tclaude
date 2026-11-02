@@ -7,7 +7,7 @@
 import { batch, computed, effect, signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { parsePlacement, viewportOf } from './overlay-window-model.js';
-import { forgetOverlayWindow, raiseOverlayWindow, readPref, writePref } from './overlay-window.js';
+import { forgetOverlayWindow, raiseOverlayWindow, readPref, setOverlayDockCheck, writePref } from './overlay-window.js';
 import { addedTab, changedGroup, dissolvedGroup, groupedTab, minimizedTab, movedGroup, movedTab, newTabGroup, parseSavedOverlays, removedTab, restoredTab, savedOverlays, swappedTab, tabsOfWindows, tornOutGroup, tornOutTab, windowAround, windowHolding } from './overlay-tab-model.js';
 
 // In session storage, as the companion's open state is: a reload brings the
@@ -36,15 +36,22 @@ function patchWindow(id, patch) {
   overlayWindows.value = overlayWindows.peek().map((window) => (window.id === id ? { ...window, ...patch } : window));
 }
 
-// Windows and the dock change together, and a window left with no tabs is gone
-// from the stack and any split.
+// A window whose tabs wait on the dock comes back as itself, to its cell.
+const onDock = (id, minimizedTabs = minimizedOverlayTabs.peek()) => !!id && minimizedTabs.some(({ home }) => home === id);
+setOverlayDockCheck((id) => onDock(id));
+
+// Windows and the dock change together. A window left with no tabs is gone from
+// the stack, and from any split once no tab of it waits on the dock.
 function commit({ windows, minimizedTabs = minimizedOverlayTabs.peek() }) {
-  const gone = overlayWindows.peek().filter((window) => !windows.some((other) => other.id === window.id));
+  const here = (id) => windows.some((other) => other.id === id);
+  const gone = overlayWindows.peek().map(({ id }) => id).filter((id) => !here(id));
+  const leftDock = minimizedOverlayTabs.peek().map(({ home }) => home).filter((id) => id && !here(id) && !gone.includes(id) && !onDock(id, minimizedTabs));
   batch(() => {
     overlayWindows.value = windows;
     minimizedOverlayTabs.value = minimizedTabs;
   });
-  for (const window of gone) forgetOverlayWindow(window.id);
+  for (const id of gone) forgetOverlayWindow(id, onDock(id, minimizedTabs));
+  for (const id of new Set(leftDock)) forgetOverlayWindow(id);
 }
 
 const dockState = () => ({ windows: overlayWindows.peek(), minimizedTabs: minimizedOverlayTabs.peek() });

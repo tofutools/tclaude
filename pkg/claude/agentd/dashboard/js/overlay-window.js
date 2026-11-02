@@ -107,11 +107,22 @@ export function untileOverlayWindows() {
   return true;
 }
 
-// forgetOverlayWindow takes a closed window out of the stack and any split.
-export function forgetOverlayWindow(id) {
+// forgetOverlayWindow takes a closed window out of the stack and any split. A
+// window gone to the dock keeps its cell (keepCell), for when it comes back.
+export function forgetOverlayWindow(id, keepCell = false) {
   overlayStack.value = overlayStack.peek().filter((other) => other !== id);
-  if (leavesOf(splitTree.peek()).includes(id)) saveSplit(splitLoadedFrom, withoutWindow(splitTree.peek(), id));
+  if (!keepCell && leavesOf(splitTree.peek()).includes(id)) saveSplit(splitLoadedFrom, withoutWindow(splitTree.peek(), id));
 }
+
+// Whether a window not mounted now is on the dock, and will come back to its
+// cell. overlay-instances.js, which keeps the dock, answers it.
+let onDock = () => false;
+export function setOverlayDockCheck(check) {
+  onDock = check;
+}
+
+// A window keeps its cell while it is open, minimized in place or on the dock.
+const keepsCell = { has: (id) => aliveWindows.has(id) || onDock(id) };
 
 function loadSplit(prefs) {
   if (splitLoadedFrom === prefs) return;
@@ -155,7 +166,7 @@ export function tiledOverlayIds() {
 // offerSnapAssist asks for the largest empty cell of tree, if there is one. A
 // cell kept for a window that no longer exists is empty to it too.
 function offerSnapAssist(tree, area, from) {
-  const shown = tree && keepingWindows(tree, aliveWindows);
+  const shown = tree && keepingWindows(tree, keepsCell);
   const cells = snapAssistOn && shown && fits(shown, area) ? splitLayout(shown, area).gaps : [];
   const size = ({ rect }) => rect.w * rect.h;
   const gap = cells.sort((a, b) => size(b) - size(a))[0];
@@ -394,7 +405,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     };
     // A window outside the split cannot start a tree of its own: there is one.
     if (liveSplit.peek()) {
-      const drop = dropTree(savedTree, bounds, pointer, id, { here: new Set(snappedWindows.peek().keys()), alive: aliveWindows, room, vacated });
+      const drop = dropTree(savedTree, bounds, pointer, id, { here: new Set(snappedWindows.peek().keys()), alive: keepsCell, room, vacated });
       if (drop?.float) return null;
       return (drop && planned(drop.tree, drop.zone)) || plain;
     }
@@ -415,9 +426,10 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
   }
 
-  // With onCancel, Escape and a cancelled pointer end the gesture through it, and
-  // otherwise a cancelled pointer ends it like a release.
-  function track(event, onMove, onEnd, onCancel = null) {
+  // With onCancel, a cancelled pointer ends the gesture through it, and
+  // otherwise like a release. Escape ends it through onEscape, which is onCancel
+  // unless given, and with neither does nothing.
+  function track(event, onMove, onEnd, onCancel = null, onEscape = onCancel) {
     const handle = event.currentTarget;
     handle.setPointerCapture?.(event.pointerId);
     const stop = () => {
@@ -440,12 +452,13 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       if (key.key !== 'Escape') return;
       key.preventDefault();
       key.stopImmediatePropagation();
-      cancel();
+      stop();
+      onEscape();
     };
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', up);
     handle.addEventListener('pointercancel', cancelled);
-    if (onCancel) win?.addEventListener?.('keydown', onKey, true);
+    if (onEscape) win?.addEventListener?.('keydown', onKey, true);
     gesture.current = stop;
   }
 
@@ -488,6 +501,17 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       join.cancel();
       release();
     });
+    // Escape calls the whole move off: the window goes back where it was, into
+    // the cell it was torn out of, and nothing is saved.
+    const original = placement;
+    const treeBefore = splitTree.peek();
+    const putBack = () => {
+      join?.cancel();
+      setGuide(null);
+      setFloating(false);
+      setPlacement(original);
+      if (splitTree.peek() !== treeBefore) saveSplit(prefs, treeBefore);
+    };
     track(event, (m) => {
       if (start.snap) {
         // A click leaves a snapped window alone. Tearing it off takes a real
@@ -514,7 +538,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       plan = dropPlan({ x: m.clientX, y: m.clientY }, vacated);
       setGuide(plan?.guide || null);
       setFloating(!plan);
-    }, release, cancelJoin);
+    }, release, cancelJoin, putBack);
   }
 
   function onResizePointerDown(event, zone = '') {
