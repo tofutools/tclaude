@@ -684,7 +684,7 @@ func resolveMessageRouting(w http.ResponseWriter, r *http.Request, fromID, targe
 		return via.ID, via.Name, true
 	}
 	if contextFreeResolution(resolvePermissionVerdictForRequest(r, fromID, PermMessageDirect)) != permAllow {
-		if isLiveSteward(targetID) {
+		if isLiveSteward(targetID) || db.IsExternalStewardConv(targetID) {
 			writeError(w, http.StatusForbidden, "auth",
 				fmt.Sprintf("you can answer the Steward with `tclaude agent reply <id>` but not write to it first; "+
 					"that takes the %q permission or a shared group", PermMessageDirect))

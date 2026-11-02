@@ -760,8 +760,9 @@ func isStewardAddress(to string) bool {
 }
 
 // resolveStewardAddresses turns the address "steward" into the active Steward,
-// in To and Cc alike, before any routing looks at them. It answers the
-// request and returns false when no Steward is online.
+// in To and Cc alike, before any routing looks at them. A built-in Steward keeps
+// the address while it runs. With none online it goes to the one external steward
+// able to answer. It answers the request and returns false when nobody can take it.
 func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 	var steward string
 	resolve := func(address *string) bool {
@@ -771,7 +772,14 @@ func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 		if steward == "" {
 			steward = activeStewardConv()
 			if steward == "" || pickAliveSession(steward) == nil {
-				steward = ""
+				var able int
+				steward, able = soleExternalSteward()
+				if able > 1 {
+					writeError(w, http.StatusNotFound, "not_found", "no Steward is online and several external stewards could take this; address one by name")
+					return false
+				}
+			}
+			if steward == "" {
 				writeError(w, http.StatusNotFound, "not_found", "no Steward is online; the operator can summon one from the companion window")
 				return false
 			}

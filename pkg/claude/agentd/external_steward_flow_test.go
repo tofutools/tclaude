@@ -556,3 +556,64 @@ func TestExternalSteward_ListedOfflineAndNeverLaunched(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "no_tmux")
 }
+
+// The address "steward" stays with a running built-in Steward. With none online
+// it falls to the one external steward able to answer.
+func TestExternalSteward_StewardAddress(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	stubScribeTerminal(t)
+	const worker = "stwd-aaaa-bbbb-cccc-000000000002"
+	s.f.HaveConvWithTitle(worker, "worker")
+	s.f.HaveAliveSession(worker, "workers", "tclaude-workers", s.f.TestCwd("w"))
+	send := func(req map[string]any) *httptest.ResponseRecorder {
+		return testharness.Serve(s.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", req), worker))
+	}
+	refused := send(map[string]any{"to": "steward", "body": "nobody yet"})
+	require.Equal(t, http.StatusNotFound, refused.Code, "no Steward of either kind")
+	assert.Contains(t, refused.Body.String(), "summon")
+
+	first := s.create("assistant")
+	denied := send(map[string]any{"to": "steward", "body": "not allowed"})
+	require.Equal(t, http.StatusForbidden, denied.Code, "the address opens no door: %s", denied.Body.String())
+	assert.Contains(t, denied.Body.String(), "tclaude agent reply")
+	require.NoError(t, db.GrantAgentPermissionWithScope(worker, agentd.PermMessageDirect, "", "test"))
+
+	inbox := func(credential string) string {
+		code, body := s.call(credential, http.MethodGet, "/v1/inbox?unread=1", nil)
+		require.Equal(t, http.StatusOK, code, body)
+		return body
+	}
+	rec := send(map[string]any{"to": "steward", "body": "alone to the assistant"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, inbox(first.Credential), "alone to the assistant")
+	operator := s.dashboard(http.MethodPost, "/api/operator-message", map[string]any{"to": "steward", "body": "from the operator"})
+	require.Equal(t, http.StatusAccepted, operator.Code, operator.Body.String())
+	assert.Contains(t, inbox(first.Credential), "from the operator")
+
+	code, body := s.humanPost("/v1/external-stewards/assistant/revoke", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
+	require.Equal(t, http.StatusNotFound, send(map[string]any{"to": "steward", "body": "revoked"}).Code,
+		"a principal that can't sign in can't answer")
+
+	second := s.create("second")
+	renewed := s.humanRenew("assistant")
+	several := send(map[string]any{"to": "steward", "body": "which one"})
+	require.Equal(t, http.StatusNotFound, several.Code)
+	assert.Contains(t, several.Body.String(), "by name")
+	assert.NotContains(t, inbox(second.Credential), "which one")
+	assert.NotContains(t, inbox(renewed.Credential), "which one")
+
+	code, body = s.humanPost("/v1/external-stewards/second/revoke", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
+	setExternalStewards(t, false)
+	require.Equal(t, http.StatusNotFound, send(map[string]any{"to": "steward", "body": "off"}).Code)
+	setExternalStewards(t, true)
+
+	summoned := testharness.Serve(s.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
+	})))
+	require.Equal(t, http.StatusOK, summoned.Code, summoned.Body.String())
+	rec = send(map[string]any{"to": "steward", "body": "for the built-in"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, inbox(renewed.Credential), "for the built-in", "a running built-in keeps the address")
+}
