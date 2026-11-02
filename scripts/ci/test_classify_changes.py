@@ -22,6 +22,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 SCRIPT = HERE / "classify-changes.py"
 
+# Importing the module must not leave a __pycache__ in the checkout.
+sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("classify_changes", SCRIPT)
 cc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cc)
@@ -46,6 +48,8 @@ SOURCES = {
     "pkg/claude/agentd/notunix.go": "//go:build !unix\n\npackage agentd\n",
     "pkg/claude/agentd/dashboard_tagged_test.go": "//go:build linux\n\npackage agentd\n",
     "pkg/hostmetrics/read.go": "package hostmetrics\n",
+    "pkg/claude/setup/setup.go": 'package setup\n\nfunc f() bool { return runtime.GOOS == "darwin" }\n',
+    "pkg/claude/setup/other.go": "package setup\n",
     "pkg/hostmetrics/read_darwin.go": "package hostmetrics\n",
     "pkg/claude/common/db/db.go": "package db\n",
     "pkg/claude/harness/harness.go": "package harness\n",
@@ -79,7 +83,8 @@ class PathPredicates(unittest.TestCase):
         for p in ("docs/paf/schema/v0.1/common.schema.json",
                   "docs/paf/examples/full-agent/signature.json",
                   "pkg/claude/agent/skills/review/SKILL.md", "skills/x/SKILL.md",
-                  "mkdocs.yaml", "docsx/a.md", "main.go"):
+                  "mkdocs.yaml", "docsx/a.md", "main.go", "docs/embed.go",
+                  "docs/embed_darwin.go", "docs/learn/x.go"):
             self.assertFalse(cc.is_doc(p), p)
 
     def test_is_full(self):
@@ -95,7 +100,8 @@ class PathPredicates(unittest.TestCase):
     def test_is_known(self):
         for p in ("pkg/a/b.go", "cmd/x/main.go", "main.go", "scripts/lib/smoke/a.sh",
                   "skills/a/SKILL.md", ".claude/settings.json", ".golangci.yml",
-                  "docs/paf/schema/x.json", "docs/x.md", "README.md", "LICENSE"):
+                  "docs/paf/schema/x.json", "docs/x.md", "README.md", "LICENSE",
+                  "docs/embed.go"):
             self.assertTrue(cc.is_known(p), p)
         for p in ("verify.sh", ".goreleaser.yaml", "Makefile", "vendor/x.go",
                   "internal/x.go", "foo/bar.txt", ".envrc"):
@@ -181,7 +187,8 @@ class PathPredicates(unittest.TestCase):
                      "//go:build !windows\n", "//go:build cgo\n",
                      "// +build linux\n", "package x\n\nimport \"C\"\n",
                      "package x\n\nimport (\n\t\"C\"\n\t\"os\"\n)\n",
-                     "// doc\n//go:build integration && darwin\n"):
+                     "// doc\n//go:build integration && darwin\n",
+                     'package x\n\nimport (\n\t"os"\n\t"C"\n)\n'):
             self.assertTrue(cc.go_source_is_platform(text), text)
         for text in ("package x\n", "//go:build integration\n", "//go:build ignore\n",
                      "// go:build darwin\n", "// mentions darwin in prose\n",
@@ -200,6 +207,15 @@ class PathPredicates(unittest.TestCase):
         for p in ("pkg/claude/agentd/handlers.go", "pkg/claude/agentd/integration.go",
                   "pkg/x/a.js", "pkg/x/data.json", "pkg/x/README.md"):
             self.assertFalse(cc.is_platform_file(p, read), p)
+        # Run-time OS branches count for the changed file itself...
+        self.assertTrue(cc.is_platform_file("pkg/claude/setup/setup.go", read))
+        self.assertTrue(cc.is_platform_file(
+            "pkg/x/a.go", lambda p: "x := runtime.GOARCH\n"))
+        self.assertFalse(cc.is_platform_file(
+            "pkg/x/a.go", lambda p: "// runtimeXGOOS goosey\n"))
+        # ...but do not make the whole package a platform package.
+        self.assertFalse(cc.is_platform_file("pkg/claude/setup/setup.go", read,
+                                             runtime_os=False))
         # Unreadable Go source is a doubt, and doubts run macOS.
         self.assertTrue(cc.is_platform_file("pkg/x/gone.go", lambda p: None))
         self.assertFalse(cc.is_platform_file("pkg/x/gone.txt", lambda p: None))
@@ -210,6 +226,7 @@ class PathPredicates(unittest.TestCase):
         for d in cc.PER_FILE_ONLY_DIRS:
             self.assertNotIn(d, dirs)
         self.assertNotIn("pkg/claude/common/db", dirs)
+        self.assertNotIn("pkg/claude/setup", dirs)
 
 
 class Decisions(unittest.TestCase):
@@ -330,6 +347,17 @@ class Decisions(unittest.TestCase):
                   "pkg/claude/harness/copilotfixture/testdata/1.0.77/sandbox_baseline_darwin.json"):
             self.assert_macos(p)
 
+    def test_runtime_os_branch_runs_macos_for_that_file_only(self):
+        self.assert_macos("pkg/claude/setup/setup.go")
+        self.assert_macos("pkg/claude/setup/other.go", want=False)
+
+    def test_go_under_docs_is_code(self):
+        for p in ("docs/embed.go", "docs/embed_test.go"):
+            mode, run, _ = self.decide([p, "docs/x.md"])
+            self.assertEqual(mode, "code", p)
+            self.assertTrue(run["lint"] and run["test"], p)
+        self.assert_macos("docs/embed_darwin.go")
+
     def test_platform_package_runs_macos_for_any_file(self):
         self.assert_macos("pkg/hostmetrics/read.go")
         self.assert_macos("pkg/hostmetrics/testdata/sample.txt")
@@ -382,6 +410,7 @@ POOL = [
     "pkg/claude/agentd/jstest/node_test.go", "pkg/claude/agentd/handlers.go",
     "pkg/claude/agentd/tray_darwin.go", "pkg/claude/agentd/tagged.go",
     "pkg/hostmetrics/read.go", "pkg/claude/session/launch.go",
+    "pkg/claude/setup/setup.go", "pkg/claude/setup/other.go", "docs/embed.go",
     "pkg/claude/common/db/db.go", "pkg/claude/harness/pifixture/pi.go",
     "scripts/lib/smoke/common.sh", "docs/paf/schema/x.json",
     ".github/workflows/ci.yml", "go.sum", "verify.sh",
@@ -525,6 +554,24 @@ class GitPlumbing(unittest.TestCase):
         out = self.outputs(self.base, no_go=True)
         self.assertEqual(out["mode"], "code")
         self.assertTrue(any(e["os"] == MACOS for e in out["matrix"]))
+
+    def test_removed_build_constraint_is_platform(self):
+        self.write("pkg/claude/agentd/tagged.go", "package agentd\n")
+        self.commit("drop the constraint")
+        out = self.outputs(self.base, no_go=True)
+        self.assertTrue(any(e["os"] == MACOS for e in out["matrix"]))
+
+    def test_added_build_constraint_is_platform(self):
+        self.write("pkg/claude/agentd/plain.go", "//go:build linux\n\npackage agentd\n")
+        self.commit("add a constraint")
+        out = self.outputs(self.base, no_go=True)
+        self.assertTrue(any(e["os"] == MACOS for e in out["matrix"]))
+
+    def test_plain_agentd_edit_skips_macos(self):
+        self.write("pkg/claude/agentd/plain.go", "package agentd // edited\n")
+        self.commit("edit")
+        out = self.outputs(self.base, no_go=True)
+        self.assertFalse(any(e["os"] == MACOS for e in out["matrix"]))
 
     def test_platform_package_from_head_tree(self):
         self.write("pkg/hostmetrics/read.go", "package hostmetrics // edited\n")

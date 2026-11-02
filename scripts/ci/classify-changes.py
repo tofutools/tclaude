@@ -85,11 +85,15 @@ SANDBOX_NAME = re.compile(
 # suffix. A file naming any of them, or `cgo`, behaves differently per OS.
 GOOS = ("aix android darwin dragonfly freebsd hurd illumos ios js linux nacl "
         "netbsd openbsd plan9 solaris wasip1 windows zos unix").split()
-GOARCH = ("386 amd64 arm arm64 loong64 mips mips64 mips64le mipsle ppc64 "
-          "ppc64le riscv64 s390x wasm").split()
+GOARCH = ("386 amd64 amd64p32 arm armbe arm64 arm64be loong64 mips mipsle "
+          "mips64 mips64le mips64p32 mips64p32le ppc ppc64 ppc64le riscv riscv64 "
+          "s390 s390x sparc sparc64 wasm").split()
 BUILD_LINE = re.compile(r"^//go:build (.*)$|^// \+build (.*)$", re.MULTILINE)
 OS_WORD = re.compile(r"\b(?:%s|cgo)\b" % "|".join(GOOS))
-CGO_IMPORT = re.compile(r'^import "C"$|^import \(\s*"C"', re.MULTILINE)
+CGO_IMPORT = re.compile(r'^import "C"$|^import \([^)]*^\s*"C"\s*$', re.MULTILINE)
+# Code that branches on the OS at run time. Counted per changed file only, not
+# for platform_dirs: plenty of packages mention runtime.GOOS once.
+RUNTIME_OS = re.compile(r"\bruntime\.GO(?:OS|ARCH)\b")
 # Non-Go files that are platform-specific by name (testdata baselines, Seatbelt
 # profiles) or are native sources cgo compiles.
 PLATFORM_NAME = re.compile(r"darwin|macos|seatbelt|\.sb$", re.IGNORECASE)
@@ -130,6 +134,10 @@ JOBS = ("lint", "sandbox-v2-smoke", "sandbox-v2-seatbelt-smoke", "test",
 
 
 def is_doc(path):
+    # docs/ is also a Go package (docs/embed.go embeds the tree for the
+    # knowledge base); its Go source is code.
+    if path.endswith(".go"):
+        return False
     # These published artifacts also drive schema/signature package tests.
     if path.startswith(("docs/paf/schema/", "docs/paf/examples/")):
         return False
@@ -143,7 +151,8 @@ def is_full(path):
 
 
 def is_known(path):
-    return is_doc(path) or path.startswith(CODE_PREFIXES) or path in CODE_EXACT
+    return (is_doc(path) or path.startswith(CODE_PREFIXES) or path in CODE_EXACT
+            or (path.startswith("docs/") and path.endswith(".go")))
 
 
 def is_ui(path):
@@ -200,9 +209,11 @@ def go_source_is_platform(text):
     return bool(CGO_IMPORT.search(text))
 
 
-def is_platform_file(path, read):
+def is_platform_file(path, read, runtime_os=True):
     """True when the file compiles or behaves differently per OS. `read`
-    returns the file's text (head, or base when deleted), or None."""
+    returns the file's text, or None when unreadable. For a changed file it
+    returns every version that exists (head and base joined), so dropping a
+    build constraint counts as much as adding one."""
     name = basename(path)
     if name.endswith(NATIVE_EXT) or PLATFORM_NAME.search(name):
         return True
@@ -212,7 +223,9 @@ def is_platform_file(path, read):
         return True
     text = read(path)
     # Unreadable Go source is a doubt; doubts run macOS.
-    return text is None or go_source_is_platform(text)
+    if text is None:
+        return True
+    return go_source_is_platform(text) or (runtime_os and bool(RUNTIME_OS.search(text)))
 
 
 def platform_dirs(go_files, read):
@@ -223,7 +236,7 @@ def platform_dirs(go_files, read):
         d = dirname(path)
         if d in dirs or d in PER_FILE_ONLY_DIRS:
             continue
-        if is_platform_file(path, read):
+        if is_platform_file(path, read, runtime_os=False):
             dirs.add(d)
     return dirs
 
@@ -244,11 +257,13 @@ def needs_macos(path, read, plat_dirs, go_dirs):
     return owner_dir(path, go_dirs) in plat_dirs
 
 
-def classify(paths, read, go_files, affected):
+def classify(paths, read, go_files, affected, tree_read=None):
     """Pure decision over the changed paths.
 
-    read(path) -> str|None: the file's text (head, else base).
+    read(path) -> str|None: a changed file's text, every version that exists
+        (head and base) joined; None when neither is readable.
     go_files: every .go path in the head tree (for platform_dirs).
+    tree_read(path) -> str|None: a head-tree file's text; defaults to read.
     affected(pkg) -> bool: does the change reach pkg's test closure; must
         return True when it cannot tell.
     Returns (mode, run: {job: bool}, matrix: [ {os, shard} ], reasons: [str]).
@@ -279,7 +294,7 @@ def classify(paths, read, go_files, affected):
     code = [p for p in paths if not is_doc(p)]
     run = {"lint": True, "sandbox-v2-smoke": True, "test": True}
 
-    plat_dirs = platform_dirs(go_files, read)
+    plat_dirs = platform_dirs(go_files, tree_read or read)
     go_dirs = {dirname(p) for p in go_files}
     mac = [p for p in code if needs_macos(p, read, plat_dirs, go_dirs)]
     run["sandbox-v2-seatbelt-smoke"] = bool(mac)
@@ -324,13 +339,15 @@ def make_reader(base, head):
     cache = {}
 
     def read(path):
+        """Every version of a changed file that exists, joined: a build
+        constraint present on either side makes the change platform code."""
         if path not in cache:
-            cache[path] = None
+            versions = []
             for rev in (head, base):
                 res = git("show", f"{rev}:{path}", check=False)
                 if res.returncode == 0:
-                    cache[path] = res.stdout.decode("utf-8", "replace")
-                    break
+                    versions.append(res.stdout.decode("utf-8", "replace"))
+            cache[path] = "\n".join(versions) if versions else None
         return cache[path]
     return read
 
@@ -340,7 +357,7 @@ def head_go_files(head):
     return [p.decode() for p in out.split(b"\0") if p.endswith(b".go")]
 
 
-def make_bulk_reader(base, head, go_files):
+def make_tree_reader(head, go_files):
     """Prefetch every head .go file in one `git cat-file --batch` so scanning
     the tree for platform packages stays one subprocess."""
     texts = {}
@@ -357,8 +374,7 @@ def make_bulk_reader(base, head, go_files):
             size = int(header[2])
             texts[path] = data[pos:pos + size].decode("utf-8", "replace")
             pos += size + 1
-    fallback = make_reader(base, head)
-    return lambda path: texts[path] if path in texts else fallback(path)
+    return texts.get
 
 
 def make_affected(base, head):
@@ -389,9 +405,9 @@ def main(argv):
         head = git("rev-parse", head).stdout.decode().strip()
         paths = changed_paths(base, head)
         go_files = head_go_files(head)
-        read = make_bulk_reader(base, head, go_files)
         mode, run, matrix, reasons = classify(
-            paths, read, go_files, make_affected(base, head))
+            paths, make_reader(base, head), go_files, make_affected(base, head),
+            tree_read=make_tree_reader(head, go_files))
     except subprocess.CalledProcessError as err:
         sys.stderr.write(f"classify-changes: {err} {err.stderr!r}\n")
         sys.exit(1)

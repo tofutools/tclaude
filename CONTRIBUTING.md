@@ -73,8 +73,8 @@ so a job the change cannot need never claims a runner:
   session and harness-launch code, which also runs the filtered-proxy and
   proxy-posture smokes. The Copilot, Gemini and pi smokes run when
   `scripts/ci/affected` says the change reaches their fixture package. Lint
-  type-checks every package as `GOOS=darwin` too, so a darwin compile break
-  outside the cgo-only packages fails on Linux.
+  also type-checks every package and its tests as `GOOS=darwin`
+  (`scripts/ci/darwin-vet.sh`), so a darwin compile break fails on Linux.
 - **full**: `.github/`, `scripts/ci/`, `scripts/test.sh`, `go.mod`, `go.sum`,
   `mise.toml`, an unknown path or an empty diff — everything runs.
 
