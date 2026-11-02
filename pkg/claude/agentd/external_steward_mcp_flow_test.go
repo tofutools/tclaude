@@ -228,9 +228,11 @@ func TestExternalStewardMCP_NoDashboardIsPlain(t *testing.T) {
 	s := newExternalStewardFlow(t, true)
 	issued := s.create("assistant")
 	session := s.mcpSession(issued.Credential)
+	agentd.ResetDashboardGuideForTest()
+	t.Cleanup(agentd.ResetDashboardGuideForTest)
 
 	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardView, nil), `"known":false`)
-	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardCue, map[string]any{"tab": "groups"}), `"dashboard_open":false`)
+	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardCue, map[string]any{"tab": "groups"}), `"dashboard_on_screen":false`)
 
 	refused, isError := mcpCall(t, session, stewardtools.DashboardCapture, nil)
 	require.True(t, isError)
@@ -266,8 +268,17 @@ func TestExternalStewardMCP_DashboardNamesTheAssistant(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		return resp.Capture
 	}
-	ping()
-	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardCue, map[string]any{"tab": "groups"}), `"dashboard_open":true`)
+	present := func(visible bool) {
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
+			map[string]any{"client": "tab", "focused": visible, "visible": visible}))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	present(false)
+	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardCue, map[string]any{"tab": "groups"}), `"dashboard_on_screen":false`,
+		"a tab in the background is open but nobody sees it")
+	agentd.ResetDashboardGuideForTest()
+	present(true)
+	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardCue, map[string]any{"tab": "groups"}), `"dashboard_on_screen":true`)
 	snapReq := testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil)
 	snapReq.Header.Set("Origin", "http://127.0.0.1:0")
 	snapshot := testharness.Serve(dash, snapReq)

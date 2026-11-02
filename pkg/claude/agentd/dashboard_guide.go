@@ -357,9 +357,7 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 	}
 	guideState.Unlock()
 	captureState.Lock()
-	_, dashboardOpen := captureTarget(now)
-	_, polled := dashboardLiveness()
+	client, _ := captureTarget(now)
 	captureState.Unlock()
-	dashboardOpen = dashboardOpen || (!polled.IsZero() && now.Sub(polled) <= capturePollWindow)
-	writeJSON(w, http.StatusOK, map[string]any{"id": cue.ID, "expires_at": cue.ExpiresAt, "dashboard_open": dashboardOpen})
+	writeJSON(w, http.StatusOK, map[string]any{"id": cue.ID, "expires_at": cue.ExpiresAt, "dashboard_on_screen": client != ""})
 }

@@ -133,6 +133,8 @@ func TestTool_ArgumentsReachTheRoute(t *testing.T) {
 	callTool(t, session, stewardtools.Reply, map[string]any{"id": 7, "body": "ok"})
 	callTool(t, session, stewardtools.NotifyHuman, map[string]any{"subject": "s", "body": "b"})
 	callTool(t, session, stewardtools.ReadBoard, map[string]any{"id": "a/b", "since": 3})
+	callTool(t, session, stewardtools.ReadBoard, map[string]any{"id": "plan", "since": 0})
+	callTool(t, session, stewardtools.ReadBoard, map[string]any{"id": "plan"})
 	callTool(t, session, stewardtools.UpdateBoard, map[string]any{"id": "plan", "elements": []map[string]any{{"id": "e"}}})
 	callTool(t, session, stewardtools.SetTaskLink, map[string]any{"agent": "a/b", "url": "https://e.example"})
 	assert.Equal(t, []string{
@@ -143,6 +145,8 @@ func TestTool_ArgumentsReachTheRoute(t *testing.T) {
 		"POST /v1/messages/7/reply",
 		"POST /v1/notify-human",
 		"GET /v1/boards/a%2Fb?since=3",
+		"GET /v1/boards/plan?since=0",
+		"GET /v1/boards/plan",
 		"PATCH /v1/boards/plan",
 		"POST /v1/agent/a%2Fb/task",
 	}, paths)
@@ -150,6 +154,8 @@ func TestTool_ArgumentsReachTheRoute(t *testing.T) {
 	assert.Equal(t, "worker", bodies[0]["to"])
 	assert.Equal(t, "ok", bodies[1]["body"])
 	assert.Equal(t, "b", bodies[2]["body"])
+	assert.Equal(t, []any{map[string]any{"id": "e"}}, bodies[3]["elements"])
+	assert.Equal(t, "https://e.example", bodies[4]["url"])
 }
 
 type activityDaemon struct {

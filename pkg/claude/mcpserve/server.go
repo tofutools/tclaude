@@ -55,7 +55,7 @@ type notifyHumanInput struct {
 
 type readBoardInput struct {
 	ID    string `json:"id" jsonschema:"The board's ID"`
-	Since int64  `json:"since,omitempty" jsonschema:"Only elements changed after this board version, tombstones included"`
+	Since *int64 `json:"since,omitempty" jsonschema:"Only elements changed after this board version, tombstones included. Without it, the live elements"`
 }
 
 type createBoardInput struct {
@@ -155,8 +155,8 @@ func register(server *mcp.Server, c *Client, tool stewardtools.Tool) {
 
 func boardPath(in readBoardInput) string {
 	path := "/v1/boards/" + url.PathEscape(in.ID)
-	if in.Since > 0 {
-		path += "?since=" + strconv.FormatInt(in.Since, 10)
+	if in.Since != nil {
+		path += "?since=" + strconv.FormatInt(*in.Since, 10)
 	}
 	return path
 }
@@ -209,7 +209,8 @@ func send[In any](c *Client, method string, request func(In) (string, any)) mcp.
 }
 
 // dashboardCapture hands the screen over as an image, the form an assistant can
-// look at. The form text is a separate grant and this tool never asks for it.
+// look at. A form's text sent apart from the image is a separate grant, and this
+// tool never asks for it. The image still shows what is typed on screen.
 func (c *Client) dashboardCapture(ctx context.Context, _ *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
 	raw, err := c.call(ctx, http.MethodPost, "/v1/dashboard/capture", map[string]any{})
 	if err != nil {

@@ -118,7 +118,7 @@ func List() []Tool {
 		},
 		{
 			Name:        ReadBoard,
-			Description: "Read a board's elements. Works with no dashboard open.",
+			Description: "Read a board's elements. Works with no dashboard open. Read again to see what the human changed: nothing announces board edits.",
 			Routes:      []string{"GET /v1/boards/{id}"},
 			Access:      "Needs boards.read",
 			Permissions: []string{"boards.read"},
@@ -151,7 +151,7 @@ func List() []Tool {
 		{
 			Name: DashboardCue,
 			Description: "Move the human's dashboard to a view, or highlight something there with a note. A cue expires, and " +
-				"nobody sees it if no dashboard opens in time: dashboard_open in the answer says whether one is open now.",
+				"nobody sees it if nobody gets to it in time: dashboard_on_screen in the answer says whether a dashboard is showing now.",
 			Routes:      []string{"POST /v1/dashboard/cue"},
 			Access:      "Needs dashboard.guide",
 			Permissions: []string{"dashboard.guide"},
@@ -159,8 +159,8 @@ func List() []Tool {
 		},
 		{
 			Name: DashboardCapture,
-			Description: "See the human's dashboard as an image. The human is shown that it happened. It fails, and says " +
-				"why, when no dashboard is open or none is on screen.",
+			Description: "See the human's dashboard as an image, including what is typed into fields. The human is shown " +
+				"that it happened. It fails, and says why, when no dashboard is open or none is on screen.",
 			Routes:      []string{"POST /v1/dashboard/capture"},
 			Access:      "Off until you grant dashboard.capture, because the image goes to your assistant's provider",
 			Permissions: []string{"dashboard.capture"},
@@ -169,7 +169,7 @@ func List() []Tool {
 			Name:        SetTaskLink,
 			Description: "Set or clear the task link shown beside an agent in the dashboard.",
 			Routes:      []string{"POST /v1/agent/{agent}/task"},
-			Access:      "Needs agent.task, which comes with the Workers level, or owning a group with that agent in it",
+			Access:      "Needs agent.task, which comes with the Workers level, or owning every group that agent is in",
 			Permissions: []string{"agent.task"},
 			Writes:      true,
 		},

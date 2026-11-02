@@ -96,7 +96,7 @@ It reads the credential once when it starts, so restart it after a renewal.
 | `dashboard_view` | Reads which view your dashboard is on | Needs `dashboard.view.read` |
 | `dashboard_cue` | Moves your dashboard to a view or highlights something there | Needs `dashboard.guide` |
 | `dashboard_capture` | Sees your dashboard as an image | Off until you grant `dashboard.capture`, because the image goes to your assistant's provider |
-| `set_task_link` | Sets or clears the task link beside an agent | Needs `agent.task`, which comes with the Workers level, or owning a group with that agent in it |
+| `set_task_link` | Sets or clears the task link beside an agent | Needs `agent.task`, which comes with the Workers level, or owning every group that agent is in |
 
 So taking `message.direct` away doesn't stop it messaging agents it can reach through a group.
 
@@ -105,8 +105,15 @@ So taking `message.direct` away doesn't stop it messaging agents it can reach th
 Boards work with no dashboard open. The dashboard tools depend on your page, and say so
 when it isn't there. `dashboard_view` reports `known: false` if no dashboard has reported
 since the daemon started. `dashboard_capture` fails and gives the reason. `dashboard_cue`
-answers `dashboard_open: false`, and a cue expires unseen if you don't open one in time.
-`dashboard_capture` never includes form text, and there is no tool that fills forms.
+answers `dashboard_on_screen: false` when no dashboard is showing, and a cue expires
+unseen if you don't get to it in time.
+
+`dashboard_capture` doesn't send a form's text separately, but the image shows whatever is
+on screen, including what's typed into fields. Passwords and fields marked secret are
+masked. No tool fills forms.
+
+Board edits don't reach it as mail, and `wait_for_activity` doesn't watch boards, so it
+reads a board again to see what you changed.
 
 Nothing wakes an idle assistant: it only sees new mail when it asks. Call `wait_for_activity`
 in a loop to stay current, passing back the `cursor` from the last call. Past 10 unread
