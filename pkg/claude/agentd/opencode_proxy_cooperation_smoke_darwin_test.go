@@ -232,6 +232,17 @@ func TestOpenCodeProxyCooperationDarwin(t *testing.T) {
 	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stopOpenCodeRuntime(openCodeDarwinProxySessionID) })
+	if tree, psErr := exec.Command("ps", "-axo", "pid,ppid,pgid,stat,command").CombinedOutput(); psErr == nil {
+		var lines []string
+		for _, line := range strings.Split(string(tree), "\n") {
+			lower := strings.ToLower(line)
+			if strings.Contains(lower, "opencode") || strings.Contains(lower, "tclaude") ||
+				strings.Contains(lower, "sandbox-exec") {
+				lines = append(lines, line)
+			}
+		}
+		t.Logf("process tree after launch (root pid %d):\n%s", launch.PID, strings.Join(lines, "\n"))
+	}
 
 	require.Eventually(t, func() bool {
 		_, statErr := os.Stat(fixture.probeMarker)
@@ -243,9 +254,15 @@ func TestOpenCodeProxyCooperationDarwin(t *testing.T) {
 		launch, fixture.cwd, "reply with exactly ok", openCodeDarwinProxyModel, ""))
 	promptSent := time.Now()
 	deadline := promptSent.Add(120 * time.Second)
+	rootLost := false
 	for !openCodeDarwinProxyDecisionsInclude(
 		readOpenCodeDarwinProxyDecisions(t, fixture.supervisorHome),
 		"http", openCodeDarwinProxyOrigin, 443, "allowed") {
+		if !rootLost && launch != nil && !session.IsProcessAlive(launch.PID) {
+			rootLost = true
+			t.Logf("launch root pid %d (the proxy launcher) is gone %s after the prompt",
+				launch.PID, time.Since(promptSent).Round(time.Millisecond))
+		}
 		if time.Now().After(deadline) {
 			// Read everything at failure time: a message built before the wait
 			// would only show the state from before the prompt was sent.
@@ -596,6 +613,41 @@ func dumpOpenCodeDarwinProxyDiagnostics(
 			t.Logf("OpenCode GET %s:\n%s", endpoint,
 				openCodeDarwinProxyDiagnosticGET(launch.ServerURL+endpoint, runtime))
 		}
+	}
+	if launch != nil {
+		t.Logf("launch root pid %d alive=%v", launch.PID, session.IsProcessAlive(launch.PID))
+	}
+	configPath := filepath.Join(fixture.supervisorHome, ".tclaude", "data", "config.json")
+	if raw, err := os.ReadFile(configPath); err == nil {
+		t.Logf("%s:\n%s", configPath, raw)
+	} else {
+		t.Logf("%s: %v", configPath, err)
+	}
+	// Every tclaude log under the smoke root, wherever a process's HOME put it.
+	_ = filepath.WalkDir(filepath.Dir(fixture.supervisorHome),
+		func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil || entry.IsDir() ||
+				!strings.HasPrefix(entry.Name(), "output.log") {
+				return nil
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			var matched []string
+			for _, line := range strings.Split(string(raw), "\n") {
+				if strings.Contains(line, "proxy") || strings.Contains(line, "launcher") ||
+					strings.Contains(line, "\"level\":\"ERROR\"") ||
+					strings.Contains(line, "\"level\":\"WARN\"") {
+					matched = append(matched, line)
+				}
+			}
+			t.Logf("log %s (%d bytes), proxy/launcher/WARN/ERROR lines:\n%s",
+				path, len(raw), strings.Join(matched, "\n"))
+			return nil
+		})
+	if all, err := exec.Command("ps", "-axo", "pid,ppid,pgid,stat,lstart,command").CombinedOutput(); err == nil {
+		t.Logf("all processes:\n%s", headOpenCodeDarwinProxyDiagnostic(all, 48<<10))
 	}
 	listing, err := exec.Command("ps", "-axo", "pid,ppid,stat,etime,%cpu,command").CombinedOutput()
 	if err != nil {
