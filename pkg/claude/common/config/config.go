@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -270,11 +271,21 @@ const TriggersDisabledMessage = "trigger commands are disabled; set features.tri
 // operator has turned Collab off.
 const CollabDisabledMessage = "Collab is turned off; set features.collab=true in tclaude config to use this command"
 
+// collabUnsetOff makes an unset features.collab read as off in this process.
+// The daemon sets it when it could not store the upgrade default, so a run that
+// can't tell whether the operator had turned Collab off fails closed.
+var collabUnsetOff atomic.Bool
+
+// SetCollabUnsetOff sets whether an unset features.collab reads as off in this
+// process; see collabUnsetOff.
+func SetCollabUnsetOff(off bool) { collabUnsetOff.Store(off) }
+
 // CollabEnabled reports whether Collab is on: it is unless features.collab is
-// explicitly false. Nil-safe.
+// explicitly false, or unset in a daemon that could not store its default.
+// Nil-safe.
 func (c *Config) CollabEnabled() bool {
 	if c == nil || c.Features == nil || c.Features.Collab == nil {
-		return true
+		return !collabUnsetOff.Load()
 	}
 	return *c.Features.Collab
 }

@@ -15,7 +15,8 @@ import (
 // turned Collab on and then off again, and it stays off. An absent key with no
 // traces means Collab was never used, and it turns on, which only shows UI.
 // Either way the value is stored, so this decides only once; only that key is
-// written. A failed read decides nothing and leaves the key for the next start.
+// written. A failed read stores nothing and leaves the key for the next start;
+// until then this daemon reads the unset key as off.
 // It runs before the daemon serves anything, and cfg is updated to match.
 func resolveCollabDefault(cfg *config.Config) {
 	if cfg == nil || (cfg.Features != nil && cfg.Features.Collab != nil) {
@@ -26,7 +27,10 @@ func resolveCollabDefault(cfg *config.Config) {
 		return !traces, err
 	})
 	if err != nil {
-		slog.Warn("collab: store the default failed; deciding next start", "error", err)
+		// Fail closed: this run can't tell whether the operator had turned
+		// Collab off, and on would re-open what they closed.
+		config.SetCollabUnsetOff(true)
+		slog.Warn("collab: store the default failed; off for this run, deciding next start", "error", err)
 		return
 	}
 	if cfg.Features == nil {

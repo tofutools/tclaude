@@ -92,3 +92,21 @@ func TestResolveCollabDefault(t *testing.T) {
 		}
 	})
 }
+
+// A daemon that can't store the default fails closed: it stores nothing and
+// reads the unset key as off until a later start decides.
+func TestResolveCollabDefaultFailsClosed(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(func() { config.SetCollabUnsetOff(false) })
+	require.NoError(t, os.MkdirAll(filepath.Dir(config.ConfigPath()), 0o700))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":`), 0o600))
+
+	cfg := &config.Config{}
+	resolveCollabDefault(cfg)
+	assert.False(t, cfg.CollabEnabled(), "the caller's config reads off")
+	assert.False(t, (&config.Config{}).CollabEnabled(), "every reader in the process reads unset as off")
+	assert.True(t, (&config.Config{Features: &config.FeaturesConfig{Collab: new(true)}}).CollabEnabled(), "an explicit on still reads on")
+	raw, err := os.ReadFile(config.ConfigPath())
+	require.NoError(t, err)
+	assert.Equal(t, `{"features":`, string(raw), "nothing is stored")
+}
