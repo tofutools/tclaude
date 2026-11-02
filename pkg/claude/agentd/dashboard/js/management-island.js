@@ -791,9 +791,9 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       attention=${packVisibilityAttention}
       entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
     <div class="sbx-network-controls">
-      <label class="sbx-network-control"><span class="sbx-network-control-kind">Traffic policy</span><span class="sbx-network-control-label">Baseline</span><${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/><span class="sbx-network-control-help">What destinations are permitted before individual rules are applied.</span></label>
-      <label class="sbx-network-control"><span class="sbx-network-control-kind">Filtering mechanism</span><span class="sbx-network-control-label">Engine</span><${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/><span class="sbx-network-control-help">How destination rules are enforced when the composed policy has them.</span></label>
-      <label class="sbx-network-control"><span class="sbx-network-control-kind">Network isolation</span><span class="sbx-network-control-label">Namespace</span><${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/><span class="sbx-network-control-help">Whether the agent shares host localhost and abstract Unix sockets.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Traffic policy</span><span class="sbx-network-control-label">Baseline</span><${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/><span class="sbx-network-control-help ui-hint">What destinations are permitted before individual rules are applied.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Filtering mechanism</span><span class="sbx-network-control-label">Engine</span><${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/><span class="sbx-network-control-help ui-hint">How destination rules are enforced when the composed policy has them.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Network isolation</span><span class="sbx-network-control-label">Namespace</span><${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/><span class="sbx-network-control-help ui-hint">Whether the agent shares host localhost and abstract Unix sockets.</span></label>
     </div>
     ${rules.namespace === 'private' && html`<p class="sbx-inline-note sbx-network-namespace-note"><strong>Private, routed:</strong> internet traffic is routed normally, while host localhost services, IDE bridges, and abstract Unix sockets are not shared. Requires tclaude’s sandbox on Linux.</p>`}
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
@@ -1255,7 +1255,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       id="profile-editor-sandbox-impl-cleared-row" role="alert">
       <span class="cron-create-label"></span>
       <div class="cron-create-target">
-        <div class="spawn-field-hint warn">${sandboxImplCleared.text}</div>
+        <div class="spawn-field-hint ui-hint warn">${sandboxImplCleared.text}</div>
       </div>
     </div>`}
     <${HelpField} id=${sandboxID}
@@ -1291,13 +1291,13 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       id=${`${profile ? 'profile' : 'role'}-editor-sandbox-info`}>
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="status">
-        ${sandboxInfo.map((message) => html`<div class="spawn-field-hint info" key=${message}>ℹ ${message}</div>`)}
+        ${sandboxInfo.map((message) => html`<div class="spawn-field-hint ui-hint info" key=${message}>ℹ ${message}</div>`)}
       </div>
     </div>
     ${autonomyWarnings.length > 0 && html`<div class="cron-create-row" id=${`${profile ? 'profile' : 'role'}-editor-autonomy-warning`}>
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="alert">
-        ${autonomyWarnings.map((warning) => html`<div class="spawn-field-hint warn" key=${warning}>${warning}</div>`)}
+        ${autonomyWarnings.map((warning) => html`<div class="spawn-field-hint ui-hint warn" key=${warning}>${warning}</div>`)}
       </div>
     </div>`}
     ${profile && html`<${HelpField} id="profile-editor-approval-reviewer" label="Approval reviewer" title="Controls who decides eligible approval requests; it does not change the approval policy or sandbox."
@@ -1319,7 +1319,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
           onInput=${(event) => change(setDraft, 'auto_compact_window', event.currentTarget.value)}
           placeholder="blank = model default; e.g. 450k" autocomplete="off" spellcheck="false" inputmode="numeric" />
         ${autoCompactWindowHint && html`<div
-          class=${`spawn-field-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>`}
+          class=${`spawn-field-hint ui-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>`}
       </div>
     </${Row}>`}
     ${profile && hEntry?.can_context_window_max && html`<${Row} label="Context max"
@@ -1329,7 +1329,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
           value=${draft.context_window_max}
           onInput=${(event) => change(setDraft, 'context_window_max', event.currentTarget.value)}
           placeholder="blank = assumed; e.g. 272000" autocomplete="off" spellcheck="false" inputmode="numeric" />
-        ${contextWindowMaxHint && html`<div class=${`spawn-field-hint${contextWindowMaxHint.warn ? ' warn' : ''}`}>${contextWindowMaxHint.text}</div>`}
+        ${contextWindowMaxHint && html`<div class=${`spawn-field-hint ui-hint${contextWindowMaxHint.warn ? ' warn' : ''}`}>${contextWindowMaxHint.text}</div>`}
       </div>
     </${Row}>`}
   `;
@@ -1393,7 +1393,7 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
     (role.permissions || []).length ? `Grants: ${role.permissions.map((grant) => roleGrantSlug(grant)).join(', ')}` : 'Grants: none']
     .filter(Boolean).join('\n\n');
   return html`<${Overlay} id="profile-editor-modal" labelledby="profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${saving ? null : submit} dirty=${draftDirty || usageChanged} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="profile-editor-title">${local ? wizWord('Custom launch — this agent only', 'Bespoke summons — this hero only') : options.cloneSourceName ? wizWord(`Clone profile: ${options.cloneSourceName}`, `Mirror loadout: ${options.cloneSourceName}`) : seed && options.editExisting !== false ? wizWord(`Edit profile: ${seed.name}`, `Edit loadout: ${seed.name}`) : wizWord('New spawn profile', 'New loadout')}</h3>
-    ${saveNodes.length > 0 && html`<${Row} label="Save on" title="A profile lives on one node; spawns on that node can use it."><div class="cron-create-target"><${UISelect} id="profile-editor-save-on" value=${saveOn} onChange=${(event) => setSaveOn(event.currentTarget.value)}>${saveNodes.map((node) => html`<option key=${node.id} value=${node.id}>${node.name}</option>`)}<//>${saveNode?.operatorOnly && html`<div class="spawn-field-hint" id="profile-editor-save-on-hint">${saveNode.name} saves it as operator-only. Only ${saveNode.name}'s operator can change that.</div>`}</div></${Row}>`}
+    ${saveNodes.length > 0 && html`<${Row} label="Save on" title="A profile lives on one node; spawns on that node can use it."><div class="cron-create-target"><${UISelect} id="profile-editor-save-on" value=${saveOn} onChange=${(event) => setSaveOn(event.currentTarget.value)}>${saveNodes.map((node) => html`<option key=${node.id} value=${node.id}>${node.name}</option>`)}<//>${saveNode?.operatorOnly && html`<div class="spawn-field-hint ui-hint" id="profile-editor-save-on-hint">${saveNode.name} saves it as operator-only. Only ${saveNode.name}'s operator can change that.</div>`}</div></${Row}>`}
     <${Row} label="Name" hidden=${local}><input id="profile-editor-name" value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="profile name — kebab-or-snake-case label" autofocus autocomplete="off" spellcheck="false" /></${Row}>
     <${Row} label="Aliases" hidden=${local} title="Alternate handles for this same profile. Separate multiple aliases with commas."><input id="profile-editor-aliases" value=${draft.aliases_text} onInput=${(event) => change(setDraft, 'aliases_text', event.currentTarget.value)} placeholder="e.g. codex-reviewer, cold-reviewer" autocomplete="off" spellcheck="false" /></${Row}>
     <${Row} label="Disabled" hidden=${local} title="Keep this profile visible and editable, but block every spawn that would use it."><input id="profile-editor-disabled" type="checkbox" checked=${draft.disabled} onChange=${(event) => change(setDraft, 'disabled', event.currentTarget.checked)} /></${Row}>
@@ -1414,11 +1414,11 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
         <button data-ui-exempt type="button" class="role-chip-inspect" title=${role.missing ? 'This role is missing from the library' : roleTitle(role)} onClick=${() => setInspectedRole(inspectedRole === role.name ? '' : role.name)}>${role.name}</button>
         <button data-ui-exempt type="button" class="role-chip-remove" aria-label=${`Remove role ${role.name}`} onClick=${() => { setInspectedRole(inspectedRole === role.name ? '' : inspectedRole); change(setDraft, 'role_refs', draft.role_refs.filter((name) => name !== role.name)); }}>×</button>
       </span>`)}<${UISelect} id="profile-editor-role-add" value="" aria-label="Add role" onChange=${(event) => { const value = event.currentTarget.value; if (value) change(setDraft, 'role_refs', [...draft.role_refs, value]); event.currentTarget.value = ''; }}><option value="">＋ Add role…</option>${roles.filter((role) => !draft.role_refs.includes(role.name)).map((role) => html`<option value=${role.name}>${role.name}${role.descr ? ` — ${role.descr}` : ''}</option>`)}<//></div>
-      <div class="spawn-field-hint">Hover or click a role to inspect its brief and grants.</div>
+      <div class="spawn-field-hint ui-hint">Hover or click a role to inspect its brief and grants.</div>
       ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>${inspected.missing ? '⚠ This role is no longer in the library.' : html`<div>${inspected.descr || ''}</div><div><b>Brief</b> ${inspected.brief || 'none'}</div><div><b>Grants</b> ${(inspected.permissions || []).length ? html`<span class="role-inspect-grants">${inspected.permissions.map((grant) => html`<code>${roleGrantSlug(grant)}${roleGrantScope(grant) ? ` · ${roleGrantScope(grant)}` : ''}</code>`)}</span>` : 'none'}</div>`}</div>`}
     </div></${Row}>
     ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role label', 'role', 'optional — routing/display label; defaults independently of the role preset'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
-    ${usageLinkable && !saveNode?.id && usageLink.loaded ? html`<div class="cron-create-row" id="profile-editor-usage-profiles-row" title="Usage profiles (budgets and alerts) added to every agent spawned from this profile, on top of its group's or the global default."><span class="cron-create-label">Usage profiles</span><div class="cron-create-target"><${ProfileChips} names=${usageCurrent} profiles=${usageLink.profiles} disabled=${saving} label="this spawn profile" onChange=${setUsageNames} onNew=${() => openUsageRulesManager({ tab: 'profiles', newProfile: true })}/><div class="spawn-field-hint">Added to each agent this profile spawns, on top of its group or global budget.</div></div></div>` : null}
+    ${usageLinkable && !saveNode?.id && usageLink.loaded ? html`<div class="cron-create-row" id="profile-editor-usage-profiles-row" title="Usage profiles (budgets and alerts) added to every agent spawned from this profile, on top of its group's or the global default."><span class="cron-create-label">Usage profiles</span><div class="cron-create-target"><${ProfileChips} names=${usageCurrent} profiles=${usageLink.profiles} disabled=${saving} label="this spawn profile" onChange=${setUsageNames} onNew=${() => openUsageRulesManager({ tab: 'profiles', newProfile: true })}/><div class="spawn-field-hint ui-hint">Added to each agent this profile spawns, on top of its group or global budget.</div></div></div>` : null}
     <div class="cron-create-row" hidden=${local} title="Saved prompts that open the task brief of agents spawned from this profile, in order, ahead of the initial message. They replace the group's default prompts."><span class="cron-create-label">Saved prompts</span><${SavedPromptChips} id="profile-editor-prompt-refs" node=${descriptor.node || ''} value=${draft.prompt_refs} onChange=${(refs) => change(setDraft, 'prompt_refs', refs)} confirmDiscard=${confirmDiscard}/></div>
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     <${Row} label="Profile context" title="Extra startup guidance delivered to every agent that resolves this profile. It is kept separate from the per-spawn task brief and group context."><textarea id="profile-editor-startup-context" value=${draft.startup_context} onInput=${(event) => change(setDraft, 'startup_context', event.currentTarget.value)} rows="5" placeholder="optional — model/profile-specific guidance injected into every spawn" spellcheck="false" /></${Row}>
@@ -1523,7 +1523,7 @@ function SandboxPreLaunchEditor({ blocks, setDraft, validation }) {
     return { ...draft, pre_launch };
   });
   return html`<div class="sbx-prelaunch-intro"><strong>Execution order:</strong> blocks run top to bottom in the launching shell.</div>
-    ${validation.profile.map((error, index) => html`<div key=${index} class="sbx-prelaunch-error" role="alert">${error}</div>`)}
+    ${validation.profile.map((error, index) => html`<div key=${index} class="sbx-prelaunch-error ui-error" role="alert">${error}</div>`)}
     <div class="sbx-prelaunch-list">${rows.map((block, index) => {
     const errors = validation.blocks[index] || { name: [], script: [], exports: [] };
     const nameErrorID = `sandbox-profile-editor-pre-launch-name-error-${index}`;
@@ -1549,21 +1549,21 @@ function SandboxPreLaunchEditor({ blocks, setDraft, validation }) {
             onClick=${() => remove(index)}>Remove<//>
         </div>
       </div>
-      ${errors.name.length > 0 && html`<div id=${nameErrorID} class="sbx-prelaunch-error" role="alert">${errors.name.join(' ')}</div>`}
+      ${errors.name.length > 0 && html`<div id=${nameErrorID} class="sbx-prelaunch-error ui-error" role="alert">${errors.name.join(' ')}</div>`}
       <label class="sbx-prelaunch-script">Script
         <textarea rows="8" value=${block.script || ''} placeholder=${'#!/usr/bin/env bash\nexport TOOL_HOME=/tmp/tool'} spellcheck="false"
           aria-invalid=${errors.script.length ? 'true' : null}
           aria-describedby=${errors.script.length ? scriptErrorID : null}
           onInput=${(event) => update(index, { script: event.currentTarget.value })}/>
       </label>
-      ${errors.script.length > 0 && html`<div id=${scriptErrorID} class="sbx-prelaunch-error" role="alert">${errors.script.join(' ')}</div>`}
+      ${errors.script.length > 0 && html`<div id=${scriptErrorID} class="sbx-prelaunch-error ui-error" role="alert">${errors.script.join(' ')}</div>`}
       <label class="sbx-prelaunch-exports">Exports <span>comma or space separated</span>
         <input value=${block._exports_text || ''} placeholder="PATH, TOOL_HOME" autocomplete="off" spellcheck="false"
           aria-invalid=${errors.exports.length ? 'true' : null}
           aria-describedby=${errors.exports.length ? exportsErrorID : null}
           onInput=${(event) => update(index, { _exports_text: event.currentTarget.value })}/>
       </label>
-      ${errors.exports.length > 0 && html`<div id=${exportsErrorID} class="sbx-prelaunch-error" role="alert">${errors.exports.join(' ')}</div>`}
+      ${errors.exports.length > 0 && html`<div id=${exportsErrorID} class="sbx-prelaunch-error ui-error" role="alert">${errors.exports.join(' ')}</div>`}
     </div>`;
   })}</div>
     <${Button} size="sm" class="sbx-add-row sbx-prelaunch-add" disabled=${rows.length >= 32}
@@ -1583,7 +1583,7 @@ function SandboxTmpfsEditor({ mounts, setDraft, validation }) {
     tmpfs: (draft.tmpfs || []).filter((_, i) => i !== index),
   }));
   return html`<div class="sbx-tmpfs-intro"><strong>Requires tclaude’s sandbox on Linux.</strong> Each mount is empty at launch, writable, and discarded when the agent exits. Nothing on the host is exposed by it.</div>
-    ${validation.profile.map((error, index) => html`<div key=${index} class="sbx-tmpfs-error" role="alert">${error}</div>`)}
+    ${validation.profile.map((error, index) => html`<div key=${index} class="sbx-tmpfs-error ui-error" role="alert">${error}</div>`)}
     <div class="sbx-tmpfs-list">${rows.map((row, index) => {
     const errors = validation.mounts[index] || { path: [], size: [] };
     const pathErrorID = `sandbox-profile-editor-tmpfs-path-error-${index}`;
@@ -1609,8 +1609,8 @@ function SandboxTmpfsEditor({ mounts, setDraft, validation }) {
       <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove temporary filesystem ${index + 1}`}
         onClick=${() => remove(index)}>×<//>
     </div>
-    ${errors.path.length > 0 && html`<div key=${`path-error-${index}`} id=${pathErrorID} class="sbx-tmpfs-error" role="alert">${errors.path.join(' ')}</div>`}
-    ${errors.size.length > 0 && html`<div key=${`size-error-${index}`} id=${sizeErrorID} class="sbx-tmpfs-error" role="alert">${errors.size.join(' ')}</div>`}`;
+    ${errors.path.length > 0 && html`<div key=${`path-error-${index}`} id=${pathErrorID} class="sbx-tmpfs-error ui-error" role="alert">${errors.path.join(' ')}</div>`}
+    ${errors.size.length > 0 && html`<div key=${`size-error-${index}`} id=${sizeErrorID} class="sbx-tmpfs-error ui-error" role="alert">${errors.size.join(' ')}</div>`}`;
   })}</div>
     <${Button} size="sm" class="sbx-add-row sbx-tmpfs-add" disabled=${rows.length >= 32}
       onClick=${() => setDraft((draft) => ({ ...draft, tmpfs: [

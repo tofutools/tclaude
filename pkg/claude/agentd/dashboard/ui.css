@@ -324,3 +324,17 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
 :where(.ui-empty-block) { display: block; padding: 14px 12px; }
 .ui-empty, .ui-empty-block { color: var(--ui-muted); font-size: 12px; font-style: italic; }
 .ui-empty-block { text-align: center; }
+
+/* Help and error text around fields and dialogs.
+     .ui-hint       the muted help line under or beside a field or option
+     .ui-error      an inline error message
+     .ui-error-box  an error banner: red edge, faint red wash
+   Text style only (the box adds its edge and wash); an area class keeps
+   placement and spacing, and a stronger state (a .warn variant) may still
+   recolour. Skins recolour --ui-muted and --ui-danger-text. */
+.ui-hint { color: var(--ui-muted); font-size: 11px; line-height: 1.4; }
+.ui-error { color: var(--ui-danger-text); font-size: 12px; line-height: 1.4; }
+.ui-error-box {
+  border-left: 3px solid var(--ui-danger); background: rgba(248, 81, 73, .08);
+  color: var(--ui-danger-text); font-size: 12px; line-height: 1.4;
+}

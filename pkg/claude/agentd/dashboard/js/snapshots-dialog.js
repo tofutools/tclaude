@@ -70,7 +70,7 @@ function CreatePanel({ actions, preset, onDone, onError }) {
     <${Field} label="Note"><input id="snapshot-create-note" value=${note} maxlength="1000" placeholder="optional, e.g. known good before the refactor" onInput=${(e) => setNote(e.currentTarget.value)} /></${Field}>
     <${Field} label="Expires"><input id="snapshot-create-expires" value=${expires} placeholder="e.g. 30d, 72h or never (default: library retention)" onInput=${(e) => setExpires(e.currentTarget.value)} /></${Field}>
     <label class="paf-check"><input type="checkbox" id="snapshot-create-history" checked=${history} onChange=${(e) => setHistory(e.currentTarget.checked)} />
-      <span>Include the conversation<span class="paf-hint">A busy agent is captured up to its last complete turn.</span></span></label>
+      <span>Include the conversation<span class="paf-hint ui-hint">A busy agent is captured up to its last complete turn.</span></span></label>
     <div class="paf-row-buttons"><button type="button" id="snapshot-create-submit" class="primary" disabled=${busy || !agent} onClick=${create}>${busy ? 'Taking…' : '📸 Take snapshot'}</button></div>
   </div>`;
 }
@@ -98,7 +98,7 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
   };
   return html`<div class="snap-panel" id="snapshot-spawn">
     <div class="paf-sec">Spawn from ${snap.name}</div>
-    <div class="paf-hint">Each agent is a new identity that continues from the snapshot's conversation; ${snap.agent_name || 'the original'} is untouched.</div>
+    <div class="paf-hint ui-hint">Each agent is a new identity that continues from the snapshot's conversation; ${snap.agent_name || 'the original'} is untouched.</div>
     <${Field} label="Group"><select id="snapshot-spawn-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
       <option value="">(pick a group)</option>${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}</select></${Field}>
     <${Field} label="Count"><input id="snapshot-spawn-count" type="number" min="1" max="20" value=${count} onInput=${(e) => setCount(e.currentTarget.value)} /></${Field}>
@@ -112,7 +112,7 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
         <option value="">(model: default)</option>${modelsFor(snapshot, harness).map((m) => html`<option key=${m} value=${m}>${m}</option>`)}</select>
     </span></div>
     <label class="paf-check"><input type="checkbox" id="snapshot-spawn-confirm-loss" checked=${confirmCut} onChange=${(e) => setConfirmCut(e.currentTarget.checked)} />
-      <span>Allow cutting the conversation<span class="paf-hint">A model with a smaller context window may keep only the start, the agent's summary and the newest turns; 25% or more needs this. The full history is saved beside each agent.</span></span></label>
+      <span>Allow cutting the conversation<span class="paf-hint ui-hint">A model with a smaller context window may keep only the start, the agent's summary and the newest turns; 25% or more needs this. The full history is saved beside each agent.</span></span></label>
     <div class="paf-row-buttons"><button type="button" id="snapshot-spawn-submit" class="primary" disabled=${busy || !group} onClick=${spawn}>${busy ? 'Spawning…' : 'Spawn'}</button></div>
   </div>`;
 }
@@ -184,14 +184,14 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
   const s = review?.summary;
   return html`<div class="snap-panel" id="snapshot-share">
     <div class="paf-sec">Share ${snap.name} on a Board</div>
-    ${boards && !boards.length ? html`<div class="paf-hint">This node is on no Board. Join or create one in ⚙ Fleet config → Boards.</div>` : html`
+    ${boards && !boards.length ? html`<div class="paf-hint ui-hint">This node is on no Board. Join or create one in ⚙ Fleet config → Boards.</div>` : html`
     <${Field} label="Board"><select id="snapshot-share-board" value=${board} disabled=${!!busy} onChange=${(e) => { changed(); setBoard(e.currentTarget.value); }}>
       ${(boards || []).map((b) => html`<option key=${b.id} value=${b.id}>${b.name || b.id}</option>`)}</select></${Field}>
     <div class="cron-create-row"><span class="cron-create-label">Recipients</span><span class="snap-recipients" id="snapshot-share-to">
-      ${members.length === 0 ? html`<span class="paf-hint">no other members</span>` : members.map((m) => html`<label key=${m.instance} class="paf-check">
+      ${members.length === 0 ? html`<span class="paf-hint ui-hint">no other members</span>` : members.map((m) => html`<label key=${m.instance} class="paf-check">
         <input type="checkbox" data-instance=${m.instance} checked=${to.includes(m.instance)} disabled=${!!busy} onChange=${(e) => toggle(m.instance, e.currentTarget.checked)} />
         <span>${m.label || m.name || m.instance}</span></label>`)}
-      <span class="paf-hint">Only these members can open it; every member sees that it exists. This node is always a recipient.</span></span></div>
+      <span class="paf-hint ui-hint">Only these members can open it; every member sees that it exists. This node is always a recipient.</span></span></div>
     <${Field} label="Expires"><select id="snapshot-share-expires" value=${expires} disabled=${!!busy} onChange=${(e) => { setExpires(e.currentTarget.value); changed(); }}>
       ${SHARE_TTLS.map((d) => html`<option key=${d} value=${d}>in ${d.replace('d', d === '1d' ? ' day' : ' days')}</option>`)}</select></${Field}>
     ${review?.flagged && html`<div class="paf-findings" id="snapshot-share-flagged">⚠ This snapshot has suspected credentials, so it cannot go on a board as it is.
@@ -237,7 +237,7 @@ function PublishPanel({ actions, snap, onDone, onError }) {
   const s = review?.summary;
   return html`<div class="snap-panel" id="snapshot-publish">
     <div class="paf-sec">Publish ${snap.name}</div>
-    <div class="paf-hint">Publishing always masks suspected credentials, replaces paths with placeholders, strips the agent's name, ids and repository, and drops the native history. It is signed with this node's pseudonymous publisher key, never its federation key.</div>
+    <div class="paf-hint ui-hint">Publishing always masks suspected credentials, replaces paths with placeholders, strips the agent's name, ids and repository, and drops the native history. It is signed with this node's pseudonymous publisher key, never its federation key.</div>
     <label class="paf-check"><input type="checkbox" id="snapshot-publish-stub" checked=${opts.stub_tool_results} onChange=${set('stub_tool_results')} /><span>Stub old tool results</span></label>
     <label class="paf-check"><input type="checkbox" id="snapshot-publish-reasoning" checked=${opts.drop_reasoning} onChange=${set('drop_reasoning')} /><span>Drop reasoning</span></label>
     <label class="paf-check"><input type="checkbox" id="snapshot-publish-media" checked=${opts.drop_media} onChange=${set('drop_media')} /><span>Drop images and documents</span></label>
@@ -262,16 +262,16 @@ function PolicyStatus({ policies }) {
     <table class="paf-member-table"><thead><tr><th>Target</th><th>Every</th><th>To</th><th>Agent</th><th>Last good</th><th>Status</th><th>Next due</th></tr></thead><tbody>
       ${policies.flatMap((p) => (p.agents?.length ? p.agents : [null]).map((a, i) => html`<tr key=${`${p.id}:${a?.agent || i}`} data-policy=${p.id}>
         <td>${i === 0 ? p.target : ''}</td><td>${i === 0 ? everyText(p.every_seconds) : ''}</td><td>${i === 0 ? (p.peer_label || p.dest?.peer || '') : ''}</td>
-        <td>${a?.agent || html`<span class="paf-hint">no agent yet</span>`}</td>
+        <td>${a?.agent || html`<span class="paf-hint ui-hint">no agent yet</span>`}</td>
         <td>${a ? (when(a.last_good) || '—') : ''}</td>
         <td>${!a ? '' : a.last_error ? html`<span class="gi-warn" title=${a.last_error}>⚠ error${a.failures ? ` ×${a.failures}` : ''}</span>`
-          : a.deferred ? html`<span class="paf-hint" title=${a.deferred}>deferred</span>`
-          : a.pending_offer ? html`<span class="paf-hint">sending…</span>` : html`<span class="paf-ok">ok</span>`}
+          : a.deferred ? html`<span class="paf-hint ui-hint" title=${a.deferred}>deferred</span>`
+          : a.pending_offer ? html`<span class="paf-hint ui-hint">sending…</span>` : html`<span class="paf-ok">ok</span>`}
           ${a?.findings ? html` <span class="gi-warn">${a.findings} finding${a.findings === 1 ? '' : 's'}</span>` : ''}</td>
         <td>${a ? (when(a.next_due) || '—') : ''}</td>
       </tr>`))}
     </tbody></table>
-    <div class="paf-hint">Set and remove policies with <code>tclaude agent snapshot policy</code>.</div>
+    <div class="paf-hint ui-hint">Set and remove policies with <code>tclaude agent snapshot policy</code>.</div>
   </div>`;
 }
 
@@ -319,10 +319,10 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
       : list.length === 0 ? html`<div class="empty" id="snapshots-empty">No snapshots yet. Take one here, from an agent's ⚙ menu, or with <code>tclaude agent snapshot create</code>.</div>`
       : html`<table class="paf-member-table" id="snapshots-list"><thead><tr><th>Name</th><th>Agent</th><th>Harness</th><th>Taken</th><th>Size</th><th>Expires</th><th></th></tr></thead><tbody>
         ${list.map((snap) => html`<tr key=${snap.name} data-snapshot=${snap.name} class=${p?.snap?.name === snap.name ? 'active' : ''}>
-          <td><div class="snap-trunc" title=${snap.name}><b>${snap.name}</b></div>${snap.note && html`<div class="paf-hint snap-trunc" title=${snap.note}>${snap.note}</div>`}</td>
+          <td><div class="snap-trunc" title=${snap.name}><b>${snap.name}</b></div>${snap.note && html`<div class="paf-hint ui-hint snap-trunc" title=${snap.note}>${snap.note}</div>`}</td>
           <td><div class="snap-trunc" title=${snap.agent_name}>${snap.agent_name}</div></td>
-          <td><div class="snap-trunc" title=${[snap.harness, snap.model].filter(Boolean).join(' · ')}>${[snap.harness, snap.model].filter(Boolean).join(' · ')}</div>${!snap.history ? html`<div class="paf-hint">no history</div>` : ''}</td>
-          <td title=${snap.created_at}>${when(snap.created_at)}${snap.state === 'last_complete_turn' ? html`<div class="paf-hint">last complete turn</div>` : ''}</td>
+          <td><div class="snap-trunc" title=${[snap.harness, snap.model].filter(Boolean).join(' · ')}>${[snap.harness, snap.model].filter(Boolean).join(' · ')}</div>${!snap.history ? html`<div class="paf-hint ui-hint">no history</div>` : ''}</td>
+          <td title=${snap.created_at}>${when(snap.created_at)}${snap.state === 'last_complete_turn' ? html`<div class="paf-hint ui-hint">last complete turn</div>` : ''}</td>
           <td>${bytesText(snap.bytes)}</td>
           <td>${snap.expires_at ? when(snap.expires_at) : 'never'}</td>
           <td class="snap-acts">

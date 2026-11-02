@@ -508,7 +508,7 @@ function StewardDownNotice({ pane, actions }) {
     <span><b>${pane.label || 'The Steward'}</b> is shut down. You can pick its conversation back up.</span>
     <${Button} size="sm" class="mux-btn" disabled=${busy} onClick=${resume}>Resume<//>
     <${Button} size="sm" class="mux-btn" disabled=${busy} onClick=${start}>${busy ? 'Starting…' : 'Start fresh'}<//>
-    ${error ? html`<span class="steward-shutdown-error" role="alert">${error}</span>` : null}
+    ${error ? html`<span class="steward-shutdown-error ui-error" role="alert">${error}</span>` : null}
   </div>`;
 }
 

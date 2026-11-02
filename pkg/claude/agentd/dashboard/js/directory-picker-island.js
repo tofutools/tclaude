@@ -104,7 +104,7 @@ function DirectoryOperationDialog({ operation, currentPath, actions, browse, onC
         onInput=${(event) => setValue(event.currentTarget.value)} />
     </label>
     <div class="directory-picker-action-path">${destination}</div>
-    <div role="alert" class="directory-picker-error">${error}</div>
+    <div role="alert" class="directory-picker-error ui-error">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
@@ -255,7 +255,7 @@ export function DirectoryPickerApp({ state, actions }) {
         onClick=${() => setOperation({ kind: 'create' })}>＋ New folder</button>
       <span class="directory-picker-count" role="status" aria-live="polite">${view ? count : ''}</span>
     </div>
-    ${typedOtherPath && html`<div class="directory-picker-hint">Press Enter to open the typed path.</div>`}
+    ${typedOtherPath && html`<div class="directory-picker-hint ui-hint">Press Enter to open the typed path.</div>`}
     <div ref=${listRef} id="directory-picker-folders" class="directory-picker-list"
       role=${selecting ? 'listbox' : 'list'} aria-label="Folders">
       ${visibleDirectories.map((directory, index) => {
@@ -283,7 +283,7 @@ export function DirectoryPickerApp({ state, actions }) {
         ${filtering ? 'No matching folders' : 'No subdirectories'}
       </p>`}
     </div>
-    <div role="alert" class="directory-picker-error">${error}</div>
+    <div role="alert" class="directory-picker-error ui-error">${error}</div>
     <div class="modal-buttons">
       <${Button} onClick=${close}>Cancel</${Button}>
       <span class="spacer"></span>

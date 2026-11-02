@@ -122,7 +122,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
         aria-label=${wizard ? 'Seal decrees' : 'Close rules'}
         disabled=${changing.size > 0} onClick=${actions.closeStandingOrders}>×</button>
     </div>
-    ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}</div>`}
     ${loading
       ? html`<div class="empty">Loading standing orders…</div>`
       : loadFailed
@@ -153,7 +153,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
                 : 'Standing orders are reusable instructions delivered when a chosen trigger occurs. Their scope and trigger remain editable in Automations.'}
             </div>`}
           </div>
-          <div class="group-standing-orders-first-hint">
+          <div class="group-standing-orders-first-hint ui-hint">
             <strong>${wizard ? 'Scrolls already bound elsewhere?' : 'Already have rules elsewhere?'}</strong>
             ${wizard
               ? ' When the archive holds decrees, it may be opened from here.'

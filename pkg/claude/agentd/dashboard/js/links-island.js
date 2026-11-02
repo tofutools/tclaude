@@ -372,7 +372,7 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
           </select>
         </label>`}
       ${!edit && targets && (target === 'peer' || !connected) && html`<${PeerOutcome} peer=${peer} group=${peerGroup} connected=${connected} reason=${targets.reason} />`}
-      ${remote && peer?.link_capable && typeof actions.openPropose === 'function' && html`<div class="proposal-hint">Want to share groups or link several at once?
+      ${remote && peer?.link_capable && typeof actions.openPropose === 'function' && html`<div class="proposal-hint ui-hint">Want to share groups or link several at once?
         <button type="button" class="fa-link" id="link-modal-propose" disabled=${busy}
           onClick=${() => actions.openPropose({ peer: peer.peer, replace: true })}>Propose several items…</button></div>`}
       <label class="cron-create-row">
@@ -479,7 +479,7 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
               onChange=${(event) => setMembers(group.name, event.currentTarget.checked)} /> include member list</label>`}
         </div>`)}
         <div class="proposal-sec"><span>Links</span><span>each direction is a separate edge</span></div>
-        ${!peerGroups.length && html`<div class="proposal-hint">${label} has not shared a group with you yet, so there is nothing to link to. Share yours and ${label} can propose links back.</div>`}
+        ${!peerGroups.length && html`<div class="proposal-hint ui-hint">${label} has not shared a group with you yet, so there is nothing to link to. Share yours and ${label} can propose links back.</div>`}
         ${pairs.map((pair, index) => html`<div key=${index} class="proposal-item proposal-pair">
           <select class="proposal-pair-ours" value=${pair.ours} disabled=${busy} onChange=${(event) => setPair(index, { ours: event.currentTarget.value })}>
             ${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}</select>
@@ -501,7 +501,7 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
         ${summary.length > 0 && html`<div class="proposal-preview" id="proposal-preview">
           <div class="proposal-sec"><span>What you're proposing</span></div>
           <ul>${summary.map((line, index) => html`<li key=${index}>${line}</li>`)}</ul>
-          <div class="proposal-hint">No other permission changes; nothing reaches further than these items.</div>
+          <div class="proposal-hint ui-hint">No other permission changes; nothing reaches further than these items.</div>
         </div>`}`}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">

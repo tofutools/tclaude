@@ -57,18 +57,18 @@ export function RemoteFilesPanel({ terminal, viewer, peer = 'the peer', fetchImp
       <span class="term-files-muted">Secret files, symlinks and files over 32 MiB are not listed.</span>
       <button type="button" class="term-files-link" id="term-files-close" aria-label="Close files" onClick=${onClose}>×</button>
     </div>
-    ${note && html`<div class="term-files-error" role="alert">${note}</div>`}
+    ${note && html`<div class="term-files-error ui-error" role="alert">${note}</div>`}
     ${preview ? html`<div class="term-files-preview" id="term-files-preview">
         <div class="term-files-head"><code>${preview.path}</code>
           <button type="button" class="term-files-link" id="term-files-preview-download" onClick=${() => download(preview.path)}>download</button>
           <button type="button" class="term-files-link" id="term-files-preview-back" onClick=${() => setPreview(null)}>← back to ${dir}</button></div>
         ${preview.loading ? html`<div class="term-files-muted">Loading…</div>`
-          : preview.error ? html`<div class="term-files-error" role="alert">${preview.error}</div>`
+          : preview.error ? html`<div class="term-files-error ui-error" role="alert">${preview.error}</div>`
           : preview.binary ? html`<div class="term-files-muted">This looks like a binary file; download it to open it.</div>`
           : preview.tooLarge ? html`<div class="term-files-muted">Too large to preview here; download it instead.</div>`
           : html`<pre class="term-files-text">${preview.text}</pre>`}
       </div>`
-    : listing?.error ? html`<div class="term-files-error" role="alert" id="term-files-error">${listing.error}</div>`
+    : listing?.error ? html`<div class="term-files-error ui-error" role="alert" id="term-files-error ui-error">${listing.error}</div>`
     : !listing ? html`<div class="term-files-muted">Loading…</div>`
     : !entries.length ? html`<div class="term-files-muted" id="term-files-empty">Nothing to show in this directory.</div>`
     : html`<table class="term-files-table" id="term-files-list"><tbody>

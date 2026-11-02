@@ -68,7 +68,7 @@ export function NotifyApp({ state, actions, documentRef = document }) {
           onChange=${(event) => { void actions.setEnabled(event.currentTarget.checked); }} /> <b>All notifications</b>
       </label>
       <div class="notify-pop-sep"></div>
-      <div class="notify-pop-hint" id="notify-pop-types-hint">Notify me when an agent…</div>
+      <div class="notify-pop-hint ui-hint" id="notify-pop-types-hint">Notify me when an agent…</div>
       ${NOTIFY_TYPES.map((type) => html`<label class="notify-pop-row" key=${type}>
         <input type="checkbox" data-notify-type=${type} checked=${settings.types[type]}
           onChange=${(event) => { void actions.setType(type, event.currentTarget.checked); }} /> ${TYPE_LABELS[type]}
@@ -95,7 +95,7 @@ export function NotifyApp({ state, actions, documentRef = document }) {
             selected=${settings.delivery === value}>${DELIVERY_LABELS[value]}</option>`)}
         <//>
       </label>
-      ${deliveryNote && html`<div class="notify-pop-hint" id="notify-pop-delivery-note">${deliveryNote}</div>`}
+      ${deliveryNote && html`<div class="notify-pop-hint ui-hint" id="notify-pop-delivery-note">${deliveryNote}</div>`}
       <div class="notify-pop-sep"></div>
       <${Button} size="sm" class="notify-pop-config" id="notify-pop-config"
         title="Open the Config tab for the full notifications settings (cooldown, custom command, advanced rules)."

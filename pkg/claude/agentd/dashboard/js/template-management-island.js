@@ -1036,7 +1036,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
           type="file"
           accept=".zip,.paf,application/zip,application/vnd.tclaude.paf+zip"
           onChange=${(event) => pickFile(event.currentTarget.files?.[0] || null)}
-          autofocus />${file && initialFile === file && html`<span class="paf-hint" id="group-import-dropped">${file.name}</span>`}</label
+          autofocus />${file && initialFile === file && html`<span class="paf-hint ui-hint" id="group-import-dropped">${file.name}</span>`}</label
       >${kind !== 'agent' && html`<label class="cron-create-row"
         ><span class="cron-create-label">Into dir</span
         ><input
@@ -1148,7 +1148,7 @@ export function GroupContextDialog({
       <div class="modal-meta" id="group-context-meta">
         group: ${descriptor.group}
       </div>
-      <p class="modal-hint">
+      <p class="modal-hint ui-hint">
         Shared guidance auto-injected into every agent spawned into this group,
         right after the spawn welcome. Multi-line is fine. Leave empty to clear
         it.
@@ -2633,7 +2633,7 @@ export function TemplateEditor({
                 onChange=${setUsageNames}
                 onNew=${() => openUsageRulesManager({ tab: 'profiles', newProfile: true })}
               />
-              <div class="spawn-field-hint">
+              <div class="spawn-field-hint ui-hint">
                 The deployed group's usage profiles. A member's spawn profile can
                 add to them, and an agent's own assignment replaces them.
               </div>

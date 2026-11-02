@@ -158,7 +158,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
         autocomplete="off" spellcheck=${false}
         placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only"
         onInput=${(event) => update('title', event.currentTarget.value)} />
-      <div id="edit-member-title-hint" class=${`spawn-field-hint${titleHint.warn ? ' warn' : ''}`}>${titleHint.text}</div>
+      <div id="edit-member-title-hint" class=${`spawn-field-hint ui-hint${titleHint.warn ? ' warn' : ''}`}>${titleHint.text}</div>
       <label class="edit-member-auto-row" title="Ask this agent / hero to pick a descriptive title itself via the agent-rename skill / CLI.">
         <input id="edit-member-auto" type="checkbox" checked=${auto} disabled=${busy}
           onChange=${(event) => setAuto(event.currentTarget.checked)} /> <span class="theme-copy-regular">Auto — let the agent choose its own title</span><span class="theme-copy-wizard">Auto — let the hero choose its own title</span>

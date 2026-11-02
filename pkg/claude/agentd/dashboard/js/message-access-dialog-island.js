@@ -156,7 +156,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     <h3 id="operator-message-title"><${Words}
       plain=${allLive ? 'Announce to all live agents' : 'Send message to agent'}
       wizard=${allLive ? '📯 Proclaim to all channeling heroes' : '✒ Send a missive to the hero'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/></h3>
-    <p class="modal-hint" id="operator-message-desc"><${Words}
+    <p class="modal-hint ui-hint" id="operator-message-desc"><${Words}
       plain=${allLive
         ? 'Sent once to every agent that is live when you submit. Offline agents are not queued.'
         : 'Queued through the agent mailbox, so incoming agent output cannot interfere with what you type.'}
@@ -180,7 +180,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
           onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/><//>
         <input ref=${fileInputRef} type="file" id="operator-message-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-        <span class="spawn-attachments-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
+        <span class="spawn-attachments-hint ui-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="operator-message-error" value=${error}/>
     <div class="modal-buttons"><${Button} id="operator-message-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
@@ -432,7 +432,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     <h3 id="message-create-title"><${Words}
       plain=${scopedGroup ? `Send a message to group “${scopedGroup}”` : 'Send a message'}
       wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/></h3>
-    <p id="message-create-desc" class="modal-hint"><${Words}
+    <p id="message-create-desc" class="modal-hint ui-hint"><${Words}
       plain=${scopedGroup ? `Delivers one immediate message to the members of “${scopedGroup}” ticked below. Leave From blank to send it as you, the operator.` : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Leave From blank on a group send to multicast as you, the operator.'}
       wizard=${scopedGroup ? `Delivers one immediate missive to the heroes of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a hero, or multicasts it to every hero in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
     <label class="cron-create-row"><span class="cron-create-label" title="Leave blank to multicast as the human operator; a solo message needs a sender agent">From</span><div class="cron-create-target"><div class=${`cron-target-input-row${lock.from ? ' locked-field' : ''}`}>
@@ -443,7 +443,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     ${!scopedGroup ? html`<label class="cron-create-row" id="message-create-target-row"><span class="cron-create-label"><${Words} plain="Target" wizard="Recipient"/></span>
       <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent} groupLocked=${lock.group || ''}/>
     </label>` : html`<div class="cron-create-row" id="message-create-group-row"><span class="cron-create-label">Recipients</span><div class="cron-create-target">
-      <p class="cleanup-hint" id="message-create-group-hint">${groupExists
+      <p class="cleanup-hint ui-hint" id="message-create-group-hint">${groupExists
         ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${preset === 'online' ? 'online members selected, following live presence; tick an offline member to queue it in their inbox.'
           : preset === 'all' ? 'all selected follows live membership.' : 'custom selection is retained across live updates.'}`
         : `Group “${scopedGroup}” is missing; sending is blocked.`}</p>
@@ -462,7 +462,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       </label>${openMemberPRs(member).length
         // Outside the <label>: a click inside a PR hover panel must not toggle the recipient.
         ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}</div>`) : html`<div class="ui-empty-block">no members in this group</div>`}</div>
-      <p class="cleanup-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · ${modClickText()} = narrow</p>
+      <p class="cleanup-hint ui-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · ${modClickText()} = narrow</p>
     </div></div>`}
     ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"
       title="Optional group role filter; blank or all reaches every selected member"><${Words} plain="Role filter" wizard="Class filter"/></span>
@@ -539,7 +539,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       addFiles(dropped);
     }}>
     <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the hero</span></h3>
-    <p id="human-reply-desc" class="modal-hint">${remote
+    <p id="human-reply-desc" class="modal-hint ui-hint">${remote
       ? `Sent through ${context.nodeName || 'its node'}, which queues your answer in this agent's inbox for delivery when its pane is ready. The agent sees it comes from this node's operator.`
       : "Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator."}</p>
     <label class="cron-create-row"><span class="cron-create-label">To</span><div class="cron-create-target"><div id="human-reply-to">
@@ -555,7 +555,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
           onClick=${() => fileInputRef.current?.click()}>📎 Attach files…<//>
         <input ref=${fileInputRef} type="file" id="human-reply-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-        <span class="spawn-attachments-hint">…or drag files here / paste a screenshot</span>
+        <span class="spawn-attachments-hint ui-hint">…or drag files here / paste a screenshot</span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="human-reply-error" value=${error}/><div class="modal-buttons">
       <${Button} id="human-reply-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}><span class="spacer"></span>
@@ -1158,7 +1158,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     </div>`}
     ${sudoMode && html`<${SudoLimits} uses=${sudoBundleUses} setUses=${setSudoBundleUses} usesBad=${!usesValid(sudoBundleUses.trim())} uncounted=${sudoBundleUses.trim() ? sudoUncounted : 0} duration=${duration} setDuration=${chooseDuration} reason=${reason} setReason=${setReason}
       maxSeconds=${policy.max_seconds} submit=${submit} />`}
-    <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
+    <${ErrorLine} id="perm-edit-error" className="sudo-grant-error ui-error" value=${error}/><div class="modal-buttons">
       ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${usesBad ? 'A use limit is a whole number from 1 to 1000' : sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
       <${Button} id="perm-edit-reset" disabled=${busy || !resettable}
         title=${`Set every slug back to Default (${sudoMode ? 'not picked' : 'inherit'}), including any the filter hides`}

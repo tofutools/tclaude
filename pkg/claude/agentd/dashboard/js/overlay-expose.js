@@ -268,7 +268,7 @@ function ExposeView({ win }) {
       <input ref=${input} class="overlay-expose-filter" type="text" placeholder="Type to filter windows" aria-label="Filter windows by title"
         role="combobox" aria-expanded="true" aria-controls="overlay-expose-list" aria-activedescendant=${shown[at] ? optionId(at) : undefined}
         value=${query} onInput=${(event) => { setQuery(event.currentTarget.value); setChosen(0); }} />
-      <span class="overlay-expose-hint">Enter or a click raises · Esc leaves</span>
+      <span class="overlay-expose-hint ui-hint">Enter or a click raises · Esc leaves</span>
     </div>
     ${spreading && html`<div ref=${stage} class="overlay-expose-stage" onPointerDown=${away}></div>`}
     <div class=${`overlay-expose-grid${spreading ? ' row' : ''}`} id="overlay-expose-list" role="listbox" aria-label=${spreading ? 'Minimized windows' : 'Windows'}

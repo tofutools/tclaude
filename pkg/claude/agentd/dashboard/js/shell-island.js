@@ -121,7 +121,7 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
         <${Button} size="sm" class="open-prs-add-person" title="Track another GitHub user’s open pull requests"
           onClick=${() => setAdding(true)}>＋ Add person<//>
       ` : null}
-      ${error ? html`<span class="open-prs-people-error" role="alert">${error}</span>` : null}
+      ${error ? html`<span class="open-prs-people-error ui-error" role="alert">${error}</span>` : null}
     </div>
   `;
 }
@@ -707,7 +707,7 @@ function Confirm({ feedback }) {
                 check.checked = event.currentTarget.checked;
                 feedback.confirmation.value = { ...model };
               }} />
-            <span>${check.label}${check.hint ? html`<span class="confirm-check-hint">${check.hint}</span>` : null}</span>
+            <span>${check.label}${check.hint ? html`<span class="confirm-check-hint ui-hint">${check.hint}</span>` : null}</span>
           </label>`)}
         </div>` : null}
         <div class="modal-buttons">

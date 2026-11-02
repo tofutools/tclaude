@@ -77,7 +77,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
   const statusFor = (limit) => (fleet.statuses || []).find((s) => s.fleet_id === limit.id);
   const selfTotals = fleet.self?.totals;
   return html`<div class="usage-rules-tab usage-fleet-tab">
-    <p class="modal-hint">A fleet limit sums spend across nodes: every trusted node, a node pool (a sub-fleet) or one node, and this node unless you leave it out. Nodes count once they grant you <code>usage.read</code>; a step acts on a node's agents only where it granted you <code>usage-rules.enforce</code>, and the node carries it out itself.</p>
+    <p class="modal-hint ui-hint">A fleet limit sums spend across nodes: every trusted node, a node pool (a sub-fleet) or one node, and this node unless you leave it out. Nodes count once they grant you <code>usage.read</code>; a step acts on a node's agents only where it granted you <code>usage-rules.enforce</code>, and the node carries it out itself.</p>
     <${FleetPresets} disabled=${busy} onPick=${(preset) => onEdit({ id: 0, target: 'all', include_self: true, enabled: true, rule: preset ? preset.rule : blankRule('global') }, fleet)}/>
     ${(fleet.limits || []).length ? html`<div class="usage-rule-cards">${fleet.limits.map((limit) => {
       const status = statusFor(limit);
@@ -115,7 +115,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
         })}
       </tbody>
     </table></div>
-    ${(fleet.nodes || []).length ? html`<p class="modal-hint">A node shares with you what its operator grants you: <code>usage.read</code> (its totals), <code>usage-rules.manage</code> (its rules, from here), <code>usage-rules.enforce</code> (your fleet limits act on its agents). Ask from its peer view (the <b>peer view</b> pill → request…), or its operator runs <code>${'tclaude federation grant <this node> usage.read'}</code>.</p>`
+    ${(fleet.nodes || []).length ? html`<p class="modal-hint ui-hint">A node shares with you what its operator grants you: <code>usage.read</code> (its totals), <code>usage-rules.manage</code> (its rules, from here), <code>usage-rules.enforce</code> (your fleet limits act on its agents). Ask from its peer view (the <b>peer view</b> pill → request…), or its operator runs <code>${'tclaude federation grant <this node> usage.read'}</code>.</p>`
       : html`<div class="ui-empty-block">No trusted peers. Link nodes under Fleet to build a fleet.</div>`}
 
     ${(fleet.controls || []).length ? html`<h4 class="usage-fleet-h">Peers' fleet limits in force here</h4>
@@ -174,7 +174,7 @@ export function FleetLimitEditor({ limit, fleet, busy, RuleEditor, onSave, onDel
       <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
     </div>
     <${RuleEditor} draft=${draft} scope="fleet" windows=${[]} disabled=${busy} onChange=${touch(setDraft)}/>
-    <p class="modal-hint">Agent steps (notify agents, wrap up, hard stop, block spawns) reach this node's agents when it is counted, and each member's agents in the groups its <code>usage-rules.enforce</code> grant covers. Elsewhere they only alert you.</p>
+    <p class="modal-hint ui-hint">Agent steps (notify agents, wrap up, hard stop, block spawns) reach this node's agents when it is counted, and each member's agents in the groups its <code>usage-rules.enforce</code> grant covers. Elsewhere they only alert you.</p>
     <div role="alert" class="cron-create-error">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onCancel}>Back</${Button}>

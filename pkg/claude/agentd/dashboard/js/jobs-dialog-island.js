@@ -134,9 +134,9 @@ function AgentPicker({ descriptor, snapshot, onChoose, onClose, confirmDiscard }
 function CronExplanation({ result, loading, onRetry }) {
   if (loading) return html`<div class="muted">Explaining…</div>`;
   if (!result) return null;
-  if (result.error) return html`<span class="cron-explain-error">explain failed: ${result.error}
+  if (result.error) return html`<span class="cron-explain-error ui-error">explain failed: ${result.error}
     <button type="button" onClick=${onRetry}>retry</button></span>`;
-  if (!result.valid) return html`<span class="cron-explain-error">${result.message || 'invalid expression'}</span>`;
+  if (!result.valid) return html`<span class="cron-explain-error ui-error">${result.message || 'invalid expression'}</span>`;
   const fires = (result.next || []).map((value) => new Date(value).toLocaleString()).join(' · ');
   return html`<${Fragment}>
     ${result.description && html`<div class="cron-explain-desc">${result.description}</div>`}

@@ -312,8 +312,8 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
           <label class="export-same-group" title="The export runs on an isolated clone of this conversation so the live agent is never disturbed. By default the clone is standalone. Check this to put the clone in the same group(s) as the original, so the summary writer can message peers if it needs to.">
             <input id="export-agent-same-group" type="checkbox" checked=${sameGroup} onChange=${(event) => setSameGroup(event.currentTarget.checked)} />
             <span><${Words}
-              plain=${html`Clone into the same group <span class="export-same-group-hint">— lets the summary writer message peers (default: isolated)</span>`}
-              wizard=${html`Mirror into the same party <span class="export-same-group-hint">— lets the scribe send missives to peers (default: isolated)</span>`}
+              plain=${html`Clone into the same group <span class="export-same-group-hint ui-hint">— lets the summary writer message peers (default: isolated)</span>`}
+              wizard=${html`Mirror into the same party <span class="export-same-group-hint ui-hint">— lets the scribe send missives to peers (default: isolated)</span>`}
             /></span>
           </label>
         </div>
@@ -440,7 +440,7 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
           ${section('session', 'Watch or drive the agent', 'Gaze into the hero')}
           ${section('shell', 'Your own shell', 'Enter its lair')}
         </div>
-        <p class="term-chooser-hint"><${Words}
+        <p class="term-chooser-hint ui-hint"><${Words}
           plain=${html`Press <kbd>1</kbd>–<kbd>4</kbd> to pick.`}
           wizard=${html`Speak <kbd>1</kbd>–<kbd>4</kbd> to choose.`}
         /></p>
@@ -596,7 +596,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
           })}
         </div>
         ${availability && html`
-          <p class="sandbox-impl-hint sandbox-impl-warn" id="sandbox-impl-availability" role="status">
+          <p class="sandbox-impl-hint ui-hint sandbox-impl-warn" id="sandbox-impl-availability" role="status">
             ⚠ ${availability}
           </p>
         `}
@@ -609,22 +609,22 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
               ${modes.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
             </select>
           </label>
-          <p class="sandbox-impl-hint" id="sandbox-impl-hint"><${Words}
+          <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-hint ui-hint"><${Words}
             plain="Leave this alone unless you mean to pin it. Left alone, the server carries the agent's recorded mode forward, or uses the harness default when the implementation being replaced had forced one."
             wizard="Leave this be unless you mean to bind it. Left alone, the recorded mode carries forward."
           /></p>
         `}
         ${restart && html`
-          <p class="sandbox-impl-hint" id="sandbox-impl-restart"><${Words}
+          <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-restart"><${Words}
             plain="This agent is running. Assigning restarts it in the same conversation under the new implementation; it must be idle (no turn, background agents, shells or monitors running)."
             wizard="This familiar is awake. Binding the ward re-summons it under the new one; it must be at rest."
           /></p>
         `}
         ${posture.temporary_sandbox_active && html`
-          <p class="sandbox-impl-hint" id="sandbox-impl-unlocked">⚠ the temporary sandbox unlock is active on this agent; restore its normal sandbox before assigning.</p>
+          <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-unlocked">⚠ the temporary sandbox unlock is active on this agent; restore its normal sandbox before assigning.</p>
         `}
         ${moveOut && html`
-          <p class="sandbox-impl-hint sandbox-impl-warn" id="sandbox-impl-move-out" role="alert">⚠ ${moveOut}</p>
+          <p class="sandbox-impl-hint ui-hint sandbox-impl-warn" id="sandbox-impl-move-out" role="alert">⚠ ${moveOut}</p>
         `}
       `}
       <div class="cron-create-error" id="sandbox-impl-error" role="alert">${error}</div>

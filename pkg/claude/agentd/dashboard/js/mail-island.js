@@ -148,7 +148,7 @@ function MailSidebar({ current, controller }) {
       : html`<${SectionToggle} expanded=${model.agentsExpanded} unread=${agentUnread} onToggle=${controller.toggleAgentsExpand}
           label=${`${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})`} />`)}
     ${model.agentsTotal > 0 && model.agentsExpanded && html`<${Fragment}>
-      ${operatorHere() && html`<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
+      ${operatorHere() && html`<div class="mailbox-section-help ui-hint">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
       ${model.agents.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox}
         prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)}
       ${model.moreAgents > 0 && html`<${LoadMore} shown=${model.agents.length} total=${model.agentsTotal}
@@ -200,7 +200,7 @@ function MessageList({ current, controller, model }) {
     controller.consumeAccessHighlight(id);
   });
   if (current.messageRequest?.phase === 'error') {
-    return html`<div class="mail-list" id="mail-list"><div class="island-error mail-error" role="alert">
+    return html`<div class="mail-list" id="mail-list"><div class="island-error mail-error ui-error-box" role="alert">
       Messages failed to load: ${current.messageRequest.error}
       <${Button} size="sm" onClick=${controller.reloadMessagesPage}>Retry<//>
     </div></div>`;
@@ -696,7 +696,7 @@ export function MailApp({ controller }) {
     <div class="mail-col mail-sidebar-col">
       <${RemoteInboxSection} />
       <${WipeBar} current=${current} controller=${controller} />
-      ${current.mailboxRequest?.phase === 'error' && html`<div class="island-error mail-error" role="alert">
+      ${current.mailboxRequest?.phase === 'error' && html`<div class="island-error mail-error ui-error-box" role="alert">
         Mailboxes failed to refresh: ${current.mailboxRequest.error}
         <${Button} size="sm" onClick=${controller.reloadMail}>Retry<//>
       </div>`}

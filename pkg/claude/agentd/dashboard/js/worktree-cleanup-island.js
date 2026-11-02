@@ -330,14 +330,14 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
         : `Clean up worktrees in party "${descriptor.group}"`}
     /></h3>
     ${result ? html`
-      <p class="cleanup-hint" id="worktree-cleanup-hint">${worktreeCleanupSummary(result)}</p>
+      <p class="cleanup-hint ui-hint" id="worktree-cleanup-hint">${worktreeCleanupSummary(result)}</p>
       <${CleanupOutcomeList} response=${result} />
-      <div class="cleanup-error" id="worktree-cleanup-error"></div>
+      <div class="cleanup-error ui-error" id="worktree-cleanup-error"></div>
       <div class="modal-buttons">
         <${Button} variant="primary" domRef=${doneRef} id="worktree-cleanup-submit" onClick=${close}>Done</${Button}>
       </div>
     ` : html`
-      <p class="cleanup-hint" id="worktree-cleanup-hint"><${Words}
+      <p class="cleanup-hint ui-hint" id="worktree-cleanup-hint"><${Words}
         plain=${regularHint} wizard=${wizardHint}
       /></p>
       <div class="cleanup-toolbar">
@@ -427,7 +427,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           <span class="wt-note">permanently loses commits that exist nowhere else: ${atRiskBranches.map((row) => `${row.branch} (${row.unpushed_unknown ? 'unknown number of commits' : `${row.unpushed_commits} commit${row.unpushed_commits === 1 ? '' : 's'}`})`).join(', ')}</span>
         </span>
       </label>` : null}
-      <div class="cleanup-error" id="worktree-cleanup-error"
+      <div class="cleanup-error ui-error" id="worktree-cleanup-error"
         role=${error || pruneScanErrors.length ? 'alert' : undefined}>${error || (pruneScanErrors.length
           ? `Stale-record scan incomplete: ${pruneScanErrors.map((entry) => `${entry.repo_root}: ${entry.detail}`).join('; ')}`
           : '')}</div>

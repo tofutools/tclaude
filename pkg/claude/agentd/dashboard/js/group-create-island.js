@@ -271,7 +271,7 @@ function GroupCreateDialog({
       plain=${regularTitle}
       wizard=${wizardTitle}
     /></h3>
-    <p class="modal-hint">Start blank or prefill from an existing group or template.</p>
+    <p class="modal-hint ui-hint">Start blank or prefill from an existing group or template.</p>
     <div class="cron-create-row group-create-origin-row">
       <span class="cron-create-label">Start from</span>
       <div class="ui-seg group-create-origin-options" role="group" aria-label="Group source">
@@ -421,7 +421,7 @@ function GroupCreateDialog({
             onChange=${(event) => setField('attachRepository', event.currentTarget.checked)} />
           <span>Show repository link on the group</span>
         </label>
-        <div class="group-create-clone-hint">The checkout becomes this group’s default working directory.</div>
+        <div class="group-create-clone-hint ui-hint">The checkout becomes this group’s default working directory.</div>
       `}
     </fieldset>
     <label class="cron-create-row">
