@@ -67,7 +67,6 @@
   "js/process-kit.js": 4,
   "js/process-node-fields.js": 1,
   "js/process-overlay.js": 3,
-  "js/process-terminal-overlay.js": 11,
   "js/proposal-reader.js": 1,
   "js/queued-spawns-island.js": 1,
   "js/queued-spawns.js": 2,
