@@ -354,6 +354,14 @@ test('every settled loss that offers Reconnect gets the terminal-area notice, no
     'the card says why the terminal is down');
   assert.ok(getByRole(notice, 'button', { name: 'Reconnect terminal' }));
 
+  // The same close also ends a session that finished normally; Dismiss
+  // uncovers its final output, and the next settled loss shows the card again.
+  await harness.act(() => harness.fireEvent(getByRole(notice, 'button', { name: 'Dismiss' }), 'click'));
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'), 'Dismiss uncovers the terminal');
+  await harness.act(() => fake.widgets[0].options.onReconnectChange(false));
+  await harness.act(() => fake.widgets[0].options.onReconnectChange(true));
+  assert.ok(pane.querySelector('.mux-terminal-disconnect-overlay'), 'a later loss shows the card again');
+
   await harness.act(() => {
     fake.widgets[0].options.onStatus('closed: the peer revoked your access to this terminal');
     fake.widgets[0].options.onReconnectChange(false);

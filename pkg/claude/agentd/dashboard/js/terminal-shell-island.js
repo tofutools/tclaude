@@ -265,13 +265,17 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
 // ended', and a remote close settles on 'closed: …'. Each of those leaves the
 // same dead screen, so each gets the same big Reconnect; the reason, when it
 // says more than "disconnected", is shown on the card.
+// The same close code also ends a session that finished normally, so the card
+// can be dismissed to read that final output; it unmounts when Reconnect goes
+// away, so the next settled loss shows it again.
 function TerminalDisconnectNotice({ status, onReconnect }) {
+  const [dismissed, setDismissed] = useState(false);
   // While the dashboard-wide "Disconnected from agentd" curtain is up, this
   // terminal dropped for the same reason (the daemon is gone) and its restart
   // watch reconnects once agentd answers again; a second card on top of the
   // first only repeats it. Reading the signal here, not in TerminalPane, keeps
   // the subscription to panes that are actually disconnected.
-  if (dashboardState.connection.value.status === 'disconnected') return null;
+  if (dismissed || dashboardState.connection.value.status === 'disconnected') return null;
   return html`
     <div class="mux-terminal-disconnect-overlay" role="alert" aria-live="assertive">
       <div class="mux-terminal-disconnect-card">
@@ -281,7 +285,7 @@ function TerminalDisconnectNotice({ status, onReconnect }) {
         <${Button} variant="success" class="mux-terminal-disconnect-reconnect" aria-label="Reconnect terminal" onClick=${onReconnect}>
           <span aria-hidden="true">⟳</span> Reconnect
         <//>
-        <p class="mux-terminal-disconnect-status">Also available in the header above.</p>
+        <p class="mux-terminal-disconnect-status">Also available in the header above. <${Button} variant="link" onClick=${() => setDismissed(true)}>Dismiss<//></p>
       </div>
     </div>
   `;
