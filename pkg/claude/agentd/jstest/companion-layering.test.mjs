@@ -53,3 +53,13 @@ test('the chips step clear of the dock instead of covering its menus', async () 
   assert.match(css, /\.companion-spot-bottom-right \{ right: var\(--chip-right\); \}/);
   assert.match(css, /@media \(max-width: 620px\) \{\s*body\.dock-open \{ --chip-right: 16px; \}\s*body\.dock-open \.companion-chips:not\(\.dragging\) \{ z-index: 45; \}/, 'a narrow window keeps them on screen');
 });
+
+test('a row\'s action dialogs step a window aside; an editor stays beneath it', async () => {
+  const css = await readFile(new URL('../dashboard/companion.css', import.meta.url), 'utf8');
+  const rule = css.match(/body:has\(([^{}]*)\) :is\(\.companion-window, \.companion-resize-frame\) \{ z-index: 90; \}/);
+  assert.ok(rule, 'the window has a rule that steps aside');
+  for (const id of ['term-chooser-modal', 'term-modal', 'sandbox-impl-modal', 'clone-modal', 'export-agent-modal', 'reincarnate-agent-modal', 'task-link-modal']) {
+    assert.ok(rule[1].includes(`#${id}.show`), `${id} must not open under a window`);
+  }
+  assert.ok(!rule[1].includes('#profile-editor-modal'), 'an agent can still be used beside an editor');
+});
