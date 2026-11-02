@@ -1190,6 +1190,10 @@ type snapshotPayload struct {
 	// WindowControls mirrors config dashboard.window_controls: the look of the
 	// companion window's controls. See Config.WindowControls.
 	WindowControls string `json:"window_controls"`
+	// SnapAssist mirrors config dashboard.no_snap_assist, inverted: whether a
+	// space an overlay snap leaves empty offers the other windows. See
+	// Config.SnapAssist.
+	SnapAssist bool `json:"snap_assist"`
 	// DefaultTerminal mirrors config dashboard.default_terminal — how spawn
 	// auto-focus, per-agent focus / open-window / open-terminal actions and bulk
 	// windows-modal focus open a console: "native" (pop a native OS window) or
@@ -3503,6 +3507,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		GroupQuickOptions: cfg.GroupQuickOptions(),
 		OverlayBackdrop:   cfg.OverlayBackdrop(),
 		WindowControls:    cfg.WindowControls(),
+		SnapAssist:        cfg.SnapAssist(),
 		DefaultTerminal:   cfg.DefaultTerminal(),
 		TerminalAttach: dashboardTerminalAttach{
 			Mode:                 terminalAttachMode,

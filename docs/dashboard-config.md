@@ -29,6 +29,7 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 | Header & rows | Group quick options | `dashboard.group_quick_options` | `hover` |
 | Overlays | Preview background | `dashboard.overlay_backdrop` | `dim`; also `blur`, `both`, `none` |
 | Overlays | Window controls | `dashboard.window_controls` | `auto`; also `macos`, `windows`, `linux`, `classic` |
+| Overlays | Snap Assist | `dashboard.no_snap_assist` | off (Snap Assist on) |
 | Header & rows | Group descriptions (deprecated) | `dashboard.show_group_description` | off |
 | Header & rows | CI on finished PRs | `dashboard.show_final_pr_checks` | off |
 | Header & rows | Agent hide button | `dashboard.show_agent_hide_button` | off |

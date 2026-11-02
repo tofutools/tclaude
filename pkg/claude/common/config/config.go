@@ -624,6 +624,10 @@ type DashboardConfig struct {
 	// "auto" (default, follows the browser's OS), "macos", "windows", "linux"
 	// or "classic". See (*Config).WindowControls.
 	WindowControls string `json:"window_controls,omitempty"`
+	// NoSnapAssist turns off Snap Assist: after the operator snaps an overlay
+	// window, the space left empty no longer offers the other windows. See
+	// (*Config).SnapAssist.
+	NoSnapAssist bool `json:"no_snap_assist,omitempty"`
 	// DefaultTerminal selects how the dashboard's spawn auto-focus, per-agent
 	// focus / open-window / open-terminal actions open a console — one of
 	// DefaultTerminal{Native, Web}. "native" pops a native OS window (falling
@@ -2255,6 +2259,12 @@ func (c *Config) OverlayBackdrop() string {
 		}
 	}
 	return "dim"
+}
+
+// SnapAssist reports whether a space a snap leaves empty offers the other
+// overlay windows. Default true; dashboard.no_snap_assist turns it off.
+func (c *Config) SnapAssist() bool {
+	return c == nil || c.Dashboard == nil || !c.Dashboard.NoSnapAssist
 }
 
 // WindowControls returns dashboard.window_controls, with "auto" for anything

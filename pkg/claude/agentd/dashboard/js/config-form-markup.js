@@ -371,6 +371,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
             <option value="classic">Classic</option>
           </${ConfigSelect}>
         </${Setting}>
+        <${Setting} title="Snap Assist" forId="cfg-dashboard-snap-assist" k="dashboard.no_snap_assist"
+          summary="after you snap an overlay window, offer the other windows for the space left empty"
+          more=${html`As on Windows: the largest empty space shows a card for each overlay window outside the tiling, minimized ones too. Pick one to put it there, and the next empty space asks, until none is left. A click elsewhere, Escape or any drag stops it. It only follows a snap of your own, never a reload. On by default. Stored as <code>dashboard.no_snap_assist</code> (on is omitted; unchecked writes <code>true</code>).`}>
+          <${Toggle} id="cfg-dashboard-snap-assist" />
+        </${Setting}>
       </${Group}>
 
       <${Group} title="Tabs">

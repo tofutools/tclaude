@@ -46,7 +46,10 @@ export class TabBoundary extends Component {
   }
 }
 
-const plainView = ({ kind, label }) => ({ label: label || 'Terminal', lead: html`<span aria-hidden="true">${WINDOW_GLYPHS[kind] || '▣'}</span>`, title: label });
+export const plainView = ({ kind, label }) => ({ label: label || 'Terminal', lead: html`<span aria-hidden="true">${WINDOW_GLYPHS[kind] || '▣'}</span>`, title: label });
+
+// tabViewOf is how a tab shows, { label, lead, title }, by its kind.
+export const tabViewOf = (kinds) => (tab) => (kinds[tab.kind]?.view || plainView)(tab);
 
 const closeTitle = (window, stewardInside) => {
   if (stewardInside) return window.tabs.length > 1 ? 'Close: other tabs go to the dock, and the Steward shuts down, after asking' : 'Close: shut it down, after asking';
@@ -74,7 +77,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
       if (asking) askOverlayClose(asking.id);
     },
   };
-  const viewOf = (candidate) => (kinds[candidate.kind]?.view || plainView)(candidate);
+  const viewOf = tabViewOf(kinds);
   const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} />${add?.(window)}`;
   const Body = kinds[tab.kind]?.Body || TAB_BODIES[tab.kind];
   const minimize = home?.shrinks?.(window, overlay);

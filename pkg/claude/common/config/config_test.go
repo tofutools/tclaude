@@ -1659,6 +1659,12 @@ func TestStewardAccessDefaultsAndValidates(t *testing.T) {
 	assert.Equal(t, []string{"groups.owners.manage"}, c.Steward.DefaultPermissions)
 }
 
+func TestSnapAssist(t *testing.T) {
+	assert.True(t, (*Config)(nil).SnapAssist())
+	assert.True(t, (&Config{}).SnapAssist())
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{NoSnapAssist: true}}).SnapAssist())
+}
+
 func TestWindowControls(t *testing.T) {
 	var unset *Config
 	assert.Equal(t, "auto", unset.WindowControls())
