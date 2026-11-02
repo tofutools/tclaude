@@ -288,6 +288,54 @@ test('a window torn out of the split floats where it is let go, even over the ce
   assert.ok(frame('b').classList.contains('snapped'), 'b keeps its cell');
 });
 
+test('Escape calls a move off: a window torn out of the split goes back into its cell', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  const frame = (id) => mounted.container.querySelector(`.w-${id}`);
+  const box = () => ['left', 'top', 'width', 'height'].map((side) => frame('a').style[side]);
+  const was = box();
+  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 900, y: 400 }, () => {
+    assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } }, 'torn out while held');
+    harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { cancelable: true }), { key: 'Escape' }));
+  });
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR, 'its cell is its own again');
+  assert.ok(frame('a').classList.contains('snapped'), 'and it is back in it');
+  assert.deepEqual(box(), was, 'where it was');
+  assert.equal(mounted.container.querySelector('.overlay-snap-guide'), null);
+  assert.equal(JSON.parse(prefs.getItem('p.a')).snap, 'left', 'its placement is as it was');
+});
+
+test('a window minimized to the dock keeps its cell, and closing it there gives the cell up', async (t) => {
+  const { harness, instances, overlay, prefs } = await setup(t, PAIR);
+  const saved = () => JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF));
+  await harness.act(() => instances.openOverlayWindow({ id: 'a', kind: 'k', label: 'A' }));
+  await harness.act(() => instances.minimizeOverlayTab('a'));
+  assert.equal(instances.overlayWindows.value.length, 0, 'its one tab took the window to the dock');
+  assert.deepEqual(saved(), PAIR, 'the cell waits for it');
+  await harness.act(() => instances.openOverlayWindow({ id: 'a', kind: 'k', label: 'A' }));
+  assert.deepEqual(instances.overlayWindows.value.map(({ id }) => id), ['a'], 'it comes back as the same window');
+  assert.deepEqual(saved(), PAIR, 'to its cell');
+  await harness.act(() => instances.minimizeOverlayTab('a'));
+  await harness.act(() => instances.closeOverlayTab('a'));
+  assert.deepEqual(saved(), { ...PAIR, a: { gap: true } }, 'closed for good, it leaves the cell empty');
+});
+
+test('no new window takes the id of one on the dock, whose cell waits for it', async (t) => {
+  const { harness, instances, overlay, prefs } = await setup(t, PAIR);
+  const ids = () => instances.overlayWindows.value.map(({ id }) => id);
+  await harness.act(() => instances.openOverlayWindow({ id: 'a', kind: 'k', label: 'A' }));
+  await harness.act(() => instances.openTabInWindow('a', 'p.a', { id: 'x', kind: 'k', label: 'X' }));
+  await harness.act(() => instances.openOverlayWindow({ id: 'c', kind: 'k', label: 'C' }));
+  await harness.act(() => instances.minimizeOverlayTab('x'));
+  await harness.act(() => instances.moveOverlayTab('a', 'c', 0));
+  assert.deepEqual(ids(), ['c'], 'window a is gone, and x waits on the dock to bring it back');
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR, 'so its cell waits too');
+  await harness.act(() => instances.tearOverlayTabOut('a', { x: 300, y: 300 }));
+  assert.equal(ids().length, 2);
+  assert.ok(!ids().includes('a'), `tab a torn out takes another id: ${ids()}`);
+  await harness.act(() => instances.openOverlayWindow({ id: 'x', kind: 'k', label: 'X' }));
+  assert.ok(ids().includes('a'), 'x comes back as window a, to its cell');
+});
+
 test('a tear-off let go at the room\'s edge, still over the cell it left, floats rather than snapping alone', async (t) => {
   const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
   await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 10, y: 400 });

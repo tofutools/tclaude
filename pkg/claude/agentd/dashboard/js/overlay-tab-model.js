@@ -80,11 +80,12 @@ export function groupsOf(window) {
 
 // windowAround is a new window around one tab among windows. A tab that left the
 // window named after it cannot take that id or that placement, which stay there.
-export function windowAround(windows, tab, { id = tab.id, place = '', at = null } = {}) {
+// Nor can it take a reserved id: one a window on the dock comes back as.
+export function windowAround(windows, tab, { id = tab.id, place = '', at = null, reserved = [] } = {}) {
   const window = windowOfTab({ ...tab, at });
   return {
     ...window,
-    id: withNumber(id, new Set(windows.map((other) => other.id))),
+    id: withNumber(id, new Set([...windows.map((other) => other.id), ...reserved])),
     place: withNumber(place || window.place, new Set(windows.map((other) => other.place))),
   };
 }
@@ -150,7 +151,7 @@ export function movedGroup(windows, sourceId, groupId, targetId, index) {
 
 // tornOutGroup gives a group a window of its own, at at, unless it is all its
 // window has.
-export function tornOutGroup(windows, sourceId, groupId, at) {
+export function tornOutGroup(windows, sourceId, groupId, at, reserved = []) {
   const source = windows.find((window) => window.id === sourceId);
   const members = source?.tabs.filter((tab) => tab.groupId === groupId) || [];
   if (!members.length || members.length === source.tabs.length) return windows;
@@ -158,7 +159,7 @@ export function tornOutGroup(windows, sourceId, groupId, at) {
   const rest = source.tabs.filter((tab) => !leaving.has(tab.id));
   const left = replaced(windows, sourceId, { ...source, tabs: rest, active: leaving.has(source.active) ? rest[0].id : source.active });
   const shown = members.find((tab) => tab.id === source.active) || members[0];
-  const opened = windowAround(left, shown, { at });
+  const opened = windowAround(left, shown, { at, reserved });
   return [...left, settled({ ...opened, tabs: members, active: shown.id, groups: source.groups })];
 }
 
@@ -201,12 +202,12 @@ export function dissolvedGroup(windows, windowId, groupId) {
 
 // tornOutTab gives a tab a window of its own, at at. The last tab of a window has
 // nothing to leave.
-export function tornOutTab(windows, tabId, at) {
+export function tornOutTab(windows, tabId, at, reserved = []) {
   const source = windowHolding(windows, tabId);
   if (!source || source.tabs.length < 2) return windows;
   const tab = source.tabs.find((candidate) => candidate.id === tabId);
   const left = replaced(windows, source.id, withoutTab(source, tabId));
-  return [...left, windowAround(left, withoutGroup(tab), { at })];
+  return [...left, windowAround(left, withoutGroup(tab), { at, reserved })];
 }
 
 // minimizedTab sends a window's tab to the dock on its own.
