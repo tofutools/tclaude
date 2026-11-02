@@ -164,7 +164,11 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 		g.respondOrFail(w, r, "job.log-failed", failure, err)
 		return
 	}
-	var b strings.Builder
+	// The answer keeps its END (ghTailText below), so the end is all that is
+	// kept while it is built: a pipeline with hundreds of failed jobs must
+	// not hold every trace in memory first. Twice the cap leaves ghTailText
+	// room to start the answer on a line boundary.
+	b := newProxyTail(2 * maxGHProxyTextBytes)
 	running := 0
 	// A trace that cannot be read keeps its placeholder in the output, and
 	// the run reports failure, as the GitHub proxy does when half a read
@@ -186,7 +190,7 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 		}
 		text, traceTruncated, failure, err := g.jobTrace(ctx, job.ID)
 		if err != nil || failure != nil {
-			fmt.Fprintf(&b, "%s\t%s\t(the trace for this failed job could not be read)\n", job.Name, label)
+			fmt.Fprintf(b, "%s\t%s\t(the trace for this failed job could not be read)\n", job.Name, label)
 			if unreadable == 0 {
 				reason := ""
 				if err != nil {
@@ -200,13 +204,15 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		anyTraceTruncated = anyTraceTruncated || traceTruncated
-		writePrefixedLog(&b, job.Name, label, text)
+		var lines strings.Builder
+		writePrefixedLog(&lines, job.Name, label, text)
+		_, _ = b.Write([]byte(lines.String()))
 	}
 	if running > 0 {
-		fmt.Fprintf(&b, "\n(%d job(s) in this pipeline have not finished; a failure among them is not reported yet)\n", running)
+		fmt.Fprintf(b, "\n(%d job(s) in this pipeline have not finished; a failure among them is not reported yet)\n", running)
 	}
 	if partial {
-		fmt.Fprintf(&b, "\n(this pipeline has more than %d jobs; the rest were not inspected)\n",
+		fmt.Fprintf(b, "\n(this pipeline has more than %d jobs; the rest were not inspected)\n",
 			maxGLPaginatedPages*glJobsPerPage)
 	}
 	tail, truncated := ghTailText(b.String(), maxGHProxyTextBytes)

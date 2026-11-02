@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -778,6 +779,34 @@ func TestGLProxy_JobLogFailedSaysWhenATraceWasTrimmed(t *testing.T) {
 	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
 	assert.Contains(t, out.Stdout, "FAIL: the end", "the tail, where the failure is, is kept")
 	assert.True(t, out.Truncated, "the trace's start was dropped")
+}
+
+// TestGLProxy_JobLogFailedKeepsTheEndOfManyTraces: many failed jobs with long
+// traces still answer within the output cap, keeping the last job's failure
+// and starting on a whole line.
+func TestGLProxy_JobLogFailedKeepsTheEndOfManyTraces(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	var jobs []string
+	for i := 1; i <= 8; i++ {
+		jobs = append(jobs, fmt.Sprintf(`{"id":%d,"name":"job%d","stage":"test","status":"failed"}`, 600+i, i))
+		gl.bodies[fmt.Sprintf("projects/%s/jobs/%d/trace", glTestProjectID, 600+i)] =
+			[]byte(fmt.Sprintf("start of job %d\n", i) + strings.Repeat("line of output\n", 12*1024) + fmt.Sprintf("FAIL: job %d\n", i))
+	}
+	gl.def = glCanned{Status: 200, Body: "[" + strings.Join(jobs, ",") + "]"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/gitlab/job/log-failed", map[string]any{"pipeline_id": 99})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	var out struct {
+		Stdout    string `json:"stdout"`
+		Truncated bool   `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.LessOrEqual(t, len(out.Stdout), 256*1024, "within the output cap")
+	assert.Contains(t, out.Stdout, "job8\ttest\tFAIL: job 8", "the last failure is kept")
+	assert.NotContains(t, out.Stdout, "start of job 1", "the oldest output is what goes")
+	assert.True(t, strings.HasPrefix(out.Stdout, "job"), "the answer starts on a whole line")
+	assert.True(t, out.Truncated)
 }
 
 // TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue.
