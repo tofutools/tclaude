@@ -186,9 +186,9 @@ and they are checked when you set them and again at every spawn.
   assistant can't answer for you. Copilot and a shell have no such mode, so they can't be
   used. Neither can OpenCode, whose `bash` follows its tools policy instead.
 - **The sandbox holds.** The spawn profile also has to enforce the sandbox profile while
-  still asking you: `sandbox_implementation` set to `tclaude-layer` for Claude, Gemini or
-  pi, and `sandbox` set to `tclaude-agent` for Codex, or `read-only` or `workspace-write`
-  if the sandbox profile has no rules for those to miss. Claude's own sandbox can't be used, because it runs Bash without asking. Check your own Claude
+  still asking you: `sandbox_implementation` set to `tclaude-layer` for Claude, Gemini, pi
+  or Codex, or for Codex `sandbox` set to `tclaude-agent`, or to `read-only` or
+  `workspace-write` if no rules apply in that group. Claude's own sandbox can't be used, because it runs Bash without asking. Check your own Claude
   settings too: a `permissions.allow` entry there applies to a worker as well. A profile
   that gives its agents ownership, permissions or a trusted directory can't be used either.
 - **A request can't change the launch.** The assistant chooses the group, a name, the first

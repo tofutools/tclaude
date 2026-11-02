@@ -4771,7 +4771,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	if externalSpawn && !externalStewardApprovalHolds(h.Name, childLaunchSandbox) {
 		writeError(w, http.StatusForbidden, externalStewardCeilingCode,
-			"this spawn profile uses Claude's own sandbox, which runs commands without asking; an external steward's worker needs tclaude's pane sandbox")
+			"this launch can run commands without asking a human: Claude's own sandbox does, and so does OpenCode's bash; an external steward's worker can't use either")
 		return
 	}
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()

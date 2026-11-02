@@ -127,8 +127,12 @@ func checkExternalStewardSpawnPin(pin externalStewardSpawnPin) error {
 		return fmt.Errorf("no sandbox profile is named %q", pin.SandboxProfile)
 	}
 	// Groups layer their own rules on it, so whether the launch can enforce them
-	// depends on the group.
+	// depends on the group. A profile that doesn't name an implementation gets one
+	// from defaults at launch, so that's left for spawn to judge.
 	harnessName, mode, implementation := externalStewardProfileLaunch(profile)
+	if strings.TrimSpace(profile.SandboxImplementation) == "" {
+		return nil
+	}
 	for _, name := range pin.Groups {
 		g, err := db.GetAgentGroupByName(name)
 		if err != nil {
@@ -157,7 +161,8 @@ func externalStewardProfileLaunch(profile *db.SpawnProfile) (string, string, san
 }
 
 // externalStewardProfileProblem says why a spawn profile can't start a principal's
-// worker: everything spawning would refuse about it, heard when choosing.
+// worker, so the operator hears it when choosing. It judges the profile alone, and
+// spawn checks the launch that results from every default too.
 func externalStewardProfileProblem(profile *db.SpawnProfile) error {
 	if fail := profileSpawnFailure(profile, "external-steward"); fail != nil {
 		return fmt.Errorf("%s", fail.Msg)
@@ -175,7 +180,7 @@ func externalStewardProfileProblem(profile *db.SpawnProfile) error {
 	harnessName, mode, implementation := externalStewardProfileLaunch(profile)
 	child := spawnLineageSandbox{Harness: harnessName, HarnessBuiltinMode: mode, Implementation: implementation}
 	if !spawnSandboxLineageAllowed(externalStewardLineage, child) || !externalStewardApprovalHolds(harnessName, mode) {
-		return fmt.Errorf("spawn profile %q has to confine its agents with a sandbox that still asks a human: tclaude's pane sandbox for Claude, Gemini and pi, tclaude-agent, read-only or workspace-write for Codex; OpenCode can't be used",
+		return fmt.Errorf("spawn profile %q has to confine its agents with a sandbox that still asks a human: tclaude's pane sandbox for Claude, Gemini, pi or Codex, or tclaude-agent, read-only or workspace-write for Codex; OpenCode can't be used",
 			profile.Name)
 	}
 	if fail := sandboxImplementationHostFailure(harnessName, string(implementation)); fail != nil {

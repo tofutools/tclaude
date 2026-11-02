@@ -139,7 +139,7 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "ruled", Filesystem: []db.SandboxFilesystemGrant{{Path: s.dir, Access: "read"}}})
 	require.NoError(t, err)
-	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "plain-codex", Harness: harness.CodexName, Approval: "untrusted", Sandbox: harness.SandboxWorkspaceWrite})
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "plain-codex", Harness: harness.CodexName, Approval: "untrusted", Sandbox: harness.SandboxWorkspaceWrite, SandboxImplementation: "harness-builtin"})
 	require.NoError(t, err)
 	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "own-sandbox", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn})
 	require.NoError(t, err)
@@ -260,7 +260,7 @@ func TestExternalStewardSpawn_PinIsCheckedAtSpawn(t *testing.T) {
 	require.NoError(t, db.UpdateSpawnProfile(profile))
 	code, body = s.spawn("crew", map[string]any{"name": "w"})
 	assert.Equal(t, http.StatusForbidden, code, "Claude's own sandbox runs Bash without asking: %s", body)
-	assert.Contains(t, body, "without asking")
+	assert.Contains(t, body, "without asking a human")
 	profile.Sandbox = ""
 	profile.SandboxImplementation = "tclaude-layer"
 	require.NoError(t, db.UpdateSpawnProfile(profile))
