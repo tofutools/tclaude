@@ -154,6 +154,9 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 	} {
 		code, out := s.pin(body)
 		assert.Equalf(t, http.StatusBadRequest, code, "%s: %s", name, out)
+		if name == "wildcard" {
+			assert.Contains(t, out, "exact groups")
+		}
 	}
 
 	grant := func(scope map[string]any) int {
@@ -232,9 +235,56 @@ func TestExternalStewardSpawn_OwningAGroupIsNoWayIn(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, code, body)
 }
 
+// A pin on one group says nothing about a group it owns, even with a place to start.
+func TestExternalStewardSpawn_OwningAnotherGroupIsNoWayOutOfThePin(t *testing.T) {
+	s := newSpawnSetup(t)
+	s.pinned()
+	s.f.HaveGroup("theirs")
+	_, err := db.SetAgentGroupDefaultCwd("theirs", s.dir)
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("theirs")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, s.conv(), "human"))
+	code, body := s.spawn("theirs", map[string]any{"name": "w"})
+	assert.Equal(t, http.StatusForbidden, code, body)
+}
+
+func TestExternalStewardSpawn_RequestIsOnlyTheShortForm(t *testing.T) {
+	s := newSpawnSetup(t)
+	s.pinned()
+	for field, value := range map[string]any{
+		"cwd": "/tmp", "harness": "codex", "model": "x", "sandbox_profile": "open",
+		"permission_overrides": map[string]string{"agent.spawn": "grant"}, "is_owner": true,
+	} {
+		code, body := s.spawn("crew", map[string]any{"name": "w", field: value})
+		assert.Equalf(t, http.StatusForbidden, code, "%s: %s", field, body)
+		assert.Containsf(t, body, field, "the refusal names the field")
+	}
+	s.worker("w")
+}
+
+func TestExternalStewardSpawn_OffTakesThePinAway(t *testing.T) {
+	s := newSpawnSetup(t)
+	s.pinned()
+	code, body := s.pin(map[string]any{"off": true})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = s.spawn("crew", map[string]any{"name": "w"})
+	assert.Equal(t, http.StatusForbidden, code, body)
+	rows, err := db.ListAgentPermissionOverrideRowsForConv(s.conv())
+	require.NoError(t, err)
+	for _, row := range rows {
+		assert.NotEqual(t, agentd.PermAgentSpawn, row.Slug, "the grant itself is gone")
+	}
+}
+
 func TestExternalStewardSpawn_OtherDoorsAreShut(t *testing.T) {
 	s := newSpawnSetup(t)
 	s.pinned()
+	assert.Equal(t, "external_steward_ceiling", agentd.ExecuteSpawnAsForTest("crew", s.conv()), "any way into executeSpawn but the gated one")
+	remote, err := http.NewRequest(http.MethodPost, "/v1/federation/spawn-requests", nil)
+	require.NoError(t, err)
+	assert.False(t, agentd.PlacementSpawnAllowedForTest(agentd.AsExternalStewardPeer(remote, s.conv()), s.conv(), "peer", "crew"),
+		"a pinned group doesn't reach a same-named group elsewhere")
 	conv := s.worker("w1")
 	for _, slug := range []string{agentd.PermAgentClone, agentd.PermAgentMorph, agentd.PermGroupsMembersClone, agentd.PermGroupsMembersMorph} {
 		assert.Truef(t, agentd.ExternalStewardRefusesForTest(slug), "%s", slug)
@@ -324,6 +374,27 @@ func TestExternalStewardSpawn_CapCountsRunningWorkers(t *testing.T) {
 	cfg.Steward.ExternalMaxChildren = 4
 	require.NoError(t, config.Save(cfg))
 	s.worker("w5")
+}
+
+// The cap has to see spawns that nothing lists yet, or two at once both pass it.
+func TestExternalStewardSpawn_CapCountsSpawnsOnTheirWay(t *testing.T) {
+	s := newSpawnSetup(t)
+	s.pinned()
+	s.worker("w1")
+	s.worker("w2")
+
+	release := agentd.HoldExternalStewardSpawnForTest(s.issued.AgentID)
+	code, body := s.spawn("crew", map[string]any{"name": "w3"})
+	assert.Equal(t, http.StatusConflict, code, body)
+	release()
+
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{Label: "on-its-way", SpawnedByConv: s.conv()}))
+	code, body = s.spawn("crew", map[string]any{"name": "w3"})
+	assert.Equal(t, http.StatusConflict, code, body)
+	require.NoError(t, db.DeletePendingSpawn("on-its-way"))
+
+	s.worker("w3")
+	assert.Zero(t, agentd.ExternalStewardSpawningForTest(s.issued.AgentID), "a finished spawn gives its place back")
 }
 
 func mustSession(t *testing.T, conv string) string {
