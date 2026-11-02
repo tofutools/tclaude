@@ -47,7 +47,7 @@ export function BoardContextMenu({ x, y, label, items, win, onClose }) {
       if (item === 'separator') return html`<div key=${i} class="mux-tab-menu-separator" role="separator"></div>`;
       if (item.swatches) {
         return html`<div key=${i} class="board-context-swatches" role="group">
-          ${item.swatches.map((s) => html`<button key=${s.color} type="button" role="menuitem" tabIndex="-1" aria-label=${s.label} title=${s.label}
+          ${item.swatches.map((s) => html`<button data-ui-exempt key=${s.color} type="button" role="menuitem" tabIndex="-1" aria-label=${s.label} title=${s.label}
             class=${`board-swatch${s.color === 'transparent' ? ' fill' : ''}${s.on ? ' on' : ''}`} style=${s.color === 'transparent' ? '' : `background:${s.color}`}
             onClick=${() => run(s.run)}>${s.color === 'transparent' ? '∅' : ''}</button>`)}
         </div>`;

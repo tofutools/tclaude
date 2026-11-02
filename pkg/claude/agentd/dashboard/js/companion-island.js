@@ -171,22 +171,22 @@ function AddMenu({ agents, tabs, steward, stewardLabel, returning, onResumeStewa
   }, [agents, tabs, steward, filter]);
   const stewardPinned = steward && tabs.includes(steward.agentId);
   return html`<div ref=${menuRef} class="companion-menu" role="menu" aria-label="Add a companion">
-    ${returning && html`<button type="button" role="menuitem" class="companion-menu-steward companion-menu-resume" disabled=${busy} onClick=${onResumeSteward}>
+    ${returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward companion-menu-resume" disabled=${busy} onClick=${onResumeSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>Resume ${returning.name}</b><small>${stewardReturnNote(returning)}</small></span>
     </button>`}
-    ${returning && html`<button type="button" role="menuitem" class="companion-menu-steward companion-menu-fresh" disabled=${busy} onClick=${onSummonSteward}>
+    ${returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward companion-menu-fresh" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>Start fresh</b><small>${stewardFreshNote(returning)}</small></span>
     </button>`}
-    ${!stewardPinned && !returning && html`<button type="button" role="menuitem" class="companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
+    ${!stewardPinned && !returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
     </button>`}
     <input ref=${filterRef} type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
       value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
     <div class="companion-menu-list">
-      ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" onClick=${() => onPin(agent.agentId)}>
+      ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" class="ui-menu-item" onClick=${() => onPin(agent.agentId)}>
         <${agent.scribe ? Avatar : StatusDot} agent=${agent} status=${companionStatus(agent)} /> ${agent.name}</button>`)
         : html`<div class="companion-menu-empty">${filter ? 'No live agent matches.' : 'No other live agents.'}</div>`}
     </div>

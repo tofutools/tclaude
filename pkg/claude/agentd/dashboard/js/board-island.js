@@ -1764,7 +1764,7 @@ export function BoardEditor({
         <span class="board-invite-wrap" ref=${inviteRef}>
           <${Button} size="sm" class="board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent<//>
           ${invite && html`<div class="board-invite-menu" role="menu">
-            ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)
+            ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" class="ui-menu-item" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)
               : html`<div class="board-invite-empty">No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).</div>`}
           </div>`}
         </span>

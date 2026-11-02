@@ -5,6 +5,7 @@
 import { h, render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 const POLL_MS = 500;
@@ -87,8 +88,8 @@ export function KnowledgeSourceCard({ snapshot, fetchImpl = globalThis.fetch, no
       <b>The source download failed</b>
       <p>${view.detail}</p>
       <div class="knowledge-source-actions">
-        <button type="button" class="companion-primary" disabled=${busy} onClick=${() => answer('once')}>Try again</button>
-        <button type="button" disabled=${busy} onClick=${() => { writeDismissed(view.detail); setDismissed(view.detail); }}>Dismiss</button>
+        <${Button} size="sm" variant="primary" class="companion-primary" disabled=${busy} onClick=${() => answer('once')}>Try again<//>
+        <${Button} size="sm" disabled=${busy} onClick=${() => { writeDismissed(view.detail); setDismissed(view.detail); }}>Dismiss<//>
       </div>
     </div>`;
   }
@@ -98,9 +99,9 @@ export function KnowledgeSourceCard({ snapshot, fetchImpl = globalThis.fetch, no
     <p>The Steward has the docs for ${view.version}. With the source as well, it can check how this version really behaves.</p>
     <p>About ${mib(view.download_bytes)} from ${view.origin}, about ${mib(view.stored_bytes)} on disk. Only one version is kept.</p>
     <div class="knowledge-source-actions">
-      <button type="button" class="companion-primary" disabled=${busy} onClick=${() => answer('once')}>Yes, this version</button>
-      <button type="button" disabled=${busy} onClick=${() => answer('each_version')}>Yes, every new version</button>
-      <button type="button" disabled=${busy} onClick=${() => answer('never')}>No</button>
+      <${Button} size="sm" variant="primary" class="companion-primary" disabled=${busy} onClick=${() => answer('once')}>Yes, this version<//>
+      <${Button} size="sm" disabled=${busy} onClick=${() => answer('each_version')}>Yes, every new version<//>
+      <${Button} size="sm" disabled=${busy} onClick=${() => answer('never')}>No<//>
     </div>
     <p class="knowledge-source-note">You can change this in Config, under Steward.</p>
   </div>`;

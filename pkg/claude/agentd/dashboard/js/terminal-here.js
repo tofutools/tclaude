@@ -79,7 +79,7 @@ export function ShellHere({
   }
   const peer = node ? ` on ${peerLabel || 'the peer'}` : '';
   const where = target.dir ? ` in ${target.dir}` : ` where ${name} is working`;
-  return html`<button type="button" class="companion-tool companion-shell" aria-label=${`Open a shell where ${name} is working`}
+  return html`<button data-ui-exempt type="button" class="companion-tool companion-shell" aria-label=${`Open a shell where ${name} is working`}
     title=${`Open a shell${peer}${where}. It runs ${node ? 'as the tclaude user there' : 'as you'}, outside ${name}'s sandbox, and ${name} can write to this directory.`}
     onClick=${open}>⌨</button>`;
 }

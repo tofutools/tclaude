@@ -417,7 +417,7 @@ body.companion-annotating .companion-chips { visibility: hidden; }
   padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
   font: inherit; line-height: 1; cursor: pointer;
 }
-.companion-floating .companion-tool:enabled:not(.on):hover { border-color: var(--cmp-amber); }
+.companion-floating .companion-tool:enabled:not(.on):hover { background: var(--ui-bg-hover); }
 .companion-floating .companion-tool:disabled { opacity: .5; cursor: not-allowed; }
 .companion-floating .companion-annotate { color: var(--cmp-amber-text); font-size: 14px; }
 .companion-floating .companion-shell { color: #e6edf3; }
@@ -496,7 +496,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 .knowledge-source-card p { margin: 0; overflow-wrap: anywhere; }
 .knowledge-source-card progress { width: 100%; height: 8px; accent-color: var(--cmp-blue); }
 .knowledge-source-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.knowledge-source-actions button {
+.knowledge-source-actions button:where(:not(.ui-btn)) {
   padding: 4px 10px; border-radius: 6px; border: 1px solid var(--cmp-line);
   background: transparent; color: var(--cmp-text); font: inherit; cursor: pointer;
 }
