@@ -58,11 +58,18 @@ blocking it, and comes back when you reload the tab.
 - **Move it** by its title bar. Resize it from any edge or corner.
 - **Split the room** with any windows, boards and chats alike: snap one to the left and one to the right, and they
   fill the room and share a line. A corner stays a corner beside a half or another
-  corner, and the cell nobody took stays empty: dragging a window over it offers that
-  corner, or both corners of an empty half. Drag a line to redistribute,
-  and it is remembered. Dropping a window near the edge or corner of a snapped window
-  splits that window, so two windows, 2+1 and four are all possible, and four around
-  one crossing drag together at the crossing. Bring the pointer near the centre of a line for a detach button,
+  corner, and the cell nobody took stays empty. Drag a line to redistribute,
+  and it is remembered.
+- **Drop targets** show for the whole of any window drag, drawn over every window:
+  strips along the room's left, right and bottom edges and its corners, a box at the
+  centre of each empty cell (and of the space beside a window snapped alone), and a
+  marker on each free edge of a tiled window. A window snaps, fills or splits only when
+  you let go over one of them, and the one under the pointer lights up with a preview.
+  Let go anywhere else and it floats where it is, so a window moves freely over a
+  split. A box fills its whole cell, and an edge or corner strip over an empty half
+  takes that half's part of it. A marker splits its window on that side, so two
+  windows, 2+1 and four are all possible, and four around one crossing drag together
+  at the crossing. Bring the pointer near the centre of a line for a detach button,
   which unlocks that line: the windows stay snapped where they are, the line goes, and
   each side resizes from that edge on its own, so a space or an overlap can open.
   Drag an edge back near the other side's and a preview shows the snap: release there
@@ -71,8 +78,8 @@ blocking it, and comes back when you reload the tab.
   never moves the others. Minimized or maximized, it keeps its cell and goes back into
   it. Closed or dragged out, by its title bar or by its tab when it has only one, it
   leaves its cell empty and floats where you let it go, even over the cell it left: a
-  dashed outline shows that it will float. A later drag can drop any window into the
-  empty cell. The last window stays where it is. Pairs fill the room while it holds both windows at their
+  dashed outline shows that it will float. A later drag can drop any window on the
+  empty cell's box. The last window stays where it is. Pairs fill the room while it holds both windows at their
   minimum size.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free
