@@ -13,10 +13,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// The collab surfaces are opt-in: with features.collab off every one answers
-// with the same stable 404, for agents and the dashboard alike, and the
-// snapshot says so. Turning the flag on takes effect without a restart.
-func TestCollabSurfacesAreAbsentUntilOptedIn(t *testing.T) {
+// Collab is on by default, and an operator can turn it off: with
+// features.collab explicitly false every collab surface answers with the same
+// stable 404, for agents and the dashboard alike, and the snapshot says so.
+// Turning the flag back on takes effect without a restart.
+func TestCollabSurfacesAreAbsentWhenTurnedOff(t *testing.T) {
 	f := newFlow(t)
 	const agent = "coll-aaaa-bbbb-cccc-000000000001"
 	f.HaveGroup("design")
@@ -24,6 +25,21 @@ func TestCollabSurfacesAreAbsentUntilOptedIn(t *testing.T) {
 	f.HaveAliveSession(agent, "coll", "tclaude-coll", f.TestCwd("work"))
 	require.NoError(t, db.GrantAgentPermission(agent, agentd.PermHumanNotify, "test"))
 	dash := agentd.BuildDashboardHandlerForTest()
+	snapshot := func() bool {
+		rec := testharness.Serve(dashMessageMux(t), testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		var s struct {
+			Enabled bool `json:"collab_enabled"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &s))
+		return s.Enabled
+	}
+	// A fresh config has no features.collab: Collab is on.
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Features == nil || cfg.Features.Collab == nil, "the flow starts with features.collab unset")
+	assert.True(t, snapshot(), "unset features.collab is on")
+	disableCollab(t)
 
 	disabled := func(t *testing.T, code int, body string, name string) {
 		t.Helper()
@@ -86,18 +102,9 @@ func TestCollabSurfacesAreAbsentUntilOptedIn(t *testing.T) {
 		map[string]any{"name": "steward", "scope": map[string]any{"kind": "steward"}}))
 	disabled(t, steward.Code, steward.Body.String(), "steward summon")
 
-	snapshot := func() bool {
-		rec := testharness.Serve(dashMessageMux(t), testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
-		require.Equal(t, http.StatusOK, rec.Code)
-		var s struct {
-			Enabled bool `json:"collab_enabled"`
-		}
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &s))
-		return s.Enabled
-	}
 	assert.False(t, snapshot())
 
-	enableCollab(t)
+	setCollab(t, nil)
 	assert.True(t, snapshot())
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/boards", nil), agent))
 	assert.NotEqual(t, http.StatusNotFound, rec.Code, rec.Body.String())

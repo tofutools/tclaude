@@ -1096,7 +1096,7 @@ func TestDashboardAssets_UsageReadoutWired(t *testing.T) {
 	}
 }
 
-// TestDashboardAssets_FeatureFlagsWired guards the experimental feature flags
+// TestDashboardAssets_FeatureFlagsWired guards the feature flags (Collab included)
 // across their exact Preact markup and adapter owners. The Go accessors +
 // round-trip are covered separately in common/config.
 func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
@@ -1116,7 +1116,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 		"js/config-form-adapter.js": {
 			"#cfg-feature-processes", "feats.processes = true",
 			"#cfg-processes-refuse-unsigned", "processes.refuse_unsigned_imports = true",
-			"#cfg-feature-collab", "feats.collab = true",
+			"#cfg-feature-collab", "feats.collab = $('#cfg-feature-collab').checked",
 			"#cfg-feature-triggers", "feats.triggers = true",
 			"#cfg-feature-groups-route-map", "feats.groups_route_map = true",
 			"#cfg-feature-group-attachments", "feats.group_attachments = groupAttachments",

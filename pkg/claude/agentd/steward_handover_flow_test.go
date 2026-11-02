@@ -239,7 +239,7 @@ func TestStewardHandover_HiddenWithCollabOff(t *testing.T) {
 	s := newStewardHandoverFlow(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Features.Collab = false
+	cfg.Features.Collab = new(false)
 	require.NoError(t, config.Save(cfg))
 	rec := s.handover(handoverWorker, "roster")
 	assert.Equal(t, http.StatusNotFound, rec.Code)

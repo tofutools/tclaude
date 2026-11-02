@@ -10,7 +10,7 @@ remote access is not supported.
 
 ## Turning it on
 
-External stewards are off by default. They need [Collab](companion.md#turning-collab-on)
+External stewards are off by default. They need [Collab](companion.md#turning-collab-off)
 on, plus **Allow external stewards** under **Config** › **Steward**. That page lists what
 an assistant can do, so you can read it first. In `~/.tclaude/config.json` the setting is:
 

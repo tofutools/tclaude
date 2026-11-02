@@ -164,6 +164,10 @@ func TestDocShotsServe(t *testing.T) {
 		seedLearnTeam(t, f)
 	}
 	switch os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE") {
+	case "fleet", "learn":
+		// Collab is on by default; these images were taken with it off, so the
+		// fixtures keep it off until the images are retaken with Collab on.
+		disableCollab(t)
 	case "collab":
 		enableCollab(t)
 	case "steward":

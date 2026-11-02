@@ -34,7 +34,7 @@ want it.
 |---|---|---|---|
 | 1 | [Get started](get-started.md) | Install tclaude, start its daemon, and open the dashboard | 10 min |
 | 2 | [Your first agent](first-agent.md) | Create a group, start an agent, watch it, open its terminal and message it | 15 min |
-| Optional | [Ask the Steward](steward.md) | Turn on Collab, get a brief of what needs you, and let the helper agent set things up | 10 min |
+| Optional | [Ask the Steward](steward.md) | Get a brief of what needs you, and let the helper agent set things up | 10 min |
 | 3 | [Set up your team](team-setup.md) | Give a group a startup context, save a spawn profile, and start agents from it | 10 min |
 | 4 | [Run a team through a lead](team-lead.md) | Make an agent the lead, let it run workers, follow their mail and pull requests, and answer its notifications | 25 min |
 | 5 | [Keep agents going](keep-agents-going.md) | Watch an agent's context, schedule check-ins, stop and wake it, clone, reincarnate or morph it, and bring back earlier work | 25 min |

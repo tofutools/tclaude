@@ -1,7 +1,7 @@
 # Terminals and Collab
 
 This tab is where you work inside agents' sessions from the browser. It is
-called **Terminals**. With [Collab](companion.md#turning-collab-on) on it is called
+called **Terminals**. With [Collab](companion.md#turning-collab-off) on it is called
 **Collab**, and [boards](boards.md) open as tabs here too. It is always shown,
 and its badge reads `N +M`: N open terminals plus M sessions running in the
 background.

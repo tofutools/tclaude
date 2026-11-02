@@ -235,7 +235,7 @@ func TestHumanAction_HiddenWithCollabOff(t *testing.T) {
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Features.Collab = false
+	cfg.Features.Collab = new(false)
 	require.NoError(t, config.Save(cfg))
 
 	assert.Nil(t, a.view(id))
