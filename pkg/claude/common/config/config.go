@@ -3223,6 +3223,12 @@ var defaultGitLabHosts = map[string]string{"gitlab.com": "https://gitlab.com"}
 // GitLab instance, or "" when the host is not one. The host is matched
 // case-insensitively and without a port, which is how the allow-list spells
 // it too.
+//
+// The built-in gitlab.com applies only while gitlab_hosts is empty. The one
+// gitlab_token_file goes to every instance this recognises. Once the operator
+// lists an instance, the token is that instance's, and gitlab.com, a third
+// party, must be listed too before it is treated as GitLab and receives the
+// token.
 func (p GitProxyConfig) GitLabBase(host string) string {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
@@ -3230,6 +3236,9 @@ func (p GitProxyConfig) GitLabBase(host string) string {
 	}
 	if base, ok := p.GitLabHosts[host]; ok {
 		return base
+	}
+	if len(p.GitLabHosts) > 0 {
+		return ""
 	}
 	return defaultGitLabHosts[host]
 }

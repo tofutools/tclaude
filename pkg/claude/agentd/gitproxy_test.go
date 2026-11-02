@@ -207,13 +207,12 @@ func TestGitLabCredentialHelpers(t *testing.T) {
 		GitLabHosts:     map[string]string{"gitlab.example.test": "https://GitLab.example.test:6080"},
 		GitLabTokenFile: "/etc/tclaude/gitlab token",
 	})
-	require.Len(t, pins, 2, "the configured instance and the gitlab.com default")
+	require.Len(t, pins, 1, "only the listed instance: gitlab.com is not attached to a self-hosted token")
 	keys := map[string]bool{}
 	for _, pin := range pins {
 		keys[pin[:strings.Index(pin, "=")]] = true
 	}
 	assert.Equal(t, map[string]bool{
-		"credential.https://gitlab.com.helper":               true,
 		"credential.https://gitlab.example.test:6080.helper": true,
 	}, keys, "keyed by exact origin, host lower-cased, port kept")
 	for _, pin := range pins {

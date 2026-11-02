@@ -116,8 +116,12 @@ daemon state; migrated automatically from the legacy `~/.tclaude/config.json`):
   It does two jobs: it is how the daemon *recognises* a remote as a GitLab
   project at all (a self-hosted instance cannot be told apart from any other
   git server by its name), and it is where the web/API root lives, which may
-  differ from the SSH host in scheme and port. `gitlab.com` needs no entry.
-  The base must be `https`; the GitLab token is only ever sent to it. It is
+  differ from the SSH host in scheme and port. `gitlab.com` needs no entry
+  while this map is empty. Once you list any instance, list `gitlab.com` too
+  if you use it, because the one `gitlab_token_file` is sent only to listed
+  instances, never to a third party you did not name. The footer's Open MRs
+  indicator always needs an entry. The base must be `https`; the GitLab token
+  is only ever sent to it. It is
   also the one way a remote URL may name a port: an `https` remote whose
   scheme, host and port are exactly a base here is accepted (see
   [GitLab proxy](#gitlab-proxy)).
@@ -171,7 +175,8 @@ tclaude proxy gitlab mr view 157
 The same contract as the GitHub proxy against a GitLab instance. Operations
 are restricted to the *project* that the agent's own recorded launch remote
 resolves to, and only when that remote is allowed **and** its host is a
-configured instance (`gitlab_hosts`, or `gitlab.com`). The project is the
+configured instance (`gitlab_hosts`, or `gitlab.com` while no instance is
+listed). The project is the
 full namespace path, `group/subgroup/project`, exactly as the allow-list
 admitted it; a nested path is ordinary on GitLab and is never re-derived
 from its first and last segments. The token travels as an

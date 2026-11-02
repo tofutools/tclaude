@@ -28,7 +28,13 @@ func TestResolvedGitProxyGitLabHosts(t *testing.T) {
 	assert.Equal(t, "https://gitlab.example.com:6080", policy.GitLabBase("GITLAB.example.com"),
 		"the host is matched case-insensitively, as the allow-list spells it")
 	assert.Equal(t, "", policy.GitLabBase("plain.example.com"), "an http base was dropped")
-	assert.Equal(t, "https://gitlab.com", policy.GitLabBase("gitlab.com"), "gitlab.com needs no entry")
+	assert.Equal(t, "", policy.GitLabBase("gitlab.com"),
+		"with an instance listed, gitlab.com is not recognised (and gets no token) until it is listed too")
+	explicit := GitProxyConfig{GitLabHosts: map[string]string{
+		"gitlab.example.com": "https://gitlab.example.com:6080", "gitlab.com": "https://gitlab.com",
+	}}
+	assert.Equal(t, "https://gitlab.com", explicit.GitLabBase("gitlab.com"), "listed explicitly, it is")
+	assert.Equal(t, []string{"https://gitlab.com", "https://gitlab.example.com:6080"}, explicit.GitLabBases())
 	assert.Equal(t, "", policy.GitLabBase("github.com"))
 	assert.Equal(t, "", policy.GitLabBase(""))
 }
@@ -38,5 +44,7 @@ func TestResolvedGitProxyGitLabHostsAbsent(t *testing.T) {
 	assert.Nil(t, nilCfg.ResolvedGitProxy().GitLabHosts)
 	assert.Equal(t, "https://gitlab.com", nilCfg.ResolvedGitProxy().GitLabBase("gitlab.com"),
 		"the default survives an absent policy, so a scope-only posture can still reach gitlab.com")
+	assert.Equal(t, []string{"https://gitlab.com"}, GitProxyConfig{}.GitLabBases(),
+		"with no instance listed, the token is for gitlab.com")
 	assert.Equal(t, "", GitProxyConfig{}.GitLabBase("gitlab.example.com"))
 }
