@@ -649,3 +649,19 @@ test('the Open MRs model keeps your list on top and serves project tabs from eve
   assert.equal(authoredOpenMRsView(snapshot, 'all', false, 'gone/project').panel.total, 1,
     'a tab that disappeared falls back to your list');
 });
+
+test('a conflicting merge request is never ready to merge, however green and approved', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  const green = { checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } };
+  const snapshot = { authored_open_mrs: { available: true, total: 2, items: [
+    { number: 1, url: `${base}1`, ...green },
+    { number: 2, url: `${base}2`, ...green, conflicts: true },
+  ] } };
+  const view = authoredOpenMRsView(snapshot);
+  assert.equal(view.ready, 1, 'the conflicting one is not counted');
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ready').items.map((mr) => mr.number), [1]);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'attention').items.map((mr) => mr.number), [1, 2],
+    'it needs attention instead');
+});

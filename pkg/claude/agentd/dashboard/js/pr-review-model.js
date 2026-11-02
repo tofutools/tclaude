@@ -58,9 +58,12 @@ export function prReviewSummaryLine(reviews) {
   return reviews?.reviewers_known ? 'No reviews yet' : 'Reviewer list not fetched yet';
 }
 
-// readyToMerge: an open, non-draft PR that is approved with green CI.
+// readyToMerge: an open, non-draft PR that is approved with green CI. A merge
+// request that conflicts with its target is not, however green: its pipeline
+// may have passed before the target moved (GitHub rows never set conflicts).
 export function readyToMerge(pr) {
-  return !pr?.draft && pr?.checks?.state === 'passing' && prReviewState(pr?.reviews) === 'approved';
+  return !pr?.draft && !pr?.conflicts && pr?.checks?.state === 'passing'
+    && prReviewState(pr?.reviews) === 'approved';
 }
 
 export function prReviewStateText(state) {
