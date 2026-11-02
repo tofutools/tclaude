@@ -184,7 +184,7 @@ test('the last tab to leave a window gives up its cell, as closing it does', asy
   assert.deepEqual(instances.overlayWindows.value.map((window) => [window.id, window.tabs.map((tab) => tab.id)]), [['b', ['b']], ['a', ['a']]]);
 });
 
-test('closing a window sends each tab to the dock, and a question goes to the tab that asks', async (t) => {
+test('closing a window takes each tab off, and a question goes to the tab that asks', async (t) => {
   const { instances } = await setup(t);
   t.after(() => { instances.overlayWindows.value = []; instances.minimizedOverlayTabs.value = []; });
   instances.overlayWindows.value = [{ id: 'w', tabs: [{ id: 'p', kind: 'k' }, { id: 'q', kind: 'k' }], active: 'p', minimized: false, place: '' }];
@@ -193,12 +193,19 @@ test('closing a window sends each tab to the dock, and a question goes to the ta
   assert.equal(instances.overlayWindows.value[0].active, 'q', 'it asks where it can be seen');
   instances.overlayCloseHeard('q');
   assert.equal(instances.overlayTabs.value[0].closeAsked, undefined, 'and only once');
-  instances.minimizeEveryTab('w', 'q');
+  instances.closeEveryTab('w', { asking: 'q' });
   assert.deepEqual(instances.overlayWindows.value[0].tabs.map((tab) => tab.id), ['q'], 'the tab that asks stays to ask');
-  assert.deepEqual(instances.minimizedOverlayTabs.value.map(({ tab }) => tab.id), ['p']);
-  instances.minimizeEveryTab('w');
+  assert.deepEqual(instances.minimizedOverlayTabs.value, [], 'the other leaves, with nothing on the dock');
+  instances.closeEveryTab('w');
   assert.deepEqual(instances.overlayWindows.value, []);
-  assert.deepEqual(instances.minimizedOverlayTabs.value.map(({ tab, home }) => [tab.id, home]), [['p', 'w'], ['q', 'w']]);
+  assert.deepEqual(instances.minimizedOverlayTabs.value, []);
+
+  instances.overlayWindows.value = [{ id: 'w', tabs: [{ id: 'p', kind: 'k' }, { id: 'r', kind: 'k' }], active: 'p', minimized: false, place: '' }];
+  const closed = [];
+  instances.closeEveryTab('w', { closeOf: (tab) => (tab.id === 'r' ? () => closed.push(tab.id) : null) });
+  assert.deepEqual(closed, ['r'], 'a kind closes its own tab its own way');
+  assert.deepEqual(instances.overlayWindows.value.map((window) => window.tabs.map((tab) => tab.id)), [['r']], 'and what it keeps stays where it was');
+  assert.deepEqual(instances.minimizedOverlayTabs.value, []);
 });
 
 // A pointer on an unlocked edge of the window, in the room's coordinates.
