@@ -77,15 +77,17 @@ func TestServeConfigWriteRightAfterStartSurvives(t *testing.T) {
 	daemon.Stdout = &output
 	daemon.Stderr = &output
 	require.NoError(t, daemon.Start())
-	exited := make(chan error, 1)
-	go func() { exited <- daemon.Wait() }()
+	// done closes once the daemon is reaped, so every waiter below sees it.
+	done := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = daemon.Wait(); close(done) }()
 	t.Cleanup(func() {
 		_ = daemon.Process.Signal(syscall.SIGTERM)
 		select {
-		case <-exited:
+		case <-done:
 		case <-time.After(30 * time.Second):
 			_ = daemon.Process.Kill()
-			<-exited
+			<-done
 		}
 		if t.Failed() {
 			t.Logf("daemon output:\n%s", output.String())
@@ -99,8 +101,8 @@ func TestServeConfigWriteRightAfterStartSurvives(t *testing.T) {
 			break
 		}
 		select {
-		case err := <-exited:
-			t.Fatalf("daemon exited before serving: %v\n%s", err, output.String())
+		case <-done:
+			t.Fatalf("daemon exited before serving: %v\n%s", waitErr, output.String())
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
