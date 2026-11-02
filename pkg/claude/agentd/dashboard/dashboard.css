@@ -499,9 +499,9 @@ nav [data-tab].overlay-drop { color: #d4d4d4; background: #1f6feb2e; box-shadow:
    over every context), and its scoped twin a cooler blue: the narrower,
    safer of the two must not read as the same click. */
 .ui-btn.access-btn.always { background: #3a2f16; border-color: #d29922; color: #e6c07b; }
-.ui-btn.access-btn.always:hover:not(:disabled) { background: #4a3c1c; border-color: #d29922; color: #e6c07b; }
+.ui-btn.access-btn.always:hover:not(:disabled) { background: #4a3c1c; color: #e6c07b; }
 .ui-btn.access-btn.always.scoped { background: #12233a; border-color: #1f4b7a; color: #79c0ff; }
-.ui-btn.access-btn.always.scoped:hover:not(:disabled) { background: #17304f; border-color: #1f4b7a; color: #79c0ff; }
+.ui-btn.access-btn.always.scoped:hover:not(:disabled) { background: #17304f; color: #79c0ff; }
 
 /* Recently-handled history: decided requests stay in the folder (dimmed) so the
    operator can see what they chose, under a small divider below the pending ones. */
@@ -730,10 +730,10 @@ button.tool {
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-/* Hover sets ONLY border-color: every scoped `.tool` hover (filter-bar) and the tied .modal-buttons button:hover already set
-   border-color to this same value, so this fallback introduces no property they
-   don't — it can't leak a background/text change onto a do-not-touch button. */
-button.tool:hover { border-color: #58a6ff; }
+/* Hover brightens the background (the one hover style). :where() keeps it at
+   the base rule's own rank, so any scoped `.tool` skin out-ranks it and it
+   can't leak onto a do-not-touch button. */
+button.tool:where(:hover) { background: var(--ui-bg-hover); }
 
 /* Bulk-action bars above each column's scrolling pane: a count/label on
    the left, action buttons on the right. */
@@ -766,10 +766,10 @@ button.tool:hover { border-color: #58a6ff; }
   color: #7d8590; cursor: pointer; font-family: inherit;
   font-size: 12px; padding: 3px 8px;
 }
-.mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
 .mail-bulk-bar button:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .mail-bulk-bar button:where(:not(.ui-btn)).danger { color: #d4d4d4; }
-.mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
+.mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 
 /* Pager footer under the message list: prev/next navigation on the left,
    a page-size selector pushed to the right. Same chrome as the bulk bar
@@ -1016,7 +1016,7 @@ button.tool:hover { border-color: #58a6ff; }
   cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
 }
 .mail-decision button:where(:not(.ui-btn)).primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.mail-decision button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #58a6ff; }
+.mail-decision button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .mail-decision button:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 /* The button an agent put on a message (notify-human --action). */
 .message-action { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
@@ -1025,7 +1025,7 @@ button.tool:hover { border-color: #58a6ff; }
   cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
 }
 .message-action button:where(:not(.ui-btn)).primary, .message-action button:where(:not(.ui-btn)).companion-primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.message-action button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #58a6ff; }
+.message-action button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .message-action button:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 .message-action-detail { color: #d4d4d4; font-size: 12px; overflow-wrap: anywhere; }
 .message-action-note { flex-basis: 100%; color: #8b949e; font-size: 12px; }
@@ -1039,9 +1039,9 @@ button.tool:hover { border-color: #58a6ff; }
   color: #7d8590; cursor: pointer; font-family: inherit;
   font-size: 12px; padding: 3px 8px;
 }
-.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
 .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):disabled { opacity: .45; cursor: default; }
-.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f85149; border-color: #f85149; }
+.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 /* "⤓ download ▾" split button (message-download-menu.js). It sits at the far
    end of the action bar, just before delete, and its menu opens DOWNWARD: the
    reader scrolls, so a menu below the bar only lengthens the scroll area,
@@ -1811,7 +1811,7 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
   width: 28px; height: 26px; padding: 0; border: 1px solid #30363d;
   border-radius: 4px; background: #161b22; color: #8b949e; cursor: pointer;
 }
-.human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; border-color: #58a6ff; }
+.human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
 .human-notification-drawer-nav button:where(:not(.ui-btn)):disabled { opacity: .35; cursor: default; }
 .human-notification-drawer-order { margin-left: auto; }
 .human-notification-drawer-announcement {
@@ -1914,7 +1914,7 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 .human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):focus-visible {
   background: #263445; color: #f0f6fc; outline: none;
 }
-.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
+.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
 .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
 }
@@ -2230,10 +2230,11 @@ body.slop .attachment-preview-position { color: #c9a86b; }
      page-level `body.wizard header button` rule adds here. */
   display: grid; place-items: center; line-height: 1;
 }
-.image-preview-close:hover, .image-preview-close:focus-visible,
-.image-preview-footer button:hover:not(:disabled), .image-preview-footer button:focus-visible {
+.image-preview-close:focus-visible, .image-preview-footer button:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
+.image-preview-close:hover,
+.image-preview-footer button:hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
 .image-preview-stage {
   position: relative; min-height: 0; flex: 1; display: flex;
   overflow: auto; padding: 24px; overscroll-behavior: contain;
@@ -2308,10 +2309,11 @@ body.slop .attachment-preview-position { color: #c9a86b; }
 }
 .viewer-display-button { width: 30px; }
 .markdown-preview-zoom-reset { min-width: 48px; font-variant-numeric: tabular-nums; }
-.viewer-display-button:hover, .viewer-display-button:focus-visible,
-.markdown-preview-zoom-reset:hover, .markdown-preview-zoom-reset:focus-visible {
+.viewer-display-button:focus-visible, .markdown-preview-zoom-reset:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
+.viewer-display-button:hover,
+.markdown-preview-zoom-reset:hover { color: #f0f6fc; background: var(--ui-bg-hover); }
 /* Maximized fills the window up to the same margin the resize ceiling keeps;
    fullscreen is the whole screen. Both outrank the remembered drag size, and
    neither has a corner to drag. */
@@ -2654,10 +2656,12 @@ body.wizard :is(.markdown-preview-close, .image-preview-close, .viewer-display-b
   border-color: #3a2f57; background: #1d1730; color: #b39ddb;
 }
 body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
-  header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):hover,
-body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
   header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):focus-visible {
   background: #2a2140; border-color: #7c5cc4; color: #e6dcff;
+}
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):hover {
+  background: #2a2140; color: #e6dcff;
 }
 body.wizard .markdown-preview-modes { border-color: #3a2f57; }
 body.wizard .markdown-preview-mode {
@@ -2673,8 +2677,8 @@ body.wizard .image-preview-footer { border-top-color: #3a2f57; }
 body.wizard .image-preview-footer button {
   background: #1d1730; border-color: #3a2f57; color: #d8cff0;
 }
-body.wizard .image-preview-footer button:hover:not(:disabled),
 body.wizard .image-preview-footer button:focus-visible { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .image-preview-footer button:hover:not(:disabled) { color: #e6dcff; background: #3a2a63; }
 body.wizard .markdown-preview-source { color: #d8cff0; }
 body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer { color: #6b5b8f; }
 body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:hover,
@@ -2707,10 +2711,12 @@ body.slop :is(.markdown-preview-close, .image-preview-close, .viewer-display-but
   border-color: #8b0000; background: #2a0a0a; color: #c9a86b;
 }
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
-  header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):hover,
-body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
   header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):focus-visible {
   background: #3d0d0d; border-color: #ffd700; color: #ffe88c;
+}
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):hover {
+  background: #3d0d0d; color: #ffe88c;
 }
 body.slop .markdown-preview-modes { border-color: #8b0000; }
 body.slop .markdown-preview-mode {
@@ -2726,8 +2732,8 @@ body.slop .image-preview-footer { border-top-color: #8b0000; }
 body.slop .image-preview-footer button {
   background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
 }
-body.slop .image-preview-footer button:hover:not(:disabled),
 body.slop .image-preview-footer button:focus-visible { border-color: #ffd700; color: #ffe88c; }
+body.slop .image-preview-footer button:hover:not(:disabled) { color: #ffe88c; background: #4a1414; }
 body.slop .markdown-preview-source { color: #f0dcc0; }
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer { color: #7a3b3b; }
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:hover,
@@ -2886,9 +2892,7 @@ body.wizard .human-notification-drawer-nav { border-bottom-color: #2a2140; color
 body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)) {
   background: #1d1730; border-color: #3a2f57; color: #b39ddb;
 }
-body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) {
-  color: #e6dcff; border-color: #7c5cc4;
-}
+body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #e6dcff; background: #3a2a63; }
 body.wizard .human-notification-drawer-date { border-bottom-color: #2a2140; }
 body.wizard .human-notification-drawer-body { color: #d8cff0; }
 body.wizard .human-notification-drawer-body a { color: #b39ddb; }
@@ -2901,7 +2905,7 @@ body.wizard .human-notification-drawer-download:hover { background: rgba(124, 92
 body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #1d1730; border-color: #3a2f57; color: #d8cff0;
 }
-body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #e6dcff; background: #3a2a63; }
 body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   background: #3b2a63; border-color: #7c5cc4; color: #f0e9ff;
 }
@@ -2930,9 +2934,7 @@ body.slop .human-notification-drawer-nav { border-bottom-color: #5c0d0d; color: 
 body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)) {
   background: #2a0a0a; border-color: #8b0000; color: #c9a86b;
 }
-body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) {
-  color: #ffe88c; border-color: #ffd700;
-}
+body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #ffe88c; background: #4a1414; }
 body.slop .human-notification-drawer-date { border-bottom-color: #5c0d0d; }
 body.slop .human-notification-drawer-body { color: #f0dcc0; }
 body.slop .human-notification-drawer-body a { color: #ffd700; }
@@ -2945,7 +2947,7 @@ body.slop .human-notification-drawer-download:hover { background: rgba(255, 215,
 body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
 }
-body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #ffd700; color: #ffe88c; }
+body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #ffe88c; background: #4a1414; }
 body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   background: #4a0a0a; border-color: #ffd700; color: #ffe88c;
 }
@@ -3568,7 +3570,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
   font-family: inherit;
 }
-.group-links-section > button:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-links-section > button:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 /* Per-group link chips in the <summary> header — an at-a-glance, always-
    visible (even when the group is collapsed) view of who this group can
    message (→) and who can message it (←). Clicking any chip opens the
@@ -4682,7 +4684,7 @@ tr:hover .row-actions { opacity: 1; }
    a delete is the quiet .ui-btn-ghost.ui-btn-danger, so a red frame doesn't
    repeat down every row. A reversible demotion (retire, disable, pause) is a
    plain button that warms amber only under the cursor. */
-.row-actions .ui-btn.warn:hover:not(:disabled) { color: var(--ui-warn-text); border-color: var(--ui-warn-text); }
+.row-actions .ui-btn.warn:hover:not(:disabled) { color: var(--ui-warn-text); background: rgba(210, 153, 34, 0.15); }
 /* The status dot + the focus/hide/⚙ cluster share the row's first
    cell (.agent-ctl) so the controls sit together — no empty gap from
    the dot living in its own column. */
@@ -4973,9 +4975,9 @@ details[open] > summary .group-actions { opacity: 1; }
     opacity: 0;
   }
 }
-.group-actions button:where(:not(.ui-menu-item, .ui-btn)):hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-actions button:where(:not(.ui-menu-item, .ui-btn)).danger:hover { color: #f85149; border-color: #f85149; }
-.group-actions button:where(:not(.ui-menu-item, .ui-btn)).warn:hover { color: #d29922; border-color: #d29922; }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)):hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)).danger:hover:not(:disabled) { color: #f85149; background: rgba(248, 81, 73, 0.15); }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)).warn:hover:not(:disabled) { color: #d29922; background: rgba(210, 153, 34, 0.15); }
 /* The spawn button — the primary "add an agent to this group" CTA.
    Sits as a SIBLING of .group-actions (not inside it) so its style
    stays distinct: blue-accent skin matching filter-bar .primary so it
@@ -4995,7 +4997,7 @@ details[open] > summary .group-actions { opacity: 1; }
   cursor: pointer; font-family: inherit;
   opacity: 0.4; transition: opacity 0.15s ease;
 }
-.spawn-btn:hover { background: #388bfd; border-color: #388bfd; }
+.spawn-btn:hover { background: #388bfd; }
 .spawn-btn .spawn-ico, .subgroup-btn .subgroup-ico { display: block; }
 details > summary:hover .spawn-btn,
 details[open] > summary .spawn-btn { opacity: 1; }
@@ -5252,10 +5254,10 @@ body.show-group-description .group-descr { display: inline; }
   font-size: 11px; padding: 2px 10px; border-radius: 4px;
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; cursor: pointer;
 }
-.force-rebrief-btn:hover { background: #2d333b; border-color: #58a6ff; }
+.force-rebrief-btn:hover { background: #2d333b; }
 /* Stand-down is the destructive wind-down control, so its hover warms to a
    caution border rather than the re-brief blue. */
-.force-standdown-btn:hover { background: #2d333b; border-color: #f0883e; }
+.force-standdown-btn:hover { background: #2d333b; }
 /* The mission label span-swaps regular → wizard, the same "always emit, CSS
    picks" trick the spawn button + activity bots use. */
 .force-mission-label-wizard { display: none; }
@@ -6546,7 +6548,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 /* Spawn dialog: the queue action sits beside Spawn; a reopened queued spawn
    gets a banner and a green launch button instead of the blue primary. */
 #agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn { background: #2b2111; border-color: #9e6a03; color: #e3b341; font-weight: 600; }
-#agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn:hover:not(:disabled) { border-color: #e3b341; color: #f2cc60; }
+#agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn:hover:not(:disabled) { color: #f2cc60; background: #3d2f12; }
 #agent-spawn-modal .modal-buttons button.agent-spawn-launch-btn { background: #238636; border-color: #2ea043; color: #fff; }
 #agent-spawn-modal .modal-buttons button.agent-spawn-launch-btn:hover:not(:disabled) { background: #2ea043; }
 .agent-spawn-queued-banner {
@@ -6666,7 +6668,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-.filter-bar button.primary:where(:not(.ui-btn)):hover { background: #388bfd; border-color: #388bfd; }
+.filter-bar button.primary:where(:not(.ui-btn)):hover { background: #388bfd; }
 .filter-bar button.tool:where(:not(.ui-btn)), .filter-bar a.tool {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
@@ -6674,7 +6676,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 /* A download link styled as a toolbar button (Logs tab "export"). */
 .filter-bar a.tool { display: inline-block; text-decoration: none; line-height: normal; }
-.filter-bar button.tool:where(:not(.ui-btn)):hover, .filter-bar a.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
+.filter-bar button.tool:where(:not(.ui-btn)):hover, .filter-bar a.tool:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 .filter-bar label.filter-toggle {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; color: #7d8590; cursor: pointer; user-select: none;
@@ -6696,12 +6698,14 @@ body.wizard .group-pending-title-wizard { display: inline; }
    default so a user can tell at a glance whether anything is hidden. */
 .filter-bar .view-popover-wrap { position: relative; display: inline-flex; align-items: center; }
 /* "search conversations" and "▾ view" are ghost buttons by operator exception
-   (buttons are bordered by default): quiet grey text, no fill, a blue frame
-   only on hover or while open. */
+   (buttons are bordered by default): quiet grey text, no fill; hover lifts
+   the background like every button, and a blue frame marks it open. */
 .filter-bar .view-btn.ui-btn { color: #7d8590; font-size: 11px; background: transparent; border-color: transparent; }
-.filter-bar .view-btn.ui-btn:is(:hover:not(:disabled), [aria-expanded="true"]) { color: #d4d4d4; background: transparent; border-color: #58a6ff; }
+.filter-bar .view-btn.ui-btn:hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
+.filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; }
 body.wizard .filter-bar .view-btn.ui-btn { color: #b39ddb; }
-body.wizard .filter-bar .view-btn.ui-btn:is(:hover:not(:disabled), [aria-expanded="true"]) { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .filter-bar .view-btn.ui-btn:hover:not(:disabled) { color: #f3e6c0; background: #3a2a63; }
+body.wizard .filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #f3e6c0; background: #3a2a63; border-color: #a97bd6; }
 /* Subtle grey count — matches the Terminals tab's .tab-badge.count so a
    deviation-from-default reads as a quiet informational number, not an alert. */
 .filter-bar .view-badge {
@@ -6999,7 +7003,7 @@ button.perm-scope-twisty {
   background: #21262d; border: 1px solid #3d4451; border-radius: 5px;
   color: #c9d1d9; cursor: pointer;
 }
-button.perm-scope-twisty:hover { background: #2d333b; border-color: #58a6ff; color: #e6edf3; }
+button.perm-scope-twisty:hover { background: #2d333b; color: #e6edf3; }
 button.perm-scope-twisty:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 button.perm-scope-twisty[aria-expanded="true"] { border-color: #58a6ff; color: #58a6ff; }
 .perm-scope-chevron {
@@ -8298,7 +8302,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 }
 .sbx-row button:where(:not(.ui-btn)):last-child:not(.sbx-segmented-option) { padding: 0 9px; color: #8b949e; }
 .sbx-row button:where(:not(.ui-btn)):hover { background: #2d333b; }
-.sbx-row button:where(:not(.ui-btn)):last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; border-color: #6e3a3a; }
+.sbx-row button:where(:not(.ui-btn)):last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; background: var(--ui-bg-hover); }
 /* Sandbox-profile card body: one compact line per grant / env binding, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
@@ -8381,7 +8385,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #e3b341; font-family: inherit; font-size: 12px; padding: 4px 9px;
   cursor: pointer; white-space: nowrap;
 }
-.sbx-missing button:where(:not(.ui-btn)):hover { background: #2d2a20; border-color: #9e7c32; }
+.sbx-missing button:where(:not(.ui-btn)):hover { background: #2d2a20; }
 .sbx-missing button:where(:not(.ui-btn)):disabled { opacity: 0.55; cursor: default; }
 /* The common-rule preset menu sits under the filesystem table and ships
    folded: it is a long audited catalog most profiles never open, and every
@@ -8671,7 +8675,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; padding: 5px 10px; font-size: 12px; cursor: pointer;
 }
-.spawn-attachments-controls button:where(:not(.ui-btn)):hover { border-color: #58a6ff; }
+.spawn-attachments-controls button:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
 .spawn-attachments-hint { font-size: 11px; color: #7d8590; }
 .spawn-attachments-list {
   list-style: none; margin: 0; padding: 0; display: flex;
@@ -8802,13 +8806,13 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
 }
 #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):not(.group-standing-orders-close):hover:not(:disabled) {
-  background: #2d333b; border-color: #58a6ff;
+  background: #2d333b;
 }
 #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)).primary {
   background: #1f6feb; border-color: #388bfd; color: #fff;
 }
 #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)).primary:hover:not(:disabled) {
-  background: #388bfd; border-color: #58a6ff;
+  background: #388bfd;
 }
 #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):disabled { opacity: 0.65; cursor: not-allowed; }
 .group-standing-orders-summary {
@@ -8911,15 +8915,14 @@ body.wizard #group-standing-orders-modal .cron-create-modal button:where(:not(.u
   background: #2a2034; border-color: #59466b; color: #e7d9f5;
 }
 body.wizard #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):not(.group-standing-orders-close):hover:not(:disabled) {
-  background: #39294a; border-color: #d9b45a;
+  background: #39294a;
 }
 body.wizard #group-standing-orders-modal .cron-create-modal button:is(.primary, .ui-btn-primary) {
   background: linear-gradient(180deg, #7650a5, #563477);
   border-color: #b184d1; color: #fff7dc; box-shadow: 0 0 12px #b26de840;
 }
 body.wizard #group-standing-orders-modal .cron-create-modal button:is(.primary, .ui-btn-primary):hover:not(:disabled) {
-  background: linear-gradient(180deg, #8d65ba, #654087);
-  border-color: #f3e6c0; box-shadow: 0 0 17px #b26de866;
+  background: linear-gradient(180deg, #8d65ba, #654087); box-shadow: 0 0 17px #b26de866;
 }
 body.wizard #group-standing-orders-modal .group-standing-orders-first-run {
   border-color: #694f7e; background: linear-gradient(145deg, #17101f, #120e19);
@@ -9180,7 +9183,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 .directory-picker-path button, .directory-picker-nav button { padding: 6px 11px; }
 .directory-picker-path button:hover:not(:disabled),
 .directory-picker-nav button:hover:not(:disabled),
-.directory-picker-list button:hover:not(:disabled) { border-color: #58a6ff; background: #292f37; }
+.directory-picker-list button:hover:not(:disabled) { background: #292f37; }
 .directory-picker-list button.active:not(:disabled) {
   background: #1f2937; border-color: #58a6ff; box-shadow: inset 3px 0 #58a6ff;
 }
@@ -9364,7 +9367,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   padding: 5px 14px; color: #c9d1d9; font-family: inherit; font-size: 13px; cursor: pointer;
 }
-:is(.paf-flagged-actions, .paf-row-buttons) button:hover:not(:disabled) { border-color: #58a6ff; }
+:is(.paf-flagged-actions, .paf-row-buttons) button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 :is(.paf-flagged-actions, .paf-row-buttons) button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 :is(.paf-flagged-actions, .paf-row-buttons) button:disabled { opacity: 0.6; cursor: default; }
 :is(.paf-flagged-actions, .paf-row-buttons) button.primary:disabled { background: #6e7681; border-color: #6e7681; opacity: 1; }
@@ -9653,7 +9656,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-.template-card .tc-actions button:where(:not(.ui-btn)).primary:hover { background: #388bfd; border-color: #388bfd; }
+.template-card .tc-actions button:where(:not(.ui-btn)).primary:hover { background: #388bfd; }
 .template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
 .template-card .tc-agent {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
@@ -9866,7 +9869,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   border-radius: 4px; padding: 4px 8px; color: #c9d1d9;
   font: inherit; cursor: pointer;
 }
-.cleanup-related button:hover { border-color: #58a6ff; color: #58a6ff; }
+.cleanup-related button:hover { color: #58a6ff; background: var(--ui-bg-hover); }
 .cleanup-tier {
   display: flex; flex-direction: column; gap: 4px;
   padding: 6px 8px; margin-bottom: 2px;
@@ -9975,7 +9978,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   font-family: inherit; white-space: nowrap;
 }
 #command-palette-btn:hover,
-#window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
+#window-all-btn:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 /* (The top-bar #dock-toggle-top and its aria-expanded "on" accent were removed
    in JOH-390 item 7 — see the dashboard.html note. The dock's own edge tab +
    in-dock collapse are the remaining show/hide controls.) */
@@ -10064,7 +10067,7 @@ label.cfg-label { cursor: pointer; }
   border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
   padding: 4px 10px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
 }
-.cfg-row-ctl button.cfg-inline:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-row-ctl button.cfg-inline:not(:disabled):hover { background: var(--ui-bg-hover); }
 .cfg-row-ctl button.cfg-inline:disabled { opacity: 0.5; cursor: default; }
 .cfg-row-wide > .cfg-row-ctl { justify-content: flex-start; }
 .cfg-tool-list { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -10309,8 +10312,8 @@ label.cfg-label { cursor: pointer; }
 }
 .cfg-footer button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 .cfg-footer button:disabled { opacity: 0.5; cursor: default; }
-.cfg-footer button:not(:disabled):hover { border-color: #58a6ff; }
-.cfg-footer button.primary:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-footer button:not(:disabled):hover { background: var(--ui-bg-hover); }
+.cfg-footer button.primary:not(:disabled):hover { background: #388bfd; }
 .cfg-status { font-size: 11px; color: #7d8590; }
 /* Remote-access live status line (Config tab) — colour tracks the state:
    info (neutral), ok (listener live), warn (setup missing / restart pending). */
@@ -10345,9 +10348,9 @@ label.cfg-label { cursor: pointer; }
   border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
   padding: 6px 16px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
 }
-.ra-inline-form button:not(:disabled):hover { border-color: #58a6ff; }
+.ra-inline-form button:not(:disabled):hover { background: var(--ui-bg-hover); }
 .ra-inline-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.ra-inline-form button.primary:not(:disabled):hover { border-color: #58a6ff; }
+.ra-inline-form button.primary:not(:disabled):hover { background: #388bfd; }
 .ra-form-grid { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
 .ra-form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #9aa3b2; }
 .ra-link {
@@ -11743,9 +11746,9 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 }
 .plugin-step-edit-head button:hover,
 .plugin-head > button.primary:hover,
-#sudo-list td > button:where(:not(.ui-btn)):hover { color: #d4d4d4; border-color: #58a6ff; }
+#sudo-list td > button:where(:not(.ui-btn)):hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 .plugin-step-edit-head button.danger:hover,
-#sudo-list td > button.danger:where(:not(.ui-btn)):hover { color: #f85149; border-color: #f85149; }
+#sudo-list td > button.danger:where(:not(.ui-btn)):hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 #plugin-modal .cron-create-modal { max-width: 720px; }
 #plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
 
@@ -11864,8 +11867,8 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   flex: 0 0 auto; font-size: 12px; padding: 2px 7px;
   background: transparent; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; cursor: pointer;
 }
-.export-history-item button:hover { border-color: #58a6ff; }
-.export-history-item button.ehi-del:hover { border-color: #f85149; color: #f85149; }
+.export-history-item button:hover { background: var(--ui-bg-hover); }
+.export-history-item button.ehi-del:hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 
 /* ═══ Wizard theme (body.wizard) ═════════════════════════════════════
    The 🧙 "it's wizard time" re-skin — activated by ?wizard=1 on the URL
@@ -11945,7 +11948,7 @@ body.wizard .open-prs-age,
 body.wizard .open-pr-meta,
 body.wizard .open-prs-empty { color: #9a86c4; }
 body.wizard .open-prs-filters button { border-color: #4a3d6b; color: #b39ddb; }
-body.wizard .open-prs-filters button:hover { border-color: #7a5db0; color: #e7d9f5; }
+body.wizard .open-prs-filters button:hover { color: #e7d9f5; background: #3a2a63; }
 body.wizard .open-prs-filters button.active {
   border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
 }
@@ -12099,7 +12102,6 @@ body.wizard .group-actions button[data-act="power-on-group"] {
 body.wizard #power-on-all-btn:hover,
 body.wizard .group-actions button[data-act="power-on-group"]:hover {
   background: linear-gradient(180deg, #37a374 0%, #1d5540 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 14px rgba(110, 231, 183, 0.85);
 }
 
@@ -12112,7 +12114,6 @@ body.wizard .group-actions button[data-act="shutdown-group"] {
 body.wizard #shutdown-all-btn:hover,
 body.wizard .group-actions button[data-act="shutdown-group"]:hover {
   background: linear-gradient(180deg, #bb5567 0%, #4d2131 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 14px rgba(242, 119, 122, 0.8);
 }
 
@@ -12414,7 +12415,6 @@ body.wizard .spawn-btn {
 }
 body.wizard .spawn-btn:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 14px rgba(169, 123, 214, 0.85);
 }
 
@@ -12932,7 +12932,6 @@ body.wizard #cron-create-open.ui-btn-primary {
 }
 body.wizard #cron-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -13325,7 +13324,6 @@ body.wizard #group-create-open.ui-btn-primary {
 }
 body.wizard #group-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -13648,7 +13646,7 @@ body.wizard #command-palette-btn {
 body.wizard #command-palette-btn::before {
   content: "📖"; font-size: 11px;
 }
-body.wizard #command-palette-btn:hover { background: #3a2a63; border-color: #d9b45a; }
+body.wizard #command-palette-btn:hover { background: #3a2a63; }
 
 /* ─── Wizard windows button + modal — "Reveal / veil heroes" ─────
    The top-bar 🪟 windows… launcher and the bulk focus/unfocus dialog it
@@ -13669,7 +13667,7 @@ body.wizard .win-label-wizard { display: inline; }
 body.wizard #window-all-btn {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #window-all-btn:hover { background: #3a2a63; border-color: #d9b45a; }
+body.wizard #window-all-btn:hover { background: #3a2a63; }
 
 /* Dialog title copy — a pure-CSS span swap, "Agent windows" → "Heroes'
    windows". The h3 is the dialog's aria-labelledby, and display:none drops the
@@ -14904,7 +14902,6 @@ body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary {
 }
 body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -14960,7 +14957,6 @@ body.wizard #links-manage-modal #link-new-open.ui-btn-primary {
 }
 body.wizard #links-manage-modal #link-new-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 body.wizard #links-manage-modal #links-list th,
@@ -14987,7 +14983,6 @@ body.wizard .group-links-section > button {
 }
 body.wizard .group-links-section > button:hover {
   background: #3a2a63;
-  border-color: #d9b45a;
   color: #f3e6c0;
 }
 
@@ -15085,7 +15080,6 @@ body.wizard #templates-manage-modal #template-create-open.ui-btn-primary {
 }
 body.wizard #templates-manage-modal #template-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -15853,7 +15847,6 @@ body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-p
 }
 body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 body.wizard #sandbox-profiles-manage-modal .template-card {
@@ -16088,7 +16081,6 @@ body.wizard #roles-manage-modal #role-create-open.ui-btn-primary {
 }
 body.wizard #roles-manage-modal #role-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 /* Class cards: violet-framed void, gilt name, violet meta + descr. */
@@ -16332,7 +16324,6 @@ body.wizard #context-features-modal .modal-buttons button:is(.primary, .ui-btn-p
 body.wizard #perm-edit-modal .modal-buttons button:is(.primary, .ui-btn-primary):hover,
 body.wizard #context-features-modal .modal-buttons button:is(.primary, .ui-btn-primary):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 body.wizard #perm-edit-modal .modal-buttons button:is(.primary, .ui-btn-primary):disabled,
@@ -16507,7 +16498,7 @@ body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)) {
   background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
 }
 body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)):hover {
-  background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
+  background: #3a2a63; color: #f3e6c0;
 }
 /* Primary "+ new …" / "+ Grant sudo" levers that lack their own id-scoped
    wizard rule (Parties + Labours already carry gilded overrides above). */
@@ -16519,7 +16510,6 @@ body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {
 }
 body.wizard .filter-bar button.primary:where(:not(.ui-btn)):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -16715,7 +16705,7 @@ body.wizard .jobs-subnav {
   background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
 }
 .trigger-inspector-head button:hover, .trigger-action-editor-head button:hover, .trigger-placeholder-chips button:hover, .trigger-add-actions button:hover {
-  background: #21262d; border-color: #58a6ff;
+  background: #21262d;
 }
 .trigger-action-editor-head button.danger { color: #ff7b72; }
 .trigger-placeholder-chips button { color: #e3a54b; }
@@ -16792,7 +16782,7 @@ body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-e
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)):hover {
-  background: #3a2a63; border-color: #f3e6c0;
+  background: #3a2a63;
 }
 body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }
 body.wizard #trigger-modal .modal-buttons button:is(.primary, .ui-btn-primary) {
@@ -16866,16 +16856,15 @@ body.wizard .filter-bar-cog .cog-btn {
 }
 /* Reach for the cog — the mechanism winds up: brighter parchment-gold, a
    gold edge, a flare of candle-glow, and the gear whirls fast. */
-body.wizard .filter-bar-cog .cog-btn:hover,
-body.wizard .filter-bar-cog .cog-btn:focus-visible,
-body.wizard .row-actions .cog-btn:hover,
-body.wizard .row-actions .cog-btn:focus-visible,
-body.wizard .group-actions .cog-btn:hover,
-body.wizard .group-actions .cog-btn:focus-visible {
+body.wizard .filter-bar-cog .cog-btn:focus-visible, body.wizard .row-actions .cog-btn:focus-visible, body.wizard .group-actions .cog-btn:focus-visible {
   color: #f3e6c0;
   border-color: #d9b45a;
   text-shadow: 0 0 10px rgba(217, 180, 90, 0.9);
 }
+body.wizard .filter-bar-cog .cog-btn:hover,
+body.wizard .row-actions .cog-btn:hover,
+body.wizard .group-actions .cog-btn:hover { color: #f3e6c0;
+  text-shadow: 0 0 10px rgba(217, 180, 90, 0.9); background: #3a2a63; }
 body.wizard .filter-bar-cog .cog-btn:hover .cog-glyph,
 body.wizard .filter-bar-cog .cog-btn:focus-visible .cog-glyph,
 body.wizard .row-actions .cog-btn:hover .cog-glyph,
@@ -16904,11 +16893,11 @@ body.wizard .row-actions .icon-btn.warn {
   color: #d9b45a;
   border-color: #7a5db0;
 }
-body.wizard .row-actions .icon-btn.warn:hover,
 body.wizard .row-actions .icon-btn.warn:focus-visible {
   color: #f3d98a;
   border-color: #d9b45a;
 }
+body.wizard .row-actions .icon-btn.warn:hover { color: #f3d98a; background: rgba(210, 153, 34, 0.15); }
 body.wizard .row-actions .icon-btn.warn:hover .trash-ico,
 body.wizard .row-actions .icon-btn.warn:focus-visible .trash-ico {
   filter: drop-shadow(0 0 4px rgba(217, 180, 90, 0.9));
@@ -17143,9 +17132,9 @@ body.wizard .mail-pager {
 body.wizard .mail-bulk-bar button:where(:not(.ui-btn)) {
   background: #241b3d; border-color: #d9b45a; color: #b39ddb;
 }
-body.wizard .mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f3e6c0; background: #3a2a63; }
 body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger { color: #d8cef0; }
-body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f2777a; border-color: #f2777a; }
+body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f2777a; background: rgba(248, 81, 73, 0.15); }
 body.wizard .mail-folder-actions { border-left-color: #4a3a6b; }
 body.wizard .mail-pager-pos,
 body.wizard .mail-pager-size { color: #b39ddb; }
@@ -17320,18 +17309,16 @@ body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:w
 body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover,
 body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover,
 body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover {
-  background: linear-gradient(180deg, #ecdcae, #d4bd82); border-color: #5f4519;
+  background: linear-gradient(180deg, #ecdcae, #d4bd82);
 }
 body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover,
 body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover,
-body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover {
-  color: #a5342e; border-color: #a5342e;
-}
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #a5342e; background: rgba(248, 81, 73, 0.15); }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover { background: #3a2a63; }
-body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f2777a; border-color: #f2777a; }
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f2777a; background: rgba(248, 81, 73, 0.15); }
 
 /* ─── Wizard config tab — "📜 The Wizard's Almanac" ─────────────────
    The 🧙 re-skin of the Config tab (#tab-config) — the settings-book twin of
@@ -17501,9 +17488,7 @@ body.wizard #tab-config .cfg-status { color: #b39ddb; }
 body.wizard #tab-config .cfg-footer button:not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #tab-config .cfg-footer button:not(.primary):not(:disabled):hover {
-  border-color: #f3e6c0;
-}
+body.wizard #tab-config .cfg-footer button:not(.primary):not(:disabled):hover { background: #3a2a63; }
 body.wizard #tab-config .cfg-footer button.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a; color: #f3e6c0;
@@ -17512,7 +17497,6 @@ body.wizard #tab-config .cfg-footer button.primary {
 }
 body.wizard #tab-config .cfg-footer button.primary:not(:disabled):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -17547,7 +17531,6 @@ body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons 
 }
 body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:is(.primary, .ui-btn-primary):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -18089,7 +18072,8 @@ button.dock-where-pill { cursor: pointer; }
 .dock-where-pill.is-differs { color: #f2cc60; border-color: #f2cc6088; background: #2a2208; }
 .dock-where-pill.is-differs.is-picked { border-color: #f2cc60; box-shadow: 0 0 0 1px #f2cc6066; }
 .dock-where-pill.is-missing { color: #6e7681; border-style: dashed; border-color: #484f58; background: none; }
-button.dock-where-pill.is-missing:hover, button.dock-where-pill.is-missing:focus-visible { color: #79c0ff; border-color: #58a6ff; }
+button.dock-where-pill.is-missing:focus-visible { color: #79c0ff; border-color: #58a6ff; }
+button.dock-where-pill.is-missing:hover { color: #79c0ff; background: var(--ui-bg-hover); }
 .dock-where-pill.is-missing.is-locked { opacity: .7; }
 .dock-card-menu-item.is-locked { opacity: .55; cursor: not-allowed; }
 
@@ -18494,7 +18478,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
 }
-.process-fit-button:hover { border-color: var(--pg-accent); background: var(--pg-node-strong); }
+.process-fit-button:hover { background: var(--pg-node-strong); }
 .process-fit-button:focus-visible { outline: 2px solid var(--pg-focus); outline-offset: 2px; }
 
 /* Wizard keeps the same semantic shapes and non-colour state anchors, with a
@@ -18882,7 +18866,7 @@ body.wizard .process-scroll-surface {
 }
 .process-palette-card-actions button:hover:not(:disabled),
 .process-palette-save:hover:not(:disabled),
-.process-palette-state button:hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
+.process-palette-state button:hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
 .process-palette-card-actions button:disabled,
 .process-palette-save:disabled { opacity: .45; cursor: default; }
 .process-palette-manage { width: 24px; padding-inline: 0 !important; }
@@ -19107,7 +19091,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 .process-list .process-actions .process-action + .process-delete-btn { margin-left: 8px; }
 .process-list .process-actions .process-delete-btn:disabled { opacity: .5; cursor: default; }
 .process-list .process-actions .process-delete-btn:hover:not(:disabled) {
-  background: #2d1618; border-color: #f85149;
+  background: #2d1618;
 }
 /* Rows are draggable onto the shared bin; dim the source for the gesture the
    same way group-reorder.js dims a dragged group header. */
@@ -19140,9 +19124,12 @@ body.wizard #dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-unpin-wizard { disp
 body.wizard .process-list .process-actions .process-delete-btn {
   color: #d9b45a; border-color: #7a5db0;
 }
-body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled),
 body.wizard .process-list .process-actions .process-delete-btn:focus-visible {
   color: #f3d98a; border-color: #d9b45a;
+  background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
+}
+body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled) {
+  color: #f3d98a;
   background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
 }
 body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled) .trash-ico,
@@ -19362,7 +19349,7 @@ body.wizard .process-palette-save,
 body.wizard .process-palette-state button { background: #211832; border-color: #6d568f; color: #f3e6c0; }
 body.wizard .process-palette-card-actions button:hover:not(:disabled),
 body.wizard .process-palette-save:hover:not(:disabled),
-body.wizard .process-palette-state button:hover:not(:disabled) { border-color: #d4af37; }
+body.wizard .process-palette-state button:hover:not(:disabled) { background: #3a2a63; }
 body.wizard .process-editor-band { stroke: #d4af37; }
 body.wizard .process-node-chooser {
   color: #e7d9f5; background: #211832; border-color: #d4af37;
@@ -20285,7 +20272,7 @@ html.scope-fused #messages-root { display: none !important; }
 /* node-select.js: the one node selector (tcl-vwuc0b), rows styled like the top bar's node popover. */
 .node-select { position: relative; display: inline-block; max-width: 100%; }
 .node-select-button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; box-sizing: border-box; padding: 3px 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #c9d1d9; font-size: 11.5px; cursor: pointer; }
-.node-select-button:hover { border-color: #8b949e; }
+.node-select-button:hover { background: var(--ui-bg-hover); }
 .node-select-button.narrowed { border-color: #1f6feb; background: #1f6feb22; }
 .node-select-button:disabled { opacity: .6; cursor: not-allowed; }
 .node-select-label { color: #7d8590; }
@@ -20528,7 +20515,7 @@ html.remote-node body::before {
 .rnp-foot button {
   font: inherit; font-size: 11px; color: #58a6ff; background: transparent; border: 1px solid #30363d; border-radius: 4px; padding: 1px 8px; cursor: pointer;
 }
-.rnp-foot button:hover { border-color: #58a6ff; }
+.rnp-foot button:hover { background: var(--ui-bg-hover); }
 .rnp-ask {
   background: none; border: 0; padding: 0 2px; color: #58a6ff; font: inherit; font-size: 11px; cursor: pointer;
 }
@@ -20662,7 +20649,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 /* Themed base for plain buttons on the Fleet pages and their dialogs; :where
    keeps it below every class rule (subtabs, cells, links, modal buttons). */
 :where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)) { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
-:where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)):where(:hover:not(:disabled)) { border-color: #58a6ff; }
+:where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)):where(:hover:not(:disabled)) { background: var(--ui-bg-hover); }
 :where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea, input:not([type="checkbox"]):not([type="radio"])) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; color-scheme: dark; }
 :where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea, input):where(:disabled) { opacity: 0.6; }
 :where(.fleet-admin, [id^="fleet-"], #launch-target) :where(button, select, textarea, input, a):where(:focus-visible) { outline: 2px solid #58a6ff; outline-offset: 1px; }
@@ -21076,7 +21063,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .remote-viewers-badge.term-viewers-badge { flex: none; margin-left: 0; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; }
 .remote-viewers-badge.term-viewers-badge.typing { border-color: #9e6a03; }
 #remote-sessions button[data-open] { background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; cursor: pointer; padding: 2px 10px; font: inherit; font-size: 12px; }
-#remote-sessions button[data-open]:hover { border-color: #58a6ff; }
+#remote-sessions button[data-open]:hover { background: var(--ui-bg-hover); }
 #remote-sessions button[data-open="interactive"] { border-color: #9e6a03; color: #d29922; }
 
 /* Other own nodes' human inbox (tcl-99b5ir): unread notifications and pending
@@ -21204,7 +21191,6 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-member.is-waiting { box-shadow: 0 0 0 2px #ff7b72; }
 .gp-member.is-offline .gp-member-glyph { opacity: .35; }
 .gp-run-controls .group-actions button:disabled { opacity: .4; cursor: default; }
-.gp-run-controls .group-actions button:disabled:hover { border-color: #2a3340; }
 .gp-strip-text { color: #8b949e; font-size: 11px; }
 .gp-card { background: #161b22; border: 1px solid #2a3340; border-radius: 10px; margin: 0 0 10px 18px; }
 .gp-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid #2a3340; }
@@ -21318,7 +21304,7 @@ body.wizard .gp-group-name, body.wizard .gp-card-name { color: #f3e6c0; }
 body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
 body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
 .gp-start, .gp-start-form button, .gp-start-form select { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
-.gp-start:hover, .gp-start-form button:hover:not(:disabled) { border-color: #58a6ff; }
+.gp-start:hover, .gp-start-form button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .gp-start-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 .gp-start-form button:disabled { opacity: .55; cursor: default; }
 .gp-start-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px 18px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
@@ -21361,8 +21347,12 @@ body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #
 .gq-spacer { flex: 1; }
 .gq-chip, .gq-btn, .gq-link { font: inherit; font-size: 12px; cursor: pointer; }
 .gq-chip, .gq-btn { border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; }
-.gq-chip:hover, .gq-btn:hover:not(:disabled) { border-color: #58a6ff; }
+.gq-chip:hover, .gq-btn:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .gq-btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+/* Area primaries keep their own colour on hover and brighten it a step (the
+   one hover style); the neutral area hovers above skip them. */
+:is(.mail-decision, .message-action, .human-notification-drawer-actions, .paf-flagged-actions, .paf-row-buttons, .gp-start-form) button:is(.primary, .companion-primary):hover:not(:disabled),
+.gq-btn.primary:hover:not(:disabled) { filter: brightness(1.2); }
 .gq-btn:disabled { opacity: .55; cursor: default; }
 .gq-btn.primary:disabled { opacity: 1; background: #21262d; border-color: #30363d; color: #8b949e; }
 .gq-link { background: transparent; border: 0; padding: 0; color: #58a6ff; }
@@ -21401,7 +21391,8 @@ body.wizard .gq-step:hover .gq-decides { color: #d4af37; }
 .gq-res.waits, .gq-whonow li.waits span { color: #e3b341; }
 .gq-row-act { display: flex; flex-direction: column; gap: 2px; }
 .gq-row-act button { font: inherit; font-size: 11px; line-height: 1; padding: 2px 5px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #8b949e; cursor: pointer; }
-.gq-row-act button:hover:not(:disabled), .gq-row-act button:focus-visible { border-color: #30363d; color: #e6edf3; }
+.gq-row-act button:focus-visible { border-color: #30363d; color: #e6edf3; }
+.gq-row-act button:hover:not(:disabled) { color: #e6edf3; background: var(--ui-bg-hover); }
 .gq-row-act button:disabled { opacity: .35; cursor: default; }
 .gq-problem, .gq-problems, .gq-error { font-size: 11.5px; color: #ff7b72; }
 .gq-problems, .gq-error { margin-top: 8px; }

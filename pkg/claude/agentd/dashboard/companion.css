@@ -461,7 +461,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 .voice-wake button {
   padding: 2px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d; color: var(--cmp-text); font: inherit; cursor: pointer;
 }
-.voice-wake button:hover { border-color: var(--cmp-amber); }
+.voice-wake button:hover { background: var(--ui-bg-hover); }
 .companion-pane-notice {
   position: absolute; top: 42px; right: 8px; max-width: 60%; padding: 5px 8px; border: 1px solid var(--cmp-red); border-radius: 6px;
   background: var(--cmp-bar); color: var(--cmp-text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;
@@ -500,7 +500,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
   padding: 4px 10px; border-radius: 6px; border: 1px solid var(--cmp-line);
   background: transparent; color: var(--cmp-text); font: inherit; cursor: pointer;
 }
-.knowledge-source-actions button:hover:not(:disabled) { border-color: var(--cmp-blue); }
+.knowledge-source-actions button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .knowledge-source-actions .companion-primary { margin: 0; background: var(--cmp-blue); border-color: var(--cmp-blue); color: #0d1117; }
 .knowledge-source-note { color: var(--cmp-muted); }
 .knowledge-source-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -525,9 +525,11 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
   margin: 0; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
   color: var(--cmp-text); font: inherit; font-size: 13px; cursor: pointer; text-align: left;
 }
-.companion-decision-options button:hover:not(:disabled) { border-color: var(--cmp-blue); }
+.companion-decision-options button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .companion-decision > * { flex: none; }
 .companion-decision-options button.companion-primary { border-color: var(--cmp-blue); background: #1f6feb; color: #fff; }
+/* Primaries brighten their own colour on hover; the neutral hovers skip them. */
+:is(.knowledge-source-actions, .companion-decision-options) button.companion-primary:hover:not(:disabled) { filter: brightness(1.2); }
 .companion-decision-rec { opacity: 0.85; }
 .companion-decision-note {
   padding: 5px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: var(--cmp-bg);

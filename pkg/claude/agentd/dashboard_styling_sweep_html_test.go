@@ -36,10 +36,9 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// Anchored at line start so it does not match the scoped `.filter-bar
 	// button.tool {` rule that shares the `button.tool {` suffix.
 	must("\nbutton.tool {", "the global fallback button.tool skin exists")
-	// Hover sets ONLY border-color so it can't leak a bg/text change onto the
-	// scoped (do-not-touch) toolbar buttons — the `; }` right after the colour
-	// distinguishes it from `.filter-bar button.tool:hover { …; color: … }`.
-	must("\nbutton.tool:hover { border-color: #58a6ff; }", "the fallback hover is border-only (leak-free)")
+	// Hover brightens the background at the base rule's own rank (:where), so a
+	// scoped (do-not-touch) toolbar skin always out-ranks it and nothing leaks.
+	must("\nbutton.tool:where(:hover) { background: var(--ui-bg-hover); }", "the fallback hover brightens the background without out-ranking scoped skins")
 	// The deploy/summon action is a `.primary`, not a `.tool`.
 	must(".template-card .tc-actions button:where(:not(.ui-btn)).primary {", "the template deploy .primary button is themed")
 
@@ -78,6 +77,6 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// Anti-regression: the plain-mode gaps must NOT be closed by widening a
 	// body.wizard rule (the wizard selectors stay modal-id-scoped). A bare
 	// `button.tool { ... }` fallback with a background hover would leak onto the
-	// scoped toolbars — guard that the fallback hover never gained a background.
-	mustNot("button.tool:hover { background:", "the fallback tool hover must not set a background (would leak onto scoped toolbars)")
+	// scoped toolbars — guard that the fallback hover never ranks above its base.
+	mustNot("\nbutton.tool:hover {", "the fallback tool hover must stay at the base rank (would leak onto scoped toolbars)")
 }
