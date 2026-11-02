@@ -8,7 +8,7 @@
 // the saved set of windows.
 
 import { h, render } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect } from 'preact/hooks';
 import htm from 'htm';
 import { BoardEditor, BoardsGate } from './board-island.js';
 import { onBoardDeleted } from './board-manage.js';
@@ -17,19 +17,20 @@ import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { validProcessTab } from './process-overlay.js';
 import { boardPaneSeed, isBoardId } from './board-model.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
-import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId, stewardAgent } from './companion-model.js';
-import { endCompanionPeek, openInCompanion, peekInCompanion } from './companion-facade.js';
+import { isAgentId } from './companion-model.js';
+import { openInCompanion } from './companion-facade.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { closeOverlayTab, focusOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayHostUp, overlayWindows } from './overlay-instances.js';
+import { closeOverlayTab, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND } from './chat-window-model.js';
 import { TERMINAL_WINDOW_KIND, validTerminalWindow } from './terminal-window-model.js';
 import { OverlayWindow, overlayStackReset, readPref } from './overlay-window.js';
-import { BOARD_OVERLAY_PLACEMENT_PREF, dockEntriesOf } from './overlay-tab-model.js';
+import { BOARD_OVERLAY_PLACEMENT_PREF } from './overlay-tab-model.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow } from './terminals-tab.js';
 import { POPUP_BLOCKED, TO_COLLAB_LABEL, TO_WINDOW_LABEL, registerTabMoves, tabMoves } from './overlay-tab-moves.js';
-import { buildOverlayBulkCommands, overlayBulkActions } from './overlay-window-bulk.js';
+import { buildOverlayBulkCommands } from './overlay-window-bulk.js';
 import { OverlayExpose, installOverlayExposeKey } from './overlay-expose.js';
+import { FooterDock, OverlayDock, OverlayDockPopup } from './overlay-dock.js';
 import { registerCommandProvider } from './command-registry.js';
 
 const html = htm.bind(h);
@@ -38,7 +39,6 @@ const html = htm.bind(h);
 // there were several: what a window for a board not yet moved starts from.
 export { BOARD_OVERLAY_PLACEMENT_PREF };
 const CASCADE_PX = 28;
-export const WINDOW_GLYPHS = { [BOARD_WINDOW_KIND]: '✎', [TERMINAL_WINDOW_KIND]: '⌨', [PROCESS_WINDOW_KIND]: '⬡' };
 const DEFAULT_W = 760;
 const DEFAULT_H = 540;
 
@@ -99,91 +99,18 @@ export function BoardOverlayWindow({ instance, overlay, strip, close, snapshot, 
   <//>`;
 }
 
-// What taking a pill off for good does, by kind. A Steward has none: only its ⚙
-// shuts it down.
-const REMOVE_TITLES = {
-  [CHAT_WINDOW_KIND]: ['Unpin', 'Unpin (the agent keeps running)'],
-  [TERMINAL_WINDOW_KIND]: ['Close', 'Close (the shell keeps running)'],
-  [BOARD_WINDOW_KIND]: ['Close', 'Close this board\u2019s window'],
-  [PROCESS_WINDOW_KIND]: ['Close', 'Close this editor (asks first if it has unsaved edits)'],
-};
-
-// OverlayDock holds the minimized windows and tabs of every kind: a window shows
-// its active tab and how many it holds, and a tab comes back from here to the
-// window it left. A chat that needs the operator says so here, as a chip does, so
-// it never looks silently busy.
-function OverlayDock({ snapshot }) {
-  const agents = companionAgents(snapshot.value);
-  // The chip stands for the seated Steward's window, and for the page summoning one.
-  const seated = stewardAgent(agents)?.agentId;
-  const onChip = ({ kind, agent }) => kind === START_WINDOW_KIND || (kind === CHAT_WINDOW_KIND && agent === seated);
-  const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value).filter(({ tabs }) => !(overlayHostUp.value && (tabs.every(onChip) || tabs.some(({ kind, agent }) => kind === CHAT_WINDOW_KIND && agent === seated))));
-  const actions = overlayBulkActions.value;
-  const [menuAt, setMenuAt] = useState(null);
-  const closeMenu = useCallback(() => setMenuAt(null), []);
-  if (!entries.length && !actions.length) return null;
-  const needs = ({ kind, agent }) => {
-    const row = kind === CHAT_WINDOW_KIND ? agents.get(agent) : null;
-    return !!row && (companionStatus(row) === 'needs' || approvalsFor(snapshot.value, row).length + decisionsFor(snapshot.value, row).length > 0);
-  };
-  return html`<div class="overlay-dock" role="group" aria-label="Minimized windows">
-    ${actions.length > 0 && html`<${OverlayDockMenu} open=${!!menuAt} onOpen=${setMenuAt} />`}
-    ${entries.map(({ key, tab, tabs }) => {
-      const removes = tabs.length === 1 && !onChip(tab) && tab.kind !== DECIDE_WINDOW_KIND && REMOVE_TITLES[tab.kind];
-      const peeks = tab.kind === CHAT_WINDOW_KIND ? {
-        onMouseEnter: (event) => peekInCompanion(tab.agent, event.currentTarget),
-        onMouseLeave: endCompanionPeek,
-        onFocus: (event) => peekInCompanion(tab.agent, event.currentTarget),
-        onBlur: endCompanionPeek,
-      } : null;
-      return html`<span key=${key} class=${`overlay-dock-pill${tabs.some(needs) ? ' needs' : ''}`}>
-        <button type="button" class="overlay-dock-item" title=${`Bring back ${tab.label}`} ...${peeks}
-          onClick=${() => { endCompanionPeek(); openOverlayWindow(tab); focusOverlayWindow(tab.id); }}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
-        ${removes && html`<button type="button" class="overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => (tabMoves(tab).close || (() => closeOverlayTab(tab.id)))()}>×</button>`}
-      </span>`;
-    })}
-  </div>
-  ${menuAt && actions.length > 0 && html`<${OverlayDockActions} at=${menuAt} actions=${actions} onClose=${closeMenu} />`}`;
-}
-
-// OverlayDockMenu is the dock's first button: actions on every window at once,
-// in the palette's words. Where its menu opens, from the button, is up to it.
-function OverlayDockMenu({ open, onOpen }) {
-  return html`<span class="overlay-dock-menu">
-    <button type="button" class="overlay-dock-menu-button" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title="All windows" aria-label="All windows" onClick=${(event) => {
-        if (open) { onOpen(null); return; }
-        const rect = event.currentTarget.getBoundingClientRect();
-        const height = event.currentTarget.ownerDocument.defaultView?.innerHeight || 0;
-        onOpen({ left: rect.left, bottom: height - rect.top + 6 });
-      }}>☰</button>
-  </span>`;
-}
-
-// OverlayDockActions is that menu. It renders beside the dock, not in it: the
-// dock's transform would place a fixed menu by the dock, and its scrolling clip it.
-function OverlayDockActions({ at, actions, onClose }) {
-  const root = useRef(null);
-  useEffect(() => {
-    const doc = root.current?.ownerDocument;
-    const away = (event) => { if (!event.target?.closest?.('.overlay-dock-menu, .overlay-dock-actions')) onClose(); };
-    const key = (event) => { if (event.key === 'Escape') onClose(); };
-    doc?.addEventListener('pointerdown', away, true);
-    doc?.addEventListener('keydown', key, true);
-    return () => {
-      doc?.removeEventListener('pointerdown', away, true);
-      doc?.removeEventListener('keydown', key, true);
-    };
-  }, [onClose]);
-  return html`<div ref=${root} class="overlay-dock-actions" role="menu" style=${`left:${at.left}px;bottom:${at.bottom}px`}>
-    ${actions.map(({ key, icon, label, hint, run }) => html`<button key=${key} type="button" role="menuitem" class=${`overlay-dock-action overlay-dock-action-${key}`}
-      title=${hint} onClick=${() => { onClose(); run(); }}>${icon} ${label}</button>`)}
-  </div>`;
-}
-
-export function BoardOverlay({ snapshot, win = globalThis.window }) {
+// BoardOverlay hosts what belongs to every window: the dock, unless it rests in
+// the footer (inFooter), its menus, and Show all windows.
+export function BoardOverlay({ snapshot, win = globalThis.window, inFooter = false }) {
   if (!overlayWindows.value.length && !minimizedOverlayTabs.value.length) return null;
-  return html`<${BoardsGate} snapshot=${snapshot}><${OverlayDock} snapshot=${snapshot} /><${OverlayExpose} win=${win} /><//>`;
+  return html`<${BoardsGate} snapshot=${snapshot}>
+    ${!inFooter && html`<${OverlayDock} snapshot=${snapshot} />`}<${OverlayDockPopup} snapshot=${snapshot} win=${win} /><${OverlayExpose} win=${win} />
+  <//>`;
+}
+
+function FooterOverlayDock({ snapshot, win }) {
+  if (!overlayWindows.value.length && !minimizedOverlayTabs.value.length) return null;
+  return html`<${BoardsGate} snapshot=${snapshot}><${FooterDock} snapshot=${snapshot} win=${win} /><//>`;
 }
 
 function validWindow(window) {
@@ -198,9 +125,13 @@ export function mountBoardOverlayIsland({ host, registerCleanup, snapshot, win =
   const stopKeeping = keepOverlayWindows(win, validWindow);
   const stopCommands = registerCommandProvider('overlay-windows', buildOverlayBulkCommands);
   const stopExposeKey = installOverlayExposeKey(win);
-  render(html`<${BoardOverlay} snapshot=${snapshot} win=${win} />`, host);
+  // The dock rests in the footer where the page has one (tcl-9qsgqs).
+  const dockHost = win?.document?.getElementById?.('overlay-dock-root');
+  render(html`<${BoardOverlay} snapshot=${snapshot} win=${win} inFooter=${!!dockHost} />`, host);
+  if (dockHost) render(html`<${FooterOverlayDock} snapshot=${snapshot} win=${win} />`, dockHost);
   registerCleanup(() => {
     render(null, host);
+    if (dockHost) render(null, dockHost);
     stopCommands();
     stopExposeKey();
     stopKeeping();

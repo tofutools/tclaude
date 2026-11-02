@@ -6,7 +6,8 @@
 import { Component, h } from 'preact';
 import { useRef } from 'preact/hooks';
 import htm from 'htm';
-import { BoardOverlayWindow, WINDOW_GLYPHS, boardStartPlacement } from './board-overlay.js';
+import { BoardOverlayWindow, boardStartPlacement } from './board-overlay.js';
+import { WINDOW_GLYPHS } from './overlay-dock.js';
 import { BOARD_WINDOW_KIND, boardOverlays } from './board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { ProcessOverlayWindow, processStartPlacement } from './process-overlay.js';

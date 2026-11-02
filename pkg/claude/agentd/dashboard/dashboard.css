@@ -203,6 +203,10 @@ footer {
    opened over a pinned popover still covers it. */
 footer:has(.open-prs.is-open) { z-index: 46; }
 body:not(:has(.modal-overlay.show, .manage-overlay.show)) footer:has(.open-prs.is-open) { z-index: 952; }
+/* With overlay windows on the page, the footer holds their dock and the chips:
+   it rises over the windows (930-949), which may reach down over the bar, so
+   nothing there is ever covered. A dialog still covers it. */
+body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) footer { z-index: 950; }
 body.dock-open .open-prs-popover { right: calc(var(--dock-w) + 12px); }
 body.dock-open .open-prs.is-open::before {
   right: 12px; width: calc(var(--dock-w) + min(470px, calc(100vw - 24px)));
@@ -381,6 +385,12 @@ body.dock-open .open-prs.is-open::before {
 }
 footer .meta { color: #7d8590; font-size: 12px; }
 footer .meta-time { font-variant-numeric: tabular-nums; }
+/* On a phone the bar keeps the refresh time, and the overlay dock and the chips
+   the room the version text took. */
+@media (max-width: 620px) {
+  .footer-inner { padding: 0 12px; gap: 10px; }
+  footer :is(.meta-version, .meta-sep) { display: none; }
+}
 /* Reserve the fixed footer's height at the page bottom so scrolling to the
    end never leaves the last row hidden behind the bar. The Messages tab
    pins body to the viewport height and scrolls internally, so it shrinks
@@ -2048,28 +2058,46 @@ header.overlay-look-windows { padding-right: 0; }
   background: var(--cmp-bar); color: #58a6ff; line-height: 1; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s;
 }
 .overlay-split-detach:is(.near, :focus-visible) { opacity: 1; pointer-events: auto; }
+/* An empty cell of a split, outlined so a tiling reads as one: a window snapped
+   alone is a side panel and has none. It takes no clicks: the page shows through. */
+.overlay-split-gap { position: fixed; pointer-events: none; border: 1px dashed var(--cmp-line); border-radius: 8px; box-sizing: border-box; }
 /* The windows step down for a dialog and aside for annotation. The lines between
    them go, as they would cut across either and take its clicks. */
-body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach) { display: none; }
-/* The minimized windows (board-overlay.js), clear of the chips in a corner. */
-.overlay-dock { position: fixed; z-index: 950; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 70vw; max-height: 40vh; overflow: auto; }
-.overlay-dock-pill { display: inline-flex; align-items: center; flex: none; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); }
-.overlay-dock-pill:hover { border-color: #58a6ff; }
-.overlay-dock-pill.needs { border-color: var(--cmp-amber); }
-.overlay-dock-item { padding: 5px 12px; border: 0; background: none; color: var(--cmp-text); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
-.overlay-dock-item:has(+ .overlay-dock-remove) { padding-right: 4px; }
-.overlay-dock-count { padding: 0 6px; border-radius: 8px; background: #30363d; font-size: 10px; }
-.overlay-dock-remove { padding: 2px 8px 2px 4px; border: 0; background: none; color: var(--cmp-muted); font-size: 13px; cursor: pointer; }
-.overlay-dock-remove:hover { color: var(--cmp-text); }
-/* The dock's menu of actions on every window. It opens upwards from its button,
-   fixed and beside the dock: inside, the dock's transform and scrolling would
-   misplace and clip it. */
-.overlay-dock-menu { display: inline-flex; flex: none; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); }
-.overlay-dock-menu:hover { border-color: #58a6ff; }
-.overlay-dock-menu-button { padding: 5px 10px; border: 0; background: none; color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer; }
-.overlay-dock-actions { position: fixed; z-index: 951; display: flex; flex-direction: column; min-width: 190px; padding: 4px; border: 1px solid var(--cmp-line); border-radius: 8px; background: var(--cmp-bar); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
-.overlay-dock-action { padding: 6px 10px; border: 0; border-radius: 6px; background: none; color: var(--cmp-text); font: inherit; font-size: 12px; text-align: left; white-space: nowrap; cursor: pointer; }
-.overlay-dock-action:hover, .overlay-dock-action:focus-visible { background: rgba(88, 166, 255, .14); }
+body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach, .overlay-split-gap) { display: none; }
+/* The overlay windows' dock (overlay-dock.js). It rests in the footer, in the
+   room the bar has left: it grows into none and is clipped rather than push the
+   Open PRs trigger. It is right-aligned, ☰ last beside the chips, and the pills
+   run to its left, so ☰ stays put as they come and go. Its pills are the bar's
+   height, as the chips beside it are. */
+.footer-dock-root { display: flex; flex: 1 1 0; min-width: 0; align-self: stretch; align-items: center; }
+.overlay-dock { display: flex; align-items: center; gap: 6px; }
+.overlay-dock.in-footer { flex: 1 1 0; flex-direction: row-reverse; min-width: 0; box-sizing: border-box; overflow: hidden; }
+/* Off screen, the pills at their full width, for the dock to measure. */
+.overlay-dock.overlay-dock-measure { position: fixed; left: -10000px; top: 0; visibility: hidden; pointer-events: none; }
+/* Without the footer (a page that has none), the dock floats over the room,
+   clear of the chips in a corner. */
+.overlay-dock.floating { position: fixed; z-index: 950; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); flex-wrap: wrap; justify-content: center; max-width: 70vw; max-height: 40vh; overflow: auto; }
+.overlay-dock :is(.overlay-dock-pill, .overlay-dock-menu, .overlay-dock-more) { display: inline-flex; align-items: center; flex: none; height: 21px; box-sizing: border-box; border: 1px solid var(--cmp-line); border-radius: 11px; background: var(--cmp-bar); }
+.overlay-dock.floating :is(.overlay-dock-pill, .overlay-dock-menu) { height: 27px; border-radius: 16px; }
+.overlay-dock :is(.overlay-dock-pill, .overlay-dock-menu, .overlay-dock-more):hover { border-color: #58a6ff; }
+.overlay-dock :is(.overlay-dock-pill, .overlay-dock-menu, .overlay-dock-more).needs { border-color: var(--cmp-amber); }
+.overlay-dock .ui-btn.ui-sm { height: 100%; padding: 0 9px; border: 0; border-radius: inherit; background: none; color: var(--cmp-text); font-size: 11px; }
+.overlay-dock .ui-btn.ui-sm:hover:not(:disabled), .overlay-dock .ui-btn.ui-sm:focus-visible { border: 0; background: none; color: var(--cmp-text); }
+.overlay-dock .ui-btn.ui-sm:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.overlay-dock.floating .ui-btn.ui-sm { padding: 0 12px; font-size: 12px; }
+.overlay-dock .overlay-dock-menu-button.ui-sm { padding: 0 8px; }
+.overlay-dock .overlay-dock-more-button.ui-sm { color: var(--cmp-muted); }
+.overlay-dock .overlay-dock-item.ui-sm:has(+ .overlay-dock-remove) { padding-right: 3px; }
+.overlay-dock .overlay-dock-remove.ui-sm { padding: 0 8px 0 3px; color: var(--cmp-muted); font-size: 13px; }
+.overlay-dock .overlay-dock-remove.ui-sm:hover:not(:disabled) { color: var(--cmp-text); }
+.overlay-dock-count { padding: 0 5px; border-radius: 7px; background: #30363d; font-size: 10px; }
+/* The dock's menus: ☰'s actions on every window, and the pills that did not fit.
+   They open upwards from their button, fixed and outside the footer: inside, the
+   footer's level would put them under the overlay windows (930-949). */
+.ui-menu.overlay-dock-actions { position: fixed; z-index: 951; min-width: 190px; max-height: calc(100vh - var(--footer-h, 29px) - 24px); overflow: auto; box-sizing: border-box; }
+.overlay-dock-actions .ui-menu-item { white-space: nowrap; }
+.overlay-dock-entry-note { color: var(--ui-muted); }
+.overlay-dock-entry-needs { color: var(--cmp-amber-text); font-weight: 600; }
 /* Show all windows (overlay-expose.js): a dimmed view over everything, the
    companion's chips included, with a card per window laid out without overlap.
    Under toasts and tooltips (1000). */

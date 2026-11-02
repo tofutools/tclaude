@@ -14,7 +14,7 @@ const BOARDS = [{ id: 'plan', title: 'Release plan' }, { id: 'map', title: 'Team
 
 // A scenario with a stand-in for the companion goes without the real one, and so
 // without the windows it shows.
-async function setup(t, snapshotValue = COLLAB_ON, { companion = true } = {}) {
+async function setup(t, snapshotValue = COLLAB_ON, { companion = true, footer = false } = {}) {
   const harness = await createPreactHarness(t);
   const doc = harness.document;
   const nav = doc.body.appendChild(doc.createElement('nav'));
@@ -35,6 +35,11 @@ async function setup(t, snapshotValue = COLLAB_ON, { companion = true } = {}) {
   const overlayHost = doc.body.appendChild(doc.createElement('div'));
   overlayHost.appendChild(doc.createElement('div')).id = 'board-overlay-root';
   overlayHost.appendChild(doc.createElement('div')).id = 'companion-root';
+  if (footer) {
+    const bar = doc.body.appendChild(doc.createElement('footer')).appendChild(doc.createElement('div'));
+    bar.className = 'footer-inner';
+    bar.appendChild(doc.createElement('span')).id = 'overlay-dock-root';
+  }
 
   const previous = globalThis.fetch;
   globalThis.fetch = async (url) => {
@@ -1107,4 +1112,90 @@ scenario('a tab that cannot be a Collab tab finds no place to drop on the Collab
   await drag.up(40, 210);
   assert.ok(windows.overlayTabs.value.some((tab) => tab.id === 'odd' && tab.windowId), 'it is still an overlay tab');
   assert.deepEqual(tabLabels(host), [], 'and not a Collab tab');
+});
+
+test('model: the dock shows the pills that fit, then "+N", then folds them into ☰', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { fitDockPills } = await harness.importDashboardModule('js/overlay-dock.js');
+  const pills = [80, 80, 80];
+  assert.equal(fitDockPills({ budget: 1000, menu: 30, more: 30, pills, gap: 6 }), 3);
+  assert.equal(fitDockPills({ budget: 288, menu: 30, more: 30, pills, gap: 6 }), 3, 'exactly wide enough');
+  assert.equal(fitDockPills({ budget: 287, menu: 30, more: 30, pills, gap: 6 }), 2, 'two and "+1"');
+  assert.equal(fitDockPills({ budget: 237, menu: 30, more: 30, pills, gap: 6 }), 1);
+  assert.equal(fitDockPills({ budget: 151, menu: 30, more: 30, pills, gap: 6 }), 0, 'with no room for one beside "+N", ☰ holds them');
+  assert.equal(fitDockPills({ budget: 10, menu: 30, more: 30, pills: [], gap: 6 }), 0);
+});
+
+// Widths the layout would give: the dock as wide as the footer leaves it, ☰ and
+// "+N" 30 each, a pill 80.
+function layDockOut(harness, dockWidth) {
+  const proto = harness.window.Element.prototype;
+  const original = proto.getBoundingClientRect;
+  proto.getBoundingClientRect = function rect() {
+    const width = this.matches('.overlay-dock.in-footer') ? dockWidth
+      : this.matches('.overlay-dock-measure > :is(.overlay-dock-menu, .overlay-dock-more)') ? 30
+        : this.matches('.overlay-dock-measure > .overlay-dock-pill') ? 80 : 0;
+    return width ? { left: 0, right: width, top: 0, bottom: 21, width, height: 21, x: 0, y: 0 } : original.call(this);
+  };
+  return () => { proto.getBoundingClientRect = original; };
+}
+
+const footerPills = (doc) => [...doc.querySelectorAll('footer .overlay-dock.in-footer > .overlay-dock-pill .overlay-dock-item')].map((item) => item.textContent.trim());
+
+scenario('the dock rests in the footer, and its menus open over the windows, outside it', COLLAB_ON, { footer: true }, async ({ harness, overlayHost, overlayState }) => {
+  const doc = harness.document;
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  assert.equal(overlayHost.querySelector('.overlay-dock'), null, 'nothing floats over the room');
+  assert.ok(doc.querySelector('footer .overlay-dock-menu-button'), '☰ is in the footer while a window is open');
+  await harness.act(async () => { overlayHost.querySelector('.overlay-wc-minimize').click(); await wait(); await wait(); });
+  assert.deepEqual(footerPills(doc), ['✎ Release plan']);
+  await harness.act(async () => { doc.querySelector('footer .overlay-dock-menu-button').click(); await wait(); });
+  const menu = doc.querySelector('.overlay-dock-actions');
+  assert.ok(menu && !menu.closest('footer'), 'the menu is outside the footer, so it can rise over the windows');
+  await harness.act(async () => { menu.querySelector('.overlay-dock-action-restore').click(); await wait(); await wait(); });
+  assert.ok(overlayHost.querySelector('.board-overlay'), 'restore all works from the footer');
+  assert.deepEqual(footerPills(doc), []);
+});
+
+scenario('pills that don\'t fit in the footer fold into "+N", and with no room for one into ☰', COLLAB_ON, { footer: true }, async ({ harness, overlayHost, overlayState, windows }) => {
+  const doc = harness.document;
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });
+  await harness.act(async () => { windows.minimizeOverlayWindow('board:plan'); windows.minimizeOverlayWindow('board:map'); await wait(); await wait(); });
+  assert.deepEqual(footerPills(doc), ['✎ Release plan', '✎ Team map'], 'unmeasured, everything shows');
+
+  const restore = layDockOut(harness, 160);
+  try {
+    // ☰ 30 + 2 × (6 + 80) = 202 is too wide; ☰, one pill and "+1" = 158 fit.
+    await harness.act(async () => { windows.overlayWindows.value = [...windows.overlayWindows.value]; await wait(); await wait(); });
+    assert.deepEqual(footerPills(doc), ['✎ Release plan']);
+    const more = doc.querySelector('footer .overlay-dock.in-footer > .overlay-dock-more > button');
+    assert.equal(more.textContent.trim(), '+1');
+    await harness.act(async () => { more.click(); await wait(); });
+    const list = doc.querySelector('.overlay-dock-actions');
+    assert.ok(!list.closest('footer'));
+    assert.deepEqual([...list.querySelectorAll('.overlay-dock-entry')].map((item) => item.textContent.trim()), ['✎ Team map']);
+    assert.equal(list.querySelector('.overlay-dock-action-restore'), null, '"+N" lists only the windows');
+    await harness.act(async () => { list.querySelector('.overlay-dock-entry').click(); await wait(); await wait(); });
+    assert.match(overlayHost.querySelector('.board-overlay').getAttribute('aria-label'), /Team map/, 'a window comes back from the list');
+    await harness.act(async () => { windows.minimizeOverlayWindow('board:map'); await wait(); await wait(); });
+
+    restore();
+    const again = layDockOut(harness, 100);
+    try {
+      await harness.act(async () => { windows.overlayWindows.value = [...windows.overlayWindows.value]; await wait(); await wait(); });
+      assert.deepEqual(footerPills(doc), []);
+      assert.equal(doc.querySelector('footer .overlay-dock.in-footer > .overlay-dock-more'), null);
+      const button = doc.querySelector('footer .overlay-dock-menu-button');
+      assert.equal(button.getAttribute('aria-label'), 'All windows, 2 minimized');
+      await harness.act(async () => { button.click(); await wait(); });
+      const menu = doc.querySelector('.overlay-dock-actions');
+      assert.ok(menu.querySelector('.overlay-dock-action-restore'), '☰ keeps its actions');
+      assert.deepEqual([...menu.querySelectorAll('.overlay-dock-entry')].map((item) => item.textContent.trim()), ['✎ Release plan', '✎ Team map'], 'and lists the windows folded into it');
+    } finally {
+      again();
+    }
+  } finally {
+    restore();
+  }
 });
