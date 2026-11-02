@@ -11,9 +11,9 @@
 
 import { signal } from '@preact/signals';
 import { dropIndex, pulledOff } from './overlay-tab-model.js';
-import { moveOverlayTab, overlayWindows, tearOverlayTabOut } from './overlay-instances.js';
+import { moveOverlayTab, overlayTabs, overlayWindows, tearOverlayTabOut } from './overlay-instances.js';
 import { droppedAt } from './overlay-window-model.js';
-import { moveTabsToCollab } from './overlay-tab-moves.js';
+import { moveTabsToCollab, tabMoves } from './overlay-tab-moves.js';
 
 const DRAG_START_PX = 5;
 const TEAR_OFF_PX = 40;
@@ -62,9 +62,15 @@ function targetAt(doc, point, ids, through = '') {
   return { ids, windowId, index: beside ? tabs.findIndex((tab) => tab.id === beside.dataset.tabId) : tabs.length, groupId };
 }
 
-// Where on the Collab view a point is: its strip, beside the nearest tab, or the
-// nav's entry for it. The strip only counts while its view shows.
-function collabAt(doc, { x, y }, through) {
+// Whether any of the tabs could be a Collab tab now: the Collab view is no place
+// to drop the rest, which stay where they were.
+const goesToCollab = (ids) => ids.some((id) => tabMoves(overlayTabs.peek().find((tab) => tab.id === id)).toCollab);
+
+// Where on the Collab view a point is, for tabs that can go there: its strip,
+// beside the nearest tab, or the nav's entry for it. The strip only counts while
+// its view shows.
+function collabAt(doc, { x, y }, through, ids) {
+  if (!goesToCollab(ids)) return null;
   const top = [...(doc?.elementsFromPoint?.(x, y) || [])].find((element) => !element.closest?.('.window-resize-frame') && (!through || windowOf(element) !== through));
   if (top?.closest?.(COLLAB_NAV)) return { nav: true };
   const strip = top?.closest?.('[data-collab-strip]');
@@ -80,16 +86,24 @@ function collabAt(doc, { x, y }, through) {
 const sameTarget = (a, b) => a?.windowId === b?.windowId && a?.index === b?.index && a?.groupId === b?.groupId;
 const sameCollab = (a, b) => a?.nav === b?.nav && a?.beside === b?.beside && a?.after === b?.after;
 
-// Resting on the nav's entry switches to the Collab view, as a browser's tab bar
-// does under a dragged link.
+// Resting on the nav's entry switches to the Collab view, once, as a browser's
+// tab bar does under a dragged link.
 let navTimer = null;
+let navSwitched = false;
 function restOnNav(doc, on) {
   const nav = doc?.querySelector?.(COLLAB_NAV);
   nav?.classList?.toggle?.('overlay-drop', on);
   if (!on) {
     clearTimeout(navTimer);
     navTimer = null;
-  } else if (!navTimer) navTimer = setTimeout(() => { navTimer = null; nav?.click?.(); }, NAV_SWITCH_MS);
+    navSwitched = false;
+  } else if (!navTimer && !navSwitched) {
+    navTimer = setTimeout(() => {
+      navTimer = null;
+      navSwitched = true;
+      nav?.click?.();
+    }, NAV_SWITCH_MS);
+  }
 }
 
 function aimCollab(next, doc) {
@@ -120,7 +134,7 @@ export function tabJoin(win, tabId, windowId) {
   const doc = win?.document;
   const over = (point) => {
     const target = targetAt(doc, point, [tabId], windowId);
-    const collab = target ? null : collabAt(doc, point, windowId);
+    const collab = target ? null : collabAt(doc, point, windowId, [tabId]);
     aim(target, doc, collab);
     return !!(target || collab);
   };
@@ -224,13 +238,13 @@ export function startTabDrag(event, { ids, label, land, tear }, win) {
     }
     tabGhost.value = { label, x: m.clientX + 8, y: m.clientY + 8 };
     const target = targetAt(doc, point(m), ids);
-    aim(target, doc, target ? null : collabAt(doc, point(m)));
+    aim(target, doc, target ? null : collabAt(doc, point(m), '', ids));
   };
   const up = (u) => {
     if (u.pointerId !== pointerId) return;
     const dragged = dragging;
     const target = dragged ? targetAt(doc, point(u), ids) : null;
-    const collab = dragged && !target ? collabAt(doc, point(u)) : null;
+    const collab = dragged && !target ? collabAt(doc, point(u), '', ids) : null;
     const pressHeld = !dragged && !swiping;
     const rect = strip?.getBoundingClientRect?.();
     end();

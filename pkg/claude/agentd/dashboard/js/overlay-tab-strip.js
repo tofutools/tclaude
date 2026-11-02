@@ -202,23 +202,41 @@ export function OverlayTabStrip({ window, overlay, win, viewOf }) {
   };
   // The tabs in flight may be this strip's, and target.index counts without them.
   const landsBefore = target && window.tabs.filter((tab) => !target.ids.includes(tab.id))[target.index]?.id;
-  // A Collab tab dragged here shows where it would land; its own strip's dragend
-  // takes it there, as it knows the pane. One that cannot float is not taken.
-  const collabOver = (event) => {
-    if (!collabDrag.peek()?.floats) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-    aimFromCollab(stripTargetAt(win?.document, { x: event.clientX, y: event.clientY }));
-  };
-  const collabLeave = (event) => {
-    if (!event.currentTarget.contains(event.relatedTarget) && tabDropTarget.peek()?.windowId === window.id) aimFromCollab(null);
-  };
-  const collabDrop = (event) => {
-    if (!collabDrag.peek()?.floats) return;
-    event.preventDefault();
-    event.stopPropagation();
-  };
+  // A Collab tab dragged over the title bar shows where it would land; its own
+  // strip's dragend takes it there, as that knows the pane. One that cannot float
+  // is not taken. A browser names no element a drag left for, so leaving is by
+  // where the pointer went.
+  useEffect(() => {
+    const bar = stripRef.current?.closest?.('header');
+    if (!bar) return undefined;
+    const over = (event) => {
+      if (!collabDrag.peek()?.floats) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      aimFromCollab(stripTargetAt(win?.document, { x: event.clientX, y: event.clientY }));
+    };
+    const leave = (event) => {
+      const box = bar.getBoundingClientRect();
+      const inside = event.clientX > box.left && event.clientX < box.right && event.clientY > box.top && event.clientY < box.bottom;
+      if (!inside && tabDropTarget.peek()?.windowId === window.id) aimFromCollab(null);
+    };
+    const drop = (event) => {
+      if (!collabDrag.peek()?.floats) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    bar.addEventListener('dragenter', over);
+    bar.addEventListener('dragover', over);
+    bar.addEventListener('dragleave', leave);
+    bar.addEventListener('drop', drop);
+    return () => {
+      bar.removeEventListener('dragenter', over);
+      bar.removeEventListener('dragover', over);
+      bar.removeEventListener('dragleave', leave);
+      bar.removeEventListener('drop', drop);
+    };
+  }, [window.id]);
   // Ctrl+wheel over the title bar zooms a board.
   const onWheel = (event) => { if (!event.ctrlKey) event.currentTarget.scrollLeft += event.deltaY; };
   const renderTab = (tab) => {
@@ -236,8 +254,7 @@ export function OverlayTabStrip({ window, overlay, win, viewOf }) {
   const groups = new Map((window.groups || []).map((group) => [group.id, group]));
   const groupOf = new Map(window.tabs.map((tab) => [tab.id, tab.groupId]));
   const segments = segmentsFor(window.tabs.map((tab) => ({ ...tab, key: tab.id })), (key) => groupOf.get(key), groups);
-  return html`<div ref=${stripRef} class=${`companion-tabs overlay-tab-strip${target ? ' joining' : ''}`} role="tablist" aria-label="Tabs" data-tab-strip=${window.id} onWheel=${onWheel}
-    onDragOver=${collabOver} onDragLeave=${collabLeave} onDrop=${collabDrop}>
+  return html`<div ref=${stripRef} class=${`companion-tabs overlay-tab-strip${target ? ' joining' : ''}`} role="tablist" aria-label="Tabs" data-tab-strip=${window.id} onWheel=${onWheel}>
     ${segments.map((segment) => (segment.type === 'group'
     ? html`<${GroupStack} key=${segment.key} window=${window} group=${segment.group} overlay=${overlay} win=${win} renderTab=${renderTab} />`
     : renderTab(segment.pane)))}

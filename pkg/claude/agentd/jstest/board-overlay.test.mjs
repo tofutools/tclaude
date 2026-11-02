@@ -1074,3 +1074,17 @@ scenario('a Collab tab dragged onto a window\'s strip joins that window at the m
   assert.deepEqual(tabsByWindow(overlayHost), [['Team map', 'Release plan']]);
   assert.deepEqual(tabLabels(host), []);
 });
+
+scenario('a tab that cannot be a Collab tab finds no place to drop on the Collab view', async ({ harness, host, overlayHost, overlayState, windows }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await harness.act(async () => { windows.openTabInWindow('board:plan', '', { id: 'odd', kind: 'odd', label: 'Odd' }, { activate: false }); await wait(); await wait(); });
+  layOutCollab(harness, host, overlayHost);
+  const nav = harness.document.querySelector('nav [data-tab="terminals"]');
+  const drag = pointer(harness, tabButton(overlayHost, 'Odd'));
+  await drag.down(150, 15);
+  await drag.move(40, 210);
+  assert.ok(!nav.classList.contains('overlay-drop'), 'the entry stays plain');
+  await drag.up(40, 210);
+  assert.ok(windows.overlayTabs.value.some((tab) => tab.id === 'odd' && tab.windowId), 'it is still an overlay tab');
+  assert.deepEqual(tabLabels(host), [], 'and not a Collab tab');
+});
