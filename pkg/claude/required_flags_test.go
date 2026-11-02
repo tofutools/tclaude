@@ -49,6 +49,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 	allow := map[string]string{
 		"claude proxy awb comment add":                  "key",
 		"claude proxy github pr create":                 "title",
+		"claude proxy gitlab mr create":                 "title",
 		"claude proxy linear issue create":              "team title",
 		"claude proxy linear issue link":                "url",
 		"claude agent bundle export":                    "file",
