@@ -448,3 +448,58 @@ test('a window torn off floats where it left, even where its cell joined an empt
   assert.deepEqual(dropTree(torn, room, { x: 520, y: 150 }, 'b', { here, alive: here, vacated }), { float: true });
   assert.deepEqual(dropTree(torn, room, { x: 750, y: 700 }, 'b', { here, alive: here, vacated }).tree.cells, [{ id: 'a' }, gap, { id: 'c' }, { id: 'b' }], 'below it, the rest of the half takes it');
 });
+
+// Explicit drop targets (tcl-7uk9l6): a box in each empty cell, markers on the
+// free edges of tiled windows, and only a pointer over one counts.
+test('targets: a box centred in each empty cell, none in a cell held for a window away or the one just left', async (t) => {
+  const { dropTargets, gapTarget, GAP_TARGET } = await model(t);
+  const tree = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { gap: true }, { gap: true, held: 'z' }, { gap: true }] };
+  const all = dropTargets(tree, AREA, 'c', { here: new Set(['a']) });
+  assert.deepEqual(all.gaps.map(({ gap }) => gap.path), [[1], [2], [3]], 'a cell held for a window that no longer exists is empty');
+  assert.deepEqual(all.gaps[0].rect, { x: 1200 - GAP_TARGET.w / 2, y: 240 - GAP_TARGET.h / 2, w: GAP_TARGET.w, h: GAP_TARGET.h });
+  const held = dropTargets(tree, AREA, 'c', { here: new Set(['a']), alive: new Set(['z']) });
+  assert.deepEqual(held.gaps.map(({ gap }) => gap.path), [[1], [3]], 'held for a window that is away');
+  const left = dropTargets(tree, AREA, 'c', { here: new Set(['a']), vacated: { x: 800, y: 440, w: 800, h: 400 } });
+  assert.deepEqual(left.gaps.map(({ gap }) => gap.path), [[1], [2]], 'the cell the window was torn out of floats it');
+  assert.deepEqual(gapTarget({ x: 0, y: 0, w: 40, h: 30 }), { x: 4, y: 4, w: 32, h: 22 }, 'a box stays inside a small cell');
+});
+
+test('targets: markers on a tiled window\'s free edges, not on the room\'s edge, and none for the window dragged', async (t) => {
+  const { dropTargets, splitMarkers } = await model(t);
+  const { markers } = dropTargets(pair('x', 'a', 'b'), AREA, 'b', { here: new Set(['a', 'b']), reach: 48 });
+  assert.deepEqual(markers.map(({ window, zone }) => `${window}:${zone}`), ['a:right', 'a:top']);
+  assert.deepEqual(splitMarkers({ x: 400, y: 200, w: 400, h: 300 }, AREA, 48).map(({ zone }) => zone), ['left', 'right', 'top', 'bottom'], 'away from the room\'s edges, all four');
+  for (const { zone, rect } of splitMarkers({ x: 400, y: 200, w: 400, h: 300 }, AREA, 48)) {
+    assert.ok(rect.x >= 400 && rect.x + rect.w <= 800 && rect.y >= 200 && rect.y + rect.h <= 500, `${zone} lies inside its window`);
+  }
+});
+
+test('targets: only a pointer over a box or a marker hits it', async (t) => {
+  const { dropTargets, targetAt } = await model(t);
+  const tree = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { gap: true } };
+  const targets = dropTargets(tree, AREA, 'c', { here: new Set(['a']), reach: 48 });
+  assert.equal(targetAt({ x: 1000, y: 200 }, targets), null, 'in the empty cell, off its box');
+  assert.equal(targetAt({ x: 400, y: 600 }, targets), null, 'in a window, off its markers');
+  assert.deepEqual(targetAt({ x: 1200, y: 440 }, targets).gap.path, [1]);
+  const right = targets.markers.find(({ zone }) => zone === 'right').rect;
+  assert.deepEqual(targetAt({ x: right.x + 2, y: right.y + 2 }, targets), { window: 'a', zone: 'right' });
+});
+
+test('edge strips: each lies where snapZone names its zone', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { snapZone, snapZoneRects } = await harness.importDashboardModule('js/overlay-window-model.js');
+  for (const viewport of [{ width: 1600, height: 900 }, { width: 900, height: 600 }]) {
+    for (const top of [0, 48]) {
+      const zones = snapZoneRects(viewport, top);
+      assert.equal(zones.length, 7);
+      for (const { zone, rects } of zones) {
+        for (const rect of rects) {
+          for (const [dx, dy] of [[0.5, 0.5], [0.05, 0.05], [0.95, 0.95]]) {
+            const point = { x: rect.x + rect.w * dx, y: rect.y + rect.h * dy };
+            assert.equal(snapZone(point, viewport, top), zone, `${zone} at ${JSON.stringify(point)} in ${viewport.width}x${viewport.height}, top ${top}`);
+          }
+        }
+      }
+    }
+  }
+});

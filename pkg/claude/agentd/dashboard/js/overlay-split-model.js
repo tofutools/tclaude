@@ -447,6 +447,70 @@ export function dropZone(pointer, rect) {
   return side && end ? `${end}-${side}` : side || end;
 }
 
+// A drag shows explicit drop targets (tcl-7uk9l6): a box at the centre of each
+// empty cell, which fills it, and a marker on each free edge of a tiled window,
+// which splits it there. Only a pointer over one does that: anywhere else in a
+// cell or a window, the drop floats, so a window moves freely over a split.
+export const GAP_TARGET = Object.freeze({ w: 72, h: 52 });
+export const SPLIT_MARKER = Object.freeze({ long: 56, short: 28, inset: 10 });
+const SPLIT_SIDES = ['left', 'right', 'top', 'bottom'];
+
+// gapTarget is the box at the centre of an empty cell that a drop fills it from.
+export function gapTarget(rect) {
+  const w = Math.min(GAP_TARGET.w, Math.max(0, rect.w - 8));
+  const h = Math.min(GAP_TARGET.h, Math.max(0, rect.h - 8));
+  return { x: Math.round(rect.x + (rect.w - w) / 2), y: Math.round(rect.y + (rect.h - h) / 2), w, h };
+}
+
+// splitMarkers are the markers on a tiled window's edges, { zone, rect }, each
+// splitting it on that side. A side on the room's edge has none: the room's own
+// strip there (snapZone, reach wide) already offers that drop.
+export function splitMarkers(rect, area, reach) {
+  const { long, short, inset } = SPLIT_MARKER;
+  const midX = Math.round(rect.x + (rect.w - long) / 2);
+  const midY = Math.round(rect.y + (rect.h - long) / 2);
+  const at = {
+    left: { x: rect.x + inset, y: midY, w: short, h: long },
+    right: { x: rect.x + rect.w - inset - short, y: midY, w: short, h: long },
+    top: { x: midX, y: rect.y + inset, w: long, h: short },
+    bottom: { x: midX, y: rect.y + rect.h - inset - short, w: long, h: short },
+  };
+  const onRoomEdge = {
+    left: rect.x - area.x < reach,
+    right: area.x + area.w - (rect.x + rect.w) < reach,
+    top: false,
+    bottom: area.y + area.h - (rect.y + rect.h) < reach,
+  };
+  return SPLIT_SIDES.filter((side) => !onRoomEdge[side]).map((zone) => ({ zone, rect: at[zone] }));
+}
+
+const overlaps = (a, b) => !!a && !!b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+// dropTargets is every target a drag of id shows over tree laid out in area,
+// with the windows in here showing: { gaps: [{ gap, rect }], markers: [{ window,
+// zone, rect }] }. A cell held for a window in alive that is away takes no drop,
+// and neither does the cell this drag tore the window out of (vacated): let go
+// there, it floats. It reads nothing but its arguments.
+export function dropTargets(tree, area, id, { here, alive = new Set(), vacated = null, reach = 0 }) {
+  const live = keepingWindows(tree, here);
+  if (!live || !fits(live, area)) return { gaps: [], markers: [] };
+  const { rects, gaps } = splitLayout(live, area);
+  return {
+    gaps: gaps.filter((cell) => !(cell.held && cell.held !== id && alive.has(cell.held)))
+      .map((gap) => ({ gap, rect: gapTarget(gap.rect) })).filter(({ rect }) => !overlaps(rect, vacated)),
+    markers: leavesOf(live).filter((other) => other !== id)
+      .flatMap((other) => splitMarkers(rects[other], area, reach).map(({ zone, rect }) => ({ window: other, zone, rect }))),
+  };
+}
+
+// targetAt is the target under pointer: { gap } or { window, zone }, or null.
+export function targetAt(pointer, { gaps = [], markers = [] } = {}) {
+  const gap = gaps.find(({ rect }) => inside(pointer, rect));
+  if (gap) return { gap: gap.gap };
+  const marker = markers.find(({ rect }) => inside(pointer, rect));
+  return marker ? { window: marker.window, zone: marker.zone } : null;
+}
+
 // detachSpot is where a line's detach button sits: its middle, or on a quad, the
 // middle of the arm before the crossing, which is the crossing's own.
 export function detachSpot(line, crossing = null) {

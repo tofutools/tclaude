@@ -96,6 +96,12 @@ test('a raised window stays in the window layer, under the snap guide and the ch
   assert.ok(guide, 'the snap guide is a step in the window layer');
   assert.ok(top < band('window') + Number(guide[1]), `the front split's lines (${top}) stay under the snap guide`);
   assert.ok(band('window') + Number(guide[1]) < band('chrome'), 'and the guide under the chrome');
+  // The drop targets a drag shows sit over every window, the dragged one
+  // included, and over the guide's preview, but under the chrome (tcl-7uk9l6).
+  const targets = valueOf('.overlay-snap-targets').match(/calc\(var\(--z-window\) \+ (\d+)\)/);
+  assert.ok(targets, 'the drop targets are a step in the window layer');
+  assert.ok(Number(targets[1]) > Number(guide[1]), 'over the snap guide');
+  assert.ok(band('window') + Number(targets[1]) < band('chrome'), 'and under the chrome');
   for (const selector of ['.board-overlay', '.companion-window', '.window-resize-frame']) {
     assert.equal(valueOf(selector), 'var(--overlay-level, var(--z-window))', `${selector} takes its window's level`);
   }

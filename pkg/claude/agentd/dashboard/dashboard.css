@@ -2133,6 +2133,22 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
   position: fixed; z-index: calc(var(--z-window) + 90); pointer-events: none; border-radius: 8px;
   background: rgba(88, 166, 255, .10); border: 1px dashed #58a6ff;
 }
+/* The drop targets a drag shows (overlay-window.js SnapTargets): over every
+   window, the dragged one included, and over the guide, so a hot target reads
+   on top of the preview it gives; under the chrome. Quiet until hot. */
+.overlay-snap-targets { position: fixed; inset: 0; z-index: calc(var(--z-window) + 95); pointer-events: none; }
+.overlay-snap-edge, .overlay-snap-target { position: absolute; box-sizing: border-box; border: 1.5px solid rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .07); }
+.overlay-snap-edge { border-radius: 4px; }
+.overlay-snap-target { border-color: rgba(88, 166, 255, .6); background: rgba(13, 17, 23, .55); border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+.overlay-snap-target::after { content: ""; position: absolute; inset: 9px; border: 1.5px dashed rgba(88, 166, 255, .8); border-radius: 3px; }
+.overlay-snap-target.split::after { inset: 7px; }
+.overlay-snap-target.split.left::after { right: 50%; }
+.overlay-snap-target.split.right::after { left: 50%; }
+.overlay-snap-target.split.top::after { bottom: 50%; }
+.overlay-snap-target.split.bottom::after { top: 50%; }
+.overlay-snap-edge.hot, .overlay-snap-target.hot { border-color: #58a6ff; background: rgba(88, 166, 255, .3); }
+.overlay-snap-target.hot { box-shadow: 0 0 0 3px rgba(88, 166, 255, .25); }
+.overlay-snap-target.hot::after { border-style: solid; border-color: #cfe5ff; background: rgba(88, 166, 255, .35); }
 /* A dragged window that would float where it is let go, as a tear-off out of a
    split does: the guide's dashed line on the window itself, where it will stay. */
 .overlay-window.overlay-window-floating { outline: 1px dashed #58a6ff; outline-offset: 2px; }

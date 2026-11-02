@@ -116,6 +116,28 @@ export function snapZone(pointer, viewport, top = 0) {
   return pointer.x >= viewport.width - corner ? 'bottom-right' : 'bottom';
 }
 
+// snapZoneRects is where each zone of snapZone lies, as the rectangles a drag
+// shows them as: { zone, rects }. A bottom corner is two strips, along the side
+// and along the bottom. They reach the room's edges; snapZone also counts a
+// pointer past them, over the nav bar or the footer.
+export function snapZoneRects(viewport, top = 0) {
+  const bottom = viewport.height - OVERLAY_FOOTER_ROOM;
+  const { edge, corner } = snapReach(viewport);
+  const reach = Math.min(corner, (bottom - top) / 3);
+  const right = viewport.width - edge;
+  const box = (x, y, w, h) => ({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
+  const side = (x) => box(x, top + reach, edge, bottom - top - 2 * reach);
+  return [
+    { zone: 'top-left', rects: [box(0, top, edge, reach)] },
+    { zone: 'left', rects: [side(0)] },
+    { zone: 'bottom-left', rects: [box(0, bottom - reach, edge, reach - edge), box(0, bottom - edge, corner, edge)] },
+    { zone: 'bottom', rects: [box(corner, bottom - edge, viewport.width - 2 * corner, edge)] },
+    { zone: 'bottom-right', rects: [box(right, bottom - reach, edge, reach - edge), box(viewport.width - corner, bottom - edge, corner, edge)] },
+    { zone: 'right', rects: [side(right)] },
+    { zone: 'top-right', rects: [box(right, top, edge, reach)] },
+  ];
+}
+
 // viewportOf is the area a fixed window can use. innerWidth and innerHeight
 // include page scrollbars, which would cover a window snapped to that edge.
 export function viewportOf(win) {
