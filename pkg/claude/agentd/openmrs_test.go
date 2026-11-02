@@ -585,3 +585,24 @@ func TestRunServeStartsTheOpenMRsPoller(t *testing.T) {
 	assert.Contains(t, body, "startAuthoredOpenMRPoller(cronStop)",
 		"the Open MRs poller starts with the daemon, beside the Open PRs one")
 }
+
+// TestAuthoredOpenMRsSnapshot_HidesListsReadWithAnotherToken: between polls,
+// the snapshot itself must not show the previous account's lists.
+func TestAuthoredOpenMRsSnapshot_HidesListsReadWithAnotherToken(t *testing.T) {
+	openMRsWorld(t, map[string]string{"gitlab.example.test": testMRBase}, func(string) glAPIResult {
+		return graphQLAnswer(t, "first-account", 1, testMRNode(7, nil))
+	})
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, authoredOpenMRsSnapshot(loadCfg(t), nil))
+
+	tokenFile := loadCfg(t).Agent.GitProxy.GitLabTokenFile
+	require.NoError(t, os.WriteFile(tokenFile, []byte("glpat-open-mrs-second\n"), 0o600))
+	assert.Nil(t, authoredOpenMRsSnapshot(loadCfg(t), nil), "no poll yet: the first account's list is not shown")
+
+	require.NoError(t, os.WriteFile(tokenFile, []byte("glpat-open-mrs\n"), 0o600))
+	assert.NotNil(t, authoredOpenMRsSnapshot(loadCfg(t), nil), "the token it was read with shows it again")
+
+	require.NoError(t, os.Remove(tokenFile))
+	assert.Nil(t, authoredOpenMRsSnapshot(loadCfg(t), nil), "an unreadable token shows nothing")
+}

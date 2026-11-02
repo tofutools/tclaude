@@ -265,8 +265,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 		return 0, errors.New(fault.Msg)
 	}
 
-	sum := sha256.Sum256([]byte(token))
-	digest := hex.EncodeToString(sum[:])
+	digest := authoredOpenMRTokenDigest(token)
 	authoredOpenMRState.RLock()
 	good := map[string]authoredOpenMRAnswer{}
 	everyone := map[string]authoredOpenMREveryone{}
@@ -328,6 +327,13 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 		return wait, lastErr
 	}
 	return wait, nil
+}
+
+// authoredOpenMRTokenDigest identifies a token without keeping it: lists are
+// only ever shown for the token they were read with.
+func authoredOpenMRTokenDigest(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 func resetAuthoredOpenMRs(key string) {
@@ -722,9 +728,20 @@ func glRetryAfter(res glAPIResult, now time.Time) time.Duration {
 func authoredOpenMRsSnapshot(cfg *config.Config, agents []dashboardAgent) *dashboardAuthoredOpenMRs {
 	policy := cfg.ResolvedGitProxy()
 	key := authoredOpenMRConfigKey(authoredOpenMRBases(policy), policy.GitLabTokenFile)
+	if key == "" {
+		return nil
+	}
+	// The token FILE may have been rewritten to another account since the
+	// last poll: lists read with another token, or with none now readable,
+	// are not shown. One small file read per snapshot.
+	token, fault := gitlabToken(policy)
+	if fault != nil {
+		return nil
+	}
+	digest := authoredOpenMRTokenDigest(token)
 	authoredOpenMRState.RLock()
 	defer authoredOpenMRState.RUnlock()
-	if key == "" || authoredOpenMRState.key != key || len(authoredOpenMRState.good) == 0 {
+	if authoredOpenMRState.key != key || authoredOpenMRState.tokenDigest != digest || len(authoredOpenMRState.good) == 0 {
 		return nil
 	}
 	view := dashboardAuthoredOpenMRs{
