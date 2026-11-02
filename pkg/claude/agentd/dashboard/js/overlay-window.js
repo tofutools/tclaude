@@ -528,7 +528,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   const edges = cell ? splitEdges(layout.edges[id]) : freeEdges(placement.snap);
   const unitLevel = levelOf(cell ? SPLIT_UNIT : id);
   const splitFront = cell && overlayStack.value.findLast((other) => layout.rects[other]) === id;
-  return { placement: shown, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow };
+  return { placement: shown, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow, cancelGesture: () => gesture.current?.() };
 }
 
 export function ResizeFrame({ placement, level, className, onResizeStart, onPointerDownCapture }) {

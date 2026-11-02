@@ -221,8 +221,8 @@ test('a tab can be parked at a group boundary that a drop on a tab cannot reach'
 
 test('creating a group at the cap evicts an invisible dormant stack instead of failing forever', async (t) => {
   const harness = await createPreactHarness(t);
-  const { createTerminalShellState, MAX_TERMINAL_TAB_GROUPS } =
-    await harness.importDashboardModule('js/terminal-shell-state.js');
+  const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
+  const { MAX_TERMINAL_TAB_GROUPS } = await harness.importDashboardModule('js/tab-group-model.js');
   const state = createTerminalShellState();
 
   // Fill the cap with stacks whose only tab is then closed: each becomes
@@ -261,7 +261,7 @@ test('creating a group at the cap evicts an invisible dormant stack instead of f
 
 test('group names strip invisible and bidi-spoofing characters, not just control codes', async (t) => {
   const harness = await createPreactHarness(t);
-  const { sanitizeGroupName } = await harness.importDashboardModule('js/terminal-shell-state.js');
+  const { sanitizeGroupName } = await harness.importDashboardModule('js/tab-group-model.js');
   assert.equal(sanitizeGroupName('a‮b​c'), 'a b c',
     'a right-to-left override and a zero-width space become separators, never reach the strip as glyphs');
   assert.equal(sanitizeGroupName('​'.repeat(40)), 'group',
@@ -855,8 +855,7 @@ test('double-click renames a group without collapsing it or moving the active te
 test('a single pointer click on a group pill collapses it only after the double-click grace period', async (t) => {
   const harness = await createPreactHarness(t);
   const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
-  const { GROUP_COLLAPSE_CLICK_DELAY_MS } =
-    await harness.importDashboardModule('js/terminal-shell-island.js');
+  const { GROUP_COLLAPSE_CLICK_DELAY_MS } = await harness.importDashboardModule('js/tab-controls.js');
   state.createGroup({ name: 'infra', keys: ['a', 'b'] });
   await harness.act(() => {});
   const pill = () => getByRole(container, 'button', { name: /^infra, 2 terminals$/ });

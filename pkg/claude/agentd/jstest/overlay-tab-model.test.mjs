@@ -177,3 +177,99 @@ test('a saved tab on the dock keeps its window and its place', async (t) => {
   const raw = JSON.stringify({ windows: [], minimizedTabs: [{ tab: tab('a'), home: 'w', place: 'tclaude.dash.x' }, { tab: tab('b'), home: 'w', place: 'elsewhere' }] });
   assert.deepEqual(model.parseSavedOverlays(raw, anyTab).minimizedTabs.map(({ home, place }) => [home, place]), [['w', 'tclaude.dash.x'], ['w', '']]);
 });
+
+const groupWindow = () => ({
+  id: 'w', place: 'tclaude.dash.x', minimized: false, active: 'a',
+  groups: [{ id: 'g', name: 'Work', color: 'blue', collapsed: false }],
+  tabs: [{ id: 'a', kind: 'board', board: 'a', groupId: 'g' }, { id: 'b', kind: 'board', board: 'b', groupId: 'g' }, { id: 'c', kind: 'board', board: 'c' }],
+});
+
+test('a group goes with its last member, and a tab dropped outside it leaves it', async (t) => {
+  const model = await model_(t);
+  const [left] = model.movedTab([groupWindow()], 'a', 'w', 2);
+  assert.equal(left.tabs.find((tab) => tab.id === 'a').groupId, undefined);
+  assert.deepEqual(left.groups.map((group) => group.id), ['g']);
+  const [gone] = model.movedTab([left], 'b', 'w', 2);
+  assert.equal(gone.groups, undefined);
+});
+
+test('a tab dropped inside a group joins it, and its members stay together', async (t) => {
+  const model = await model_(t);
+  const [joined] = model.movedTab([groupWindow()], 'c', 'w', 1, 'g');
+  assert.deepEqual(ids(joined), ['a', 'c', 'b']);
+  assert.equal(joined.tabs[1].groupId, 'g');
+  const [grouped] = model.groupedTab([{ ...groupWindow(), tabs: [groupWindow().tabs[0], groupWindow().tabs[2], groupWindow().tabs[1]] }], 'c', null);
+  assert.deepEqual(ids(grouped), ['a', 'b', 'c'], 'a stray member comes back beside its group');
+});
+
+test('a tab that leaves a window leaves its group, and comes back to it from the dock', async (t) => {
+  const model = await model_(t);
+  const torn = model.tornOutTab([groupWindow()], 'a', null);
+  assert.equal(torn[1].tabs[0].groupId, undefined);
+  const docked = model.minimizedTab({ windows: [groupWindow()], minimizedTabs: [] }, 'a');
+  const back = model.restoredTab(docked, 'a');
+  assert.equal(back.windows[0].tabs.find((tab) => tab.id === 'a').groupId, 'g');
+});
+
+test('a tab back from the dock after its group went comes back ungrouped', async (t) => {
+  const model = await model_(t);
+  const docked = model.minimizedTab(model.minimizedTab({ windows: [groupWindow()], minimizedTabs: [] }, 'a'), 'b');
+  assert.equal(docked.windows[0].groups, undefined);
+  const back = model.restoredTab(docked, 'a');
+  assert.equal(back.windows[0].tabs.find((tab) => tab.id === 'a').groupId, undefined);
+});
+
+test('a whole group moves along its strip, to another window, and out to its own', async (t) => {
+  const model = await model_(t);
+  const [along] = model.movedGroup([groupWindow()], 'w', 'g', 'w', 1);
+  assert.deepEqual(ids(along), ['c', 'a', 'b']);
+  const other = { id: 'x', place: 'tclaude.dash.y', minimized: false, active: 'd', groups: [{ id: 'g', name: 'Taken', color: 'red', collapsed: false }], tabs: [{ id: 'd', kind: 'board', board: 'd', groupId: 'g' }] };
+  const [left, target] = model.movedGroup([groupWindow(), other], 'w', 'g', 'x', 1);
+  assert.deepEqual(ids(left), ['c']);
+  assert.equal(left.active, 'c');
+  assert.deepEqual(ids(target), ['d', 'a', 'b']);
+  assert.equal(target.groups.length, 2, 'a group id taken there is not shared');
+  assert.notEqual(target.tabs[1].groupId, 'g');
+  const out = model.tornOutGroup([groupWindow()], 'w', 'g', { x: 5, y: 6 });
+  assert.deepEqual(out.map(ids), [['c'], ['a', 'b']]);
+  assert.deepEqual(out[1].at, { x: 5, y: 6 });
+  assert.deepEqual(out[1].groups.map((group) => group.name), ['Work']);
+  assert.notEqual(out[0].place, out[1].place);
+  assert.equal(model.tornOutGroup([{ ...groupWindow(), tabs: groupWindow().tabs.slice(0, 2) }], 'w', 'g', null).length, 1, 'a window of only that group has nothing to leave');
+});
+
+test('a group collapsing hands over the showing tab, and ungrouping leaves tabs in place', async (t) => {
+  const model = await model_(t);
+  const [collapsed] = model.changedGroup([groupWindow()], 'w', 'g', { collapsed: true });
+  assert.equal(collapsed.active, 'c');
+  const alone = { ...groupWindow(), tabs: groupWindow().tabs.slice(0, 2) };
+  assert.equal(model.changedGroup([alone], 'w', 'g', { collapsed: true })[0].active, 'a', 'with nothing else to show it stays');
+  const [plain] = model.dissolvedGroup([groupWindow()], 'w', 'g');
+  assert.deepEqual(ids(plain), ['a', 'b', 'c']);
+  assert.ok(plain.tabs.every((tab) => !tab.groupId));
+  assert.equal(plain.groups, undefined);
+});
+
+test('a new group is named and coloured apart from those there', async (t) => {
+  const model = await model_(t);
+  const group = model.newTabGroup(groupWindow());
+  assert.notEqual(group.id, 'g');
+  assert.equal(group.name, 'group 2');
+  assert.equal(group.color, 'purple');
+  const [window] = model.groupedTab([groupWindow()], 'c', group);
+  assert.equal(window.groups.length, 2);
+  assert.equal(window.tabs[2].groupId, group.id);
+});
+
+test('saved groups come back checked, and a window saved before groups has none', async (t) => {
+  const model = await model_(t);
+  const saved = model.savedOverlays([groupWindow()], []);
+  const { windows } = model.parseSavedOverlays(saved, () => true);
+  assert.deepEqual(windows[0].groups, groupWindow().groups);
+  const raw = JSON.stringify({ windows: [{ ...groupWindow(), groups: [{ id: 'g', name: 'a\u202eb', color: 'nope', collapsed: 1 }, 7, { id: 'h', name: 'empty' }], tabs: [...groupWindow().tabs, { id: 'e', kind: 'board', board: 'e', groupId: 'lost' }] }] });
+  const [window] = model.parseSavedOverlays(raw, () => true).windows;
+  assert.deepEqual(window.groups, [{ id: 'g', name: 'a b', color: 'blue', collapsed: true }]);
+  assert.equal(window.tabs.find((tab) => tab.id === 'e').groupId, undefined);
+  const [flat] = model.parseSavedOverlays(JSON.stringify([{ id: 'board:a', kind: 'board', board: 'a', label: 'A' }]), () => true).windows;
+  assert.equal(flat.groups, undefined);
+});

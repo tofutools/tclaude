@@ -9,7 +9,7 @@ import { batch, computed, effect, signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { parsePlacement, viewportOf } from './overlay-window-model.js';
 import { forgetOverlayWindow, raiseOverlayWindow, readPref, writePref } from './overlay-window.js';
-import { minimizedTab, movedTab, parseSavedOverlays, removedTab, restoredTab, savedOverlays, tabsOfWindows, tornOutTab, windowAround, windowHolding } from './overlay-tab-model.js';
+import { changedGroup, dissolvedGroup, groupedTab, minimizedTab, movedGroup, movedTab, newTabGroup, parseSavedOverlays, removedTab, restoredTab, savedOverlays, tabsOfWindows, tornOutGroup, tornOutTab, windowAround, windowHolding } from './overlay-tab-model.js';
 
 // In session storage, as the companion's open state is: a reload brings the
 // windows back, another browser tab does not get a second set.
@@ -71,10 +71,46 @@ export function activateOverlayTab(id) {
   if (window && window.active !== id) patchWindow(window.id, { active: id });
 }
 
-// moveOverlayTab puts a tab at index in a window, its own or another.
-export function moveOverlayTab(id, windowId, index) {
-  commit({ windows: movedTab(overlayWindows.peek(), id, windowId, index) });
+// moveOverlayTab puts a tab at index in a window, its own or another, and in
+// groupId if it landed inside that group.
+export function moveOverlayTab(id, windowId, index, groupId = '') {
+  commit({ windows: movedTab(overlayWindows.peek(), id, windowId, index, groupId) });
   raiseOverlayWindow(windowId);
+}
+
+// moveOverlayGroup does the same for a whole group.
+export function moveOverlayGroup(sourceId, groupId, windowId, index) {
+  commit({ windows: movedGroup(overlayWindows.peek(), sourceId, groupId, windowId, index) });
+  raiseOverlayWindow(windowId);
+}
+
+// tearOverlayGroupOut gives a group a window of its own, at the drop point.
+export function tearOverlayGroupOut(sourceId, groupId, at) {
+  const before = new Set(overlayWindows.peek().map((window) => window.id));
+  commit({ windows: tornOutGroup(overlayWindows.peek(), sourceId, groupId, at) });
+  const opened = overlayWindows.peek().find((window) => !before.has(window.id));
+  if (opened) raiseOverlayWindow(opened.id);
+}
+
+// groupOverlayTab adds a tab to a group of its window, or with none takes it out.
+export function groupOverlayTab(id, group = null) {
+  commit({ windows: groupedTab(overlayWindows.peek(), id, group) });
+}
+
+// startOverlayGroup makes a group of one tab and says which, or null at the cap.
+export function startOverlayGroup(id) {
+  const window = holding(id);
+  const group = window && newTabGroup(window);
+  if (group) groupOverlayTab(id, group);
+  return group;
+}
+
+export function changeOverlayGroup(windowId, groupId, patch) {
+  commit({ windows: changedGroup(overlayWindows.peek(), windowId, groupId, patch) });
+}
+
+export function ungroupOverlayTabs(windowId, groupId) {
+  commit({ windows: dissolvedGroup(overlayWindows.peek(), windowId, groupId) });
 }
 
 // tearOverlayTabOut gives a tab a window of its own, at the drop point.
@@ -92,8 +128,13 @@ export function minimizeOverlayTab(id) {
 // minimizeEveryTab is the window's close: each tab goes to the dock, apart from
 // one that asks first.
 export function minimizeEveryTab(windowId, asking = '') {
+  minimizeOverlayTabs(windowId, (tab) => tab.id !== asking);
+}
+
+// minimizeOverlayTabs sends the tabs of a window that leaves picks to the dock.
+export function minimizeOverlayTabs(windowId, leaves) {
   const window = overlayWindows.peek().find((candidate) => candidate.id === windowId);
-  for (const tab of window?.tabs || []) if (tab.id !== asking) minimizeOverlayTab(tab.id);
+  for (const tab of (window?.tabs || []).filter(leaves)) minimizeOverlayTab(tab.id);
 }
 
 // askOverlayClose shows a tab and asks it to put its own question about closing.

@@ -134,11 +134,23 @@ any mix of chats, shells and boards. The title bar tools belong to the tab showi
   that tab, and dropping it on another window's title bar joins that window.
 - **See every tab:** when a window can't show all its tabs, scroll over them with the wheel,
   or swipe along them on a touch screen. The other drags work with a finger too.
+- **Group:** right-click a tab (or Shift+F10, or press and hold on a touch screen) for
+  `New group from this tab`, `Add to "<group>"`, `Remove from group` and
+  `Move to a new window`. Drop a tab inside a group to join it, or outside to leave it.
+- **Work with a group:** click its pill to collapse or expand it, double-click or press F2 to
+  rename it, and drag it to move the whole group along the strip, onto another window, or
+  off into a window of its own. A pill that is all its window has drags the window.
+  Right-click or hold it for `Rename group…`, `Ungroup tabs` and `Minimize tabs in group`.
+
+Groups belong to their window and come back after a reload. A tab minimized from a group
+returns to it while the group lasts. A group goes with its last tab.
 
 A window is what tiles, minimizes and takes focus. A tiled window keeps its cell as tabs
 come and go, until the last tab leaves.
 
-A tab's × minimizes that tab to the dock and stops nothing. Its pill brings it back to the
+A tab's × minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
+menu, beside `Minimize other tabs` and `Minimize all tabs`. These never ask, even for a Steward,
+because nothing stops. Its pill brings it back to the
 window it left, or to a new window where that one stood. The window's close button does the
 same for each of its tabs, except that a running Steward asks first and shuts down.
 The window's – keeps its tabs together on one pill, showing the active tab and a count.

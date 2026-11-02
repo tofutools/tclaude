@@ -748,6 +748,110 @@ scenario('a cancelled drag of a window of one tab joins nothing', async ({ harne
   assert.deepEqual(tabsByWindow(overlayHost), [['Release plan'], ['Team map']]);
 });
 
+const rightClick = (harness, node) => harness.act(async () => {
+  node.dispatchEvent(Object.assign(new harness.window.Event('contextmenu', { bubbles: true, cancelable: true }), { clientX: 40, clientY: 20 }));
+  await wait();
+});
+const menuItems = (harness) => [...harness.document.querySelectorAll('.mux-tab-menu [role="menuitem"]')].map((item) => item.textContent);
+const chooseItem = (harness, label) => harness.act(async () => {
+  [...harness.document.querySelectorAll('.mux-tab-menu [role="menuitem"]')].find((item) => item.textContent === label).click();
+  await wait();
+  await wait();
+});
+
+scenario('a tab\'s menu groups it, and says Minimize where Terminals says Close', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await rightClick(harness, tabButton(overlayHost, 'Team map'));
+  assert.deepEqual(menuItems(harness), ['New group from this tab', 'Move to a new window', 'Minimize tab', 'Minimize other tabs', 'Minimize all tabs']);
+  await chooseItem(harness, 'New group from this tab');
+  const input = overlayHost.querySelector('.mux-group-rename');
+  assert.ok(input, 'a new group asks for its name');
+  input.value = 'Sprint';
+  await harness.act(async () => { input.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true }), { key: 'Enter' })); await wait(); });
+  assert.equal(overlayHost.querySelector('.mux-group-pill .mux-group-name').textContent, 'Sprint');
+  await rightClick(harness, tabButton(overlayHost, 'Release plan'));
+  assert.ok(menuItems(harness).includes('Add to “Sprint”'));
+  await chooseItem(harness, 'Add to “Sprint”');
+  assert.equal(overlayHost.querySelectorAll('[data-tab-group] [role="tab"]').length, 2);
+  await rightClick(harness, tabButton(overlayHost, 'Team map'));
+  assert.ok(menuItems(harness).includes('Remove from group'));
+  await chooseItem(harness, 'Remove from group');
+  assert.equal(overlayHost.querySelectorAll('[data-tab-group] [role="tab"]').length, 1);
+  await rightClick(harness, tabButton(overlayHost, 'Team map'));
+  await chooseItem(harness, 'Minimize other tabs');
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map']]);
+  assert.deepEqual(windows.minimizedOverlayTabs.value.map(({ tab }) => tab.label), ['Release plan']);
+});
+
+scenario('a group\'s menu and pill collapse, rename, ungroup and minimize it', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { overlayState.openBoardOverlay('third', 'Third'); await wait(); await wait(); });
+  await harness.act(async () => { windows.moveOverlayTab('board:third', 'board:plan', 2); await wait(); await wait(); });
+  await harness.act(async () => { const group = windows.startOverlayGroup('board:plan'); windows.groupOverlayTab('board:map', group); await wait(); await wait(); });
+  const pill = () => overlayHost.querySelector('.mux-group-pill');
+  await rightClick(harness, pill());
+  assert.deepEqual(menuItems(harness), ['Collapse group', 'Rename group…', 'Ungroup tabs', 'Minimize tabs in group']);
+  await chooseItem(harness, 'Collapse group');
+  assert.equal(pill().getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(tabsByWindow(overlayHost), [['Third']], 'a collapsed group\'s tabs are not drawn, and the showing tab moved out');
+  await rightClick(harness, pill());
+  await chooseItem(harness, 'Expand group');
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan', 'Team map', 'Third']]);
+  await rightClick(harness, pill());
+  await chooseItem(harness, 'Minimize tabs in group');
+  assert.deepEqual(tabsByWindow(overlayHost), [['Third']]);
+  assert.equal(windows.minimizedOverlayTabs.value.length, 2);
+  assert.equal(pill(), null, 'and the group went with its last member');
+});
+
+scenario('a tab dropped inside a group joins it, and a pill carries its group to another window', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { overlayState.openBoardOverlay('third', 'Third'); await wait(); await wait(); });
+  await harness.act(async () => { windows.startOverlayGroup('board:plan'); await wait(); await wait(); });
+  await harness.act(async () => { overlayState.openBoardOverlay('fourth', 'Fourth'); await wait(); await wait(); });
+  await harness.act(async () => { windows.moveOverlayTab('board:fourth', 'board:plan', 2); await wait(); await wait(); });
+  layOut(harness, overlayHost);
+  const stack = overlayHost.querySelector('[data-tab-group]');
+  const original = harness.document.elementsFromPoint;
+  const drag = pointer(harness, tabButton(overlayHost, 'Team map'));
+  await drag.down(150, 15);
+  await drag.move(40, 15);
+  harness.document.elementsFromPoint = () => [tabButton(overlayHost, 'Release plan'), stack, harness.document.body];
+  await drag.up(40, 15);
+  harness.document.elementsFromPoint = original;
+  assert.deepEqual(windows.overlayWindows.value[0].tabs.filter((tab) => tab.groupId).map((tab) => tab.label).sort(), ['Release plan', 'Team map']);
+  layOut(harness, overlayHost);
+  const pillDrag = pointer(harness, overlayHost.querySelector('.mux-group-pill'));
+  await pillDrag.down(10, 15);
+  await pillDrag.move(520, 15);
+  await pillDrag.up(520, 15);
+  const [left, joined] = windows.overlayWindows.value;
+  assert.deepEqual(left.tabs.map((tab) => tab.label), ['Fourth']);
+  assert.deepEqual(joined.tabs.map((tab) => tab.label).sort(), ['Release plan', 'Team map', 'Third']);
+  assert.equal(joined.groups.length, 1);
+});
+
+scenario('a finger held on a tab opens its menu and drags nothing, and a finger that moves does not', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  layOut(harness, overlayHost);
+  const hold = pointer(harness, tabButton(overlayHost, 'Team map'), harness.window, 'touch');
+  await hold.down(150, 15);
+  await harness.act(() => new Promise((resolve) => { setTimeout(resolve, 560); }));
+  assert.ok(menuItems(harness).includes('Minimize tab'));
+  await hold.move(150, 300);
+  await hold.up(150, 300);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan', 'Team map']], 'the drag ended when the menu opened');
+  await harness.act(async () => { harness.document.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true }), { key: 'Escape' })); await wait(); });
+  assert.deepEqual(menuItems(harness), []);
+  const slide = pointer(harness, tabButton(overlayHost, 'Team map'), harness.window, 'touch');
+  await slide.down(150, 15);
+  await slide.move(150, 60);
+  await harness.act(() => new Promise((resolve) => { setTimeout(resolve, 560); }));
+  assert.deepEqual(menuItems(harness), []);
+  await slide.up(150, 300);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan'], ['Team map']]);
+});
+
 scenario('a window of one tab that stays clear of the others just moves', async ({ harness, overlayHost, overlayState, windows }) => {
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
   await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });

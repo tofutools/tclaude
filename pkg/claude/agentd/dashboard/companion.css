@@ -581,7 +581,12 @@ body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.s
 /* In a narrow window the active tab's tools give way, so every tab stays reachable. */
 .overlay-tab-strip ~ .board-overlay-action { flex-shrink: 1000; }
 /* The drag owns a touch on a tab: left to the browser it would be cancelled as a pan. */
-.overlay-tab-strip .companion-tab > button[role="tab"] { touch-action: none; }
+.overlay-tab-strip .companion-tab > button[role="tab"], .overlay-tab-group .mux-group-pill { touch-action: none; -webkit-touch-callout: none; }
+/* A title bar is shorter than the Terminals strip these stacks come from. */
+.overlay-tab-group { flex-wrap: nowrap; align-items: center; height: 26px; padding: 0 3px; border-radius: 6px; border-bottom-width: 1px; }
+.overlay-tab-group .mux-group-pill, .overlay-tab-group .mux-group-rename { margin-bottom: 0; padding: 1px 7px; }
+.overlay-tab-group .mux-group-rename { width: 110px; }
+.overlay-tab-group.dragging { opacity: .35; }
 .overlay-tab-strip.joining { background: #1f6feb2e; box-shadow: inset 0 0 0 1px var(--cmp-blue); }
 .companion-tab.dragging { opacity: .35; }
 .companion-tab.drop-before { box-shadow: -2px 0 0 var(--cmp-blue); }

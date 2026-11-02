@@ -11,7 +11,7 @@ import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
-import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
+import { TabContextMenu, TabGroupRename, useArmedCollapse } from './tab-controls.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
@@ -61,7 +61,6 @@ const TERMINAL_GROUP_DRAG_MIME = 'application/x-tclaude-terminal-group';
 // A pointer click on a group pill waits this long before collapsing so a
 // double-click (rename) can cancel it. Roughly the platform double-click
 // threshold; keyboard clicks bypass it entirely.
-export const GROUP_COLLAPSE_CLICK_DELAY_MS = 200;
 
 export function terminalTabReorderOffset(event) {
   if (event?.type !== 'keydown' || event.target?.closest?.('button')) return null;
@@ -917,7 +916,6 @@ function GroupStack({
   openMenu, menuOpen, dropActive, dragging, onPillDragOver, onPillDragLeave, onPillDrop,
   onPillDragStart, onPillDragEnd, onKeyboardMove, renderTab, snapshot = null, peerNotifications = {},
 }) {
-  const inputRef = useRef(null);
   // A single click collapses, a double click renames — the two share the pill.
   // Collapsing is NOT a pure toggle: collapsing a group that owns the active
   // terminal deliberately moves activation outside the group, and expanding
@@ -927,25 +925,7 @@ function GroupStack({
   // second click (the double-click) cancels, so renaming never collapses at
   // all. A keyboard-synthesised click (Enter/Space, detail 0) has no
   // double-click to wait for, so it collapses immediately. F2 renames.
-  const collapseTimer = useRef(null);
-  const clearCollapseTimer = () => {
-    if (collapseTimer.current) {
-      clearTimeout(collapseTimer.current);
-      collapseTimer.current = null;
-    }
-  };
-  useEffect(() => clearCollapseTimer, []);
-  const onPillClick = (event) => {
-    if (event.detail === 0) {
-      actions.toggleGroupCollapsed(group.id);
-      return;
-    }
-    clearCollapseTimer();
-    collapseTimer.current = setTimeout(() => {
-      collapseTimer.current = null;
-      actions.toggleGroupCollapsed(group.id);
-    }, GROUP_COLLAPSE_CLICK_DELAY_MS);
-  };
+  const { onPillClick, clearCollapseTimer } = useArmedCollapse(() => actions.toggleGroupCollapsed(group.id));
   const startRename = () => {
     clearCollapseTimer();
     onRenameStart(group.id);
@@ -954,28 +934,6 @@ function GroupStack({
     event.preventDefault();
     event.stopPropagation();
     startRename();
-  };
-  // onBlur commits, so a cancel must first mark itself: browsers do not fire
-  // blur when a focused node is removed today, but any future close that moves
-  // focus before unmount would otherwise turn Escape into a commit. The ref is
-  // the guard that keeps Escape meaning "discard" regardless of blur timing.
-  const cancelledRef = useRef(false);
-  useLayoutEffect(() => {
-    if (!renaming) return undefined;
-    cancelledRef.current = false;
-    inputRef.current?.focus();
-    // Selecting the existing name makes retyping it the default gesture.
-    // Guarded because the test DOM implements focus() but not select().
-    if (typeof inputRef.current?.select === 'function') inputRef.current.select();
-    return undefined;
-  }, [renaming]);
-  const cancelRename = () => {
-    cancelledRef.current = true;
-    onRenameCancel();
-  };
-  const commitRename = (value) => {
-    if (cancelledRef.current) return;
-    onRenameCommit(group.id, value);
   };
   // A collapsed stack still shows the terminal the operator is looking at when
   // there is nowhere outside the stack for activation to move to — collapsing
@@ -1047,20 +1005,7 @@ function GroupStack({
       onDrop=${(event) => onPillDrop(event, group.id)}
     >
       ${renaming ? html`
-        <input
-          ref=${inputRef}
-          class="mux-group-rename"
-          type="text"
-          maxLength=${MAX_TERMINAL_GROUP_NAME_LENGTH}
-          aria-label=${`Rename terminal group ${group.name}`}
-          value=${group.name}
-          onKeyDown=${(event) => {
-            event.stopPropagation();
-            if (event.key === 'Enter') commitRename(event.currentTarget.value);
-            else if (event.key === 'Escape') cancelRename();
-          }}
-          onBlur=${(event) => commitRename(event.currentTarget.value)}
-        />
+        <${TabGroupRename} group=${group} label=${`Rename terminal group ${group.name}`} onCommit=${onRenameCommit} onCancel=${onRenameCancel} />
       ` : html`
         <button
           type="button"
@@ -1122,99 +1067,36 @@ function StripGap({ active, armed, grow = false, onDragOver, onDragLeave, onDrop
 function PaneContextMenu({
   menu, actions, groups, closeMenu, focusAfterAction, focusAfterDismiss, onRenameGroup,
 }) {
-  const menuRef = useRef(null);
-
-  useLayoutEffect(() => {
-    const node = menuRef.current;
-    if (!node) return;
-    const rect = node.getBoundingClientRect();
-    const viewportWidth = Number.isFinite(window.innerWidth) ? window.innerWidth : rect.right;
-    const viewportHeight = Number.isFinite(window.innerHeight) ? window.innerHeight : rect.bottom;
-    const left = Math.max(4, Math.min(menu.x, viewportWidth - rect.width - 4));
-    const top = Math.max(4, Math.min(menu.y, viewportHeight - rect.height - 4));
-    node.style.left = `${left}px`;
-    node.style.top = `${top}px`;
-    node.querySelector('[role="menuitem"]')?.focus();
-  }, [menu]);
-
-  useDismissablePopover(menuRef, true, (why) => closeMenu(why !== 'outside'));
-  useEffect(() => {
-    const onFocusIn = (event) => {
-      if (!menuRef.current?.contains(event.target)) closeMenu(false);
-    };
-    document.addEventListener('focusin', onFocusIn);
-    return () => document.removeEventListener('focusin', onFocusIn);
-  }, [closeMenu]);
-
-  const onMenuKeyDown = (event) => {
-    if (event.key === 'Tab') {
-      event.preventDefault();
-      closeMenu(false);
-      focusAfterDismiss(event.shiftKey);
-      return;
-    }
-    const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]')];
-    const index = items.indexOf(document.activeElement);
-    let next = null;
-    if (event.key === 'ArrowDown') next = items[(index + 1) % items.length];
-    else if (event.key === 'ArrowUp') next = items[(index - 1 + items.length) % items.length];
-    else if (event.key === 'Home') next = items[0];
-    else if (event.key === 'End') next = items.at(-1);
-    if (!next) return;
-    event.preventDefault();
-    next.focus();
-  };
-  // Most commands hand focus back to the strip. The rename commands must not:
-  // they hand focus to the rename input the stack is about to render, and the
-  // parent's refocus would blur it — committing the edit before it is typed.
-  const run = (action, { refocus = true } = {}) => {
-    closeMenu(false);
-    void action();
-    if (refocus) focusAfterAction();
-  };
-
-  const item = (label, action, { className = 'mux-tab-menu-item', refocus = true } = {}) => html`
-    <button type="button" role="menuitem" tabIndex="-1" class=${className} onClick=${() => run(action, { refocus })}>${label}</button>
-  `;
-  const separator = html`<div class="mux-tab-menu-separator" role="separator"></div>`;
-  // The grouping commands live in this menu rather than only on the drag
-  // gesture so every one of them is reachable from the keyboard (Shift+F10 on a
-  // focused tab), which drag-and-drop alone can never be.
-  const groupItems = menu.kind === 'group' ? [
-    item(menu.collapsed ? 'Expand group' : 'Collapse group', () => actions.toggleGroupCollapsed(menu.id)),
-    item('Rename group…', () => onRenameGroup(menu.id), { refocus: false }),
-    item('Ungroup tabs', () => actions.dissolveGroup(menu.id)),
-    separator,
-    item('Close tabs in group', () => actions.closeGroupPanes(menu.id), { className: 'mux-tab-menu-item danger' }),
-  ] : [
-    item('New group from this tab', () => {
-      const group = actions.createGroup({ keys: [menu.key] });
-      if (group) onRenameGroup(group.id);
-    }, { refocus: false }),
-    ...groups
-      .filter((group) => group.id !== menu.groupId)
-      .map((group) => item(`Add to “${group.name}”`, () => actions.assignPaneToGroup(menu.key, group.id))),
-    ...(menu.groupId ? [item('Remove from group', () => actions.assignPaneToGroup(menu.key, null))] : []),
-    separator,
-    ...(menu.floats ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
-    item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
-    separator,
-    ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'mux-tab-menu-item danger', refocus: false })] : []),
-    item('Close tab', () => actions.closePane(menu.key)),
-    item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
-    item('Close all tabs', () => actions.closeAllPanes(), { className: 'mux-tab-menu-item danger' }),
-  ];
-
-  return html`
-    <div
-      ref=${menuRef}
-      class="mux-tab-menu"
-      role="menu"
-      aria-label=${`Actions for ${menu.label}`}
-      style=${{ left: `${menu.x}px`, top: `${menu.y}px` }}
-      onKeyDown=${onMenuKeyDown}
-    >${groupItems}</div>
-  `;
+  return html`<${TabContextMenu} menu=${menu} closeMenu=${closeMenu} focusAfterAction=${focusAfterAction} focusAfterDismiss=${focusAfterDismiss}
+    items=${({ item, separator }) => {
+      // The grouping commands live in this menu rather than only on the drag
+      // gesture so every one of them is reachable from the keyboard (Shift+F10 on a
+      // focused tab), which drag-and-drop alone can never be.
+      return menu.kind === 'group' ? [
+        item(menu.collapsed ? 'Expand group' : 'Collapse group', () => actions.toggleGroupCollapsed(menu.id)),
+        item('Rename group…', () => onRenameGroup(menu.id), { refocus: false }),
+        item('Ungroup tabs', () => actions.dissolveGroup(menu.id)),
+        separator,
+        item('Close tabs in group', () => actions.closeGroupPanes(menu.id), { className: 'mux-tab-menu-item danger' }),
+      ] : [
+        item('New group from this tab', () => {
+          const group = actions.createGroup({ keys: [menu.key] });
+          if (group) onRenameGroup(group.id);
+        }, { refocus: false }),
+        ...groups
+          .filter((group) => group.id !== menu.groupId)
+          .map((group) => item(`Add to “${group.name}”`, () => actions.assignPaneToGroup(menu.key, group.id))),
+        ...(menu.groupId ? [item('Remove from group', () => actions.assignPaneToGroup(menu.key, null))] : []),
+        separator,
+        ...(menu.floats ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
+        item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
+        separator,
+        ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'mux-tab-menu-item danger', refocus: false })] : []),
+        item('Close tab', () => actions.closePane(menu.key)),
+        item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
+        item('Close all tabs', () => actions.closeAllPanes(), { className: 'mux-tab-menu-item danger' }),
+      ];
+    }} />`;
 }
 
 function TerminalTabs({
