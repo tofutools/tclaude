@@ -410,7 +410,7 @@ function TerminalPane({
           <span>Arcane palette</span>
         </label>
         ${solo ? html`
-          <button type="button" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(!!pane.seed.floats)}</button>
+          <button type="button" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(processSnapshot?.value?.collab_enabled === true || !!pane.seed.floats)}</button>
           ${soloFloats(pane) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay</button>` : null}
         ` : html`
           ${paneFloats(pane, processSnapshot?.value) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>` : null}

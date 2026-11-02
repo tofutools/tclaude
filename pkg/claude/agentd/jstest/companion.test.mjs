@@ -514,6 +514,18 @@ test('no window is home: an agent joins the chats used last, or gets a window of
   assert.deepEqual(windowsOf(), [['board-1'], [`chat:${A}`]], 'with no chat up, it takes a window of its own');
 });
 
+test('Ctrl+. opens the Steward past a worker\'s window, never minimizing that', async (t) => {
+  const { view, harness, controller } = await setup(t, { snapshot: snapshotWith({ steward: true }) });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { overlays.closeOverlayTab(`chat:${S}`); });
+  const key = () => harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  await key();
+  const shown = overlays.overlayWindows.peek().filter((window) => !window.minimized).map((window) => window.active);
+  assert.ok(shown.includes(`chat:${S}`), 'the Steward shows');
+  assert.ok(view.container.querySelector(`[data-chat-agent="${S}"]`), 'its chat is drawn');
+});
+
 test('viewportOf leaves out page scrollbars', async (t) => {
   const harness = await createPreactHarness(t);
   const o = await harness.importDashboardModule('js/overlay-window-model.js');

@@ -10,8 +10,8 @@
 //   peek    hovering a chip or a chat's pill previews the last lines of the
 //           agent's pane, read-only (GET /api/companion/{agent}/peek): the
 //           keyboard stays with the page until the operator clicks.
-//   home    the window the Steward opens in, which keeps the placement the
-//           companion window had, and takes any agent with nowhere else to go.
+//   landing no window is home: a tab nobody placed joins the Steward's window,
+//           its start tab's, or the chats used last, or else gets its own.
 //
 // A web terminal attach displaces any other web view of the same session, so
 // showing an agent here first closes its Terminals-tab pane, and "open in
@@ -644,7 +644,11 @@ export function CompanionApp({
   // would, and Ctrl+. puts it away again.
   const toggle = useCallback(() => {
     stopPeek();
-    const window = overlayWindows.peek().find((candidate) => candidate.id === landingId());
+    // The Steward's own window, or its start tab's. A worker's window only stands
+    // in while there is no Steward at all, as the chats kept at hand.
+    const windows = overlayWindows.peek();
+    const window = windowHolding(windows, steward ? chatWindowId(steward.agentId) : '') || windowHolding(windows, startTab().id)
+      || (!steward && windows.find((candidate) => candidate.id === landingId())) || null;
     const docked = !holder && !!steward && overlayTabs.peek().some((tab) => tab.id === chatWindowId(steward.agentId));
     if (window && !window.minimized && !docked) {
       const shrinks = home.shrinks(window, homeOverlay.current);
