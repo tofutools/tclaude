@@ -2355,3 +2355,19 @@ test('after an agent\'s harness fill is undone, a profile picked later applies i
     mounted.cleanup();
   }
 });
+
+test('a field the operator holds keeps every key its handler marks', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const kept = (id, keys) => {
+    const sets = { touched: new Set(keys), operatorSet: new Set(), profileOverrides: new Set(keys) };
+    const entries = Object.fromEntries(keys.flatMap((key) => [[`touched:${key}`, undefined], [`profileOverrides:${key}`, undefined]]));
+    model.restoreSpawnProvenance(sets, entries, new Set([`agent-spawn-${id}`]));
+    return [...sets.profileOverrides].sort();
+  };
+  assert.deepEqual(kept('trust-dir', ['trustDir', 'trustDirSpecified']), ['trustDir', 'trustDirSpecified']);
+  assert.deepEqual(kept('model', ['model', 'customModel', 'effort']), ['customModel', 'effort', 'model']);
+  assert.deepEqual(kept('wt-branch', ['worktreeBranch', 'syncWorktree']), ['syncWorktree', 'worktreeBranch']);
+  assert.deepEqual(kept('harness', ['sandbox', 'approval']), ['approval', 'sandbox']);
+  assert.deepEqual(kept('name', ['sandbox']), [], 'a field holds only its own');
+});

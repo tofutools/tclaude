@@ -142,12 +142,17 @@ function catchUp(watch) {
 // write sends a value and waits for it to settle, noting what it moved.
 async function write(win, watch, el, value, tick) {
   const before = catchUp(watch);
+  const { trace } = watch;
+  if (trace) Object.assign(trace, { settling: true, interrupted: false });
   writeField(win, watch, el, value);
   await tick();
-  const after = before && provenanceOf(watch);
-  if (!after) return;
-  for (const key of movedEntries(before, after)) watch.trace.written.add(key);
-  watch.trace.last = after;
+  if (!trace || watch.trace !== trace) return;
+  trace.settling = false;
+  const after = provenanceOf(watch);
+  // An edit of the operator's during the wait mixes in with the write, so all
+  // of it counts as theirs: a restore then leaves it be.
+  for (const key of movedEntries(before, after)) (trace.interrupted ? trace.operator : trace.written).add(key);
+  trace.last = after;
 }
 
 // restoreProvenance ends a fill that was undone in full: what only writes moved
@@ -190,7 +195,7 @@ function setFilled(form, fields) {
   // Once nothing is filled, the operator has taken every field over: there is no
   // fill left to undo, and the next one starts a new record. An undo restores first.
   const watch = watches.get(form);
-  if (!fields.length && watch && !watch.undoing) watch.trace = null;
+  if (!fields.length && watch && !watch.undoing && !watch.filling) watch.trace = null;
   for (const fn of listeners) fn();
 }
 
@@ -219,9 +224,11 @@ export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl 
     }
     look();
   };
-  const watch = { name: form, root, owned, look, sweep, writing: false, kept: null, provenance, trace: null, undoing: false };
+  const watch = { name: form, root, owned, look, sweep, writing: false, kept: null, provenance, trace: null, undoing: false, filling: false };
   const onEdit = (event) => {
     if (!event.isTrusted || watch.writing || !event.target?.id) return;
+    // The operator got in while a write settled: what moves now is theirs.
+    if (watch.trace?.settling) watch.trace.interrupted = true;
     look();
     release(event.target.id);
     if (event.type !== 'change') return;
@@ -309,7 +316,18 @@ function record(name, form, win, agent, changes) {
 // cascade has run before the next, which may depend on it (a harness, then its
 // model). Whatever a write moves counts as filled, the named field or not, so the
 // warning and the undo cover it. It answers what became of each field.
-export const applyFill = ({ win = globalThis.window, request, tick = defaultTick }) => inTurn(() => fillForm(win, request, tick));
+export const applyFill = ({ win = globalThis.window, request, tick = defaultTick }) => inTurn(async () => {
+  const watch = watches.get(request.form);
+  // A write that puts an earlier field back empties the fills mid-fill, which
+  // must not drop the record of where this fill started.
+  if (watch) watch.filling = true;
+  try {
+    return await fillForm(win, request, tick);
+  } finally {
+    if (watch) watch.filling = false;
+    if (watch && !filledIn(request.form).length) watch.trace = null;
+  }
+});
 
 async function fillForm(win, request, tick) {
   const form = FILL_FORMS[request.form];

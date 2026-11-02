@@ -493,3 +493,16 @@ test('a field the operator took over after the fill stays theirs through the und
   assert.ok(second.marks.has('agent-spawn-name'));
   second.p.stop();
 });
+
+test('what the operator does while a write settles is theirs, not the fill\'s', async () => {
+  const { p, marks } = tracked();
+  // As a real handler does, the operator's edit marks more than its own field.
+  p.document.getElementById('agent-spawn-wt-branch').addEventListener('input', () => marks.add('extra'));
+  let once = true;
+  const tick = async () => { if (once) { once = false; typed(p, 'agent-spawn-wt-branch', 'mine'); } };
+  await applyFill({ win: p.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field: 'agent-spawn-name', value: 'a' }, { field: 'agent-spawn-init-msg', value: 'b' }] } });
+  await undoFill('spawn', { win: p.window, tick: p.tick });
+  assert.ok(marks.has('agent-spawn-wt-branch') && marks.has('extra'), 'the edit in the wait keeps its marks');
+  assert.ok(!marks.has('agent-spawn-init-msg'), 'a write after it is still the fill\'s');
+  p.stop();
+});

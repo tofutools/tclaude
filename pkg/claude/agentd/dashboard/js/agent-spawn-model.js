@@ -1403,10 +1403,27 @@ export function spawnProvenance(sets, draft) {
   return entries;
 }
 
-// A field's id names its draft key, but for these.
+// What a harness change sets for the new harness: the island's changeHarness
+// marks each of these as touched and as a profile override.
+export const SPAWN_HARNESS_FIELDS = [
+  'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
+  'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
+  'autoMemory', 'peerMessaging', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
+  'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
+];
+
+// A field's id names its draft key, but for these: a different name, or a handler
+// that marks more keys than its own (agent-spawn-island.js). An operator who
+// holds the field holds all of them. A group change also re-derives cwd, which
+// is not listed: that is the very origin an undo gives back.
+const MODEL_KEYS = ['model', 'customModel', 'effort'];
+const WORKTREE_KEYS = ['worktree', 'worktreeBranch', 'syncWorktree'];
 const PROVENANCE_ID_ALIASES = {
-  'init-msg': ['initialMessage'], 'model-codex': ['model'], 'model-custom': ['model', 'customModel'],
-  'wt-base': ['worktreeBase'], 'wt-branch': ['worktreeBranch'], 'wt-sync': ['syncWorktree'], 'wt-fetch': ['fetchLatestWorktree'],
+  'init-msg': ['initialMessage'], model: MODEL_KEYS, 'model-codex': MODEL_KEYS, 'model-custom': MODEL_KEYS,
+  harness: ['harness', ...SPAWN_HARNESS_FIELDS], group: ['group', 'wtRepo', 'remoteControl'], 'load-profile': ['profile'],
+  'trust-dir': ['trustDir', 'trustDirSpecified'],
+  worktree: WORKTREE_KEYS, 'wt-branch': WORKTREE_KEYS, 'wt-sync': WORKTREE_KEYS,
+  'wt-base': ['worktreeBase'], 'wt-fetch': ['fetchLatestWorktree'],
   focus: ['autoFocus'], 'group-context': ['includeGroupContext'], 'copilot-api': ['copilotAPI'],
 };
 const camel = (name) => name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());

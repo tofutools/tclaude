@@ -66,6 +66,7 @@ import {
   setSpawnSandboxImpl,
   spawnProvenance,
   restoreSpawnProvenance,
+  SPAWN_HARNESS_FIELDS,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import {
@@ -727,13 +728,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     operatorSet.current.add('harness');
     operatorSet.current.delete('model');
     operatorSet.current.delete('effort');
-    const harnessFields = [
-      'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
-      'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
-      'autoMemory', 'peerMessaging', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
-      'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
-    ];
-    for (const key of harnessFields) {
+    for (const key of SPAWN_HARNESS_FIELDS) {
       touched.current.add(key);
       profileOverrides.current.add(key);
     }
