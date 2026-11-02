@@ -443,11 +443,9 @@ nav [data-tab].overlay-drop { color: #d4d4d4; background: #1f6feb2e; box-shadow:
 }
 .access-banner.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; animation: disconnect-pulse 1.6s ease-in-out infinite; }
 .access-banner-sigil { font-size: 15px; }
-.access-banner-review {
-  background: #d29922; color: #1c1400; border: none; border-radius: 6px;
-  padding: 4px 12px; font-size: 12px; font-weight: 700; cursor: pointer;
-}
-.access-banner-review:hover { background: #e3ad33; }
+/* A standard button that keeps the banner's amber call to action. */
+.ui-btn.access-banner-review { background: #d29922; border-color: #d29922; color: #1c1400; font-weight: 700; }
+.ui-btn.access-banner-review:hover:not(:disabled) { background: #e3ad33; color: #1c1400; }
 @media (prefers-reduced-motion: reduce) { .access-banner.show { animation: none; } }
 
 .access-row-wrap.handled .mail-row { opacity: 0.72; }
@@ -5037,7 +5035,7 @@ body.show-group-description .group-descr { display: inline; }
   font-size: 11px; margin-left: 4px; padding: 1px 8px; border-radius: 4px;
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; cursor: pointer;
 }
-.group-process-advance:hover { background: #2d333b; border-color: #58a6ff; }
+.group-process-advance:hover { background: #2d333b; }
 /* Force block (JOH-247) — the deployed-task-force glance in a group's expanded
    body: mission (quest), phase + transition history, a per-role live-status
    rollup, a stalling hint, and the re-brief control. Rendered only for a group

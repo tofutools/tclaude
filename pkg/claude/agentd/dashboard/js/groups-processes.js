@@ -416,19 +416,19 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
   const shared = { 'data-group': group.name };
   // Inline is Both's half-row beside the agent controls; otherwise the row.
   return html`<${inline ? 'span' : 'div'} class=${inline ? 'gp-run-controls gf-run-controls' : 'group-header-actions gp-run-controls'}>
-    <button type="button" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
+    <${Button} size="sm" variant="primary" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
       title=${wizard ? `Begin a rite for one hero of ${group.name}` : `Agent process: run a saved process, or build a new one, for one agent in ${group.name}`}
-      aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span></button>
-    <button type="button" class="spawn-btn subgroup-btn" ...${shared} data-process-start=${group.name} onClick=${() => onStart('group')}
+      aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span><//>
+    <${Button} size="sm" variant="primary" class="spawn-btn subgroup-btn" ...${shared} data-process-start=${group.name} onClick=${() => onStart('group')}
       title=${wizard ? `Begin a rite bound to ${group.name}` : `Group process: run a saved process, or build a new one, for the whole group`}
-      aria-label="Start a process for this group"><${RunIcon} group=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔📜</span></button>
+      aria-label="Start a process for this group"><${RunIcon} group=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔📜</span><//>
     <span class="group-actions">
-      <button type="button" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
+      <${Button} size="sm" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
         onClick=${() => bulk('resume', resumable)} aria-label="Resume every paused process in this group"
-        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><${RunGlyph} kind="resume" /></button>
-      <button type="button" class="warn" ...${shared} data-process-pause-all=${group.name} disabled=${!!busy || !pausable.length}
+        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><${RunGlyph} kind="resume" /><//>
+      <${Button} size="sm" class="warn" ...${shared} data-process-pause-all=${group.name} disabled=${!!busy || !pausable.length}
         onClick=${() => bulk('pause', pausable)} aria-label="Pause every running process in this group"
-        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><${RunGlyph} kind="pause" /></button>
+        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><${RunGlyph} kind="pause" /><//>
     </span>
   <//>`;
 }
