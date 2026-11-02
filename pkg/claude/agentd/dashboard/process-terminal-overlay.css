@@ -62,7 +62,8 @@
 }
 .pk-run-popover-actions .mux-btn[disabled] { opacity: .5; cursor: not-allowed; }
 .pk-run-popover-error { flex-basis: 100%; color: var(--pk-failed-text); }
-.pk-run-popover-verdict { border-color: var(--pk-waiting); color: var(--pk-waiting-text); }
+/* A verdict keeps its waiting colours on the standard button. */
+.pk-run-popover-verdict, .pk-run-popover-verdict.ui-btn { border-color: var(--pk-waiting); color: var(--pk-waiting-text); }
 
 /* Reassign picker in the T2 actions row */
 .pk-reassign { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }

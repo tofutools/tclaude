@@ -12,6 +12,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { consentControl, findGuideTarget, markPath } from './companion-guide.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -183,8 +184,8 @@ function MarkTip({ mark, why, place, onEnd, onReply }) {
   };
   return html`<div class="companion-mark-tip" style=${`left:${place.left}px;top:${place.top}px`} data-mark-tip=${mark.id}>
     <div class="companion-mark-tip-head"><b>${mark.agent_name || 'steward'}</b>
-      <button type="button" title="Got it" aria-label="Acknowledge" onClick=${() => onEnd(mark, 'acknowledge')}>✓</button>
-      <button type="button" title="Dismiss" aria-label="Dismiss" onClick=${() => onEnd(mark, 'dismiss')}>×</button></div>
+      <button type="button" data-ui-exempt title="Got it" aria-label="Acknowledge" onClick=${() => onEnd(mark, 'acknowledge')}>✓</button>
+      <button type="button" data-ui-exempt title="Dismiss" aria-label="Dismiss" onClick=${() => onEnd(mark, 'dismiss')}>×</button></div>
     ${mark.tip ? html`<div class="companion-mark-tip-text">${mark.tip}</div>` : null}
     ${why ? html`<small>Couldn't show this: ${why}.</small>` : null}
     ${sent ? html`<small>Reply sent.</small>` : null}
@@ -193,8 +194,8 @@ function MarkTip({ mark, why, place, onEnd, onReply }) {
           <textarea rows="2" maxlength=${MARK_REPLY_MAX} aria-label="Reply to this mark" placeholder="Reply here"
             value=${text} onInput=${(e) => setText(e.target.value)}
             onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey) void send(e); }}></textarea>
-          <button type="submit">Send</button></form>`
-      : html`<button type="button" class="companion-mark-reply" onClick=${() => setReplying(true)}>Reply</button>`}
+          <${Button} size="sm" type="submit">Send<//></form>`
+      : html`<${Button} size="sm" variant="link" class="companion-mark-reply" onClick=${() => setReplying(true)}>Reply<//>`}
   </div>`;
 }
 
@@ -268,7 +269,7 @@ export function MarksLayer({ marks, win, onEnd, onDismissAll, onReply, onReport 
       ${drawn.filter((d) => !d.why).map((d) => html`<${MarkShape} key=${d.mark.id} ...${d} />`)}
     </svg>
     ${drawn.map((d, i) => html`<${MarkTip} key=${d.mark.id} mark=${d.mark} why=${d.why} place=${places[i]} onEnd=${onEnd} onReply=${onReply} />`)}
-    <button type="button" class="companion-marks-clear" onClick=${onDismissAll}>Dismiss all marks (${here.length})</button>`;
+    <button type="button" data-ui-exempt class="companion-marks-clear" onClick=${onDismissAll}>Dismiss all marks (${here.length})</button>`;
 }
 
 // marksKey says whether a ping changed anything to draw.

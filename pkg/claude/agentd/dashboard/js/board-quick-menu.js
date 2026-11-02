@@ -50,7 +50,7 @@ export function BoardQuickMenu({ x, y, kind, onPreview, onPick, onCancel }) {
   return html`<div ref=${root} class="board-quick" style=${`left:${x}px;top:${y}px`} role="dialog" aria-label="Next shape">
     <input ref=${field} type="text" aria-label="Find a shape" placeholder="Shape…" autocomplete="off" spellcheck="false" value=${query}
       onInput=${(event) => { setQuery(event.currentTarget.value); setMarked(''); }} onKeyDown=${onKeyDown} />
-    ${shown.map((shape) => html`<button key=${shape.id} type="button" class=${shape === current ? 'on' : ''} tabindex="-1"
+    ${shown.map((shape) => html`<button data-ui-exempt key=${shape.id} type="button" class=${shape === current ? 'on' : ''} tabindex="-1"
       onPointerDown=${(event) => event.preventDefault()} onPointerEnter=${() => setMarked(shape.id)} onClick=${() => onPick(shape.id)}>
       <kbd>${shape.digit}</kbd>${shape.label}
     </button>`)}

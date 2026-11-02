@@ -33,6 +33,7 @@ import { tickedNodes } from './fleet-scope.js';
 import { remoteSessionAgents } from './remote-session-status.js';
 import { LockReason } from './lock-reason.js';
 import { useDismissablePopover, useExclusivePopover } from './hover-popover.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -352,9 +353,9 @@ function KillButton({ row, label }) {
   const hint = board
     ? (armed ? "Click again to end the agents' sessions on this board. The board stays" : 'End the board sessions on this board')
     : (armed ? 'Click again to end this tmux session and whatever runs in it' : `End tmux session ${row.tmux_session}`);
-  return html`<button type="button" class=${`mux-btn mux-bg-kill${armed ? ' armed' : ''}`} disabled=${busy}
+  return html`<${Button} size="sm" variant=${armed ? 'danger' : ''} class=${`mux-btn mux-bg-kill${armed ? ' armed' : ''}`} disabled=${busy}
     onClick=${onClick} aria-label=${`${verb} ${label}`} title=${error || hint}>
-    ${busy ? (board ? 'Ending…' : 'Killing…') : armed ? `${verb}?` : error ? 'Failed' : verb}</button>`;
+    ${busy ? (board ? 'Ending…' : 'Killing…') : armed ? `${verb}?` : error ? 'Failed' : verb}<//>`;
 }
 
 let attachAllRunning = false;
@@ -425,7 +426,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
   return html`
     <div ref=${rootRef} class=${`mux-bg${open ? ' open' : ''}`}
       onMouseEnter=${() => setOpen(true)}>
-      <button type="button" class="mux-bg-trigger" aria-expanded=${open ? 'true' : 'false'} aria-haspopup="dialog"
+      <button data-ui-exempt type="button" class="mux-bg-trigger" aria-expanded=${open ? 'true' : 'false'} aria-haspopup="dialog"
         aria-label=${`${count} tclaude ${noun} running in the background without a terminal`}
         title=${`${count} tclaude ${noun} still running with no terminal attached`}
         onClick=${() => { if (pinned) close(); else { setOpen(true); setPinned(true); } }}>
@@ -452,23 +453,23 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
                       ${row.key
                         // The title attaches too, a bigger target than the
                         // button; tabindex -1 keeps one tab stop per row.
-                        ? html`<button type="button" class="mux-bg-name mux-bg-name-attach" tabindex="-1"
+                        ? html`<button data-ui-exempt type="button" class="mux-bg-name mux-bg-name-attach" tabindex="-1"
                             title=${`${verb} ${view.label}`} onClick=${() => attach(row)}>${view.label}</button>`
                         : html`<span class="mux-bg-name" title=${view.label}>${view.label}</span>`}
                       ${idle.text ? html`<span class=${`mux-bg-idle${idle.stale ? ' stale' : ''}`}>${idle.text}</span>` : null}
                       ${row.key
-                        ? html`<button type="button" class="mux-btn mux-bg-attach" onClick=${() => attach(row)}
-                            aria-label=${`${verb} ${view.label}`}>${verb}</button>`
+                        ? html`<${Button} size="sm" class="mux-btn mux-bg-attach" onClick=${() => attach(row)}
+                            aria-label=${`${verb} ${view.label}`}>${verb}<//>`
                         : row.attachLock
-                          ? html`<button type="button" class="mux-btn mux-bg-attach" disabled aria-disabled="true"
-                              aria-label=${`Attach ${view.label}`}>Attach</button><${LockReason} why=${row.attachLock}/>`
+                          ? html`<${Button} size="sm" class="mux-btn mux-bg-attach" disabled aria-disabled="true"
+                              aria-label=${`Attach ${view.label}`}>Attach<//><${LockReason} why=${row.attachLock}/>`
                           : html`<span class="mux-bg-noattach" title=${`Attach from a shell: tmux -L tclaude attach -t '${row.tmux_session}'`}>${row.superseded ? 'previous generation' : 'not a tclaude terminal'}</span>`}
                       ${row.killable ? html`<${KillButton} row=${row} label=${view.label} />` : null}
                     </div>`;
                 })}
               </div>`)}
           ${attachable.length > 1 ? html`
-            <div class="mux-bg-foot"><button type="button" class="mux-btn" onClick=${attachAll}>Attach all</button></div>
+            <div class="mux-bg-foot"><${Button} size="sm" class="mux-btn" onClick=${attachAll}>Attach all<//></div>
           ` : null}
         </div>
       ` : null}

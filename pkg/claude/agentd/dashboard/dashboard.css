@@ -276,7 +276,7 @@ body.dock-open .open-prs.is-open::before {
 .open-pr-ignore { width: 20px; height: 20px; padding: 0; opacity: 0.45; }
 .open-pr-restore { padding: 4px 9px; color: #8b949e; }
 .open-pr-row:hover .open-pr-ignore, .open-pr-ignore:focus-visible { opacity: 1; }
-.open-pr-ignore:hover, .open-pr-restore:hover { color: #c9d1d9; border-color: #385b81; background: #172a40; }
+.open-pr-ignore:hover, .open-pr-restore:hover { color: #c9d1d9; background: #172a40; }
 .open-pr-ignore:focus-visible, .open-pr-restore:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-pr-row.is-ignored .open-pr-title { color: #8b949e; }
 /* Whose pull requests: the operator's own tab plus one per tracked colleague,
@@ -313,7 +313,7 @@ body.dock-open .open-prs.is-open::before {
   margin: 0 0 5px auto; padding: 3px 8px; border: 1px dashed #303946; border-radius: 10px;
   background: transparent; color: #7d8590; cursor: pointer; font-size: 10px;
 }
-.open-prs-add-person:hover { color: #c9d1d9; border-color: #385b81; }
+.open-prs-add-person:hover { color: #c9d1d9; background: var(--ui-bg-hover); }
 .open-prs-add-person:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-prs-add-form { display: flex; gap: 4px; margin: 0 0 5px auto; }
 .open-prs-add-form input {
@@ -321,13 +321,13 @@ body.dock-open .open-prs.is-open::before {
   background: #0d1117; color: #c9d1d9; font: inherit; font-size: 11px;
 }
 .open-prs-add-form input:focus-visible { outline: 2px solid #58a6ff; outline-offset: 0; }
-.open-prs-add-form button {
+.open-prs-add-form button:where(:not(.ui-btn)) {
   padding: 2px 8px; border: 1px solid #303946; border-radius: 6px; background: transparent;
   color: #8b949e; cursor: pointer; font-size: 10.5px;
 }
-.open-prs-add-form .open-prs-add-ok { border-color: #385b81; background: #172a40; color: #c9d1d9; }
-.open-prs-add-form button:disabled { opacity: 0.5; cursor: default; }
-.open-prs-add-form button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.open-prs-add-form .open-prs-add-ok:where(:not(.ui-btn)) { border-color: #385b81; background: #172a40; color: #c9d1d9; }
+.open-prs-add-form button:where(:not(.ui-btn)):disabled { opacity: 0.5; cursor: default; }
+.open-prs-add-form button:where(:not(.ui-btn)):focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-prs-stale { margin: 0; padding: 6px 13px; border-bottom: 1px solid #222b35; color: #d29922; font-size: 10.5px; }
 .open-prs-people-error { flex-basis: 100%; margin: 0 0 6px; color: #f85149; font-size: 10.5px; text-align: right; }
 /* The ignore confirmation covers the popover (its positioned ancestor). */
@@ -347,13 +347,11 @@ body.dock-open .open-prs.is-open::before {
 .open-prs-confirm-durations label { display: inline-flex; align-items: center; gap: 4px; color: #c9d1d9; cursor: pointer; }
 .open-prs-confirm-durations input { margin: 0; accent-color: #1f6feb; }
 .open-prs-confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; }
-.open-prs-confirm-buttons button {
+.open-prs-confirm-buttons button:where(:not(.ui-btn)) {
   padding: 4px 12px; border: 1px solid #3a4654; border-radius: 6px; background: #21262d;
   color: #c9d1d9; cursor: pointer; font-size: 11.5px;
 }
-.open-prs-confirm-buttons button:hover { background: #30363d; }
-.open-prs-confirm-buttons button.confirm-danger { border-color: #f85149; background: #4d1d1d; color: #f85149; }
-.open-prs-confirm-buttons button.confirm-danger:hover { background: #f85149; color: #fff; }
+.open-prs-confirm-buttons button:where(:not(.ui-btn)):hover { background: #30363d; }
 .open-prs-confirm-buttons button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 @media (max-width: 620px) {
   .open-prs-popover, .open-prs.is-open::before { right: 8px; width: calc(100vw - 16px); }
@@ -5424,7 +5422,8 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 /* The inline profile picker — a <select> swapped in for a group or toolbar
    chip while choosing a spawn or sandbox profile.
    Same compact monospace look as the chip inputs above. */
-.group-default-profile-select, .toolbar-profile-select {
+.group-default-profile-select, .toolbar-profile-select { margin-left: 8px; }
+.group-default-profile-select:where(:not(.ui-select)), .toolbar-profile-select:where(:not(.ui-select)) {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
@@ -6678,11 +6677,11 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .steward-shutdown-confirm p { margin: 0 0 8px; }
 .steward-shutdown-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.steward-shutdown-actions button {
+.steward-shutdown-actions button:where(:not(.ui-btn)) {
   background: #21262d; border: 1px solid #2a3340; border-radius: 3px; padding: 3px 10px;
   font-size: 12px; color: #c9d1d9; font-family: inherit; cursor: pointer;
 }
-.steward-shutdown-actions button.danger { background: #8e1f1f; border-color: #da3633; color: #fff; }
+.steward-shutdown-actions button:where(:not(.ui-btn)).danger { background: #8e1f1f; border-color: #da3633; color: #fff; }
 .steward-shutdown-error { color: #f85149; }
 .steward-down-notice {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 12px;
@@ -11686,10 +11685,10 @@ body.wizard .open-prs-title-details { color: #b39ddb; }
 body.wizard .open-prs-title-details:hover,
 body.wizard .open-prs-title-details:has(input:focus-visible) { color: #f3e6c0; }
 body.wizard .open-prs-title-details input { accent-color: #7a5db0; }
-body.wizard .open-pr-ignore,
-body.wizard .open-pr-restore { border-color: #4a3d6b; color: #b39ddb; }
-body.wizard .open-pr-ignore:hover,
-body.wizard .open-pr-restore:hover { border-color: #d9b45a; background: #3a2a63; color: #f3e6c0; }
+body.wizard .open-pr-ignore:where(:not(.ui-btn)),
+body.wizard .open-pr-restore:where(:not(.ui-btn)) { border-color: #4a3d6b; color: #b39ddb; }
+body.wizard .open-pr-ignore:where(:not(.ui-btn)):hover,
+body.wizard .open-pr-restore:where(:not(.ui-btn)):hover { background: #3a2a63; color: #f3e6c0; }
 body.wizard .open-pr-row.is-ignored .open-pr-title { color: #9a86c4; }
 body.wizard .open-prs-confirm { border-color: #7a5db0; background: #241b3d; }
 body.wizard .open-prs-people { border-color: #33284d; }
@@ -11697,7 +11696,7 @@ body.wizard .open-prs-person.active { border-color: #33284d; background: #241b3d
 body.wizard .open-prs-person > button[role="tab"] { color: #b39ddb; }
 body.wizard .open-prs-person.active > button[role="tab"] { color: #f3e6c0; }
 body.wizard .open-prs-person.active .open-prs-person-n { background: #7a5db0; }
-body.wizard .open-prs-add-person { border-color: #4a3d6b; color: #b39ddb; }
+body.wizard .open-prs-add-person:where(:not(.ui-btn)) { border-color: #4a3d6b; color: #b39ddb; }
 body.wizard .open-prs-add-form input { border-color: #7a5db0; background: #140f28; color: #e7d9f5; }
 body.wizard .open-prs-confirm h4 { color: #f3e6c0; }
 body.wizard .open-prs-confirm p,

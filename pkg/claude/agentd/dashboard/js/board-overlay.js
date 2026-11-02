@@ -32,6 +32,7 @@ import { buildOverlayBulkCommands } from './overlay-window-bulk.js';
 import { OverlayExpose, installOverlayExposeKey } from './overlay-expose.js';
 import { FooterDock, OverlayDock, OverlayDockPopup } from './overlay-dock.js';
 import { registerCommandProvider } from './command-registry.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -87,9 +88,9 @@ export function BoardOverlayWindow({ instance, overlay, strip, close, snapshot, 
     overlay.windowRef.current?.querySelector?.('.board-editor')?.dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY, ctrlKey, metaKey }));
   }
   const title = html`${strip}
-    <button type="button" class="board-overlay-action" title="Move this board to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}</button>
-    <button type="button" class="board-overlay-action" title="Move this board to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}</button>
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${board.label}`}
+    <${Button} size="sm" class="board-overlay-action" title="Move this board to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}<//>
+    <${Button} size="sm" class="board-overlay-action" title="Move this board to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}<//>
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${board.label}`}
       onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay" frameClass="board-overlay-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Board ${board.label}`} title=${title}

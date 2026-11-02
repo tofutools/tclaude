@@ -8,6 +8,7 @@ import { relativeAge } from './pr-review-model.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow } from './overlay-window.js';
 import { minimizeOverlayWindow } from './overlay-instances.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -28,8 +29,8 @@ function HomeWindow({ instance, overlay, strip, close, minimize, snapshot, label
   const look = windowControlsLook(snapshot.value?.window_controls);
   const onMinimize = minimize || (() => minimizeOverlayWindow(instance.id));
   const title = html`${strip}
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`} onClick=${onMinimize}>–</button>`}
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`} onClick=${close.onClose}>×</button>`}`;
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`} onClick=${onMinimize}>–</button>`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`} onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${!instance.minimized} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${label} title=${title}
     controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize }}>
@@ -46,11 +47,11 @@ export function StartTab({ instance, overlay, strip, close, minimize, snapshot, 
       <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
         groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
       <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, ⚙ in the title bar changes its access.</p>
-      ${returning ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${onResume}>${busy ? 'Working…' : `Resume ${returning.name}`}</button>
+      ${returning ? html`<${Button} size="sm" variant="primary" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${onResume}>${busy ? 'Working…' : `Resume ${returning.name}`}<//>
         <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
-        <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${onSummon}>Start fresh</button>
+        <${Button} size="sm" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${onSummon}>Start fresh<//>
         <p class="companion-empty-note">${stewardFreshNote(returning)}</p>`
-      : html`<button type="button" class="companion-primary" disabled=${busy} onClick=${onSummon}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>`}
+      : html`<${Button} size="sm" variant="primary" class="companion-primary" disabled=${busy} onClick=${onSummon}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}<//>`}
       <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
     </div>
   <//>`;

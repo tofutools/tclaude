@@ -105,7 +105,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	for _, needle := range []string{
 		"class=\"terminal-interaction-hint\"",
 		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: ${shortcutText('terminal-copy')}",
-		">✉ Message</button>",
+		">✉ Message<//>",
 		"onComposeMessage=${composeMessage}",
 	} {
 		if !strings.Contains(shell, needle) {

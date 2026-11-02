@@ -373,7 +373,7 @@ export function BoardMinimap({ elements, tick, view, svgRef, onScreen = true, wi
   }
 
   if (collapsed) {
-    return html`<button type="button" class="board-minimap-open" title="Show the minimap" aria-label="Show the minimap" onClick=${() => setHidden(false)}>▦</button>`;
+    return html`<button data-ui-exempt type="button" class="board-minimap-open" title="Show the minimap" aria-label="Show the minimap" onClick=${() => setHidden(false)}>▦</button>`;
   }
   return html`<div class="board-minimap" role="group" aria-label="Minimap">
     <div ref=${frameRef} class="board-minimap-frame" title="Click or drag to move the view. Scroll to zoom the map, Shift+drag to move it."
@@ -382,10 +382,10 @@ export function BoardMinimap({ elements, tick, view, svgRef, onScreen = true, wi
       <div ref=${markerRef} class="board-minimap-view"></div>
     </div>
     <div class="board-minimap-bar">
-      <button type="button" title="Zoom the map out" aria-label="Zoom the map out" disabled=${zoom <= 1} onClick=${() => step(1 / ZOOM_STEP)}>−</button>
-      <button type="button" class="board-minimap-zoom" title="Show the whole board" aria-label="Show the whole board" disabled=${zoom <= 1} onClick=${() => changeZoom(1, null)}>${zoom <= 1 ? 'Fit' : `${Math.round(zoom * 10) / 10}×`}</button>
-      <button type="button" title="Zoom the map in" aria-label="Zoom the map in" disabled=${zoom >= BOARD_MINIMAP_ZOOM_MAX} onClick=${() => step(ZOOM_STEP)}>+</button>
-      <button type="button" class="board-minimap-hide" title="Hide the minimap" aria-label="Hide the minimap" onClick=${() => setHidden(true)}>▾</button>
+      <button type="button" data-ui-exempt title="Zoom the map out" aria-label="Zoom the map out" disabled=${zoom <= 1} onClick=${() => step(1 / ZOOM_STEP)}>−</button>
+      <button data-ui-exempt type="button" class="board-minimap-zoom" title="Show the whole board" aria-label="Show the whole board" disabled=${zoom <= 1} onClick=${() => changeZoom(1, null)}>${zoom <= 1 ? 'Fit' : `${Math.round(zoom * 10) / 10}×`}</button>
+      <button type="button" data-ui-exempt title="Zoom the map in" aria-label="Zoom the map in" disabled=${zoom >= BOARD_MINIMAP_ZOOM_MAX} onClick=${() => step(ZOOM_STEP)}>+</button>
+      <button data-ui-exempt type="button" class="board-minimap-hide" title="Hide the minimap" aria-label="Hide the minimap" onClick=${() => setHidden(true)}>▾</button>
     </div>
   </div>`;
 }

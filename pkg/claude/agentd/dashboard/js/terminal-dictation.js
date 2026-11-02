@@ -191,7 +191,7 @@ export function PaneDictation({
           ? `${name} can't capture your screen: that permission is off for it. The attached view says where you are, not what is on screen.` : ''}
         annotateLabel=${`Mark up this page for ${name}`}
         onAnnotate=${talks ? onAnnotate || (() => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch(), remote: !!target.node })) : null}>${children}<//>
-      ${notice && html`<button type="button" class="companion-pane-notice" role="alert" title="Dismiss" onClick=${() => setNotice('')}>${notice}</button>`}
+      ${notice && html`<button data-ui-exempt type="button" class="companion-pane-notice" role="alert" title="Dismiss" onClick=${() => setNotice('')}>${notice}</button>`}
     </div>
     ${showField && html`<${DraftField} dictation=${dictation} draft=${draft} sending=${sending} fieldRef=${fieldRef}
       label=${talks ? `Message ${name}` : 'Draft for this terminal'}

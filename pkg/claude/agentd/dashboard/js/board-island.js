@@ -33,6 +33,7 @@ import { BoardQuickMenu, QUICK_MENU_SIZE } from './board-quick-menu.js';
 import { companionAgents } from './companion-model.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { shortcutText, withShortcut } from './keybindings.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -1749,79 +1750,79 @@ export function BoardEditor({
           const state = presence.get(id) || '';
           const doing = state === 'drawing' ? ' (drawing…)' : state === 'looking' ? ' (looking at the board)' : '';
           return html`<span key=${id} class=${`board-person${agent?.online ? '' : ' offline'}${state ? ` ${state}` : ''}`} title=${agent ? `${agent.name}${agent.online ? '' : ' (offline)'}${doing}` : id}>
-            <button type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.steward ? '✦ ' : ''}${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
-            <button type="button" class="board-person-x" aria-label=${`Remove ${agent?.name || id} from the board`} onClick=${() => removeParticipant(id)}>×</button>
+            <button data-ui-exempt type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.steward ? '✦ ' : ''}${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
+            <button data-ui-exempt type="button" class="board-person-x" aria-label=${`Remove ${agent?.name || id} from the board`} onClick=${() => removeParticipant(id)}>×</button>
           </span>`;
         })}
         ${meta.groupMembers.filter((id) => !meta.participants.includes(id)).map((id) => {
           const agent = agents.get(id);
           const state = presence.get(id) || '';
           return html`<span key=${id} class=${`board-person via-group${agent?.online ? '' : ' offline'}${state ? ` ${state}` : ''}`} title=${`${agent?.name || id} (in group ${meta.group})${state === 'drawing' ? ' (drawing…)' : ''}`}>
-            <button type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
+            <button data-ui-exempt type="button" class="board-person-name" onClick=${() => onOpenAgent?.(id)}>${agent?.name || id.slice(0, 12)}${state === 'drawing' ? html` <span class="board-person-doing" aria-label="drawing">✎</span>` : ''}</button>
           </span>`;
         })}
         <span class="board-invite-wrap" ref=${inviteRef}>
-          <button type="button" class="board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent</button>
+          <${Button} size="sm" class="board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent<//>
           ${invite && html`<div class="board-invite-menu" role="menu">
-            ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)
+            ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" class="ui-menu-item" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)
               : html`<div class="board-invite-empty">No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).</div>`}
           </div>`}
         </span>
-        <select class="board-group" aria-label="The board's group" title="A group's members are on its board without invitations"
+        <${Select} size="sm" class="board-group" aria-label="The board's group" title="A group's members are on its board without invitations"
           value=${meta.group} onChange=${(event) => setGroup(event.currentTarget.value, event.currentTarget)}>
           <option value="">No group</option>
           ${groupNames.map((name) => html`<option key=${name} value=${name}>Group: ${name}</option>`)}
-        </select>
+        <//>
       </div>
-      <button type="button" class="board-export" title="Download as .excalidraw"
-        onClick=${() => import('./board-export.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(drawnElements(elements.current))))}>⤓</button>
+      <${Button} size="sm" class="board-export" title="Download as .excalidraw"
+        onClick=${() => import('./board-export.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(drawnElements(elements.current))))}>⤓<//>
       ${headActions}
     </header>
     <div class="board-toolbar" role="toolbar" aria-label="Board tools">
       ${BOARD_TOOLS.map((t, index) => {
         const digit = boardToolDigit(index);
         const keys = digit ? [digit, t.key.toUpperCase()] : [t.key.toUpperCase()];
-        return html`<button key=${t.id} type="button" class=${`board-tool${tool === t.id ? ' on' : ''}`}
+        return html`<button key=${t.id} type="button" data-ui-exempt class=${`board-tool${tool === t.id ? ' on' : ''}`}
           aria-pressed=${tool === t.id ? 'true' : 'false'} title=${`${t.label} (${keys.join(' or ')})`} aria-label=${t.label}
           aria-keyshortcuts=${keys.join(' ')} onClick=${() => setTool(t.id)}>${t.icon}${digit && html`<span class="board-tool-digit" aria-hidden="true">${digit}</span>`}</button>`;
       })}
       <span class="board-sep"></span>
-      ${BOARD_COLORS.map((c) => html`<button key=${c} type="button" class=${`board-swatch${color === c ? ' on' : ''}`} style=${`background:${c}`}
+      ${BOARD_COLORS.map((c) => html`<button key=${c} type="button" data-ui-exempt class=${`board-swatch${color === c ? ' on' : ''}`} style=${`background:${c}`}
         aria-label=${`Stroke ${c}`} onClick=${() => chooseColor(c, sels)}></button>`)}
       <span class="board-sep"></span>
-      ${BOARD_FILLS.map((c) => html`<button key=${c} type="button" class=${`board-swatch fill${fill === c ? ' on' : ''}`}
+      ${BOARD_FILLS.map((c) => html`<button key=${c} type="button" data-ui-exempt class=${`board-swatch fill${fill === c ? ' on' : ''}`}
         style=${c === 'transparent' ? '' : `background:${c}`} aria-label=${c === 'transparent' ? 'No fill' : `Fill ${c}`}
         onClick=${() => chooseFill(c, sels)}>${c === 'transparent' ? '∅' : ''}</button>`)}
-      ${(lines.length > 0 || tool === 'arrow' || tool === 'line') && html`<span class="board-sep"></span>${LINE_ROUTES.map((r) => html`<button key=${r.id} type="button"
+      ${(lines.length > 0 || tool === 'arrow' || tool === 'line') && html`<span class="board-sep"></span>${LINE_ROUTES.map((r) => html`<button key=${r.id} type="button" data-ui-exempt
         class=${`board-tool${shownRouting === r.id ? ' on' : ''}`} aria-pressed=${shownRouting === r.id ? 'true' : 'false'} title=${r.label} aria-label=${r.label}
         onClick=${() => chooseRouting(r.id, lines)}>${r.icon}</button>`)}`}
       ${showTextControls && html`<span class="board-sep"></span>
         <span class="board-text-controls" role="group" aria-label="Text style">
-          <select class="board-text-select" aria-label="Text size" title="Text size" value=${shownText.fontSize}
+          <${Select} size="sm" class="board-text-select" aria-label="Text size" title="Text size" value=${shownText.fontSize}
             onChange=${(event) => { chooseTextStyle({ fontSize: Number(event.currentTarget.value) }, texts); if (!editingRef.current) event.currentTarget.blur(); }} onBlur=${editingText ? leaveText : null}>
             ${boardFontSizes(shownText.fontSize).map((size) => html`<option key=${size} value=${size}>${size}</option>`)}
-          </select>
-          <select class="board-text-select" aria-label="Font" title="Font" value=${shownText.fontFamily}
+          <//>
+          <${Select} size="sm" class="board-text-select" aria-label="Font" title="Font" value=${shownText.fontFamily}
             onChange=${(event) => { chooseTextStyle({ fontFamily: Number(event.currentTarget.value) }, texts); if (!editingRef.current) event.currentTarget.blur(); }} onBlur=${editingText ? leaveText : null}>
             ${BOARD_FONTS.map((font) => html`<option key=${font.id} value=${font.id}>${font.label}</option>`)}
-          </select>
-          <button type="button" class=${`board-tool${shownText.fontWeight ? ' on' : ''}`} title="Bold" aria-label="Bold" aria-pressed=${shownText.fontWeight ? 'true' : 'false'}
+          <//>
+          <button type="button" data-ui-exempt class=${`board-tool${shownText.fontWeight ? ' on' : ''}`} title="Bold" aria-label="Bold" aria-pressed=${shownText.fontWeight ? 'true' : 'false'}
             onMouseDown=${(event) => event.preventDefault()} onClick=${() => chooseTextStyle({ fontWeight: shownText.fontWeight ? undefined : 'bold' }, texts)}><b>B</b></button>
-          <button type="button" class=${`board-tool${shownText.fontStyle ? ' on' : ''}`} title="Italic" aria-label="Italic" aria-pressed=${shownText.fontStyle ? 'true' : 'false'}
+          <button type="button" data-ui-exempt class=${`board-tool${shownText.fontStyle ? ' on' : ''}`} title="Italic" aria-label="Italic" aria-pressed=${shownText.fontStyle ? 'true' : 'false'}
             onMouseDown=${(event) => event.preventDefault()} onClick=${() => chooseTextStyle({ fontStyle: shownText.fontStyle ? undefined : 'italic' }, texts)}><i>I</i></button>
         </span>`}
       <span class="board-sep"></span>
-      <button type="button" class="board-tool" title=${withShortcut('Undo', 'board-undo')} aria-label="Undo" onClick=${() => undo(false)}>↶</button>
-      <button type="button" class="board-tool" title=${withShortcut('Redo', 'board-redo')} aria-label="Redo" onClick=${() => undo(true)}>↷</button>
-      ${sels.length > 0 && html`<button type="button" class="board-tool" title="Delete (Del)" aria-label="Delete selection" onClick=${() => remove(selected)}>🗑</button>`}
-      ${arrangeable >= 2 && html`<span class="board-sep"></span>${ALIGNMENTS.filter((a) => arrangeable >= (a.min || 2)).map((a) => html`<button key=${a.id} type="button" class="board-tool"
+      <button data-ui-exempt type="button" class="board-tool" title=${withShortcut('Undo', 'board-undo')} aria-label="Undo" onClick=${() => undo(false)}>↶</button>
+      <button data-ui-exempt type="button" class="board-tool" title=${withShortcut('Redo', 'board-redo')} aria-label="Redo" onClick=${() => undo(true)}>↷</button>
+      ${sels.length > 0 && html`<button data-ui-exempt type="button" class="board-tool" title="Delete (Del)" aria-label="Delete selection" onClick=${() => remove(selected)}>🗑</button>`}
+      ${arrangeable >= 2 && html`<span class="board-sep"></span>${ALIGNMENTS.filter((a) => arrangeable >= (a.min || 2)).map((a) => html`<button data-ui-exempt key=${a.id} type="button" class="board-tool"
         title=${a.label} aria-label=${a.label} onClick=${() => align(a.id)}>${a.icon}</button>`)}`}
       <span class="board-zoom-controls" role="group" aria-label="Board zoom">
-        <button type="button" class="board-tool" title="Zoom out (-)" aria-label="Zoom out" disabled=${view.zoom <= BOARD_ZOOM_MIN} onClick=${zoomOut}>−</button>
+        <button data-ui-exempt type="button" class="board-tool" title="Zoom out (-)" aria-label="Zoom out" disabled=${view.zoom <= BOARD_ZOOM_MIN} onClick=${zoomOut}>−</button>
         <span class="board-zoom">${Math.round(view.zoom * 100)}%</span>
-        <button type="button" class="board-tool" title="Zoom in (+)" aria-label="Zoom in" disabled=${view.zoom >= BOARD_ZOOM_MAX} onClick=${zoomIn}>+</button>
-        <button type="button" class="board-tool" title="Reset zoom to 100% (Shift+0)" aria-label="Reset zoom to 100%" disabled=${view.zoom === 1} onClick=${zoomReset}>1:1</button>
-        <button type="button" class="board-tool" title="Fit everything in view (Shift+1)" aria-label="Fit everything in view" disabled=${!live.length} onClick=${fitView}>⤢</button>
+        <button data-ui-exempt type="button" class="board-tool" title="Zoom in (+)" aria-label="Zoom in" disabled=${view.zoom >= BOARD_ZOOM_MAX} onClick=${zoomIn}>+</button>
+        <button data-ui-exempt type="button" class="board-tool" title="Reset zoom to 100% (Shift+0)" aria-label="Reset zoom to 100%" disabled=${view.zoom === 1} onClick=${zoomReset}>1:1</button>
+        <button data-ui-exempt type="button" class="board-tool" title="Fit everything in view (Shift+1)" aria-label="Fit everything in view" disabled=${!live.length} onClick=${fitView}>⤢</button>
       </span>
     </div>
     <div class="board-canvas-wrap" style=${paper}>
@@ -1894,14 +1895,14 @@ function BoardRow({ board, onOpen, onExport, onDelete }) {
   const elements = `${board.element_count ?? 0} element${board.element_count === 1 ? '' : 's'}`;
   const changed = board.updated_at ? new Date(board.updated_at).toLocaleString() : '';
   return html`<li class="board-row">
-    <button type="button" class="board-row-open" title=${`${label}: ${elements}${changed ? `, changed ${changed}` : ''}`} onClick=${() => onOpen(board.id, label)}>
+    <button data-ui-exempt type="button" class="board-row-open" title=${`${label}: ${elements}${changed ? `, changed ${changed}` : ''}`} onClick=${() => onOpen(board.id, label)}>
       <span class=${`board-row-dot${board.active ? ' active' : ''}`} title=${board.active ? 'An agent has a session on it' : ''}></span>
       <span class="board-row-title">${label}</span>
       ${agents > 0 && html`<span class="board-row-agents">${agents} agent${agents === 1 ? '' : 's'}</span>`}
       <span class="board-row-age">${boardAge(board.updated_at)}</span>
     </button>
-    <button type="button" class="board-row-action" title="Download as .excalidraw" aria-label=${`Export ${label}`} onClick=${() => onExport(board)}>⤓</button>
-    <button type="button" class="board-row-action danger" title="Delete this board" aria-label=${`Delete ${label}`} onClick=${() => onDelete(board)}>🗑</button>
+    <${Button} size="sm" icon=${true} class="board-row-action" title="Download as .excalidraw" aria-label=${`Export ${label}`} onClick=${() => onExport(board)}>⤓<//>
+    <${Button} size="sm" icon=${true} variant="ghost danger" class="board-row-action" title="Delete this board" aria-label=${`Delete ${label}`} onClick=${() => onDelete(board)}>🗑<//>
   </li>`;
 }
 
@@ -1976,7 +1977,7 @@ export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, com
     <form class="board-new" onSubmit=${create}>
       <input type="text" placeholder="Search, or type a title to create" aria-label="Search boards, or title a new one" maxLength="120"
         value=${title} onInput=${(event) => setTitle(event.currentTarget.value)} />
-      <button type="submit" disabled=${!clean}>${same ? 'Open' : 'Create'}</button>
+      <${Button} size="sm" variant="primary" type="submit" disabled=${!clean}>${same ? 'Open' : 'Create'}<//>
     </form>
     ${error && html`<p class="board-error" role="alert">Boards are unavailable: ${error}</p>`}
     ${boards === null && !error && html`<p class="board-muted">Loading boards…</p>`}
@@ -1993,7 +1994,7 @@ export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, com
     </div>
     <div class="board-store">
       <span>Stored in this tclaude instance, not in a file. ⤓ exports one.</span>
-      <button type="button" class="board-import" disabled=${importing} onClick=${() => { onPicking(true); fileRef.current?.click(); }}>${importing ? 'Importing…' : 'Import…'}</button>
+      <${Button} size="sm" class="board-import" disabled=${importing} onClick=${() => { onPicking(true); fileRef.current?.click(); }}>${importing ? 'Importing…' : 'Import…'}<//>
       <input ref=${fileRef} type="file" accept=".excalidraw,.json,application/json" hidden aria-label="Import an .excalidraw file" onChange=${importFile} onCancel=${() => onPicking(false)} />
     </div>
   </div>`;

@@ -117,7 +117,7 @@ export function CompanionCog({ sections, children = null }) {
     item.run();
   };
   return html`<span ref=${rootRef} class="companion-cog">
-    <button ref=${buttonRef} type="button" class="companion-cog-button" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt ref=${buttonRef} type="button" class="companion-cog-button" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       aria-label="More actions" title="More actions" onClick=${() => setOpen((value) => !value)}>⚙</button>
     <div ref=${menuRef} class=${`ui-menu ui-sm action-menu companion-cog-menu${open ? ' open' : ''}`} role="menu"
       onPointerDown=${(event) => event.stopPropagation()}>

@@ -12,6 +12,7 @@ import htm from 'htm';
 import { COMPANION_CHROME, TARGET_SELECTOR, textOf } from './companion-guide.js';
 import { terminalRow } from './dashboard-capture.js';
 import { withShortcut } from './keybindings.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -370,14 +371,14 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
     </svg>
     <form class="annotate-bar" onSubmit=${send}>
       <span class="annotate-title">✎ Mark up this view for <b>${agentName}</b>: circle, underline, point with an arrow or write</span>
-      ${ANNOTATE_COLORS.map((c) => html`<button key=${c} type="button" class=${`annotate-swatch${color === c ? ' on' : ''}`}
+      ${ANNOTATE_COLORS.map((c) => html`<button key=${c} type="button" data-ui-exempt class=${`annotate-swatch${color === c ? ' on' : ''}`}
         style=${`background:${c}`} aria-label=${`Pen ${c}`} aria-pressed=${color === c ? 'true' : 'false'} onClick=${() => setColor(c)}></button>`)}
-      <button type="button" class="annotate-btn" title=${withShortcut('Undo', 'mini-undo')} disabled=${!strokes.length} onClick=${() => setStrokes((list) => list.slice(0, -1))}>↶</button>
+      <${Button} size="sm" class="annotate-btn" title=${withShortcut('Undo', 'mini-undo')} disabled=${!strokes.length} onClick=${() => setStrokes((list) => list.slice(0, -1))}>↶<//>
       <textarea class="annotate-note" ref=${noteRef} rows="1" maxLength=${ANNOTATE_NOTE_MAX} placeholder="Add a note (optional)" aria-label="Note" value=${note}
         onInput=${(event) => setNote(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) send(event); }}></textarea>
-      <button type="submit" class="annotate-send" disabled=${sending || (!strokes.length && !note.trim())}>${sending ? 'Sending…' : 'Send'}</button>
-      <button type="button" class="annotate-btn" onClick=${onCancel} title="Cancel (Esc)">Cancel</button>
+      <${Button} size="sm" variant="primary" type="submit" class="annotate-send" disabled=${sending || (!strokes.length && !note.trim())}>${sending ? 'Sending…' : 'Send'}<//>
+      <${Button} size="sm" class="annotate-btn" onClick=${onCancel} title="Cancel (Esc)">Cancel<//>
     </form>
   </div>`;
 }

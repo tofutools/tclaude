@@ -157,8 +157,8 @@ export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellTo
         return html`<tr key=${r.agent} data-agent=${r.agent}>
           <td>${r.name || r.agent}${r.stale ? html` <span class="muted" title="The catalog entry is out of date; the peer decides when you open it">· stale</span>` : ''}</td>
           <td class="muted">${(r.groups || []).join(', ')}</td>
-          <td>${mode ? html`<button type="button" data-open=${mode} onClick=${() => go(r)}>${mode === 'interactive' ? '⌨ Open (interactive)' : '👁 Watch'}</button>` : html`<span class="muted">not shared</span>`}</td>
-          <td class="fa-acts">${cmd && html`<button type="button" class="fa-link" data-copy-cli title=${`Native terminal: ${cmd}`} onClick=${() => copyCmd(cmd)}>CLI command</button>`}</td>
+          <td>${mode ? html`<${Button} size="sm" data-open=${mode} onClick=${() => go(r)}>${mode === 'interactive' ? '⌨ Open (interactive)' : '👁 Watch'}<//>` : html`<span class="muted">not shared</span>`}</td>
+          <td class="fa-acts">${cmd && html`<${Button} size="sm" variant="link" class="fa-link" data-copy-cli title=${`Native terminal: ${cmd}`} onClick=${() => copyCmd(cmd)}>CLI command<//>`}</td>
         </tr>`;
       })}</tbody></table>`}
     <div class="muted fa-cli-note">Opening never stops the agent. Viewers share the size: the smallest attached terminal sets it. With the take-over grant you can disconnect the others. ${node.name} shows REMOTE WATCH or REMOTE INPUT on its pane and can disconnect you.</div>

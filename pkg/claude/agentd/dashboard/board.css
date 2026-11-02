@@ -36,12 +36,12 @@ body.slop, body.vegas {
   flex: 1 1 260px; max-width: 420px; padding: 7px 10px; border-radius: 6px;
   border: 1px solid var(--board-line); background: var(--board-bg); color: var(--board-text); font: inherit;
 }
-.board-new button, .board-invite, .board-export {
+.board-new button:where(:not(.ui-btn)), .board-invite:where(:not(.ui-btn)), .board-export:where(:not(.ui-btn)) {
   padding: 6px 12px; border-radius: 6px; border: 1px solid var(--board-line);
   background: var(--board-bar); color: var(--board-text); font: inherit; font-size: 12px; cursor: pointer;
 }
-.board-new button:not(:disabled) { background: #238636; border-color: #2ea043; color: #fff; }
-.board-new button:disabled { opacity: .5; cursor: default; }
+.board-new button:where(:not(.ui-btn)):not(:disabled) { background: #238636; border-color: #2ea043; color: #fff; }
+.board-new button:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 .board-muted { color: var(--board-muted); }
 .board-error { color: #f85149; }
 .board-section { margin-bottom: 6px; }
@@ -66,23 +66,18 @@ body.slop, body.vegas {
   flex: none; padding: 0 6px; border-radius: 9px; background: var(--board-line); color: var(--board-muted); font-size: 11px;
 }
 .board-row-age { flex: none; width: 28px; text-align: right; color: var(--board-muted); font-size: 11px; }
-.board-row-action {
-  flex: none; display: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none;
-  color: var(--board-muted); font-size: 13px; cursor: pointer;
-}
-.board-row:hover .board-row-action, .board-row:focus-within .board-row-action { display: block; }
-@media (hover: none) { .board-row-action { display: block; } }
-.board-row-action:hover { background: var(--board-line); color: var(--board-text); }
-.board-row-action.danger:hover { background: #4d1d1d; color: #f85149; }
+.board-row .board-row-action { flex: none; display: none; }
+.board-row:hover .board-row-action, .board-row:focus-within .board-row-action { display: inline-flex; }
+@media (hover: none) { .board-row .board-row-action { display: inline-flex; } }
 .board-store {
   flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px;
   padding-top: 8px; border-top: 1px solid var(--board-line); color: var(--board-muted); font-size: 11px;
 }
-.board-import {
+.board-import:where(:not(.ui-btn)) {
   flex: none; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--board-line); background: var(--board-bar);
   color: var(--board-text); font: inherit; cursor: pointer;
 }
-.board-import:disabled { opacity: .5; cursor: default; }
+.board-import:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 .board-delete-people {
   list-style: none; margin: 8px 0; padding: 6px 10px; max-height: 160px; overflow: auto; border-radius: 5px;
   background: #0d1117; color: #c9d1d9; font-size: 13px;
@@ -113,11 +108,12 @@ body.slop, body.vegas {
   display: flex; flex-direction: column; padding: 4px; border-radius: 8px;
   border: 1px solid var(--board-line); background: var(--board-bar); box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
 }
-.board-invite-menu button {
-  text-align: left; border: 0; border-radius: 5px; padding: 6px 10px; background: transparent;
+.board-invite-menu button { text-align: left; }
+.board-invite-menu button:where(:not(.ui-menu-item)) {
+  border: 0; border-radius: 5px; padding: 6px 10px; background: transparent;
   color: var(--board-text); font: inherit; font-size: 12px; cursor: pointer;
 }
-.board-invite-menu button:hover, .board-invite-menu button:focus-visible { background: #1f6feb33; outline: none; }
+.board-invite-menu button:where(:not(.ui-menu-item)):hover, .board-invite-menu button:where(:not(.ui-menu-item)):focus-visible { background: #1f6feb33; outline: none; }
 .board-invite-empty { padding: 8px 10px; color: var(--board-muted); font-size: 12px; max-width: 260px; }
 
 .board-toolbar {

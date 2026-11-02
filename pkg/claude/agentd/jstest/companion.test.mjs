@@ -127,7 +127,7 @@ test('shutting a Steward down asks first, retires it, and offers a new one', asy
   const stops = () => calls.filter(([, url]) => url.endsWith('/stop'));
   assert.deepEqual(stops(), [], 'nothing happens before the confirmation');
   assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /keeps its conversation/);
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await Promise.resolve(); await Promise.resolve(); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await Promise.resolve(); await Promise.resolve(); });
   assert.deepEqual(stops(), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]], 'it stops; it is not retired');
   assert.equal(calls.some(([, url]) => url.endsWith('/retire')), false);
   assert.match(view.container.querySelector('.companion-shutdown-note').textContent, /is shut down/);
@@ -166,7 +166,7 @@ test('the window ✕ on a Steward asks what ⏻ asks, then shuts it down and clo
   assert.ok(view.container.querySelector(SHOWN_WINDOW));
 
   await harness.act(() => close().click());
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(stops(), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]]);
   assert.ok(!view.container.querySelector(SHOWN_WINDOW), 'the window closed');
 });
@@ -178,7 +178,7 @@ test('⏻ after a cancelled ✕ still keeps the window on the way back', async (
   await harness.act(() => view.container.querySelector('.overlay-wc-close').click());
   await harness.act(() => view.container.querySelector('.steward-shutdown-actions button:not(.danger)').click());
   await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(view.container.querySelector(SHOWN_WINDOW));
   assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
 });
@@ -198,7 +198,7 @@ test('a floated Steward: its window ✕ asks too, and Cancel keeps it running', 
   assert.deepEqual(stops(), []);
 
   await harness.act(() => floated().querySelector('.overlay-wc-close').click());
-  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(stops(), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]]);
   assert.equal(floated(), null, 'the window closed');
 });
@@ -209,7 +209,7 @@ test('a Steward shut down from its window ✕ leaves Resume behind its chip', as
   await harness.act(() => controller().open(S));
   const floated = () => view.container.querySelector('.chat-window');
   await harness.act(() => floated().querySelector('.overlay-wc-close').click());
-  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(!floated());
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /Open the companion/ }).click());
   assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
@@ -331,7 +331,7 @@ test('a refused shut-down stays on the Steward and says why', async (t) => {
   const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
   await harness.act(() => controller().open(S));
   await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
   assert.match(view.container.querySelector('.steward-shutdown-error').textContent, /nothing to retire/);
   assert.ok(!view.container.querySelector('.companion-shutdown-note'));
 });
@@ -2379,7 +2379,7 @@ test('Clear context asks first, for any agent that is not a shell', async (t) =>
   await harness.act(() => view.container.querySelector('.companion-clear-open').click());
   assert.match(clear().querySelector('.steward-shutdown-confirm').textContent, /same identity and permissions/);
   assert.deepEqual(calls.filter(([url]) => url.endsWith('/reincarnate')), [], 'nothing happens before the confirmation');
-  await harness.act(async () => { clear().querySelector('.danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+  await harness.act(async () => { clear().querySelector('.ui-btn-danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
   assert.deepEqual(calls.filter(([url]) => url.endsWith('/reincarnate')), [[`/api/agents/${encodeURIComponent(A)}/reincarnate`, '{"mode":"clear"}']]);
 });
 
