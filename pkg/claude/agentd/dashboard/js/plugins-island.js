@@ -261,7 +261,7 @@ export function PluginsModal({ state, actions }) {
         <textarea id="plugin-modal-descr" rows="2" placeholder="optional — what this plugin provides" spellcheck=${false}
           value=${draft.descr} onInput=${(event) => state.updateModal({ descr: event.currentTarget.value })}></textarea></label>
       <div id="plugin-modal-steps">${draft.steps.map((step, index) => html`<${StepEditor} key=${step._key} step=${step} index=${index} state=${state} />`)}</div>
-      <div class="modal-buttons"><button id="plugin-modal-add-step" type="button" class="ui-btn tool" onClick=${() => state.addStep()}
+      <div class="modal-buttons"><button id="plugin-modal-add-step" type="button" class="ui-btn" onClick=${() => state.addStep()}
         title="Append another check/run step">+ add step</button></div>
       <div class="cron-create-error" id="plugin-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
       <div class="modal-buttons">

@@ -16824,10 +16824,10 @@ body.wizard #trigger-modal .trigger-action-editor { background: #18122b; border-
 body.wizard #trigger-modal .trigger-step-head,
 body.wizard #trigger-modal .trigger-action-editor-head { background: #241b3d; border-color: rgba(122, 93, 176, .55); }
 body.wizard #trigger-modal .trigger-step-body { border-color: rgba(122, 93, 176, .55); }
-body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:not(.primary)) {
+body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:not(.primary)):hover {
+body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)):hover {
   background: #3a2a63; border-color: #f3e6c0;
 }
 body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }
@@ -21946,10 +21946,10 @@ body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), 
 }
 body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), input[type=text], textarea, select):focus { border-color: #a97bd6; }
 body.wizard #saved-prompts-manage-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
-body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:not(.primary) {
+body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:where(:not(.ui-btn)):not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:not(.primary):hover:not(:disabled) { background: #3a2a63; }
+body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:where(:not(.ui-btn)):not(.primary):hover:not(:disabled) { background: #3a2a63; }
 body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:is(.primary, .ui-btn-primary) {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0; border: 2px solid #d9b45a;
