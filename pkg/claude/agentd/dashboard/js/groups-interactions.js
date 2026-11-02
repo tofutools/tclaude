@@ -191,12 +191,12 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
     ><span class="cog-glyph">⚙︎</span></button>
     <div
       ref=${menuRef}
-      class=${`action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
+      class=${`ui-menu ui-sm action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
       data-preact-menu="1"
       role="menu"
     ><input
         ref=${filterRef}
-        class="action-menu-filter"
+        class="ui-input ui-sm action-menu-filter"
         type="text"
         autocomplete="off"
         spellcheck=${false}

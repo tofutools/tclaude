@@ -124,21 +124,32 @@ test('Menu renders a menu of items, separators and headings', async (t) => {
   const { harness, ui, host } = await setup(t);
   let picked = '';
   const mounted = await harness.mount(harness.html`
-    <${ui.Menu} aria-label="Agent actions">
+    <${ui.Menu} aria-label="Agent actions" size="sm">
       <${ui.MenuHeading}>Reach</${ui.MenuHeading}>
       <${ui.MenuItem} onClick=${() => { picked = 'focus'; }}>Focus pane</${ui.MenuItem}>
       <${ui.MenuSep} />
-      <${ui.MenuItem} danger disabled>Kill</${ui.MenuItem}>
+      <${ui.MenuItem} warn>Retire</${ui.MenuItem}>
+      <${ui.MenuItem} danger warn disabled>Kill</${ui.MenuItem}>
     </${ui.Menu}>
   `, host);
   const menu = getByRole(host, 'menu', { name: 'Agent actions' });
-  assert.equal(menu.className, 'ui-menu');
+  assert.equal(menu.className, 'ui-menu ui-sm', 'size="sm" packs the rows');
   const items = [...menu.querySelectorAll('[role="menuitem"]')];
-  assert.deepEqual(items.map((item) => item.className), ['ui-menu-item', 'ui-menu-item ui-btn-danger']);
-  assert.equal(items[1].disabled, true);
+  assert.deepEqual(items.map((item) => item.className), ['ui-menu-item', 'ui-menu-item ui-menu-warn', 'ui-menu-item ui-btn-danger'], 'danger wins over warn');
+  assert.equal(items[2].disabled, true);
   items[0].click();
   assert.equal(picked, 'focus');
   assert.equal(menu.querySelector('hr').className, 'ui-menu-sep');
   assert.equal(menu.querySelector('.ui-menu-heading').textContent, 'Reach');
   mounted.unmount();
+});
+
+test('a danger or warn menu row keeps its tone under the keyboard cursor, not only under hover', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../dashboard/ui.css', import.meta.url), 'utf8');
+  // menu-filter.js marks the cursor with data-menu-active and no :hover; the
+  // plain cursor rule would otherwise turn the row white.
+  for (const tone of ['ui-btn-danger', 'ui-menu-warn']) {
+    assert.match(css, new RegExp(`\\.ui-menu-item\\.${tone}:is\\(:hover, \\[data-menu-active\\]\\):not\\(:disabled\\) \\{[^}]*color:`), tone);
+  }
 });

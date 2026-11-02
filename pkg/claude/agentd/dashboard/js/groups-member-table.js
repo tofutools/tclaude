@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { MenuHeading, MenuItem, MenuSep } from './ui-components.js';
 import { AgentBudgetBadge } from './usage-profile-chip.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
@@ -772,8 +773,10 @@ function menuMemberAttrs(member, selector) {
   return attrs;
 }
 
+// MenuButton is one ⚙ menu item. className 'danger' (cannot be undone) and
+// 'warn' (reversible but disruptive) pick the item's tone.
 function MenuButton({ member, selector = 'agent', group, act, regular, wizard = regular, title, className, disabled, attrs = {} }) {
-  return html`<button role="menuitem" class=${className} data-act=${act} ...${menuMemberAttrs(member, selector)} data-group=${group?.name} ...${attrs} title=${title} disabled=${disabled}><${ThemeText} regular=${regular} wizard=${wizard} /></button>`;
+  return html`<${MenuItem} danger=${className === 'danger'} warn=${className === 'warn'} data-act=${act} ...${menuMemberAttrs(member, selector)} data-group=${group?.name} ...${attrs} title=${title} disabled=${disabled}><${ThemeText} regular=${regular} wizard=${wizard} /><//>`;
 }
 
 function NotifyMenuItem({ member }) {
@@ -928,7 +931,7 @@ function SendElsewhereItems({ member, group, snapshot }) {
   // Without a fleet (no hub connection, or no linked node yet) move and
   // teleport stay in the menu, greyed out with the reason, as the node chips do.
   const off = fleet ? '' : sendElsewhereOffReason(fleetState.node.value);
-  return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
+  return html`<${MenuHeading}>send elsewhere<//>
     ${item('move', peerRow ? 'move here…' : 'move to…', 'relocate hero…', off || (peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`), !!off)}
     ${TELEPORT_ROUTES && !peerRow ? item('teleport', 'teleport to…', 'teleport hero…', off || `Teleport ${label} to another node; its home keeps its place for Recall home`, !!off) : null}
     ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror hero to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
@@ -951,7 +954,7 @@ function MakeStewardMenuItem({ member, group, snapshot }) {
 }
 
 function MenuSeparator() {
-  return html`<div class="menu-sep" role="separator"></div>`;
+  return html`<${MenuSep} />`;
 }
 
 function MemberMenu({ member, group, snapshot, actions, ungrouped }) {

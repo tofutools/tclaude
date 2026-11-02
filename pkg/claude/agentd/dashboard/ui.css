@@ -6,7 +6,8 @@
               [+ .ui-sm] [+ .ui-btn-icon]; group with .ui-seg
      fields   .ui-input  .ui-select  .ui-textarea  [+ .ui-sm]
      checks   label.ui-check > input[type=checkbox|radio];  input.ui-switch
-     menus    .ui-menu > .ui-menu-item | .ui-menu-sep | .ui-menu-heading
+     menus    .ui-menu [+ .ui-sm] > .ui-menu-item [+ .ui-btn-danger | .ui-menu-warn]
+              | .ui-menu-sep | .ui-menu-heading
 
    Blue primary is the one main action; green success is approve / run / start.
    State lives in attributes: :disabled, aria-pressed="true", aria-busy="true",
@@ -76,6 +77,7 @@
   --ui-success-line: #2ea043;
   --ui-danger: #f85149;
   --ui-danger-text: #ffa198;
+  --ui-warn-text: #e3b341;
   --ui-danger-bg: #4d1d1d;
   --ui-switch-off: #30363d;
   --ui-radius: 4px;
@@ -221,7 +223,11 @@ body.slop {
 .ui-menu-item:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
 .ui-menu-item:disabled { opacity: .45; cursor: default; }
 .ui-menu-item.ui-btn-danger { color: var(--ui-danger-text); }
-.ui-menu-item.ui-btn-danger:hover:not(:disabled) { background: rgba(248, 81, 73, 0.15); color: var(--ui-danger); }
+/* Warn: reversible but disruptive (retire, revoke owner, restart without the
+   sandbox). Danger stays for what cannot be undone. */
+.ui-menu-item.ui-menu-warn { color: var(--ui-warn-text); }
+.ui-menu-item.ui-menu-warn:is(:hover, [data-menu-active]):not(:disabled) { background: rgba(210, 153, 34, 0.15); color: var(--ui-warn-text); }
+.ui-menu-item.ui-btn-danger:is(:hover, [data-menu-active]):not(:disabled) { background: rgba(248, 81, 73, 0.15); color: var(--ui-danger); }
 .ui-menu-item > input { margin: 0; accent-color: var(--ui-focus); }
 .ui-menu-sep { flex: none; height: 1px; margin: 3px 2px; border: 0; background: var(--ui-line); }
 .ui-menu-heading {
@@ -229,3 +235,7 @@ body.slop {
   font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
 }
 .ui-menu > .ui-input { margin-bottom: 3px; }
+/* A long action menu (the ⚙ cogs) packs its rows tighter. */
+.ui-menu.ui-sm { gap: 0; }
+.ui-menu.ui-sm .ui-menu-item { padding: 3px 8px; font-size: 12px; line-height: 17px; }
+.ui-menu.ui-sm .ui-menu-sep { margin: 2px; }

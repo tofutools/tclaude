@@ -1387,14 +1387,10 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 	must("body.wizard .row-actions .cog-btn", "the per-row cog is re-skinned in wizard mode")
 	must("body.wizard .group-actions .cog-btn", "the per-group cog is re-skinned in wizard mode")
 
-	// …and so do the DROPDOWN menus each cog opens — the arcane panel plus a
-	// violet-void base skin on every menu item, so the per-group and per-agent
-	// "spell lists" match the global filter-bar one instead of staying an
-	// unthemed default-dark island inside the arcane panel.
-	must("body.wizard .action-menu {", "the cog dropdown panels get the arcane skin")
-	must("body.wizard .filter-bar-cog .action-menu button", "the filter-bar menu items get the arcane base skin at rest")
-	must("body.wizard .row-actions .action-menu button:not(:disabled)", "the per-agent menu items get the arcane base skin at rest")
-	must("body.wizard .group-actions .action-menu button:not(:disabled)", "the per-group menu items get the arcane base skin at rest")
+	// The DROPDOWN menus each cog opens are standard .ui-menu panels, whose
+	// wizard skin comes from the --ui-* variables in ui.css, so all three
+	// "spell lists" match without per-cog rules.
+	must(`class="ui-menu ui-sm action-menu"`, "the cog menus are standard .ui-menu panels")
 
 	// The enchanted rotation + its keyframes — the "self-turning clockwork" gag.
 	must("animation: wizard-cog-turn", "the wizard cog glyph spins under its own enchantment")
@@ -1406,19 +1402,9 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 		t.Error("wizard cog rotation is not disabled under prefers-reduced-motion")
 	}
 
-	// The type-to-filter box each cog opens with (menu-filter.js) is chrome, so
-	// it takes the arcane skin along with the panel it sits in — otherwise it
-	// would sit as an unthemed default-dark input inside the violet-void
-	// dropdown. Its keyboard cursor gilds like a hovered spell, and the
-	// no-matches note re-letters to match the Spellbook's own empty state.
-	must("body.wizard .action-menu-filter {", "the cog filter box gets the arcane skin")
-	must("body.wizard .action-menu-filter::placeholder", "the filter box's prompt is re-lettered arcane")
-	// These are deliberately scoped per cog. The per-agent/per-group resting
-	// rules above carry an extra :not(:disabled); a generic active selector is
-	// less specific and leaves keyboard movement working but invisible.
-	must("body.wizard .filter-bar-cog .action-menu button[data-menu-active]", "the global keyboard cursor takes the mystic-purple glow")
-	must("body.wizard .row-actions .action-menu button[data-menu-active]", "the per-agent keyboard cursor overrides the resting item background")
-	must("body.wizard .group-actions .action-menu button[data-menu-active]", "the per-group keyboard cursor overrides the resting item background")
+	// The type-to-filter box each cog opens with (menu-filter.js) is a standard
+	// .ui-input, skinned with the panel by the same variables. The no-matches
+	// note re-letters to match the Spellbook's own empty state.
 	must("body.wizard .action-menu[data-menu-empty]::after", "the empty-result note is re-lettered arcane")
 }
 
@@ -1440,7 +1426,7 @@ func TestDashboardHTML_CogMenuFilter(t *testing.T) {
 	// The toolbar cog's items are static markup, so unlike the two Preact cogs
 	// its filter box is authored in the shell. toolbar-actions-menu.js binds by
 	// this class and degrades to the old click-only menu without it.
-	must(`<input class="action-menu-filter"`, "the static toolbar cog ships a filter box")
+	must(`<input class="ui-input ui-sm action-menu-filter"`, "the static toolbar cog ships a filter box")
 	must(`aria-label="Filter actions"`, "the filter box is named for screen readers")
 	// aria-activedescendant only resolves against a descendant or an
 	// aria-controls / aria-owns target, and the cursor's item is a SIBLING of the
@@ -1453,10 +1439,8 @@ func TestDashboardHTML_CogMenuFilter(t *testing.T) {
 	// silently do nothing.
 	must(".action-menu [data-menu-filtered-out] { display: none; }", "non-matching items are hidden")
 	must(".action-menu[data-menu-empty]::after", "a query matching nothing says so")
-	// Background only: a border here would tie with the existing per-cog :hover
-	// rules on specificity and win on source order, turning a .danger row's red
-	// edge blue on plain hover.
-	must(".action-menu button[data-menu-active] { background: #1f6feb33; }", "the keyboard cursor marks its row with a background alone")
+	// The keyboard cursor is painted by the standard menu row in ui.css, the
+	// same as its hover; jstest/ui-components.test.mjs covers the classes.
 }
 
 // TestDashboardHTML_WizardConfigTab pins the wizard re-skin of the Config tab
