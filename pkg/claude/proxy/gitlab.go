@@ -350,7 +350,9 @@ func gitlabMRMergeCmd() *cobra.Command {
 			"GitLab's words.\n\n" +
 			"Merging a merge request that is ALREADY merged succeeds and says so. A draft, a closed merge " +
 			"request, or one that conflicts with its target is refused with which of those it is.\n\n" +
-			"The source branch is left alone; deleting it is a separate decision this proxy does not make.",
+			"This proxy never asks GitLab to delete the source branch. GitLab still deletes it when the " +
+			"merge request itself is set to (its \"Delete source branch\" option, which a project can turn on " +
+			"by default).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *gitlabMRMergeParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)

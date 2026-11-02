@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // gitlabproxy_test.go covers the pieces of the GitLab proxy that are pure
@@ -133,4 +135,21 @@ func TestGLMergePreflight(t *testing.T) {
 		assert.Equal(t, 1, res.ExitCode, name)
 		assert.Contains(t, res.Stderr, "!1", name)
 	}
+}
+
+func TestGLRequestURL_AFollowedLinkMayNameTheDefaultPort(t *testing.T) {
+	got, err := glRequestURL("https://gitlab.example.com", glAPIRequest{Path: "https://gitlab.example.com:443/api/v4/projects/1/notes?page=2"})
+	require.NoError(t, err, ":443 is the base's own origin")
+	assert.Contains(t, got, "page=2")
+	_, err = glRequestURL("https://gitlab.example.com", glAPIRequest{Path: "https://gitlab.example.com:8443/api/v4/projects/1/notes?page=2"})
+	assert.Error(t, err, "any other port is not")
+}
+
+func TestGitLabToken_StripsWhitespaceAsTheCredentialHelperDoes(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/token"
+	require.NoError(t, os.WriteFile(path, []byte(" glpat-abc\tdef \n"), 0o600))
+	token, fault := gitlabToken(config.GitProxyConfig{GitLabTokenFile: path})
+	require.Nil(t, fault)
+	assert.Equal(t, "glpat-abcdef", token, "every ASCII whitespace character goes, as tr -d '[:space:]' removes it")
 }

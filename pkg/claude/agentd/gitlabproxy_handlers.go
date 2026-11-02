@@ -782,7 +782,10 @@ func handleGLProxyMRMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload := map[string]any{}
+	// Never ask GitLab to delete the source branch. Sent explicitly, so this
+	// request opts into nothing; a merge request whose own "delete source
+	// branch" option is set is still GitLab's to honour.
+	payload := map[string]any{"should_remove_source_branch": false}
 	message := subject
 	if strings.TrimSpace(body.Body) != "" {
 		if message == "" {
@@ -924,7 +927,13 @@ func handleGLProxyIssueView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var issue glIssue
-	if err := json.Unmarshal(raw, &issue); err != nil || issue.IID == 0 {
+	if err := json.Unmarshal(raw, &issue); err != nil {
+		// An answer that does not decode is an upstream read failure, not a
+		// missing issue.
+		g.respond(w, r, "issue.view", ProxyResult{}, fmt.Errorf("could not read GitLab's answer for issue #%d: %w", iid, err))
+		return
+	}
+	if issue.IID == 0 {
 		g.respond(w, r, "issue.view", ghResultFromError(fmt.Sprintf("no issue #%d in %s", iid, g.project)), nil)
 		return
 	}

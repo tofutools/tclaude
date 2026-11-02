@@ -166,6 +166,11 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 	}
 	var b strings.Builder
 	running := 0
+	// A trace that cannot be read keeps its placeholder in the output, and
+	// the run reports failure, as the GitHub proxy does when half a read
+	// fails: exit 0 would tell the agent it has every failure's trace.
+	unreadable := 0
+	var firstUnreadable string
 	for _, job := range jobs {
 		switch strings.ToLower(job.Status) {
 		case "running", "pending", "created", "waiting_for_resource", "preparing":
@@ -181,6 +186,16 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 		text, failure, err := g.jobTrace(ctx, job.ID)
 		if err != nil || failure != nil {
 			fmt.Fprintf(&b, "%s\t%s\t(the trace for this failed job could not be read)\n", job.Name, label)
+			if unreadable == 0 {
+				reason := ""
+				if err != nil {
+					reason = err.Error()
+				} else {
+					reason = strings.TrimSpace(failure.Stderr)
+				}
+				firstUnreadable = fmt.Sprintf("the trace of job %s (%d) could not be read: %s", job.Name, job.ID, reason)
+			}
+			unreadable++
 			continue
 		}
 		writePrefixedLog(&b, job.Name, label, text)
@@ -193,7 +208,15 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 			maxGLPaginatedPages*glJobsPerPage)
 	}
 	tail, truncated := ghTailText(b.String(), maxGHProxyTextBytes)
-	g.respond(w, r, "job.log-failed", ProxyResult{Stdout: tail, Truncated: truncated}, nil)
+	out := ProxyResult{Stdout: tail, Truncated: truncated}
+	if unreadable > 0 {
+		out.ExitCode = ghExitFailure
+		out.Stderr = firstUnreadable
+		if unreadable > 1 {
+			out.Stderr += fmt.Sprintf(" (and %d more)", unreadable-1)
+		}
+	}
+	g.respond(w, r, "job.log-failed", out, nil)
 }
 
 // jobTrace reads one job's trace, keeping the tail, through the stream seam

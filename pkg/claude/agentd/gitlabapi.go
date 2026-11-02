@@ -79,7 +79,15 @@ func gitlabToken(policy config.GitProxyConfig) (string, *proxyFault) {
 			"the configured agent.git_proxy.gitlab_token_file could not be read: %v%s",
 			err, shellVarHint(configured))
 	}
-	token := strings.TrimSpace(string(raw))
+	// Every ASCII whitespace character goes, anywhere, exactly as the git
+	// credential helper's `tr -d '[:space:]'` does (gitLabTokenCredentialHelper),
+	// so the API and git always send the same token from the same file.
+	token := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(" \t\n\v\f\r", r) {
+			return -1
+		}
+		return r
+	}, string(raw))
 	if token == "" {
 		return "", faultf(http.StatusServiceUnavailable, "token_unreadable",
 			"the configured agent.git_proxy.gitlab_token_file is empty")
@@ -296,7 +304,7 @@ func glRequestURL(base string, req glAPIRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("build GitLab URL: %w", err)
 	}
-	if u.Scheme != "https" || !strings.EqualFold(u.Host, baseURL.Host) {
+	if u.Scheme != "https" || !sameHTTPSOrigin(u, baseURL) {
 		return "", fmt.Errorf("refusing a GitLab API URL outside %s: %s", baseURL.Host, u.Redacted())
 	}
 	if len(req.Query) > 0 {

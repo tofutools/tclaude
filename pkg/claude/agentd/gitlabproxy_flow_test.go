@@ -614,6 +614,7 @@ func TestGLProxy_MergeRequiresItsOwnSlugAndNamesTheCase(t *testing.T) {
 		body := glJSONBody(t, calls[1])
 		assert.Equal(t, true, body["squash"])
 		assert.Equal(t, "Add a thing", body["squash_commit_message"])
+		assert.Equal(t, false, body["should_remove_source_branch"], "the proxy never asks GitLab to delete the source branch")
 		exit, stdout, _, _ := glOutcome(t, res.Body.Bytes())
 		assert.Equal(t, 0, exit)
 		assert.Contains(t, stdout, "merged !7 into main as feedface")
@@ -709,6 +710,43 @@ func TestGLProxy_PipelineListFilters(t *testing.T) {
 
 	res = gitProxyPost(t, f, "/v1/gitlab/pipeline/list", map[string]any{"status": "exploded"})
 	assert.Equal(t, http.StatusBadRequest, res.Code)
+}
+
+// TestGLProxy_JobLogFailedSaysWhenATraceCouldNotBeRead: an unreadable trace
+// keeps its placeholder, and the run fails with the reason on stderr.
+func TestGLProxy_JobLogFailedSaysWhenATraceCouldNotBeRead(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	gl.def = glCanned{Status: 200, Body: `[{"id":502,"name":"test","stage":"test","status":"failed"},
+		{"id":504,"name":"e2e","stage":"test","status":"failed"}]`}
+	gl.bodies["projects/"+glTestProjectID+"/jobs/502/trace"] = []byte("FAIL: tst_sessioncontroller\n")
+	// 504's trace has no body: the stream answers 404.
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/gitlab/job/log-failed", map[string]any{"pipeline_id": 99})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	exit, stdout, stderr, _ := glOutcome(t, res.Body.Bytes())
+	assert.Contains(t, stdout, "FAIL: tst_sessioncontroller", "the readable trace is still there")
+	assert.Contains(t, stdout, "e2e\ttest\t(the trace for this failed job could not be read)")
+	assert.Equal(t, 1, exit, "a missing trace is not a clean answer")
+	assert.Contains(t, stderr, "e2e (504)")
+}
+
+// TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue.
+func TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+
+	gl.def = glCanned{Status: 200, Body: `not json`}
+	res := gitProxyPost(t, f, "/v1/gitlab/issue/view", map[string]any{"number": 3})
+	assert.Equal(t, http.StatusBadGateway, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "could not read GitLab's answer")
+	assert.NotContains(t, res.Body.String(), "no issue #3")
+
+	gl.def = glCanned{Status: 200, Body: `{}`}
+	res = gitProxyPost(t, f, "/v1/gitlab/issue/view", map[string]any{"number": 3})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	_, _, stderr, _ := glOutcome(t, res.Body.Bytes())
+	assert.Contains(t, stderr, "no issue #3", "a decoded answer without an issue is a missing issue")
 }
 
 func TestGLProxy_JobLogFailedReadsOnlyTheFailedTraces(t *testing.T) {
