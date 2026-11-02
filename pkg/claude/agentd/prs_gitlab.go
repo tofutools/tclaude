@@ -265,11 +265,21 @@ func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRR
 		}
 	}
 	summary := summarizePRChecks(checks, now)
-	if !complete {
-		summary.State = "pending"
-		if verdict := glPipelineChecks(&struct {
+	if pipeline != nil {
+		verdict := glPipelineChecks(&struct {
 			Status string `json:"status"`
-		}{Status: pipeline.Status}, ""); verdict != nil {
+		}{Status: pipeline.Status}, "")
+		switch {
+		case !complete:
+			summary.State = "pending"
+			if verdict != nil {
+				summary.State = verdict.State
+			}
+		case verdict != nil && checkStateRank(verdict.State) > checkStateRank(summary.State):
+			// Even a complete read is not the whole pipeline: the Jobs API
+			// leaves out trigger (bridge) jobs, so a downstream pipeline's
+			// failure, or one still running, shows only in the pipeline's own
+			// status. That status can make the summary worse, never better.
 			summary.State = verdict.State
 		}
 	}
@@ -277,6 +287,20 @@ func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRR
 		checks = checks[:prChecksMaxRuns]
 	}
 	return prChecksInfo{Summary: summary, Checks: checks, FetchedAt: now}
+}
+
+// checkStateRank orders summary states from good to bad, for letting the
+// pipeline's own verdict override a summary only towards worse.
+func checkStateRank(state string) int {
+	switch state {
+	case "failing":
+		return 3
+	case "pending":
+		return 2
+	case "passing":
+		return 1
+	}
+	return 0
 }
 
 // gitlabJobCheckRun maps one CI job onto a check row. Buckets follow the
@@ -311,6 +335,9 @@ func gitlabJobCheckRun(job glJob, pipelineURL string) (prCheckRun, bool) {
 		run.Bucket, run.Conclusion = "skipped", status
 	case "":
 		run.Bucket, run.Conclusion = "pending", "pending"
+	case "running":
+		// The dashboard's running clock keys on GitHub's "in progress".
+		run.Bucket, run.Conclusion = "pending", "in progress"
 	default:
 		// created, pending, running, manual, scheduled, waiting_for_resource,
 		// preparing: all still to come.
@@ -409,12 +436,13 @@ func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch
 	// The listing carries no head pipeline; one more read fetches it, and the
 	// jobs follow. A merge request with no pipeline parses to zero checks.
 	ref := gitlabMRRef{base: repo.Base, host: strings.ToLower(strings.TrimSpace(hostOf(repo.Base))), project: repo.OwnerRepo, number: mr.IID}
-	var checks prChecksInfo
-	if full, ok := gitlabReadMR(ctx, repo.Base, token, ref); ok {
-		checks = gitlabPipelineChecks(ctx, repo.Base, token, ref, full.HeadPipeline, time.Now())
-	} else {
-		checks = gitlabPipelineChecks(ctx, repo.Base, token, ref, nil, time.Now())
+	full, ok := gitlabReadMR(ctx, repo.Base, token, ref)
+	if !ok {
+		// No checks rather than zero checks: a failed read must leave the
+		// cached CI summary alone instead of overwriting it with nothing.
+		return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), truncateAuthoredPRTitle(mr.Title), nil
 	}
+	checks := gitlabPipelineChecks(ctx, repo.Base, token, ref, full.HeadPipeline, time.Now())
 	return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), truncateAuthoredPRTitle(mr.Title), &checks
 }
 

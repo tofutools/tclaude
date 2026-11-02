@@ -115,3 +115,17 @@ func TestGitLabPipelineChecks_ACancelledPipelineIsNotGreen(t *testing.T) {
 		&glPipeline{ID: 99, Status: "canceled"}, time.Now())
 	assert.Equal(t, "failing", info.Summary.State, "GitLab's 'canceled', wholesale, is not a pass")
 }
+
+func TestGitLabPipelineChecks_ThePipelinesVerdictCanOnlyMakeACompleteReadWorse(t *testing.T) {
+	run := func(t *testing.T, pipelineStatus string) string {
+		t.Helper()
+		t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, _ glAPIRequest) (glAPIResult, error) {
+			return glAPIResult{Status: http.StatusOK, Body: jobsPage(t, 1, 3, "success"), Header: http.Header{}}, nil
+		}))
+		return gitlabPipelineChecks(context.Background(), jobsTestBase, "glpat", jobsRef(t),
+			&glPipeline{ID: 99, Status: pipelineStatus}, time.Now()).Summary.State
+	}
+	assert.Equal(t, "failing", run(t, "failed"), "a failed bridge job is in no job list, only in the pipeline's status")
+	assert.Equal(t, "pending", run(t, "running"), "a downstream pipeline still running")
+	assert.Equal(t, "passing", run(t, "success"))
+}

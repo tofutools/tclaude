@@ -209,3 +209,21 @@ func TestBranchWebURLEscapesTheBranchName(t *testing.T) {
 		"a '#' or '?' stays in the path; slashes stay separators")
 	assert.Equal(t, repo+"/-/tree/feat/thing", branchWebURL(repo, "", "feat/thing"))
 }
+
+func TestHardenedGitInfoKeepsTheCachedChecksWhenTheDetailReadFails(t *testing.T) {
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
+		"git@gitlab.yamzz.test:yamzz/sub/previewplayback.git")
+	const list = "projects/yamzz%2Fsub%2Fpreviewplayback/merge_requests"
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
+		if req.Path == list {
+			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`[{"iid":8,"state":"opened",
+				"web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/8"}]`)}, nil
+		}
+		return glAPIResult{Status: http.StatusBadGateway, Header: http.Header{}, Body: []byte(`{"message":"bad gateway"}`)}, nil
+	}))
+	info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
+	require.True(t, ok)
+	assert.Equal(t, 8, info.PRNumber)
+	assert.Nil(t, info.Checks, "no checks, not zero checks, so the cached summary is kept")
+}
