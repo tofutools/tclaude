@@ -556,9 +556,8 @@ export function CompanionApp({
     peek: (agentId, element) => peekRef.current?.(agentId, element),
     endPeek: () => stopPeek(),
   }), [showAgent]);
-  // A pill in the footer peeks upwards from its left edge, as the dock floating
-  // over the room peeks from its right.
-  peekRef.current = (agentId, element) => { if (agents.has(agentId)) startPeek(agentId, element, element?.closest?.('footer') ? 'footer-left' : DEFAULT_ROOM_CHIP_SPOT); };
+  // A pill peeks upwards from its right edge, in the footer as over the room.
+  peekRef.current = (agentId, element) => { if (agents.has(agentId)) startPeek(agentId, element, element?.closest?.('footer') ? 'footer-right' : DEFAULT_ROOM_CHIP_SPOT); };
 
   // A shut-down Steward can come back without this window: from the Agents tab,
   // the CLI, or by the seat going to another agent. Then there is nothing left
@@ -733,7 +732,7 @@ export function CompanionApp({
 
   // A row saved in the footer rests at its last spot in the room when it doesn't fit.
   const chipRow = useRef(null);
-  const footerRest = useFooterRest({ win, watching: isFooterSpot(chipSpot) && !stewardShown, row: chipRow });
+  const footerRest = useFooterRest({ win, watching: isFooterSpot(chipSpot) && !stewardShown, row: chipRow, spot: chipSpot });
   const restSpot = () => { const spot = parseChipSpot(readPref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF)); return isFooterSpot(spot) ? DEFAULT_ROOM_CHIP_SPOT : spot; };
   const shownSpot = isFooterSpot(chipSpot) && !footerRest.fits ? restSpot() : chipSpot;
   const inFooter = isFooterSpot(shownSpot);
@@ -741,13 +740,13 @@ export function CompanionApp({
   // the overlay dock gives way first.
   const reserve = isFooterSpot(chipSpot) && !stewardShown ? chipReserve(footerRest.width) : 0;
   useEffect(() => {
-    footerChipReserve.value = reserve;
-  }, [reserve]);
-  useEffect(() => () => { footerChipReserve.value = 0; }, []);
+    footerChipReserve.value = { width: reserve, spot: reserve ? chipSpot : '' };
+  }, [reserve, chipSpot]);
+  useEffect(() => () => { footerChipReserve.value = { width: 0, spot: '' }; }, []);
   const footerSlots = (node) => {
-    const room = measureFooterRoom(win);
     const width = compactWidth(node);
-    return footerSpotFits(room, width) ? FOOTER_CHIP_SPOTS.map((spot) => ({ spot, left: footerSpotLeft(spot, room, width), width })) : [];
+    return FOOTER_CHIP_SPOTS.map((spot) => ({ spot, room: measureFooterRoom(win, spot, width) }))
+      .filter(({ room }) => footerSpotFits(room, width)).map(({ spot, room }) => ({ spot, left: footerSpotLeft(spot, room, width), width }));
   };
   const chipDrag = useChipDrag({ win, spot: shownSpot, row: chipRow, extraSlots: footerSlots, onDrop: moveChips, onStart: stopPeek, reducedMotion: () => reducedMotion(win) });
 

@@ -4,7 +4,7 @@
 // covers nothing and pushes nothing.
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
-import { FOOTER_CHIP_MARGIN, footerSpotFits, freeStretch } from './companion-model.js';
+import { FOOTER_CHIP_MARGIN, footerRoom, footerSpotFits, freeStretch } from './companion-model.js';
 
 const COMPACT = 'compact';
 
@@ -16,9 +16,10 @@ const COMPACT = 'compact';
 const POPOVER = '.open-prs-popover, .overlay-dock-measure';
 
 // footerChipReserve is the room the chips take in the footer while they rest
-// there, margins included. The overlay dock beside them in the bar keeps it free,
-// so its pills give way before the chips have to float.
-export const footerChipReserve = signal(0);
+// there, margins included, and the spot they rest at: { width, spot }. The
+// overlay dock beside them in the bar keeps it free, so its pills give way
+// before the chips have to float.
+export const footerChipReserve = signal({ width: 0, spot: '' });
 
 export const chipReserve = (width) => (width > 0 ? width + 2 * FOOTER_CHIP_MARGIN : 0);
 
@@ -34,14 +35,16 @@ function occupied(bar, doc) {
   return rects.filter((rect) => rect.width > 0);
 }
 
-// measureFooterRoom is the footer's widest free stretch, { left, right }, or null
+// measureFooterRoom is the footer's free stretch, { left, right }, that a row
+// width wide rests in at spot (footerRoom), or with neither given its widest; null
 // on a page without one.
-export function measureFooterRoom(win) {
+export function measureFooterRoom(win, spot = '', width = 0) {
   const doc = win?.document;
   const bar = doc?.querySelector?.('footer .footer-inner');
   const box = bar?.getBoundingClientRect?.();
   if (!box?.width) return null;
-  return freeStretch(occupied(bar, doc), box.left, box.right);
+  const rects = occupied(bar, doc);
+  return spot ? footerRoom(rects, box.left, box.right, spot, width) : freeStretch(rects, box.left, box.right);
 }
 
 // compactWidth is how wide the row is in the bar, wherever it is now. It takes
@@ -58,13 +61,13 @@ export function compactWidth(node) {
 // watches the bar and the row for as long as one is. It returns { room, fits,
 // width }, measured before the row paints, and measure, for a row about to land
 // there.
-export function useFooterRest({ win, watching, row }) {
+export function useFooterRest({ win, watching, row, spot }) {
   const [rest, setRest] = useState({ room: null, width: 0 });
   const measure = useRef(() => {});
   measure.current = () => {
     const node = row.current;
-    const room = measureFooterRoom(win);
     const width = node ? compactWidth(node) : 0;
+    const room = measureFooterRoom(win, spot, width);
     setRest((now) => (now.width === width && now.room?.left === room?.left && now.room?.right === room?.right ? now : { room, width }));
   };
   // Every render: what the row holds changes with it.

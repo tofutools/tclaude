@@ -1,11 +1,13 @@
 // overlay-dock.js -- the dock of minimized overlay windows: its ☰ menu of
 // actions on every window, and a pill for each window or tab sent to it.
 //
-// It rests in the footer (tcl-9qsgqs), right after the version text, and takes
-// only the room the bar has left: it pushes and covers nothing there, and keeps
-// clear the room of the chips resting beside it (footerChipReserve). Pills that
-// don't fit fold into a "+N" button, and when none fits, into ☰ itself. Either
-// opens a list of them. On a page without the footer it floats over the room.
+// It rests in the footer (tcl-9qsgqs), right-aligned beside the Steward's chips:
+// from the right, Open PRs, the chips, then ☰ and the pills, which grow to the
+// left. It takes only the room the bar has left: it pushes and covers nothing
+// there, and keeps clear the room of the chips (footerChipReserve). Pills that
+// don't fit fold into a "+N" button at their left end, and when none fits, into
+// ☰ itself. Either opens a list of them. On a page without the footer it floats
+// over the room.
 //
 // Its menus render beside it, in the overlay host (OverlayDockPopup): inside the
 // footer they would sit under the overlay windows, the footer's level being theirs.
@@ -144,13 +146,20 @@ export function FooterDock({ snapshot, win }) {
   const root = useRef(null);
   const measure = useRef(null);
   const [shown, setShown] = useState(Infinity);
+  // Whether the chips' room is kept: not when ☰ itself would not fit beside it,
+  // as ☰ never leaves the bar and the chips float then anyway.
+  const [reserving, setReserving] = useState(true);
   const [, setWidth] = useState(0);
-  const reserve = footerChipReserve.value;
+  // Chips resting at footer-right sit between the dock and Open PRs, so the dock
+  // keeps their room at its right end; elsewhere it only leaves them the width.
+  const { width: reserve, spot: chipSpot } = footerChipReserve.value;
   useLayoutEffect(() => {
     const box = root.current?.getBoundingClientRect?.();
     const widths = [...(measure.current?.children || [])].map((node) => node.getBoundingClientRect().width);
     // Unlaid out, as under test: everything shows.
-    const next = !box?.width || !widths.length ? Infinity : fitDockPills({ budget: box.width - reserve, menu: widths[0], more: widths[1], pills: widths.slice(2) });
+    const keep = !box?.width || !widths.length || box.width - reserve >= widths[0];
+    if (keep !== reserving) setReserving(keep);
+    const next = !box?.width || !widths.length ? Infinity : fitDockPills({ budget: box.width - (keep ? reserve : 0), menu: widths[0], more: widths[1], pills: widths.slice(2) });
     const fitted = next >= entries.length ? Infinity : next;
     if (fitted !== shown) setShown(fitted);
     dockShown.value = fitted;
@@ -166,7 +175,8 @@ export function FooterDock({ snapshot, win }) {
   const visible = entries.slice(0, shown);
   const hidden = entries.slice(visible.length);
   const folded = visible.length ? [] : hidden;
-  return html`<div ref=${root} class="overlay-dock in-footer" role="group" aria-label="Minimized windows">
+  return html`<div ref=${root} class="overlay-dock in-footer" role="group" aria-label="Minimized windows"
+    style=${chipSpot === 'footer-right' && reserve && reserving ? `padding-right:${reserve}px` : null}>
     ${(entries.length > 0 || actions.length > 0) && html`<${DockMenuButton} folded=${folded} needs=${needs} />`}
     ${visible.map((entry) => html`<${DockPill} key=${entry.key} entry=${entry} needs=${needs} onChip=${onChip} />`)}
     ${visible.length > 0 && hidden.length > 0 && html`<${DockMoreButton} hidden=${hidden} needs=${needs} />`}

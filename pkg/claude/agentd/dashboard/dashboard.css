@@ -2066,10 +2066,12 @@ header.overlay-look-windows { padding-right: 0; }
 body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach, .overlay-split-gap) { display: none; }
 /* The overlay windows' dock (overlay-dock.js). It rests in the footer, in the
    room the bar has left: it grows into none and is clipped rather than push the
-   Open PRs trigger. Its pills are the bar's height, as the chips beside it are. */
+   Open PRs trigger. It is right-aligned, ☰ last beside the chips, and the pills
+   run to its left, so ☰ stays put as they come and go. Its pills are the bar's
+   height, as the chips beside it are. */
 .footer-dock-root { display: flex; flex: 1 1 0; min-width: 0; align-self: stretch; align-items: center; }
 .overlay-dock { display: flex; align-items: center; gap: 6px; }
-.overlay-dock.in-footer { flex: 1 1 0; min-width: 0; overflow: hidden; }
+.overlay-dock.in-footer { flex: 1 1 0; flex-direction: row-reverse; min-width: 0; box-sizing: border-box; overflow: hidden; }
 /* Off screen, the pills at their full width, for the dock to measure. */
 .overlay-dock.overlay-dock-measure { position: fixed; left: -10000px; top: 0; visibility: hidden; pointer-events: none; }
 /* Without the footer (a page that has none), the dock floats over the room,

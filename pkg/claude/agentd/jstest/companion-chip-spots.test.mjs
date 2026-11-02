@@ -138,6 +138,20 @@ test('model: a footer spot needs the row to fit in the widest free stretch', asy
   assert.deepEqual(m.peekAnchor('footer-left', { left: 16, right: 150, top: 100, bottom: 134 }, { width: 1000, height: 600 }), { bottom: 508, left: 16 });
 });
 
+test('model: at footer-right a row takes the rightmost stretch it fits, beside Open PRs, past the dock', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/companion-model.js');
+  const box = (left, right) => ({ left, right, width: right - left });
+  // The version text, the dock's pills and ☰, and Open PRs.
+  const rects = [box(24, 280), box(600, 700), box(706, 740), box(1000, 1120)];
+  assert.deepEqual(m.footerRoom(rects, 0, 1144, 'footer-right', 200), { left: 740, right: 1000 }, 'between ☰ and Open PRs, though the stretch before the pills is wider');
+  assert.deepEqual(m.footerRoom(rects, 0, 1144, 'footer-left', 200), { left: 280, right: 600 });
+  assert.deepEqual(m.footerRoom(rects, 0, 1144, 'footer-center', 200), { left: 280, right: 600 }, 'the widest');
+  assert.deepEqual(m.footerRoom(rects, 0, 1144, 'footer-right', 300), { left: 280, right: 600 }, 'too wide beside Open PRs, the one it fits');
+  assert.deepEqual(m.footerRoom(rects, 0, 1144, 'footer-right', 400), { left: 280, right: 600 }, 'fitting none, the widest, which says so');
+  assert.equal(m.footerSpotFits(m.footerRoom(rects, 0, 1144, 'footer-right', 400), 400), false);
+});
+
 test('model: a row moving into the footer keeps the spot it left to fall back to', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/companion-model.js');
