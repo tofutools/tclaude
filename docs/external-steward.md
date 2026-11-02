@@ -78,12 +78,12 @@ It reads the credential once when it starts, so restart it after a renewal.
 | `list_agents` | Lists the agents and groups it can reach | Always shows its own groups and agents in no group; `fleet.read` adds every group |
 | `inbox` | Lists its messages, with previews | Always available |
 | `read_message` | Reads one message and marks it read | Always available |
-| `send_message` | Sends a message to an agent or group, including `member@peer` on a linked instance | An agent needs `message.direct` or a shared group, a group needs it to be a member or owner, and another instance needs a group link or `message.direct` |
+| `send_message` | Sends a message to an agent or group, including `member@peer` on a linked instance | An agent needs `message.direct`, a shared or owned group, or a group link. A group needs it to be a member or owner. Another instance needs a group link or `message.direct` |
 | `reply` | Replies to a message it received | Always available: having received a message is enough |
-| `notify_human` | Sends you a message in the dashboard | Needs `human.notify` |
+| `notify_human` | Sends you a message in the dashboard | Needs `human.notify`, or owning a group |
 | `wait_for_activity` | Waits up to 50 seconds for new mail or a change in what needs attention | Always watches mail; `fleet.read` adds what needs attention |
 
-So taking `message.direct` away doesn't stop it messaging agents it shares a group with.
+So taking `message.direct` away doesn't stop it messaging agents it can reach through a group.
 
 **Config** › **Steward** shows this list with Collab on, whether or not the feature is on.
 
