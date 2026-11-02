@@ -402,6 +402,17 @@ things there are specific to processes:
   save an unfinished template too: graph and semantic validation errors are
   advisory on save (the draft just cannot run yet), so each step it makes
   reaches your canvas as it goes.
+- **In an overlay window.** With Collab on, *Open in overlay* beside
+  *← templates* floats the editor in a window over the dashboard, so you can
+  edit beside a chat or a board. It moves as it is: unsaved edits, undo, the
+  scribe dock and the version a save is checked against go with it, and
+  nothing is saved on the way. Its tab reorders, groups and joins other
+  windows like any overlay tab, and *Open in the Processes tab*, in its title
+  bar or its tab's right-click menu, brings it back. A template is edited in
+  one place at a time: opening it from the list while it floats brings its
+  window forward. Ctrl/Cmd+S saves it while its window has the keyboard.
+  Closing it from the dock asks first when it has unsaved edits, and a reload
+  reopens the window on the last saved version.
 - **Subprocesses.** A ▣ node runs a nested graph (see
   [Subprocess nodes](#what-executes-today)). Double-click it to edit its body
   in place: a breadcrumb and a minimap of the parent show where you are, the

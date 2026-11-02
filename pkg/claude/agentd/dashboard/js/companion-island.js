@@ -42,6 +42,7 @@ import { OverlayTabWindow, tabViewOf } from './overlay-tab-window.js';
 import { SnapAssist } from './overlay-snap-assist.js';
 import { activeTabOf, windowHolding } from './overlay-tab-model.js';
 import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
+import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
@@ -1236,6 +1237,7 @@ export function CompanionApp({
     [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onSeparateWindow: detachWindow ? detachToWindow : null, onFloat: floatTab, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot, ...chatTabTools },
     [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
     [BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
+    [PROCESS_WINDOW_KIND]: { snapshot, fetchImpl, win },
     [START_WINDOW_KIND]: { Body: StartTab, view: () => ({ label: customName || 'Steward', lead: html`<span class="companion-avatar steward" aria-hidden="true">✦</span>`, title: customName || 'Steward' }), ...stewardHome, onResume: resumeSteward, onSummon: summonSteward },
     [DECIDE_WINDOW_KIND]: { Body: DecideTab, view: () => ({ label: `${queue.length} to decide`, lead: html`<span class="companion-decide-mark" aria-hidden="true">◆</span>`, title: 'Decisions agents are waiting on' }), snapshot, queue, askerName, fetchImpl, notify, DecisionCard },
   };

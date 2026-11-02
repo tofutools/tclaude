@@ -13,6 +13,8 @@ import htm from 'htm';
 import { BoardEditor, BoardsGate } from './board-island.js';
 import { onBoardDeleted } from './board-manage.js';
 import { BOARD_WINDOW_KIND, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
+import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
+import { validProcessTab } from './process-overlay.js';
 import { boardPaneSeed, isBoardId } from './board-model.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
 import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId, stewardAgent } from './companion-model.js';
@@ -36,7 +38,7 @@ const html = htm.bind(h);
 // there were several: what a window for a board not yet moved starts from.
 export { BOARD_OVERLAY_PLACEMENT_PREF };
 const CASCADE_PX = 28;
-export const WINDOW_GLYPHS = { [BOARD_WINDOW_KIND]: '✎', [TERMINAL_WINDOW_KIND]: '⌨' };
+export const WINDOW_GLYPHS = { [BOARD_WINDOW_KIND]: '✎', [TERMINAL_WINDOW_KIND]: '⌨', [PROCESS_WINDOW_KIND]: '⬡' };
 const DEFAULT_W = 760;
 const DEFAULT_H = 540;
 
@@ -103,6 +105,7 @@ const REMOVE_TITLES = {
   [CHAT_WINDOW_KIND]: ['Unpin', 'Unpin (the agent keeps running)'],
   [TERMINAL_WINDOW_KIND]: ['Close', 'Close (the shell keeps running)'],
   [BOARD_WINDOW_KIND]: ['Close', 'Close this board\u2019s window'],
+  [PROCESS_WINDOW_KIND]: ['Close', 'Close this editor (asks first if it has unsaved edits)'],
 };
 
 // OverlayDock holds the minimized windows and tabs of every kind: a window shows
@@ -136,7 +139,7 @@ function OverlayDock({ snapshot }) {
       return html`<span key=${key} class=${`overlay-dock-pill${tabs.some(needs) ? ' needs' : ''}`}>
         <button type="button" class="overlay-dock-item" title=${`Bring back ${tab.label}`} ...${peeks}
           onClick=${() => { endCompanionPeek(); openOverlayWindow(tab); focusOverlayWindow(tab.id); }}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
-        ${removes && html`<button type="button" class="overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => closeOverlayTab(tab.id)}>×</button>`}
+        ${removes && html`<button type="button" class="overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => (tabMoves(tab).close || (() => closeOverlayTab(tab.id)))()}>×</button>`}
       </span>`;
     })}
   </div>
@@ -185,6 +188,7 @@ export function BoardOverlay({ snapshot, win = globalThis.window }) {
 
 function validWindow(window) {
   if (window.kind === BOARD_WINDOW_KIND) return isBoardId(window.board);
+  if (window.kind === PROCESS_WINDOW_KIND) return validProcessTab(window);
   if (window.kind === TERMINAL_WINDOW_KIND) return validTerminalWindow(window);
   if (window.kind === START_WINDOW_KIND || window.kind === DECIDE_WINDOW_KIND) return true;
   return window.kind === CHAT_WINDOW_KIND && isAgentId(window.agent);

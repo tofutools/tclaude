@@ -20,12 +20,14 @@ import { MAX_TERMINAL_TAB_GROUPS, normalizeColor, normalizeGrouping, sanitizeGro
 export const CHAT_PLACEMENT_PREF = 'tclaude.dash.chat-window.placement';
 export const TERMINAL_WINDOW_PREF = 'tclaude.dash.terminal-window.placement';
 export const BOARD_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.board-overlay.placement';
+export const PROCESS_OVERLAY_PLACEMENT_PREF = 'tclaude.dash.process-overlay.placement';
 
 // Each kind's placements, by the field that names the tab's content.
 const PLACEMENTS = Object.freeze({
   chat: [CHAT_PLACEMENT_PREF, 'agent'],
   terminal: [TERMINAL_WINDOW_PREF, 'paneKey'],
   board: [BOARD_OVERLAY_PLACEMENT_PREF, 'board'],
+  process: [PROCESS_OVERLAY_PLACEMENT_PREF, 'template'],
 });
 
 // placementKeyOf is where a window opened around tab saves its placement: where

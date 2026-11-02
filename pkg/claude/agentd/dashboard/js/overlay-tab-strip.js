@@ -42,10 +42,11 @@ function tabItems(menu, window, { item, separator }, notify) {
   const tab = window.tabs.find((candidate) => candidate.id === tabId);
   const others = window.tabs.length > 1;
   // Out of the overlay, the same moves its title bar or ⚙ offers.
-  const { toCollab, toWindow } = tabMoves(tab);
+  const { toCollab, toWindow, toDock } = tabMoves(tab);
   const leaving = () => ({ rect: menu.trigger?.closest?.('section')?.getBoundingClientRect?.(), win: menu.trigger?.ownerDocument?.defaultView, notify });
   const away = [
     ...(toCollab ? [item(TO_COLLAB_LABEL, toCollab)] : []),
+    ...(toDock ? [item(toDock.label, toDock.run)] : []),
     ...(toWindow ? [item(TO_WINDOW_LABEL, () => toWindow(leaving()))] : []),
   ];
   return [
