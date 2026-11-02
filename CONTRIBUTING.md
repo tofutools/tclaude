@@ -58,6 +58,29 @@ that changes only docs skips the Go jobs entirely. Release and
 manual-release always run every shard in full, so the merge commit is measured
 without selection before anything ships.
 
+Before any of that, the `Changes` job decides which whole jobs run at all
+(`scripts/ci/classify-changes.py`, unit-tested by `test_classify_changes.py`),
+so a job the change cannot need never claims a runner:
+
+- **docs**: only docs changed — only the mkdocs and Learn-commands checks run.
+- **ui**: only dashboard/jstest assets, agentd's `dashboard_*_test.go` and
+  docs changed — the Linux agentd, jstest and rest shards run (plus lint when
+  a Go test changed); every smoke and every macOS job is skipped.
+- **code**: everything else runs on Linux. The macOS jobs (Seatbelt smoke,
+  agentd, rest-all) run only for platform code: a file with a GOOS/GOARCH
+  suffix, an OS or `cgo` build constraint, `import "C"` or a darwin/Seatbelt
+  name; any file in a small package that holds such files; or sandbox, proxy,
+  session and harness-launch code, which also runs the filtered-proxy and
+  proxy-posture smokes. The Copilot, Gemini and pi smokes run when
+  `scripts/ci/affected` says the change reaches their fixture package. Lint
+  type-checks every package as `GOOS=darwin` too, so a darwin compile break
+  outside the cgo-only packages fails on Linux.
+- **full**: `.github/`, `scripts/ci/`, `scripts/test.sh`, `go.mod`, `go.sum`,
+  `mise.toml`, an unknown path or an empty diff — everything runs.
+
+`CI complete` checks every job against that verdict, and release.yml runs every
+job, macOS included, on every merge to main.
+
 A test that reads a file outside its own package directory without importing
 that package is invisible to the graph. Keep such reads inside the package, or
 reach the file through an import, as `pkg/claude/agentd/jstest` does. When a

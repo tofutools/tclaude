@@ -31,3 +31,8 @@ jobs:
       # the root ./... build, lint and test above never compile it.
       - name: Vet e2e drive module
         run: go -C scripts/e2e/drive vet ./...
+
+      # PR CI skips the macOS jobs unless the change is platform code; this
+      # keeps a darwin compile break anywhere from passing a PR.
+      - name: Type-check as darwin
+        run: scripts/ci/darwin-vet.sh
