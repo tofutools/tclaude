@@ -21020,6 +21020,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-bi-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow: auto; }
 .fa-bi-list li { padding: 3px 0; overflow-wrap: anywhere; }
 .fa-bi-list .fa-link.active { font-weight: 600; text-decoration: underline; }
+/* Entry paths and holder names are link buttons that still wrap like text. */
+:is(.fa-bi-list, .fs-reach-holders) .ui-btn-link { white-space: normal; overflow-wrap: anywhere; text-align: left; justify-content: flex-start; }
 .fa-bi-view { min-width: 0; }
 .fa-bi-text { margin: 0; max-height: 60vh; overflow: auto; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .fa-bi-more { margin-top: 6px; }

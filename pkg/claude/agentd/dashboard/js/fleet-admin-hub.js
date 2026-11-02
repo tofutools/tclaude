@@ -612,7 +612,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
           <td><input class="fa-hub-spaces" aria-label=${`Spaces for ${a.instance}`} value=${(a.spaces || []).join(', ')} onChange=${(e) => editSpaces(a, e.currentTarget.value)} /></td>
           <td class="fa-nowrap">${a.connected ? 'connected' : when(a.last_seen)}</td>
           <td class="fa-acts">${ok(data.admins) && caps.length > 0 && !admins.some((x) => x.instance === a.instance) && html`<${Button} size="sm" data-hub="make-admin" onClick=${() => addAdmin(a)}>Make admin…<//>`}
-            ${a.instance !== self.id && html`<${Button} size="sm" data-hub="revoke" onClick=${() => revokeAdmission(a)}>Revoke…<//>`}</td>
+            ${a.instance !== self.id && html`<${Button} size="sm" variant="ghost danger" data-hub="revoke" onClick=${() => revokeAdmission(a)}>Revoke…<//>`}</td>
         </tr>`))}</tbody></table>`)}
       ${h4('Invites')}
       <div class="fa-grant-form">
@@ -633,7 +633,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         <tbody>${rows.map((i) => html`<tr key=${i.token_hash} data-token=${i.token_hash}>
           <td><code>${String(i.token_hash || '').slice(0, 12)}…</code></td><td>${i.space || '—'}</td><td>${when(i.created_at)}</td><td>${when(i.expires_at)}</td>
           <td>${i.used ? (i.used_by || 'yes') : 'no'}</td>
-          <td class="fa-acts">${!i.used && html`<${Button} size="sm" data-hub="revoke-invite" onClick=${() => revokeInvite(i)}>Revoke…<//>`}</td>
+          <td class="fa-acts">${!i.used && html`<${Button} size="sm" variant="ghost danger" data-hub="revoke-invite" onClick=${() => revokeInvite(i)}>Revoke…<//>`}</td>
         </tr>`)}</tbody></table>`))}
       ${h4('Admins')}
       ${listOr(data.admins, (rows) => html`<table class="fa-table" id="fleet-hub-admins">
@@ -643,7 +643,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
           <td><code>${a.fingerprint || '—'}</code></td>
           <td class="fa-wrap">${(a.capabilities || []).join(', ') || '—'}</td>
           <td class="fa-nowrap">${when(a.added_at)}${a.added_by ? html` <span class="muted">by ${a.added_by}</span>` : ''}</td>
-          <td class="fa-acts"><${Button} size="sm" data-hub="remove-admin" disabled=${status.admin_count <= 1} title=${status.admin_count <= 1 ? 'The last admin cannot be removed' : ''} onClick=${() => removeAdmin(a)}>${a.instance === self.id ? 'Give up admin…' : 'Remove…'}<//></td>
+          <td class="fa-acts"><${Button} size="sm" variant="ghost danger" data-hub="remove-admin" disabled=${status.admin_count <= 1} title=${status.admin_count <= 1 ? 'The last admin cannot be removed' : ''} onClick=${() => removeAdmin(a)}>${a.instance === self.id ? 'Give up admin…' : 'Remove…'}<//></td>
         </tr>`)}</tbody></table>`)}
       ${h4('Settings')}
       ${listOr(data.settings, (rows) => html`<${SettingsSection} settings=${rows} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload} />`)}
